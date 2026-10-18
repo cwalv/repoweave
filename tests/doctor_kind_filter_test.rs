@@ -129,7 +129,11 @@ fn kind_filter_text_shows_only_the_named_kind_itemized() {
         .current_dir(&root)
         .output()
         .unwrap();
-    assert!(out.status.success(), "warnings only — exit 0");
+    assert!(
+        !out.status.success(),
+        "`--kind` admits a finding regardless of severity — exit 1 on the \
+         two warning-severity matches"
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
 
     // Itemized: two per-item savepoint lines, not one count line.

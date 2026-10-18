@@ -111,6 +111,20 @@ Nothing raised it: an entry with no `role` fails to parse and is reported as
 commit ids. An `rwv.toml` still carrying the table fails to load with an error
 saying the table was retired. Delete it.
 
+### Breaking: `rwv doctor`'s exit code treats text and `--json` alike
+
+Without `--kind`, `rwv doctor --json` exits non-zero only when a finding —
+violation or integration issue — is error-severity, matching the text report.
+It used to exit 1 on any violation, warnings included, so a weave whose only
+finding was a warning such as `missing-merge-driver-config` failed `--json`
+while the text report exited 0. A CI job scripted against `--json`'s old,
+wider failure could be relying on it.
+
+With `--kind`, a finding the filter admits exits non-zero regardless of
+severity, in both modes — `rwv doctor --kind tool-missing` included. Before
+this release the text report ignored `--kind` for its exit code and used the
+error-only rule even under a filter that matched a warning.
+
 ### Added
 
 - `rwv role <repo> <role>` changes a member's role in the active project,

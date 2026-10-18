@@ -36,10 +36,10 @@ rwv doctor [--all] [--locked] [--json] [--fix] [--reattach-checkouts]
 - `--kind <kind>` narrows the report to the named finding kinds (repeatable):
   a violation's `kind`, or an integration issue's (`tool-missing`,
   `surfacing`, `member-incompatibility`, …). An unknown name refuses, listing
-  the valid set. The exit code reflects the filtered view, and under `--json`
-  any finding in it exits non-zero, warnings included — so CI fails on a
-  missing ecosystem tool with `rwv doctor --json --kind tool-missing`, while
-  the same warning leaves an unfiltered run green. Mutually exclusive with
+  the valid set. The exit code reflects the filtered view, text and `--json`
+  alike: any finding in it exits non-zero, warnings included — so CI fails on
+  a missing ecosystem tool with `rwv doctor --kind tool-missing`, while the
+  same warning leaves an unfiltered run green. Mutually exclusive with
   `--locked` and `--fix`.
 - `--fix` repairs every finding marked **Auto-fixable** in
   `docs/reference/doctor-findings.md`. That page carries the mark on each
@@ -234,10 +234,12 @@ Schema:
 
 ## Exit codes
 
-- `0` — no violations found.
-- non-zero — violations found, or an error occurred resolving the
-  workspace. Under `--kind`, only findings of the named kinds count; with
-  `--json`, any of them does, warnings included.
+- `0` — clean, or every finding is warning-severity (without `--kind`).
+- non-zero — an error-severity finding (violation or integration issue), or
+  an error occurred resolving the workspace. Under `--kind`, any finding the
+  filter admits exits non-zero regardless of severity, text and `--json`
+  alike — naming a warning-severity kind such as `tool-missing` is how a CI
+  gate escalates it.
 
 ## Examples
 

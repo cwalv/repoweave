@@ -813,6 +813,77 @@ impl CheckViolation {
         }
     }
 
+    /// The severity this violation carries toward `rwv doctor`'s exit code
+    /// and toward the `Issue` it renders as in text output.
+    ///
+    /// Mirrors [`fix_disposition`](Self::fix_disposition) in shape: the one
+    /// place the per-(kind, sub-kind) severity table lives, matched
+    /// exhaustively down to sub-kind so a finding added without an entry
+    /// here does not compile. `--json`'s `violations` array carries no
+    /// severity field of its own — `docs/reference/doctor-findings.md`
+    /// states the same table for a reader without this method.
+    pub fn severity(&self) -> crate::integration::Severity {
+        use crate::integration::Severity::{Error, Warning};
+        match self {
+            CheckViolation::OrphanedClone { .. }
+            | CheckViolation::UnknownSegmentClone { .. }
+            | CheckViolation::DanglingReference { .. }
+            | CheckViolation::StaleLock { .. }
+            | CheckViolation::IncompleteLock { .. }
+            | CheckViolation::HeadUnreadable { .. }
+            | CheckViolation::ProjectsDirUnreadable { .. }
+            | CheckViolation::UnresolvableLockEntry { .. }
+            | CheckViolation::LegacyManifestFormat { .. }
+            | CheckViolation::DanglingActiveProject { .. }
+            | CheckViolation::WeaveRootIdentityConflict { .. }
+            | CheckViolation::UnreadableWorkweaveIndex { .. }
+            | CheckViolation::UnparseableProject { .. }
+            | CheckViolation::CloneTopology { .. } => Error,
+
+            CheckViolation::MemberPermissions { .. }
+            | CheckViolation::RoleDisagreement { .. }
+            | CheckViolation::IndexDrift { .. }
+            | CheckViolation::WorkingTreeDrift { .. }
+            | CheckViolation::MissingReplayExclusion { .. }
+            | CheckViolation::ReplayExclusionUnreadable { .. }
+            | CheckViolation::MissingMergeDriverConfig { .. }
+            | CheckViolation::MergeDriverConfigUnreadable { .. }
+            | CheckViolation::ProjectlessDir { .. }
+            | CheckViolation::UnnameableProject { .. }
+            | CheckViolation::LockPinnedByName { .. }
+            | CheckViolation::LegacyWorkweaveMarker { .. }
+            | CheckViolation::LegacyWorkweaveIndex { .. }
+            | CheckViolation::UnreadableOwnedState { .. }
+            | CheckViolation::WorkweaveTreeIntegrity { .. }
+            | CheckViolation::BranchDiscipline { .. }
+            | CheckViolation::StaleWorktreeRegistration { .. }
+            | CheckViolation::StaleOpState { .. }
+            | CheckViolation::DeadOpLease { .. }
+            | CheckViolation::DanglingRefReceipt { .. }
+            | CheckViolation::PreFlatRefReceipt { .. }
+            | CheckViolation::OrphanedSavepoint { .. }
+            | CheckViolation::ConfusableSiblings { .. }
+            | CheckViolation::CargoVersionSkew { .. }
+            | CheckViolation::CargoPatchShadowing { .. }
+            | CheckViolation::MissingCanonicalClone { .. }
+            | CheckViolation::UninitializedSubmodule { .. }
+            | CheckViolation::PhantomMergeDriver { .. } => Warning,
+
+            CheckViolation::WorkweaveDrift { kind, .. } => match kind {
+                DriftKind::Extra => Warning,
+                DriftKind::Missing
+                | DriftKind::MissingUnfetched
+                | DriftKind::Symlink
+                | DriftKind::SymlinkUnfetched => Error,
+            },
+            CheckViolation::Provenance { sub_kind, .. } => match sub_kind {
+                ProvenanceKind::OriginUrlMismatch { .. }
+                | ProvenanceKind::PlacementDisagreement { .. } => Warning,
+                ProvenanceKind::LockShaUnreachable { .. } => Error,
+            },
+        }
+    }
+
     /// The `kind` tag this violation serializes under in `rwv doctor --json`.
     ///
     /// [`ViolationOutput`] mirrors this enum variant-for-variant and tags
@@ -9849,6 +9920,23 @@ impl KindFilter {
     }
 }
 
+/// The one place `rwv doctor` decides whether to exit non-zero, text and
+/// `--json` alike.
+///
+/// Without `--kind`, only an error-severity finding — violation or
+/// integration issue — exits the run; a warning-severity one exits 0.
+/// `--kind` has already narrowed `finding_count` to what the filter admits,
+/// so any survivor there exits the run regardless of severity: that is what
+/// lets a CI gate escalate a warning-severity kind such as `tool-missing`
+/// by naming it.
+fn doctor_exit_signal(kind_filtered: bool, finding_count: usize, has_error: bool) -> bool {
+    if kind_filtered {
+        finding_count > 0
+    } else {
+        has_error
+    }
+}
+
 /// When `fix` is `true`, the repairable subset is remediated in place before
 /// the report is rendered, so a repaired workspace reports healthy.
 ///
@@ -9865,7 +9953,7 @@ impl KindFilter {
 /// true` (via `--all`) to reproduce the weave-wide behavior, including orphan
 /// detection across every project.
 ///
-/// Returns `Ok(true)` if there are errors (exit 1), `Ok(false)` if clean.
+/// Returns `Ok(true)` (exit 1) or `Ok(false)` per [`doctor_exit_signal`].
 ///
 /// `ctx` is the already-resolved invocation context (with `--project` baked
 /// in when passed). Handlers must not re-resolve.
@@ -10014,7 +10102,11 @@ pub fn run_check(
         }
     }
 
-    Ok(has_errors)
+    Ok(doctor_exit_signal(
+        kind_filter.is_some(),
+        all_issues.len(),
+        has_errors,
+    ))
 }
 
 /// Build the payload for `rwv doctor --json` from a vector of violations and
@@ -10672,13 +10764,9 @@ fn collect_doctor_violations(
 /// Emits `{ "$schema": "...", "violations": [...], "issues": [...] }` to
 /// stdout, from the same two collection passes [`run_check`] renders as text.
 ///
-/// Returns `Ok(true)` — the caller's exit-1 signal — when any violation was
-/// found or any integration issue was an error. The violation half of that is
-/// wider than [`run_check`]'s, which exits non-zero on errors alone, and stays
-/// so: a caller already scripting against `--json` reads a warning-severity
-/// violation as exit 1 today. Under a kind filter an admitted issue of any
-/// severity is the same signal, which is what lets CI fail on a warning kind
-/// such as `tool-missing` by naming it.
+/// Returns `Ok(true)` (exit 1) or `Ok(false)` per [`doctor_exit_signal`] —
+/// the same contract [`run_check`] follows, so a caller scripting against
+/// `--json` reads the same signal a human reads off the text report.
 ///
 /// There is no `--fix` on this path, so nothing here repairs and nothing mints
 /// a `--fix` failure.
@@ -10716,10 +10804,17 @@ pub fn run_check_json(
         .into_iter()
         .filter(|issue| kind_filter.is_none_or(|filter| filter.admits_issue(issue)))
         .collect();
-    let has_violations = !violations.is_empty()
+    let has_error = violations
+        .iter()
+        .any(|v| v.severity() == crate::integration::Severity::Error)
         || issues
             .iter()
-            .any(|i| kind_filter.is_some() || i.severity == crate::integration::Severity::Error);
+            .any(|i| i.severity == crate::integration::Severity::Error);
+    let has_violations = doctor_exit_signal(
+        kind_filter.is_some(),
+        violations.len() + issues.len(),
+        has_error,
+    );
     // Discover `rwv-*` executables on PATH for the inventory. This is
     // reporting only — the presence or absence of plugins never affects the
     // has_violations signal or the doctor exit code.
