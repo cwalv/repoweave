@@ -121,7 +121,8 @@ fn rwv_with_path(args: &[&str], cwd: &Path, path: &std::ffi::OsStr) -> String {
 }
 
 /// (a) The source activated: the seat carries the same `.cargo/config.toml`
-/// bytes, and nothing is left for `doctor` to report.
+/// bytes, and nothing is left for `doctor` to report. Created with
+/// `--no-materialize`, so the bytes can only have come from the carry.
 #[test]
 fn workweave_create_carries_an_activated_wrapper_config() {
     require_cargo!();
@@ -143,7 +144,17 @@ fn workweave_create_carries_an_activated_wrapper_config() {
     common::git_in(&project_dir, &["add", "-A"]);
     common::git_in(&project_dir, &["commit", "-m", "activate"]);
 
-    let create = rwv_with_path(&["workweave", "web-app", "create", "agent-1"], &ws, &path);
+    let create = rwv_with_path(
+        &[
+            "workweave",
+            "web-app",
+            "create",
+            "agent-1",
+            "--no-materialize",
+        ],
+        &ws,
+        &path,
+    );
     assert!(
         !create.contains("cargo-workspace managed file missing"),
         "create should leave nothing for cargo-workspace to warn about.\n{create}"
