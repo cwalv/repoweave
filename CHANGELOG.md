@@ -378,6 +378,11 @@ saying the table was retired. Delete it.
   project. They named a bare `rwv fetch`, which at the primary fetches only
   the active project, so for a workweave of another project a parked
   `rwv sync --continue` parked again.
+- `tracked-index` names `git -C <project dir> rm --cached .rwv-workweave-index`
+  and committing the removal, and says the index needs no `.gitignore` entry,
+  since rwv excludes it through the project repo's `.git/info/exclude`. It
+  named `git rm --cached <absolute path>`, which fails outside the project
+  repo, and adding the index to `.gitignore`.
 
 ### Documentation
 

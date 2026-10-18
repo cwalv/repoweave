@@ -673,9 +673,10 @@ otherwise repeat this about every other sibling. It is still enumerated under
 repo. The index is machine-local state; a checked-in copy propagates absolute
 paths to every clone and every workweave checkout.
 
-**What to do:** `git rm --cached projects/<project>/.rwv-workweave-index` and
-add it to `.gitignore`. `--fix` cannot untrack a file without touching commit
-history, so this stays yours.
+**What to do:** `git -C projects/<project> rm --cached .rwv-workweave-index`,
+then commit the removal. rwv excludes the index through the project repo's
+`.git/info/exclude`, so it needs no `.gitignore` entry. `--fix` cannot untrack
+a file without touching commit history, so this stays yours.
 
 #### `unreadable-marker`
 

@@ -172,7 +172,7 @@ const ROUTED: &[Routed] = &[
     Routed {
         file: "check.rs",
         scope: "",
-        needle: r#"`.rwv-workweave-index` to `.gitignore`","#,
+        needle: r#"`.git/info/exclude`, so it needs no `.gitignore` entry","#,
         renders: 2,
         prints: "doctor: a tracked workweave index, and the `git rm --cached` that untracks it",
     },

@@ -1167,8 +1167,9 @@ pub enum WorkweaveTreeIntegrityKind {
     /// should not be committed; a checked-in copy propagates absolute
     /// paths to every clone and every workweave checkout. Report-only —
     /// `--fix` cannot un-track without touching commit history; the
-    /// operator runs `git rm --cached projects/<project>/.rwv-workweave-index`
-    /// and updates `.gitignore`.
+    /// operator runs `git rm --cached .rwv-workweave-index` in the project
+    /// repo and commits the removal. rwv excludes the index through the
+    /// project repo's `.git/info/exclude`, never `.gitignore`.
     TrackedIndex {
         /// Project whose index is committed.
         project: String,
@@ -7826,11 +7827,15 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                         } => format!(
                             "{}: `.rwv-workweave-index` for project `{}` is \
                              tracked by the project repo; the index is \
-                             machine-local — run `git rm --cached {}` and add \
-                             `.rwv-workweave-index` to `.gitignore`",
+                             machine-local — run `git -C {} rm --cached \
+                             .rwv-workweave-index` and commit the removal. rwv \
+                             excludes the index through the project repo's \
+                             `.git/info/exclude`, so it needs no `.gitignore` entry",
                             crate::path_spelling::operator_path(index_path),
                             project,
-                            crate::path_spelling::operator_path(index_path)
+                            crate::path_spelling::operator_path(
+                                index_path.parent().unwrap_or(index_path)
+                            )
                         ),
                         WorkweaveTreeIntegrityKind::UnreadableMarker { detail } => detail.clone(),
                         WorkweaveTreeIntegrityKind::NestedWorkweaveDir {

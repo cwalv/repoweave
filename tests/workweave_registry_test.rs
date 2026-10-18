@@ -439,7 +439,7 @@ fn an_unparseable_index_reports_itself_rather_than_an_adoption_that_cannot_run()
 }
 
 #[test]
-fn doctor_flags_tracked_index() {
+fn doctor_flags_tracked_index_until_the_named_untrack_is_committed() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
@@ -457,15 +457,57 @@ fn doctor_flags_tracked_index() {
         .success();
 
     // Force-add the index into the project repo — even though `create`
-    // ensured the `.gitignore` line.
+    // listed it in the project repo's `.git/info/exclude`.
     common::git_in(&project_dir, &["add", "--force", ".rwv-workweave-index"]);
     common::git_in(&project_dir, &["commit", "-m", "track index"]);
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let report = String::from_utf8_lossy(&out.stdout);
+    let finding = report
+        .lines()
+        .find(|l| l.contains("tracked by the project repo"))
+        .unwrap_or_else(|| panic!("the tracked index must be reported:\n{report}"));
+    assert!(
+        !finding.contains("add `.rwv-workweave-index` to `.gitignore`"),
+        "{finding}"
+    );
+    let untrack = finding
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .find(|span| span.starts_with("git ") && span.contains("rm --cached"))
+        .unwrap_or_else(|| panic!("the finding must name the untrack: {finding}"));
+    let mut words = untrack.split_whitespace().skip(1);
+    let ran = common::git()
+        .args(&mut words)
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    assert!(
+        ran.status.success(),
+        "`{untrack}` failed:\n{}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
+    common::git_in(&project_dir, &["commit", "-m", "untrack index"]);
 
     rwv()
         .args(["doctor"])
         .current_dir(&ws)
         .assert()
-        .stdout(predicate::str::contains("tracked by the project repo"));
+        .stdout(predicate::str::contains("tracked by the project repo").not());
+    assert!(
+        index_path(&ws, "web-app").exists(),
+        "the index stays on disk"
+    );
+    assert_eq!(
+        common::git_in(&project_dir, &["status", "--porcelain"]),
+        "",
+        "the project repo's exclude keeps the untracked index out of status"
+    );
+    assert!(
+        !project_dir.join(".gitignore").exists(),
+        "no `.gitignore` entry is needed"
+    );
 }
 
 // ---------------------------------------------------------------------------

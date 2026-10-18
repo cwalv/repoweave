@@ -2932,7 +2932,7 @@ Schema:
           "additionalProperties": false
         },
         {
-          "description": "The `.rwv-workweave-index` file at `projects/<project>/` is tracked by the project repo's VCS. The index is machine-local state and should not be committed; a checked-in copy propagates absolute paths to every clone and every workweave checkout. Report-only — `--fix` cannot un-track without touching commit history; the operator runs `git rm --cached projects/<project>/.rwv-workweave-index` and updates `.gitignore`.",
+          "description": "The `.rwv-workweave-index` file at `projects/<project>/` is tracked by the project repo's VCS. The index is machine-local state and should not be committed; a checked-in copy propagates absolute paths to every clone and every workweave checkout. Report-only — `--fix` cannot un-track without touching commit history; the operator runs `git rm --cached .rwv-workweave-index` in the project repo and commits the removal. rwv excludes the index through the project repo's `.git/info/exclude`, never `.gitignore`.",
           "type": "object",
           "required": [
             "tracked-index"
