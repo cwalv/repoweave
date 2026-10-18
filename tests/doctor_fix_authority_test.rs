@@ -61,8 +61,9 @@
 
 mod common;
 
-use common::doctor_corpus::{case_token, corpus};
+use common::doctor_corpus::{case_token, corpus, issue_corpus, issue_kind_token};
 use repoweave::check::FixDisposition;
+use repoweave::integration::Severity;
 use std::collections::{BTreeMap, BTreeSet};
 
 const PAGE_PATH: &str = "docs/reference/doctor-findings.md";
@@ -407,6 +408,472 @@ fn the_page_check_reports_a_mark_that_drifted_from_the_code() {
                 && g.contains("--reattach-checkouts")),
         "a consented entry that stops naming its flag must be reported; got:\n  {}",
         gaps.join("\n  ")
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Instrument 1b: the Summary index table and the sub_kind list
+// ---------------------------------------------------------------------------
+//
+// Two more hand-kept copies on the same page, read by nothing until now: the
+// `## Summary index` table's Severity and `--fix` columns for violations, its
+// kind column for issues, and the "Twelve kinds carry a `sub_kind`" sentence
+// just above both.
+//
+// Scope: the issues table's kind column is checked against `IssueKind`'s
+// exhaustive set, and its `--fix` cell against the two-word vocabulary
+// (`Per finding` / `Never`). Which of the two words is correct per kind is
+// NOT re-derived here — `run_doctor`'s collection path decides it (some
+// kinds bypass the `--fix` partition entirely; others go through it per
+// occurrence), and there is no single register for that the way
+// `fix_disposition` is one for violations; hand-deriving it here would be a
+// second copy of that judgment to keep complete. The violations table's
+// Severity and `--fix` columns ARE checked for value agreement, because both
+// already have one register apiece (`fix_disposition`, and the severity each
+// violation renders with).
+
+const SUMMARY_VIOLATIONS_HEADER: &str =
+    "| `kind` (and `sub_kind` where applicable) | Severity | `--fix` disposition |";
+const SUMMARY_ISSUES_HEADER: &str = "| `kind` | `--fix` |";
+
+/// Token → severity, off the same render arm `--json` and the text report
+/// both go through (`violations_to_issues`), so this is not a second
+/// judgment beside it.
+///
+/// One token is absent on purpose:
+/// `workweave-tree-integrity/foreign-primary-other-workspace` is the one
+/// deliberate carve-out `itemized_violations_to_issues` drops rather than
+/// renders (every sibling weave would otherwise repeat the same finding
+/// about every other sibling), so no render arm ever produces a severity for
+/// it — `--json` carries it straight from `CheckViolation` instead.
+fn severity_register() -> BTreeMap<String, Severity> {
+    corpus()
+        .into_iter()
+        .filter_map(|v| {
+            let token = case_token(&v);
+            let issues = repoweave::check::violations_to_issues(vec![v]);
+            if issues.is_empty() {
+                return None;
+            }
+            assert_eq!(
+                issues.len(),
+                1,
+                "{token}: one violation must render to exactly one issue line, got {}",
+                issues.len()
+            );
+            Some((token, issues[0].severity))
+        })
+        .collect()
+}
+
+fn severity_text(s: Severity) -> &'static str {
+    match s {
+        Severity::Warning => "Warning",
+        Severity::Error => "Error",
+    }
+}
+
+/// One expanded entry from a Summary-index violations row: the row's kind,
+/// or `kind/sub_kind` for each sub-kind the row names. A row naming three
+/// sub-kinds produces three entries, one per `(kind, sub_kind)` pair, all
+/// sharing that row's severity and `--fix` cell and line number.
+struct SummaryViolationEntry {
+    token: String,
+    severity: String,
+    fix: String,
+    line: usize,
+}
+
+/// Backtick-quoted spans in a Summary-index kind column are, in order, the
+/// kind and then zero or more sub-kinds — true whether they are written
+/// `(sub1, sub2)` or `/ sub1, sub2`, since the grouping punctuation itself
+/// never sits inside a backtick span.
+fn quoted_spans(col: &str) -> Vec<&str> {
+    col.split('`').skip(1).step_by(2).collect()
+}
+
+fn summary_violation_rows(page: &str) -> Vec<SummaryViolationEntry> {
+    let lines: Vec<&str> = page.lines().collect();
+    let header = lines
+        .iter()
+        .position(|l| *l == SUMMARY_VIOLATIONS_HEADER)
+        .unwrap_or_else(|| panic!("{PAGE_PATH}: the violations Summary index header is missing"));
+    let mut out = Vec::new();
+    let mut i = header + 2; // skip the header row and its `|---|` separator
+    while let Some(line) = lines.get(i).copied() {
+        if !line.starts_with('|') {
+            break;
+        }
+        let cols: Vec<&str> = line.trim_matches('|').split('|').map(str::trim).collect();
+        assert_eq!(
+            cols.len(),
+            3,
+            "{PAGE_PATH}:{}: expected 3 columns in the violations table, got {}: {line:?}",
+            i + 1,
+            cols.len()
+        );
+        let quoted = quoted_spans(cols[0]);
+        let Some((kind, subs)) = quoted.split_first() else {
+            panic!(
+                "{PAGE_PATH}:{}: no backtick-quoted kind in {:?}",
+                i + 1,
+                cols[0]
+            );
+        };
+        let severity = cols[1].to_string();
+        let fix = cols[2].to_string();
+        if subs.is_empty() {
+            out.push(SummaryViolationEntry {
+                token: (*kind).to_string(),
+                severity,
+                fix,
+                line: i + 1,
+            });
+        } else {
+            for sub in subs {
+                out.push(SummaryViolationEntry {
+                    token: format!("{kind}/{sub}"),
+                    severity: severity.clone(),
+                    fix: fix.clone(),
+                    line: i + 1,
+                });
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Whether a Summary-index `--fix` cell agrees with `expected`. `None` when
+/// the cell is not one of the three spellings the vocabulary allows (mirrors
+/// `mark`, above, applied to the table's own wording instead of a per-entry
+/// heading's).
+fn fix_cell_agrees(text: &str, expected: FixDisposition) -> Option<bool> {
+    if text == "Auto-fixable" {
+        return Some(matches!(expected, FixDisposition::Auto));
+    }
+    if text == "Report-only" {
+        return Some(matches!(expected, FixDisposition::ReportOnly));
+    }
+    if let Some(rest) = text.strip_prefix("Report-only by default (`") {
+        let flag = rest.trim_end_matches("`)");
+        return Some(match expected {
+            FixDisposition::Consented(f) => flag == f,
+            _ => false,
+        });
+    }
+    None
+}
+
+fn summary_violation_gaps(
+    page: &str,
+    register: &BTreeMap<String, FixDisposition>,
+    severities: &BTreeMap<String, Severity>,
+) -> Vec<String> {
+    let mut gaps = Vec::new();
+    let mut reached: BTreeSet<String> = BTreeSet::new();
+    for row in summary_violation_rows(page) {
+        reached.insert(row.token.clone());
+        match severities.get(&row.token) {
+            // The one token `severity_register` leaves out on purpose (see
+            // its doc comment) — nothing to compare the cell against.
+            None if register.contains_key(&row.token) => {}
+            None => gaps.push(format!(
+                "{PAGE_PATH}:{}: `{}` is not a finding the register knows",
+                row.line, row.token
+            )),
+            Some(actual) => {
+                let actual_text = severity_text(*actual);
+                if actual_text != row.severity {
+                    gaps.push(format!(
+                        "{PAGE_PATH}:{}: `{}` severity says {}, the code says {actual_text}",
+                        row.line, row.token, row.severity
+                    ));
+                }
+            }
+        }
+        if let Some(expected) = register.get(&row.token) {
+            match fix_cell_agrees(&row.fix, *expected) {
+                Some(true) => {}
+                Some(false) => gaps.push(format!(
+                    "{PAGE_PATH}:{}: `{}` --fix says {}, the code says {}",
+                    row.line,
+                    row.token,
+                    row.fix,
+                    describe(*expected)
+                )),
+                None => gaps.push(format!(
+                    "{PAGE_PATH}:{}: `{}` --fix cell `{}` is not one of the three marks",
+                    row.line, row.token, row.fix
+                )),
+            }
+        }
+    }
+    for token in register.keys() {
+        if !reached.contains(token) {
+            gaps.push(format!(
+                "{token}: the code defines it and the Summary index table has no row for it"
+            ));
+        }
+    }
+    gaps
+}
+
+struct SummaryIssueEntry {
+    token: String,
+    fix: String,
+    line: usize,
+}
+
+fn summary_issue_rows(page: &str) -> Vec<SummaryIssueEntry> {
+    let lines: Vec<&str> = page.lines().collect();
+    let header = lines
+        .iter()
+        .position(|l| *l == SUMMARY_ISSUES_HEADER)
+        .unwrap_or_else(|| panic!("{PAGE_PATH}: the issues Summary index header is missing"));
+    let mut out = Vec::new();
+    let mut i = header + 2;
+    while let Some(line) = lines.get(i).copied() {
+        if !line.starts_with('|') {
+            break;
+        }
+        let cols: Vec<&str> = line.trim_matches('|').split('|').map(str::trim).collect();
+        assert_eq!(
+            cols.len(),
+            2,
+            "{PAGE_PATH}:{}: expected 2 columns in the issues table, got {}: {line:?}",
+            i + 1,
+            cols.len()
+        );
+        let quoted = quoted_spans(cols[0]);
+        let kind = quoted.first().unwrap_or_else(|| {
+            panic!(
+                "{PAGE_PATH}:{}: no backtick-quoted kind in {:?}",
+                i + 1,
+                cols[0]
+            )
+        });
+        out.push(SummaryIssueEntry {
+            token: (*kind).to_string(),
+            fix: cols[1].to_string(),
+            line: i + 1,
+        });
+        i += 1;
+    }
+    out
+}
+
+/// The issues table's kind column against `IssueKind`'s exhaustive set, and
+/// its `--fix` cell against the two-word vocabulary. See the module note
+/// above for why the word itself is not checked against the code.
+fn summary_issue_gaps(page: &str) -> Vec<String> {
+    let expected: BTreeSet<String> = issue_corpus()
+        .iter()
+        .map(|issue| issue_kind_token(&issue.kind))
+        .collect();
+    let mut gaps = Vec::new();
+    let mut reached: BTreeSet<String> = BTreeSet::new();
+    for row in summary_issue_rows(page) {
+        if !expected.contains(&row.token) {
+            gaps.push(format!(
+                "{PAGE_PATH}:{}: `{}` names no `IssueKind`",
+                row.line, row.token
+            ));
+        }
+        if row.fix != "Per finding" && row.fix != "Never" {
+            gaps.push(format!(
+                "{PAGE_PATH}:{}: `{}` --fix cell `{}` is not `Per finding` or `Never`",
+                row.line, row.token, row.fix
+            ));
+        }
+        reached.insert(row.token.clone());
+    }
+    for token in &expected {
+        if !reached.contains(token) {
+            gaps.push(format!(
+                "{token}: `IssueKind` defines it and the issues Summary index table has no \
+                 row for it"
+            ));
+        }
+    }
+    gaps
+}
+
+#[test]
+fn the_summary_index_agrees_with_the_register() {
+    let gaps = summary_violation_gaps(PAGE, &register(), &severity_register());
+    assert!(
+        gaps.is_empty(),
+        "{PAGE_PATH}'s Summary index (violations) disagrees with the code:\n  {}",
+        gaps.join("\n  ")
+    );
+
+    let gaps = summary_issue_gaps(PAGE);
+    assert!(
+        gaps.is_empty(),
+        "{PAGE_PATH}'s Summary index (issues) disagrees with `IssueKind`:\n  {}",
+        gaps.join("\n  ")
+    );
+}
+
+#[test]
+fn the_summary_index_check_reports_a_drifted_cell() {
+    let register = register();
+    let severities = severity_register();
+    const ROW: &str = "| [`orphaned-clone`](#orphaned-clone) | Error | Report-only |";
+
+    let wrong_severity = PAGE.replacen(
+        ROW,
+        "| [`orphaned-clone`](#orphaned-clone) | Warning | Report-only |",
+        1,
+    );
+    assert_ne!(wrong_severity, PAGE, "the seeded edit matched nothing");
+    let gaps = summary_violation_gaps(&wrong_severity, &register, &severities);
+    assert!(
+        gaps.iter()
+            .any(|g| g.contains("`orphaned-clone` severity says Warning, the code says Error")),
+        "a flipped severity cell must be reported; got:\n  {}",
+        gaps.join("\n  ")
+    );
+
+    let wrong_fix = PAGE.replacen(
+        ROW,
+        "| [`orphaned-clone`](#orphaned-clone) | Error | Auto-fixable |",
+        1,
+    );
+    assert_ne!(wrong_fix, PAGE, "the seeded edit matched nothing");
+    let gaps = summary_violation_gaps(&wrong_fix, &register, &severities);
+    assert!(
+        gaps.iter()
+            .any(|g| g
+                .contains("`orphaned-clone` --fix says Auto-fixable, the code says Report-only")),
+        "a flipped --fix cell must be reported; got:\n  {}",
+        gaps.join("\n  ")
+    );
+
+    let dropped_row = PAGE.replacen(&format!("{ROW}\n"), "", 1);
+    assert_ne!(dropped_row, PAGE, "the seeded edit matched nothing");
+    let gaps = summary_violation_gaps(&dropped_row, &register, &severities);
+    assert!(
+        gaps.iter()
+            .any(|g| g.starts_with("orphaned-clone:") && g.contains("no row for it")),
+        "a finding dropped from the table must be reported; got:\n  {}",
+        gaps.join("\n  ")
+    );
+}
+
+#[test]
+fn the_issues_summary_index_check_reports_a_drifted_row() {
+    const ROW: &str = "| [`tool-missing`](#tool-missing) | Per finding |";
+
+    let renamed = PAGE.replacen(ROW, "| [`tool-absent`](#tool-missing) | Per finding |", 1);
+    assert_ne!(renamed, PAGE, "the seeded edit matched nothing");
+    let gaps = summary_issue_gaps(&renamed);
+    assert!(
+        gaps.iter()
+            .any(|g| g.contains("`tool-absent` names no `IssueKind`")),
+        "a kind the issues table invents must be reported; got:\n  {}",
+        gaps.join("\n  ")
+    );
+    assert!(
+        gaps.iter()
+            .any(|g| g.starts_with("tool-missing:") && g.contains("no row for it")),
+        "the real kind it stopped naming must be reported missing too; got:\n  {}",
+        gaps.join("\n  ")
+    );
+
+    let unvocab = PAGE.replacen(ROW, "| [`tool-missing`](#tool-missing) | Sometimes |", 1);
+    assert_ne!(unvocab, PAGE, "the seeded edit matched nothing");
+    let gaps = summary_issue_gaps(&unvocab);
+    assert!(
+        gaps.iter()
+            .any(|g| g.contains("`tool-missing` --fix cell `Sometimes`")),
+        "a --fix cell outside the two-word vocabulary must be reported; got:\n  {}",
+        gaps.join("\n  ")
+    );
+}
+
+/// The kinds the committed schema actually marks with a `sub_kind` property,
+/// derived from every `oneOf` arm of `ViolationOutput` rather than
+/// hand-listed — a `kind` whose shape gains or loses the property moves this
+/// set without anyone updating it by hand.
+fn kinds_carrying_sub_kind() -> BTreeSet<String> {
+    let schema = common::json_schema::committed_schema("doctor");
+    let one_of = schema["definitions"]["ViolationOutput"]["oneOf"]
+        .as_array()
+        .expect("ViolationOutput must be a `oneOf` schema");
+    let mut out = BTreeSet::new();
+    for variant in one_of {
+        let props = variant["properties"]
+            .as_object()
+            .expect("every violation variant declares `properties`");
+        if !props.contains_key("sub_kind") {
+            continue;
+        }
+        let kind_enum = props["kind"]["enum"].as_array().unwrap_or_else(|| {
+            panic!("a sub_kind-carrying variant has no literal `kind` enum: {variant}")
+        });
+        for k in kind_enum {
+            out.insert(
+                k.as_str()
+                    .unwrap_or_else(|| panic!("`kind` enum value is not a string: {k}"))
+                    .to_string(),
+            );
+        }
+    }
+    out
+}
+
+/// The kinds the page's "Twelve kinds carry a `sub_kind`" sentence lists.
+fn page_sub_kind_list(page: &str) -> Vec<String> {
+    const MARKER: &str = "kinds carry a `sub_kind` — ";
+    let start = page
+        .find(MARKER)
+        .unwrap_or_else(|| panic!("{PAGE_PATH}: the sub_kind sentence is missing"))
+        + MARKER.len();
+    let rest = &page[start..];
+    let end = rest.find(". Where the").unwrap_or_else(|| {
+        panic!("{PAGE_PATH}: the sub_kind sentence's closing clause is missing")
+    });
+    rest[..end]
+        .replace('\n', " ")
+        .split(',')
+        .map(|s| s.trim().trim_matches('`').to_string())
+        .collect()
+}
+
+#[test]
+fn the_sub_kind_list_agrees_with_the_schema() {
+    let page_list = page_sub_kind_list(PAGE);
+    let page_set: BTreeSet<String> = page_list.iter().cloned().collect();
+    assert_eq!(
+        page_set.len(),
+        page_list.len(),
+        "{PAGE_PATH}'s sub_kind sentence names a kind twice: {page_list:?}"
+    );
+    let schema_set = kinds_carrying_sub_kind();
+    assert_eq!(
+        page_set,
+        schema_set,
+        "{PAGE_PATH}'s \"Twelve kinds carry a `sub_kind`\" sentence disagrees with \
+         docs/reference/schemas/doctor.json:\n  page only: {:?}\n  schema only: {:?}",
+        page_set.difference(&schema_set).collect::<Vec<_>>(),
+        schema_set.difference(&page_set).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn the_sub_kind_list_check_reports_a_drifted_entry() {
+    let dropped = PAGE.replacen("`branch-discipline`, ", "", 1);
+    assert_ne!(dropped, PAGE, "the seeded edit matched nothing");
+    let page_set: BTreeSet<String> = page_sub_kind_list(&dropped).into_iter().collect();
+    let schema_set = kinds_carrying_sub_kind();
+    assert!(
+        schema_set
+            .difference(&page_set)
+            .any(|k| k == "branch-discipline"),
+        "dropping `branch-discipline` from the sentence must leave it missing from the \
+         parsed set"
     );
 }
 
