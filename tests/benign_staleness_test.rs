@@ -148,6 +148,20 @@ fn head(repo: &Path) -> String {
     common::git_in(repo, &["rev-parse", "HEAD"])
 }
 
+/// Savepoints under `refs/rwv/pre-op/` in `repo`. Enough to tell "a savepoint
+/// exists" from "none does" without needing the op-id; a red assertion
+/// prints which refs survived.
+fn savepoint_refs(repo: &Path) -> Vec<String> {
+    common::git_in(
+        repo,
+        &["for-each-ref", "--format=%(refname)", "refs/rwv/pre-op"],
+    )
+    .lines()
+    .filter(|l| !l.is_empty())
+    .map(str::to_owned)
+    .collect()
+}
+
 // ===========================================================================
 // LockRelation::Ok — both verbs proceed on a fresh lock
 // ===========================================================================
@@ -326,6 +340,41 @@ fn a_relock_that_cannot_commit_leaves_no_auto_relocked_claim() {
         "the per-repo line must name the repo whose lock is still behind HEAD; got \
          stderr:\n{stderr}"
     );
+
+    // The residue "Clear what refused the commit, then re-run." implies is
+    // clear is left before that line is reached: no owner record, no lease,
+    // no savepoint survives the refusal.
+    assert!(
+        !f.ww.root.join(".rwv-op").exists(),
+        "a refused op-start relock must release the owner's op-state; \
+         stderr:\n{stderr}"
+    );
+    assert!(
+        !f.main.root.join(".rwv-op-lease").exists(),
+        "a refused op-start relock must release the target's lease; \
+         stderr:\n{stderr}"
+    );
+    assert_eq!(
+        savepoint_refs(&f.ww.project_dir),
+        Vec::<String>::new(),
+        "a refused op-start relock must drop the project-repo savepoint it \
+         created; stderr:\n{stderr}"
+    );
+    assert_eq!(
+        savepoint_refs(&f.ww.manifest_repo),
+        Vec::<String>::new(),
+        "a refused op-start relock must drop the manifest-repo savepoint it \
+         created; stderr:\n{stderr}"
+    );
+
+    // "Clear what refused the commit, then re-run." — follow it, and the op
+    // that was blocked must now go through.
+    common::git_in(&f.ww.project_dir, &["config", "--unset", "core.hooksPath"]);
+    rwv()
+        .args(["sync-to", &f.main.root.to_string_lossy()])
+        .current_dir(&f.ww.root)
+        .assert()
+        .success();
 }
 
 /// sync-to: the TARGET's manifest repo advanced past the target's committed
