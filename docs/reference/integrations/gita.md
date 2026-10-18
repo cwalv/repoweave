@@ -45,7 +45,7 @@ Two headerless CSV files in `projects/<project>/gita/` (surfaced at `<weave>/git
 /home/dev/workspace/github/chatly/web,web,,
 ```
 
-- **path**: absolute path to the repo in the current weave or workweave
+- **path**: absolute path to the repo in the current weave or workweave, spelled as gita spells one on the host: backslash-separated on Windows (`C:\…\github\chatly\protocol`)
 - **name**: display name used in gita commands (basename of the repo path)
 - **type**, **flags**: empty
 

@@ -311,6 +311,18 @@ saying the table was retired. Delete it.
   `lint.exe`. A `rwv-*` file is a plugin when its extension is in `PATHEXT`, and
   two such files for one verb in one directory are reported as duplicates, the
   one dispatch runs winning in `PATHEXT` order. Unix listing is unchanged.
+- On Windows, a drive-letter path in either separator, or a UNC path, names the
+  same remote as the `file://` URL for it. `rwv doctor` reported
+  `origin-url-mismatch` for a clone whose origin records the remote's path
+  while `rwv.toml` names it by URL, and `rwv add <file-url>` refused such a
+  clone at the placement with `foreign-clone-at-placement` instead of
+  registering it. On every platform, a `file://server/share/…` URL no longer
+  matches `https://server/share/…`.
+- On Windows, the gita integration spells each `repos.csv` path the way gita
+  does: backslash-separated throughout, with no `\\?\` verbatim prefix. It
+  wrote the weave root followed by a `/`-separated repo path, a string gita
+  does not match against its own spelling of the same repo. Unix output is
+  unchanged.
 
 ### Documentation
 

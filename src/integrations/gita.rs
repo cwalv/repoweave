@@ -33,8 +33,8 @@ impl Gita {
         let mut repo_entries: Vec<(String, String)> = active
             .iter()
             .map(|(rp, _)| {
-                let abs_path = ctx.workspace_root.join(rp.as_str());
-                (abs_path.to_string_lossy().into_owned(), basename(rp))
+                let abs_path = crate::path_spelling::native_join(ctx.workspace_root, rp.as_str());
+                (abs_path, basename(rp))
             })
             .collect();
         repo_entries.sort_by(|a, b| a.1.cmp(&b.1));

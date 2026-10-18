@@ -94,6 +94,10 @@ fn generates_groups_csv_by_role() {
 /// row is read as a repo or a group, and a comma in groups.csv puts the whole
 /// line in the group name. Python's csv module writes `\r\n` and reads either
 /// terminator, so the comparison is over lines.
+///
+/// A repo path is gita's `os.path.abspath`, which joins in the host's own
+/// separator, so the expected row joins the fixture's tail onto the root one
+/// component at a time.
 #[test]
 fn csvs_match_the_format_gita_writes() {
     let tmp = common::tempdir().unwrap();
@@ -111,7 +115,6 @@ fn csvs_match_the_format_gita_writes() {
 
     Gita.activate(&ctx).unwrap();
 
-    let root_text = root.to_string_lossy();
     for (written, fixture) in [
         ("gita/repos.csv", include_str!("../fixtures/gita/repos.csv")),
         (
@@ -121,7 +124,14 @@ fn csvs_match_the_format_gita_writes() {
     ] {
         let expected: Vec<String> = fixture
             .lines()
-            .map(|line| line.replace("{root}", &root_text))
+            .map(|line| match line.strip_prefix("{root}/") {
+                Some(rooted) => {
+                    let (tail, fields) = rooted.split_once(',').unwrap();
+                    let path = common::under(root, tail);
+                    format!("{},{fields}", path.to_string_lossy())
+                }
+                None => line.to_owned(),
+            })
             .collect();
         assert!(!expected.is_empty(), "fixture {written} must hold rows");
         let actual = std::fs::read_to_string(root.join(written)).unwrap();
@@ -131,6 +141,30 @@ fn csvs_match_the_format_gita_writes() {
             "{written} must be in the format gita writes"
         );
     }
+}
+
+/// On Windows gita's `os.path.abspath` turns every `/` into `\`; the expected
+/// row is what CPython's `ntpath.abspath` returns for this root and repo. The
+/// root is read for its shape, so this runs the Windows spelling on any host.
+#[test]
+fn repos_csv_under_a_windows_root_is_backslashed_throughout() {
+    let tmp = common::tempdir().unwrap();
+    let manifest = make_manifest(vec![("github/chatly/protocol", Role::Owned)]);
+    let project = ProjectName::new("test-project").unwrap();
+    let config = IntegrationConfig::default();
+    let cache = HashMap::new();
+    let ctx = IntegrationContext {
+        workspace_root: Path::new(r"C:\Users\runneradmin\AppData\Local\Temp\.tmpOC0a9S"),
+        ..make_ctx(tmp.path(), &project, &manifest, &config, &cache)
+    };
+
+    Gita.activate(&ctx).unwrap();
+
+    let repos_csv = std::fs::read_to_string(tmp.path().join("gita/repos.csv")).unwrap();
+    assert_eq!(
+        repos_csv.lines().collect::<Vec<_>>(),
+        [r"C:\Users\runneradmin\AppData\Local\Temp\.tmpOC0a9S\github\chatly\protocol,protocol,,"]
+    );
 }
 
 #[test]
@@ -288,10 +322,10 @@ fn csv_escaping_roundtrips_path_with_comma() {
     let records: Vec<_> = rdr.records().collect::<Result<_, _>>().unwrap();
     assert_eq!(records.len(), 1, "expected exactly one data row");
     let path_field = &records[0][0];
-    // The path column should end with the repo path including the comma.
-    assert!(
-        path_field.ends_with("github/owner/with,comma"),
-        "path field should contain the comma-repo path, got: {path_field:?}"
+    assert_eq!(
+        path_field,
+        common::under(root, "github/owner/with,comma").to_string_lossy(),
+        "path field should hold the comma-repo path whole"
     );
     // And the name field (basename) should be correct too.
     let name_field = &records[0][1];

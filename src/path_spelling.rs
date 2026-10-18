@@ -26,6 +26,9 @@
 //!
 //! [`mint_file_url`] is a fourth spelling, for a path becoming a `file://`
 //! URL rather than a path on some other path-shaped surface.
+//!
+//! [`native_join`] spells a path into a file another tool keeps, the way that
+//! tool's own path library would have written it.
 
 use std::path::Path;
 
@@ -119,6 +122,24 @@ pub fn mint_file_url(path: &str) -> String {
         format!("file://{encoded}")
     } else {
         format!("file:///{encoded}")
+    }
+}
+
+/// The `/`-separated weave-relative `relative` under `root`, spelled as the
+/// host's own path library spells an absolute path: verbatim prefix dropped,
+/// and every separator `\` under a drive letter or a UNC share, `/` otherwise.
+///
+/// For a tool that stores a path and compares it as a string. gita stores
+/// `os.path.abspath` of the path it is handed, and on Windows Python rewrites
+/// every `/` there to `\`, so its `repos.csv` holds `C:\…\a\b`. Read from the
+/// root's shape, like [`mint_file_url`], so a Windows-shaped root drives the
+/// same code on every host.
+pub fn native_join(root: &Path, relative: &str) -> String {
+    let root = dunce::simplified(root).to_string_lossy();
+    if starts_with_drive_letter(&root) || root.starts_with(r"\\") {
+        format!(r"{}\{relative}", root.trim_end_matches(['\\', '/'])).replace('/', r"\")
+    } else {
+        format!("{}/{relative}", root.trim_end_matches('/'))
     }
 }
 
@@ -332,6 +353,56 @@ mod tests {
         assert_eq!(
             mint_file_url("/srv/repos/100%/fresh"),
             "file:///srv/repos/100%25/fresh"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // native_join
+
+    /// The expected strings are what CPython's `ntpath.abspath` returns for
+    /// the same root and tail.
+    #[test]
+    fn native_join_under_a_drive_letter_is_backslashed_throughout() {
+        assert_eq!(
+            native_join(
+                Path::new(r"C:\Users\runneradmin\AppData\Local\Temp\.tmpOC0a9S"),
+                "github/chatly/protocol"
+            ),
+            r"C:\Users\runneradmin\AppData\Local\Temp\.tmpOC0a9S\github\chatly\protocol"
+        );
+        assert_eq!(
+            native_join(Path::new("C:/Users/dev/weave/"), "github/chatly/protocol"),
+            r"C:\Users\dev\weave\github\chatly\protocol"
+        );
+    }
+
+    #[test]
+    fn native_join_under_a_unc_share_is_backslashed_throughout() {
+        assert_eq!(
+            native_join(Path::new(r"\\server\share\weave"), "github/chatly/protocol"),
+            r"\\server\share\weave\github\chatly\protocol"
+        );
+    }
+
+    /// A canonicalized weave root carries the verbatim prefix, under which
+    /// Windows translates no `/`; gita is never handed that spelling.
+    #[cfg(windows)]
+    #[test]
+    fn native_join_drops_the_verbatim_prefix_of_a_canonicalized_root() {
+        assert_eq!(
+            native_join(
+                Path::new(r"\\?\C:\Users\dev\weave"),
+                "github/chatly/protocol"
+            ),
+            r"C:\Users\dev\weave\github\chatly\protocol"
+        );
+    }
+
+    #[test]
+    fn native_join_under_a_posix_root_keeps_a_backslash_as_content() {
+        assert_eq!(
+            native_join(Path::new(r"/srv/a\b/weave"), "github/chatly/protocol"),
+            r"/srv/a\b/weave/github/chatly/protocol"
         );
     }
 }

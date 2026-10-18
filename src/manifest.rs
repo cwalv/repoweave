@@ -270,16 +270,27 @@ impl RepoUrl {
 ///
 /// Returns `true` when both strings resolve to the same logical repo after
 /// stripping trailing slashes, a `.git` suffix, and normalizing `git@host:`
-/// SCP-style URLs to `https://host/`. A `file://` URL is percent-decoded, so
-/// it equals the bare absolute path it encodes. Used by the all-roles
-/// origin-url-mismatch check, which only needs to recognize "origin already
-/// points at the source-of-record" — not a security-grade comparison.
+/// SCP-style URLs to `https://host/`. A bare absolute path, in any platform's
+/// spelling, compares as the `file://` URL [`mint_file_url`] makes of it, and a
+/// `file://` URL is percent-decoded, so `C:\a\b`, `C:/a/b` and `file:///C:/a/b`
+/// name one repo. A `file://` URL keeps its `//`, so a UNC share never matches
+/// an `https://` host of the same name. It recognizes two spellings of one
+/// remote; it is not a security-grade comparison.
+///
+/// [`mint_file_url`]: crate::path_spelling::mint_file_url
 pub fn clone_urls_equivalent(a: &str, b: &str) -> bool {
     normalize_clone_url(a) == normalize_clone_url(b)
 }
 
 fn normalize_clone_url(s: &str) -> String {
     let s = s.trim().trim_end_matches('/');
+    let minted;
+    let s = if crate::path_spelling::is_absolute_spelling(s) {
+        minted = crate::path_spelling::mint_file_url(s);
+        minted.as_str()
+    } else {
+        s
+    };
     // SCP-style: git@host:owner/repo(.git) -> host/owner/repo
     let body = if let Some(rest) = s.strip_prefix("git@") {
         rest.replacen(':', "/", 1)
@@ -289,7 +300,7 @@ fn normalize_clone_url(s: &str) -> String {
         rest.to_owned()
     } else if let Some(rest) = s.strip_prefix("ssh://") {
         rest.trim_start_matches("git@").to_owned()
-    } else if let Some(rest) = s.strip_prefix("file://") {
+    } else if let Some(rest) = s.strip_prefix("file:") {
         percent_decode(rest)
     } else {
         s.to_owned()
@@ -2022,6 +2033,64 @@ role = "owned"
         assert!(clone_urls_equivalent(
             "file:///srv/my%20repos/caf%C3%A9/100%25/a%2Bb%40c",
             "/srv/my repos/café/100%/a+b@c"
+        ));
+    }
+
+    /// git records a clone's source path as `origin` verbatim, so a Windows
+    /// clone made from a temp-dir root with a `/`-joined tail carries both
+    /// separators, while `rwv add` is handed the `file://` URL.
+    #[test]
+    fn urls_equivalent_a_drive_letter_path_in_either_separator_and_its_file_url() {
+        let url = "file:///C:/Users/runneradmin/AppData/Local/Temp/.tmpYVOHxo/ours/remotes/lib.git";
+        for path in [
+            r"C:\Users\runneradmin\AppData\Local\Temp\.tmpYVOHxo\ours/remotes/lib.git",
+            r"C:\Users\runneradmin\AppData\Local\Temp\.tmpYVOHxo\ours\remotes\lib.git",
+            "C:/Users/runneradmin/AppData/Local/Temp/.tmpYVOHxo/ours/remotes/lib.git",
+            r"c:\users\runneradmin\appdata\local\temp\.tmpyvohxo\ours\remotes\lib",
+        ] {
+            assert!(clone_urls_equivalent(path, url), "{path} vs {url}");
+            assert!(clone_urls_equivalent(url, path), "{url} vs {path}");
+        }
+    }
+
+    #[test]
+    fn urls_equivalent_a_unc_path_and_its_host_file_url() {
+        assert!(clone_urls_equivalent(
+            r"\\server\share\My Repos\lib.git",
+            "file://server/share/My%20Repos/lib.git"
+        ));
+    }
+
+    #[test]
+    fn urls_not_equivalent_a_unc_share_and_an_https_host_of_the_same_name() {
+        assert!(!clone_urls_equivalent(
+            r"\\server\share\lib.git",
+            "https://server/share/lib.git"
+        ));
+        assert!(!clone_urls_equivalent(
+            "file://server/share/lib.git",
+            "https://server/share/lib.git"
+        ));
+    }
+
+    #[test]
+    fn urls_not_equivalent_on_different_drives() {
+        assert!(!clone_urls_equivalent(
+            r"D:\Users\dev\lib.git",
+            "file:///C:/Users/dev/lib.git"
+        ));
+    }
+
+    /// Off a drive letter or a UNC share, `\` is filename content.
+    #[test]
+    fn urls_equivalent_reads_a_backslash_in_a_posix_path_as_content() {
+        assert!(!clone_urls_equivalent(
+            r"/srv/a\b/lib.git",
+            "file:///srv/a/b/lib.git"
+        ));
+        assert!(clone_urls_equivalent(
+            r"/srv/a\b/lib.git",
+            "file:///srv/a%5Cb/lib.git"
         ));
     }
 
