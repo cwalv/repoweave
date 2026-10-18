@@ -377,6 +377,26 @@ fn a_provider_cannot_mint_url_routes_to_its_token() {
     assert_routes_to(&stderr, "provider-cannot-mint-url");
 }
 
+/// B5: `rwv add --adopt <path>` on a clone with no `origin` remote — nothing
+/// to read a URL from, so there is nothing to register it under
+/// (refusals.md:520-529).
+#[test]
+fn an_adopt_with_no_origin_remote_routes_to_no_remote_url() {
+    let tmp = common::tempdir().unwrap();
+    let ws = plain_weave(tmp.path());
+    let clone_dir = ws.join(SERVER_PATH);
+    std::fs::create_dir_all(&clone_dir).unwrap();
+    std::fs::write(clone_dir.join("README.md"), "init\n").unwrap();
+    git_init_with_commit(&clone_dir);
+
+    let stderr = refusal_stderr(&["add", "--adopt", SERVER_PATH], &ws);
+    assert!(
+        stderr.contains("has no origin remote to read a URL from"),
+        "precondition: this is the no-remote-url refusal:\n{stderr}"
+    );
+    assert_routes_to(&stderr, "no-remote-url");
+}
+
 /// The selector errors, which are three conditions under one type. A single
 /// drive would pass on an arm that answered the same kind for all three.
 #[test]
