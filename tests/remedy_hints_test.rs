@@ -116,6 +116,45 @@ impl Weave {
     fn set_project_head(&self) {
         common::git_in(self.project(), &["remote", "set-head", "origin", "-a"]);
     }
+
+    /// Clone a fresh member's own origin into the weave and append it to the
+    /// manifest, committing only `rwv.toml` — `rwv.lock` is left exactly as
+    /// `new` wrote it, so the member has no entry there. This is the state
+    /// push's "missing from {lock}" arm reads.
+    fn add_unlocked_member(&self, name: &str) {
+        let src = self.tmp.path().join("src").join(name);
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("README.md"), format!("{name}\n")).unwrap();
+        git_init_with_commit(&src);
+        let bare = self.tmp.path().join(format!("{name}.git"));
+        common::git_in(
+            self.tmp.path(),
+            &[
+                "clone",
+                "--bare",
+                &src.to_string_lossy(),
+                &bare.to_string_lossy(),
+            ],
+        );
+        let url = common::file_url(&bare);
+        let clone = self.ws.join("github/acme").join(name);
+        common::git_in(self.tmp.path(), &["clone", &url, &clone.to_string_lossy()]);
+        common::git_in(&clone, &["config", "user.email", "test@test.com"]);
+        common::git_in(&clone, &["config", "user.name", "Test"]);
+
+        let manifest_path = self.project().join("rwv.toml");
+        let manifest = std::fs::read_to_string(&manifest_path).unwrap();
+        std::fs::write(
+            &manifest_path,
+            format!(
+                "{manifest}\n[repositories.\"github/acme/{name}\"]\ntype = \"git\"\n\
+                 url = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
+            ),
+        )
+        .unwrap();
+        common::git_in(self.project(), &["add", "rwv.toml"]);
+        common::git_in(self.project(), &["commit", "-q", "-m", "add member"]);
+    }
 }
 
 /// `git push -u origin main` publishes the branch and leaves `origin/HEAD`
@@ -202,6 +241,62 @@ fn lock_state_mismatch_names_remedies_that_push_accepts() {
     assert!(
         common::git_in(&member, &["log", "--oneline", "kept"]).contains("ahead of the lock"),
         "and the commits it moved off are kept"
+    );
+
+    // The hint's other remedy — recording the local state instead of moving
+    // the branch back — also gets push through.
+    std::fs::write(member.join("ahead-again.txt"), "ahead again\n").unwrap();
+    common::git_in(&member, &["add", "-A"]);
+    common::git_in(&member, &["commit", "-q", "-m", "ahead of the lock again"]);
+
+    let report = weave.refused(&["push"]);
+    assert!(
+        report.contains("rwv explain lock-state-mismatch"),
+        "fixture: the push stops on the lock mismatch again:\n{report}"
+    );
+
+    weave.ok(&["lock", "--commit"]);
+    let new_head = common::git_in(&member, &["rev-parse", "HEAD"]);
+    let report = weave.ok(&["push"]);
+    assert!(
+        !report.contains("lock-state-mismatch"),
+        "`rwv lock --commit` recorded the member's new HEAD and push got past the \
+         gate:\n{report}"
+    );
+    let lock = std::fs::read_to_string(weave.project().join("rwv.lock")).unwrap();
+    assert!(
+        lock.contains(&new_head),
+        "the lock now pins the member's new HEAD:\n{lock}"
+    );
+}
+
+/// A member added to the manifest after `rwv.lock` was last written: push
+/// refuses, naming the missing entry, and `rwv lock --commit` is what clears
+/// it.
+#[test]
+fn push_names_lock_commit_for_a_member_missing_from_the_lock() {
+    let weave = Weave::new(&["web"]);
+    weave.set_project_head();
+    weave.add_unlocked_member("api");
+
+    let report = weave.refused(&["push"]);
+    assert!(
+        report.contains("github/acme/api: missing from")
+            && report.contains("run `rwv lock --commit` to record local state"),
+        "the refusal names the remedy for the member the lock has never seen:\n{report}"
+    );
+
+    weave.ok(&["lock", "--commit"]);
+    let report = weave.ok(&["push"]);
+    assert!(
+        !report.contains("missing from"),
+        "`rwv lock --commit` recorded the member's HEAD and push got past the \
+         gate:\n{report}"
+    );
+    let lock = std::fs::read_to_string(weave.project().join("rwv.lock")).unwrap();
+    assert!(
+        lock.contains("github/acme/api"),
+        "the lock now carries the previously-missing member:\n{lock}"
     );
 }
 
