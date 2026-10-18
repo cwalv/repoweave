@@ -578,6 +578,49 @@ fn workweave_delete_removes_directory_and_worktrees() {
     );
 }
 
+/// B7 (review-pr-with-workweave.md:61): "`rwv workweave web-app delete`
+/// also works from inside the workweave." Same fixture as
+/// `workweave_delete_removes_directory_and_worktrees`, but the delete
+/// subprocess's own cwd is the workweave directory it is about to remove,
+/// not the primary weave — the production topology (`rwv sync-to --retire`
+/// deletes from inside) that no other `tests/*.rs` delete invocation runs
+/// with (every one of them sets `current_dir` to the primary).
+///
+/// Seeding a refusal at `workweave.rs`'s `cwd_inside` branch reddens this;
+/// deleting the `std::env::set_current_dir` step-out that branch guards
+/// does not — removing a directory that is the calling process's own cwd
+/// is not an open handle on Linux the way the comment there says it is on
+/// Windows, so that one line is unreached by any assertion this suite can
+/// make on this platform.
+#[test]
+fn delete_from_inside_the_workweave_succeeds() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    rwv()
+        .args(["workweave", "web-app", "create", "to-delete"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let ww_dir = weaveroot.join("web-app--to-delete");
+    assert!(ww_dir.exists(), "workweave should exist before deletion");
+
+    rwv()
+        .args(["workweave", "web-app", "delete", "to-delete"])
+        .current_dir(&ww_dir)
+        .assert()
+        .success();
+
+    assert!(
+        !ww_dir.exists(),
+        "workweave directory should be removed after delete, even run from inside it"
+    );
+}
+
 // ============================================================================
 // Workweave list -- `rwv workweave PROJECT --list`
 // ============================================================================
