@@ -103,7 +103,7 @@ fn the_published_crate_leaves_the_maintainer_tools_out() {
     for (tool, file) in MAINTAINER_TOOLS {
         assert!(
             excluded.contains(file),
-            "`cargo install repoweave` would install {tool}: exclude {file} from the crate"
+            "the packaged crate would ship {tool}: exclude {file} from the crate"
         );
     }
 }

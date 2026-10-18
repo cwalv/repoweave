@@ -110,13 +110,12 @@ fn uv_tool_install_repoweave() {
 }
 
 // ---------------------------------------------------------------------------
-// Test: cargo install repoweave
+// Test: cargo install --git
 // ---------------------------------------------------------------------------
 
-/// Install `repoweave` via `cargo install repoweave` and verify `rwv --version`.
-///
-/// This is the baseline distribution channel (always worked). The test
-/// confirms that the binary reports the correct version after a clean install.
+/// Install from the repository with `cargo install --git` and verify
+/// `rwv --version`. The crate is not published to crates.io, so the git route
+/// is the Cargo channel.
 #[test]
 fn cargo_install_repoweave() {
     require_e2e!();
@@ -129,13 +128,18 @@ fn cargo_install_repoweave() {
     let version = expected_version();
 
     let install_out = Command::new("cargo")
-        .args(["install", "--force", "repoweave"])
+        .args([
+            "install",
+            "--force",
+            "--git",
+            "https://github.com/cwalv/repoweave",
+        ])
         .output()
         .expect("cargo install should run");
 
     assert!(
         install_out.status.success(),
-        "cargo install repoweave failed\nstdout: {}\nstderr: {}",
+        "cargo install --git failed\nstdout: {}\nstderr: {}",
         String::from_utf8_lossy(&install_out.stdout),
         String::from_utf8_lossy(&install_out.stderr),
     );
