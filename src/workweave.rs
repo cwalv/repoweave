@@ -1104,7 +1104,8 @@ pub(crate) fn materialize_member(
         crate::refuse!(
             RefusalKind::MissingCanonicalClone,
             "canonical clone for {repo_path} missing at {}; \
-             run `rwv fetch` with no source at primary first to materialize it there",
+             run `rwv fetch --project {project}` at the primary weave first to materialize it \
+             there",
             canonical.display()
         );
     }
@@ -1173,7 +1174,7 @@ pub(crate) fn replace_standalone_member(
         .rsplit_once('/')
         .map_or(repo_path.as_str(), |(_, leaf)| leaf);
     let aside = slot.with_file_name(format!(".{leaf}.rwv-replaced"));
-    let at = refuse_unless_replaceable(vcs, &slot, &canonical, &aside)?;
+    let at = refuse_unless_replaceable(vcs, project, &slot, &canonical, &aside)?;
 
     std::fs::rename(&slot, &aside).with_context(|| {
         format!(
@@ -1233,6 +1234,7 @@ pub(crate) fn replace_standalone_member(
 /// checked out.
 fn refuse_unless_replaceable(
     vcs: &dyn Vcs,
+    project: &ProjectName,
     standalone: &Path,
     canonical: &Path,
     aside: &Path,
@@ -1252,8 +1254,8 @@ fn refuse_unless_replaceable(
     let canonical_is_clone = match vcs.resolve_canonical_store(canonical) {
         None => {
             reasons.push(format!(
-                "there is no canonical clone at {} to link a worktree into; `rwv fetch` in \
-                 the primary weave materializes it.",
+                "there is no canonical clone at {} to link a worktree into; \
+                 `rwv fetch --project {project}` in the primary weave materializes it.",
                 crate::path_spelling::operator_path(canonical)
             ));
             false
@@ -4283,7 +4285,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_canonical_clone_names_in_place_fetch_at_primary() {
+    fn missing_canonical_clone_names_the_fetch_of_its_own_project_at_primary() {
         let (_tmp, primary, project, _store) = weave();
         let err = materialize_member(
             git_vcs().as_ref(),
@@ -4299,7 +4301,7 @@ mod tests {
         .expect("a member with no canonical clone is refused");
         let message = format!("{err:#}");
         assert!(
-            message.contains("run `rwv fetch` with no source at primary first"),
+            message.contains("run `rwv fetch --project web-app` at the primary weave first"),
             "{message}"
         );
         assert!(

@@ -393,3 +393,142 @@ fn remove_delete_in_a_workweave_leaves_no_stale_exclude() {
         "no entry names the deleted path:\n{content}"
     );
 }
+
+/// A bare remote at `<tmp>/origins/<name>.git` holding one commit, and its
+/// `file://` URL.
+fn origin_with_commit(tmp: &Path, name: &str) -> String {
+    let bare = common::under(tmp, &format!("origins/{name}.git"));
+    std::fs::create_dir_all(bare.parent().unwrap()).unwrap();
+    common::init_bare_repo_with_commit(&bare);
+    common::file_url(&bare)
+}
+
+fn rwv_ok(cwd: &Path, args: &[&str]) -> String {
+    let (ok, report) = rwv(cwd, args);
+    assert!(ok, "`rwv {}` failed:\n{report}", args.join(" "));
+    report
+}
+
+fn rwv_refused(cwd: &Path, args: &[&str]) -> String {
+    let (ok, report) = rwv(cwd, args);
+    assert!(
+        !ok,
+        "`rwv {}` should have refused:\n{report}",
+        args.join(" ")
+    );
+    report
+}
+
+/// The `rwv …` command a report names in backticks starting with `prefix`,
+/// split into the arguments after `rwv`.
+fn named_rwv_command(report: &str, prefix: &str) -> Vec<String> {
+    let span = report
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .find(|span| span.starts_with(prefix))
+        .unwrap_or_else(|| panic!("the report must name `{prefix}…`:\n{report}"));
+    span.split_whitespace().skip(1).map(str::to_owned).collect()
+}
+
+/// A primary weave holding project `pa`, which lists `local/origins/a`, and
+/// project `pb`, which the primary presents until a test activates `pa`.
+/// Returns the weave root.
+fn weave_with_two_projects(tmp: &Path) -> PathBuf {
+    let ws = tmp.join("ws");
+    std::fs::create_dir_all(ws.join("projects")).unwrap();
+    let a = origin_with_commit(tmp, "a");
+    rwv_ok(&ws, &["init", "pa"]);
+    rwv_ok(&ws, &["add", &a]);
+    rwv_ok(&ws, &["lock", "--commit"]);
+    rwv_ok(&ws, &["init", "pb"]);
+    ws
+}
+
+fn commit_project(ws: &Path, project: &str) {
+    let dir = ws.join("projects").join(project);
+    common::git_in(&dir, &["add", "-A"]);
+    common::git_in(&dir, &["commit", "-q", "-m", "settled"]);
+}
+
+/// A sync that needs a member of a project the primary does not present
+/// parks on its missing canonical clone. A bare `rwv fetch` at the primary
+/// fetches the presented project and leaves it parked; the fetch the refusal
+/// names, with the workweave's project, lets `--continue` finish.
+#[test]
+fn missing_canonical_clone_names_the_fetch_of_the_workweaves_own_project() {
+    let tmp = common::tempdir().unwrap();
+    let ws = weave_with_two_projects(tmp.path());
+    commit_project(&ws, "pb");
+    rwv_ok(&ws, &["workweave", "pb", "create", "w"]);
+    let seat = tmp.path().join(".workweaves").join("pb--w");
+    let x = origin_with_commit(tmp.path(), "x");
+    rwv_ok(&ws, &["add", &x]);
+    rwv_ok(&ws, &["lock", "--commit"]);
+    rwv_ok(&ws, &["activate", "pa"]);
+    let canonical = common::under(&ws, "local/origins/x");
+    std::fs::remove_dir_all(&canonical).unwrap();
+
+    let parked = rwv_refused(&seat, &["sync", &ws.to_string_lossy()]);
+    assert!(parked.contains("rwv explain op-parked"), "{parked}");
+    let fetch = named_rwv_command(&parked, "rwv fetch");
+    assert_eq!(fetch, ["fetch", "--project", "pb"], "{parked}");
+
+    rwv_ok(&ws, &["fetch"]);
+    assert!(
+        !canonical.exists(),
+        "a bare fetch at the primary fetches only the project it presents"
+    );
+    rwv_refused(&seat, &["sync", "--continue"]);
+
+    let fetch: Vec<&str> = fetch.iter().map(String::as_str).collect();
+    rwv_ok(&ws, &fetch);
+    assert!(canonical.join(".git").is_dir(), "the named fetch clones it");
+    rwv_ok(&seat, &["sync", "--continue"]);
+    assert!(
+        common::under(&seat, "local/origins/x")
+            .join(".git")
+            .is_file(),
+        "the continued sync gives the workweave its worktree"
+    );
+}
+
+/// The full-clone repair names the same fetch when the canonical clone it
+/// would link into is gone, and replaces the clone once that fetch has run.
+#[test]
+fn standalone_repair_names_the_fetch_of_the_workweaves_own_project() {
+    let tmp = common::tempdir().unwrap();
+    let ws = weave_with_two_projects(tmp.path());
+    let x = origin_with_commit(tmp.path(), "x");
+    rwv_ok(&ws, &["add", &x]);
+    rwv_ok(&ws, &["lock"]);
+    commit_project(&ws, "pb");
+    rwv_ok(&ws, &["workweave", "pb", "create", "w"]);
+    let seat = tmp.path().join(".workweaves").join("pb--w");
+    let canonical = common::under(&ws, "local/origins/x");
+    let slot = common::under(&seat, "local/origins/x");
+    std::fs::remove_dir_all(&slot).unwrap();
+    common::git_in(
+        slot.parent().unwrap(),
+        &["clone", "--quiet", &canonical.to_string_lossy(), "x"],
+    );
+    rwv_ok(&ws, &["activate", "pa"]);
+    std::fs::remove_dir_all(&canonical).unwrap();
+
+    let refused = rwv_refused(&seat, &["doctor", "--fix"]);
+    assert!(
+        refused.contains("there is no canonical clone at"),
+        "{refused}"
+    );
+    let fetch = named_rwv_command(&refused, "rwv fetch");
+    assert_eq!(fetch, ["fetch", "--project", "pb"], "{refused}");
+
+    let fetch: Vec<&str> = fetch.iter().map(String::as_str).collect();
+    rwv_ok(&ws, &fetch);
+    let (_, fixed) = rwv(&seat, &["doctor", "--fix"]);
+    assert!(
+        fixed.contains("[fixed] core: replaced the full clone of local/origins/x in workweave w"),
+        "{fixed}"
+    );
+    assert!(slot.join(".git").is_file(), "now a linked worktree");
+}

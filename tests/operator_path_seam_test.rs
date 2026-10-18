@@ -428,7 +428,7 @@ const ROUTED: &[Routed] = &[
     Routed {
         file: "workweave.rs",
         scope: "",
-        needle: r#""there is no canonical clone at {} to link a worktree into; `rwv fetch` in \"#,
+        needle: r#""there is no canonical clone at {} to link a worktree into; \"#,
         renders: 1,
         prints: "the standalone repair's reason that the canonical clone is missing",
     },

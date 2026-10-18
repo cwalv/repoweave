@@ -635,6 +635,12 @@ fn refuses_while_there_is_no_canonical_clone_to_link_into() {
         "{out}"
     );
     assert!(out.contains("there is no canonical clone at"), "{out}");
+    assert!(
+        out.contains(&format!(
+            "`rwv fetch --project {PROJECT}` in the primary weave"
+        )),
+        "{out}"
+    );
     assert!(weave.clone.join(".git").is_dir(), "still a full clone");
     assert_eq!(repo_state(&weave.clone), clone_before, "clone untouched");
     assert!(!aside(&weave).exists(), "nothing moved aside");

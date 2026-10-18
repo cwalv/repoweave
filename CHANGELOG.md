@@ -372,6 +372,12 @@ saying the table was retired. Delete it.
   `rwv fetch --project <name>` for the project already there, and an empty
   directory to fetch the other one into. It suggested a scoped project path,
   which no `rwv fetch` spelling can request.
+- A verb that refuses `missing-canonical-clone` for a workweave member, and
+  `rwv doctor --fix` when it cannot replace a full clone in a workweave for
+  the same cause, name `rwv fetch --project <project>` with the workweave's
+  project. They named a bare `rwv fetch`, which at the primary fetches only
+  the active project, so for a workweave of another project a parked
+  `rwv sync --continue` parked again.
 
 ### Documentation
 

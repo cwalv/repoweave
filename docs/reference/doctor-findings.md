@@ -977,6 +977,15 @@ cause instead of letting the failure be misread as live local edits.
 re-run `rwv doctor`. There is no auto-fix because doctor never clones —
 network access stays behind explicit verbs.
 
+A verb that needs the canonical clone to give a workweave its worktree
+refuses with this token, and `rwv doctor --fix` gives the same cause as a
+reason it cannot replace a full clone standing in a workweave. Both name
+`rwv fetch --project <project>`, `<project>` being the workweave's own. Run it
+at the primary weave: a bare `rwv fetch` there fetches only the active
+project's members, so for a workweave of any other project it materializes
+nothing. Then re-run the verb, or `--continue` the operation that parked on
+it.
+
 ### `uninitialized-submodule`
 
 **Warning. Report-only.** A worktree has a `.gitmodules` file but one or more
