@@ -162,13 +162,12 @@ jobs:
     runs-on: windows-latest
     # Wall time here is compile (steady, ~6m) plus every integration binary
     # run to completion in sequence, and that second part grows with the
-    # suite and varies with runner speed. Run 39076064505 (ddcd4c5) was
-    # canceled at 60m16s with four binaries still unfinished. 120m is
-    # headroom over the worst case measured there, chosen over splitting the
-    # suite across jobs: a hand-partitioned binary list is the same
-    # frozen-enumeration trap the header above warns about for the `test
-    # result:` count — a tests/*.rs file added later would silently land
-    # outside every partition instead of just making the job run longer.
+    # suite and varies with runner speed. The cap is headroom over that,
+    # chosen over splitting the suite across jobs: a hand-partitioned binary
+    # list is the same frozen-enumeration trap the header above warns about
+    # for the `test result:` count — a tests/*.rs file added later would
+    # silently land outside every partition instead of just making the job
+    # run longer.
     timeout-minutes: 120
 
     steps:
