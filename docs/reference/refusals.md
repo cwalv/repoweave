@@ -897,8 +897,8 @@ it there.
 interleave writes. The budget exists so a hung peer surfaces as a refusal
 rather than an indefinite hang.
 
-**Exits.** Wait for the other process and re-run. If nothing is running, the
-claim is stale — `rwv doctor` reports and repairs that case.
+**Exits.** Wait for the other process and re-run. If no rwv is running, the
+claim is stale: delete the claim file the refusal names, then re-run.
 
 ### `store-claims-unreadable`
 
