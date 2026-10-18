@@ -7306,7 +7306,7 @@ impl CollapsedClass {
 
     /// The one text line the class renders: count, class, remedy, and where
     /// the per-item records are.
-    fn issue(self, n: usize) -> Issue {
+    fn issue(self, n: usize, severity: crate::integration::Severity) -> Issue {
         let s = if n == 1 { "" } else { "s" };
         let body = match self {
             Self::StaleRegistryEntry => format!(
@@ -7365,7 +7365,7 @@ impl CollapsedClass {
         Issue {
             kind: IssueKind::CoreFinding,
             integration: "core".into(),
-            severity: crate::integration::Severity::Warning,
+            severity,
             message,
             safe_to_fix: self.auto_fixed(),
         }
@@ -7380,17 +7380,28 @@ impl CollapsedClass {
 /// TEXT-report shape only — `--json` is built straight from
 /// `CheckViolation` and carries every record.
 pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
-    let mut counts: std::collections::BTreeMap<CollapsedClass, usize> =
+    use crate::integration::Severity;
+    let mut counts: std::collections::BTreeMap<CollapsedClass, (usize, Severity)> =
         std::collections::BTreeMap::new();
     let mut itemized = Vec::new();
     for v in violations {
         match CollapsedClass::of(&v) {
-            Some(class) => *counts.entry(class).or_default() += 1,
+            Some(class) => {
+                let (n, severity) = counts.entry(class).or_insert((0, Severity::Warning));
+                *n += 1;
+                if v.severity() == Severity::Error {
+                    *severity = Severity::Error;
+                }
+            }
             None => itemized.push(v),
         }
     }
     let mut issues = itemized_violations_to_issues(itemized);
-    issues.extend(counts.into_iter().map(|(class, n)| class.issue(n)));
+    issues.extend(
+        counts
+            .into_iter()
+            .map(|(class, (n, severity))| class.issue(n, severity)),
+    );
     issues
 }
 
@@ -7419,52 +7430,41 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
             // safe_to_fix defaults to true; live-class branch-discipline
             // findings override to false so `doctor --fix` leaves them alone.
             let mut safe_to_fix = true;
-            let (severity, message) = match v {
+            let severity = v.severity();
+            let message = match v {
                 CheckViolation::ConfusableSiblings {
                     parent,
                     first,
                     second,
-                } => (
-                    crate::integration::Severity::Warning,
-                    crate::workspace::confusable_warning(
-                        &crate::workspace::ConfusableSiblings {
-                            parent: parent.clone(),
-                            first: first.clone(),
-                            second: second.clone(),
-                        },
-                    ),
+                } => crate::workspace::confusable_warning(
+                    &crate::workspace::ConfusableSiblings {
+                        parent: parent.clone(),
+                        first: first.clone(),
+                        second: second.clone(),
+                    },
                 ),
-                CheckViolation::OrphanedClone { path } => (
-                    crate::integration::Severity::Error,
-                    format!(
-                        "orphaned clone: {path} — not listed in any project's rwv.toml; \
-                         run `rwv add <url>` to register it, or remove the directory manually"
-                    ),
+                CheckViolation::OrphanedClone { path } => format!(
+                    "orphaned clone: {path} — not listed in any project's rwv.toml; \
+                     run `rwv add <url>` to register it, or remove the directory manually"
                 ),
-                CheckViolation::UnknownSegmentClone { path } => (
-                    crate::integration::Severity::Error,
-                    format!(
-                        "unknown-segment clone: {path} — sits under a top-level directory no \
-                         built-in registry and no project's rwv.toml names, so no scan compares \
-                         it against anything; to register it, move it to the path its remote's \
-                         URL places it at under the primary weave root, unless it already sits \
-                         there, and run `rwv add --adopt` with that path; or remove the directory \
-                         manually"
-                    ),
+                CheckViolation::UnknownSegmentClone { path } => format!(
+                    "unknown-segment clone: {path} — sits under a top-level directory no \
+                     built-in registry and no project's rwv.toml names, so no scan compares \
+                     it against anything; to register it, move it to the path its remote's \
+                     URL places it at under the primary weave root, unless it already sits \
+                     there, and run `rwv add --adopt` with that path; or remove the directory \
+                     manually"
                 ),
                 // `rwv fetch` (no SOURCE) re-clones missing manifest
                 // members of the active project — the settled repair verb
                 // for dangling references. See fetch::run_fetch_in_place.
                 // `doctor --fix` intentionally does NOT auto-clone: network
                 // side effects stay behind an explicit verb.
-                CheckViolation::DanglingReference { project, repo } => (
-                    crate::integration::Severity::Error,
-                    format!(
-                        "dangling reference in {project}: {repo} — \
-                         listed in rwv.toml but not cloned on disk; \
-                         run `rwv fetch` from the workspace to re-materialize \
-                         missing manifest members, then re-run `rwv doctor` to verify"
-                    ),
+                CheckViolation::DanglingReference { project, repo } => format!(
+                    "dangling reference in {project}: {repo} — \
+                     listed in rwv.toml but not cloned on disk; \
+                     run `rwv fetch` from the workspace to re-materialize \
+                     missing manifest members, then re-run `rwv doctor` to verify"
                 ),
                 CheckViolation::MemberPermissions {
                     workweave,
@@ -7488,44 +7488,32 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                              workspace a private copy"
                         ),
                     };
-                    (
-                        crate::integration::Severity::Warning,
-                        format!("member permissions: {detail}"),
-                    )
+                    format!("member permissions: {detail}")
                 }
-                CheckViolation::RoleDisagreement { repo, roles } => (
-                    crate::integration::Severity::Warning,
-                    format!(
-                        "role disagreement: {repo} — the projects listing this clone declare \
-                         different roles ({}); a clone several projects share is read-only \
-                         only when every one of them declares `reference`, so its files stay \
-                         writable; give every project the same role with \
-                         `rwv role --project <name> {repo} <role>`",
-                        roles
-                            .iter()
-                            .map(|(project, role)| format!("{project}: {role}"))
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ),
+                CheckViolation::RoleDisagreement { repo, roles } => format!(
+                    "role disagreement: {repo} — the projects listing this clone declare \
+                     different roles ({}); a clone several projects share is read-only \
+                     only when every one of them declares `reference`, so its files stay \
+                     writable; give every project the same role with \
+                     `rwv role --project <name> {repo} <role>`",
+                    roles
+                        .iter()
+                        .map(|(project, role)| format!("{project}: {role}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ),
                 CheckViolation::StaleLock {
                     project,
                     repo,
                     locked,
                     actual,
-                } => (
-                    crate::integration::Severity::Error,
-                    format!(
-                        "stale lock in {project}: {repo} locked={locked} actual={actual}; \
-                         run `rwv lock` to re-snapshot current HEAD SHAs"
-                    ),
+                } => format!(
+                    "stale lock in {project}: {repo} locked={locked} actual={actual}; \
+                     run `rwv lock` to re-snapshot current HEAD SHAs"
                 ),
-                CheckViolation::IncompleteLock { project, repo } => (
-                    crate::integration::Severity::Error,
-                    format!(
-                        "incomplete lock in {project}: {repo} has no rwv.lock entry; \
-                         run `rwv lock` to add it"
-                    ),
+                CheckViolation::IncompleteLock { project, repo } => format!(
+                    "incomplete lock in {project}: {repo} has no rwv.lock entry; \
+                     run `rwv lock` to add it"
                 ),
                 CheckViolation::WorkweaveDrift {
                     workweave,
@@ -7568,19 +7556,9 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                              `rwv add <url>` keeps it as a member",
                         ),
                     };
-                    let severity = match kind {
-                        DriftKind::Extra => crate::integration::Severity::Warning,
-                        DriftKind::Missing
-                        | DriftKind::MissingUnfetched
-                        | DriftKind::Symlink
-                        | DriftKind::SymlinkUnfetched => crate::integration::Severity::Error,
-                    };
-                    (
-                        severity,
-                        format!(
-                            "workweave drift in {}: {kind_str} {repo}{hint}",
-                            workweave.as_ref().map_or("the primary", |w| w.as_str())
-                        ),
+                    format!(
+                        "workweave drift in {}: {kind_str} {repo}{hint}",
+                        workweave.as_ref().map_or("the primary", |w| w.as_str())
                     )
                 }
                 CheckViolation::IndexDrift {
@@ -7601,198 +7579,147 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                              not auto-fixed)"
                         }
                     };
-                    (
-                        crate::integration::Severity::Warning,
-                        format!("{location}: {detail}"),
-                    )
+                    format!("{location}: {detail}")
                 }
-                CheckViolation::MissingReplayExclusion { project, sub_kind } => (
-                    crate::integration::Severity::Warning,
-                    match sub_kind {
-                        ReplayExclusionKind::Absent => format!(
-                            "{project}: project repo missing `rwv.lock merge=rwv-ours` in .gitattributes \
-                             (run `rwv doctor --fix` to add)"
-                        ),
-                        ReplayExclusionKind::LegacySpelling => format!(
-                            "{project}: project repo has legacy `rwv.lock merge=ours` in .gitattributes; \
-                             the driver was renamed to close a global-config collision hazard \
-                             (run `rwv doctor --fix` to migrate to `rwv.lock merge=rwv-ours` \
-                             and commit)"
-                        ),
-                        ReplayExclusionKind::LegacyAlongsideCurrent => format!(
-                            "{project}: project repo has both `rwv.lock merge=rwv-ours` and legacy \
-                             `rwv.lock merge=ours` in .gitattributes; git picks between them by \
-                             reading order, and the legacy name binds to any `merge.ours.driver` \
-                             a global git config defines (run `rwv doctor --fix` to drop the \
-                             legacy line and commit)"
-                        ),
-                    },
-                ),
-                CheckViolation::ReplayExclusionUnreadable { project, error } => (
-                    crate::integration::Severity::Warning,
-                    format!(
-                        "{project}: failed to read .gitattributes for replay-exclusion check: {error}"
+                CheckViolation::MissingReplayExclusion { project, sub_kind } => match sub_kind {
+                    ReplayExclusionKind::Absent => format!(
+                        "{project}: project repo missing `rwv.lock merge=rwv-ours` in .gitattributes \
+                         (run `rwv doctor --fix` to add)"
                     ),
+                    ReplayExclusionKind::LegacySpelling => format!(
+                        "{project}: project repo has legacy `rwv.lock merge=ours` in .gitattributes; \
+                         the driver was renamed to close a global-config collision hazard \
+                         (run `rwv doctor --fix` to migrate to `rwv.lock merge=rwv-ours` \
+                         and commit)"
+                    ),
+                    ReplayExclusionKind::LegacyAlongsideCurrent => format!(
+                        "{project}: project repo has both `rwv.lock merge=rwv-ours` and legacy \
+                         `rwv.lock merge=ours` in .gitattributes; git picks between them by \
+                         reading order, and the legacy name binds to any `merge.ours.driver` \
+                         a global git config defines (run `rwv doctor --fix` to drop the \
+                         legacy line and commit)"
+                    ),
+                },
+                CheckViolation::ReplayExclusionUnreadable { project, error } => format!(
+                    "{project}: failed to read .gitattributes for replay-exclusion check: {error}"
                 ),
                 CheckViolation::MissingMergeDriverConfig {
                     project,
                     config_key,
-                } => (
-                    crate::integration::Severity::Warning,
-                    format!(
-                        "{project}: project repo missing `{config_key}` config \
-                         (defines the `rwv-ours` merge driver used by bare \
-                         `git rebase --continue`; run `rwv doctor --fix` to plant)"
-                    ),
+                } => format!(
+                    "{project}: project repo missing `{config_key}` config \
+                     (defines the `rwv-ours` merge driver used by bare \
+                     `git rebase --continue`; run `rwv doctor --fix` to plant)"
                 ),
                 CheckViolation::MergeDriverConfigUnreadable {
                     project,
                     config_key,
                     error,
-                } => (
-                    crate::integration::Severity::Warning,
-                    format!("{project}: failed to read `{config_key}` config: {error}"),
+                } => format!("{project}: failed to read `{config_key}` config: {error}"),
+                CheckViolation::HeadUnreadable { repo, error } => format!("{repo}: HEAD unreadable ({error})"),
+                CheckViolation::ProjectsDirUnreadable { path, error } => format!(
+                    "{}: projects directory unreadable ({error}); every project under it \
+                     is invisible to this scan",
+                    path.display()
                 ),
-                CheckViolation::HeadUnreadable { repo, error } => (
-                    crate::integration::Severity::Error,
-                    format!("{repo}: HEAD unreadable ({error})"),
-                ),
-                CheckViolation::ProjectsDirUnreadable { path, error } => (
-                    crate::integration::Severity::Error,
-                    format!(
-                        "{}: projects directory unreadable ({error}); every project under it \
-                         is invisible to this scan",
-                        path.display()
-                    ),
-                ),
-                CheckViolation::ProjectlessDir { dir } => (
-                    crate::integration::Severity::Warning,
-                    format!(
-                        "{}: directory under projects/ holds no {} at any depth, so it is \
-                         not a project and rwv lists nothing for it; write a {} there \
-                         (`[repositories]` alone is enough) or remove the directory",
-                        dir.display(),
-                        Manifest::FILE_NAME,
-                        Manifest::FILE_NAME,
-                    ),
+                CheckViolation::ProjectlessDir { dir } => format!(
+                    "{}: directory under projects/ holds no {} at any depth, so it is \
+                     not a project and rwv lists nothing for it; write a {} there \
+                     (`[repositories]` alone is enough) or remove the directory",
+                    dir.display(),
+                    Manifest::FILE_NAME,
+                    Manifest::FILE_NAME,
                 ),
                 CheckViolation::UnnameableProject {
                     dir,
                     derived,
                     error,
-                } => (
-                    crate::integration::Severity::Warning,
-                    format!(
-                        "{}: holds a {} but `{derived}` is not a usable project name \
-                         ({error}), so no verb can address it; rename the directory to a \
-                         name rwv accepts",
-                        dir.display(),
-                        Manifest::FILE_NAME,
-                    ),
+                } => format!(
+                    "{}: holds a {} but `{derived}` is not a usable project name \
+                     ({error}), so no verb can address it; rename the directory to a \
+                     name rwv accepts",
+                    dir.display(),
+                    Manifest::FILE_NAME,
                 ),
-                CheckViolation::UnresolvableLockEntry { project, repo } => (
-                    crate::integration::Severity::Error,
-                    format!(
-                        "{project}: lock references unknown revision for {repo}; \
-                         run `rwv lock` or fetch"
-                    ),
+                CheckViolation::UnresolvableLockEntry { project, repo } => format!(
+                    "{project}: lock references unknown revision for {repo}; \
+                     run `rwv lock` or fetch"
                 ),
                 CheckViolation::LockPinnedByName {
                     project,
                     repo,
                     version,
-                } => (
-                    crate::integration::Severity::Warning,
-                    format!(
-                        "{project}: {}",
-                        crate::lock::pinned_by_name_warning(&repo, &version)
-                    ),
+                } => format!(
+                    "{project}: {}",
+                    crate::lock::pinned_by_name_warning(&repo, &version)
                 ),
                 CheckViolation::LegacyManifestFormat {
                     project,
                     legacy_path,
-                } => (
-                    crate::integration::Severity::Error,
-                    format!(
-                        "{project}: {}",
-                        Manifest::legacy_format_refusal(legacy_path.as_path())
-                    ),
+                } => format!(
+                    "{project}: {}",
+                    Manifest::legacy_format_refusal(legacy_path.as_path())
                 ),
-                CheckViolation::LegacyWorkweaveMarker { marker_path, .. } => (
-                    crate::integration::Severity::Warning,
-                    format!(
-                        "{} is a legacy (YAML) workweave marker; \
-                         run `rwv doctor --fix` to migrate",
-                        marker_path.display()
-                    ),
+                CheckViolation::LegacyWorkweaveMarker { marker_path, .. } => format!(
+                    "{} is a legacy (YAML) workweave marker; \
+                     run `rwv doctor --fix` to migrate",
+                    marker_path.display()
                 ),
-                CheckViolation::LegacyWorkweaveIndex { index_path, .. } => (
-                    crate::integration::Severity::Warning,
-                    format!(
-                        "{} is a legacy workweave index written before ref-ownership \
-                         receipts existed (no `receipts` field), so rwv can neither \
-                         record nor destroy an ephemeral ref for this project; run \
-                         `rwv doctor --fix` to add the field — it is the precondition \
-                         for every other arm of the migration",
-                        index_path.display()
-                    ),
+                CheckViolation::LegacyWorkweaveIndex { index_path, .. } => format!(
+                    "{} is a legacy workweave index written before ref-ownership \
+                     receipts existed (no `receipts` field), so rwv can neither \
+                     record nor destroy an ephemeral ref for this project; run \
+                     `rwv doctor --fix` to add the field — it is the precondition \
+                     for every other arm of the migration",
+                    index_path.display()
                 ),
                 CheckViolation::UnreadableOwnedState {
                     project,
                     state_path,
                     error,
                     active,
-                } => (
-                    crate::integration::Severity::Warning,
-                    if active {
-                        format!(
-                            "{}: rwv's record of the generations it accepted does not \
-                             parse ({error}); until it is rebuilt, the managed-file \
-                             drift and derived-state staleness checks report nothing \
-                             for project `{project}` — including for files that had \
-                             already drifted. Run `rwv materialize` to rebuild it: it \
-                             re-derives the generated files this project has and \
-                             records them afresh, and leaves an empty record where it \
-                             has none",
-                            state_path.display()
-                        )
-                    } else {
-                        format!(
-                            "{}: rwv's record of the generations it accepted does not \
-                             parse ({error}); until it is rebuilt, the managed-file \
-                             drift and derived-state staleness checks report nothing \
-                             for project `{project}` — including for files that had \
-                             already drifted. `{project}` is not the active project \
-                             here, and `rwv materialize` takes no project argument — \
-                             it acts only on the active one. Run `rwv activate \
-                             {project}`; the repair runs there",
-                            state_path.display()
-                        )
-                    },
-                ),
+                } => if active {
+                    format!(
+                        "{}: rwv's record of the generations it accepted does not \
+                         parse ({error}); until it is rebuilt, the managed-file \
+                         drift and derived-state staleness checks report nothing \
+                         for project `{project}` — including for files that had \
+                         already drifted. Run `rwv materialize` to rebuild it: it \
+                         re-derives the generated files this project has and \
+                         records them afresh, and leaves an empty record where it \
+                         has none",
+                        state_path.display()
+                    )
+                } else {
+                    format!(
+                        "{}: rwv's record of the generations it accepted does not \
+                         parse ({error}); until it is rebuilt, the managed-file \
+                         drift and derived-state staleness checks report nothing \
+                         for project `{project}` — including for files that had \
+                         already drifted. `{project}` is not the active project \
+                         here, and `rwv materialize` takes no project argument — \
+                         it acts only on the active one. Run `rwv activate \
+                         {project}`; the repair runs there",
+                        state_path.display()
+                    )
+                },
                 CheckViolation::UnreadableWorkweaveIndex {
                     project,
                     index_path,
                     error,
-                } => (
-                    crate::integration::Severity::Error,
-                    format!(
-                        "{}: workweave index does not parse ({error}); the recorded \
-                         workweaves and ownership receipts for project `{project}` are \
-                         unevaluated, and every `rwv doctor --fix` arm that writes this \
-                         file fails until it parses — repair or delete the file, then \
-                         re-run `rwv doctor --fix` to re-adopt the workweaves on disk",
-                        index_path.display()
-                    ),
+                } => format!(
+                    "{}: workweave index does not parse ({error}); the recorded \
+                     workweaves and ownership receipts for project `{project}` are \
+                     unevaluated, and every `rwv doctor --fix` arm that writes this \
+                     file fails until it parses — repair or delete the file, then \
+                     re-run `rwv doctor --fix` to re-adopt the workweaves on disk",
+                    index_path.display()
                 ),
                 // Relayed, not narrated: the loader states which file failed
                 // and what to do about it, and this arm cannot know either.
                 CheckViolation::UnparseableProject {
                     project, message, ..
-                } => (
-                    crate::integration::Severity::Error,
-                    format!("{project}: {message}"),
-                ),
+                } => format!("{project}: {message}"),
                 CheckViolation::WorkingTreeDrift {
                     workweave,
                     repo,
@@ -7811,22 +7738,16 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                              not auto-fixed)"
                         }
                     };
-                    (
-                        crate::integration::Severity::Warning,
-                        format!("{location}: {detail}"),
-                    )
+                    format!("{location}: {detail}")
                 }
                 CheckViolation::DanglingActiveProject {
                     project,
                     missing_dir,
-                } => (
-                    crate::integration::Severity::Error,
-                    format!(
-                        "active project `{}` is set in `.rwv-active` but `{}` does not exist; \
-                         run `rwv activate <existing-project>` or remove `.rwv-active`",
-                        project,
-                        missing_dir.display()
-                    ),
+                } => format!(
+                    "active project `{}` is set in `.rwv-active` but `{}` does not exist; \
+                     run `rwv activate <existing-project>` or remove `.rwv-active`",
+                    project,
+                    missing_dir.display()
                 ),
                 CheckViolation::WeaveRootIdentityConflict {
                     root,
@@ -7869,7 +7790,7 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                             crate::path_spelling::operator_path(&root)
                         ),
                     };
-                    (crate::integration::Severity::Error, msg)
+                    msg
                 }
                 CheckViolation::WorkweaveTreeIntegrity {
                     workweave_dir,
@@ -7977,7 +7898,7 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                             ),
                         },
                     };
-                    (crate::integration::Severity::Warning, msg)
+                    msg
                 }
                 CheckViolation::Provenance {
                     project,
@@ -7995,34 +7916,25 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                         } else {
                             ""
                         };
-                        (
-                            crate::integration::Severity::Warning,
-                            format!(
-                                "{project}: {repo}: origin URL mismatch — manifest has \
-                                 `{manifest_url}`, clone has `{actual_url}`; pushes may target \
-                                 the wrong remote (report-only; update the manifest or \
-                                 re-point the remote to converge){suffix}",
-                            ),
+                        format!(
+                            "{project}: {repo}: origin URL mismatch — manifest has \
+                             `{manifest_url}`, clone has `{actual_url}`; pushes may target \
+                             the wrong remote (report-only; update the manifest or \
+                             re-point the remote to converge){suffix}",
                         )
                     }
-                    ProvenanceKind::LockShaUnreachable { sha } => (
-                        crate::integration::Severity::Error,
-                        format!(
-                            "{project}: {repo}: lock pins SHA {sha} which is absent from \
-                             the local object store; the canonical store is missing the pinned \
-                             revision — refresh it from its remote (fetch, not sync)",
-                        ),
+                    ProvenanceKind::LockShaUnreachable { sha } => format!(
+                        "{project}: {repo}: lock pins SHA {sha} which is absent from \
+                         the local object store; the canonical store is missing the pinned \
+                         revision — refresh it from its remote (fetch, not sync)",
                     ),
-                    ProvenanceKind::PlacementDisagreement { expected_path } => (
-                        crate::integration::Severity::Warning,
-                        format!(
-                            "{project}: {repo}: recorded at `{repo}`, but its URL places at \
-                             `{expected_path}` under the canonical layout (report-only; to \
-                             converge, move the checkout to `{expected_path}` unless it is already \
-                             there, re-key the entry in rwv.toml from `{repo}` to \
-                             `{expected_path}`, and run `rwv lock` — a `reference` or `fork` role \
-                             exempts this comparison)",
-                        ),
+                    ProvenanceKind::PlacementDisagreement { expected_path } => format!(
+                        "{project}: {repo}: recorded at `{repo}`, but its URL places at \
+                         `{expected_path}` under the canonical layout (report-only; to \
+                         converge, move the checkout to `{expected_path}` unless it is already \
+                         there, re-key the entry in rwv.toml from `{repo}` to \
+                         `{expected_path}`, and run `rwv lock` — a `reference` or `fork` role \
+                         exempts this comparison)",
                     ),
                 },
                 CheckViolation::CloneTopology {
@@ -8076,7 +7988,7 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                             actual_store_path.display(),
                         ),
                     };
-                    (crate::integration::Severity::Error, msg)
+                    msg
                 }
                 CheckViolation::BranchDiscipline {
                     repo_path,
@@ -8406,7 +8318,7 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                             )
                         }
                     };
-                    (crate::integration::Severity::Warning, msg)
+                    msg
                 }
                 CheckViolation::StaleWorktreeRegistration {
                     workweave,
@@ -8417,66 +8329,54 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                         Some(ww) => format!("{ww}/{repo}"),
                         None => format!("{repo}"),
                     };
-                    (
-                        crate::integration::Severity::Warning,
-                        format!(
-                            "{location}: stale-worktree-registration: missing path \
-                             {} (run `rwv doctor --fix` to prune)",
-                            missing_path.display()
-                        ),
+                    format!(
+                        "{location}: stale-worktree-registration: missing path \
+                         {} (run `rwv doctor --fix` to prune)",
+                        missing_path.display()
                     )
                 }
                 CheckViolation::DanglingRefReceipt {
                     project,
                     store_path,
                     ref_name,
-                } => (
-                    crate::integration::Severity::Warning,
-                    format!(
-                        "{}: project `{}` holds an ownership receipt for `{}` but no such \
-                         ref is there — the benign residue of a crash between the receipt \
-                         write and the ref creation. rwv writes the receipt first on \
-                         purpose, so a crash leaves a receipt with no ref rather than a \
-                         ref rwv could never destroy. It authorizes nothing; run \
-                         `rwv doctor --fix` to retract it",
-                        store_path.display(),
-                        project,
-                        ref_name
-                    ),
+                } => format!(
+                    "{}: project `{}` holds an ownership receipt for `{}` but no such \
+                     ref is there — the benign residue of a crash between the receipt \
+                     write and the ref creation. rwv writes the receipt first on \
+                     purpose, so a crash leaves a receipt with no ref rather than a \
+                     ref rwv could never destroy. It authorizes nothing; run \
+                     `rwv doctor --fix` to retract it",
+                    store_path.display(),
+                    project,
+                    ref_name
                 ),
                 CheckViolation::PreFlatRefReceipt {
                     project,
                     store_path,
                     ref_name,
-                } => (
-                    crate::integration::Severity::Warning,
-                    format!(
-                        "{}: project `{}` holds an ownership receipt for `{}`, whose name \
-                         carries a `/` segment — no workweave on disk mints that name, so \
-                         rwv cannot have created the ref under the flat scheme. Left \
-                         recorded, the canonical-store scan reads the branch as a leak \
-                         rwv owns and may delete. Run `rwv doctor --fix` to \
-                         retract the receipt: that drops the record only — the branch is \
-                         not touched, and afterwards it is unowned, which `--fix` never \
-                         deletes",
-                        store_path.display(),
-                        project,
-                        ref_name
-                    ),
+                } => format!(
+                    "{}: project `{}` holds an ownership receipt for `{}`, whose name \
+                     carries a `/` segment — no workweave on disk mints that name, so \
+                     rwv cannot have created the ref under the flat scheme. Left \
+                     recorded, the canonical-store scan reads the branch as a leak \
+                     rwv owns and may delete. Run `rwv doctor --fix` to \
+                     retract the receipt: that drops the record only — the branch is \
+                     not touched, and afterwards it is unowned, which `--fix` never \
+                     deletes",
+                    store_path.display(),
+                    project,
+                    ref_name
                 ),
                 CheckViolation::StaleOpState {
                     workspace_dir,
                     verb,
                     started_at,
-                } => (
-                    crate::integration::Severity::Warning,
-                    format!(
-                        "{}/.rwv-op: stale-op-state present (started_at={started_at}); \
-                         resume with `{resume}` or roll back with `rwv abort`. \
-                         Never auto-fixed — another terminal may be mid-conflict-resolution.",
-                        workspace_dir.display(),
-                        resume = crate::op_state::resume_command(verb),
-                    ),
+                } => format!(
+                    "{}/.rwv-op: stale-op-state present (started_at={started_at}); \
+                     resume with `{resume}` or roll back with `rwv abort`. \
+                     Never auto-fixed — another terminal may be mid-conflict-resolution.",
+                    workspace_dir.display(),
+                    resume = crate::op_state::resume_command(verb),
                 ),
                 CheckViolation::DeadOpLease {
                     workspace_dir,
@@ -8506,13 +8406,10 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                         ),
                         None => String::new(),
                     };
-                    (
-                        crate::integration::Severity::Warning,
-                        format!(
-                            "{}/.rwv-op-lease: dead-op-lease op_id={op_id}{age_str} — {cause}; \
-                             safe to auto-fix with `rwv doctor --fix` (removes the lease file).",
-                            workspace_dir.display()
-                        ),
+                    format!(
+                        "{}/.rwv-op-lease: dead-op-lease op_id={op_id}{age_str} — {cause}; \
+                         safe to auto-fix with `rwv doctor --fix` (removes the lease file).",
+                        workspace_dir.display()
                     )
                 }
                 CheckViolation::OrphanedSavepoint {
@@ -8535,10 +8432,7 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                              keep — recover or delete by hand with `git branch <name> <sha>`)"
                         }
                     };
-                    (
-                        crate::integration::Severity::Warning,
-                        format!("{location}: {detail} op_id={op_id}"),
-                    )
+                    format!("{location}: {detail} op_id={op_id}")
                 }
                 CheckViolation::CargoVersionSkew {
                     crate_name,
@@ -8558,7 +8452,7 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                     for occ in &occurrences {
                         msg.push_str(&format!("\n  - {}: {}", occ.member, occ.requirement));
                     }
-                    (crate::integration::Severity::Warning, msg)
+                    msg
                 }
                 CheckViolation::CargoPatchShadowing {
                     weave_config,
@@ -8572,16 +8466,13 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                     // mismatch diagnostic actively misleads (blames
                     // crates.io). This finding is what agents/scripts key on
                     // before generating derived patches.
-                    (
-                        crate::integration::Severity::Warning,
-                        format!(
-                            "cargo patch shadowing: `[patch.{registry}].{crate_name}` in {} \
-                             silently defeats the weave-level entry in {} \
-                             (cargo merges .cargo/config.toml closest-wins per key, with no \
-                             warning when a patch is inert)",
-                            member_config.display(),
-                            weave_config.display(),
-                        ),
+                    format!(
+                        "cargo patch shadowing: `[patch.{registry}].{crate_name}` in {} \
+                         silently defeats the weave-level entry in {} \
+                         (cargo merges .cargo/config.toml closest-wins per key, with no \
+                         warning when a patch is inert)",
+                        member_config.display(),
+                        weave_config.display(),
                     )
                 }
                 CheckViolation::MissingCanonicalClone {
@@ -8594,15 +8485,12 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                     // git layer is broken and commands will fail anyway. Point
                     // at the same manual re-clone repair as DanglingReference.
                     safe_to_fix = false;
-                    (
-                        crate::integration::Severity::Warning,
-                        format!(
-                            "{workweave}/{repo}: canonical clone for `{repo}` is absent \
-                             (expected at {}) — this worktree cannot be classified; \
-                             run `rwv fetch` from the weave root to \
-                             re-materialize it, then re-run `rwv doctor` to verify",
-                            canonical_path.display()
-                        ),
+                    format!(
+                        "{workweave}/{repo}: canonical clone for `{repo}` is absent \
+                         (expected at {}) — this worktree cannot be classified; \
+                         run `rwv fetch` from the weave root to \
+                         re-materialize it, then re-run `rwv doctor` to verify",
+                        canonical_path.display()
                     )
                 }
                 CheckViolation::UninitializedSubmodule {
@@ -8613,15 +8501,12 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                     let fix_cmd = format!(
                         "git -C <worktree>/{repo} submodule update --init --recursive"
                     );
-                    (
-                        crate::integration::Severity::Warning,
-                        format!(
-                            "{workweave}/{repo}: submodules not initialized — \
-                             {n} submodule path(s) are empty on disk: {paths}; \
-                             fix: `{fix_cmd}`",
-                            n = empty_paths.len(),
-                            paths = empty_paths.join(", "),
-                        ),
+                    format!(
+                        "{workweave}/{repo}: submodules not initialized — \
+                         {n} submodule path(s) are empty on disk: {paths}; \
+                         fix: `{fix_cmd}`",
+                        n = empty_paths.len(),
+                        paths = empty_paths.join(", "),
                     )
                 }
                 CheckViolation::PhantomMergeDriver {
@@ -8632,17 +8517,14 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                     // No fix: `rwv-ours` is a guess at what the operator meant,
                     // and deleting the line is a guess that they meant nothing.
                     safe_to_fix = false;
-                    (
-                        crate::integration::Severity::Warning,
-                        format!(
-                            "{repo}: .gitattributes assigns merge driver `{driver}` to \
-                             `{pattern}`, but rwv defines no driver by that name — the \
-                             `rwv-` prefix is rwv's, so nothing else defines it either \
-                             and the line silently does nothing (git falls back to a \
-                             textual merge). Use `merge={defined}` for a derived path \
-                             whose target-side copy should win, or drop the line",
-                            defined = crate::git::RWV_MERGE_DRIVER_NAME,
-                        ),
+                    format!(
+                        "{repo}: .gitattributes assigns merge driver `{driver}` to \
+                         `{pattern}`, but rwv defines no driver by that name — the \
+                         `rwv-` prefix is rwv's, so nothing else defines it either \
+                         and the line silently does nothing (git falls back to a \
+                         textual merge). Use `merge={defined}` for a derived path \
+                         whose target-side copy should win, or drop the line",
+                        defined = crate::git::RWV_MERGE_DRIVER_NAME,
                     )
                 }
             };

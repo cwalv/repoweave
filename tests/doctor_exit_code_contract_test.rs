@@ -172,11 +172,8 @@ fn warning_only_exits_zero_without_kind_in_both_modes() {
 /// halves — the same shared function
 /// `warning_only_exits_zero_without_kind_in_both_modes` pins the other
 /// direction of. Moving `severity()`'s `DanglingReference` arm to
-/// `Warning` instead reddens only the json half here, because text's
-/// severity for this violation still comes from
-/// `itemized_violations_to_issues`'s own match, untouched by `severity()`;
-/// `severity_agrees_with_the_rendered_issue_severity_for_the_whole_corpus`
-/// below is the test that would catch the two sources drifting apart.
+/// `Warning` instead also reddens both halves: text renders the severity
+/// `severity()` returns, so the two modes cannot disagree on it.
 #[test]
 fn error_finding_exits_nonzero_without_kind_in_both_modes() {
     let tmp = common::tempdir().unwrap();
@@ -248,52 +245,4 @@ fn kind_filtered_warning_exits_nonzero_in_both_modes() {
         "json: `--kind` admits the warning — exit non-zero; got: {}",
         parse(&json.stdout)
     );
-}
-
-/// `CheckViolation::severity` — the one place `run_check_json`'s exit-code
-/// computation reads a violation's severity — agrees with the severity text
-/// mode renders through `violations_to_issues`, for every violation in the
-/// corpus.
-///
-/// The two are computed independently: `violations_to_issues` match-builds
-/// a message and a severity together per (kind, sub-kind);
-/// `CheckViolation::severity` is a second, smaller match over the same
-/// enum. Nothing but this test stops them drifting apart — unlike
-/// `wire_kind`, there is no serialized field a schema-conformance test could
-/// cross-check it against, since `--json` violations carry no severity of
-/// their own.
-///
-/// **Mutation evidence**: moving `DanglingReference` from `severity`'s
-/// `Error` group to its `Warning` group (check.rs) reddens this test. The
-/// same mutation's user-visible effect — `--json`'s exit code going quiet on
-/// an error while text still reports it — is what
-/// `error_finding_exits_nonzero_without_kind_in_both_modes` above would miss
-/// on its own, since that fixture carries only one variant.
-#[test]
-fn severity_agrees_with_the_rendered_issue_severity_for_the_whole_corpus() {
-    use common::doctor_corpus::corpus;
-    use repoweave::check::violations_to_issues;
-
-    for v in corpus() {
-        let declared = v.severity();
-        let wire = v.wire_kind().to_string();
-        let rendered = violations_to_issues(vec![v]);
-        // The one corpus violation `itemized_violations_to_issues` drops
-        // rather than rendering: a `ForeignPrimaryOtherWorkspace` marker
-        // belongs to another workspace's scan, so text mode reports none of
-        // it (see that function's own comment).
-        if wire == "workweave-tree-integrity" && rendered.is_empty() {
-            continue;
-        }
-        assert_eq!(
-            rendered.len(),
-            1,
-            "`{wire}` must render to exactly one issue; got {rendered:?}"
-        );
-        assert_eq!(
-            declared, rendered[0].severity,
-            "`{wire}`: severity() says {declared:?}, rendering says {:?}",
-            rendered[0].severity
-        );
-    }
 }

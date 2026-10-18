@@ -436,33 +436,12 @@ const SUMMARY_VIOLATIONS_HEADER: &str =
     "| `kind` (and `sub_kind` where applicable) | Severity | `--fix` disposition |";
 const SUMMARY_ISSUES_HEADER: &str = "| `kind` | `--fix` |";
 
-/// Token → severity, off the same render arm `--json` and the text report
-/// both go through (`violations_to_issues`), so this is not a second
-/// judgment beside it.
-///
-/// One token is absent on purpose:
-/// `workweave-tree-integrity/foreign-primary-other-workspace` is the one
-/// deliberate carve-out `itemized_violations_to_issues` drops rather than
-/// renders (every sibling weave would otherwise repeat the same finding
-/// about every other sibling), so no render arm ever produces a severity for
-/// it — `--json` carries it straight from `CheckViolation` instead.
+/// Token → severity, straight off `CheckViolation::severity`, which both the
+/// text report and `--json`'s exit code read.
 fn severity_register() -> BTreeMap<String, Severity> {
     corpus()
-        .into_iter()
-        .filter_map(|v| {
-            let token = case_token(&v);
-            let issues = repoweave::check::violations_to_issues(vec![v]);
-            if issues.is_empty() {
-                return None;
-            }
-            assert_eq!(
-                issues.len(),
-                1,
-                "{token}: one violation must render to exactly one issue line, got {}",
-                issues.len()
-            );
-            Some((token, issues[0].severity))
-        })
+        .iter()
+        .map(|v| (case_token(v), v.severity()))
         .collect()
 }
 
@@ -575,9 +554,6 @@ fn summary_violation_gaps(
     for row in summary_violation_rows(page) {
         reached.insert(row.token.clone());
         match severities.get(&row.token) {
-            // The one token `severity_register` leaves out on purpose (see
-            // its doc comment) — nothing to compare the cell against.
-            None if register.contains_key(&row.token) => {}
             None => gaps.push(format!(
                 "{PAGE_PATH}:{}: `{}` is not a finding the register knows",
                 row.line, row.token
