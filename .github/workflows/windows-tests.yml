@@ -148,12 +148,28 @@
 # above for keeping this workflow outside the release gates' reach is
 # untouched. What it buys is that the red belongs to the whole suite rather
 # than to whichever target happened to run first.
+#
+# A dispatch may set `tests` to a space-separated list of targets and skip
+# the rest of the suite, to watch one fix without the full wall time. That
+# run is partial by design, so the counting method above — derive the total
+# from `cargo test --no-run`, compare it to the `test result:` lines — does
+# not apply to it; there is no complete-log total to compare against. The
+# "Run the test suite" step's first line of output says which shape it is:
+# the full suite, or the selection it restricted to.
 name: Windows tests (advisory)
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      tests:
+        description: >-
+          Space-separated test targets to run instead of the full suite
+          (e.g. "hand_edit_convergence_test integrations_test"; "lib" runs
+          the unit tests). Empty runs everything.
+        required: false
+        default: ""
 
 jobs:
   windows-tests:
@@ -174,6 +190,8 @@ jobs:
 
       - name: Install Rust (pinned by rust-toolchain.toml)
         run: rustup show
+
+      - uses: Swatinem/rust-cache@v2
 
       - name: Install uv (required by uv-workspace e2e tests)
         uses: astral-sh/setup-uv@v5
@@ -210,5 +228,27 @@ jobs:
         # stops at the first target that fails, and since the lib target runs
         # first and has failed every time, no integration binary had ever
         # started here. The header above says how to read a log for that.
+        #
+        # A `tests` entry that names no real target needs no validation here:
+        # cargo's own --test/--lib resolution already errors and exits
+        # non-zero for one, and a `shell: bash` step fails on that without
+        # help from this script.
         shell: bash
-        run: cargo test --locked --no-fail-fast
+        env:
+          TESTS: ${{ github.event.inputs.tests }}
+        run: |
+          if [ -z "${TESTS:-}" ]; then
+            echo "Full suite (no 'tests' input given)."
+            cargo test --locked --no-fail-fast
+          else
+            echo "Partial suite, restricted to: ${TESTS}"
+            args=()
+            for target in $TESTS; do
+              if [ "$target" = "lib" ]; then
+                args+=(--lib)
+              else
+                args+=(--test "$target")
+              fi
+            done
+            cargo test --locked --no-fail-fast "${args[@]}"
+          fi
