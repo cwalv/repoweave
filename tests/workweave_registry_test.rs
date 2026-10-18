@@ -468,8 +468,8 @@ fn doctor_flags_tracked_index_until_the_named_untrack_is_committed() {
         .find(|l| l.contains("tracked by the project repo"))
         .unwrap_or_else(|| panic!("the tracked index must be reported:\n{report}"));
     assert!(
-        !finding.contains("add `.rwv-workweave-index` to `.gitignore`"),
-        "{finding}"
+        finding.contains("needs no `.gitignore` entry"),
+        "the finding must say exclusion needs no `.gitignore` entry: {finding}"
     );
     let untrack = finding
         .split('`')
