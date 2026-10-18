@@ -13,9 +13,10 @@
 //!      this fix, text mode ignored `--kind` for the exit code and stayed at
 //!      the error-only rule even under a filter that matched a warning.
 //!
-//! The warning-only fixture is the reviewer's own probe from rwv-hzs1.9:
-//! `git config --unset merge.rwv-ours.driver` on an otherwise-conforming
-//! project repo, leaving `missing-merge-driver-config` as the lone finding.
+//! The warning-only fixture reproduces the smallest case that showed the two
+//! modes disagreeing: `git config --unset merge.rwv-ours.driver` on an
+//! otherwise-conforming project repo, leaving `missing-merge-driver-config`
+//! as the lone finding.
 
 use std::path::{Path, PathBuf};
 
@@ -117,7 +118,7 @@ fn error_fixture(parent: &Path) -> PathBuf {
 }
 
 /// Pin 1: a lone warning exits 0, unfiltered, in both modes — the json
-/// half is the regression this bead fixes (it used to fail on any
+/// half is the regression this fix closes (it used to fail on any
 /// violation, warnings included).
 ///
 /// **Mutation evidence**: reverting `doctor_exit_signal`'s unfiltered arm
