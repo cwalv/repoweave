@@ -303,6 +303,9 @@ saying the table was retired. Delete it.
   second module joins a `use (...)` block.
 - An activation error over a file standing where a directory belongs names the
   file, on Windows as on Unix.
+- On Windows, the paths `rwv add` and `rwv remove` print, including a refused
+  add's "removed …" and "kept the clone it made at …" lines, carry no `\\?\`
+  verbatim prefix. Unix output is unchanged.
 - On Windows, `rwv --help` and the `plugins` array of `rwv doctor --json` name
   a plugin by the verb that runs it: `rwv-lint.exe` is listed as `lint`, not
   `lint.exe`. A `rwv-*` file is a plugin when its extension is in `PATHEXT`, and
@@ -318,6 +321,8 @@ saying the table was retired. Delete it.
   glossary, formats, roles and the plugin protocol), the explanation pages and
   the README describe this release's binary, including every refusal and
   finding above.
+- `rwv explain state-claim-held` says to delete the claim file the refusal
+  names; `rwv doctor` does not repair a stale claim.
 - The integration pages follow one template and describe the shipped behavior.
 - The tutorial, the how-to recipes and `adjacent-tools.md` run as written.
 - The Concepts pages are grouped into Layout & files, Workweaves & branches, and
