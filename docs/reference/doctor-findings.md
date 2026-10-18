@@ -1468,11 +1468,12 @@ of the kind rather than of the finding: taking over an unmarked region means
 overwriting content rwv never wrote and has no record of. `--fix` reports it
 and moves on.
 
-**What to do:** nothing, if the content is what you want — the state is stable
-and rwv keeps reporting rather than acting. To hand the region over, do what
-the message says: cut it over by hand, or write the ownership marker it names.
-The spelling differs by file format, which is why the finding names it rather
-than this page.
+**What to do:** nothing, if the content is what you want — rwv keeps reporting
+rather than acting. The exception is a finding whose message says the next
+authoring verb writes the keys: none of them is on disk for that verb to defer
+to, so it writes them. To hand the region over, do what the message says: cut
+it over by hand, or write the ownership marker it names. The spelling differs
+by file format, which is why the finding names it rather than this page.
 
 ### `surfacing`
 

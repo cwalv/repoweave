@@ -1197,8 +1197,18 @@ impl CargoWorkspace {
         // (either owned [workspace] key counts). The other five integrations
         // have a single owned key; cargo's two-key OR stays here, and the
         // result feeds the shared four-state dispatch.
-        let owned_key_present = toml_doc.key_present(&keypath(["workspace", "members"]))
-            || toml_doc.key_present(&keypath(["workspace", "resolver"]));
+        let members_present = toml_doc.key_present(&keypath(["workspace", "members"]));
+        let owned_key_present =
+            members_present || toml_doc.key_present(&keypath(["workspace", "resolver"]));
+        let user_held_remedy = if members_present {
+            "An authoring verb leaves an unmarked `members` as it is. Add `# managed by rwv` \
+             on its own line directly above `members`, or delete `members` and `resolver` \
+             from `[workspace]`, then run `rwv doctor --fix`"
+        } else {
+            "The next authoring verb, such as `rwv add` or `rwv role`, writes `members` under \
+             the `# managed by rwv` marker and keeps `resolver`; or delete `resolver` from \
+             `[workspace]` and run `rwv doctor --fix`, which writes both"
+        };
 
         // The nested-conflict early-return is cargo-specific and must run
         // BETWEEN USER-HELD and DRIFT (a conflict suppresses the DRIFT finding
@@ -1214,8 +1224,7 @@ impl CargoWorkspace {
                 owned_key_present,
                 None,
                 &[],
-                "Cut over manually by removing [workspace] from the file \
-                 or by exercising the intent-mode merge",
+                user_held_remedy,
                 "",
             ));
         }
@@ -1247,8 +1256,7 @@ impl CargoWorkspace {
             owned_key_present,
             on_disk.as_deref(),
             &members,
-            "Cut over manually by removing [workspace] from the file \
-             or by exercising the intent-mode merge",
+            user_held_remedy,
             "on-disk [workspace] content differs from rwv.toml config.",
         ))
     }
@@ -1394,9 +1402,11 @@ impl CargoWorkspace {
                     /* owned_key_present */ true,
                     None,
                     &[],
-                    "Cut over manually by removing the conflicting \
-                     `[patch.<registry>].<crate>` or `[build].rustc-wrapper` \
-                     key from the file or by exercising the intent-mode merge",
+                    "An authoring verb leaves an unmarked key as it is. Add \
+                     `# managed by rwv` on its own line directly above the conflicting \
+                     `[patch.<registry>].<crate>` or `[build].rustc-wrapper` key and run \
+                     `rwv doctor --fix`, or delete the key and run an authoring verb, \
+                     such as `rwv add` or `rwv role`, which writes it under the marker",
                     "",
                 ));
             }
@@ -1435,10 +1445,9 @@ impl CargoWorkspace {
             owned_key_present,
             Some(&on_disk_repr),
             &expected_repr,
-            "Cut over manually by adding the `# managed by rwv` \
-             marker to the intended `[patch.<registry>].<crate>` or \
-             `[build].rustc-wrapper` keys or by exercising the \
-             intent-mode merge",
+            "The file holds none of the keys rwv writes there; the next authoring \
+             verb, such as `rwv add` or `rwv role`, writes them under the \
+             `# managed by rwv` marker",
             "on-disk rwv-marked keys in .cargo/config.toml (`[patch.*]` \
              entries, `[build].rustc-wrapper`) differ from the set derived \
              from rwv.toml and this host's wrapper detection.",
