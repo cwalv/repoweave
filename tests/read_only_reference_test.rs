@@ -422,10 +422,7 @@ fn sync_moves_a_read_only_reference_member_and_settles_what_it_wrote() {
         advanced,
         "git must move a read-only reference member"
     );
-    assert_eq!(
-        std::fs::read_to_string(reference.join("REF")).unwrap(),
-        "r2\n"
-    );
+    assert_eq!(common::read_normalized(reference.join("REF")), "r2\n");
     assert_read_only(&reference, "after sync rewrote it");
 }
 
@@ -494,7 +491,7 @@ fn a_reference_member_arriving_by_sync_is_read_only() {
         ],
     );
     let manifest = weave.project_dir().join("rwv.toml");
-    let body = std::fs::read_to_string(&manifest).unwrap();
+    let body = common::read_normalized(&manifest);
     std::fs::write(
         &manifest,
         format!(
@@ -603,7 +600,7 @@ fn a_hand_edit_to_owned_unshares_before_restoring_write_bits() {
     );
 
     let manifest = wa.join("projects").join(PROJECT).join("rwv.toml");
-    let body = std::fs::read_to_string(&manifest).unwrap();
+    let body = common::read_normalized(&manifest);
     let ref_block = manifest_entry(REF_PATH, &weave.ref_upstream, "reference");
     assert!(body.contains(&ref_block), "fixture: manifest layout");
     std::fs::write(
@@ -631,7 +628,7 @@ fn a_hand_edit_to_owned_unshares_before_restoring_write_bits() {
         std::fs::metadata(&sibling).unwrap().ino(),
         "the shared file must get a private copy before it is made writable"
     );
-    assert_eq!(std::fs::read_to_string(&mine).unwrap(), "r\n");
+    assert_eq!(common::read_normalized(&mine), "r\n");
     assert_eq!(
         mode(&sibling) & 0o222,
         0,

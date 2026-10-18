@@ -26,6 +26,10 @@ fn git_init_with_commit(dir: &Path) {
     common::git_in(dir, &["init", "--initial-branch=main"]);
     common::git_in(dir, &["config", "user.email", "test@test.com"]);
     common::git_in(dir, &["config", "user.name", "Test"]);
+    // Cargo rewrites Cargo.lock with LF; under an inherited autocrlf=true git
+    // reports that file modified though its content is unchanged, which is
+    // git's eol handling and not what the hooks under test leave behind.
+    common::git_in(dir, &["config", "core.autocrlf", "false"]);
     common::git_in(dir, &["add", "-A"]);
     common::git_in(dir, &["commit", "-m", "init"]);
 }

@@ -195,7 +195,7 @@ fn deleting_a_seat_leaves_the_files_another_seat_shared_with_it() {
     assert!(!one.exists());
     for (file, file_before) in FILES.iter().zip(before) {
         let ours = two.join(REFERENCE).join(file);
-        assert_eq!(std::fs::read_to_string(&ours).unwrap(), format!("{file}\n"));
+        assert_eq!(common::read_normalized(&ours), format!("{file}\n"));
         assert_eq!(file_of(&ours), file_before);
         assert!(!writable(&ours));
         assert_eq!(std::fs::metadata(&ours).unwrap().nlink(), 1);
@@ -226,10 +226,10 @@ fn a_sync_that_moves_one_seat_leaves_the_file_another_seat_shared_with_it() {
     run(&["sync", "primary"], &two);
 
     assert_eq!(
-        std::fs::read_to_string(two.join(REFERENCE).join("src/a.txt")).unwrap(),
+        common::read_normalized(two.join(REFERENCE).join("src/a.txt")),
         "moved on\n"
     );
-    assert_eq!(std::fs::read_to_string(&shared).unwrap(), "src/a.txt\n");
+    assert_eq!(common::read_normalized(&shared), "src/a.txt\n");
     assert_eq!(
         (
             file_of(&shared),
@@ -262,7 +262,7 @@ fn leaving_reference_gives_a_seat_private_writable_copies_and_leaves_the_other_r
             "{file} is still read-only after leaving reference"
         );
         assert_ne!(file_of(&ours), file_of(&theirs), "{file} is still shared");
-        assert_eq!(std::fs::read_to_string(&ours).unwrap(), format!("{file}\n"));
+        assert_eq!(common::read_normalized(&ours), format!("{file}\n"));
         assert!(
             !writable(&theirs),
             "the other seat's {file} became writable"

@@ -173,6 +173,12 @@ fn fixture_repo() -> tempfile::TempDir {
     )
     .unwrap();
 
+    std::fs::copy(
+        repo_root().join(".gitattributes"),
+        root.join(".gitattributes"),
+    )
+    .unwrap();
+
     std::fs::write(
         root.join("Cargo.toml"),
         "[package]\nname = \"fixture\"\nversion = \"0.0.1\"\n",
