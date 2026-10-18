@@ -1443,8 +1443,10 @@ Everything above is a finding one of rwv's own scans made, and lands on
 `issues` entry never carries `kind: "core-finding"`.
 
 An `issues` entry carries `integration` (which integration raised it),
-`severity`, the operator-facing `message`, and `safe_to_fix` — `false` marking
-a file region you hold the pen on, which `--fix` reports and never overwrites.
+`severity`, the operator-facing `message`, and `safe_to_fix` — whether `--fix`
+acts on that finding. It is `false` on every finding of a kind the Summary
+index marks `Never`, and on a file region you hold the pen on, which `--fix`
+reports and never overwrites.
 
 That field is why the entries below open with prose instead of one of the three
 marks. On this channel what `--fix` may touch is decided per finding and
@@ -1499,10 +1501,8 @@ restore the file to the recorded content yourself.
 The owned key or region is present without rwv's ownership marker. You hold
 the pen on it.
 
-Always `safe_to_fix: false`, and this is the one kind where that is a property
-of the kind rather than of the finding: taking over an unmarked region means
-overwriting content rwv never wrote and has no record of. `--fix` reports it
-and moves on.
+Always `safe_to_fix: false`: taking over an unmarked region means overwriting
+content rwv never wrote and has no record of. `--fix` reports it and moves on.
 
 **What to do:** nothing, if the content is what you want — rwv keeps reporting
 rather than acting. The exception is a finding whose message says the next

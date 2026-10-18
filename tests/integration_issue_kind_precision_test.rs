@@ -40,11 +40,12 @@ fn write(root: &Path, relative: &str, content: &str) {
     std::fs::write(path, content).unwrap();
 }
 
-/// The `kind` token of every entry on `--json`'s `issues` array, in order.
+/// The `kind` token and `safe_to_fix` of every entry on `--json`'s `issues`
+/// array, in order.
 ///
 /// A kind carrying fields serializes as a single-key object; both shapes are
 /// read here so a variant that grows fields does not silently drop out.
-fn issue_kinds(issues: Vec<repoweave::integration::Issue>) -> Vec<String> {
+fn issue_records(issues: Vec<repoweave::integration::Issue>) -> Vec<(String, bool)> {
     let payload = serde_json::to_value(build_doctor_json(
         Vec::new(),
         issues,
@@ -59,14 +60,35 @@ fn issue_kinds(issues: Vec<repoweave::integration::Issue>) -> Vec<String> {
         .as_array()
         .expect("issues is an array")
         .iter()
-        .map(|issue| match &issue["kind"] {
-            serde_json::Value::String(tag) => tag.clone(),
-            serde_json::Value::Object(map) => {
-                map.keys().next().expect("tagged kind has a key").clone()
-            }
-            other => panic!("unrenderable kind: {other}"),
+        .map(|issue| {
+            let kind = match &issue["kind"] {
+                serde_json::Value::String(tag) => tag.clone(),
+                serde_json::Value::Object(map) => {
+                    map.keys().next().expect("tagged kind has a key").clone()
+                }
+                other => panic!("unrenderable kind: {other}"),
+            };
+            let safe_to_fix = issue["safe_to_fix"]
+                .as_bool()
+                .expect("safe_to_fix is a bool");
+            (kind, safe_to_fix)
         })
         .collect()
+}
+
+fn kinds_of(records: Vec<(String, bool)>) -> Vec<String> {
+    records.into_iter().map(|(kind, _)| kind).collect()
+}
+
+/// `--fix` never acts on a `config-rejected` finding, so `--json` must not
+/// call one safe to fix, whatever the integration minted.
+fn assert_config_rejected_is_not_safe_to_fix(records: &[(String, bool)]) {
+    for (kind, safe_to_fix) in records {
+        assert!(
+            !(kind == "config-rejected" && *safe_to_fix),
+            "a config-rejected finding reached --json as safe_to_fix: true: {records:?}"
+        );
+    }
 }
 
 /// Which of the three `Vec<Issue>` hooks to drive. They are separate
@@ -78,13 +100,13 @@ enum Hook {
     Activate,
 }
 
-fn hook_kinds(
+fn hook_records(
     hook: Hook,
     integration: &dyn Integration,
     root: &Path,
     manifest: &Manifest,
     workweave: Option<&repoweave::manifest::WorkweaveConfig>,
-) -> Vec<String> {
+) -> Vec<(String, bool)> {
     let integrations: Vec<&dyn Integration> = vec![integration];
     let project = ProjectName::new("test-project").unwrap();
     let detection_cache = build_detection_cache(&integrations, root, manifest.iter_entries());
@@ -98,11 +120,21 @@ fn hook_kinds(
         detection_cache: &detection_cache,
         workweave,
     };
-    issue_kinds(match hook {
+    issue_records(match hook {
         Hook::Check => run_checks(&integrations, manifest, &ctx_base),
         Hook::Verify => run_verifications(&integrations, manifest, &ctx_base),
         Hook::Activate => run_activations(&integrations, manifest, &ctx_base),
     })
+}
+
+fn hook_kinds(
+    hook: Hook,
+    integration: &dyn Integration,
+    root: &Path,
+    manifest: &Manifest,
+    workweave: Option<&repoweave::manifest::WorkweaveConfig>,
+) -> Vec<String> {
+    kinds_of(hook_records(hook, integration, root, manifest, workweave))
 }
 
 fn check_kinds(
@@ -139,7 +171,9 @@ fn nested_workspace_reaches_json_as_config_rejected() {
     )
     .unwrap();
 
-    let kinds = check_kinds(&CargoWorkspace, root, &manifest, None);
+    let records = hook_records(Hook::Check, &CargoWorkspace, root, &manifest, None);
+    assert_config_rejected_is_not_safe_to_fix(&records);
+    let kinds = kinds_of(records);
 
     assert!(
         kinds.contains(&"config-rejected".to_string()),
@@ -167,7 +201,9 @@ fn static_files_name_collision_reaches_json_as_config_rejected() {
     .unwrap();
     let workweave = manifest.workweave.take().expect("workweave section parses");
 
-    let kinds = check_kinds(&StaticFiles, root, &manifest, Some(&workweave));
+    let records = hook_records(Hook::Check, &StaticFiles, root, &manifest, Some(&workweave));
+    assert_config_rejected_is_not_safe_to_fix(&records);
+    let kinds = kinds_of(records);
 
     assert!(
         kinds.contains(&"config-rejected".to_string()),

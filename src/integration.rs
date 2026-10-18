@@ -416,12 +416,6 @@ impl OwnedPath {
 }
 
 /// A single issue reported by an integration's check or verify hook.
-///
-/// `safe_to_fix`: when `true` (the default for all environment/config issues),
-/// `rwv doctor --fix` may invoke the integration's write path to repair. When
-/// `false`, the issue is for human attention only — `doctor --fix` prints it
-/// but does NOT attempt an automated write. Use `false` for USER-HELD findings
-/// where the user explicitly holds the pen and auto-repair would be unsafe.
 #[derive(Debug, Clone)]
 pub struct Issue {
     pub integration: String,
@@ -429,11 +423,11 @@ pub struct Issue {
     pub message: String,
     /// What this finding is, independent of how the message words it.
     pub kind: IssueKind,
-    /// Whether `rwv doctor --fix` is permitted to auto-repair this finding.
-    ///
-    /// `true` for all environment / config / drift issues (the common case).
-    /// `false` for USER-HELD findings where the user holds the pen on a managed
-    /// file region and automatic overwrite would silently destroy user content.
+    /// This finding's own answer to whether `rwv doctor --fix` may repair it:
+    /// `false` where the user holds the pen on a managed file region and an
+    /// overwrite would destroy their content. Its kind can still forbid the
+    /// repair; [`Issue::fix_permitted`] combines the two, and is what `--fix`
+    /// and `--json` read.
     pub safe_to_fix: bool,
 }
 

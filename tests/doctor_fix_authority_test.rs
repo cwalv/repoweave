@@ -753,6 +753,25 @@ fn the_summary_index_check_reports_a_drifted_cell() {
     );
 }
 
+/// `--json`'s `safe_to_fix` is the register's answer, not the minted field's:
+/// every kind is minted safe here, and only a `Per finding` kind may reach
+/// the wire that way.
+#[test]
+fn the_wire_safe_to_fix_is_what_fix_will_do() {
+    for issue in issue_corpus() {
+        assert!(issue.safe_to_fix, "the corpus mints every kind safe");
+        let token = issue_kind_token(&issue.kind);
+        let permitted = issue.kind.fix_scope() == IssueFixScope::PerFinding;
+        let wire = repoweave::check::IssueOutput::from_issue(issue).safe_to_fix;
+        assert_eq!(
+            wire,
+            permitted,
+            "`{token}`: --json says safe_to_fix: {wire}, --fix would {}act on it",
+            if permitted { "" } else { "not " }
+        );
+    }
+}
+
 #[test]
 fn the_issues_summary_index_check_reports_a_drifted_row() {
     const ROW: &str = "| [`managed-file-missing`](#managed-file-missing) | Per finding |";

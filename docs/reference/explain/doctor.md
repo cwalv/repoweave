@@ -1048,7 +1048,7 @@ Schema:
           "type": "string"
         },
         "safe_to_fix": {
-          "description": "Whether `rwv doctor --fix` is permitted to auto-repair this finding. `false` marks a user-held file region auto-repair would destroy.",
+          "description": "Whether `rwv doctor --fix` acts on this finding. `false` for every finding of a kind `--fix` never repairs, and for content you hold the pen on that auto-repair would destroy.",
           "type": "boolean"
         },
         "severity": {

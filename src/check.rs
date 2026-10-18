@@ -2669,14 +2669,16 @@ pub struct IssueOutput {
     /// Operator-facing prose. Everything a consumer routes on is a field —
     /// matching on this string is what `kind` exists to replace.
     pub message: String,
-    /// Whether `rwv doctor --fix` is permitted to auto-repair this finding.
-    /// `false` marks a user-held file region auto-repair would destroy.
+    /// Whether `rwv doctor --fix` acts on this finding. `false` for every
+    /// finding of a kind `--fix` never repairs, and for content you hold the
+    /// pen on that auto-repair would destroy.
     pub safe_to_fix: bool,
 }
 
 impl IssueOutput {
     /// Convert an internal [`Issue`] into its wire-format counterpart.
     pub fn from_issue(issue: Issue) -> Self {
+        let safe_to_fix = issue.fix_permitted();
         Self {
             kind: IssueKindOutput::from_kind(issue.kind),
             integration: issue.integration,
@@ -2685,7 +2687,7 @@ impl IssueOutput {
                 crate::integration::Severity::Error => SeverityOutput::Error,
             },
             message: issue.message,
-            safe_to_fix: issue.safe_to_fix,
+            safe_to_fix,
         }
     }
 }

@@ -133,7 +133,8 @@ defense, never the only report.
   answers "is the environment able to do this", `verify` answers "has what we
   wrote been changed underneath us". Must not author; the recovery verb is
   `rwv doctor --fix`, which re-runs `activate` when a finding is
-  `safe_to_fix`. An enabled integration whose files are not on disk yet
+  `safe_to_fix` and its kind's `IssueKind::fix_scope` is `PerFinding`
+  (`Issue::fix_permitted`; `--json` publishes the same answer). An enabled integration whose files are not on disk yet
   reports them here as `ManagedFileMissing` — that finding is what makes
   `rwv doctor --fix` author a newly enabled integration.
 - **`owned_paths_on_disk`** — where this integration's ownership is written
