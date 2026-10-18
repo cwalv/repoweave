@@ -783,13 +783,12 @@ fn the_return_scan_reads_the_return_and_not_the_arm_that_measures() {
 /// pin's scope IS its coverage claim.
 ///
 /// A second known exclusion holds a different shape than either case above:
-/// `tool_only_bin` in `tests/common/mod.rs`, and the `git`-resolving lines in
-/// `tests/doctor_perf_test.rs` and `tests/integrations_test.rs`, hand
-/// `which::which`'s answer to `.unwrap()` or `.expect(...)` and panic rather
-/// than returning when the tool is absent. There is no `return;` there for
-/// this scan to key on — a hard precondition is not a guarded return — so
-/// reading `resolve_tool_or_skip` callers alone as this shape's full extent
-/// undercounts it.
+/// tests that hand `which::which`'s answer to `.unwrap()` or `.expect(...)` and
+/// panic rather than returning when the tool is absent. There is no `return;`
+/// there for this scan to key on — a hard precondition is not a guarded return
+/// — so reading `resolve_tool_or_skip` callers alone as this shape's full
+/// extent undercounts it. `every_panic_on_lookup_is_classified` holds that
+/// population as an exact list.
 #[test]
 fn no_environment_guard_returns_without_announcing() {
     let mut silent = Vec::new();
@@ -813,5 +812,336 @@ fn no_environment_guard_returns_without_announcing() {
          `common::report_skip` / `common::skip_without_tool` (`tests/`) or \
          `crate::report_skip` (an inline `#[cfg(test)]` module). Sites:\n{}",
         silent.join("\n")
+    );
+}
+
+/// Why a lookup answered with a panic is allowed to stay one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LookupKind {
+    /// The tool is a precondition the test cannot do without; absent, it panics
+    /// where its neighbors skip.
+    HostTool,
+    /// The lookup resolves a file this test planted, so the host cannot make it
+    /// fail.
+    PlantedFile,
+}
+
+/// Every classified panic-on-lookup: file, enclosing fn, how many such lookups
+/// that fn holds, kind, and the reason it is not converted to a skip.
+const PANIC_ON_LOOKUP: &[(&str, &str, usize, LookupKind, &str)] = &[
+    (
+        "src/plugins.rs",
+        "discovery_winner_is_what_dispatch_resolves",
+        1,
+        LookupKind::PlantedFile,
+        "resolves the `rwv-*` scripts the test writes into its own temp directory, so no host state can make the lookup fail",
+    ),
+    (
+        "tests/common/mod.rs",
+        "cargo_stand_in_path",
+        1,
+        LookupKind::HostTool,
+        "the stand-in `bin` directory is built around a symlink to the real `git`; without git there is nothing to link and no fixture",
+    ),
+    (
+        "tests/common/mod.rs",
+        "tool_only_bin",
+        1,
+        LookupKind::HostTool,
+        "the shim directory exists to expose one real tool on an otherwise empty `PATH`; without the tool the shim has no content, and every caller needs it to drive the subject",
+    ),
+    (
+        "tests/doctor_kind_filter_test.rs",
+        "kind_filter_admits_an_integration_issue_kind_and_json_fails_on_it",
+        1,
+        LookupKind::HostTool,
+        "links the real `git` beside a stand-in `npm` on a `PATH` that holds nothing else, because doctor shells out to it",
+    ),
+    (
+        "tests/doctor_perf_test.rs",
+        "doctor_scan_git_call_count_stays_linear_in_repo_count",
+        1,
+        LookupKind::HostTool,
+        "wraps the real `git` in a counting shim, so it needs the real binary's path and measures nothing without it",
+    ),
+    (
+        "tests/doctor_perf_test.rs",
+        "doctor_scan_git_call_count_stays_linear_in_workspace_size",
+        1,
+        LookupKind::HostTool,
+        "wraps the real `git` in a counting shim, so it needs the real binary's path and measures nothing without it",
+    ),
+    (
+        "tests/integrations_test.rs",
+        "activate_with_tool_shim",
+        1,
+        LookupKind::HostTool,
+        "links the real `git` into a shim `PATH` that holds nothing else, because activation shells out to it",
+    ),
+    (
+        "tests/integrations_test.rs",
+        "doctor_json_on_tool_only_path",
+        1,
+        LookupKind::HostTool,
+        "links the real `git` into a shim `PATH` that holds nothing else, because doctor shells out to it",
+    ),
+    (
+        "tests/integrations_test/activate_hooks.rs",
+        "hook_whose_tool_is_missing_warns_and_the_other_hooks_still_run",
+        1,
+        LookupKind::HostTool,
+        "links the real `git` into a shim `PATH` that holds nothing else, because the verb under test shells out to it",
+    ),
+    (
+        "tests/no_materialize_parity_test.rs",
+        "new",
+        1,
+        LookupKind::HostTool,
+        "links the real `git` into a shim `PATH` that holds nothing else, because the verb under test shells out to it",
+    ),
+    (
+        "tests/plugins_help_doctor_test.rs",
+        "doctor_json_same_directory_pathext_duplicates_shadow_in_dispatch_order",
+        1,
+        LookupKind::PlantedFile,
+        "resolves the `rwv-dup` files the test writes into its own temp directory",
+    ),
+    (
+        "tests/skip_report_visibility_test.rs",
+        "the_guards_resolver_accepts_files_the_os_will_not_run",
+        2,
+        LookupKind::PlantedFile,
+        "resolves the files the test plants in its own directory through `which_in`",
+    ),
+    (
+        "tests/skipped_effects_test.rs",
+        "new",
+        1,
+        LookupKind::HostTool,
+        "links the real `git` into a shim `PATH` that holds nothing else, because the verb under test shells out to it",
+    ),
+    (
+        "tests/tool_written_lock_adoption_test.rs",
+        "a_lock_renamed_over_its_dangling_link_is_adopted_by_the_verb_that_ran_the_tool",
+        1,
+        LookupKind::HostTool,
+        "the stand-in `npm` is a symlink to the real `mv`, because the rename that adopts the lock is the thing under test",
+    ),
+    (
+        "tests/workweave_create_carried_lock_clean_test.rs",
+        "new",
+        1,
+        LookupKind::HostTool,
+        "the stand-in `cargo` is a witness wrapper that execs the real `cargo`, because the hook's own lock rewrite is the thing under test",
+    ),
+];
+
+/// Panic-on-lookup sites in one file's test region as `(file, fn)` with a count.
+///
+/// A site is a `which::which(` or `which::which_in(` call outside a string
+/// literal whose own statement hands the answer to `.unwrap()`, `.expect(..)`
+/// or an `.unwrap_or_else(..)` that panics. The statement runs from the call
+/// to the next line at or left of the call's indent that ends in `;`, and stops
+/// early at a line indented less than the call. A call on the head line of an
+/// `if`, `while` or `match` is read on that line alone.
+fn scan_panic_on_lookup(file: &Scanned) -> Vec<(String, String, usize)> {
+    const CALLS: &[&str] = &["which::which(", "which::which_in("];
+    let mut found: Vec<(String, String, usize)> = Vec::new();
+    for (n, line) in file.lines.iter().enumerate() {
+        if n < file.test_from || is_comment(line) {
+            continue;
+        }
+        let Some(at) = CALLS
+            .iter()
+            .filter_map(|c| line.find(c))
+            .min()
+            .filter(|&at| line[..at].matches('"').count() % 2 == 0)
+        else {
+            continue;
+        };
+        let indent = line.len() - line.trim_start().len();
+        let mut statement = line[at..].to_owned();
+        let opens_a_block = ["if ", "while ", "match "]
+            .iter()
+            .any(|k| line.trim_start().starts_with(k))
+            && line.trim_end().ends_with('{');
+        let mut k = n;
+        while !opens_a_block
+            && !(file.lines[k].trim_end().ends_with(';')
+                && (k == n || indent_of(&file.lines[k]) <= indent))
+            && k + 1 < file.lines.len()
+            && k - n < 12
+        {
+            k += 1;
+            if !file.lines[k].trim().is_empty() && indent_of(&file.lines[k]) < indent {
+                break;
+            }
+            statement.push('\n');
+            statement.push_str(&file.lines[k]);
+        }
+        let panics = statement.contains(".unwrap()")
+            || statement.contains(".expect(")
+            || (statement.contains(".unwrap_or_else(") && statement.contains("panic!"));
+        if !panics {
+            continue;
+        }
+        let enclosing = enclosing_fn(&file.lines[..=n], indent);
+        match found
+            .iter_mut()
+            .find(|(f, g, _)| *f == file.rel && *g == enclosing)
+        {
+            Some(entry) => entry.2 += 1,
+            None => found.push((file.rel.clone(), enclosing, 1)),
+        }
+    }
+    found
+}
+
+/// The outermost `fn` between the nearest column-0 item and the call, so a
+/// helper `fn` nested earlier in the same test does not take its callers.
+fn enclosing_fn(above: &[String], call_indent: usize) -> String {
+    let mut outermost: Option<(usize, String)> = None;
+    for line in above.iter().rev() {
+        let indent = indent_of(line);
+        if indent < call_indent {
+            if let Some(name) = fn_name_of(line) {
+                if outermost.as_ref().is_none_or(|(i, _)| indent < *i) {
+                    outermost = Some((indent, name));
+                }
+            }
+        }
+        let t = line.trim_start();
+        if indent == 0 && !(t.is_empty() || t.starts_with(['}', '#', '/', ')'])) {
+            break;
+        }
+    }
+    outermost.map_or_else(|| "<outside any fn>".to_owned(), |(_, name)| name)
+}
+
+fn indent_of(line: &str) -> usize {
+    line.len() - line.trim_start().len()
+}
+
+fn fn_name_of(line: &str) -> Option<String> {
+    let t = line.trim_start();
+    let rest = ["pub(crate) ", "pub ", "async ", "unsafe ", "const "]
+        .iter()
+        .fold(t, |acc, p| acc.strip_prefix(p).unwrap_or(acc))
+        .strip_prefix("fn ")?;
+    Some(
+        rest.chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect(),
+    )
+}
+
+/// The panic-instead-of-skip lookups are an exact list, so a new one fails
+/// until someone classifies it.
+///
+/// These are the tests that hand `which::which`'s answer to `.unwrap()` or
+/// `.expect(..)`, so a host without the tool fails them where
+/// `common::skip_without_tool` callers skip. They are left as panics: each is a
+/// hard precondition of its subject, and the fixture needs the real binary
+/// rather than a decision about whether to run. The scan above for guarded
+/// returns cannot see them, because there is no `return;` to key on.
+///
+/// SCOPE, which is the coverage boundary. The population is every `which::which(`
+/// and `which::which_in(` call in a tracked `.rs` file's test region (all of
+/// `tests/`, and `src/` from its inline `#[cfg(test)] mod … {`) whose statement
+/// panics on the answer, keyed by file and enclosing `fn` with a per-fn count.
+///
+/// BLIND SPOTS:
+/// - A lookup reached through a wrapper (`fn which(name) -> Option<_>` in
+///   `tests/e2e_install_test.rs`, `go_on_path`) is invisible, and so is a caller
+///   that unwraps the wrapper's answer.
+/// - A lookup whose answer is bound on one statement and unwrapped on another,
+///   or matched with `let … else { panic!(..) }`, is not read as panicking.
+/// - The enclosing `fn` is the outermost `fn` line indented less than the call
+///   and after the nearest column-0 item, so a call in a closure is attributed
+///   to the `fn` holding the closure, and a call in a `fn` nested inside
+///   another is attributed to the outer one.
+/// - A tool resolved by spawning it (`Command::new("git").output().unwrap()`) or
+///   by a hand-rolled `PATH` walk is not a `which` call and is not in the
+///   population.
+/// - `which_in` sites are listed only to classify them; whether a lookup
+///   resolves a planted file is a reading of the test, not something the scan
+///   can see.
+/// - The comment filter is line-leading `//` only, and a call inside a string
+///   literal is recognized by quote parity on its line, so a multi-line string
+///   holding the needle is read as source.
+#[test]
+fn every_panic_on_lookup_is_classified() {
+    let mut found: Vec<(String, String, usize)> = Vec::new();
+    for file in scanned_corpus() {
+        found.extend(scan_panic_on_lookup(&file));
+    }
+    found.sort();
+
+    assert!(
+        found.iter().map(|f| f.2).sum::<usize>() > 5,
+        "only {found:?} panic-on-lookup sites were found, so the walk is not \
+         reaching this corpus and the agreement below is vacuous"
+    );
+
+    let mut pinned: Vec<(String, String, usize)> = PANIC_ON_LOOKUP
+        .iter()
+        .map(|(f, g, n, _, _)| ((*f).to_owned(), (*g).to_owned(), *n))
+        .collect();
+    pinned.sort();
+    assert!(
+        PANIC_ON_LOOKUP.iter().all(|e| !e.4.trim().is_empty()),
+        "every classified site carries its reason"
+    );
+    assert_eq!(
+        found, pinned,
+        "the panic-on-lookup population changed. A new site must be classified in \
+         `PANIC_ON_LOOKUP` with the reason it panics rather than skips; a missing \
+         one was converted or deleted and must leave the list"
+    );
+}
+
+/// The census scan reacts to a planted member and stays quiet on the shapes
+/// that are not one, so the exact-list agreement above rests on a scan shown to
+/// read.
+#[test]
+fn the_panic_on_lookup_scan_reports_a_planted_member_and_only_that() {
+    let planted = scan_panic_on_lookup(&scanned_fixture(
+        "tests/fixture_lookup.rs",
+        &[
+            "#[test]",
+            "fn expects_it() {",
+            "    let git = which::which(\"git\").expect(\"git\");",
+            "}",
+            "fn unwraps_over_two_lines() {",
+            "    let tool = which::which(name)",
+            "        .unwrap();",
+            "}",
+            "fn panics_in_a_closure(name: &str) {",
+            "    let tool = which::which(name).unwrap_or_else(|e| {",
+            "        panic!(\"{e}\")",
+            "    });",
+            "}",
+            "fn measures_only() -> bool {",
+            "    which::which(\"go\").is_ok()",
+            "}",
+            "fn skips() {",
+            "    if which::which(\"go\").is_err() {",
+            "        return;",
+            "    }",
+            "    run().unwrap();",
+            "}",
+            "// let x = which::which(\"git\").unwrap();",
+        ],
+    ));
+    let names: Vec<&str> = planted.iter().map(|p| p.1.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "expects_it",
+            "unwraps_over_two_lines",
+            "panics_in_a_closure"
+        ],
+        "a lookup handed to a panic is a member; a lookup that is only measured, \
+         a later unwrap on another call, and a comment are not"
     );
 }
