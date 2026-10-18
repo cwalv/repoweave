@@ -20,14 +20,17 @@
 # loud skip there, not a red gate for a check CI runs regardless.
 #
 # test-autocrlf is a further stage, outside the seven above and never run
-# unless named explicitly (--stages=test-autocrlf): it re-checks out the tree
-# under a throwaway GIT_CONFIG_GLOBAL with core.autocrlf=true — matching Git
-# for Windows' installer default, which is what a Windows checkout of this
-# repo converts tracked text files with — then runs the test stage against
-# the result, and checks the tree back out under the ordinary config
-# afterward either way. It refuses on a dirty tree rather than running: the
-# checkout it needs discards uncommitted changes with no record of what they
-# were, where every other stage here only reads the tree.
+# unless named explicitly (--stages=test-autocrlf): it runs the test stage
+# under a throwaway GIT_CONFIG_SYSTEM with core.autocrlf=true — the tier Git
+# for Windows' installer sets it at, ahead of anyone's identity, which is why
+# every git repo a test creates at runtime inherits it there regardless of
+# what HOME that test points at. First it checks the tree itself out again
+# under the same setting, converting its own tracked text files to CRLF the
+# way a Windows checkout of this repo would, then checks the tree back out
+# under the ordinary config afterward either way. It refuses on a dirty tree
+# rather than running: the checkout it needs discards uncommitted changes
+# with no record of what they were, where every other stage here only reads
+# the tree.
 
 set -euo pipefail
 
@@ -114,16 +117,17 @@ if run_stage test-autocrlf; then
         printf 'test-autocrlf refuses to run: working tree is not clean (git status --porcelain is non-empty). Commit or stash first — this stage re-checks out the whole tree and a dirty one would be discarded.\n' >&2
         exit 1
     fi
-    # GIT_CONFIG_GLOBAL, not `git config --global`, so a developer's own
-    # ~/.gitconfig is never touched — and scoped to this one checkout, not
-    # exported for cargo test's own run: a test that sets its own HOME to
-    # sandbox a git identity or an autocrlf matrix of its own (several do)
-    # reads GIT_CONFIG_GLOBAL instead of that HOME's .gitconfig if it is set
-    # in the environment, identity included, which is a confound this stage
-    # must not hand every test regardless of what it is testing.
+    # GIT_CONFIG_SYSTEM, not GIT_CONFIG_GLOBAL: the system tier is what Git
+    # for Windows' installer sets core.autocrlf=true at, and it sits below
+    # anyone's identity rather than replacing it, so a test that sandboxes
+    # its own HOME to set up a git identity or an autocrlf matrix of its own
+    # (several do) keeps that identity exactly as it would on the real
+    # ambient environment this stage otherwise matches — only the system
+    # tier changes, system config having nothing in it here to lose.
     autocrlf_config="$(mktemp)"
     printf '[core]\n\tautocrlf = true\n' > "$autocrlf_config"
     restore_autocrlf_checkout() {
+        unset GIT_CONFIG_SYSTEM
         git checkout -- .
         rm -f "$autocrlf_config"
     }
@@ -132,7 +136,8 @@ if run_stage test-autocrlf; then
     # stage, if one was named alongside this one, see the tree back at its
     # ordinary LF checkout instead of the CRLF one this stage needs.
     trap restore_autocrlf_checkout EXIT
-    GIT_CONFIG_GLOBAL="$autocrlf_config" git checkout -- .
+    export GIT_CONFIG_SYSTEM="$autocrlf_config"
+    git checkout -- .
     cargo test --release --no-fail-fast
     restore_autocrlf_checkout
     trap - EXIT
