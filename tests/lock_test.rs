@@ -1465,13 +1465,38 @@ fn init_git_repo_detached(path: &Path) -> String {
     sha
 }
 
+/// Like [`init_git_repo_detached`], but cloned from a real local bare
+/// remote `rwv fetch` can clone from — needed to drive a later fetch against
+/// this pin, not just read the warning `rwv lock` prints about it. Returns
+/// the detached SHA and the origin URL.
+fn init_git_repo_detached_from_origin(tmp: &Path, path: &Path) -> (String, String) {
+    let seed = tmp.join("origin-seed");
+    init_git_repo(&seed);
+    let bare = tmp.join("origin.git");
+    common::git_in(
+        tmp,
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            &seed.to_string_lossy(),
+            &bare.to_string_lossy(),
+        ],
+    );
+    let url = common::file_url(&bare);
+    common::git_in(tmp, &["clone", "-q", &url, &path.to_string_lossy()]);
+    let sha = common::git_in(path, &["rev-parse", "HEAD"]);
+    common::git_in(path, &["checkout", "-q", "--detach", "HEAD"]);
+    (sha, url)
+}
+
 #[test]
 fn lock_detached_head_member_succeeds_with_warning() {
     // A repo member in detached-HEAD state: `rwv lock` must succeed
     // (pinning the detached SHA) but emit a warning to stderr that names:
     //   - the state ("pinning detached HEAD")
-    //   - the consequence ("no branch names this commit; a later fetch will
-    //     materialize detached")
+    //   - the consequence ("no branch names this commit; a later fetch
+    //     materializes it attached to a branch at this pin, never detached")
     //   - the next verb ("Create/checkout a branch if this is unintended")
     let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
@@ -1555,6 +1580,55 @@ fn lock_normal_head_no_detached_warning() {
         .assert()
         .success()
         .stderr(predicate::str::contains("detached HEAD").not());
+}
+
+#[test]
+fn lock_detached_head_warning_matches_what_a_later_fetch_does() {
+    // Pin the warning's claim against the fetch path it describes: delete
+    // the checkout the lock just pinned detached, run `rwv fetch`, and
+    // confirm the re-materialized checkout lands attached, not detached.
+    let tmp = common::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_path = "github/acme/server";
+    let (sha, url) = init_git_repo_detached_from_origin(tmp.path(), &root.join(repo_path));
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(&project_dir, &[(repo_path, url.as_str())]);
+
+    rwv_cmd()
+        .arg("lock")
+        .current_dir(&project_dir)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "a later fetch materializes it attached to a branch at this pin, never detached",
+        ));
+
+    let member = root.join(repo_path);
+    std::fs::remove_dir_all(&member).unwrap();
+
+    rwv_cmd()
+        .arg("fetch")
+        .current_dir(&project_dir)
+        .assert()
+        .success();
+
+    assert!(
+        member.exists(),
+        "fetch must re-materialize the deleted member"
+    );
+    assert_eq!(
+        common::checkout_ref(&member).as_deref(),
+        Some("main"),
+        "the warning claims a later fetch attaches a branch at the pin; the \
+         re-materialized checkout must not be detached"
+    );
+    assert_eq!(
+        common::git_in(&member, &["rev-parse", "HEAD"]),
+        sha,
+        "the re-materialized checkout must sit at the pinned commit"
+    );
 }
 
 // ---------------------------------------------------------------------------

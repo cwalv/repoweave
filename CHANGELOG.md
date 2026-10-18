@@ -249,6 +249,9 @@ saying the table was retired. Delete it.
 - The `store-still-claimed` refusal over live worktrees names
   `rwv workweave <project> delete <name>`, the spelling the CLI accepts. It
   used to drop the project, which the CLI rejects.
+- `rwv lock`'s detached-HEAD warning says a later `rwv fetch` attaches a
+  branch at the pin. It used to say fetch would materialize the member
+  detached, which is the opposite of what `rwv fetch` does.
 - The lock-state-mismatch hint, and the `rwv explain push` page, name
   `rwv lock --commit` or `git reset --keep <lock commit>` in place of a
   `git checkout` of the lock commit, which detaches HEAD and is refused next.

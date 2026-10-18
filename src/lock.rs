@@ -136,7 +136,8 @@ pub fn generate_lock(
             let short = &at[..at.len().min(7)];
             eprintln!(
                 "warning: pinning detached HEAD {short} in {repo_path}: \
-                 no branch names this commit; a later fetch will materialize detached. \
+                 no branch names this commit; a later fetch materializes it attached to \
+                 a branch at this pin, never detached. \
                  Create/checkout a branch if this is unintended."
             );
         }
