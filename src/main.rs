@@ -8,6 +8,15 @@
 //! module of the library — `vcs.rs` included — could call. Keeping this file
 //! empty of logic is what lets that constructor stay `pub(in crate::cli)`.
 
+/// One stack size on every platform: Windows gives the main thread 1 MiB, less
+/// than an unoptimized build needs to parse its arguments.
+const COMMAND_STACK_BYTES: usize = 8 << 20;
+
 fn main() -> std::process::ExitCode {
-    repoweave::cli::dispatch::run_and_report()
+    std::thread::Builder::new()
+        .stack_size(COMMAND_STACK_BYTES)
+        .spawn(repoweave::cli::dispatch::run_and_report)
+        .expect("the OS refused the thread rwv runs its command on")
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }
