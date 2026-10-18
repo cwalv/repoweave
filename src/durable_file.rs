@@ -46,17 +46,108 @@ pub(crate) enum CreateNewError {
 static TMP_SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// How long a caller waits for a peer's claim on a state file before it
-/// refuses.
+/// refuses, and how long a holder retries the removal that releases one.
 ///
-/// A claimed read-modify-write is a read, a small serialization and one
-/// durable publish, so a wait this long means the holder is not running rather
-/// than merely slow. Both claims in the tree share the number: two waits that
-/// drift apart would make "how long does rwv hang before it complains" depend
-/// on which file it was.
-pub(crate) const CLAIM_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+/// A waiter queues behind every holder ahead of it, so this bounds a queue of
+/// held sections rather than one, and it has to outlast a full queue on a slow
+/// host. Both claims in the tree share the number: two waits that drift apart
+/// would make "how long does rwv hang before it complains" depend on which
+/// file it was.
+pub(crate) const CLAIM_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// How often a wait re-attempts the claim.
 pub(crate) const CLAIM_POLL: std::time::Duration = std::time::Duration::from_millis(5);
+
+/// Why a [`claim`] was not won.
+#[derive(Debug)]
+pub(crate) enum ClaimError {
+    /// A peer still held the claim when [`CLAIM_WAIT`] ran out. Carries what
+    /// the claim file records about its holder.
+    Held(String),
+    Io(std::io::Error),
+}
+
+/// A claim file this process created, removed by [`ClaimFile::release`].
+#[derive(Debug)]
+pub(crate) struct ClaimFile {
+    path: PathBuf,
+    released: bool,
+}
+
+/// Create the claim file at `path`, waiting up to [`CLAIM_WAIT`] for a peer's
+/// to go.
+pub(crate) fn claim(path: &Path) -> Result<ClaimFile, ClaimError> {
+    let holder = format!("pid {}\n", std::process::id());
+    let deadline = std::time::Instant::now() + CLAIM_WAIT;
+    loop {
+        match create_new(path, holder.as_bytes()) {
+            Ok(()) => {
+                return Ok(ClaimFile {
+                    path: path.to_path_buf(),
+                    released: false,
+                })
+            }
+            Err(CreateNewError::AlreadyExists) if std::time::Instant::now() >= deadline => {
+                let held_by = std::fs::read_to_string(path)
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_else(|_| "an unreadable holder".to_string());
+                return Err(ClaimError::Held(held_by));
+            }
+            Err(CreateNewError::AlreadyExists) => std::thread::sleep(CLAIM_POLL),
+            Err(CreateNewError::Io(e)) => return Err(ClaimError::Io(e)),
+        }
+    }
+}
+
+impl ClaimFile {
+    /// Remove the claim. A failure is returned only once removal has kept
+    /// failing for [`CLAIM_WAIT`].
+    pub(crate) fn release(mut self) -> std::io::Result<()> {
+        self.released = true;
+        self.remove()
+    }
+
+    /// On Windows a delete fails while another process — a scanner, an
+    /// indexer — holds the file open without sharing deletion, and succeeds
+    /// once it closes, so one failed attempt does not yet leave the claim
+    /// behind.
+    fn remove(&self) -> std::io::Result<()> {
+        let deadline = std::time::Instant::now() + CLAIM_WAIT;
+        loop {
+            match std::fs::remove_file(&self.path) {
+                Ok(()) => return Ok(()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+                Err(e) if std::time::Instant::now() >= deadline => return Err(e),
+                Err(_) => std::thread::sleep(CLAIM_POLL),
+            }
+        }
+    }
+}
+
+impl Drop for ClaimFile {
+    /// Reached unreleased only when the work under the claim panicked, and
+    /// the panic is what reports it.
+    fn drop(&mut self) {
+        if !self.released {
+            let _ = self.remove();
+        }
+    }
+}
+
+/// What work done under a claim returns once the claim's release is known.
+///
+/// A failed release is an error even after the work succeeded: the claim it
+/// leaves behind refuses every later writer.
+pub(crate) fn after_release<T>(
+    outcome: anyhow::Result<T>,
+    released: anyhow::Result<()>,
+) -> anyhow::Result<T> {
+    match (outcome, released) {
+        (outcome, Ok(())) => outcome,
+        (Ok(_), Err(release)) => Err(release),
+        (Err(e), Err(release)) => Err(e.context(format!("{release:#}"))),
+    }
+}
 
 /// Publish `bytes` at `path`, replacing whatever is there.
 ///
@@ -200,6 +291,67 @@ mod tests {
         });
         assert_eq!(winners, 1);
         assert_eq!(leftover_temps(tmp.path()), Vec::<String>::new());
+    }
+
+    /// As long as the slowest held section seen on a Windows host with eight
+    /// writers contending. Spelled out rather than derived from
+    /// [`CLAIM_WAIT`], so the budget cannot shrink without this going red.
+    const SLOW_HOST_SECTION: std::time::Duration = std::time::Duration::from_millis(550);
+
+    /// The last of eight queued holders waits out the seven sections ahead of
+    /// it, so the budget has to cover the queue, not one holder.
+    #[test]
+    fn every_holder_in_a_queue_of_slow_sections_gets_its_turn() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("f.lock");
+        let refused: Vec<String> = std::thread::scope(|s| {
+            let handles: Vec<_> = (0..8)
+                .map(|_| {
+                    s.spawn(|| {
+                        let held = claim(&path)?;
+                        std::thread::sleep(SLOW_HOST_SECTION);
+                        held.release().map_err(ClaimError::Io)
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .filter_map(|h| h.join().unwrap().err())
+                .map(|e| format!("{e:?}"))
+                .collect()
+        });
+        assert_eq!(
+            refused,
+            Vec::<String>::new(),
+            "a holder queued behind slow sections must wait its turn, not refuse"
+        );
+        assert!(!path.exists());
+    }
+
+    /// A delete that fails only until another process lets go of the file is
+    /// retried rather than reported, and leaves no claim behind.
+    #[test]
+    #[cfg(unix)]
+    fn a_release_that_fails_for_a_moment_is_retried() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("f.lock");
+        let held = claim(&path).unwrap();
+        let writable = std::fs::metadata(tmp.path()).unwrap().permissions();
+        std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let released = std::thread::scope(|s| {
+            s.spawn(|| {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                std::fs::set_permissions(tmp.path(), writable.clone()).unwrap();
+            });
+            held.release()
+        });
+        std::fs::set_permissions(tmp.path(), writable).unwrap();
+
+        released.expect("a removal that fails only for a moment must be retried");
+        assert!(!path.exists(), "the retried release must remove the claim");
     }
 
     fn leftover_temps(dir: &Path) -> Vec<String> {

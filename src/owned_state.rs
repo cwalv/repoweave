@@ -181,7 +181,7 @@ pub fn unreadable_ledger(dir: &Path) -> Option<String> {
 /// already-written inode is the exclusion: exactly one caller creates the
 /// claim, and the loser waits for it to go rather than proceeding.
 ///
-/// A crash between acquisition and drop leaves the claim behind and every
+/// A crash between acquisition and release leaves the claim behind and every
 /// later stamp in that directory refuses until someone removes it. That is
 /// the cost of an exclusion with no daemon to expire it, and it is paid in
 /// full view — the alternative, treating an old claim as abandoned, is a
@@ -189,52 +189,54 @@ pub fn unreadable_ledger(dir: &Path) -> Option<String> {
 #[derive(Debug)]
 pub struct LedgerClaim {
     dir: std::path::PathBuf,
+    file: crate::durable_file::ClaimFile,
 }
 
 impl LedgerClaim {
-    /// Claim `dir`'s ledger, waiting up to `crate::durable_file::CLAIM_WAIT`
-    /// for a peer holding
-    /// it, then refusing with the path to remove.
-    pub fn acquire(dir: &Path) -> anyhow::Result<Self> {
+    /// Run `edit` holding `dir`'s ledger claim, waiting up to
+    /// `crate::durable_file::CLAIM_WAIT` for a peer holding it, then refusing
+    /// with the path to remove.
+    ///
+    /// The claim is released before this returns, and a release that fails is
+    /// an error naming the file left behind, whatever `edit` returned.
+    pub fn hold<T>(dir: &Path, edit: impl FnOnce(&Self) -> anyhow::Result<T>) -> anyhow::Result<T> {
+        let claim = Self::acquire(dir)?;
+        let outcome = edit(&claim);
         let path = dir.join(OWNED_DIGESTS_CLAIM_FILE);
-        let holder = format!("pid {}\n", std::process::id());
-        let deadline = std::time::Instant::now() + crate::durable_file::CLAIM_WAIT;
-        loop {
-            match crate::durable_file::create_new(&path, holder.as_bytes()) {
-                Ok(()) => {
-                    return Ok(Self {
-                        dir: dir.to_path_buf(),
-                    })
-                }
-                Err(crate::durable_file::CreateNewError::AlreadyExists) => {
-                    if std::time::Instant::now() >= deadline {
-                        let held_by = std::fs::read_to_string(&path)
-                            .map(|s| s.trim().to_string())
-                            .unwrap_or_else(|_| "an unreadable holder".to_string());
-                        crate::refuse!(
-                            RefusalKind::StateClaimHeld,
-                            "another rwv still holds the owned-digest ledger of {dir} \
-                             ({held_by}). If no rwv is running, delete {claim} and rerun.",
-                            dir = crate::path_spelling::operator_path(dir),
-                            claim = crate::path_spelling::operator_path(&path),
-                        );
-                    }
-                    std::thread::sleep(crate::durable_file::CLAIM_POLL);
-                }
-                Err(crate::durable_file::CreateNewError::Io(e)) => {
-                    return Err(anyhow::Error::new(e).context(format!(
-                        "failed to claim the owned-digest ledger of {}",
-                        dir.display()
-                    )));
-                }
+        let released = claim.file.release().with_context(|| {
+            format!(
+                "failed to release the claim on the owned-digest ledger of {dir}. \
+                 Every later stamp there refuses until {claim} is deleted",
+                dir = crate::path_spelling::operator_path(dir),
+                claim = crate::path_spelling::operator_path(&path),
+            )
+        });
+        crate::durable_file::after_release(outcome, released)
+    }
+
+    fn acquire(dir: &Path) -> anyhow::Result<Self> {
+        let path = dir.join(OWNED_DIGESTS_CLAIM_FILE);
+        match crate::durable_file::claim(&path) {
+            Ok(file) => Ok(Self {
+                dir: dir.to_path_buf(),
+                file,
+            }),
+            Err(crate::durable_file::ClaimError::Held(held_by)) => {
+                crate::refuse!(
+                    RefusalKind::StateClaimHeld,
+                    "another rwv still holds the owned-digest ledger of {dir} \
+                     ({held_by}). If no rwv is running, delete {claim} and rerun.",
+                    dir = crate::path_spelling::operator_path(dir),
+                    claim = crate::path_spelling::operator_path(&path),
+                );
+            }
+            Err(crate::durable_file::ClaimError::Io(e)) => {
+                Err(anyhow::Error::new(e).context(format!(
+                    "failed to claim the owned-digest ledger of {}",
+                    dir.display()
+                )))
             }
         }
-    }
-}
-
-impl Drop for LedgerClaim {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(self.dir.join(OWNED_DIGESTS_CLAIM_FILE));
     }
 }
 
@@ -243,8 +245,9 @@ impl Drop for LedgerClaim {
 /// ```no_run
 /// use repoweave::owned_state::{read_owned_digests_for_edit, LedgerClaim};
 /// use std::path::Path;
-/// let claim = LedgerClaim::acquire(Path::new("/ws/projects/p")).unwrap();
-/// let _entries = read_owned_digests_for_edit(&claim);
+/// let _entries = LedgerClaim::hold(Path::new("/ws/projects/p"), |claim| {
+///     Ok(read_owned_digests_for_edit(claim))
+/// });
 /// ```
 ///
 /// ```compile_fail
@@ -283,12 +286,13 @@ fn edit_owned_digests(
     dir: &Path,
     edit: impl FnOnce(&mut BTreeMap<String, LedgerEntry>) -> anyhow::Result<LedgerEdit>,
 ) -> anyhow::Result<()> {
-    let claim = LedgerClaim::acquire(dir)?;
-    let mut entries = read_owned_digests_for_edit(&claim);
-    match edit(&mut entries)? {
-        LedgerEdit::Changed => write_owned_digests(&claim, &entries),
-        LedgerEdit::Unchanged => Ok(()),
-    }
+    LedgerClaim::hold(dir, |claim| {
+        let mut entries = read_owned_digests_for_edit(claim);
+        match edit(&mut entries)? {
+            LedgerEdit::Changed => write_owned_digests(claim, &entries),
+            LedgerEdit::Unchanged => Ok(()),
+        }
+    })
 }
 
 /// Write `entries` as the ledger of the directory `claim` covers, and keep the
@@ -774,12 +778,13 @@ pub fn reset_unreadable_ledger(dir: &Path) -> anyhow::Result<Option<String>> {
     if unreadable_ledger(dir).is_none() {
         return Ok(None);
     }
-    let claim = LedgerClaim::acquire(dir)?;
-    let fault_under_claim = unreadable_ledger_for_edit(&claim);
-    if fault_under_claim.is_some() {
-        write_owned_digests(&claim, &BTreeMap::new())?;
-    }
-    Ok(fault_under_claim)
+    LedgerClaim::hold(dir, |claim| {
+        let fault_under_claim = unreadable_ledger_for_edit(claim);
+        if fault_under_claim.is_some() {
+            write_owned_digests(claim, &BTreeMap::new())?;
+        }
+        Ok(fault_under_claim)
+    })
 }
 
 /// The files `dir`'s ledger attests, in ledger order.
@@ -1256,6 +1261,39 @@ mod tests {
         assert!(
             !tmp.path().join(OWNED_DIGESTS_CLAIM_FILE).exists(),
             "an edit that changes nothing must still release its claim"
+        );
+    }
+
+    /// A claim that cannot be removed refuses every later stamp in this
+    /// directory, so the edit that left it behind must say so — even though
+    /// the edit itself succeeded.
+    #[test]
+    #[cfg(unix)]
+    fn a_release_that_keeps_failing_is_reported_with_the_file_to_delete() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("ledger");
+        std::fs::create_dir(&dir).unwrap();
+        let writable = std::fs::metadata(&dir).unwrap().permissions();
+
+        let result = edit_owned_digests(&dir, |_| {
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555))?;
+            Ok(LedgerEdit::Unchanged)
+        });
+        std::fs::set_permissions(&dir, writable).unwrap();
+
+        let message = format!(
+            "{:#}",
+            result.expect_err("a release that failed must not be reported as success")
+        );
+        assert!(
+            message.contains(OWNED_DIGESTS_CLAIM_FILE) && message.contains("deleted"),
+            "the error must name the claim left behind and the exit: {message}"
+        );
+        assert!(
+            dir.join(OWNED_DIGESTS_CLAIM_FILE).exists(),
+            "the release failed, so the claim is still there to report"
         );
     }
 

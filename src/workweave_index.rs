@@ -324,20 +324,44 @@ pub fn write(claim: &IndexClaim, index: &WorkweaveIndex) -> anyhow::Result<()> {
 /// processes — so the per-repo fan-out that lands every repo's receipt in this
 /// one index needs nothing further.
 ///
-/// A crash between acquisition and drop leaves the claim behind and every
+/// A crash between acquisition and release leaves the claim behind and every
 /// later write to this index refuses until someone removes it — the cost of
 /// an exclusion with no daemon to expire it, paid in full view.
 #[derive(Debug)]
 pub struct IndexClaim {
     primary_root: PathBuf,
     project: ProjectName,
+    file: crate::durable_file::ClaimFile,
 }
 
 impl IndexClaim {
-    /// Claim `(primary_root, project)`'s index, waiting the shared claim
-    /// budget (`durable_file::CLAIM_WAIT`) for a peer holding it, then
-    /// refusing with the path to remove.
-    pub fn acquire(primary_root: &Path, project: &ProjectName) -> anyhow::Result<Self> {
+    /// Run `edit` holding `(primary_root, project)`'s index claim, waiting the
+    /// shared claim budget (`durable_file::CLAIM_WAIT`) for a peer holding it,
+    /// then refusing with the path to remove.
+    ///
+    /// The claim is released before this returns, and a release that fails is
+    /// an error naming the file left behind, whatever `edit` returned.
+    pub fn hold<T>(
+        primary_root: &Path,
+        project: &ProjectName,
+        edit: impl FnOnce(&Self) -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
+        let claim = Self::acquire(primary_root, project)?;
+        let outcome = edit(&claim);
+        let path = claim_path(primary_root, project);
+        let released = claim.file.release().with_context(|| {
+            format!(
+                "failed to release the claim on the workweave index of project \
+                 {project} at {root}. Every later write to it refuses until {claim} \
+                 is deleted",
+                root = crate::path_spelling::operator_path(primary_root),
+                claim = crate::path_spelling::operator_path(&path),
+            )
+        });
+        crate::durable_file::after_release(outcome, released)
+    }
+
+    fn acquire(primary_root: &Path, project: &ProjectName) -> anyhow::Result<Self> {
         let path = claim_path(primary_root, project);
         let parent = path
             .parent()
@@ -349,46 +373,26 @@ impl IndexClaim {
                 parent.display()
             );
         }
-        let holder = format!("pid {}\n", std::process::id());
-        let deadline = std::time::Instant::now() + crate::durable_file::CLAIM_WAIT;
-        loop {
-            match crate::durable_file::create_new(&path, holder.as_bytes()) {
-                Ok(()) => {
-                    return Ok(Self {
-                        primary_root: primary_root.to_path_buf(),
-                        project: project.clone(),
-                    })
-                }
-                Err(crate::durable_file::CreateNewError::AlreadyExists) => {
-                    if std::time::Instant::now() >= deadline {
-                        let held_by = std::fs::read_to_string(&path)
-                            .map(|s| s.trim().to_string())
-                            .unwrap_or_else(|_| "an unreadable holder".to_string());
-                        crate::refuse!(
-                            RefusalKind::StateClaimHeld,
-                            "another rwv still holds the workweave index of project \
-                             {project} at {root} ({held_by}). If no rwv is running, \
-                             delete {claim} and rerun.",
-                            root = crate::path_spelling::operator_path(primary_root),
-                            claim = crate::path_spelling::operator_path(&path),
-                        );
-                    }
-                    std::thread::sleep(crate::durable_file::CLAIM_POLL);
-                }
-                Err(crate::durable_file::CreateNewError::Io(e)) => {
-                    return Err(anyhow::Error::new(e).context(format!(
-                        "failed to claim the workweave index at {}",
-                        path.display()
-                    )));
-                }
+        match crate::durable_file::claim(&path) {
+            Ok(file) => Ok(Self {
+                primary_root: primary_root.to_path_buf(),
+                project: project.clone(),
+                file,
+            }),
+            Err(crate::durable_file::ClaimError::Held(held_by)) => {
+                crate::refuse!(
+                    RefusalKind::StateClaimHeld,
+                    "another rwv still holds the workweave index of project \
+                     {project} at {root} ({held_by}). If no rwv is running, \
+                     delete {claim} and rerun.",
+                    root = crate::path_spelling::operator_path(primary_root),
+                    claim = crate::path_spelling::operator_path(&path),
+                );
             }
+            Err(crate::durable_file::ClaimError::Io(e)) => Err(anyhow::Error::new(e).context(
+                format!("failed to claim the workweave index at {}", path.display()),
+            )),
         }
-    }
-}
-
-impl Drop for IndexClaim {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(claim_path(&self.primary_root, &self.project));
     }
 }
 
@@ -417,8 +421,7 @@ pub fn resolve_container(primary_root: &Path, project: &ProjectName) -> anyhow::
 /// use repoweave::workweave_index::{read_for_edit, IndexClaim};
 /// use std::path::Path;
 /// let project = ProjectName::new("p").unwrap();
-/// let claim = IndexClaim::acquire(Path::new("/ws"), &project).unwrap();
-/// let _index = read_for_edit(&claim).unwrap();
+/// let _index = IndexClaim::hold(Path::new("/ws"), &project, read_for_edit).unwrap();
 /// ```
 ///
 /// ```compile_fail
@@ -460,12 +463,13 @@ pub fn set_container(
     project: &ProjectName,
     container: PathBuf,
 ) -> anyhow::Result<PathBuf> {
-    let claim = IndexClaim::acquire(primary_root, project)?;
     let container = canonical_recorded_path(&container);
-    let mut index =
-        read_for_edit(&claim)?.unwrap_or_else(|| WorkweaveIndex::new(container.clone()));
-    index.container = container.clone();
-    write(&claim, &index)?;
+    IndexClaim::hold(primary_root, project, |claim| {
+        let mut index =
+            read_for_edit(claim)?.unwrap_or_else(|| WorkweaveIndex::new(container.clone()));
+        index.container = container.clone();
+        write(claim, &index)
+    })?;
     Ok(container)
 }
 
@@ -486,10 +490,11 @@ pub fn record_workweave(
     name: &str,
     path: PathBuf,
 ) -> anyhow::Result<()> {
-    let claim = IndexClaim::acquire(primary_root, project)?;
-    let mut index = read_or_seed(&claim)?;
-    index.workweaves.insert(name.to_string(), path);
-    write(&claim, &index)
+    IndexClaim::hold(primary_root, project, |claim| {
+        let mut index = read_or_seed(claim)?;
+        index.workweaves.insert(name.to_string(), path);
+        write(claim, &index)
+    })
 }
 
 /// Read the index, or seed a fresh one when the file does not exist.
@@ -523,15 +528,16 @@ pub fn forget_workweave(
     project: &ProjectName,
     name: &str,
 ) -> anyhow::Result<()> {
-    let claim = IndexClaim::acquire(primary_root, project)?;
-    let mut index = match read_for_edit(&claim)? {
-        Some(idx) => idx,
-        None => return Ok(()),
-    };
-    if index.workweaves.remove(name).is_none() {
-        return Ok(());
-    }
-    write(&claim, &index)
+    IndexClaim::hold(primary_root, project, |claim| {
+        let mut index = match read_for_edit(claim)? {
+            Some(idx) => idx,
+            None => return Ok(()),
+        };
+        if index.workweaves.remove(name).is_none() {
+            return Ok(());
+        }
+        write(claim, &index)
+    })
 }
 
 /// Look up the recorded path for a workweave without any marker validation.
@@ -746,28 +752,29 @@ impl RefRegistry {
             )
         })?;
 
-        let claim = IndexClaim::acquire(&self.primary_root, &self.project)?;
-        let mut index = read_or_seed(&claim)?;
-        let receipts = index
-            .receipts
-            .as_mut()
-            .ok_or_else(|| self.legacy_index_error())?;
+        IndexClaim::hold(&self.primary_root, &self.project, |claim| {
+            let mut index = read_or_seed(claim)?;
+            let receipts = index
+                .receipts
+                .as_mut()
+                .ok_or_else(|| self.legacy_index_error())?;
 
-        if let Some(existing) = receipts
-            .iter()
-            .find(|r| same_store(&r.store, &key_store) && r.name == raw_name)
-        {
-            return existing.to_owned_ref(&self.index_path());
-        }
+            if let Some(existing) = receipts
+                .iter()
+                .find(|r| same_store(&r.store, &key_store) && r.name == raw_name)
+            {
+                return existing.to_owned_ref(&self.index_path());
+            }
 
-        receipts.push(RefReceipt {
-            store: key_store.clone(),
-            name: raw_name.clone(),
-            created_at: created_at.as_str().to_owned(),
-        });
-        write(&claim, &index)?;
+            receipts.push(RefReceipt {
+                store: key_store.clone(),
+                name: raw_name.clone(),
+                created_at: created_at.as_str().to_owned(),
+            });
+            write(claim, &index)?;
 
-        Ok(OwnedRef::from_receipt(key_store, raw_name, created_at))
+            Ok(OwnedRef::from_receipt(key_store, raw_name, created_at))
+        })
     }
 
     /// The receipt for `(store, name)`, if rwv holds one.
@@ -820,21 +827,22 @@ impl RefRegistry {
     /// so retracting into a legacy index cannot quietly create the registry
     /// field and hide that the migration is still pending.
     pub fn retract(&mut self, store: &Path, name: &RawRefName) -> anyhow::Result<bool> {
-        let claim = IndexClaim::acquire(&self.primary_root, &self.project)?;
-        let Some(mut index) = read_for_edit(&claim)? else {
-            return Ok(false);
-        };
-        let Some(receipts) = index.receipts.as_mut() else {
-            return Ok(false);
-        };
-        let key_store = store_key(store);
-        let before = receipts.len();
-        receipts.retain(|r| !(same_store(&r.store, &key_store) && &r.name == name));
-        if receipts.len() == before {
-            return Ok(false);
-        }
-        write(&claim, &index)?;
-        Ok(true)
+        IndexClaim::hold(&self.primary_root, &self.project, |claim| {
+            let Some(mut index) = read_for_edit(claim)? else {
+                return Ok(false);
+            };
+            let Some(receipts) = index.receipts.as_mut() else {
+                return Ok(false);
+            };
+            let key_store = store_key(store);
+            let before = receipts.len();
+            receipts.retain(|r| !(same_store(&r.store, &key_store) && &r.name == name));
+            if receipts.len() == before {
+                return Ok(false);
+            }
+            write(claim, &index)?;
+            Ok(true)
+        })
     }
 
     /// Give a legacy index an empty receipt registry.
@@ -856,18 +864,19 @@ impl RefRegistry {
     /// once every owned weave's health floor records a clean doctor at the
     /// version that removes them (see [`crate::health_floor`]).
     pub fn migrate_legacy_index(&mut self) -> anyhow::Result<bool> {
-        let claim = IndexClaim::acquire(&self.primary_root, &self.project)?;
-        let Some(mut index) = read_for_edit(&claim)? else {
-            // No file: nothing recorded, nothing legacy. The next write
-            // seeds a current-shape index.
-            return Ok(false);
-        };
-        if index.receipts.is_some() {
-            return Ok(false);
-        }
-        index.receipts = Some(Vec::new());
-        write(&claim, &index)?;
-        Ok(true)
+        IndexClaim::hold(&self.primary_root, &self.project, |claim| {
+            let Some(mut index) = read_for_edit(claim)? else {
+                // No file: nothing recorded, nothing legacy. The next write
+                // seeds a current-shape index.
+                return Ok(false);
+            };
+            if index.receipts.is_some() {
+                return Ok(false);
+            }
+            index.receipts = Some(Vec::new());
+            write(claim, &index)?;
+            Ok(true)
+        })
     }
 
     /// The index file this registry reads and writes.
@@ -1142,6 +1151,40 @@ mod tests {
         );
     }
 
+    /// A claim that cannot be removed refuses every later write to this
+    /// index, so the edit that left it behind must say so — even though the
+    /// edit itself succeeded.
+    #[test]
+    #[cfg(unix)]
+    fn a_release_that_keeps_failing_is_reported_with_the_file_to_delete() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let primary = tmp.path().join("ws");
+        let project = make_project(&primary, "web-app");
+        let project_dir = primary.join("projects/web-app");
+        let writable = std::fs::metadata(&project_dir).unwrap().permissions();
+
+        let result = IndexClaim::hold(&primary, &project, |_| {
+            std::fs::set_permissions(&project_dir, std::fs::Permissions::from_mode(0o555))?;
+            Ok(())
+        });
+        std::fs::set_permissions(&project_dir, writable).unwrap();
+
+        let message = format!(
+            "{:#}",
+            result.expect_err("a release that failed must not be reported as success")
+        );
+        assert!(
+            message.contains(INDEX_CLAIM_FILE) && message.contains("deleted"),
+            "the error must name the claim left behind and the exit: {message}"
+        );
+        assert!(
+            claim_path(&primary, &project).exists(),
+            "the release failed, so the claim is still there to report"
+        );
+    }
+
     /// The decided behavior for a claim whose holder died: later writes
     /// refuse, after a bounded wait, naming the file to remove. Waiting
     /// forever hangs the verb; treating an old claim as abandoned publishes
@@ -1217,8 +1260,7 @@ mod tests {
             "hotfix".to_string(),
             PathBuf::from("/abs/container/web-app--hotfix"),
         );
-        let claim = IndexClaim::acquire(&primary, &project).unwrap();
-        write(&claim, &index).unwrap();
+        IndexClaim::hold(&primary, &project, |claim| write(claim, &index)).unwrap();
 
         let got = read(&primary, &project).unwrap().unwrap();
         assert_eq!(got.container, PathBuf::from("/abs/container"));
@@ -1338,8 +1380,7 @@ mod tests {
         let project = make_project(&primary, "web-app");
 
         let index = WorkweaveIndex::new(PathBuf::from("/container"));
-        let claim = IndexClaim::acquire(&primary, &project).unwrap();
-        write(&claim, &index).unwrap();
+        IndexClaim::hold(&primary, &project, |claim| write(claim, &index)).unwrap();
 
         // The chokepoint owns hygiene: any write path (create, delete,
         // set-container, doctor adoption/prune) must leave the index
@@ -1362,7 +1403,7 @@ mod tests {
         // Note: no projects/web-app dir.
         let project = ProjectName::new("web-app").unwrap();
 
-        let claim_err = IndexClaim::acquire(&primary, &project)
+        let claim_err = IndexClaim::hold(&primary, &project, |_| Ok(()))
             .expect_err("claim must fail without project dir");
         let message = format!("{claim_err:#}");
         assert!(

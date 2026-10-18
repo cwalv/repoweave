@@ -226,7 +226,8 @@ read-modify-write, a `link(2)` claim serializes it, which is git's `index.lock`
 in a different spelling. Two shapes, and they are not the same guarantee:
 
 - **The owned-digest ledger and the workweave index take a claim per
-  read-modify-write**, released when it drops. That one is a type rather than a
+  read-modify-write**, released when the edit returns; a release that fails is
+  an error naming the file left behind. That one is a type rather than a
   discipline: `read_owned_digests_for_edit` and `write_owned_digests` take a
   `&LedgerClaim`, and `workweave_index::read_for_edit` and
   `workweave_index::write` take an `&IndexClaim`, so an edit path that reads or

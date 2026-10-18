@@ -592,44 +592,26 @@ const ALLOWLIST: &[Allowed] = &[
             cleanup that used to sit here moved to durable_file.rs, audited below.",
     },
     Allowed {
-        file: "workweave_index.rs",
-        pattern: "remove_file",
-        count: 1,
-        callers: &[],
-        justification: "IndexClaim::drop: releasing the \
-            .rwv-workweave-index.lock claim this value's construction \
-            created, which is rwv-internal bookkeeping and never user data. \
-            The path is not a parameter — it is derived from the claim's own \
-            (primary root, project) and the one constant — so the site cannot \
-            be pointed at anything else, and the type's only constructor is \
-            the acquire that won it. Unlinking is the whole release: left \
-            behind, it is the wedge every later index write refuses on.",
-    },
-    Allowed {
-        file: "owned_state.rs",
-        pattern: "remove_file",
-        count: 1,
-        callers: &[],
-        justification: "LedgerClaim::drop: releasing the \
-            .rwv-owned-digests.lock claim this value's construction created, \
-            which is rwv-internal bookkeeping and never user data. The name \
-            is not a parameter — it is joined from the claim's own directory \
-            and the one constant — so the site cannot be pointed at anything \
-            else, and the type has no public constructor, so a value that \
-            exists is a claim this process won. Unlinking is the whole \
-            release: left behind, it is the wedge every later stamp in that \
-            directory refuses on.",
-    },
-    Allowed {
         file: "durable_file.rs",
         pattern: "remove_file",
-        count: 3,
+        count: 4,
         callers: &[],
-        justification: "Temp-file cleanup for the two publish modes, and never \
-            able to name the published file itself. (1) staged_temp, when the \
+        justification: "Temp-file cleanup for the two publish modes, never \
+            able to name the published file itself, plus the claim release. \
+            (1) staged_temp, when the \
             content write or its fsync failed. (2) replace, when the rename \
             failed. (3) create_new's always-runs cleanup after link(2), which \
-            consumes the temp's role whether or not the link took. Every site \
+            consumes the temp's role whether or not the link took. (4) \
+            ClaimFile::remove, releasing a claim file \
+            (.rwv-workweave-index.lock, .rwv-owned-digests.lock), which is \
+            rwv-internal bookkeeping and never user data. The path is the \
+            value's own, not a parameter, and claim() is the type's only \
+            constructor and builds one only after create_new won that path, \
+            so a ClaimFile that exists names a file this process created. \
+            Unlinking is the whole release: left behind, the claim is the \
+            wedge every later writer refuses on, so release reports a \
+            removal that keeps failing rather than dropping it. Sites \
+            (1)-(3): every site \
             unlinks only the sibling temp this call created moments earlier, \
             named <file>.tmp.<pid>.<serial>: the pid keeps processes apart and \
             a process-local AtomicU64 keeps threads within one process apart, \

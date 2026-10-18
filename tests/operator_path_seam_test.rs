@@ -276,12 +276,28 @@ const ROUTED: &[Routed] = &[
                  claim file to delete",
     },
     Routed {
+        file: "owned_state.rs",
+        scope: "",
+        needle: r#""failed to release the claim on the owned-digest ledger of {dir}. \"#,
+        renders: 2,
+        prints: "the error an edit returns when its ledger claim could not be removed, \
+                 naming the directory and the claim file to delete",
+    },
+    Routed {
         file: "workweave_index.rs",
         scope: "",
         needle: r#""another rwv still holds the workweave index of project \"#,
         renders: 2,
         prints: "the workweave-index claim refusal, naming the primary root and \
                  the claim file to delete",
+    },
+    Routed {
+        file: "workweave_index.rs",
+        scope: "",
+        needle: r#""failed to release the claim on the workweave index of project \"#,
+        renders: 2,
+        prints: "the error an edit returns when its index claim could not be removed, \
+                 naming the primary root and the claim file to delete",
     },
     Routed {
         file: "push.rs",
