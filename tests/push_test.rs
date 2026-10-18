@@ -373,7 +373,7 @@ fn push_refuses_an_uncommitted_relock() {
 }
 
 /// B1: preconditions run "before any network call, under `--dry-run` too"
-/// (cli.md:315, push-cross-repo-feature.md:11) — the dry-run branch
+/// (cli.md:315, docs/how-to/push-cross-repo-feature.md:11) — the dry-run branch
 /// (src/push.rs's `if dry_run` print-the-plan step) sits after every
 /// `refuse!`, so passing `--dry-run` must not let this one through.
 /// Revert to watch it go red: wrap the `refuse_uncommitted_project_state`
@@ -499,7 +499,7 @@ fn push_refuses_when_project_repo_off_canonical_branch() {
 // ============================================================================
 
 /// B2: a project repo on a detached HEAD refuses with `head-not-on-branch`
-/// (cli.md:317, push-cross-repo-feature.md:14) — distinct from
+/// (cli.md:317, docs/how-to/push-cross-repo-feature.md:14) — distinct from
 /// `push_refuses_detached_head` above, which detaches a *member* repo and
 /// takes the `unpushable-repo-branch` route instead. Revert to watch it go
 /// red: in `run_push` (src/push.rs), change the project-repo

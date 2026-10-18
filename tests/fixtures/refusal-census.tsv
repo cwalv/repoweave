@@ -14,7 +14,7 @@ src/add_remove.rs	missing-creation-param	tests/refusal_arrival_test.rs	1
 src/add_remove.rs	no-clone-to-adopt	tests/project_and_source_spelling_test.rs	1
 src/add_remove.rs	no-matching-registry	-	1
 src/add_remove.rs	no-remote-default-branch	-	2
-src/add_remove.rs	no-remote-url	-	1
+src/add_remove.rs	no-remote-url	tests/refusal_arrival_test.rs	1
 src/add_remove.rs	occupied-placement	tests/refusal_arrival_test.rs	2
 src/add_remove.rs	repo-not-in-manifest	tests/role_verb_test.rs	1
 src/add_remove.rs	shared-clone-referenced	-	1

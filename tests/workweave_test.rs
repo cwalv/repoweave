@@ -578,7 +578,7 @@ fn workweave_delete_removes_directory_and_worktrees() {
     );
 }
 
-/// B7 (review-pr-with-workweave.md:61): "`rwv workweave web-app delete`
+/// B7 (docs/how-to/review-pr-with-workweave.md:61): "`rwv workweave web-app delete`
 /// also works from inside the workweave." Same fixture as
 /// `workweave_delete_removes_directory_and_worktrees`, but the delete
 /// subprocess's own cwd is the workweave directory it is about to remove,
