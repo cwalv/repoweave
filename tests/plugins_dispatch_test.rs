@@ -14,7 +14,7 @@
 //!     `rwv-` name.
 //!
 //! Every plugin fixture carries a POSIX shell body and a batch body for the
-//! same behaviour; [`common::write_plugin`] writes whichever the host runs.
+//! same behavior; [`common::write_plugin`] writes whichever the host runs.
 
 use predicates::prelude::*;
 use std::fs;
