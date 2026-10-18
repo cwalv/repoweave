@@ -1874,7 +1874,7 @@ fn check_store_unclaimed(
              \n\
              Removing the store would delete their object database and worktree \
              administration along with it. Remove those workweaves first \
-             (`rwv workweave delete <name>`), then {rerun}.",
+             (`rwv workweave {project} delete <name>`), then {rerun}.",
             store.display(),
             live.join("\n  "),
         );
@@ -8514,6 +8514,24 @@ mod tests {
         assert!(
             store.exists() && live.exists(),
             "a refused prune must leave both the store and the live checkout on disk"
+        );
+        assert!(
+            msg.contains(&format!("rwv workweave {project} delete <name>")),
+            "the remedy must name the CLI's real spelling, with this fixture's \
+             project bound in; got:\n{msg}"
+        );
+
+        // `rwv workweave <project> delete <name>` retracts the registration;
+        // mirror that at the git level R4 reads.
+        git(
+            &store,
+            &["worktree", "remove", "--force", live.to_str().unwrap()],
+        );
+        prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped(), &project)
+            .expect("with the live worktree gone the store is unclaimed");
+        assert!(
+            !store.exists(),
+            "once nothing claims the store, prune removes it"
         );
     }
 

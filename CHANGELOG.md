@@ -246,6 +246,9 @@ saying the table was retired. Delete it.
 - The unset `origin/HEAD` hint no longer offers "push once with an explicit
   branch", which is what leaves it unset; it names
   `git remote set-head origin -a`.
+- The `store-still-claimed` refusal over live worktrees names
+  `rwv workweave <project> delete <name>`, the spelling the CLI accepts. It
+  used to drop the project, which the CLI rejects.
 - The lock-state-mismatch hint, and the `rwv explain push` page, name
   `rwv lock --commit` or `git reset --keep <lock commit>` in place of a
   `git checkout` of the lock commit, which detaches HEAD and is refused next.
