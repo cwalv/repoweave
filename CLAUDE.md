@@ -317,6 +317,35 @@ machinery was built", not "in this epic". In the gate a hit surfaces late, as
 `generator exited non-zero` after the test stage; `cargo run --quiet --bin
 generate-explain` names the file, line and word in seconds.
 
+## Cited tokens exist
+
+A finding kind, sub-kind, refusal token or `rwv` command that an operator page
+cites in backticks is one the code defines. A reader looks a token up with
+`rwv explain` and types a command as written; an invented one is a dead end
+that reads as authoritative.
+
+### What is mechanized, and what is not
+
+`check_doc_tokens` in `src/bin/generate-explain.rs` holds the rule over every
+page `docs/SUMMARY.md` lists and root `README.md`. A kebab-cased span must be
+a word the code spells — a condition register's token, a clap name, a schema
+value, or a production literal or serde-derived name in `src/` outside
+`src/bin/` — or a plugin's `rwv-` name, or be listed in `NON_TOKEN_WORDS`. A
+span written as a sub-kind of the kind before it must be one of that kind's.
+An `rwv` command, in prose or in a fenced block, must resolve in clap's tree,
+unless the page names its `rwv-<verb>` plugin or `ABSENT_VERBS` lists the
+verb.
+
+What it does not hold:
+
+- a token outside backticks, or inside a span holding more than the token;
+- a single-word token, which reads the same as an English word, except where
+  it is written as a sub-kind of its kind;
+- flags, and the arguments of a leaf command other than `rwv explain`'s and
+  `rwv doctor --kind`'s;
+- meaning: a real token cited for the wrong condition passes, and so does any
+  word some production literal in `src/` happens to spell.
+
 ## A green gate is not coverage
 
 The rules above each end with a "What is mechanized, and what is not". That is not

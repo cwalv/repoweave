@@ -51,6 +51,8 @@
 //!   `docs/internals/`, which mdBook does not render.
 //! - `check_vocabulary_and_spelling` — operator surfaces and message text
 //!   use the canonical vocabulary, and all prose uses American spelling.
+//! - `check_doc_tokens` — every finding kind, sub-kind, refusal token and
+//!   `rwv` command an operator page cites exists in the code.
 //! - `check_explanation_joints_index_agreement` — `docs/SUMMARY.md` and
 //!   `docs/explanation/index.md` list the same joints pages.
 //!
@@ -3490,6 +3492,885 @@ fn check_vocabulary_and_spelling(root: &Path, help_pages: &[(String, String)]) -
     findings
 }
 
+/// Kebab-cased words an operator page writes in backticks that name nothing
+/// rwv defines, and are not meant to, with what each one is.
+const NON_TOKEN_WORDS: &[(&str, &str)] = &[
+    ("billing-service", "an example project name"),
+    ("mobile-app", "an example project name"),
+    ("web-app", "an example project name"),
+    ("default-push", "a Mercurial path name"),
+    ("git-repo", "another tool"),
+    ("maturin-import-hook", "a Python package"),
+    ("write-file-atomic", "an npm package"),
+    (
+        "hide-dotfile",
+        "a misspelled settings key, shown being refused",
+    ),
+    ("remote-url-mismatch", "a rename a page weighs"),
+    ("vcs-seam", "a gate of this repository's build"),
+];
+
+/// Verbs an operator page names to say rwv does not have them.
+const ABSENT_VERBS: &[&str] = &["branch", "commit", "exec", "publish", "pull", "run"];
+
+/// What a backticked token on an operator page may name.
+///
+/// The condition registers are kept apart because each is a population the
+/// scan must go on reaching. `code_words` is every other kebab-cased word the
+/// code spells: string literals in the production regions of `src/` outside
+/// `src/bin/`, clap's command, alias, flag and value names, and the enum
+/// values and field names of the generated schemas.
+struct TokenVocabulary {
+    finding_kinds: HashSet<String>,
+    sub_kinds: HashMap<String, HashSet<String>>,
+    refusals: HashSet<String>,
+    failure_kinds: HashSet<String>,
+    explain_verbs: HashSet<String>,
+    code_words: HashSet<String>,
+}
+
+impl TokenVocabulary {
+    fn is_sub_kind(&self, token: &str) -> bool {
+        self.sub_kinds.values().any(|subs| subs.contains(token))
+    }
+
+    fn is_condition(&self, token: &str) -> bool {
+        self.finding_kinds.contains(token)
+            || self.refusals.contains(token)
+            || self.failure_kinds.contains(token)
+            || self.is_sub_kind(token)
+    }
+
+    fn defines(&self, token: &str) -> bool {
+        self.is_condition(token) || self.code_words.contains(token)
+    }
+}
+
+fn token_vocabulary(root: &Path, cli: &clap::Command) -> TokenVocabulary {
+    let (finding_kinds, sub_kinds) = doctor_finding_vocabulary();
+    let sync: serde_json::Value = serde_json::from_str(&schema_sync()).expect("sync schema parses");
+    let failure_kinds = ["VcsErrorOutput", "SyncFailureOutput"]
+        .iter()
+        .flat_map(|def| schema_variant_tags(&sync["definitions"][def]))
+        .collect();
+    let mut code_words = src_code_kebab_words(root);
+    clap_words(cli, &mut code_words);
+    code_words.extend(schema_words(root));
+    TokenVocabulary {
+        finding_kinds,
+        sub_kinds,
+        refusals: fs::read_to_string(root.join("src/refusal.rs"))
+            .map(|source| refusal_tokens(&source))
+            .unwrap_or_default(),
+        failure_kinds,
+        explain_verbs: explain::known_verbs().map(str::to_owned).collect(),
+        code_words,
+    }
+}
+
+/// The tags a schemars enum definition publishes: string variants by value,
+/// internally tagged ones by their `kind`, externally tagged ones by their
+/// single key.
+fn schema_variant_tags(def: &serde_json::Value) -> Vec<String> {
+    let variants: Vec<&serde_json::Value> = match def["oneOf"].as_array() {
+        Some(variants) => variants.iter().collect(),
+        None => vec![def],
+    };
+    let strings = |values: &Vec<serde_json::Value>| -> Vec<String> {
+        values
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_owned))
+            .collect()
+    };
+    let mut tags = Vec::new();
+    for variant in variants {
+        if let Some(values) = variant["enum"].as_array() {
+            tags.extend(strings(values));
+        } else if let Some(values) = variant["properties"]["kind"]["enum"].as_array() {
+            tags.extend(strings(values));
+        } else if let Some([key]) = variant["required"].as_array().map(Vec::as_slice) {
+            tags.extend(key.as_str().map(str::to_owned));
+        }
+    }
+    tags
+}
+
+/// Every `kind` `rwv doctor --json` can carry, violations and integration
+/// issues alike, and each violation kind's `sub_kind` tags.
+fn doctor_finding_vocabulary() -> (HashSet<String>, HashMap<String, HashSet<String>>) {
+    let json =
+        serde_json::to_value(schema_for!(DoctorJsonOutput)).expect("doctor schema serializes");
+    let mut kinds: HashSet<String> = schema_variant_tags(&json["definitions"]["IssueKindOutput"])
+        .into_iter()
+        .collect();
+    let mut sub_kinds = HashMap::new();
+    for (kind, variant) in doctor_violation_variants() {
+        if variant["properties"].get("sub_kind").is_some() {
+            let def = resolve_ref(&json, &variant["properties"]["sub_kind"]);
+            sub_kinds.insert(kind.clone(), schema_variant_tags(def).into_iter().collect());
+        }
+        kinds.insert(kind);
+    }
+    (kinds, sub_kinds)
+}
+
+/// Every token `RefusalKind` serializes to, read from its declaration: a
+/// variant's name in kebab case, or the name a `#[serde(rename = "…")]` above
+/// it gives. The enum offers no enumeration to read at run time.
+///
+/// Fieldless variants written one to a line, which is how the enum is
+/// declared; a variant written any other way is not read.
+fn refusal_tokens(source: &str) -> HashSet<String> {
+    let Some((_, body)) = source.split_once("pub enum RefusalKind {") else {
+        return HashSet::new();
+    };
+    let body = body.split_once("\n}").map_or(body, |(body, _)| body);
+    let mut tokens = HashSet::new();
+    let mut renamed = None;
+    for line in body.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("#[serde(rename = \"") {
+            renamed = rest.split('"').next().map(str::to_owned);
+            continue;
+        }
+        let Some(name) = line.strip_suffix(',') else {
+            continue;
+        };
+        if name.starts_with(|c: char| c.is_ascii_uppercase())
+            && name.chars().all(|c| c.is_ascii_alphanumeric())
+        {
+            tokens.insert(renamed.take().unwrap_or_else(|| kebab_case(name)));
+        }
+    }
+    tokens
+}
+
+/// serde's `rename_all = "kebab-case"`.
+fn kebab_case(name: &str) -> String {
+    let mut out = String::new();
+    for (i, c) in name.char_indices() {
+        if c.is_ascii_uppercase() {
+            if i > 0 {
+                out.push('-');
+            }
+            out.push(c.to_ascii_lowercase());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn kebab_word_re() -> Regex {
+    Regex::new(r"\b[a-z][a-z0-9]*(?:-[a-z0-9]+)+\b").expect("kebab pattern compiles")
+}
+
+/// Kebab-cased words in the production code of `src/`, outside `src/bin/`:
+/// what its string literals spell, and the names serde derives for every item
+/// declared `rename_all = "kebab-case"`.
+///
+/// Comments are not code and a test module is not production, so neither can
+/// vouch for a word a page cites; `src/bin/` is not shipped in `rwv`, and
+/// holds this gate's own tables.
+fn src_code_kebab_words(root: &Path) -> HashSet<String> {
+    let re = kebab_word_re();
+    let bin = root.join("src/bin");
+    let mut words = HashSet::new();
+    for path in collect_rs_files(&root.join("src")) {
+        if path.starts_with(&bin) {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let production = before_test_module(&content);
+        for line in production.lines() {
+            words.extend(
+                re.find_iter(code_on_line(line))
+                    .map(|m| m.as_str().to_owned()),
+            );
+        }
+        words.extend(serde_kebab_names(production));
+    }
+    words
+}
+
+/// The names serde gives the variants or fields of each enum or struct
+/// declared `rename_all = "kebab-case"` in `source`. A member with a
+/// `rename` of its own is left to the literal that renames it.
+///
+/// Members are read one to a line, at the item's top level, from the item's
+/// opening line to the closing brace at its own indentation.
+fn serde_kebab_names(source: &str) -> Vec<String> {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut names = Vec::new();
+    for (at, line) in lines.iter().enumerate() {
+        if !(line.trim_start().starts_with("#[serde(")
+            && line.contains("rename_all = \"kebab-case\""))
+        {
+            continue;
+        }
+        let Some((open, decl)) = lines.iter().enumerate().skip(at + 1).find(|(_, l)| {
+            let t = l.trim_start();
+            !(t.starts_with('#') || t.starts_with("//"))
+        }) else {
+            continue;
+        };
+        let words: Vec<&str> = decl.split_whitespace().collect();
+        let is_enum = words.contains(&"enum");
+        if !(is_enum || words.contains(&"struct")) || !decl.trim_end().ends_with('{') {
+            continue;
+        }
+        let close = format!("{}}}", &decl[..decl.len() - decl.trim_start().len()]);
+        let mut depth = 0usize;
+        let mut renamed = false;
+        for member in &lines[open + 1..] {
+            if member.trim_end() == close {
+                break;
+            }
+            let code = code_on_line(member).trim();
+            if depth == 0 {
+                if code.starts_with("#[serde(") && code.contains("rename = ") {
+                    renamed = true;
+                } else if !code.is_empty() && !code.starts_with('#') {
+                    let field = code
+                        .trim_start_matches("pub(crate) ")
+                        .trim_start_matches("pub(super) ")
+                        .trim_start_matches("pub ");
+                    let ident: String = field
+                        .chars()
+                        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                        .collect();
+                    let names_member = if is_enum {
+                        ident.starts_with(|c: char| c.is_ascii_uppercase())
+                    } else {
+                        field[ident.len()..].trim_start().starts_with(':')
+                    };
+                    if names_member && !std::mem::take(&mut renamed) {
+                        names.push(if is_enum {
+                            kebab_case(&ident)
+                        } else {
+                            ident.replace('_', "-")
+                        });
+                    }
+                }
+            }
+            depth = (depth + code.matches('{').count()).saturating_sub(code.matches('}').count());
+        }
+    }
+    names
+}
+
+fn clap_words(cmd: &clap::Command, out: &mut HashSet<String>) {
+    out.insert(cmd.get_name().to_owned());
+    out.extend(cmd.get_all_aliases().map(str::to_owned));
+    for arg in cmd.get_arguments() {
+        out.extend(arg.get_long().map(str::to_owned));
+        out.extend(
+            arg.get_all_aliases()
+                .unwrap_or_default()
+                .into_iter()
+                .map(str::to_owned),
+        );
+        out.extend(
+            arg.get_possible_values()
+                .iter()
+                .map(|v| v.get_name().to_owned()),
+        );
+    }
+    for sc in cmd.get_subcommands() {
+        clap_words(sc, out);
+    }
+}
+
+/// The enum values and property names of `docs/reference/schemas/*.json`:
+/// the wire vocabulary serde derives from variant and field names, which no
+/// literal in `src/` spells.
+fn schema_words(root: &Path) -> HashSet<String> {
+    fn walk(value: &serde_json::Value, out: &mut HashSet<String>) {
+        match value {
+            serde_json::Value::Object(map) => {
+                if let Some(serde_json::Value::Array(values)) = map.get("enum") {
+                    out.extend(values.iter().filter_map(|v| v.as_str().map(str::to_owned)));
+                }
+                if let Some(serde_json::Value::Object(properties)) = map.get("properties") {
+                    out.extend(properties.keys().cloned());
+                }
+                map.values().for_each(|v| walk(v, out));
+            }
+            serde_json::Value::Array(items) => items.iter().for_each(|v| walk(v, out)),
+            _ => {}
+        }
+    }
+    let mut words = HashSet::new();
+    let schemas = collect_files_in_dir(&root.join("docs/reference/schemas"), |p| {
+        p.extension().and_then(OsStr::to_str) == Some("json")
+    });
+    for path in schemas {
+        let Ok(text) = fs::read_to_string(&path) else {
+            continue;
+        };
+        if let Ok(json) = serde_json::from_str(&text) {
+            walk(&json, &mut words);
+        }
+    }
+    words
+}
+
+/// A backticked span on a page: its text, with line ends read as spaces; the
+/// line it opens on; and the prose between it and the span before it in the
+/// same paragraph.
+struct CodeSpan {
+    line: usize,
+    text: String,
+    gap: String,
+}
+
+/// A page as the doc-token scan reads it: the code spans of its prose, and
+/// the lines of its fenced blocks.
+struct PageCode {
+    spans: Vec<CodeSpan>,
+    fenced: Vec<(usize, String)>,
+}
+
+fn page_code(text: &str) -> PageCode {
+    let mut spans = Vec::new();
+    let mut fenced = Vec::new();
+    let mut fence: Option<(char, usize)> = None;
+    let mut paragraph: Vec<(usize, &str)> = Vec::new();
+    for (i, line) in text.lines().enumerate() {
+        let trimmed = line.trim_start();
+        let run = |c: char| trimmed.len() - trimmed.trim_start_matches(c).len();
+        if let Some((c, len)) = fence {
+            if run(c) >= len && trimmed.trim_start_matches(c).trim().is_empty() {
+                fence = None;
+            } else {
+                fenced.push((i + 1, line.to_owned()));
+            }
+            continue;
+        }
+        if let Some(c) = ['`', '~'].into_iter().find(|&c| run(c) >= 3) {
+            paragraph_spans(&paragraph, &mut spans);
+            paragraph.clear();
+            fence = Some((c, run(c)));
+        } else if line.trim().is_empty() {
+            paragraph_spans(&paragraph, &mut spans);
+            paragraph.clear();
+        } else {
+            paragraph.push((i + 1, line));
+        }
+    }
+    paragraph_spans(&paragraph, &mut spans);
+    PageCode { spans, fenced }
+}
+
+/// The code spans of one paragraph. A span closes at the next run of exactly
+/// as many backticks as opened it, and cannot leave its paragraph; a run with
+/// no such partner is literal text.
+fn paragraph_spans(lines: &[(usize, &str)], out: &mut Vec<CodeSpan>) {
+    let Some(&(first_line, _)) = lines.first() else {
+        return;
+    };
+    let text = lines.iter().map(|(_, l)| *l).collect::<Vec<_>>().join("\n");
+    let bytes = text.as_bytes();
+    let backtick_run = |from: usize| bytes[from..].iter().take_while(|&&b| b == b'`').count();
+    let mut at = 0;
+    let mut gap_from = 0;
+    while at < bytes.len() {
+        if bytes[at] != b'`' {
+            at += 1;
+            continue;
+        }
+        let ticks = backtick_run(at);
+        let open = at;
+        at += ticks;
+        let mut probe = at;
+        let mut close = None;
+        while probe < bytes.len() {
+            if bytes[probe] == b'`' {
+                let run = backtick_run(probe);
+                if run == ticks {
+                    close = Some(probe);
+                    break;
+                }
+                probe += run;
+            } else {
+                probe += 1;
+            }
+        }
+        let Some(close) = close else {
+            continue;
+        };
+        out.push(CodeSpan {
+            line: first_line + text[..open].matches('\n').count(),
+            text: text[at..close].replace('\n', " ").trim().to_owned(),
+            gap: text[gap_from..open].to_owned(),
+        });
+        at = close + ticks;
+        gap_from = at;
+    }
+}
+
+fn is_kebab_token(s: &str) -> bool {
+    s.starts_with(|c: char| c.is_ascii_lowercase())
+        && s.contains('-')
+        && s.split('-').all(|part| {
+            !part.is_empty()
+                && part
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        })
+}
+
+/// The spans a page writes as sub-kinds of the finding kind before them, each
+/// paired with that kind: in a parenthesis opened straight after the kind, as
+/// in "`kind` (`a`, `b`)", or after a slash, as in "`kind` / `a`", up to the
+/// first separator that is not a comma, "and" or "or", or the first span that
+/// is not shaped like a token. A link target on the kind is passed over.
+fn qualified_sub_kinds<'s>(
+    spans: &'s [CodeSpan],
+    vocab: &TokenVocabulary,
+) -> Vec<(&'s CodeSpan, &'s CodeSpan)> {
+    let token_shaped = |s: &str| {
+        s.starts_with(|c: char| c.is_ascii_lowercase())
+            && s.chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    };
+    let mut out = Vec::new();
+    for (i, kind) in spans.iter().enumerate() {
+        if !vocab.sub_kinds.contains_key(&kind.text) {
+            continue;
+        }
+        let Some(first) = spans.get(i + 1) else {
+            continue;
+        };
+        let opener = match first.gap.strip_prefix("](") {
+            Some(rest) => rest.split_once(')').map_or("", |(_, after)| after),
+            None => first.gap.as_str(),
+        };
+        if !matches!(opener.trim(), "(" | "/") {
+            continue;
+        }
+        for (j, sub) in spans.iter().enumerate().skip(i + 1) {
+            let joined =
+                j == i + 1 || matches!(sub.gap.trim(), "," | "and" | ", and" | "or" | ", or");
+            if !joined || !token_shaped(&sub.text) {
+                break;
+            }
+            out.push((kind, sub));
+        }
+    }
+    out
+}
+
+/// The `rwv` invocations in a command line: every `&&`, `||` or ` | `
+/// segment that starts with `rwv`, as its words after `rwv`, with a trailing
+/// `# comment` dropped.
+fn rwv_invocations(line: &str) -> Vec<Vec<&str>> {
+    let line = line.trim_start();
+    let line = line.strip_prefix("$ ").unwrap_or(line);
+    let line = line.split(" # ").next().unwrap_or(line);
+    Regex::new(r"&&|\|\|| \| ")
+        .expect("separator pattern compiles")
+        .split(line)
+        .filter_map(|segment| {
+            let mut words = segment.split_whitespace();
+            (words.next() == Some("rwv")).then(|| words.collect())
+        })
+        .collect()
+}
+
+fn takes_value(chain: &[&clap::Command], word: &str) -> bool {
+    if word.contains('=') {
+        return false;
+    }
+    chain
+        .iter()
+        .rev()
+        .flat_map(|cmd| cmd.get_arguments())
+        .find(|arg| match word.strip_prefix("--") {
+            Some(long) => arg.get_long() == Some(long),
+            None => word.len() == 2 && arg.get_short() == word.chars().nth(1),
+        })
+        .is_some_and(|arg| arg.get_action().takes_values())
+}
+
+fn is_placeholder(word: &str) -> bool {
+    word.starts_with(|c: char| "<[{\"'$".contains(c))
+        || word.contains("...")
+        || word.contains('…')
+        || (word.contains(|c: char| c.is_ascii_uppercase())
+            && word
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c == '_' || c == '-'))
+}
+
+fn is_command_word(word: &str) -> bool {
+    word.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && word
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "-._".contains(c))
+}
+
+/// True if `page` names the executable `rwv-<verb>`, which `rwv <verb>`
+/// reaches as a plugin.
+fn names_plugin(page: &str, verb: &str) -> bool {
+    let name = format!("rwv-{verb}");
+    page.match_indices(&name).any(|(at, _)| {
+        !page[at + name.len()..]
+            .starts_with(|c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    })
+}
+
+/// Where an invocation's words land in clap's tree.
+enum Invocation<'c> {
+    Command {
+        path: Vec<&'c str>,
+        positional_before_subcommand: bool,
+    },
+    PluginOrAbsentVerb,
+    NoVerb,
+}
+
+/// Resolve an invocation's words against clap's tree.
+///
+/// A word in a command's subcommand position must name one of its
+/// subcommands — unless the command also takes a positional and a subcommand
+/// follows, as in `rwv workweave web-app create`. At the root, a word that
+/// names no subcommand may be a plugin the same page names as an `rwv-<verb>`
+/// executable, or a verb in `ABSENT_VERBS`. A placeholder stands for a value,
+/// and a leaf command's arguments are not read.
+fn resolve_invocation<'c>(
+    cli: &'c clap::Command,
+    words: &[&str],
+    page: &str,
+) -> Result<Invocation<'c>, String> {
+    let mut chain = vec![cli];
+    let mut path: Vec<&'c str> = Vec::new();
+    let mut unresolved: Option<&str> = None;
+    let mut positional_before_subcommand = false;
+    let mut rest = words.iter();
+    while let Some(&word) = rest.next() {
+        let cmd = *chain.last().expect("the chain starts at the root");
+        if word.starts_with('-') && word.len() > 1 {
+            if takes_value(&chain, word) {
+                rest.next();
+            }
+            continue;
+        }
+        if !cmd.has_subcommands() || (path.is_empty() && !is_command_word(word)) {
+            break;
+        }
+        if is_placeholder(word) || !is_command_word(word) {
+            continue;
+        }
+        if let Some(sub) = cmd.find_subcommand(word) {
+            path.push(sub.get_name());
+            chain.push(sub);
+            positional_before_subcommand |= unresolved.take().is_some();
+            continue;
+        }
+        if path.is_empty() {
+            if names_plugin(page, word) || ABSENT_VERBS.contains(&word) {
+                return Ok(Invocation::PluginOrAbsentVerb);
+            }
+            return Err(format!(
+                "`rwv {word}` is not a verb, and this page names no `rwv-{word}` plugin"
+            ));
+        }
+        let parent = path.join(" ");
+        match unresolved {
+            None if cmd.get_positionals().next().is_some() => unresolved = Some(word),
+            None => return Err(not_a_subcommand(&path, word)),
+            Some(first) => {
+                return Err(format!(
+                    "`rwv {parent} {first} {word}` is not a command: neither `{first}` nor \
+                     `{word}` is a subcommand of `rwv {parent}`"
+                ))
+            }
+        }
+    }
+    if let Some(word) = unresolved {
+        return Err(not_a_subcommand(&path, word));
+    }
+    Ok(if path.is_empty() {
+        Invocation::NoVerb
+    } else {
+        Invocation::Command {
+            path,
+            positional_before_subcommand,
+        }
+    })
+}
+
+fn not_a_subcommand(path: &[&str], word: &str) -> String {
+    let parent = path.join(" ");
+    format!("`rwv {parent} {word}` is not a command: `{word}` is no subcommand of `rwv {parent}`")
+}
+
+/// The check an invocation's token argument faces, if it has one: what
+/// `rwv explain` is asked to serve must be a verb it explains or a condition
+/// token, and what `rwv doctor --kind` is asked to filter on must be a
+/// finding kind. A placeholder is not read.
+fn invocation_argument(
+    path: &[&str],
+    words: &[&str],
+    vocab: &TokenVocabulary,
+) -> Option<Result<(), String>> {
+    let checked = |token: &str, holds: bool, message: String| {
+        (!is_placeholder(token)).then_some(if holds { Ok(()) } else { Err(message) })
+    };
+    match path {
+        ["explain"] => {
+            let at = words.iter().position(|w| *w == "explain")?;
+            let token = *words[at + 1..].iter().find(|w| !w.starts_with('-'))?;
+            checked(
+                token,
+                vocab.explain_verbs.contains(token) || vocab.is_condition(token),
+                format!(
+                    "`rwv explain {token}` serves nothing: `{token}` is neither a verb nor a token"
+                ),
+            )
+        }
+        ["doctor"] => {
+            let kind =
+                words
+                    .iter()
+                    .enumerate()
+                    .find_map(|(i, w)| match w.strip_prefix("--kind=") {
+                        Some(value) => Some(value),
+                        None => (*w == "--kind")
+                            .then(|| words.get(i + 1).copied())
+                            .flatten(),
+                    })?;
+            checked(
+                kind,
+                vocab.finding_kinds.contains(kind),
+                format!("`rwv doctor --kind {kind}` refuses: `{kind}` is not a finding kind"),
+            )
+        }
+        _ => None,
+    }
+}
+
+/// How many citations of each token class, and through each recognition
+/// branch, the scan read.
+#[derive(Default)]
+struct DocTokenPopulation {
+    finding_kinds: usize,
+    sub_kinds: usize,
+    refusals: usize,
+    failure_kinds: usize,
+    verbs: usize,
+    qualified_sub_kinds: usize,
+    inline_invocations: usize,
+    fenced_invocations: usize,
+    positional_before_subcommand: usize,
+    plugin_or_absent_verbs: usize,
+    token_arguments: usize,
+}
+
+impl DocTokenPopulation {
+    /// Each token class and recognition branch, what it yielded, and the
+    /// least it may yield over this repository's operator pages before the
+    /// scan is taken to have gone blind rather than clean. A branch's floor is
+    /// one: it may not go dark while the classes it feeds stay full.
+    fn floors(&self) -> [(&'static str, usize, usize); 11] {
+        [
+            ("finding kinds", self.finding_kinds, 150),
+            ("sub-kinds", self.sub_kinds, 50),
+            ("refusal tokens", self.refusals, 150),
+            ("VCS and sync failure kinds", self.failure_kinds, 9),
+            ("verbs", self.verbs, 1000),
+            (
+                "sub-kinds qualified by their kind",
+                self.qualified_sub_kinds,
+                1,
+            ),
+            ("invocations in prose", self.inline_invocations, 1),
+            ("invocations in fenced blocks", self.fenced_invocations, 1),
+            (
+                "positionals before a subcommand",
+                self.positional_before_subcommand,
+                1,
+            ),
+            ("plugins and absent verbs", self.plugin_or_absent_verbs, 1),
+            ("token arguments", self.token_arguments, 1),
+        ]
+    }
+}
+
+/// Every operator page the doc-token scan reads: each page `docs/SUMMARY.md`
+/// lists, and root `README.md`.
+fn doc_token_pages(root: &Path) -> Vec<PathBuf> {
+    let mut pages = collect_summary_listed_pages(root);
+    pages.push(root.join("README.md"));
+    pages
+}
+
+/// Scan the operator pages for cited tokens that do not exist.
+///
+/// **What is read.** In prose, every backticked span: a kebab-cased one must
+/// be a word `vocab` defines, a plugin executable's `rwv-` name, or one of
+/// `NON_TOKEN_WORDS`; one written as a sub-kind of the finding kind before it
+/// must be a sub-kind of that kind; and one opening with `rwv` must resolve in
+/// clap's tree, as must every `rwv` line in a fenced block. Through
+/// `rwv explain` and `rwv doctor --kind`, the token argument is checked too.
+///
+/// **What is not.** A token outside backticks, or inside a span that holds
+/// more than the token; a single word, which reads the same as an English one
+/// — so a sub-kind like `detached` is checked only where it is written as a
+/// sub-kind of its kind; a flag, and every argument of a leaf command but the
+/// two above. Existence is all it checks: a token cited for the wrong
+/// condition passes, and so does any word that some production literal in
+/// `src/` happens to spell.
+fn scan_doc_tokens(
+    root: &Path,
+    vocab: &TokenVocabulary,
+    cli: &clap::Command,
+) -> (Vec<String>, DocTokenPopulation) {
+    let mut findings = Vec::new();
+    let mut population = DocTokenPopulation::default();
+    for path in doc_token_pages(root) {
+        let Ok(text) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let name = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .display()
+            .to_string();
+        let code = page_code(&text);
+
+        let qualified = qualified_sub_kinds(&code.spans, vocab);
+        population.qualified_sub_kinds += qualified.len();
+        for (kind, sub) in &qualified {
+            if !vocab.sub_kinds[&kind.text].contains(&sub.text) {
+                let mut known: Vec<&String> = vocab.sub_kinds[&kind.text].iter().collect();
+                known.sort();
+                findings.push(format!(
+                    "{name}:{}: `{}` is not a sub-kind of `{}`, whose sub-kinds are {}",
+                    sub.line,
+                    sub.text,
+                    kind.text,
+                    known
+                        .iter()
+                        .map(|s| format!("`{s}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+        }
+
+        let mut invocations: Vec<(usize, String, bool)> = Vec::new();
+        for span in &code.spans {
+            if span.text.starts_with("rwv ") {
+                invocations.push((span.line, span.text.clone(), true));
+                continue;
+            }
+            if !is_kebab_token(&span.text) {
+                continue;
+            }
+            let token = span.text.as_str();
+            let counted = [
+                (
+                    &mut population.finding_kinds,
+                    vocab.finding_kinds.contains(token),
+                ),
+                (&mut population.sub_kinds, vocab.is_sub_kind(token)),
+                (&mut population.refusals, vocab.refusals.contains(token)),
+                (
+                    &mut population.failure_kinds,
+                    vocab.failure_kinds.contains(token),
+                ),
+            ];
+            for (count, member) in counted {
+                *count += usize::from(member);
+            }
+            let checked_as_sub_kind = qualified.iter().any(|(_, sub)| std::ptr::eq(*sub, span));
+            if !(checked_as_sub_kind
+                || vocab.defines(token)
+                || token.starts_with("rwv-")
+                || NON_TOKEN_WORDS.iter().any(|(word, _)| *word == token))
+            {
+                findings.push(format!(
+                    "{name}:{}: `{token}` is not a token rwv defines: no finding kind, \
+                     sub-kind, refusal, failure kind, command, flag, wire value or \
+                     code literal is spelled this way",
+                    span.line
+                ));
+            }
+        }
+        invocations.extend(
+            code.fenced
+                .iter()
+                .map(|(line, text)| (*line, text.clone(), false)),
+        );
+
+        for (line, command, inline) in &invocations {
+            for words in rwv_invocations(command) {
+                if *inline {
+                    population.inline_invocations += 1;
+                } else {
+                    population.fenced_invocations += 1;
+                }
+                match resolve_invocation(cli, &words, &text) {
+                    Ok(Invocation::NoVerb) => {}
+                    Ok(Invocation::PluginOrAbsentVerb) => population.plugin_or_absent_verbs += 1,
+                    Ok(Invocation::Command {
+                        path,
+                        positional_before_subcommand,
+                    }) => {
+                        population.verbs += 1;
+                        population.positional_before_subcommand +=
+                            usize::from(positional_before_subcommand);
+                        if let Some(checked) = invocation_argument(&path, &words, vocab) {
+                            population.token_arguments += 1;
+                            if let Err(message) = checked {
+                                findings.push(format!("{name}:{line}: {message}"));
+                            }
+                        }
+                    }
+                    Err(message) => findings.push(format!("{name}:{line}: {message}")),
+                }
+            }
+        }
+    }
+    (findings, population)
+}
+
+fn floor_findings(population: &DocTokenPopulation) -> Vec<String> {
+    population
+        .floors()
+        .into_iter()
+        .filter(|(_, count, floor)| count < floor)
+        .map(|(class, count, floor)| {
+            format!(
+                "doc-token scan: {class} yielded {count} citations, under the floor of \
+                 {floor} — the scan has stopped reading them, or the pages stopped citing them"
+            )
+        })
+        .collect()
+}
+
+/// clap's tree as parsed: global options propagated and `help` added.
+fn built_cli(cli: &clap::Command) -> clap::Command {
+    let mut cli = cli.clone();
+    cli.build();
+    cli
+}
+
+/// The doc-token gate: `scan_doc_tokens` over this repository's operator
+/// pages, and a class or branch that yields fewer citations than its floor
+/// reported as a finding of its own.
+fn check_doc_tokens(root: &Path, cli: &clap::Command) -> Vec<String> {
+    let cli = built_cli(cli);
+    let vocab = token_vocabulary(root, &cli);
+    let (mut findings, population) = scan_doc_tokens(root, &vocab, &cli);
+    findings.extend(floor_findings(&population));
+    findings
+}
+
 /// Check that `docs/SUMMARY.md` and `docs/explanation/index.md` list the same
 /// set of joints pages.
 ///
@@ -4024,6 +4905,23 @@ fn main() -> anyhow::Result<()> {
              Fix: write the term the finding names. The vocabulary and spelling \
              rules are in CLAUDE.md, under \"Canonical vocabulary\" and \
              \"American spelling\"."
+        );
+    }
+
+    // --- doc-token gate ----------------------------------------------------
+    // A finding kind, sub-kind, refusal token or verb an operator page cites
+    // must exist in the code, or the page sends its reader to a name no
+    // command prints and `rwv explain` cannot serve.
+    let doc_token_errors = check_doc_tokens(&root, &Cli::command());
+    if !doc_token_errors.is_empty() {
+        let msg = doc_token_errors.join("\n");
+        anyhow::bail!(
+            "doc-token check failed:\n{msg}\n\n\
+             Fix: cite the token the code defines — `rwv explain <token>` serves \
+             every condition token, and `rwv <verb> --help` lists every \
+             subcommand. A word not meant as a token goes in NON_TOKEN_WORDS, \
+             and a verb a page names to say rwv lacks it goes in ABSENT_VERBS, \
+             both in src/bin/generate-explain.rs."
         );
     }
 
@@ -6591,10 +7489,11 @@ mod tests {
     }
 
     /// A `docs/internals/` reference on a hand-authored page `docs/SUMMARY.md`
-    /// lists is caught — the widened half of the scan this bead adds. The
-    /// anchor assertion checks the specific page name, not merely that the
-    /// scan produced *a* finding, so a scan that matched the wrong file
-    /// would not pass vacuously.
+    /// lists is caught — the half of the scan that reads pages the sidebar
+    /// reaches rather than pages the generator writes. The anchor assertion
+    /// checks the specific page name, not merely that the scan produced *a*
+    /// finding, so a scan that matched the wrong file would not pass
+    /// vacuously.
     #[test]
     fn internals_path_on_summary_listed_page_is_reported() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -7322,5 +8221,330 @@ mod tests {
         }
         let lines: usize = texts.iter().map(|t| t.text.lines().count()).sum();
         println!("lines read: {lines}");
+    }
+
+    /// The tokens the doc-token fixtures below seed, none of which the code
+    /// defines.
+    const SEEDED_PHANTOMS: &[&str] = &[
+        "user-held-featured",
+        "orphaned-owned-region",
+        "fully-owned-digest-mismatch",
+        "dep-version-skew",
+        "patch-shadowed",
+        "fetch-realign-refused",
+        "integration-file-drifted",
+        "canonical-wrong-branch",
+        "rebase-aborted",
+        "deactivate",
+    ];
+
+    fn real_token_vocabulary() -> (TokenVocabulary, clap::Command) {
+        let cli = built_cli(&Cli::command());
+        (token_vocabulary(&repo_root(), &cli), cli)
+    }
+
+    /// `body` as the one page a temp tree's `docs/SUMMARY.md` lists, scanned
+    /// against this repository's vocabulary and clap tree.
+    fn scan_page(body: &str) -> (Vec<String>, DocTokenPopulation) {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        write_at(
+            tmp.path(),
+            "docs/SUMMARY.md",
+            "# Summary\n\n- [Page](./page.md)\n",
+        );
+        write_at(tmp.path(), "docs/page.md", body);
+        let (vocab, cli) = real_token_vocabulary();
+        let (findings, population) = scan_doc_tokens(tmp.path(), &vocab, &cli);
+        (findings.iter().map(|f| slashed(f)).collect(), population)
+    }
+
+    fn assert_reported(findings: &[String], wanted: &[&str]) {
+        for want in wanted {
+            assert!(
+                findings.iter().any(|f| f.starts_with(want)),
+                "missing `{want}`, got:\n{}",
+                findings.join("\n")
+            );
+        }
+        assert_eq!(
+            findings.len(),
+            wanted.len(),
+            "got:\n{}",
+            findings.join("\n")
+        );
+    }
+
+    /// Lines the operator pages once shipped, verbatim, each citing a finding
+    /// name, refusal token, sub-kind or subcommand that never existed. Every
+    /// invention is reported at its own line, and the sub-kind once — as a
+    /// sub-kind of the kind it was written under.
+    #[test]
+    fn the_shipped_inventions_are_each_reported() {
+        let page = "# page\n\
+            \n\
+            - **`USER-HELD`** (`user-held-featured`, warning, not auto-fixable): `folders` is present without the `\"rwv.generated\"` marker.\n\
+            - When disabled (`enabled = false`), leftover `gita/repos.csv` or `gita/groups.csv` files in `projects/<project>/gita/` are reported as `orphaned-owned-region` (`DRIFT` if their bytes match `rwv`'s output, or `USER-HELD` if modified by hand).\n\
+            - A lock that is present and parseable in `projects/<project>/Cargo.lock` whose bytes differ from the **last `rwv`-accepted generation** is reported as a warning (`fully-owned-digest-mismatch`, not auto-fixed).\n\
+            - **Dependency version skew and patch shadowing**: `rwv doctor` also scans workspace members (and nested workspaces) for inconsistent dependency version requirements (`dep-version-skew`) and member `.cargo/config.toml` files that shadow weave-level patches (`patch-shadowed`).\n\
+            \n\
+            | Present, locked SHA is not a fast-forward or checkout is on another branch | Refuses (`fetch-realign-refused`), unless `--detach-checkouts` is passed to materialize the pin on a detached HEAD (use `git checkout <branch>` later before running `rwv sync-to`) |\n\
+            | 2. Drift settlement | Re-derives generated files whose inputs changed (`derived-state-stale`) and drops attestations for files no enabled integration generates. If an attested file's bytes differ from the accepted generation (`integration-file-drifted`), refuses unless `--regenerate-drifted` or `--adopt-drifted` is passed |\n\
+            \n\
+            1. `rwv doctor` reports [`branch-discipline`](../../reference/doctor-findings.md#branch-discipline) (`canonical-wrong-branch`).\n\
+            \n\
+            `rwv doctor` and context verbs (`rwv activate`, `rwv fetch`, `rwv workweave add`) verify `gita/repos.csv` and `gita/groups.csv`:\n";
+        let (findings, _) = scan_page(page);
+        assert_reported(
+            &findings,
+            &[
+                "docs/page.md:3: `user-held-featured` is not a token",
+                "docs/page.md:4: `orphaned-owned-region` is not a token",
+                "docs/page.md:5: `fully-owned-digest-mismatch` is not a token",
+                "docs/page.md:6: `dep-version-skew` is not a token",
+                "docs/page.md:6: `patch-shadowed` is not a token",
+                "docs/page.md:8: `fetch-realign-refused` is not a token",
+                "docs/page.md:9: `integration-file-drifted` is not a token",
+                "docs/page.md:11: `canonical-wrong-branch` is not a sub-kind of `branch-discipline`",
+                "docs/page.md:13: `rwv workweave add` is not a command",
+            ],
+        );
+    }
+
+    /// One seed per recognition branch the shipped inventions do not reach:
+    /// a failure kind, a verb at the root, a subcommand after a positional, a
+    /// subcommand in a fenced block, a real sub-kind under the wrong kind, and
+    /// the token arguments of `rwv explain` and `rwv doctor --kind`.
+    #[test]
+    fn a_phantom_on_each_remaining_branch_is_reported() {
+        let page = "# page\n\
+            \n\
+            `rwv sync` names the repo `rebase-aborted`.\n\
+            Run `rwv deactivate` first.\n\
+            Then `rwv workweave web-app add pr-42`.\n\
+            The row reads `weave-root-identity-conflict` / `detached`.\n\
+            Read `rwv explain integration-file-drifted`, then\n\
+            `rwv doctor --kind fully-owned-digest-mismatch` and `rwv doctor --kind=stale-lok`.\n\
+            \n\
+            ```bash\n\
+            $ rwv workweave add pr-42   # make one\n\
+            ```\n";
+        let (findings, _) = scan_page(page);
+        assert_reported(
+            &findings,
+            &[
+                "docs/page.md:3: `rebase-aborted` is not a token",
+                "docs/page.md:4: `rwv deactivate` is not a verb, and this page names no `rwv-deactivate` plugin",
+                "docs/page.md:5: `rwv workweave web-app add` is not a command",
+                "docs/page.md:6: `detached` is not a sub-kind of `weave-root-identity-conflict`",
+                "docs/page.md:7: `rwv explain integration-file-drifted` serves nothing",
+                "docs/page.md:8: `rwv doctor --kind fully-owned-digest-mismatch` refuses",
+                "docs/page.md:8: `rwv doctor --kind stale-lok` refuses",
+                "docs/page.md:11: `rwv workweave add pr-42` is not a command",
+            ],
+        );
+    }
+
+    /// What a looser scan would report: real tokens of every class, a
+    /// positional before its subcommand, global options, a plugin the page
+    /// names, an absent verb, placeholders, output lines, a list that stops at
+    /// a span not shaped like a token, words the code derives through clap,
+    /// serde and the schemas, and the exemptions.
+    #[test]
+    fn real_tokens_and_look_alikes_are_not_reported() {
+        let page = "# page\n\
+            \n\
+            `stale-lock`, `tool-missing`, `push-from-workweave`, `rebase-failed`,\n\
+            [`branch-discipline`](#x) (`detached`), `missing-replay-exclusion` (`absent`,\n\
+            `legacy-spelling`), `workweave-drift` (`.rwv-workweave` is gone).\n\
+            `rwv workweave web-app create pr-42`, `rwv workweave <project> list`,\n\
+            `rwv -w myproj--hotfix sync primary`, `rwv workweave\n\
+            create`, `rwv tidy` from `rwv-tidy`, no `rwv commit`, `rwv <verb>`,\n\
+            `rwv --help`, `rwv explain stale-lock`, `rwv explain sync-to`,\n\
+            `rwv explain <token>`, `rwv doctor --kind tool-missing`, `rwv check-mid-op && rwv sync-to`.\n\
+            `sync-to`, `allow-stale-lock`, `cargo-config`, `up-to-date`, `web-app`,\n\
+            `rwv-lint`, `owner/repo`, `--allow-stale-lock`, `project-rwv--agent-home`.\n\
+            \n\
+            ```text\n\
+            rwv push: 1 repo(s) disagree with rwv.lock:\n\
+            [error] core: x is a YAML manifest; rwv reads rwv.toml.\n\
+            ```\n\
+            \n\
+            ```\n\
+            rwv check-mid-op   # runs rwv-check-mid-op\n\
+            ```\n";
+        let (findings, population) = scan_page(page);
+        assert!(findings.is_empty(), "got:\n{}", findings.join("\n"));
+        assert_eq!(population.positional_before_subcommand, 1);
+        assert_eq!(population.qualified_sub_kinds, 3);
+        assert_eq!(population.plugin_or_absent_verbs, 4);
+    }
+
+    /// A span closes at the next run of exactly as many backticks, may wrap
+    /// a line but not leave its paragraph, and an unpartnered run is text;
+    /// fenced lines, under either fence character and at any indent, are kept
+    /// apart from the prose.
+    #[test]
+    fn code_spans_pair_their_backticks_within_a_paragraph() {
+        let code = page_code(
+            "A `` `kind` `` span and a stray `` run.\n\
+             `wrapped\n\
+             span` here.\n\
+             \n\
+             `open\n\
+             \n\
+             close`\n\
+             - item\n\
+             \x20 ~~~\n\
+             \x20 rwv sync\n\
+             \x20 ~~~\n",
+        );
+        let spans: Vec<(usize, &str)> = code
+            .spans
+            .iter()
+            .map(|s| (s.line, s.text.as_str()))
+            .collect();
+        assert_eq!(spans, [(1, "`kind`"), (2, "wrapped span")]);
+        assert_eq!(code.fenced, [(10, "  rwv sync".to_owned())]);
+    }
+
+    #[test]
+    fn refusal_tokens_honor_a_serde_rename() {
+        let source = "pub enum RefusalKind {\n    /// Doc.\n    VersionIsAPin,\n    \
+                      #[serde(rename = \"spelled-out\")]\n    Renamed,\n}\n";
+        let tokens = refusal_tokens(source);
+        assert_eq!(
+            tokens,
+            HashSet::from(["version-is-a-pin".to_owned(), "spelled-out".to_owned()])
+        );
+        let real = refusal_tokens(&fs::read_to_string(repo_root().join("src/refusal.rs")).unwrap());
+        assert!(real.len() > 90, "read {} refusal tokens", real.len());
+        assert!(real.contains(&repoweave::refusal::RefusalKind::VersionIsAPin.token()));
+    }
+
+    #[test]
+    fn serde_kebab_names_read_variants_and_fields() {
+        let source = "#[derive(Deserialize)]\n\
+             #[serde(rename_all = \"kebab-case\")]\n\
+             pub enum Surface {\n\
+             \x20   /// Doc.\n\
+             \x20   CargoConfig,\n\
+             \x20   Shaped { inner_field: u8 },\n\
+             \x20   Wide {\n\
+             \x20       nested_field: u8,\n\
+             \x20   },\n\
+             \x20   #[serde(rename = \"own\")]\n\
+             \x20   Renamed,\n\
+             }\n\
+             #[serde(deny_unknown_fields, rename_all = \"kebab-case\")]\n\
+             struct Settings {\n\
+             \x20   pub rustc_wrapper: Option<String>,\n\
+             \x20   hide_dotfiles: bool,\n\
+             }\n\
+             enum Unrenamed {\n\
+             \x20   NotRead,\n\
+             }\n";
+        assert_eq!(
+            serde_kebab_names(source),
+            [
+                "cargo-config",
+                "shaped",
+                "wide",
+                "rustc-wrapper",
+                "hide-dotfiles"
+            ]
+        );
+    }
+
+    /// Every class and branch under its floor is a finding, so a scan that
+    /// stops reading one cannot pass for one that read it clean.
+    #[test]
+    fn a_class_under_its_floor_is_reported() {
+        let findings = floor_findings(&DocTokenPopulation::default());
+        assert_eq!(findings.len(), DocTokenPopulation::default().floors().len());
+        assert!(findings
+            .iter()
+            .any(|f| f.starts_with("doc-token scan: refusal tokens yielded 0 citations")));
+    }
+
+    /// The scan population of this repository's operator pages, every class
+    /// and branch at or above its floor. Run with `--nocapture` to read the
+    /// counts.
+    #[test]
+    fn doc_token_scan_reaches_every_class_and_branch_of_this_repository() {
+        let (vocab, cli) = real_token_vocabulary();
+        let (_, population) = scan_doc_tokens(&repo_root(), &vocab, &cli);
+        for (class, count, floor) in population.floors() {
+            println!("{class}: {count} (floor {floor})");
+        }
+        let under = floor_findings(&population);
+        assert!(under.is_empty(), "{}", under.join("\n"));
+    }
+
+    /// The vocabulary is read from production code outside this file, so the
+    /// phantoms this module seeds stay phantoms.
+    #[test]
+    fn the_seeded_phantoms_are_defined_nowhere() {
+        let (vocab, cli) = real_token_vocabulary();
+        for seed in SEEDED_PHANTOMS {
+            assert!(!vocab.defines(seed), "the vocabulary defines `{seed}`");
+            assert!(
+                cli.find_subcommand(seed).is_none(),
+                "`rwv {seed}` is a verb"
+            );
+        }
+    }
+
+    /// A word the `rwv-` prefix exempts can never be a condition token, and
+    /// each exemption stays only while the code does not define it and a page
+    /// still cites it.
+    #[test]
+    fn every_exemption_is_still_needed() {
+        let (vocab, cli) = real_token_vocabulary();
+        for token in vocab
+            .finding_kinds
+            .iter()
+            .chain(&vocab.refusals)
+            .chain(&vocab.failure_kinds)
+            .chain(vocab.sub_kinds.values().flatten())
+        {
+            assert!(
+                !token.starts_with("rwv-"),
+                "`{token}` is spelled like a plugin"
+            );
+        }
+        let mut cited = HashSet::new();
+        for path in doc_token_pages(&repo_root()) {
+            let Ok(text) = fs::read_to_string(&path) else {
+                continue;
+            };
+            for span in page_code(&text).spans {
+                cited.extend(
+                    rwv_invocations(&span.text)
+                        .iter()
+                        .filter_map(|w| w.first().map(|v| v.to_string())),
+                );
+                cited.insert(span.text);
+            }
+        }
+        for (word, _) in NON_TOKEN_WORDS {
+            assert!(
+                !vocab.defines(word),
+                "the code defines `{word}`; drop the exemption"
+            );
+            assert!(
+                cited.contains(*word),
+                "no page cites `{word}`; drop the exemption"
+            );
+        }
+        for verb in ABSENT_VERBS {
+            assert!(
+                cli.find_subcommand(verb).is_none(),
+                "`rwv {verb}` exists; drop the exemption"
+            );
+            assert!(
+                cited.contains(*verb),
+                "no page cites `rwv {verb}`; drop the exemption"
+            );
+        }
     }
 }
