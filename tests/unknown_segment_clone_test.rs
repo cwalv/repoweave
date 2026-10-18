@@ -425,7 +425,7 @@ fn unknown_segment_advice(ws: &Path, path: &str) -> String {
 fn assert_advises_adopt_at_the_placement(advice: &str) {
     assert!(
         advice.contains(
-            "move it to the path its origin URL places it at under the primary weave root"
+            "move it to the path its remote's URL places it at under the primary weave root"
         ) && advice.contains("run `rwv add --adopt` with that path"),
         "the advice must name the move to the clone's placement and `rwv add --adopt` there: \
          {advice}"
