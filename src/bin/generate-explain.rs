@@ -3997,7 +3997,7 @@ enum Invocation<'c> {
     NoVerb,
 }
 
-/// Resolve an invocation's words against clap's tree.
+/// Locate an invocation's words in clap's tree.
 ///
 /// A word in a command's subcommand position must name one of its
 /// subcommands — unless the command also takes a positional and a subcommand
@@ -4005,7 +4005,7 @@ enum Invocation<'c> {
 /// names no subcommand may be a plugin the same page names as an `rwv-<verb>`
 /// executable, or a verb in `ABSENT_VERBS`. A placeholder stands for a value,
 /// and a leaf command's arguments are not read.
-fn resolve_invocation<'c>(
+fn locate_invocation<'c>(
     cli: &'c clap::Command,
     words: &[&str],
     page: &str,
@@ -4279,7 +4279,7 @@ fn scan_doc_tokens(
                 } else {
                     population.fenced_invocations += 1;
                 }
-                match resolve_invocation(cli, &words, &text) {
+                match locate_invocation(cli, &words, &text) {
                     Ok(Invocation::NoVerb) => {}
                     Ok(Invocation::PluginOrAbsentVerb) => population.plugin_or_absent_verbs += 1,
                     Ok(Invocation::Command {
@@ -8281,29 +8281,36 @@ mod tests {
     /// the token arguments of `rwv explain` and `rwv doctor --kind`.
     #[test]
     fn a_phantom_on_each_remaining_branch_is_reported() {
-        let page = "# page\n\
-            \n\
-            `rwv sync` names the repo `rebase-aborted`.\n\
-            Run `rwv deactivate` first.\n\
-            Then `rwv workweave web-app add pr-42`.\n\
-            The row reads `weave-root-identity-conflict` / `detached`.\n\
-            Read `rwv explain integration-file-drifted`, then\n\
-            `rwv doctor --kind fully-owned-digest-mismatch` and `rwv doctor --kind=stale-lok`.\n\
-            \n\
-            ```bash\n\
-            $ rwv workweave add pr-42   # make one\n\
-            ```\n";
+        let page = concat!(
+            "# page\n",
+            "\n",
+            "`rwv sync` names the repo `rebase-aborted`.\n",
+            // rwv-advice: not-an-invocation
+            "Run `rwv deactivate` first.\n",
+            // rwv-advice: not-an-invocation
+            "Then `rwv workweave web-app add pr-42`.\n",
+            "The row reads `weave-root-identity-conflict` / `detached`.\n",
+            "Read `rwv explain integration-file-drifted`, then\n",
+            "`rwv doctor --kind fully-owned-digest-mismatch` and `rwv doctor --kind=stale-lok`.\n",
+            "\n",
+            "```bash\n",
+            "$ rwv workweave add pr-42   # make one\n",
+            "```\n",
+        );
         let (findings, _) = scan_page(page);
         assert_reported(
             &findings,
             &[
                 "docs/page.md:3: `rebase-aborted` is not a token",
+                // rwv-advice: not-an-invocation
                 "docs/page.md:4: `rwv deactivate` is not a verb, and this page names no `rwv-deactivate` plugin",
+                // rwv-advice: not-an-invocation
                 "docs/page.md:5: `rwv workweave web-app add` is not a command",
                 "docs/page.md:6: `detached` is not a sub-kind of `weave-root-identity-conflict`",
                 "docs/page.md:7: `rwv explain integration-file-drifted` serves nothing",
                 "docs/page.md:8: `rwv doctor --kind fully-owned-digest-mismatch` refuses",
                 "docs/page.md:8: `rwv doctor --kind stale-lok` refuses",
+                // rwv-advice: not-an-invocation
                 "docs/page.md:11: `rwv workweave add pr-42` is not a command",
             ],
         );
@@ -8316,27 +8323,31 @@ mod tests {
     /// serde, and the exemptions.
     #[test]
     fn real_tokens_and_look_alikes_are_not_reported() {
-        let page = "# page\n\
-            \n\
-            `stale-lock`, `tool-missing`, `push-from-workweave`, `rebase-failed`,\n\
-            [`branch-discipline`](#x) (`detached`), `missing-replay-exclusion` (`absent`,\n\
-            `legacy-spelling`), `workweave-drift` (`.rwv-workweave` is gone).\n\
-            `rwv workweave web-app create pr-42`, `rwv workweave <project> list`,\n\
-            `rwv -w myproj--hotfix sync primary`, `rwv workweave\n\
-            create`, `rwv tidy` from `rwv-tidy`, no `rwv commit`, `rwv <verb>`,\n\
-            `rwv --help`, `rwv explain stale-lock`, `rwv explain sync-to`,\n\
-            `rwv explain <token>`, `rwv doctor --kind tool-missing`, `rwv check-mid-op && rwv sync-to`.\n\
-            `sync-to`, `set-container`, `allow-stale-lock`, `cargo-config`, `up-to-date`, `web-app`,\n\
-            `rwv-lint`, `owner/repo`, `--allow-stale-lock`, `project-rwv--agent-home`.\n\
-            \n\
-            ```text\n\
-            rwv push: 1 repo(s) disagree with rwv.lock:\n\
-            [error] core: x is a YAML manifest; rwv reads rwv.toml.\n\
-            ```\n\
-            \n\
-            ```\n\
-            rwv check-mid-op   # runs rwv-check-mid-op\n\
-            ```\n";
+        let page = concat!(
+            "# page\n",
+            "\n",
+            "`stale-lock`, `tool-missing`, `push-from-workweave`, `rebase-failed`,\n",
+            "[`branch-discipline`](#x) (`detached`), `missing-replay-exclusion` (`absent`,\n",
+            "`legacy-spelling`), `workweave-drift` (`.rwv-workweave` is gone).\n",
+            "`rwv workweave web-app create pr-42`, `rwv workweave <project> list`,\n",
+            "`rwv -w myproj--hotfix sync primary`, `rwv workweave\n",
+            // rwv-advice: not-an-invocation
+            "create`, `rwv tidy` from `rwv-tidy`, no `rwv commit`, `rwv <verb>`,\n",
+            "`rwv --help`, `rwv explain stale-lock`, `rwv explain sync-to`,\n",
+            // rwv-advice: not-an-invocation
+            "`rwv explain <token>`, `rwv doctor --kind tool-missing`, `rwv check-mid-op && rwv sync-to`.\n",
+            "`sync-to`, `set-container`, `allow-stale-lock`, `cargo-config`, `up-to-date`, `web-app`,\n",
+            "`rwv-lint`, `owner/repo`, `--allow-stale-lock`, `project-rwv--agent-home`.\n",
+            "\n",
+            "```text\n",
+            "rwv push: 1 repo(s) disagree with rwv.lock:\n",
+            "[error] core: x is a YAML manifest; rwv reads rwv.toml.\n",
+            "```\n",
+            "\n",
+            "```\n",
+            "rwv check-mid-op   # runs rwv-check-mid-op\n",
+            "```\n",
+        );
         let (findings, population) = scan_page(page);
         assert!(findings.is_empty(), "got:\n{}", findings.join("\n"));
         assert_eq!(population.positional_before_subcommand, 1);
