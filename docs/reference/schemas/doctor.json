@@ -36,7 +36,7 @@
       }
     },
     "resolution": {
-      "description": "Resolved workspace coordinates (workspace root, optional workweave identity, project). Absent when no project is resolved.",
+      "description": "Resolved workspace coordinates (weave root, optional workweave identity, project). Absent when no project is resolved.",
       "anyOf": [
         {
           "$ref": "#/definitions/Resolution"
@@ -235,7 +235,7 @@
           "additionalProperties": false
         },
         {
-          "description": "(a) Two or more refs share this workweave's namespace in one store, so the flat name cannot be created and no migration arm can run.\n\ngit holds `refs/heads/p--w` and `refs/heads/p--w/x` as a file and a directory of the same name, so the rename the migration would perform is refused whatever order the arms take. `fix_branch_model_migration` skips the pair before any arm, which is why this is reported in place of [`UnmigratedEphemeralBranch`](Self::UnmigratedEphemeralBranch) rather than beside it: that finding's message promises a rename this state cannot produce.\n\nReport-only, and the repair is an operator's judgement rather than a missing arm — which of the refs is this workweave's branch, and where the others belong, is not derivable from the refs themselves.",
+          "description": "(a) Two or more refs share this workweave's namespace in one store, so the flat name cannot be created and no migration arm can run.\n\ngit holds `refs/heads/p--w` and `refs/heads/p--w/x` as a file and a directory of the same name, so the rename the migration would perform is refused whatever order the arms take. `fix_branch_model_migration` skips the pair before any arm, which is why this is reported in place of [`UnmigratedEphemeralBranch`](Self::UnmigratedEphemeralBranch) rather than beside it: that finding's message promises a rename this state cannot produce.\n\nReport-only, and the repair is an operator's judgment rather than a missing arm — which of the refs is this workweave's branch, and where the others belong, is not derivable from the refs themselves.",
           "type": "object",
           "required": [
             "blocked-ephemeral-namespace"
@@ -533,10 +533,10 @@
       }
     },
     "CloneTopologyKind": {
-      "description": "Discriminator for [`CheckViolation::CloneTopology`] findings.\n\nThe four sub-kinds enumerate the ways the bottom tier of the stability stack ([clone-topology.md](../../docs/explanation/joints/clone-topology.md)) can break: a manifest repo's slot at `<weave>/<repo_path>` must be a \"canonical store\" (a full clone), and every workweave checkout `<workweave>/<repo_path>` must be a linked workspace whose VCS common store resolves to that canonical store. Each variant names a distinct way the on-disk shape diverges from that spec.",
+      "description": "Discriminator for [`CheckViolation::CloneTopology`] findings.\n\nThe four sub-kinds enumerate the ways the bottom tier of the stability stack ([clone-topology.md](../../docs/explanation/joints/clone-topology.md)) can break: a member repo's slot at `<weave>/<repo_path>` must be a \"canonical store\" (a full clone), and every workweave checkout `<workweave>/<repo_path>` must be a linked workspace whose VCS common store resolves to that canonical store. Each variant names a distinct way the on-disk shape diverges from that spec.",
       "oneOf": [
         {
-          "description": "A full clone (its own canonical store) is hosted under `.workweaves/` instead of at the manifest's canonical slot. The inverted-primary case: the canonical store has migrated into one workweave and other workweaves' checkouts link into *it*, not into `<weave>/<repo_path>`.\n\nA member slot holding a symlink is not scanned: read through the link it is the canonical store itself. It is reported as `workweave-drift`.",
+          "description": "A full clone (its own canonical store) is hosted under `.workweaves/` instead of at the manifest's canonical slot. The inverted-primary case: the canonical store has migrated into one workweave and other workweaves' checkouts link into *it*, not into `<weave>/<repo_path>`.\n\nA member slot holding a symlink is not scanned: read through the link it is the canonical store itself. It is reported as `workweave-drift`.\n\n`--fix` replaces the clone with a worktree of the canonical clone on the workweave's ephemeral branch, at the commit the clone has checked out, unless the clone holds something the canonical clone would not give back: commits no canonical ref reaches, uncommitted, untracked or ignored files, or worktrees of its own.",
           "type": "object",
           "required": [
             "standalone-in-workweave"
@@ -1121,7 +1121,7 @@
           "type": "string"
         },
         "workspace": {
-          "description": "Primary workspace root, in the wire spelling.\n\nA `String` and not a `PathBuf` so the spelling is decided at construction rather than by serde: this is a published absolute path and it owes programs the composable form, which [`crate::path_spelling::wire_path`] is the only producer of.",
+          "description": "Primary weave root, in the wire spelling.\n\nA `String` and not a `PathBuf` so the spelling is decided at construction rather than by serde: this is a published absolute path and it owes programs the composable form, which [`crate::path_spelling::wire_path`] is the only producer of.",
           "type": "string"
         },
         "workweave": {
@@ -1255,32 +1255,6 @@
                 "string",
                 "null"
               ]
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "absolute_path",
-            "kind",
-            "path",
-            "project"
-          ],
-          "properties": {
-            "absolute_path": {
-              "type": "string"
-            },
-            "kind": {
-              "type": "string",
-              "enum": [
-                "missing-role"
-              ]
-            },
-            "path": {
-              "type": "string"
-            },
-            "project": {
-              "type": "string"
             }
           }
         },
@@ -2617,7 +2591,7 @@
           ]
         },
         {
-          "description": "The marker's `primary:` path does not resolve to the workspace this scan was started from, and the path itself resolves to no workspace either (missing, or exists but is not a workspace root) — e.g. an rsync'd workweave whose marker still points at the origin machine's absolute path. Report-only.",
+          "description": "The marker's `primary:` path does not resolve to the workspace this scan was started from, and the path itself resolves to no workspace either (missing, or exists but is not a weave root) — e.g. an rsync'd workweave whose marker still points at the origin machine's absolute path. Report-only.",
           "type": "object",
           "required": [
             "foreign-primary"
@@ -2639,7 +2613,7 @@
           "additionalProperties": false
         },
         {
-          "description": "The marker's `primary:` path does not match this workspace, but resolves to a different, valid workspace root — the normal shape when several weaves share one workweave container. Not a defect in this workweave, so excluded from the default text report: every sibling weave's doctor would otherwise repeat this about every other sibling. Still enumerated under `--json`.",
+          "description": "The marker's `primary:` path does not match this workspace, but resolves to a different, valid weave root — the normal shape when several weaves share one workweave container. Not a defect in this workweave, so excluded from the default text report: every sibling weave's doctor would otherwise repeat this about every other sibling. Still enumerated under `--json`.",
           "type": "object",
           "required": [
             "foreign-primary-other-workspace"
@@ -2774,7 +2748,7 @@
           "additionalProperties": false
         },
         {
-          "description": "A recorded workweave whose directory lies *below* a workweave container rather than directly in it. A multi-segment project name used to render its `/` through into the directory name, so `chatly/web-app` + `wtest` placed the workweave at `<container>/chatly/web-app--wtest` and left `chatly` behind as a directory the container scan reads as a stray.\n\nThe scan enumerates a container's immediate children, so nothing else in this check sees such a directory at all; this finding is emitted from the registry side, which records the path.\n\nReport-only, and the remedy is retire-and-recreate rather than a rename: the move crosses a directory boundary, which invalidates the worktree back-pointers of every checkout inside and the recorded path that found it. Workweaves are ephemeral by design; rwv does not migrate a live seat in place.",
+          "description": "A recorded workweave whose directory lies *below* a workweave container rather than directly in it: a multi-segment project name rendered with its `/` intact, as `chatly/web-app` + `wtest` at `<container>/chatly/web-app--wtest`, which leaves `chatly` behind as a directory the container scan reads as a stray. rwv renders that `/` as `+`, so the records spell `<container>/chatly+web-app--wtest`.\n\nThe scan enumerates a container's immediate children, so nothing else in this check sees such a directory at all; this finding is emitted from the registry side, which records the path.\n\nReport-only, and the remedy is retire-and-recreate rather than a rename: the move crosses a directory boundary, which invalidates the worktree back-pointers of every checkout inside and the recorded path that found it. Workweaves are ephemeral by design; rwv does not migrate one in place.",
           "type": "object",
           "required": [
             "nested-workweave-dir"

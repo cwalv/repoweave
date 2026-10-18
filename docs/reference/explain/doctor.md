@@ -16,6 +16,7 @@ follow-up actions.
 
 ```
 rwv doctor [--all] [--locked] [--json] [--fix] [--reattach-checkouts]
+           [--kind <kind>]...
 ```
 
 - `--all` runs checks across every project under `projects/` and enables
@@ -32,6 +33,14 @@ rwv doctor [--all] [--locked] [--json] [--fix] [--reattach-checkouts]
 - `--json` emits machine-readable output (see Output below). Mutually
   exclusive with `--locked` and `--fix`. Honors the same scoping as the
   default text output: project-scoped by default, weave-wide with `--all`.
+- `--kind <kind>` narrows the report to the named finding kinds (repeatable):
+  a violation's `kind`, or an integration issue's (`tool-missing`,
+  `surfacing`, `member-incompatibility`, …). An unknown name refuses, listing
+  the valid set. The exit code reflects the filtered view, and under `--json`
+  any finding in it exits non-zero, warnings included — so CI fails on a
+  missing ecosystem tool with `rwv doctor --json --kind tool-missing`, while
+  the same warning leaves an unfiltered run green. Mutually exclusive with
+  `--locked` and `--fix`.
 - `--fix` repairs every finding marked **Auto-fixable** in
   `docs/reference/doctor-findings.md`. That page carries the mark on each
   finding it documents, alongside what the repair does and why the findings
@@ -68,9 +77,9 @@ question the classes answer is whether the weave you invoked doctor from
 determines what gets repaired.
 
 **Weave-scoped arms — the invoking weave sets the scope.** Integration
-content regeneration, surfacing symlinks, the `role: primary` manifest
-rewrite, the `rwv.lock` replay-exclusion and its paired merge-driver config,
-and the index / working-tree / state-hygiene drift arms all repair state that
+content regeneration, surfacing symlinks, the `rwv.lock` replay-exclusion and
+its paired merge-driver config, and the index / working-tree / state-hygiene
+drift arms all repair state that
 exists once *per weave*. Run inside a workweave, they repair that workweave
 and nothing else: primary's copy of the same file is left alone, including
 primary's own drift, and the drift scan does not enumerate sibling weaves at
@@ -182,17 +191,16 @@ severity. Under `--json`, output is the envelope:
 {
   "$schema": "<url>",
   "violations": [ { "kind": "...", ... }, ... ],
+  "issues": [ { "kind": "...", "integration": "...", "severity": "...", ... }, ... ],
   "plugins": [ { "name": "...", "path": "...", "shadowed": false }, ... ]
 }
 ```
 
 The `$schema` URL points to the committed schema artifact. Variants are
-discriminated by the `kind` tag — `branch-discipline`, `cargo-patch-shadowing`, `cargo-version-skew`, `clone-topology`, `confusable-siblings`, `dangling-active-project`, `dangling-ref-receipt`, `dangling-reference`, `dead-op-lease`, `head-unreadable`, `incomplete-lock`, `index-drift`, `legacy-manifest-format`, `legacy-workweave-index`, `legacy-workweave-marker`, `lock-pinned-by-name`, `member-permissions`, `merge-driver-config-unreadable`, `missing-canonical-clone`, `missing-merge-driver-config`, `missing-replay-exclusion`, `missing-role`, `orphaned-clone`, `orphaned-savepoint`, `phantom-merge-driver`, `pre-flat-ref-receipt`, `projectless-dir`, `projects-dir-unreadable`, `provenance`, `replay-exclusion-unreadable`, `role-disagreement`, `stale-lock`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unknown-segment-clone`, `unnameable-project`, `unparseable-project`, `unreadable-owned-state`, `unreadable-workweave-index`, `unresolvable-lock-entry`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
+discriminated by the `kind` tag — `branch-discipline`, `cargo-patch-shadowing`, `cargo-version-skew`, `clone-topology`, `confusable-siblings`, `dangling-active-project`, `dangling-ref-receipt`, `dangling-reference`, `dead-op-lease`, `head-unreadable`, `incomplete-lock`, `index-drift`, `legacy-manifest-format`, `legacy-workweave-index`, `legacy-workweave-marker`, `lock-pinned-by-name`, `member-permissions`, `merge-driver-config-unreadable`, `missing-canonical-clone`, `missing-merge-driver-config`, `missing-replay-exclusion`, `orphaned-clone`, `orphaned-savepoint`, `phantom-merge-driver`, `pre-flat-ref-receipt`, `projectless-dir`, `projects-dir-unreadable`, `provenance`, `replay-exclusion-unreadable`, `role-disagreement`, `stale-lock`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unknown-segment-clone`, `unnameable-project`, `unparseable-project`, `unreadable-owned-state`, `unreadable-workweave-index`, `unresolvable-lock-entry`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
 Every per-repo variant carries `path` (manifest-relative) and
 `absolute_path` (fully resolved). Variants with subkinds
 (`branch-discipline`, `clone-topology`, `dead-op-lease`, `index-drift`, `member-permissions`, `missing-replay-exclusion`, `orphaned-savepoint`, `provenance`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
-`legacy-role-primary` carries `project` and
-`manifest_path` so the caller can locate the file `--fix` will rewrite.
 `workweave-tree-integrity` carries `workweave_dir` and a `sub_kind`
 (`dangling-parent`, `foreign-primary`, `foreign-primary-other-workspace`, `misnamed-dir`, `nested-workweave-dir`, `parent-chain-anomaly`, `stale-registry-entry`, `tracked-index`, `unreadable-marker`, `unregistered-dir`, `unregistered-workweave`).
 
@@ -206,13 +214,13 @@ gate. The exit code is unaffected by this field.
 
 Surfacing violations (missing or mis-resolved symlinks in the active
 project's surfacing set) are reported as `core` integration warnings in
-the text output; they do not have a dedicated `--json` kind because they
-are emitted as `Issue` values through the same integration-issue channel
-as per-integration check results.
+the text output; they are emitted through the same integration-issue channel
+as per-integration check results, so under `--json` they are `issues[]`
+records with `kind` `surfacing` rather than `violations[]` records.
 
-`member-incompatibility` findings travel that same integration-issue channel
-and so also have no dedicated `--json` kind; the kebab-case tag is the message
-prefix, which is what a caller keys off. Doctor is the **standing observation
+`member-incompatibility` findings travel that same integration-issue channel,
+as `issues[]` records keyed `member-incompatibility`; the kebab-case tag is
+also the message prefix. Doctor is the **standing observation
 arm** for the category — `rwv update` reports the same finding at the moment it
 creates one. Neither gates: nothing refuses on this category, and `--fix`
 cannot repair it.
@@ -258,7 +266,7 @@ Schema:
       }
     },
     "resolution": {
-      "description": "Resolved workspace coordinates (workspace root, optional workweave identity, project). Absent when no project is resolved.",
+      "description": "Resolved workspace coordinates (weave root, optional workweave identity, project). Absent when no project is resolved.",
       "anyOf": [
         {
           "$ref": "#/definitions/Resolution"
@@ -457,7 +465,7 @@ Schema:
           "additionalProperties": false
         },
         {
-          "description": "(a) Two or more refs share this workweave's namespace in one store, so the flat name cannot be created and no migration arm can run.\n\ngit holds `refs/heads/p--w` and `refs/heads/p--w/x` as a file and a directory of the same name, so the rename the migration would perform is refused whatever order the arms take. `fix_branch_model_migration` skips the pair before any arm, which is why this is reported in place of `UnmigratedEphemeralBranch` rather than beside it: that finding's message promises a rename this state cannot produce.\n\nReport-only, and the repair is an operator's judgement rather than a missing arm — which of the refs is this workweave's branch, and where the others belong, is not derivable from the refs themselves.",
+          "description": "(a) Two or more refs share this workweave's namespace in one store, so the flat name cannot be created and no migration arm can run.\n\ngit holds `refs/heads/p--w` and `refs/heads/p--w/x` as a file and a directory of the same name, so the rename the migration would perform is refused whatever order the arms take. `fix_branch_model_migration` skips the pair before any arm, which is why this is reported in place of `UnmigratedEphemeralBranch` rather than beside it: that finding's message promises a rename this state cannot produce.\n\nReport-only, and the repair is an operator's judgment rather than a missing arm — which of the refs is this workweave's branch, and where the others belong, is not derivable from the refs themselves.",
           "type": "object",
           "required": [
             "blocked-ephemeral-namespace"
@@ -755,10 +763,10 @@ Schema:
       }
     },
     "CloneTopologyKind": {
-      "description": "Discriminator for `CheckViolation::CloneTopology` findings.\n\nThe four sub-kinds enumerate the ways the bottom tier of the stability stack (clone-topology.md) can break: a manifest repo's slot at `<weave>/<repo_path>` must be a \"canonical store\" (a full clone), and every workweave checkout `<workweave>/<repo_path>` must be a linked workspace whose VCS common store resolves to that canonical store. Each variant names a distinct way the on-disk shape diverges from that spec.",
+      "description": "Discriminator for `CheckViolation::CloneTopology` findings.\n\nThe four sub-kinds enumerate the ways the bottom tier of the stability stack (clone-topology.md) can break: a member repo's slot at `<weave>/<repo_path>` must be a \"canonical store\" (a full clone), and every workweave checkout `<workweave>/<repo_path>` must be a linked workspace whose VCS common store resolves to that canonical store. Each variant names a distinct way the on-disk shape diverges from that spec.",
       "oneOf": [
         {
-          "description": "A full clone (its own canonical store) is hosted under `.workweaves/` instead of at the manifest's canonical slot. The inverted-primary case: the canonical store has migrated into one workweave and other workweaves' checkouts link into *it*, not into `<weave>/<repo_path>`.\n\nA member slot holding a symlink is not scanned: read through the link it is the canonical store itself. It is reported as `workweave-drift`.",
+          "description": "A full clone (its own canonical store) is hosted under `.workweaves/` instead of at the manifest's canonical slot. The inverted-primary case: the canonical store has migrated into one workweave and other workweaves' checkouts link into *it*, not into `<weave>/<repo_path>`.\n\nA member slot holding a symlink is not scanned: read through the link it is the canonical store itself. It is reported as `workweave-drift`.\n\n`--fix` replaces the clone with a worktree of the canonical clone on the workweave's ephemeral branch, at the commit the clone has checked out, unless the clone holds something the canonical clone would not give back: commits no canonical ref reaches, uncommitted, untracked or ignored files, or worktrees of its own.",
           "type": "object",
           "required": [
             "standalone-in-workweave"
@@ -1343,7 +1351,7 @@ Schema:
           "type": "string"
         },
         "workspace": {
-          "description": "Primary workspace root, in the wire spelling.\n\nA `String` and not a `PathBuf` so the spelling is decided at construction rather than by serde: this is a published absolute path and it owes programs the composable form, which `crate::path_spelling::wire_path` is the only producer of.",
+          "description": "Primary weave root, in the wire spelling.\n\nA `String` and not a `PathBuf` so the spelling is decided at construction rather than by serde: this is a published absolute path and it owes programs the composable form, which `crate::path_spelling::wire_path` is the only producer of.",
           "type": "string"
         },
         "workweave": {
@@ -1477,32 +1485,6 @@ Schema:
                 "string",
                 "null"
               ]
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "absolute_path",
-            "kind",
-            "path",
-            "project"
-          ],
-          "properties": {
-            "absolute_path": {
-              "type": "string"
-            },
-            "kind": {
-              "type": "string",
-              "enum": [
-                "missing-role"
-              ]
-            },
-            "path": {
-              "type": "string"
-            },
-            "project": {
-              "type": "string"
             }
           }
         },
@@ -2839,7 +2821,7 @@ Schema:
           ]
         },
         {
-          "description": "The marker's `primary:` path does not resolve to the workspace this scan was started from, and the path itself resolves to no workspace either (missing, or exists but is not a workspace root) — e.g. an rsync'd workweave whose marker still points at the origin machine's absolute path. Report-only.",
+          "description": "The marker's `primary:` path does not resolve to the workspace this scan was started from, and the path itself resolves to no workspace either (missing, or exists but is not a weave root) — e.g. an rsync'd workweave whose marker still points at the origin machine's absolute path. Report-only.",
           "type": "object",
           "required": [
             "foreign-primary"
@@ -2861,7 +2843,7 @@ Schema:
           "additionalProperties": false
         },
         {
-          "description": "The marker's `primary:` path does not match this workspace, but resolves to a different, valid workspace root — the normal shape when several weaves share one workweave container. Not a defect in this workweave, so excluded from the default text report: every sibling weave's doctor would otherwise repeat this about every other sibling. Still enumerated under `--json`.",
+          "description": "The marker's `primary:` path does not match this workspace, but resolves to a different, valid weave root — the normal shape when several weaves share one workweave container. Not a defect in this workweave, so excluded from the default text report: every sibling weave's doctor would otherwise repeat this about every other sibling. Still enumerated under `--json`.",
           "type": "object",
           "required": [
             "foreign-primary-other-workspace"
@@ -2996,7 +2978,7 @@ Schema:
           "additionalProperties": false
         },
         {
-          "description": "A recorded workweave whose directory lies *below* a workweave container rather than directly in it. A multi-segment project name used to render its `/` through into the directory name, so `chatly/web-app` + `wtest` placed the workweave at `<container>/chatly/web-app--wtest` and left `chatly` behind as a directory the container scan reads as a stray.\n\nThe scan enumerates a container's immediate children, so nothing else in this check sees such a directory at all; this finding is emitted from the registry side, which records the path.\n\nReport-only, and the remedy is retire-and-recreate rather than a rename: the move crosses a directory boundary, which invalidates the worktree back-pointers of every checkout inside and the recorded path that found it. Workweaves are ephemeral by design; rwv does not migrate a live seat in place.",
+          "description": "A recorded workweave whose directory lies *below* a workweave container rather than directly in it: a multi-segment project name rendered with its `/` intact, as `chatly/web-app` + `wtest` at `<container>/chatly/web-app--wtest`, which leaves `chatly` behind as a directory the container scan reads as a stray. rwv renders that `/` as `+`, so the records spell `<container>/chatly+web-app--wtest`.\n\nThe scan enumerates a container's immediate children, so nothing else in this check sees such a directory at all; this finding is emitted from the registry side, which records the path.\n\nReport-only, and the remedy is retire-and-recreate rather than a rename: the move crosses a directory boundary, which invalidates the worktree back-pointers of every checkout inside and the recorded path that found it. Workweaves are ephemeral by design; rwv does not migrate one in place.",
           "type": "object",
           "required": [
             "nested-workweave-dir"
@@ -3066,7 +3048,8 @@ Schema:
 
 - `0` — no violations found.
 - non-zero — violations found, or an error occurred resolving the
-  workspace.
+  workspace. Under `--kind`, only findings of the named kinds count; with
+  `--json`, any of them does, warnings included.
 
 ## Examples
 
@@ -3088,8 +3071,8 @@ Find every stale lock and the paths involved (weave-wide):
 rwv doctor --all --json | jq '.violations[] | select(.kind == "stale-lock")'
 ```
 
-Auto-fix safe drift (index trees that match a known ancestor) and
-migrate any manifests still using the legacy `role: primary` spelling:
+Repair every finding marked Auto-fixable, safe drift (index trees that match
+a known ancestor) included:
 
 ```
 rwv doctor --fix
