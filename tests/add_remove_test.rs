@@ -3,7 +3,7 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 use repoweave::manifest::{Manifest, RepoPath};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process;
 
 mod common;
@@ -663,6 +663,98 @@ fn add_local_path_refuses_rather_than_fabricate_main_when_origin_head_is_unset()
         manifest_content.contains(repo_path),
         "the advised repair must unblock the same add, got:\n{manifest_content}"
     );
+}
+
+/// `rwv add <url>` refused for the default its fresh clone lacks, run in
+/// `workspace`: the refusal text and the clone it keeps.
+fn refused_for_its_default(workspace: &Path, url: &str, repo_path: &str) -> (String, PathBuf) {
+    let out = rwv()
+        .args(["add", url])
+        .current_dir(workspace)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(
+        !out.status.success() && stderr.contains("rwv explain no-remote-default-branch"),
+        "fixture: the add refuses for the clone's unset default:\n{stderr}"
+    );
+    let clone = common::under(workspace, repo_path);
+    assert!(
+        stderr.contains(&format!("kept the clone it made at {}", clone.display())),
+        "the re-run works in the clone the add keeps:\n{stderr}"
+    );
+    (stderr, clone)
+}
+
+fn assert_added_tracking(workspace: &Path, url: &str, repo_path: &str, clone: &Path, branch: &str) {
+    rwv()
+        .args(["add", url])
+        .current_dir(workspace)
+        .assert()
+        .success();
+    let manifest = Manifest::from_path(&workspace.join("projects/test-project/rwv.toml")).unwrap();
+    let entry = manifest
+        .get_entry(&RepoPath::new(repo_path).unwrap())
+        .expect("the re-run add lists the repo");
+    assert_eq!(entry.version.as_str(), branch);
+    common::assert_on_branch(clone, branch);
+}
+
+/// A remote with no branch yet has no default for a clone to record, and
+/// re-reading the remote cannot find one: the refusal names the first push
+/// from the clone it keeps, and that push gives the re-run its default.
+#[test]
+fn add_url_of_a_remote_with_no_branch_names_the_first_push() {
+    let tmp = common::tempdir().unwrap();
+    let bare = tmp.path().join("acme/empty.git");
+    init_bare_repo(&bare);
+    let url = common::file_url(&bare);
+    let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
+    let repo_path = "local/acme/empty";
+
+    let (stderr, clone) = refused_for_its_default(&workspace, &url, repo_path);
+    let branch = common::git_in(&clone, &["symbolic-ref", "--short", "HEAD"]);
+    assert!(
+        stderr.contains(&format!("`git push -u origin {branch}`"))
+            && stderr.contains(&format!("`git remote set-head origin {branch}`"))
+            && !stderr.contains("set-head origin -a"),
+        "the refusal names the first push of the clone's branch and records it:\n{stderr}"
+    );
+
+    std::fs::write(clone.join("README"), "first\n").unwrap();
+    common::git_in(&clone, &["add", "README"]);
+    common::git_in(&clone, &["commit", "-qm", "first"]);
+    common::git_in(&clone, &["push", "-q", "-u", "origin", &branch]);
+    common::git_in(&clone, &["remote", "set-head", "origin", &branch]);
+
+    assert_added_tracking(&workspace, &url, repo_path, &clone, &branch);
+}
+
+/// A remote whose HEAD names a branch it does not have clones with no
+/// default and no checkout: the refusal names the branches it does have, and
+/// checking one out and recording it gives the re-run its default.
+#[test]
+fn add_url_of_a_remote_whose_head_names_no_branch_names_the_ones_it_has() {
+    let tmp = common::tempdir().unwrap();
+    let bare = tmp.path().join("acme/dangling.git");
+    init_bare_repo_with_commit(&bare);
+    common::git_in(&bare, &["symbolic-ref", "HEAD", "refs/heads/trunk"]);
+    let url = common::file_url(&bare);
+    let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
+    let repo_path = "local/acme/dangling";
+
+    let (stderr, clone) = refused_for_its_default(&workspace, &url, repo_path);
+    assert!(
+        stderr.contains("`git checkout <branch> && git remote set-head origin <branch>`")
+            && stderr.contains("origin has `main`")
+            && !stderr.contains("set-head origin -a"),
+        "the refusal names the branches the remote has and the set-head that records one:\n{stderr}"
+    );
+
+    common::git_in(&clone, &["checkout", "-q", "main"]);
+    common::git_in(&clone, &["remote", "set-head", "origin", "main"]);
+
+    assert_added_tracking(&workspace, &url, repo_path, &clone, "main");
 }
 
 /// `--adopt` reads `origin` back from a pre-existing clone and

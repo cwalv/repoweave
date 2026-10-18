@@ -654,6 +654,22 @@ const ROUTED: &[Routed] = &[
     Routed {
         file: "add_remove.rs",
         scope: "",
+        needle: r#""'{}' is out of this workweave, but the branch the workweave held in \"#,
+        renders: 1,
+        prints: "run_remove's failure to delete the branch a workweave held, naming the \
+                 canonical clone it is in",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
+        needle: r#""warning: kept branch `{owned}` in {}: it holds commits the clone's \"#,
+        renders: 1,
+        prints: "run_remove's notice that a workweave's branch holding commits stays, naming \
+                 the canonical clone it stays in",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
         needle: r#"format!("failed to load lock at {}""#,
         renders: 1,
         prints: "leftover_checkout_vcs's failure to read rwv.lock",
@@ -775,7 +791,16 @@ const ROUTED: &[Routed] = &[
         scope: "",
         needle: r#""rwv add: repo at {} has a detached HEAD right after creation; \"#,
         renders: 2,
-        prints: "run_add_new's refusal when the freshly created member's HEAD is detached",
+        prints: "run_add_new's refusal when the member it found already at the placement \
+                 has a detached HEAD",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
+        needle: r#""rwv add: the clone at {} has a detached HEAD right after creation, \"#,
+        renders: 2,
+        prints: "run_add_new's refusal when the member it cloned takes a detached HEAD from \
+                 the upstream, naming the clone and the upstream",
     },
     Routed {
         file: "add_remove.rs",

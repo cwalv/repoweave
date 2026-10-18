@@ -515,7 +515,12 @@ fabricated guess would be wrong silently.
 
 **Exits.** The message names the repair for the VCS in question — for git,
 `git fetch origin && git remote set-head origin -a` in the named repo — then
-re-run.
+re-run. `rwv add <url>` names its own, in the clone it keeps: a fresh clone
+records any default the remote names, so the remote has either no branch yet
+or a default that names none of its branches. For the first, commit in the
+clone and push the branch; for the second, check out one of the branches the
+message lists. Either way, record the branch with
+`git remote set-head origin <branch>`.
 
 ### `no-remote-url`
 
@@ -592,8 +597,12 @@ silently, and the second creation would overwrite the first's meaning in the
 manifest without saying so.
 
 **Exits.** To finish an entry already in the manifest, re-run with the URL it
-records. Otherwise use a different owner or repo so the two do not collide, or
-remove the existing entry first if replacing it is what's intended.
+records. Otherwise use a different owner or repo so the two do not collide, or,
+if replacing it is what's intended, remove the existing entry and its clone
+first with `rwv remove <path> --delete`. A plain `rwv remove` keeps the clone,
+which the re-run then refuses as `foreign-clone-at-placement`. In a workweave,
+whose clones the primary weave holds, run the delete in the workweave and then
+in the primary weave.
 
 ### `op-acquisition-raced`
 

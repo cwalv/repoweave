@@ -94,8 +94,10 @@ pub fn init(name: &str, provider: Option<&str>, origin_dir: &Path) -> anyhow::Re
     // same name downstream, but by then `git init`, the manifest write and
     // the `.gitattributes` write have already happened, and a refused name
     // leaves that debris in place — including for a retry, which then trips
-    // the collision check against its own leftovers.
+    // the collision check against its own leftovers. The same holds for
+    // `--provider`, whose remote URL is minted from the name.
     crate::manifest::ProjectName::new(name)?;
+    let remote_url = provider.map(|p| provider_remote_url(p, name)).transpose()?;
 
     // Bootstrap here rather than at dispatch — the origin dir may be empty
     // (no workspace to resolve yet), and `bootstrap_workspace_if_empty`
@@ -155,52 +157,7 @@ pub fn init(name: &str, provider: Option<&str>, origin_dir: &Path) -> anyhow::Re
     crate::git::plant_rwv_merge_driver_config(&project_dir)
         .context("failed to plant merge.rwv-ours config")?;
 
-    // Set up remote from --provider
-    if let Some(provider_str) = provider {
-        let (registry_name, owner) = provider_str.split_once('/').ok_or_else(|| {
-            refusal(
-                RefusalKind::MalformedProvider,
-                format!(
-                    "invalid --provider format '{provider_str}', expected 'registry/owner' \
-                     (e.g., 'github/myorg')"
-                ),
-            )
-        })?;
-
-        // Look up the registry to get the clone URL pattern. Parse into
-        // `RegistryName` at the boundary so the comparison goes through the
-        // newtype's PartialEq — any future normalization (case, prefixes)
-        // applies here automatically. (Audit A2.)
-        let target = crate::registry::RegistryName::new(registry_name);
-        let registries = builtin_registries();
-        let registry = registries
-            .iter()
-            .find(|r| r.name() == &target)
-            .ok_or_else(|| {
-                let names = crate::registry::builtin_registry_names();
-                let known: Vec<&str> = names.iter().map(|n| n.as_str()).collect();
-                refusal(
-                    RefusalKind::UnknownRegistry,
-                    format!(
-                        "unknown registry '{registry_name}'. Known registries: {}",
-                        known.join(", ")
-                    ),
-                )
-            })?;
-
-        let repo_id = RepoId::new(owner, name);
-
-        let url = registry.clone_url(&repo_id).ok_or_else(|| {
-            refusal(
-                RefusalKind::ProviderCannotMintUrl,
-                format!(
-                    "'{registry_name}' cannot name a repository from an owner and a project \
-                     name alone. Create the project without --provider (`rwv init {name}`), \
-                     then set the remote once the repo exists."
-                ),
-            )
-        })?;
-
+    if let Some(url) = remote_url {
         vcs.add_remote(&project_dir, &url.to_string())
             .with_context(|| format!("failed to add the remote in {}", project_dir.display()))?;
     }
@@ -215,6 +172,53 @@ pub fn init(name: &str, provider: Option<&str>, origin_dir: &Path) -> anyhow::Re
     crate::activate::activate(name, &ctx)?;
 
     Ok(())
+}
+
+/// The remote URL `--provider <registry>/<owner>` names for project `name`.
+fn provider_remote_url(provider: &str, name: &str) -> anyhow::Result<RepoUrl> {
+    let (registry_name, owner) = provider.split_once('/').ok_or_else(|| {
+        refusal(
+            RefusalKind::MalformedProvider,
+            format!(
+                "invalid --provider format '{provider}', expected 'registry/owner' \
+                 (e.g., 'github/myorg')"
+            ),
+        )
+    })?;
+
+    // Look up the registry to get the clone URL pattern. Parse into
+    // `RegistryName` at the boundary so the comparison goes through the
+    // newtype's PartialEq — any future normalization (case, prefixes)
+    // applies here automatically.
+    let target = crate::registry::RegistryName::new(registry_name);
+    let registries = builtin_registries();
+    let registry = registries
+        .iter()
+        .find(|r| r.name() == &target)
+        .ok_or_else(|| {
+            let names = crate::registry::builtin_registry_names();
+            let known: Vec<&str> = names.iter().map(|n| n.as_str()).collect();
+            refusal(
+                RefusalKind::UnknownRegistry,
+                format!(
+                    "unknown registry '{registry_name}'. Known registries: {}",
+                    known.join(", ")
+                ),
+            )
+        })?;
+
+    registry
+        .clone_url(&RepoId::new(owner, name))
+        .ok_or_else(|| {
+            refusal(
+                RefusalKind::ProviderCannotMintUrl,
+                format!(
+                    "'{registry_name}' cannot name a repository from an owner and a project \
+                 name alone. Create the project without --provider (`rwv init {name}`), \
+                 then set the remote once the repo exists."
+                ),
+            )
+        })
 }
 
 /// Adopt an existing repo as a project.

@@ -446,6 +446,70 @@ fn init_without_provider_has_no_remote() {
     );
 }
 
+/// Every path under `root`, relative to it, in a stable order.
+fn tree(root: &Path) -> Vec<std::path::PathBuf> {
+    let mut found = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                pending.push(path.clone());
+            }
+            found.push(path.strip_prefix(root).unwrap().to_path_buf());
+        }
+    }
+    found.sort();
+    found
+}
+
+/// A `--provider` init refuses creates nothing, in a weave or in the empty
+/// directory init would bootstrap, so the init without the flag that the
+/// refusal names as the way on succeeds.
+#[test]
+fn init_refused_for_its_provider_leaves_nothing_and_the_plain_init_succeeds() {
+    for (provider, token) in [
+        ("local/acme", "provider-cannot-mint-url"),
+        ("nosuch/acme", "unknown-registry"),
+        ("noslash", "malformed-provider"),
+    ] {
+        for weave_exists in [true, false] {
+            let tmp = common::tempdir().unwrap();
+            let ws = if weave_exists {
+                make_empty_workspace(tmp.path())
+            } else {
+                let ws = tmp.path().join("fresh");
+                std::fs::create_dir_all(&ws).unwrap();
+                ws
+            };
+            let before = tree(&ws);
+
+            let out = rwv()
+                .args(["init", "newproj", "--provider", provider])
+                .current_dir(&ws)
+                .output()
+                .unwrap();
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            assert!(
+                !out.status.success() && stderr.contains(&format!("rwv explain {token}")),
+                "fixture: `--provider {provider}` refuses with {token}:\n{stderr}"
+            );
+            assert_eq!(
+                tree(&ws),
+                before,
+                "a refused `--provider {provider}` must leave the directory as it was"
+            );
+
+            rwv()
+                .args(["init", "newproj"])
+                .current_dir(&ws)
+                .assert()
+                .success();
+            assert!(ws.join("projects/newproj/rwv.toml").is_file());
+        }
+    }
+}
+
 // ============================================================================
 // Init auto-activates the project
 // ============================================================================

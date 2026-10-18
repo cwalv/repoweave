@@ -236,6 +236,71 @@ fn add_refuses_a_url_that_disagrees_with_the_hand_added_entry() {
     assert_eq!(std::fs::read(manifest(&weave.ws)).unwrap(), manifest_before);
 }
 
+/// Whether the clone at `clone` is a clone of `url`.
+fn clones(clone: &Path, url: &str) -> bool {
+    let origin = common::git_in(clone, &["remote", "get-url", "origin"]);
+    repoweave::manifest::clone_urls_equivalent(&origin, url)
+}
+
+/// An add over an entry the manifest maps to another URL, whose clone is on
+/// disk: the delete the refusal names takes the entry and the clone, and the
+/// re-run add lands.
+#[test]
+fn add_over_an_entry_for_another_url_lands_after_the_named_delete() {
+    let weave = Weave::new();
+    let beta = placed("beta");
+    succeed(&["add", &weave.origin("beta")], &weave.ws);
+    let replacement = crate_origin(&weave.tmp.path().join("elsewhere"), "beta");
+
+    let out = run(&["add", &replacement], &weave.ws);
+    let stderr = stderr_of(&out);
+    assert!(
+        !out.status.success() && stderr.contains("rwv explain occupied-placement"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "If replacing it is what's intended, first run `rwv remove {beta} --delete`."
+        )),
+        "{stderr}"
+    );
+
+    succeed(&["remove", &beta, "--delete"], &weave.ws);
+    succeed(&["add", &replacement], &weave.ws);
+    assert!(clones(&weave.ws.join(&beta), &replacement));
+}
+
+/// The same in a workweave, whose clones the primary weave holds: the delete
+/// is named for both, and after both the re-run add lands.
+#[test]
+fn add_in_a_workweave_over_an_entry_for_another_url_lands_after_the_named_deletes() {
+    let weave = Weave::new();
+    let workweave = weave.workweave("feat");
+    let beta = placed("beta");
+    succeed(&["add", &weave.origin("beta")], &workweave);
+    let replacement = crate_origin(&weave.tmp.path().join("elsewhere"), "beta");
+
+    let out = run(&["add", &replacement], &workweave);
+    let stderr = stderr_of(&out);
+    assert!(
+        !out.status.success() && stderr.contains("rwv explain occupied-placement"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "If replacing it is what's intended, first run `rwv remove {beta} --delete` here \
+             and then in the primary weave, which holds the clone."
+        )),
+        "{stderr}"
+    );
+
+    succeed(&["remove", &beta, "--delete"], &workweave);
+    succeed(&["remove", &beta, "--delete"], &weave.ws);
+    succeed(&["add", &replacement], &workweave);
+    assert!(clones(&weave.ws.join(&beta), &replacement));
+    assert!(workweave.join(&beta).join(".git").is_file());
+}
+
 /// The weave root's top-level symlinks.
 fn root_links(ws: &Path) -> Vec<String> {
     let mut links: Vec<String> = std::fs::read_dir(ws)
@@ -565,13 +630,59 @@ fn a_refused_url_add_in_a_workweave_names_its_worktree_and_its_clone() {
             "kept the worktree it made at {}",
             worktree.display()
         )) && stderr.contains(&format!("`rwv remove {beta} --delete` in this workweave"))
-            && stderr.contains(&format!("kept the clone it made at {}", clone.display())),
+            && stderr.contains(&format!("kept the clone it made at {}", clone.display()))
+            && stderr.contains(&format!(
+                "`rwv remove {beta} --delete` in the primary weave removes it once that \
+                 worktree is removed"
+            )),
         "{stderr}"
     );
 
     vacate_cargo_lock(&workweave);
     succeed(&["remove", &beta, "--delete"], &workweave);
     assert!(!worktree.exists());
+    succeed(&["remove", &beta, "--delete"], &weave.ws);
+    assert!(
+        !clone.exists(),
+        "the command named for the clone removes it once the worktree is gone"
+    );
+}
+
+/// The branch a workweave's `remove --delete` retires is one holding nothing
+/// the canonical clone's checkout lacks: a commit made on it and then left by
+/// the worktree keeps the branch, and its receipt, in place.
+#[test]
+fn remove_delete_in_a_workweave_keeps_its_branch_when_it_holds_commits() {
+    let weave = Weave::new();
+    let workweave = weave.workweave("feat");
+    let beta_url = weave.origin("beta");
+    let beta = placed("beta");
+    succeed(&["add", &beta_url], &workweave);
+    let worktree = workweave.join(&beta);
+    let clone = weave.ws.join(&beta);
+    std::fs::write(worktree.join("later.txt"), "later\n").unwrap();
+    common::git_in(&worktree, &["add", "later.txt"]);
+    common::git_in(&worktree, &["commit", "-qm", "later"]);
+    let kept = common::git_in(&worktree, &["rev-parse", "HEAD"]);
+    common::git_in(&worktree, &["checkout", "-q", "--detach", "origin/main"]);
+
+    let out = succeed(&["remove", &beta, "--delete"], &workweave);
+
+    assert!(!worktree.exists());
+    assert!(
+        stderr_of(&out).contains("warning: kept branch `demo--feat`"),
+        "{}",
+        describe(&out)
+    );
+    assert_eq!(common::git_in(&clone, &["rev-parse", "demo--feat"]), kept);
+    let out = run(&["remove", &beta, "--delete"], &weave.ws);
+    assert!(
+        !out.status.success()
+            && stderr_of(&out).contains("ownership receipt for branch demo--feat"),
+        "the receipt still claims the clone; {}",
+        describe(&out)
+    );
+    assert!(clone.join(".git").is_dir());
 }
 
 #[test]
@@ -648,6 +759,58 @@ fn a_refused_add_new_takes_back_its_upstream_and_its_member() {
             && stderr.contains(&format!("removed {}", member.display())),
         "{stderr}"
     );
+}
+
+/// An upstream already under `--param root` whose HEAD is detached gives the
+/// member cloned from it the same HEAD. The member is removed with the rest of
+/// the refused add, so the refusal names the upstream and the repair there,
+/// and once that is made the re-run add lands.
+#[test]
+fn a_detached_upstream_refuses_add_new_naming_the_upstream_to_repair() {
+    let weave = Weave::new();
+    let root = weave.tmp.path().join("upstreams");
+    let upstream = common::under(&root, "acme/fresh");
+    std::fs::create_dir_all(&upstream).unwrap();
+    common::git_in(&upstream, &["init", "-q", "--bare", "-b", "main"]);
+    let seed = weave.tmp.path().join("seed-fresh");
+    common::git_in(
+        weave.tmp.path(),
+        &[
+            "clone",
+            "-q",
+            upstream.to_str().unwrap(),
+            seed.to_str().unwrap(),
+        ],
+    );
+    for message in ["first", "second"] {
+        common::git_in(&seed, &["commit", "-q", "--allow-empty", "-m", message]);
+    }
+    common::git_in(&seed, &["push", "-q", "origin", "main"]);
+    let first = common::git_in(&upstream, &["rev-parse", "main~1"]);
+    common::git_in(&upstream, &["update-ref", "--no-deref", "HEAD", &first]);
+    let root_param = format!("root={}", root.display());
+    let args = ["add", "local/acme/fresh", "--new", "--param", &root_param];
+
+    let out = run(&args, &weave.ws);
+    let stderr = stderr_of(&out);
+
+    let member = common::under(&weave.ws, "local/acme/fresh");
+    assert!(!out.status.success(), "{stderr}");
+    assert!(
+        stderr.contains(&format!("removed {}", member.display())) && !member.exists(),
+        "fixture: the refused add took back the member it cloned; {stderr}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "`git -C {} symbolic-ref HEAD refs/heads/<branch>`",
+            upstream.display()
+        )),
+        "{stderr}"
+    );
+
+    common::git_in(&upstream, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    succeed(&args, &weave.ws);
+    common::assert_on_branch(&member, "main");
 }
 
 /// A `PATH` holding `git` and a `cargo` that fails every command.

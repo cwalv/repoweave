@@ -29,9 +29,13 @@ listed one. A path with no such checkout refuses (`repo-not-in-manifest`).
 
 - **In the primary weave**, the canonical clone at its path under the weave
   root.
-- **In a workweave**, that workweave's worktree of the repo. The canonical
-  clone in the primary is never touched from a workweave; it is removed when
-  the change lands and the primary drops the repo.
+- **In a workweave**, that workweave's worktree of the repo, and the branch
+  the workweave was given in the canonical clone, so nothing of the
+  workweave's still claims that clone. A branch holding commits the canonical
+  clone's checkout does not contain stays, and a warning names it. The
+  canonical clone in the primary is never touched from a workweave; it is
+  removed when the change lands and the primary drops the repo, or by
+  `rwv remove <path> --delete` in the primary weave.
 
 Every guard runs before the manifest is written, so a refused delete leaves
 `rwv.toml` and the checkout as they were:

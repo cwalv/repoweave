@@ -359,12 +359,13 @@ carries git's vocabulary across the seam:
   them. Those name the remote through `Vcs::conventional_remote_name`.
 
   The hints telling the operator that `origin/HEAD` is unset belong to
-  the third item in this list rather than this one: they spell a git
-  command, `git remote set-head origin -a`, and respelling the remote
-  name alone would leave the command standing. They come from
-  `Vcs::remote_default_branch_repair_hint`, which carries the name and
-  the command together because owning one without the other leaves a
-  message half across the seam.
+  the third item in this list rather than this one: they spell git
+  commands such as `git remote set-head origin -a`, and respelling the
+  remote name alone would leave the commands standing. They come from
+  `Vcs::remote_default_branch_repair_hint`, and for a clone `rwv add`
+  just made from `Vcs::clone_default_branch_repair_hint`, each carrying
+  the name and the command together because owning one without the other
+  leaves a message half across the seam.
 
   The one remaining site is the doctor finding, whose wire `kind` carries
   the word too — the case below.

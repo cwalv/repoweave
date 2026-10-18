@@ -3414,6 +3414,17 @@ pub trait Vcs: Send + Sync {
     /// [`conflict_resolution_hint`]: Vcs::conflict_resolution_hint
     fn remote_default_branch_repair_hint(&self) -> String;
 
+    /// [`remote_default_branch_repair_hint`] for `clone`, a clone made from
+    /// the remote. Cloning records the remote's default whenever the remote
+    /// names one, so here it is missing because the remote has no branch
+    /// yet, or because its default names none of the branches it has; asking
+    /// the remote again repairs neither. The clone's copies of the remote's
+    /// branches tell the two apart, and the hint names the repair for the one
+    /// it finds. The seam rule above holds here too.
+    ///
+    /// [`remote_default_branch_repair_hint`]: Vcs::remote_default_branch_repair_hint
+    fn clone_default_branch_repair_hint(&self, clone: &Path) -> Result<String, VcsError>;
+
     // ---- listing ----------------------------------------------------------
 
     /// Local branch names starting with `prefix`, as observed.

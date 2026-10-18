@@ -8,7 +8,7 @@ use crate::manifest::{
 use crate::path_spelling::{file_url_suggestion, mint_file_url, operator_path};
 use crate::refusal::{refusal, RefusalKind};
 use crate::registry::{builtin_registries, CreationParamError, ParamMap, RegistryName, Upstream};
-use crate::vcs::{vcs_for, HeadAttachment, RefName, Vcs};
+use crate::vcs::{vcs_for, DeletionWarrant, EphemeralRefName, HeadAttachment, RefName, Vcs};
 use crate::workspace::{project_dir, Checkout, WorkspaceContext};
 use crate::workweave_index::RefRegistry;
 use anyhow::Context;
@@ -301,15 +301,21 @@ pub fn run_add(
 
     if let Some(existing) = manifest.get_entry(&repo_path) {
         if !crate::manifest::clone_urls_equivalent(&existing.url.to_string(), url) {
+            let remove = format!("`rwv remove {repo_path} --delete`");
+            let replace = match ctx.checkout {
+                Checkout::Workweave { .. } if dest.exists() => {
+                    format!("{remove} here and then in the primary weave, which holds the clone")
+                }
+                _ => remove,
+            };
             crate::refuse!(
                 RefusalKind::OccupiedPlacement,
                 "'{}' already maps to '{}' in the manifest; this add would map it to \
-                 '{}' instead. Re-run with the manifest's URL to finish that entry, or \
-                 `rwv remove {}` first if replacing it is what's intended.",
+                 '{}' instead. Re-run with the manifest's URL to finish that entry. If \
+                 replacing it is what's intended, first run {replace}.",
                 repo_path.as_str(),
                 existing.url,
                 url,
-                repo_path.as_str()
             );
         }
         announce_already_registered(&repo_path);
@@ -359,7 +365,7 @@ pub fn run_add(
                 "rwv add: '{}' at {}: {}, then re-run `rwv add {}`",
                 repo_path.as_str(),
                 operator_path(&dest),
-                vcs.remote_default_branch_repair_hint(),
+                vcs.clone_default_branch_repair_hint(&dest)?,
                 url
             );
         };
@@ -588,9 +594,14 @@ impl AddLeftovers {
             ));
         }
         if let Some(clone) = &self.clone {
+            let after_worktree = if self.worktree.is_some() {
+                " once that worktree is removed"
+            } else {
+                ""
+            };
             lines.push(format!(
                 "kept the clone it made at {}: `{rerun}` reuses it, and \
-                 `rwv remove {repo_path} --delete` in the primary weave removes it",
+                 `rwv remove {repo_path} --delete` in the primary weave removes it{after_worktree}",
                 operator_path(clone)
             ));
         }
@@ -761,6 +772,15 @@ pub fn run_remove(
     };
     let vcs = vcs_for(vcs_type);
 
+    let workweave_ref = match &ctx.checkout {
+        Checkout::Workweave {
+            name, dir, project, ..
+        } if delete => Some((
+            project,
+            EphemeralRefName::mint(project, name.require(dir, project)?),
+        )),
+        _ => None,
+    };
     let removal = if delete {
         if let Checkout::Primary { .. } = ctx.checkout {
             refuse_shared_clone_delete(ctx, &project, &repo_path, delete_shared_clone)?;
@@ -808,8 +828,68 @@ pub fn run_remove(
         if deleted {
             eprintln!("Deleted '{}'", operator_path(&checkout));
         }
+        if let Some((project, ephemeral)) = workweave_ref {
+            let canonical = ctx.primary_path().join(repo_path.as_path());
+            retire_workweave_ref(
+                vcs.as_ref(),
+                ctx.primary_path(),
+                project,
+                ephemeral,
+                &canonical,
+            )
+            .with_context(|| {
+                format!(
+                    "'{}' is out of this workweave, but the branch the workweave held in \
+                     {} could not be deleted",
+                    repo_path.as_str(),
+                    operator_path(&canonical)
+                )
+            })?;
+        }
     }
 
+    Ok(())
+}
+
+/// Once a workweave's checkout of the repo whose canonical clone is
+/// `canonical` is gone, destroy the branch `ephemeral` the workweave was given
+/// there and retract its receipt, so nothing of the workweave's still claims
+/// the clone. A branch carrying commits the clone's checkout does not contain
+/// is left in place with its receipt, and said so.
+fn retire_workweave_ref(
+    vcs: &dyn Vcs,
+    primary_root: &Path,
+    project: &ProjectName,
+    ephemeral: EphemeralRefName,
+    canonical: &Path,
+) -> anyhow::Result<()> {
+    if !vcs.is_repo(canonical) {
+        return Ok(());
+    }
+    let store = crate::workweave::receipt_store_for(vcs, canonical);
+    let raw = ephemeral.to_raw();
+    let mut registry = RefRegistry::for_project(primary_root, project);
+    let Some(owned) = registry.lookup(&store, &raw)? else {
+        return Ok(());
+    };
+    vcs.worktree_prune(&store)?;
+    if vcs.resolve_local_branch_tip(&store, &raw)?.is_some() {
+        let warrant = vcs
+            .head_revision(canonical)
+            .ok()
+            .and_then(|head| DeletionWarrant::merged(vcs, &owned, &head))
+            .or_else(|| DeletionWarrant::unmoved(vcs, &owned));
+        let Some(warrant) = warrant else {
+            eprintln!(
+                "warning: kept branch `{owned}` in {}: it holds commits the clone's \
+                 checkout does not",
+                operator_path(&store)
+            );
+            return Ok(());
+        };
+        vcs.delete_owned_ref(&owned, warrant)?;
+    }
+    registry.retract(&store, &raw)?;
     Ok(())
 }
 
@@ -1212,6 +1292,7 @@ pub fn run_add_new(
     warn_if_shared_clone(ctx.primary_path(), &project, &repo_path, &dest, role);
 
     let mut left = AddLeftovers::default();
+    let mut cloned_from: Option<&Path> = None;
     let added = (|| -> anyhow::Result<()> {
         match &plan.upstream {
             Upstream::InitBareAt(bare_path) => {
@@ -1278,6 +1359,7 @@ pub fn run_add_new(
                                 operator_path(&dest)
                             )
                         })?;
+                    cloned_from = Some(bare_path);
                 }
             }
             Upstream::Named => {
@@ -1305,13 +1387,23 @@ pub fn run_add_new(
         let default_branch = match vcs.head_attachment(&dest)? {
             HeadAttachment::Unborn(u) => RefName::new(u.to_string()),
             HeadAttachment::Attached(a) => RefName::new(a.to_string()),
-            HeadAttachment::Detached(_) => anyhow::bail!(
-                "rwv add: repo at {} has a detached HEAD right after creation; \
-             inspect with `git -C {} status` before retrying `rwv add {} --new`",
-                operator_path(&dest),
-                operator_path(&dest),
-                address
-            ),
+            HeadAttachment::Detached(_) => match cloned_from {
+                Some(upstream) => anyhow::bail!(
+                    "rwv add: the clone at {} has a detached HEAD right after creation, \
+                     taken from the upstream at {upstream}; point that upstream's HEAD at a \
+                     branch (`git -C {upstream} symbolic-ref HEAD refs/heads/<branch>`) \
+                     before retrying `rwv add {address} --new`",
+                    operator_path(&dest),
+                    upstream = operator_path(upstream),
+                ),
+                None => anyhow::bail!(
+                    "rwv add: repo at {} has a detached HEAD right after creation; \
+                     inspect with `git -C {} status` before retrying `rwv add {} --new`",
+                    operator_path(&dest),
+                    operator_path(&dest),
+                    address
+                ),
+            },
         };
 
         let entry = RepoEntry {

@@ -432,6 +432,10 @@ impl Vcs for FakeVcs {
         unsupported("remote_default_branch_repair_hint")
     }
 
+    fn clone_default_branch_repair_hint(&self, _clone: &Path) -> Result<String, VcsError> {
+        unsupported("clone_default_branch_repair_hint")
+    }
+
     fn rebase(
         &self,
         _repo: &Path,

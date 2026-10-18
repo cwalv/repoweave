@@ -2878,6 +2878,42 @@ impl Vcs for GitVcs {
         )
     }
 
+    fn clone_default_branch_repair_hint(&self, clone: &Path) -> Result<String, VcsError> {
+        let remote = GIT_DEFAULT_REMOTE_NAME;
+        let listing = Self::run_trimmed(
+            &[
+                "for-each-ref",
+                "--format=%(refname:lstrip=3)",
+                &format!("refs/remotes/{remote}/"),
+            ],
+            clone,
+        )?;
+        let branches: Vec<String> = listing
+            .lines()
+            .map(str::trim)
+            .filter(|b| !b.is_empty() && *b != "HEAD")
+            .map(|b| format!("`{b}`"))
+            .collect();
+        if !branches.is_empty() {
+            return Ok(format!(
+                "{remote}/HEAD is unset, and {remote} has {}; check out the one to track \
+                 there and record it (`git checkout <branch> && git remote set-head {remote} \
+                 <branch>`)",
+                branches.join(", ")
+            ));
+        }
+        let branch = match self.head_attachment(clone)? {
+            HeadAttachment::Unborn(u) => u.to_string(),
+            HeadAttachment::Attached(a) => a.to_string(),
+            HeadAttachment::Detached(_) => "<branch>".to_owned(),
+        };
+        Ok(format!(
+            "{remote} has no branch there, so {remote}/HEAD is unset; commit there, push the \
+             branch (`git push -u {remote} {branch}`) and record it (`git remote set-head \
+             {remote} {branch}`)"
+        ))
+    }
+
     fn list_branch_names_with_prefix(
         &self,
         repo: &Path,

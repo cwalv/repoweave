@@ -243,9 +243,9 @@ saying the table was retired. Delete it.
 
 ### Fixed
 
-- The unset `origin/HEAD` hint no longer offers "push once with an explicit
-  branch", which is what leaves it unset; it names
-  `git remote set-head origin -a`.
+- The unset `origin/HEAD` hint of `rwv push` and `rwv add --adopt` no longer
+  offers "push once with an explicit branch", which is what leaves it unset; it
+  names `git remote set-head origin -a`.
 - The `store-still-claimed` refusal over live worktrees names
   `rwv workweave <project> delete <name>`, the spelling the CLI accepts. It
   used to drop the project, which the CLI rejects.
@@ -341,6 +341,31 @@ saying the table was retired. Delete it.
   origin URL places it at, moving it there first. It named `rwv add <url>`,
   which for a clone anywhere else makes a second clone and leaves the first
   one reported.
+- `rwv init <name> --provider <registry>/<owner>` refused as
+  `malformed-provider`, `unknown-registry` or `provider-cannot-mint-url`
+  creates nothing, so the plain `rwv init <name>` the refusal names succeeds. It
+  used to leave the project directory behind, and the retry refused as
+  `project-dir-occupied`.
+- `rwv add <url>` refused as `no-remote-default-branch` names the repair for its
+  case, in the clone it keeps: for a remote with no branch yet, commit there,
+  push the branch and record it with `git remote set-head origin <branch>`; for
+  a remote whose HEAD names none of its branches, check out one of those it
+  lists and record it the same way. It named `git remote set-head origin -a`,
+  which fails in both.
+- `rwv remove <path> --delete` in a workweave also deletes the branch the
+  workweave was given in the canonical clone, and gives up rwv's claim on it,
+  unless that branch holds commits the clone's checkout lacks. A refused
+  `rwv add <url>` in a workweave names `rwv remove <path> --delete` there for its
+  worktree and then in the primary weave for its clone, and the primary-side
+  delete no longer refuses as `store-still-claimed`.
+- `occupied-placement` from `rwv add <url>` names `rwv remove <path> --delete`,
+  and in a workweave whose clone is on disk, that command there and then in the
+  primary weave. It named a plain `rwv remove`, which keeps the clone, so the
+  re-run add refused as `foreign-clone-at-placement`.
+- `rwv add --new` whose clone takes a detached HEAD from an upstream already
+  under `--param root` names that upstream and
+  `git -C <upstream> symbolic-ref HEAD refs/heads/<branch>`. It named the clone,
+  which the same refusal had removed.
 
 ### Documentation
 
