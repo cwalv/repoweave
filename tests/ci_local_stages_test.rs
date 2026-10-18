@@ -114,7 +114,17 @@ fn run_script(
     for (k, v) in extra_env {
         cmd.env(k, v);
     }
-    cmd.output().expect("ci-local.sh should run")
+    // A sibling test's fork can still hold a just-written script open for
+    // writing; exec then fails with ETXTBSY until that child execs or exits.
+    for _ in 0..100 {
+        match cmd.output() {
+            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                std::thread::sleep(std::time::Duration::from_millis(20))
+            }
+            result => return result.expect("ci-local.sh should run"),
+        }
+    }
+    panic!("ci-local.sh stayed busy (ETXTBSY) for 2s")
 }
 
 fn stdout_of(out: &Output) -> String {
