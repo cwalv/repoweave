@@ -1006,21 +1006,26 @@ In-place `rwv fetch` does not contact the network for an already-present clone.
 **Warning. Report-only.** The manifest key disagrees with `placement(url)` —
 the path the entry's own URL derives to under the canonical
 `{registry}/{owner}/{repo}` layout. `--fix` has no arm here for the same
-reason `origin-url-mismatch` has none: the repair is either moving the
-checkout or re-keying the manifest entry, and which one is right is the
-operator's call. This is a different comparison from `origin-url-mismatch` —
-that one compares the manifest URL against the clone's `origin` URL; this one
-compares the manifest *path* against `placement` of the manifest URL — so an
-entry can trip either, both, or neither independently.
+reason `origin-url-mismatch` has none: converging rewrites a key in the
+hand-authored `rwv.toml` and may move a checkout, and whether the recorded
+path is the wrong side is the operator's call. This is a different comparison
+from `origin-url-mismatch` — that one compares the manifest URL against the
+clone's `origin` URL; this one compares the manifest *path* against
+`placement` of the manifest URL — so an entry can trip either, both, or
+neither independently.
 
 `reference`-role and `fork`-role entries are exempt: a `reference` mirror URL
 under the path of the upstream it mirrors, or a `fork` keyed on either its
 fork coordinates or its upstream coordinates (per [Roles](./roles.md) §`fork`),
 is an expected layout and raises no finding.
 
-**What to do:** the message names both paths — move the checkout (and the
-manifest key) to the derived path to converge, or re-key the manifest entry
-at the derived path if that is where it belongs.
+**What to do:** the message names both paths. Move the checkout to the
+derived path unless it is already there, re-key the entry in `rwv.toml` from
+the recorded path to the derived one, and run `rwv lock`, which re-keys
+`rwv.lock` to match. Moving the checkout alone leaves this finding and adds a
+[`dangling-reference`](#dangling-reference) at the recorded path; re-keying
+alone, with the checkout elsewhere, leaves a `dangling-reference` at the
+derived path.
 
 ---
 

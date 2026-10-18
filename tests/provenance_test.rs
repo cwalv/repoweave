@@ -17,6 +17,9 @@
 //! Each sub-kind has:
 //!   - a fixture test that triggers the violation (must be flagged)
 //!   - a clean-state test that must produce no false positives
+//!
+//! `placement-disagreement`'s advised repair is also run, from each state it
+//! names, to a report with nothing on it.
 
 use std::path::{Path, PathBuf};
 
@@ -673,5 +676,165 @@ fn an_entry_tripping_both_provenance_conditions_reports_two_findings() {
         2,
         "the two conditions must report as two findings, not merge into \
          one; got {tokens:?}"
+    );
+}
+
+// ===========================================================================
+// 5. placement-disagreement: the advised repair
+// ===========================================================================
+
+const MISPLACED: &str = "vendor/acme/x";
+const PLACED: &str = "local/acme/x";
+
+/// A weave whose `demo` project registered a clone of `acme/x` with
+/// `rwv add --adopt` at `vendor/acme/x`, where its `file://` URL does not
+/// place it, and locked it there.
+fn weave_with_misplaced_member(tmp: &Path) -> PathBuf {
+    let ws = tmp.join("ws");
+    std::fs::create_dir_all(ws.join("projects")).unwrap();
+    rwv()
+        .args(["init", "demo"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+    let origin = common::under(tmp, "origins/acme/x.git");
+    std::fs::create_dir_all(origin.parent().unwrap()).unwrap();
+    common::init_bare_repo_with_commit(&origin);
+    common::git_in(
+        &ws,
+        &["clone", "--quiet", &common::file_url(&origin), MISPLACED],
+    );
+    rwv()
+        .args(["add", "--adopt", MISPLACED])
+        .current_dir(&ws)
+        .assert()
+        .success();
+    rwv().arg("lock").current_dir(&ws).assert().success();
+    ws
+}
+
+/// Every violation `rwv doctor --all --json` reports, as its kind, its
+/// sub-kind token where it has one, and the path it names.
+fn all_violations(ws: &Path) -> Vec<String> {
+    let out = rwv()
+        .args(["doctor", "--all", "--json"])
+        .current_dir(ws)
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_else(|e| {
+        panic!(
+            "doctor --json produced invalid JSON: {e}\noutput: {}",
+            String::from_utf8_lossy(&out.stdout)
+        )
+    });
+    json["violations"]
+        .as_array()
+        .expect("violations is array")
+        .iter()
+        .map(|v| {
+            let sub_kind = v["sub_kind"]
+                .as_object()
+                .and_then(|o| o.keys().next().cloned())
+                .unwrap_or_default();
+            format!(
+                "{} {sub_kind} {}",
+                v["kind"].as_str().unwrap_or_default(),
+                v["path"].as_str().unwrap_or_default()
+            )
+        })
+        .collect()
+}
+
+/// The line `rwv doctor` prints for the `placement-disagreement` finding.
+fn placement_advice(ws: &Path) -> String {
+    let out = rwv().arg("doctor").current_dir(ws).output().unwrap();
+    let report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    report
+        .lines()
+        .find(|l| l.contains("its URL places at"))
+        .unwrap_or_else(|| panic!("no placement-disagreement line:\n{report}"))
+        .to_owned()
+}
+
+fn move_checkout(ws: &Path) {
+    let to = common::under(ws, PLACED);
+    std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+    std::fs::rename(common::under(ws, MISPLACED), to).unwrap();
+}
+
+fn re_key(ws: &Path) {
+    let manifest = ws.join("projects").join("demo").join("rwv.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    let from = format!("[repositories.\"{MISPLACED}\"]");
+    assert!(
+        text.contains(&from),
+        "fixture: keyed at {MISPLACED}:\n{text}"
+    );
+    std::fs::write(
+        &manifest,
+        text.replace(&from, &format!("[repositories.\"{PLACED}\"]")),
+    )
+    .unwrap();
+}
+
+#[test]
+fn moving_the_checkout_and_re_keying_the_entry_clears_placement_disagreement() {
+    let tmp = common::tempdir().unwrap();
+    let ws = weave_with_misplaced_member(tmp.path());
+    assert_eq!(
+        all_violations(&ws),
+        vec![format!("provenance placement-disagreement {MISPLACED}")]
+    );
+    let advice = placement_advice(&ws);
+    for step in [
+        format!("move the checkout to `{PLACED}`"),
+        format!("re-key the entry in rwv.toml from `{MISPLACED}` to `{PLACED}`"),
+        "run `rwv lock`".to_owned(),
+    ] {
+        assert!(advice.contains(&step), "must advise `{step}`: {advice}");
+    }
+
+    move_checkout(&ws);
+    re_key(&ws);
+    rwv().arg("lock").current_dir(&ws).assert().success();
+
+    assert_eq!(
+        all_violations(&ws),
+        Vec::<String>::new(),
+        "the advised steps must leave nothing to report"
+    );
+}
+
+#[test]
+fn re_keying_alone_clears_placement_disagreement_once_the_checkout_is_already_there() {
+    let tmp = common::tempdir().unwrap();
+    let ws = weave_with_misplaced_member(tmp.path());
+    move_checkout(&ws);
+    let moved = all_violations(&ws);
+    for expected in [
+        format!("provenance placement-disagreement {MISPLACED}"),
+        format!("dangling-reference  {MISPLACED}"),
+    ] {
+        assert!(
+            moved.contains(&expected),
+            "moving the checkout alone leaves `{expected}`: {moved:?}"
+        );
+    }
+    assert!(
+        placement_advice(&ws).contains("unless it is already there"),
+        "the advice must say the move is skipped for a checkout already moved"
+    );
+
+    re_key(&ws);
+    rwv().arg("lock").current_dir(&ws).assert().success();
+
+    assert_eq!(
+        all_violations(&ws),
+        Vec::<String>::new(),
+        "re-keying and relocking must leave nothing to report"
     );
 }

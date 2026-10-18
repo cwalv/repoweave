@@ -333,6 +333,10 @@ saying the table was retired. Delete it.
   it holds ignored files, the commands it names are `git clean -X -d -n` and
   `git clean -X -d -f`. Without `-d`, git leaves an ignored directory such as
   `node_modules/` in place, and the re-run `rwv doctor --fix` refused again.
+- `placement-disagreement` names the repair that clears it: move the checkout
+  to the path its URL places at unless it is already there, re-key the entry
+  in `rwv.toml`, and run `rwv lock`. It named moving the checkout alone, which
+  leaves the finding and adds a `dangling-reference`.
 
 ### Documentation
 

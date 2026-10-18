@@ -7903,10 +7903,11 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                         crate::integration::Severity::Warning,
                         format!(
                             "{project}: {repo}: recorded at `{repo}`, but its URL places at \
-                             `{expected_path}` under the canonical layout (report-only; move the \
-                             checkout to `{expected_path}` to converge, or re-key the manifest \
-                             entry at `{expected_path}` if that is where it belongs — a \
-                             `reference` or `fork` role exempts this comparison)",
+                             `{expected_path}` under the canonical layout (report-only; to \
+                             converge, move the checkout to `{expected_path}` unless it is already \
+                             there, re-key the entry in rwv.toml from `{repo}` to \
+                             `{expected_path}`, and run `rwv lock` — a `reference` or `fork` role \
+                             exempts this comparison)",
                         ),
                     ),
                 },
