@@ -221,6 +221,38 @@ fn adopt_and_new_are_exclusive() {
         .code(2);
 }
 
+/// `--param` and `--params-json` only have an effect under `--new`
+/// (dispatch.rs passes creation params on the `new` branch only); without it
+/// they were silently ignored. Explicit over guessed: clap refuses rather
+/// than accept a flag that does nothing.
+#[test]
+fn param_and_params_json_require_new() {
+    let tmp = common::tempdir().unwrap();
+    let ws = two_project_weave(tmp.path());
+    common::rwv()
+        .args([
+            "add",
+            "https://github.com/acme/fresh.git",
+            "--param",
+            "root=/tmp",
+        ])
+        .current_dir(&ws)
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("--new"));
+    common::rwv()
+        .args([
+            "add",
+            "https://github.com/acme/fresh.git",
+            "--params-json",
+            "{\"root\": \"/tmp\"}",
+        ])
+        .current_dir(&ws)
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("--new"));
+}
+
 #[test]
 fn fetch_refuses_a_plain_path_source_and_names_both_spellings() {
     let tmp = common::tempdir().unwrap();

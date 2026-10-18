@@ -108,10 +108,10 @@ rwv add <creation-address> --new [--param <name>=<value>]... [--params-json <jso
   `dependency`, `reference`). Defaults to `owned`.
 - `--new` — create a new repo instead of cloning. The positional argument
   becomes a creation address (see "Creation" above) rather than a URL or path.
-- `--param <name>=<value>` — a creation parameter (repeatable). See the table
-  above for what each registry declares.
+- `--param <name>=<value>` — a creation parameter (repeatable). Requires
+  `--new`. See the table above for what each registry declares.
 - `--params-json <json>` — the same parameters as one JSON object of string
-  values.
+  values. Requires `--new`.
 - `--project <name>` — operate on this project rather than the active project.
   Does not change `.rwv-active`.
 - `--no-materialize` — skip the integration install hooks (`npm install`,

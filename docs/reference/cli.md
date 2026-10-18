@@ -215,8 +215,8 @@ The positional argument has one spelling per meaning:
 | `--role <role>` | Sets the role (`owned` / `fork` / `dependency` / `reference`). Defaults to `owned`. |
 | `--adopt` | Register an existing clone; the positional argument is its path under the weave root. Conflicts with `--new` |
 | `--new` | Create a new repo instead of cloning; the positional argument becomes a creation address (a bare registry name, or `registry/owner/repo`) rather than a URL or path. See `rwv explain add`. |
-| `--param <name>=<value>` | A creation parameter for `--new` (repeatable). |
-| `--params-json <json>` | The same parameters as one JSON object of string values. |
+| `--param <name>=<value>` | A creation parameter for `--new` (repeatable). Requires `--new` |
+| `--params-json <json>` | The same parameters as one JSON object of string values. Requires `--new` |
 | `--no-materialize` | Skip the install hooks; regeneration still runs, and `rwv materialize` runs the hooks later |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 

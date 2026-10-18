@@ -115,12 +115,13 @@ pub enum Commands {
         #[arg(long)]
         adopt: bool,
         /// A creation parameter as NAME=VALUE (repeatable). See `rwv explain add`
-        /// for what each registry declares.
-        #[arg(long = "param", value_name = "NAME=VALUE")]
+        /// for what each registry declares. Only meaningful with --new.
+        #[arg(long = "param", value_name = "NAME=VALUE", requires = "new")]
         params: Vec<String>,
         /// Creation parameters as one JSON object of string values, e.g.
         /// '{"root": "/srv/repos"}'. A name given both here and via --param refuses.
-        #[arg(long = "params-json", value_name = "JSON")]
+        /// Only meaningful with --new.
+        #[arg(long = "params-json", value_name = "JSON", requires = "new")]
         params_json: Option<String>,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
