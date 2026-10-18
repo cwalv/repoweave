@@ -1336,3 +1336,109 @@ fn foreign_tip_recovery_options_name_the_flag_not_raw_git() {
         "the raw command must no longer be the documented path.\nstderr:\n{stderr}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Case: partial restore failure — exit 1, "abort completed with failures",
+// op-state retained, retry succeeds once the obstruction is gone
+// ---------------------------------------------------------------------------
+
+/// cli.md:347 / the Exit codes section: a partial restore failure prints
+/// "abort completed with failures", exits 1, and op-state is retained so
+/// `rwv abort` can be retried. Forces the server repo's `git reset --hard`
+/// to fail by holding its `.git/index.lock`; the project repo is already at
+/// its savepoint (untouched, no reset attempted) so it restores regardless.
+///
+/// Revert to watch it go red: in `run_abort` (src/sync.rs), change
+/// `if tally.clean() { op_state::clear_all_at(&workspace_dir); } else if
+/// tally.any_foreign { ... }` to an unconditional
+/// `op_state::clear_all_at(&workspace_dir);` — op-state then clears even on
+/// a failed abort, and the "op-state must be retained" assertion below goes
+/// red.
+#[test]
+fn abort_partial_failure_exits_with_message_and_retains_op_state_for_retry() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_fixture(tmp.path(), "primary");
+
+    let op_id = "20991231T000099Z";
+
+    let server_savepoint = common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]);
+    let server_converged = make_commit(
+        &ws.server_dir,
+        "converged.txt",
+        "converged\n",
+        "server: converged",
+    );
+    let project_savepoint = common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]);
+
+    plant_savepoint(&ws.server_dir, op_id, &server_savepoint);
+    plant_savepoint(&ws.project_dir, op_id, &project_savepoint);
+    plant_owner_record(
+        &ws.root,
+        op_id,
+        "relock",
+        &[(SERVER_PATH, &server_converged)],
+    );
+
+    // Hold the server repo's index lock so its `git reset --hard` fails.
+    let index_lock = ws.server_dir.join(".git/index.lock");
+    std::fs::write(&index_lock, b"").unwrap();
+
+    let output = rwv()
+        .arg("abort")
+        .current_dir(&ws.root)
+        .output()
+        .expect("rwv abort");
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "a partial restore failure must exit 1; stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("abort completed with failures"),
+        "expected the partial-failure message; got:\n{combined}"
+    );
+
+    // The server repo's reset never completed — still at the converged tip.
+    assert_eq!(
+        common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]),
+        server_converged,
+        "the failed repo must be left exactly where it was"
+    );
+    // Op-state is retained so the operator can retry.
+    assert!(
+        ws.root.join(".rwv-op").exists(),
+        "op-state must be retained after a partial restore failure"
+    );
+    // The savepoint survives the failed attempt too.
+    assert_eq!(
+        savepoint_sha(&ws.server_dir, op_id).as_deref(),
+        Some(server_savepoint.as_str()),
+        "a failed reset must not drop the savepoint it never reached"
+    );
+
+    // Clear the obstruction and retry: this time it goes through cleanly.
+    std::fs::remove_file(&index_lock).unwrap();
+    rwv()
+        .arg("abort")
+        .current_dir(&ws.root)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("restored"));
+
+    assert_eq!(
+        common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]),
+        server_savepoint,
+        "the retry must finish the restore the lock blocked"
+    );
+    assert!(
+        !ws.root.join(".rwv-op").exists(),
+        "op-state must clear once the retry succeeds"
+    );
+}
