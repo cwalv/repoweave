@@ -11,7 +11,8 @@ use assert_cmd::Command as AssertCommand;
 use repoweave::placement::PLACEMENT_RECORD_SCHEMA_URL;
 use repoweave::sync::{
     Containment, ContainmentOutput, ContainmentVerdictOutput, ReplayBaseline, RepoSyncOutcome,
-    SyncFailure, SyncJsonOutput, SyncOutcomeOutput, SYNC_JSON_SCHEMA_URL, SYNC_RECORD_SCHEMA_URL,
+    SyncFailure, SyncFailureOutput, SyncJsonOutput, SyncOutcomeOutput, SYNC_JSON_SCHEMA_URL,
+    SYNC_RECORD_SCHEMA_URL,
 };
 use repoweave::vcs::{ConflictOp, VcsError, VcsErrorOutput};
 use serde_json::Value;
@@ -403,7 +404,7 @@ fn outcome_failed_ff_impossible_uses_ff_impossible_tag() {
         "/abs/foo",
         &RepoSyncOutcome::Failed(SyncFailure::FastForwardImpossible {
             error: "diverged".into(),
-            cause: None,
+            cause: VcsError::NotARepo(PathBuf::from("/abs/foo")),
         }),
     );
     // Critical: must be `ff-impossible`, not `fast-forward-impossible`.
@@ -417,7 +418,7 @@ fn outcome_failed_rebase_failed_serializes() {
         "/abs/foo",
         &RepoSyncOutcome::Failed(SyncFailure::RebaseFailed {
             error: "rebase conflict".into(),
-            cause: None,
+            cause: VcsError::NotARepo(PathBuf::from("/abs/foo")),
         }),
     );
     assert_eq!(v["failure"]["kind"], "rebase-failed");
@@ -434,7 +435,7 @@ fn outcome_failed_with_rebase_conflict_cause_surfaces() {
         "/abs/foo",
         &RepoSyncOutcome::Failed(SyncFailure::RebaseFailed {
             error: cause.to_string(),
-            cause: Some(cause),
+            cause,
         }),
     );
     assert_eq!(v["failure"]["kind"], "rebase-failed");
@@ -445,11 +446,59 @@ fn outcome_failed_with_rebase_conflict_cause_surfaces() {
 }
 
 #[test]
-fn outcome_failed_without_cause_omits_cause_field() {
+fn strategy_failures_always_carry_cause_on_the_wire() {
+    for failure in [
+        SyncFailure::FastForwardImpossible {
+            error: "diverged".into(),
+            cause: VcsError::NotARepo(PathBuf::from("/abs/foo")),
+        },
+        SyncFailure::RebaseFailed {
+            error: "rebase stopped".into(),
+            cause: VcsError::NotARepo(PathBuf::from("/abs/foo")),
+        },
+    ] {
+        let v = serialize_outcome(
+            "github/cwalv/foo",
+            "/abs/foo",
+            &RepoSyncOutcome::Failed(failure),
+        );
+        assert_eq!(
+            v["failure"]["cause"]["kind"], "not-a-repo",
+            "a strategy failure must serialize its cause: {v}"
+        );
+    }
+}
+
+#[test]
+fn schema_requires_cause_exactly_on_strategy_failures() {
+    let schema = serde_json::to_value(schemars::schema_for!(SyncFailureOutput)).unwrap();
+    let variants = schema["oneOf"]
+        .as_array()
+        .expect("SyncFailureOutput is a oneOf");
+    assert_eq!(variants.len(), 3, "{schema:#}");
+    for variant in variants {
+        let kind = variant["properties"]["kind"]["enum"][0]
+            .as_str()
+            .expect("each variant pins its kind");
+        let requires_cause = variant["required"]
+            .as_array()
+            .expect("each variant lists required keys")
+            .iter()
+            .any(|key| key == "cause");
+        assert_eq!(
+            requires_cause,
+            kind != "head-unreadable",
+            "{kind}: cause required = {requires_cause}\n{variant:#}"
+        );
+    }
+}
+
+#[test]
+fn head_unreadable_without_cause_omits_cause_field() {
     let v = serialize_outcome(
         "github/cwalv/foo",
         "/abs/foo",
-        &RepoSyncOutcome::Failed(SyncFailure::RebaseFailed {
+        &RepoSyncOutcome::Failed(SyncFailure::HeadUnreadable {
             error: "no underlying VcsError".into(),
             cause: None,
         }),
@@ -908,7 +957,7 @@ fn sync_failure_cause_is_structured_not_stringly() {
         "/abs/foo",
         &RepoSyncOutcome::Failed(SyncFailure::RebaseFailed {
             error: cause.to_string(),
-            cause: Some(cause),
+            cause,
         }),
     );
     let failure = &v["failure"];

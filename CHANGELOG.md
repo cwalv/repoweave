@@ -401,6 +401,14 @@ even under a filter that matched a warning.
   `rwv materialize`, and `rwv setup claude --help` names every hook it
   registers.
 
+### `ff-impossible` and `rebase-failed` always carry a `cause`
+
+In `rwv sync --json` and `rwv sync-to --json`, a failed outcome whose
+`failure.kind` is `ff-impossible` or `rebase-failed` always has
+`failure.cause`, and the published schemas list it as required for those two
+kinds. A consumer can read `failure.cause.kind` on them without an absence
+check. `head-unreadable` still omits `cause` when it has none.
+
 ## 0.23.0
 
 ### Refusals carry stable names

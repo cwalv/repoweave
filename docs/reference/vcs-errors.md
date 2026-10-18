@@ -36,9 +36,10 @@ to which page holds it, so the split costs a reader nothing.
 ## Where these names appear
 
 - `rwv sync --json` / `rwv sync-to --json`, under a failed repo outcome, as
-  `failure.kind` — always present — and as `failure.cause.kind` when the
-  failure carries a typed cause at all. The `cause` field is omitted rather
-  than null when it does not, so read it as optional.
+  `failure.kind` — always present — and as `failure.cause.kind`. An
+  `ff-impossible` or `rebase-failed` failure always carries `cause`. A
+  `head-unreadable` failure may not; its `cause` is then omitted rather than
+  null.
 - The published schemas under `docs/reference/schemas/`, where the same set
   appears as an `"enum"`.
 

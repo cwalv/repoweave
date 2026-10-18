@@ -645,27 +645,22 @@ fn vcs_error_tag(e: &VcsErrorOutput) -> &'static str {
     }
 }
 
-/// Every [`SyncFailureOutput`] shape, each with and without a `cause`, and
-/// every `cause` the wire can carry.
+/// Every [`SyncFailureOutput`] shape, `head-unreadable` both with and without
+/// its optional `cause`, and every `cause` the wire can carry.
 fn sync_failures() -> Vec<SyncFailureOutput> {
-    let mut failures = vec![
-        SyncFailureOutput::HeadUnreadable {
-            message: "HEAD is unreadable".to_owned(),
-            cause: None,
-        },
-        SyncFailureOutput::FastForwardImpossible {
-            message: "not a fast-forward".to_owned(),
-            cause: None,
-        },
-        SyncFailureOutput::RebaseFailed {
-            message: "rebase stopped".to_owned(),
-            cause: None,
-        },
-    ];
-    for cause in every_vcs_error() {
-        failures.push(SyncFailureOutput::RebaseFailed {
-            message: format!("rebase stopped: {}", vcs_error_tag(&cause)),
-            cause: Some(cause),
+    let mut failures = vec![SyncFailureOutput::HeadUnreadable {
+        message: "HEAD is unreadable".to_owned(),
+        cause: None,
+    }];
+    for (n, cause) in every_vcs_error().into_iter().enumerate() {
+        let message = format!("failed: {}", vcs_error_tag(&cause));
+        failures.push(match n % 3 {
+            0 => SyncFailureOutput::HeadUnreadable {
+                message,
+                cause: Some(cause),
+            },
+            1 => SyncFailureOutput::FastForwardImpossible { message, cause },
+            _ => SyncFailureOutput::RebaseFailed { message, cause },
         });
     }
     failures

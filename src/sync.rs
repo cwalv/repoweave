@@ -349,10 +349,10 @@ pub fn check_parent_not_dangling(parent: &Path, primary_root: &Path) -> anyhow::
 /// `rwv sync`. The `error` payload is the underlying error string for
 /// human-readable display.
 ///
-/// `cause` optionally carries the underlying typed [`VcsError`] when the
-/// failure originated from a `Vcs` trait call (e.g. `RebaseConflict` from
-/// `Vcs::rebase`). This lets `--json` consumers pattern-match on the
-/// structured failure mode without parsing the human string.
+/// `cause` is the underlying typed [`VcsError`], so `--json` consumers can
+/// pattern-match on the structured failure mode without parsing the human
+/// string. A strategy failure always has one; `HeadUnreadable` has none when
+/// the source lock pins a commit the source cannot resolve.
 #[derive(Debug)]
 pub enum SyncFailure {
     /// Couldn't read HEAD on the repo (e.g. not a repo, or I/O failure).
@@ -361,15 +361,9 @@ pub enum SyncFailure {
         cause: Option<VcsError>,
     },
     /// `--strategy ff` cannot proceed (divergence, conflict).
-    FastForwardImpossible {
-        error: String,
-        cause: Option<VcsError>,
-    },
+    FastForwardImpossible { error: String, cause: VcsError },
     /// `--strategy rebase` failed (conflict or git error).
-    RebaseFailed {
-        error: String,
-        cause: Option<VcsError>,
-    },
+    RebaseFailed { error: String, cause: VcsError },
 }
 
 impl SyncFailure {
@@ -396,13 +390,14 @@ impl SyncFailure {
 
     pub fn cause(&self) -> Option<&VcsError> {
         match self {
-            Self::HeadUnreadable { cause, .. }
-            | Self::FastForwardImpossible { cause, .. }
-            | Self::RebaseFailed { cause, .. } => cause.as_ref(),
+            Self::HeadUnreadable { cause, .. } => cause.as_ref(),
+            Self::FastForwardImpossible { cause, .. } | Self::RebaseFailed { cause, .. } => {
+                Some(cause)
+            }
         }
     }
 
-    fn for_strategy(strategy: SyncStrategy, error: String, cause: Option<VcsError>) -> Self {
+    fn for_strategy(strategy: SyncStrategy, error: String, cause: VcsError) -> Self {
         match strategy {
             SyncStrategy::Ff => Self::FastForwardImpossible { error, cause },
             SyncStrategy::Rebase => Self::RebaseFailed { error, cause },
@@ -468,10 +463,10 @@ impl RepoSyncOutcome {
 /// override below keeps the wire tag matching [`SyncFailure::kind`].
 ///
 /// `message` is the human-readable display string of the failure (free-form
-/// text, not a typed discriminant). `cause` is the structured typed cause when
-/// the failure originated from a [`crate::vcs::VcsError`] call — consumers
-/// that want to branch on failure mode should inspect `cause.kind` rather than
-/// parsing `message`.
+/// text, not a typed discriminant). `cause` is the structured typed cause —
+/// always present on `ff-impossible` and `rebase-failed`, optional on
+/// `head-unreadable` — and consumers that want to branch on failure mode should
+/// inspect `cause.kind` rather than parsing `message`.
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum SyncFailureOutput {
@@ -485,27 +480,31 @@ pub enum SyncFailureOutput {
     FastForwardImpossible {
         /// Free-form display message for this failure. Not a typed discriminant.
         message: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        cause: Option<VcsErrorOutput>,
+        cause: VcsErrorOutput,
     },
     RebaseFailed {
         /// Free-form display message for this failure. Not a typed discriminant.
         message: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        cause: Option<VcsErrorOutput>,
+        cause: VcsErrorOutput,
     },
 }
 
 impl From<&SyncFailure> for SyncFailureOutput {
     fn from(f: &SyncFailure) -> Self {
         let message = f.error().to_owned();
-        let cause = f.cause().map(VcsErrorOutput::from);
         match f {
-            SyncFailure::HeadUnreadable { .. } => Self::HeadUnreadable { message, cause },
-            SyncFailure::FastForwardImpossible { .. } => {
-                Self::FastForwardImpossible { message, cause }
-            }
-            SyncFailure::RebaseFailed { .. } => Self::RebaseFailed { message, cause },
+            SyncFailure::HeadUnreadable { cause, .. } => Self::HeadUnreadable {
+                message,
+                cause: cause.as_ref().map(VcsErrorOutput::from),
+            },
+            SyncFailure::FastForwardImpossible { cause, .. } => Self::FastForwardImpossible {
+                message,
+                cause: cause.into(),
+            },
+            SyncFailure::RebaseFailed { cause, .. } => Self::RebaseFailed {
+                message,
+                cause: cause.into(),
+            },
         }
     }
 }
@@ -1067,21 +1066,21 @@ fn sync_one_repo(
 /// structured cause info into `--json` output.
 struct StrategyError {
     message: String,
-    cause: Option<VcsError>,
+    cause: VcsError,
 }
 
 impl StrategyError {
     fn from_vcs(err: VcsError) -> Self {
         Self {
             message: err.to_string(),
-            cause: Some(err),
+            cause: err,
         }
     }
 
     fn with_message(message: impl Into<String>, cause: VcsError) -> Self {
         Self {
             message: message.into(),
-            cause: Some(cause),
+            cause,
         }
     }
 }
@@ -9034,11 +9033,11 @@ mod tests {
             },
             SyncFailure::FastForwardImpossible {
                 error: "x".into(),
-                cause: None,
+                cause: VcsError::NotARepo(PathBuf::from("/x")),
             },
             SyncFailure::RebaseFailed {
                 error: "x".into(),
-                cause: None,
+                cause: VcsError::NotARepo(PathBuf::from("/x")),
             },
         ];
         for f in &all {
@@ -9068,11 +9067,19 @@ mod tests {
     #[test]
     fn sync_failure_for_strategy_picks_matching_variant() {
         assert!(matches!(
-            SyncFailure::for_strategy(SyncStrategy::Ff, "e".into(), None),
+            SyncFailure::for_strategy(
+                SyncStrategy::Ff,
+                "e".into(),
+                VcsError::NotARepo(PathBuf::from("/x"))
+            ),
             SyncFailure::FastForwardImpossible { .. }
         ));
         assert!(matches!(
-            SyncFailure::for_strategy(SyncStrategy::Rebase, "e".into(), None),
+            SyncFailure::for_strategy(
+                SyncStrategy::Rebase,
+                "e".into(),
+                VcsError::NotARepo(PathBuf::from("/x"))
+            ),
             SyncFailure::RebaseFailed { .. }
         ));
     }
