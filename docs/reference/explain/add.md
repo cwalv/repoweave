@@ -32,7 +32,8 @@ convention (matching `rwv workweave create`) — flat, with no third component
 derived from the source branch. `add` records an ownership receipt for it, so
 `rwv workweave delete` destroys it along with the rest of the workweave's
 refs. If the canonical clone has no commits yet (from `--new`), the worktree
-creation is skipped; run `rwv sync` after the first commit to materialize it.
+creation is skipped; after the first commit, run `rwv lock` then
+`rwv doctor --fix` here to materialize it.
 
 ### Adopting an existing clone (`--adopt`)
 
@@ -117,10 +118,10 @@ rwv add <creation-address> --new [--param <name>=<value>]... [--params-json <jso
   `dependency`, `reference`). Defaults to `owned`.
 - `--new` — create a new repo instead of cloning. The positional argument
   becomes a creation address (see "Creation" above) rather than a URL or path.
-- `--param <name>=<value>` — a creation parameter (repeatable). See the table
-  above for what each registry declares.
+- `--param <name>=<value>` — a creation parameter (repeatable). Requires
+  `--new`. See the table above for what each registry declares.
 - `--params-json <json>` — the same parameters as one JSON object of string
-  values.
+  values. Requires `--new`.
 - `--project <name>` — operate on this project rather than the active project.
   Does not change `.rwv-active`.
 - `--no-materialize` — skip the integration install hooks (`npm install`,
@@ -128,7 +129,7 @@ rwv add <creation-address> --new [--param <name>=<value>]... [--params-json <jso
   `rwv materialize` runs them later. Inside a workweave the hooks are skipped
   either way.
 
-Run `rwv --help add` for the full clap surface.
+Run `rwv add --help` for the full clap surface.
 
 ## Output
 
