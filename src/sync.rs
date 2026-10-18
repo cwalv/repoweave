@@ -3123,11 +3123,11 @@ fn run_preconditions_after_acquire(
     // the operator sees the full list in one message. Acquired op-state is
     // released by the caller on Err (no trace left on disk).
     //
-    // Ordering: sync's CWD dirt scan runs here (before the snapshot pin and
-    // lock-freshness gate) so the in-flight-op refusal from `acquire_op`
-    // still dominates all other refusals (Correction-1 ordering). Dirt
-    // refusals never compete with an in-flight refusal — that was emitted
-    // atomically by `acquire_op` above.
+    // Ordering: an in-flight-op refusal outranks every other refusal, so a
+    // dirty workspace never masks a concurrent op. `acquire_op` has already
+    // emitted that refusal atomically by the time control reaches here, and
+    // the dirt scans below run before the snapshot pin and lock-freshness
+    // gate.
     match verb {
         MachineVerb::Sync => {
             // sync (pull): replay rebases or ff-advances the CWD repos onto the

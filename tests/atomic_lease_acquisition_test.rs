@@ -243,9 +243,9 @@ fn sync_against_in_flight_op_refuses_and_leaves_the_holder_intact() {
     );
     let holder_record = std::fs::read(&op_path).unwrap();
 
-    // Second sync against the held workweave. Acquisition dominates every
-    // other refusal (Correction-1 ordering), so regardless of what state the
-    // parked op left the repos in, the refusal MUST be the in-flight shape.
+    // Second sync against the held workweave. Acquisition outranks every
+    // other refusal, so regardless of what state the parked op left the
+    // repos in, the refusal MUST be the in-flight shape.
     let assertion = rwv()
         .args(["sync", &primary.root.to_string_lossy()])
         .current_dir(&ww.root)

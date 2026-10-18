@@ -1,6 +1,6 @@
 //! E2E coverage for rwv topology + parent exposure.
 //!
-//! Exercises the Correction-5 + parent-exposure surface:
+//! Exercises child adoption on retire/delete and the parent-exposure surface:
 //!   1. retire/delete ADOPT living children (0/1/N children; grandparent vs
 //!      primary fallback) and print the loud per-child line.
 //!   2. dangling-parent `rwv doctor --fix` re-points to primary.
