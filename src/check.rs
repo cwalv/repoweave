@@ -9953,7 +9953,10 @@ fn doctor_exit_signal(kind_filtered: bool, finding_count: usize, has_error: bool
 /// true` (via `--all`) to reproduce the weave-wide behavior, including orphan
 /// detection across every project.
 ///
-/// Returns `Ok(true)` (exit 1) or `Ok(false)` per [`doctor_exit_signal`].
+/// Returns `Ok(true)` (exit 1) when `kind_filter` is absent and some
+/// finding is error-severity, or when it is present and it admits any
+/// finding regardless of severity; `Ok(false)` otherwise. [`run_check_json`]
+/// follows the same contract.
 ///
 /// `ctx` is the already-resolved invocation context (with `--project` baked
 /// in when passed). Handlers must not re-resolve.
@@ -10764,9 +10767,9 @@ fn collect_doctor_violations(
 /// Emits `{ "$schema": "...", "violations": [...], "issues": [...] }` to
 /// stdout, from the same two collection passes [`run_check`] renders as text.
 ///
-/// Returns `Ok(true)` (exit 1) or `Ok(false)` per [`doctor_exit_signal`] —
-/// the same contract [`run_check`] follows, so a caller scripting against
-/// `--json` reads the same signal a human reads off the text report.
+/// Returns `Ok(true)` (exit 1) or `Ok(false)` under the same contract
+/// [`run_check`] follows, so a caller scripting against `--json` reads the
+/// same signal a human reads off the text report.
 ///
 /// There is no `--fix` on this path, so nothing here repairs and nothing mints
 /// a `--fix` failure.
