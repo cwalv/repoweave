@@ -1509,8 +1509,8 @@ impl Vcs for GitVcs {
 
     fn ignored_removal_hint(&self, workspace: &Path) -> String {
         format!(
-            "`git -C {at} clean -X -n` lists what would go, and `git -C {at} clean -X -f` \
-             deletes it",
+            "`git -C {at} clean -X -d -n` lists what would go, and \
+             `git -C {at} clean -X -d -f` deletes it",
             at = crate::path_spelling::operator_path(workspace),
         )
     }

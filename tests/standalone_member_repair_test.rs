@@ -398,7 +398,7 @@ fn refuses_while_the_clone_holds_untracked_files() {
 }
 
 #[test]
-fn refuses_while_the_clone_holds_ignored_files() {
+fn refuses_while_the_clone_holds_ignored_files_until_the_named_clean_removes_them() {
     let tmp = common::tempdir().unwrap();
     let weave = weave_with_standalone_member(tmp.path());
     std::fs::write(
@@ -432,10 +432,52 @@ fn refuses_while_the_clone_holds_ignored_files() {
         .lines()
         .find(|l| l.contains("it holds ignored files"))
         .unwrap();
+    let [preview, removal] = named_commands(heading)[..] else {
+        panic!("the ignored files' heading must name the preview and the removal: {heading}");
+    };
+
+    let previewed = run_named(preview);
+    for listed in ["local.env", "node_modules/"] {
+        assert!(
+            previewed.contains(&format!("Would remove {listed}")),
+            "`{preview}` must preview every ignored entry the refusal listed, \
+             `{listed}` included:\n{previewed}"
+        );
+    }
+    run_named(removal);
+
+    let (_, out) = doctor_fix(&weave);
     assert!(
-        heading.contains("widget clean -X -n`") && heading.contains("widget clean -X -f`"),
-        "the ignored files' heading must name the preview and the removal: {heading}"
+        out.contains(&format!(
+            "[fixed] core: replaced the full clone of {MEMBER} in workweave {SEAT}"
+        )),
+        "once `{removal}` has run, the repair it was named for must go through:\n{out}"
     );
+    assert!(weave.clone.join(".git").is_file(), "now a linked worktree");
+    assert_eq!(standalone_findings(&weave.seat), 0);
+}
+
+/// The `git …` commands a reason line names in backticks.
+fn named_commands(line: &str) -> Vec<&str> {
+    line.split('`')
+        .skip(1)
+        .step_by(2)
+        .filter(|span| span.starts_with("git "))
+        .collect()
+}
+
+/// Run a command an operator was told to run, as written, and return its
+/// stdout.
+fn run_named(command: &str) -> String {
+    let mut words = command.split_whitespace();
+    assert_eq!(words.next(), Some("git"), "{command}");
+    let out = common::git().args(words).output().unwrap();
+    assert!(
+        out.status.success(),
+        "`{command}` failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
 #[test]
@@ -463,7 +505,7 @@ fn lists_ignored_files_apart_from_untracked_ones_and_names_their_removal() {
         .find(|l| l.contains("it holds ignored files"))
         .unwrap();
     assert!(
-        heading.contains("widget clean -X -n`") && heading.contains("widget clean -X -f`"),
+        heading.contains("widget clean -X -d -n`") && heading.contains("widget clean -X -d -f`"),
         "the ignored files' heading must name the preview and the removal: {heading}"
     );
     assert_eq!(

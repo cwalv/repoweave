@@ -329,6 +329,10 @@ saying the table was retired. Delete it.
   wrote the weave root followed by a `/`-separated repo path, a string gita
   does not match against its own spelling of the same repo. Unix output is
   unchanged.
+- When `rwv doctor --fix` leaves a full clone in a workweave standing because
+  it holds ignored files, the commands it names are `git clean -X -d -n` and
+  `git clean -X -d -f`. Without `-d`, git leaves an ignored directory such as
+  `node_modules/` in place, and the re-run `rwv doctor --fix` refused again.
 
 ### Documentation
 

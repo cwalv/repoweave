@@ -456,7 +456,7 @@ const ROUTED: &[Routed] = &[
     Routed {
         file: "git.rs",
         scope: "",
-        needle: r#""`git -C {at} clean -X -n` lists what would go, and `git -C {at} clean -X -f` \"#,
+        needle: r#""`git -C {at} clean -X -d -n` lists what would go, and \"#,
         renders: 1,
         prints: "the commands that preview and delete a workspace's ignored files, for an operator to run",
     },

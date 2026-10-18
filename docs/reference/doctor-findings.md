@@ -907,7 +907,7 @@ repair stands beside the clone. The refusal is one error line, so `--fix` exits
 
 ```
 [error] core: clone-topology fix left <workweave>/<repo> standing: not replacing the full clone at <path> with a worktree of the canonical clone:
-  - it holds ignored files, which no commit records either. Move out any you need; if the rest are regenerable, such as build output or installed dependencies, `git -C <path> clean -X -n` lists what would go, and `git -C <path> clean -X -f` deletes it:
+  - it holds ignored files, which no commit records either. Move out any you need; if the rest are regenerable, such as build output or installed dependencies, `git -C <path> clean -X -d -n` lists what would go, and `git -C <path> clean -X -d -f` deletes it:
       node_modules/
 
 Nothing was changed. Re-run `rwv doctor --fix` once each of these is resolved.
