@@ -383,6 +383,13 @@ saying the table was retired. Delete it.
   since rwv excludes it through the project repo's `.git/info/exclude`. It
   named `git rm --cached <absolute path>`, which fails outside the project
   repo, and adding the index to `.gitignore`.
+- A workweave checkout detached while its ephemeral branch exists, such as a
+  review workweave holding a pull request's tip, reports
+  `branch-discipline` / `detached-off-ephemeral-branch`. It names the
+  `git switch <branch>` that reattaches it, and whether that moves the working
+  tree. It reported `detached`, offering `--adopt-detached-checkouts`, which
+  refuses to mint a branch that already exists; that flag now leaves such a
+  checkout alone.
 
 ### Documentation
 

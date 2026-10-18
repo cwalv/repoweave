@@ -180,6 +180,9 @@ pub fn case_token(v: &CheckViolation) -> String {
                 BranchDisciplineKind::BlockedDetachedNamespace { .. } => {
                     "blocked-detached-namespace"
                 }
+                BranchDisciplineKind::DetachedOffEphemeralBranch { .. } => {
+                    "detached-off-ephemeral-branch"
+                }
                 BranchDisciplineKind::UnmigratedEphemeralBranch { .. } => {
                     "unmigrated-ephemeral-branch"
                 }
@@ -605,6 +608,14 @@ pub fn corpus() -> Vec<CheckViolation> {
                 expected_ref: "proj--feat-a".into(),
                 at_sha: sha(),
                 blocking_refs: vec!["proj--feat-a/main".into(), "proj--feat-a/master".into()],
+            },
+        },
+        CheckViolation::BranchDiscipline {
+            repo_path: path("/ws/github/acme/repo"),
+            sub_kind: BranchDisciplineKind::DetachedOffEphemeralBranch {
+                expected_ref: "proj--feat-a".into(),
+                at_sha: sha(),
+                branch_tip: sha(),
             },
         },
         CheckViolation::BranchDiscipline {

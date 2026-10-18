@@ -3817,3 +3817,91 @@ fn name_half_rename_keeps_recorded_branch_healthy_and_reports_misnamed() {
         "the rename is the finding, with the recorded target; got:\n{stdout}"
     );
 }
+
+/// A checkout detached by hand while its flat ref stands, as in a review
+/// workweave holding a pull request's tip: `--adopt-detached-checkouts` has
+/// no branch to mint, so the finding names only the reattach, and the
+/// reattach it names clears it.
+///
+/// **Mutation evidence**: dropping the `flat_present` branch from the
+/// `HeadAttachment::Detached` arm of `scan_workweave_repo_branches` reports
+/// `detached` here, and that finding offers the flag; dropping the
+/// `!flat_present` guard from the migration's consented arm makes the flag
+/// fail on the existing name.
+#[test]
+fn detached_beside_its_own_flat_ref_names_the_reattach_that_clears_it() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+    let ww_dir = workweaves_dir(&ws).join("myproj--feat-a");
+    write_marker(&ww_dir, &ws, "myproj", &ws);
+    record_placement(&ws, "myproj", "feat-a", &ww_dir);
+    let ww_checkout = ww_dir.join("github").join("acme").join("repo");
+    std::fs::create_dir_all(ww_checkout.parent().unwrap()).unwrap();
+    worktree_add(&canonical, &ww_checkout, "myproj--feat-a");
+    record_receipt(&ws, "myproj", "feat-a", &canonical);
+    let branch_tip = rev(&canonical, "myproj--feat-a");
+
+    git_in(&ww_checkout, &["checkout", "--detach", "-q"]);
+    assert_eq!(
+        branch_discipline_sub_kinds(&ws),
+        vec!["detached-off-ephemeral-branch".to_string()]
+    );
+    let finding = detached_finding(&ws);
+    assert!(
+        finding.contains("`git switch myproj--feat-a` reattaches it without moving"),
+        "{finding}"
+    );
+
+    add_commit(&ww_checkout, "PR.txt", "pull request commit");
+    let pr_tip = rev(&ww_checkout, "HEAD");
+    let finding = detached_finding(&ws);
+    assert!(
+        finding.contains(&format!("checking out {branch_tip} in place of {pr_tip}")),
+        "{finding}"
+    );
+    assert!(
+        !finding.contains("run `rwv doctor --fix --adopt-detached-checkouts`"),
+        "the flag has no branch to mint here, so it is not offered: {finding}"
+    );
+
+    let fix = rwv()
+        .args(["doctor", "--fix", "--adopt-detached-checkouts"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let fix_report = String::from_utf8_lossy(&fix.stdout);
+    assert!(
+        !fix_report.contains("already exists"),
+        "the consented arm leaves an existing flat ref alone: {fix_report}"
+    );
+    assert_eq!(rev(&canonical, "myproj--feat-a"), branch_tip);
+    assert_eq!(
+        rev(&ww_checkout, "HEAD"),
+        pr_tip,
+        "still detached at the PR"
+    );
+
+    let switch = finding
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .find(|span| span.starts_with("git switch "))
+        .unwrap_or_else(|| panic!("the finding must name a `git switch`: {finding}"));
+    let args: Vec<&str> = switch.split_whitespace().skip(1).collect();
+    git_in(&ww_checkout, &args);
+
+    assert_eq!(branch_discipline_sub_kinds(&ws), Vec::<String>::new());
+}
+
+/// The line `rwv doctor` prints for a detached workweave checkout.
+fn detached_finding(ws: &Path) -> String {
+    let out = rwv().args(["doctor"]).current_dir(ws).output().unwrap();
+    let report = String::from_utf8_lossy(&out.stdout).into_owned();
+    report
+        .lines()
+        .find(|l| l.contains("detached-HEAD state"))
+        .unwrap_or_else(|| panic!("no detached finding:\n{report}"))
+        .to_owned()
+}

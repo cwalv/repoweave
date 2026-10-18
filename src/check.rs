@@ -798,6 +798,7 @@ impl CheckViolation {
                 | BranchDisciplineKind::ForeignEphemeral { .. }
                 | BranchDisciplineKind::BlockedEphemeralNamespace { .. }
                 | BranchDisciplineKind::BlockedDetachedNamespace { .. }
+                | BranchDisciplineKind::DetachedOffEphemeralBranch { .. }
                 | BranchDisciplineKind::UnbornCheckout { .. }
                 | BranchDisciplineKind::CanonicalHoldsLiveWorkweaveRef { .. }
                 | BranchDisciplineKind::CanonicalHoldsLeakedRef { .. }
@@ -1538,6 +1539,25 @@ pub enum BranchDisciplineKind {
         at_sha: String,
         /// Every pre-flat ref found under that namespace, in listing order.
         blocking_refs: Vec<String>,
+    },
+    /// (a) The workweave checkout is in detached-HEAD state while its flat
+    /// ref already exists in the canonical store.
+    ///
+    /// Reported in place of [`Detached`](Self::Detached) because that
+    /// finding's remedy, `--adopt-detached-checkouts`, mints the flat ref and
+    /// refuses a name that already exists: moving an existing branch to HEAD
+    /// would be a MOVE no receipt witnesses. The migration's consented arm
+    /// skips this state for the same reason.
+    ///
+    /// Report-only. Reattaching is `git switch` to the branch; it checks out
+    /// the branch's tip, which is HEAD's commit only when the two agree.
+    DetachedOffEphemeralBranch {
+        /// The flat ref (`<project>--<workweave>`).
+        expected_ref: String,
+        /// The commit HEAD names directly.
+        at_sha: String,
+        /// The commit the flat ref names.
+        branch_tip: String,
     },
     /// (a) The workweave's flat ref exists in the canonical store, but rwv
     /// holds no receipt for it.
@@ -4708,6 +4728,19 @@ fn scan_workweave_repo_branches(
                         at_sha: d.at().as_str().to_string(),
                         blocking_refs: legacy_refs.iter().map(|r| r.to_string()).collect(),
                     }
+                } else if let Some(tip) = flat_present
+                    .then(|| {
+                        vcs.resolve_local_branch_tip(&store, &flat_raw)
+                            .ok()
+                            .flatten()
+                    })
+                    .flatten()
+                {
+                    BranchDisciplineKind::DetachedOffEphemeralBranch {
+                        expected_ref: expected_ref.clone(),
+                        at_sha: d.at().as_str().to_string(),
+                        branch_tip: tip.as_str().to_string(),
+                    }
                 } else {
                     BranchDisciplineKind::Detached {
                         expected_ref: expected_ref.clone(),
@@ -6257,7 +6290,9 @@ pub fn fix_stale_ephemeral_branches(
 ///      commits. Without the flag, report-only (both tips, from the scan).
 ///   4. attached to anything else — report, do not touch. Under R2 these are
 ///      not rwv's refs.
-///   5. detached with no pre-flat ref — as arm 3, minus the ref to give up.
+///   5. detached with no pre-flat ref and no flat ref — as arm 3, minus the
+///      ref to give up. Detached beside an existing flat ref is report-only:
+///      the birth refuses a name that exists.
 ///   6. unborn — nothing to attach a receipt to. Report-only.
 ///
 /// Arm 7 (the legacy index and marker fields) is applied by `run_check`
@@ -6405,8 +6440,9 @@ pub fn fix_branch_model_migration(
                         Err(e) => errors.push(format!("{}: {e}", abs.display())),
                     }
                 }
-                // Arms 3 and 5, and only with the operator's consent.
-                Ok(HeadAttachment::Detached(d)) => {
+                // Arms 3 and 5, and only with the operator's consent. Never
+                // over an existing flat ref, which the birth would refuse.
+                Ok(HeadAttachment::Detached(d)) if !flat_present => {
                     let Some(consent) = adopt_detached else {
                         continue;
                     };
@@ -8129,6 +8165,31 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                                 expected_ref,
                                 expected_ref,
                                 expected_ref,
+                            )
+                        }
+                        BranchDisciplineKind::DetachedOffEphemeralBranch {
+                            expected_ref,
+                            at_sha,
+                            branch_tip,
+                        } => {
+                            safe_to_fix = false;
+                            let moves = if at_sha == branch_tip {
+                                " without moving the working tree".to_owned()
+                            } else {
+                                format!(", checking out {branch_tip} in place of {at_sha}")
+                            };
+                            format!(
+                                "{}: workweave checkout is in detached-HEAD state at {} \
+                                 while its ephemeral branch `{}` stands at {}; \
+                                 `git switch {}` reattaches it{} (report-only; \
+                                 `--adopt-detached-checkouts` mints the branch only where \
+                                 none exists)",
+                                repo_path.display(),
+                                at_sha,
+                                expected_ref,
+                                branch_tip,
+                                expected_ref,
+                                moves,
                             )
                         }
                         BranchDisciplineKind::UnrecordedEphemeralBranch { branch } => format!(

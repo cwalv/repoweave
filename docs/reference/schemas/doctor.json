@@ -300,6 +300,38 @@
           "additionalProperties": false
         },
         {
+          "description": "(a) The workweave checkout is in detached-HEAD state while its flat ref already exists in the canonical store.\n\nReported in place of [`Detached`](Self::Detached) because that finding's remedy, `--adopt-detached-checkouts`, mints the flat ref and refuses a name that already exists: moving an existing branch to HEAD would be a MOVE no receipt witnesses. The migration's consented arm skips this state for the same reason.\n\nReport-only. Reattaching is `git switch` to the branch; it checks out the branch's tip, which is HEAD's commit only when the two agree.",
+          "type": "object",
+          "required": [
+            "detached-off-ephemeral-branch"
+          ],
+          "properties": {
+            "detached-off-ephemeral-branch": {
+              "type": "object",
+              "required": [
+                "at_sha",
+                "branch_tip",
+                "expected_ref"
+              ],
+              "properties": {
+                "at_sha": {
+                  "description": "The commit HEAD names directly.",
+                  "type": "string"
+                },
+                "branch_tip": {
+                  "description": "The commit the flat ref names.",
+                  "type": "string"
+                },
+                "expected_ref": {
+                  "description": "The flat ref (`<project>--<workweave>`).",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
           "description": "(a) The workweave's flat ref exists in the canonical store, but rwv holds no receipt for it.\n\nThe state a build that minted flat names before receipts existed leaves behind, and the state a migration crash between the receipt and the rename would leave if the receipt had not been written first. Under R2 the ref is nobody's until adopted, so `workweave delete` cannot clean it up; `--fix` adopts it at its observed tip.",
           "type": "object",
           "required": [

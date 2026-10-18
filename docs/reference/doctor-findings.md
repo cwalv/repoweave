@@ -91,7 +91,7 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`branch-discipline`](#branch-discipline) / `unmigrated-ephemeral-branch`, `unrecorded-ephemeral-branch`, `stale-ephemeral-branch-safe` | Warning | Auto-fixable |
 | [`branch-discipline`](#branch-discipline) / `detached` | Warning | Report-only by default (`--adopt-detached-checkouts`) |
 | [`branch-discipline`](#branch-discipline) / `canonical-detached` | Warning | Report-only by default (`--reattach-checkouts`) |
-| [`branch-discipline`](#branch-discipline) / `shared-branch`, `foreign-ephemeral`, `blocked-ephemeral-namespace`, `blocked-detached-namespace`, `unborn-checkout`, `canonical-holds-live-workweave-ref`, `canonical-holds-leaked-ref`, `stale-ephemeral-branch-live`, `stale-ephemeral-branch-unowned` | Warning | Report-only |
+| [`branch-discipline`](#branch-discipline) / `shared-branch`, `foreign-ephemeral`, `blocked-ephemeral-namespace`, `blocked-detached-namespace`, `detached-off-ephemeral-branch`, `unborn-checkout`, `canonical-holds-live-workweave-ref`, `canonical-holds-leaked-ref`, `stale-ephemeral-branch-live`, `stale-ephemeral-branch-unowned` | Warning | Report-only |
 | [`dangling-ref-receipt`](#dangling-ref-receipt) | Warning | Auto-fixable |
 | [`pre-flat-ref-receipt`](#pre-flat-ref-receipt) | Warning | Auto-fixable |
 | [`index-drift`](#index-drift) / `safe-to-fix` | Warning | Auto-fixable |
@@ -1108,7 +1108,9 @@ invariants.
 workweave's flat ref *at HEAD*. When a pre-flat branch of this workweave's
 namespace also exists, both tips are reported side by side, because those two
 commits are what you are choosing between — adopting at HEAD can strand the
-other one.
+other one. When the flat ref itself already exists there is nothing to mint,
+and the checkout reports
+[`detached-off-ephemeral-branch`](#detached-off-ephemeral-branch) instead.
 
 #### `unmigrated-ephemeral-branch`
 
@@ -1155,6 +1157,19 @@ namespace is blocked.
 the others, leaving at most one ref under the namespace; then re-run `rwv
 doctor` to get the ordinary `detached` finding with a remedy that will actually
 run. Never auto-fixed: which ref is which is not derivable from the refs.
+
+#### `detached-off-ephemeral-branch`
+
+**Warning. Report-only.** The workweave checkout is in detached-HEAD state
+while its flat `<project>--<workweave>` branch already exists — a checkout
+detached by hand, such as onto a pull request's tip in a review workweave.
+
+Reported *in place of* `detached`, not beside it: `--adopt-detached-checkouts`
+mints the branch only where none exists, and leaves this checkout alone.
+
+**What to do:** the message names `git switch <branch>`, which reattaches the
+checkout. It says whether that moves the working tree: the switch checks out
+the branch's tip, which is HEAD's commit only when the two agree.
 
 #### `unrecorded-ephemeral-branch`
 
