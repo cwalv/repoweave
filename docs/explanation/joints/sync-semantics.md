@@ -32,7 +32,7 @@ guard → mark → savepoint → replay → relock → advance-target → retire
 | replay | **Phase 1'** replays CWD's unique project commits onto the named workspace's project tip, with `rwv.lock` excluded from each commit; **Phase 2** advances CWD's member repos to the named workspace's lock targets | yes | yes | yes |
 | relock | Regenerates `rwv.lock` from CWD's new tips (**Phase 3**) and commits it if it changed | yes | yes | yes |
 | advance-target | Fast-forwards the target's member repos, then its project repo, to CWD's tips | — | yes | yes |
-| retire | Checks that member tips match and no worktree is dirty, then deletes the workweave | — | — | yes |
+| retire | Checks that member tips match, that no checkout is dirty and that replay left no checkout it could not prune, then deletes the workweave | — | — | yes |
 | cleanup | Drops the savepoints and the op-state | yes | yes | yes |
 
 **Stopping and resuming.** A refusal at guard leaves no trace. Once the
@@ -56,7 +56,11 @@ holding a repo as a symlink is refused before any phase runs
 lacks is materialized, and a member it dropped is pruned, behind the dirty,
 unique-commit and store-claim refusals. Pruning waits until every repo has
 replayed, so an op that parks has removed nothing — `rwv abort` restores refs
-and cannot bring back a deleted checkout.
+and cannot bring back a deleted checkout. A refused prune leaves its checkout
+on disk: the op still runs to completion and clears its op-state, then exits
+1 naming the checkout to remove by hand. Under `--retire` the retire check
+refuses first (`retire-unpruned-checkout`), so the workweave is not deleted
+with that checkout in it.
 
 **Whose lock is the target.** Phase 2 advances to the named workspace's
 lock, with one exception: a plain `sync` from a workweave whose lock is
@@ -202,9 +206,11 @@ outcome as each worker finishes, each with its own `"$schema"`, plus a line
 for each record the envelope carries beside `outcomes` — placements
 (`placement-record.json`), replay members (`member-record.json`), and
 `sync-to`'s advance-target fast-forwards (`advance-record.json`). In both
-modes the exit status is non-zero iff some per-repo outcome is `failed`. A
-refused prune is not one: the op completes and reports a `prune-refused`
-member record.
+modes the exit status is non-zero when some per-repo outcome is `failed`,
+and when a prune was refused: the op completes, reports a `prune-refused`
+member record, and exits 1. The envelope's `complete` field is true when the
+op ran its last phase and cleared its op-state, false when a phase parked
+it; NDJSON carries no `complete`.
 
 ## Auto-target
 

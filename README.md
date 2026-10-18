@@ -93,22 +93,22 @@ cd ../.workweaves/web-app--payments
 | `-C <path>`, `--cwd <path>` | Global: resolve the workspace as if invoked from `<path>` (precedes the subcommand) |
 | `-w <project>--<name>`, `--workweave <project>--<name>` | Global: address a workweave by name from anywhere (precedes the subcommand) |
 | `rwv` | Show current context (weave, project, workweave, repos) |
-| `rwv fetch <source>` | Clone a project and all its repos; align repos to `rwv.lock`; activate and install. `--frozen` errors if the lock is incomplete (CI) |
+| `rwv fetch <source>` | Clone a project and all its repos; align repos to `rwv.lock`; activate and install. `--frozen` errors if the lock is incomplete (CI). With no `<source>`, re-clone missing members of the active project (`--project` names another); a weave with exactly one project and none active gets it activated |
 | `rwv init <project>` | Create a new project with empty `rwv.toml`. Optional `--provider registry/owner` sets up the remote |
 | `rwv activate <project>` | Set the active project — update `.rwv-active`, verify integration files, surface symlinks at the weave root, and run install hooks (`--no-materialize` to skip hooks) |
 | `rwv materialize` | Run integration install hooks, clean up disabled-integration artifacts, and settle drifted attested files (`--regenerate-drifted`, `--adopt-drifted`, `--remove-undeclared-links`) without switching projects |
-| `rwv add <url>` | Clone a repo, add to `rwv.toml`, re-run integrations. `--role` sets the role, `--new` for `git init` |
+| `rwv add <url>` | Clone a repo, add to `rwv.toml`, re-run integrations. `<url>` is a URL (`file://` for a local remote) or registry shorthand; `--adopt <path>` registers a clone already under the weave root; `--role` sets the role, `--new` for `git init` |
 | `rwv remove <path>` | Remove from `rwv.toml`, re-run integrations. `--delete` removes this workspace's checkout |
 | `rwv role <repo> <role>` | Change a repo's role in `rwv.toml`, update ecosystem workspace files, and settle file permissions |
-| `rwv lock` | Snapshot repo HEADs into `rwv.lock`. Errors on uncommitted changes (`--dirty` to bypass) |
+| `rwv lock` | Snapshot repo HEADs into `rwv.lock`. Errors on uncommitted changes (`--dirty` to bypass). `--commit` commits the lock, with `rwv.toml` when it has uncommitted changes (`-m` sets the message) |
 | `rwv doctor` | Convention enforcement: orphans, dangling refs, stale locks, integration checks. `--locked` for scriptable lock-freshness check |
 | `rwv status` | Show per-repo state: branch, tip, lock entry, relation, mid-op state. `--json` for machine-readable output |
 | `rwv sync <source>` | Pull: align CWD to another workspace's committed `rwv.lock`. `--strategy ff\|rebase` (default `ff`); `--allow-stale-lock` to skip lock-freshness check; `--discard-local-commits` to hard-reset project repo to source tip |
 | `rwv sync-to [<target>]` | Push: land CWD's commits into target (3-step: rebase CWD against target → auto-relock → FF-advance target). `--strategy rebase\|ff` (default `rebase`); `--retire` deletes the workweave on success. Bare `rwv sync-to` auto-targets the parent recorded in `.rwv-workweave` |
-| `rwv abort` | Restore CWD workspace to its pre-sync state using savepoint refs |
+| `rwv abort` | Roll an in-flight `sync` or `sync-to` back to its savepoints in every workspace it touched; run it from any of them |
 | `rwv push` | Coordinated cross-repo push: member repos first, then project repo. `--dry-run` to preview; `--force` for force-push consent; `--role`/`--repo` selectors to limit scope |
-| `rwv update` | Advance each repo to its branch HEAD and re-snapshot `rwv.lock` (network bump; analogous to `cargo update`). `--commit` to commit the lock after writing it |
-| `rwv workweave <project> create <name>` | Create an isolated working copy (worktrees on ephemeral branches) |
+| `rwv update` | Advance each repo to its branch HEAD and re-snapshot `rwv.lock` (network bump; analogous to `cargo update`). `--commit` commits the lock and the regenerated files, with `rwv.toml` when it has uncommitted changes |
+| `rwv workweave <project> create <name>` | Create an isolated working copy (worktrees on ephemeral branches) and run its install hooks (`--no-materialize` skips them) |
 | `rwv workweave <project> set-container <path>` | Set the directory new workweaves for `project` are created under by default |
 | `rwv workweave <project> delete <name>` | Delete a workweave (remove worktrees, clean up ephemeral branches) |
 | `rwv workweave <project> list` | List workweaves for a project |

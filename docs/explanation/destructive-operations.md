@@ -26,9 +26,13 @@ verify the gate matches the destruction it guards. Anonymous guards
 
 Examples in the current tree:
 
-- `rwv workweave delete` checks for uncommitted changes and unmerged
-  commits before removing the workweave directory. Both refusals fire
-  with actionable error messages.
+- `rwv workweave delete` checks every checkout under the workweave, a
+  manifest member or not, for uncommitted changes and unmerged commits
+  before removing the workweave directory. Both refusals fire with
+  actionable error messages.
+- `rwv sync-to --retire` refuses to delete a workweave that still holds a
+  checkout replay refused to prune (`retire-unpruned-checkout`), and its
+  dirty check covers every checkout under the workweave the same way.
 - `rwv remove --delete` refuses to delete a checkout with uncommitted
   changes or commits no other clone reaches, and refuses to delete the
   canonical store while another project's manifest still references the
@@ -93,12 +97,15 @@ ref surgery during phase replay — must keep what they discard
 recoverable where possible, and the operation's documentation must
 say where.
 
-The current mechanism is **named savepoints**: ref surgery operations
-write a `refs/rwv/pre-op/<op-id>` ref pointing at the pre-operation
-state before any destructive write. The ref namespace is rwv-internal
-(no user ref ever lives under `refs/rwv/`); the ref is tied to a
-specific operation id; and `rwv abort` knows how to roll back
-to it.
+The mechanism is **named savepoints**: ref surgery operations write a
+`refs/rwv/pre-op/<op-id>` ref pointing at the pre-operation state before
+any destructive write — `refs/rwv/pre-op/<op-id>-target` in a `sync-to`
+target's repos, which share a ref store with the source's. The ref
+namespace is rwv-internal (no user ref ever lives under `refs/rwv/`); the
+ref is tied to a specific operation id; and `rwv abort` knows how to roll
+back to it. Abort holds itself to the same rule: before resetting a repo it
+writes `refs/rwv/pre-abort/<op-id>` (`-target` on the target side) at the
+tip it is about to move, and never deletes it.
 
 Operations that *cannot* leave a recoverable artifact — e.g., disk
 removal of a fully unreferenced workweave directory after every

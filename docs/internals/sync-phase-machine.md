@@ -299,13 +299,24 @@ the idempotent re-entry rule a `--continue` depends on.
 
 ## retire (--retire only)
 
-Run the merged-check (member repo tips equal in CWD and target after
-the preceding advance-target) and the dirty-check (no worktree has
-uncommitted changes), then delete the workweave. A failure from either
-check preserves the op record at phase `retire` — `--continue` retries
-after the operator reconciles; `rwv abort` rolls back the whole op,
-target included. The removal itself is idempotent (a missing workweave
-directory is a no-op).
+Refuse first while replay left a checkout it could not prune
+(`refuse_retiring_unpruned_checkouts`, `RefusalKind::RetireUnprunedCheckout`):
+deleting the workweave would destroy what the prune refused to. Then run the
+merged-check (member repo tips equal in CWD and target after the preceding
+advance-target) and the dirty-check (no checkout under the workweave has
+uncommitted changes, a manifest member or not), then delete the workweave.
+A failure from any of the three preserves the op record at phase `retire` —
+`--continue` retries after the operator reconciles; `rwv abort` rolls back
+the whole op, target included. The removal itself is idempotent (a missing
+workweave directory is a no-op).
+
+The unpruned set is `stranded_checkouts`: the repos CWD's manifest named
+when the op started (read at the project savepoint), named by no manifest
+now, and still on disk. It is derived rather than carried from replay, so a
+`--continue` that re-entered past replay weighs the same set. The same set
+decides a completed op's exit: when it is non-empty after cleanup, the op
+has cleared its op-state and `fail_on_stranded_checkouts` exits 1 naming the
+checkouts, since nothing the op can still do repairs them.
 
 Retire compares **member repo tips** rather than project repo tips.
 The project repo's post-sync state can diverge from the target by

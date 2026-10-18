@@ -54,7 +54,9 @@ machine).
 What `rwv` adds that most PATH-dispatch tools lack: **`rwv doctor` inventories the
 plugin surface**. `rwv doctor --json` carries a `plugins` array listing every
 `rwv-*` executable discovered on `$PATH`, with each binary's absolute path and a
-`shadowed` flag when a duplicate name earlier in `$PATH` would win at exec time.
+`shadowed` flag when another file for the same verb would win at exec time — one
+earlier in `$PATH`, or on Windows one in the same directory whose extension
+comes earlier in `PATHEXT`.
 The inventory is reporting only — plugin presence never fails the doctor check or
 affects the exit code. The audit surface is where scrutiny belongs; silent dispatch
 is correct at invocation time.

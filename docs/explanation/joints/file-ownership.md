@@ -181,10 +181,11 @@ construction, because regeneration is tied to the intent verb that changed them.
 "Never author" is a claim about the **authoring path** — the managed regions and rwv-computed
 artifacts that intent verbs regenerate. It is not a claim that a context verb leaves every byte on
 disk untouched. The context verbs that run activation (`activate`, `materialize`, `init`,
-`init --adopt`, and `fetch`'s first-fetch auto-activate — not workweave-create, which suppresses
-hooks, and not `lock`, which runs no activation) still fire the integration **install hooks**, and
-the ecosystem tools those hooks invoke rewrite the lockfiles they own: `Cargo.lock`,
-`package-lock.json`, `pnpm-lock.yaml`, `uv.lock`.
+`init --adopt`, workweave-create, and a `fetch` that activates a project — the first fetch of a
+source, or an in-place fetch selecting the weave's only project — but not `lock`, which runs no
+activation) still fire the integration **install hooks** unless the verb's `--no-materialize`
+skips them, and the ecosystem tools those hooks invoke rewrite the lockfiles they own:
+`Cargo.lock`, `package-lock.json`, `pnpm-lock.yaml`, `uv.lock`.
 
 This holds at `init --adopt` even when the adopted repo **commits** its lock. A generated lock is
 fully rwv-owned derived state with no user author (§"Lockfiles are fully owned",

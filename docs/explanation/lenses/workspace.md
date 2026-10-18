@@ -71,7 +71,7 @@ This is the antidote to manual wiring hell:
 - **Deterministic paths.** Build tools see a consistent view. Two projects that use different versions of a shared library can't accidentally cross-contaminate.
 - **Low overhead.** Symlinks are cheap and ephemeral — losing one costs nothing, because the source of truth always remains in the project repo. `rwv activate` re-creates them at the weave root; inside a workweave, where `activate` is refused, `rwv doctor --fix` re-surfaces them and `rwv materialize` runs install hooks.
 
-`.rwv-active` is the single source of truth for what's active in a workspace. There is no CWD-based override: cd-ing into `projects/<name>/` does not switch the active project. Action verbs read `.rwv-active`; if you want to operate on a non-active project, use `--project <name>` for a one-shot or `rwv activate <name>` to switch.
+`.rwv-active` is the single source of truth for what's active in a workspace. There is no CWD-based override: cd-ing into `projects/<name>/` does not switch the active project. Action verbs read `.rwv-active`, and a verb that writes refuses (`cwd-in-inactive-project`) when run from inside another project's directory rather than act on the active one. To operate on a non-active project, use `--project <name>` for a one-shot or `rwv activate <name>` to switch.
 
 See [switch projects](../../how-to/switch-projects.md) for the operational recipe.
 

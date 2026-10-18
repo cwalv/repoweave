@@ -56,9 +56,18 @@ against the primary weave root. The source must be a workspace whose
    and the two files are mutually exclusive, one tier of the resolution
    chain rather than two. `rwv doctor` reports a root carrying both as a
    `weave-root-identity-conflict`.
-4. Integration surfacing (surfaces symlinks to the workweave root without
-   running install hooks; run `rwv materialize` inside the workweave when you
-   want install hooks to execute).
+4. Activation: surfacing symlinks at the workweave root, verifying the
+   integration files, then running the integration install hooks, so the
+   workweave gets its own `node_modules/`, `.venv/` or `target/`. A hook that
+   fails leaves the workweave created and registered: `create` exits 1
+   naming `rwv materialize` as the step to re-run inside it. Under
+   `--hook-mode` and `--claude-hook`, the path harness integrations use, the
+   same failure is a warning and `create` exits 0. `--no-materialize` skips
+   the hooks and says so:
+
+   ```text
+   [skipped] core: the install hooks did not run (--no-materialize); `rwv materialize` runs them
+   ```
 
 ### Dirty-source check
 
@@ -67,24 +76,28 @@ proceeding. If the project directory is dirty it refuses with a clear
 error:
 
 ```
-Error: rwv workweave create: refusing to create workweave —
-       projects/web-app has uncommitted changes:
+Error: rwv workweave create: refusing to create workweave — projects/web-app has uncommitted changes:
   rwv.toml
 
 To proceed, do one of:
   1. commit the changes: git -C projects/web-app commit
   2. stash the changes: git -C projects/web-app stash
   3. capture them into the workweave: rwv workweave web-app create payments --capture-dirty
+
+rwv explain dirty-project-dir
 ```
 
 The check covers only `projects/<project>/`. Member-repo worktrees are
 forked at HEAD by `git worktree add`, so uncommitted edits in member
 repos are not captured and not checked.
 
-Pass `--capture-dirty` to opt in to capturing the dirty state. Captured
-dirty state becomes an obstacle at retire time — if the same changes are
-present in the parent, the project-repo replay will hit a conflict. Commit
-or stash them inside the workweave before running `rwv sync-to`.
+Pass `--capture-dirty` to move the uncommitted edits to `rwv.toml` and
+`rwv.lock` into the workweave: once it exists, the source's copies go back
+to their committed versions, so landing the edits from the workweave later
+meets no dirty target. `create` names each file it moved, and names any
+other uncommitted file in `projects/<project>/`, which stays in the source
+only. Commit the captured edits inside the workweave before running
+`rwv sync-to`.
 
 ### Re-invocation (idempotent path)
 
@@ -95,9 +108,10 @@ project) and returns immediately. Non-git state written between invocations
 "ensure workweave exists" path.
 
 Use `--replace-existing` to tear down and recreate from scratch. It refuses if
-the existing workweave holds uncommitted changes or unmerged commits — the
-operator must discard those explicitly with `rwv workweave <project> delete
-<name> --discard-uncommitted --discard-unmerged-commits`.
+any checkout under the existing workweave, a manifest member or not, holds
+uncommitted changes or unmerged commits — the operator must discard those
+explicitly with `rwv workweave <project> delete <name> --discard-uncommitted
+--discard-unmerged-commits`.
 
 ## Working state
 
@@ -155,7 +169,7 @@ Workweaves live at `<parent>/.workweaves/<project>--<name>/` — by default a si
 ### The retire contract
 
 Retire is a phase in the sync-to machine, not a separate command. It runs
-only after `advance-target` has completed successfully. It does two checks:
+only after `advance-target` has completed successfully. It does three checks:
 
 **Merged-check** — every member repo in CWD must have the same HEAD as
 the corresponding repo in the target workspace. After a successful
@@ -170,8 +184,17 @@ and will be regenerated on the parent's next sync, so comparing project
 tips would refuse every retire, including the happy path. Manifest tip
 equality is the accurate convergence signal.
 
-**Dirty-check** — no worktree in the workweave may have uncommitted
-changes. Any dirty path blocks retire.
+**Dirty-check** — no checkout in the workweave may have uncommitted
+changes, whether a manifest member names it or not (a clone put there by
+hand is listed with the suffix `(not a manifest member)`). Any dirty path
+blocks retire.
+
+**Unpruned-checkout check** — when replay refused to prune a member the
+manifest no longer names, because pruning would have destroyed what its
+checkout holds, that checkout is still in the workweave, and deleting the
+workweave would destroy it. Retire refuses (`retire-unpruned-checkout`)
+until the checkout is gone: save what it holds or discard it, then remove it
+by hand. Committing or discarding alone does not unblock it.
 
 ### What retire deletes
 
@@ -211,11 +234,12 @@ sits.
 
 ### If retire fails
 
-A merged-check or dirty-check failure keeps the op record at phase
-`retire`. The workweave is preserved. The repair loop:
+A failed retire check keeps the op record at phase `retire`. The landing
+into the target has already completed, and the workweave is preserved. The
+repair loop:
 
 ```bash
-# fix the divergence (commit, sync, etc.), then:
+# fix what the refusal names (commit, remove the unpruned checkout, etc.), then:
 rwv sync-to --continue    # re-runs the retire check
 
 # or roll back the entire op:
@@ -235,13 +259,17 @@ rwv workweave <project> delete <name>
 
 Refuses if:
 
-- Any worktree has **uncommitted changes** (staged, unstaged, or untracked
+- Any checkout has **uncommitted changes** (staged, unstaged, or untracked
   files outside `.gitignore`).
-- Any worktree HEAD holds **commits not reachable from the recorded parent
+- Any checkout's HEAD holds **commits not reachable from the recorded parent
   or the primary weave** — work that would be permanently destroyed when
   the ephemeral branches are force-deleted.
 
-The refusal lists the dirty or diverged paths. Options:
+Both checks cover every checkout under the workweave, not only the members
+the project's manifest names: a member replay dropped but could not prune, a
+member the workweave added that has not landed, or a clone put there by
+hand. The refusal lists the dirty or diverged paths, marking those outside
+the manifest `(not a manifest member)`. Options:
 
 - Commit the work and land it: `rwv sync-to --retire`
 - Stash or discard the uncommitted changes, then delete
