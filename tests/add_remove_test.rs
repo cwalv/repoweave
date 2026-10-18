@@ -634,6 +634,10 @@ fn add_local_path_refuses_rather_than_fabricate_main_when_origin_head_is_unset()
         stderr.contains("origin/HEAD") && stderr.contains("remote set-head"),
         "refusal must name the resolving command, got: {stderr}"
     );
+    assert!(
+        stderr.contains(&format!("then re-run `rwv add --adopt {repo_path}`")),
+        "refusal must name the re-run that registers this clone, got: {stderr}"
+    );
 
     let manifest_path = workspace.join("projects/test-project/rwv.toml");
     let manifest_content = std::fs::read_to_string(&manifest_path).unwrap();

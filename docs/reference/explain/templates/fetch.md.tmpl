@@ -320,8 +320,10 @@ rwv fetch --detach-checkouts
 
 ## Common errors
 
-- *project 'X' already exists at projects/X/* — run `rwv fetch` from a
-  fresh directory, or use a scoped path hint printed in the error.
+- *cannot fetch project 'X': projects/X already exists* — if that is the
+  project you meant, `rwv fetch --project X` fetches its members in place;
+  otherwise run `rwv fetch <source>` in an empty directory, which becomes a
+  weave of its own.
 - *no repoweave workspace found and … is not empty* — the current directory
   is not a workspace; use `--allow-non-empty-dir` to bootstrap here anyway.
 - *no SOURCE and no repoweave workspace found above …* — in-place mode

@@ -134,7 +134,7 @@ fn fetch_occupied_project_refuses_once() {
         "the refusal reached the operator more than once, stderr was:\n{stderr}"
     );
     assert_eq!(
-        stderr.matches("try a scoped path").count(),
+        stderr.matches("fetches its members in place").count(),
         1,
         "the hint reached the operator more than once, stderr was:\n{stderr}"
     );

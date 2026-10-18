@@ -106,7 +106,7 @@ This follows Go's GOPATH precedent (`$GOPATH/src/github.com/owner/repo`), shorte
 - **No collisions.** Two `web-app` repos owned by different organizations can coexist on disk without renaming.
 - **Discovery.** `find github/chatly/` lists every chatly repo on disk; `find . -name '.git' -type d` lists everything across all owners.
 
-Project paths are simpler — `projects/{name}/`. They use short names because there's typically one of each per workspace; if names collide across organizations, `rwv` prompts for a scoped path (`projects/{owner}/{name}/`). The asymmetry is intentional: member repos are physical clones whose path encodes their origin; projects are coordination entities referred to by short name.
+Project paths are simpler — `projects/{name}/`. They use short names because there's typically one of each per workspace; if names collide across organizations, `rwv fetch` refuses rather than merge them, and the second project goes in a weave of its own. The asymmetry is intentional: member repos are physical clones whose path encodes their origin; projects are coordination entities referred to by short name.
 
 ## What ecosystem tools see
 

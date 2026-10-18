@@ -366,6 +366,12 @@ saying the table was retired. Delete it.
   under `--param root` names that upstream and
   `git -C <upstream> symbolic-ref HEAD refs/heads/<branch>`. It named the clone,
   which the same refusal had removed.
+- `rwv add --adopt <path>` refused as `no-remote-default-branch` names
+  `rwv add --adopt <path>` as the re-run, the spelling that registers a clone.
+- `rwv fetch <source>` refused as `project-dir-occupied` names
+  `rwv fetch --project <name>` for the project already there, and an empty
+  directory to fetch the other one into. It suggested a scoped project path,
+  which no `rwv fetch` spelling can request.
 
 ### Documentation
 

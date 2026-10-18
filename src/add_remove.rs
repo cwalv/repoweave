@@ -713,7 +713,7 @@ fn run_add_from_local_path(
     else {
         crate::refuse!(
             RefusalKind::NoRemoteDefaultBranch,
-            "rwv add: '{}' at {}: {}, then re-run `rwv add {}`",
+            "rwv add: '{}' at {}: {}, then re-run `rwv add --adopt {}`",
             repo_path.as_str(),
             operator_path(clone_dir),
             vcs.remote_default_branch_repair_hint(),

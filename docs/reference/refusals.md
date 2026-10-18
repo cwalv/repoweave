@@ -692,8 +692,10 @@ into this workspace if it belongs here.
 rwv will not merge into an occupied slot, because the occupant's files are not
 rwv's to reinterpret.
 
-**Exits.** Fetch under a scoped path — the refusal prints the scoped form —
-or choose a fresh directory.
+**Exits.** For `rwv fetch <source>`: if the project already there is the one
+you meant, `rwv fetch --project <name>` fetches its members in place; to fetch
+the other one too, run `rwv fetch <source>` in an empty directory, which
+becomes a weave of its own. For `rwv init`, choose another name.
 
 ### `project-push-withheld`
 

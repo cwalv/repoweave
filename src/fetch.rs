@@ -136,13 +136,11 @@ pub enum FetchMode {
     Frozen,
 }
 
-/// Resolve `source` to a clone URL and the owner string.
+/// Resolve `source` to a clone URL.
 ///
 /// Accepts full URLs (returned as-is) or `owner/repo` / `registry/owner/repo`
 /// shorthand (resolved via the built-in registries to an HTTPS clone URL).
-///
-/// Returns `(url, owner)` where `owner` may be empty for unrecognized URLs.
-fn resolve_source(source: &str) -> anyhow::Result<(crate::manifest::RepoUrl, String)> {
+fn resolve_source(source: &str) -> anyhow::Result<crate::manifest::RepoUrl> {
     let parsed: crate::manifest::RepoUrl = source.parse()?;
     if parsed.is_plain_path() {
         crate::refuse!(
@@ -154,9 +152,7 @@ fn resolve_source(source: &str) -> anyhow::Result<(crate::manifest::RepoUrl, Str
             file_url = crate::path_spelling::file_url_suggestion(source),
         );
     }
-    let info = registry::resolve_to_clone_info(&parsed)?;
-    let owner = info.id.owner().to_owned();
-    Ok((info.url, owner))
+    Ok(registry::resolve_to_clone_info(&parsed)?.url)
 }
 
 /// Validate that a lock file covers all repos in the manifest.
@@ -232,22 +228,19 @@ pub fn run_fetch(
     let project_vcs = project_vcs();
 
     // Resolve source to a clone URL (supports full URLs and owner/repo shorthand).
-    let (url, owner) = resolve_source(source)?;
+    let url = resolve_source(source)?;
     let url_str = url.to_string();
     let name = registry::repo_name_from_source(&url_str);
     let projects_dir = projects_dir(workspace_root);
     std::fs::create_dir_all(&projects_dir).context("failed to create projects/ directory")?;
     let project_dir = projects_dir.join(&name);
     if project_dir.exists() {
-        let scoped = if owner.is_empty() {
-            format!("projects/{{owner}}/{name}/")
-        } else {
-            format!("projects/{owner}/{name}/")
-        };
         crate::refuse!(
             RefusalKind::ProjectDirOccupied,
             "cannot fetch project '{name}': {}\n\
-             Hint: try a scoped path: {scoped}",
+             Hint: if that is this project, `rwv fetch --project {name}` fetches its \
+             members in place. To fetch this one beside it, run `rwv fetch {source}` in an \
+             empty directory, which becomes a weave of its own.",
             crate::workspace::describe_existing(&project_dir)
         );
     } else {
@@ -1272,40 +1265,31 @@ mod tests {
     #[test]
     fn resolve_source_passes_through_urls() {
         let url = "https://github.com/org/repo.git";
-        let (resolved_url, owner) = resolve_source(url).unwrap();
-        assert_eq!(resolved_url.to_string(), url);
-        assert_eq!(owner, "org");
+        assert_eq!(resolve_source(url).unwrap().to_string(), url);
     }
 
     #[test]
     fn resolve_source_passes_through_ssh_urls() {
         let url = "git@github.com:org/repo.git";
-        let (resolved_url, owner) = resolve_source(url).unwrap();
-        assert_eq!(resolved_url.to_string(), url);
-        assert_eq!(owner, "org");
+        assert_eq!(resolve_source(url).unwrap().to_string(), url);
     }
 
     #[test]
     fn resolve_source_passes_through_file_urls() {
         let url = format!("file://{}", std::env::temp_dir().join("repo.git").display());
-        let (resolved_url, owner) = resolve_source(&url).unwrap();
-        assert_eq!(resolved_url.to_string(), url);
-        // file:// URLs that don't match any registry have an empty owner
-        let _ = owner; // owner may be empty or a path segment; just verify no panic
+        assert_eq!(resolve_source(&url).unwrap().to_string(), url);
     }
 
     #[test]
     fn resolve_source_resolves_two_part_shorthand() {
-        let (url, owner) = resolve_source("cwalv/repoweave").unwrap();
+        let url = resolve_source("cwalv/repoweave").unwrap();
         assert_eq!(url.to_string(), "https://github.com/cwalv/repoweave.git");
-        assert_eq!(owner, "cwalv");
     }
 
     #[test]
     fn resolve_source_resolves_three_part_shorthand() {
-        let (url, owner) = resolve_source("gitlab/org/proj").unwrap();
+        let url = resolve_source("gitlab/org/proj").unwrap();
         assert_eq!(url.to_string(), "https://gitlab.com/org/proj.git");
-        assert_eq!(owner, "org");
     }
 
     #[test]

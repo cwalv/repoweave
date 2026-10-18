@@ -632,7 +632,7 @@ const ROUTED: &[Routed] = &[
     Routed {
         file: "add_remove.rs",
         scope: "fn run_add_from_local_path(",
-        needle: r#""rwv add: '{}' at {}: {}, then re-run `rwv add {}`","#,
+        needle: r#""rwv add: '{}' at {}: {}, then re-run `rwv add --adopt {}`","#,
         renders: 1,
         prints: "run_add_from_local_path's refusal when the adopted clone has no default \
                  branch",

@@ -160,61 +160,58 @@ fn setup_workspace_with_project(
 // ============================================================================
 // Test 1 — name collision on fetch
 //
-// Doc claim: "If names collide, rwv fetch errors and suggests a scoped path:
-//             projects/{owner}/{name}/"
+// `rwv fetch <source>` over an occupied `projects/<name>/` refuses, naming
+// `rwv fetch --project <name>` for the project already there and an empty
+// directory for fetching this one beside it. Both run.
 // ============================================================================
 
 #[test]
-fn fetch_name_collision_behavior() {
+fn fetch_name_collision_names_the_in_place_fetch_and_an_empty_directory() {
     let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
-
-    // Create a bare repo for the "web-app" project.
     let project_bare = tmp.path().join("web-app.git");
     init_bare_repo(&project_bare);
     push_manifest_to_bare(&project_bare, &[]);
-
-    // Pre-create projects/web-app/ so the name collides on the second fetch.
-    let pre_existing = workspace.join("projects").join("web-app");
-    std::fs::create_dir_all(&pre_existing).unwrap();
-    // Write a minimal rwv.toml so the project is readable after being "found".
-    std::fs::write(pre_existing.join("rwv.toml"), "[repositories]\n").unwrap();
-
-    // Fetching into a workspace where projects/web-app already exists.
     let project_url = common::file_url(&project_bare);
+    rwv()
+        .args(["fetch", &project_url])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+
     let output = rwv()
         .args(["fetch", &project_url])
         .current_dir(&workspace)
         .output()
         .expect("rwv fetch should run");
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let combined = format!("{stdout}{stderr}");
-
-    // Command must exit non-zero.
     assert!(
-        !output.status.success(),
-        "fetch should exit non-zero on name collision, got exit: {}\n{combined}",
-        output.status
+        !output.status.success() && stderr.contains("rwv explain project-dir-occupied"),
+        "fixture: the second fetch refuses for the occupied directory:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("`rwv fetch --project web-app` fetches its members in place")
+            && stderr.contains(&format!(
+                "run `rwv fetch {project_url}` in an empty directory"
+            )),
+        "the refusal names the in-place fetch and the empty directory:\n{stderr}"
     );
 
-    // Error message must mention "already exists".
-    assert!(
-        combined.contains("already exists"),
-        "expected 'already exists' in error output, got:\n{combined}"
-    );
+    rwv()
+        .args(["fetch", "--project", "web-app"])
+        .current_dir(&workspace)
+        .assert()
+        .success();
 
-    // Output must include the scoped-path hint.
-    assert!(
-        combined.contains("Hint") || combined.contains("scoped"),
-        "expected a scoped-path hint in the output, got:\n{combined}"
-    );
-    assert!(
-        combined.contains("web-app"),
-        "hint should name the project, got:\n{combined}"
-    );
+    let beside = tmp.path().join("beside");
+    std::fs::create_dir_all(&beside).unwrap();
+    rwv()
+        .args(["fetch", &project_url])
+        .current_dir(&beside)
+        .assert()
+        .success();
+    assert!(beside.join("projects/web-app/rwv.toml").is_file());
 }
 
 // ============================================================================
