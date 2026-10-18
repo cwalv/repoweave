@@ -180,7 +180,8 @@ fn workweave_create_carries_an_activated_wrapper_config() {
 }
 
 /// (b) The source never activated: the seat has nothing to carry and stays
-/// exactly as empty-handed. Pins "create never writes" for this file.
+/// exactly as empty-handed. Pins that `create --no-materialize` never writes
+/// this file; a materializing create authors it.
 #[test]
 fn workweave_create_leaves_an_unactivated_wrapper_config_missing_in_both() {
     require_cargo!();
