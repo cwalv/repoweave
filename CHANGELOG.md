@@ -225,6 +225,8 @@ saying the table was retired. Delete it.
   back, leaving the file as it was. The refusal arrives as an integration error.
 - A sync whose op-start relock cannot commit refuses before any work and
   restores `rwv.lock`.
+- A verb waits up to 10 seconds, not 2, for another rwv to release the workweave
+  index or the owned-digest ledger before refusing with `state-claim-held`.
 - `rwv abort` labels the lines for the op's other workspace `[source]` or
   `[target]`, and its help summary says it rolls back every workspace the op
   touched.
@@ -264,6 +266,11 @@ saying the table was retired. Delete it.
   repos as `foreign-tip`.
 - `rwv sync-to` into a workweave that lacks a member its lock pins creates the
   member there, instead of parking in replay.
+- A claim on the workweave index or the owned-digest ledger that rwv cannot
+  delete when it is done is retried, and if the delete keeps failing the verb
+  fails with an error naming the claim file to delete, even when its own work
+  succeeded. The file used to stay behind silently, and every later write
+  refused on it.
 - `rwv materialize` refuses up front, changing nothing, while an enabled
   integration's settings block is malformed. It used to drop owned-file
   attestations before refusing at the hooks. `rwv doctor` reports such a block
@@ -308,8 +315,9 @@ saying the table was retired. Delete it.
   are withdrawn from the book until the branch model lands. Pages that linked to
   them point at `lock-as-derived` and `workweave-lifecycle`.
 - The reference pages (`cli.md`, `refusals.md`, `doctor-findings.md`, the
-  glossary, formats, roles and the plugin protocol) describe this release's
-  binary, including every refusal and finding above.
+  glossary, formats, roles and the plugin protocol), the explanation pages and
+  the README describe this release's binary, including every refusal and
+  finding above.
 - The integration pages follow one template and describe the shipped behavior.
 - The tutorial, the how-to recipes and `adjacent-tools.md` run as written.
 - The Concepts pages are grouped into Layout & files, Workweaves & branches, and
