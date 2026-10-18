@@ -61,7 +61,7 @@ Place `.envrc` in the project directory and use the `static-files` integration t
   },
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/ws/projects/web-app,type=bind,consistency=cached",
   "workspaceFolder": "/workspaces/ws/projects/web-app",
-  "postCreateCommand": "cd /workspaces/ws && cargo install repoweave && rwv fetch --frozen",
+  "postCreateCommand": "cd /workspaces/ws && cargo install --git https://github.com/cwalv/repoweave && rwv fetch --frozen",
   "forwardPorts": [5432]
 }
 ```

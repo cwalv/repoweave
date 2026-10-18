@@ -9,7 +9,7 @@ homepage = "https://cwalv.github.io/repoweave/"
 keywords = ["workspace", "monorepo", "git", "multi-repo"]
 categories = ["development-tools", "command-line-utilities"]
 # generate-explain regenerates this repo's committed docs; it is a maintainer
-# tool, left out of the published crate so `cargo install repoweave` installs
+# tool, left out of the published crate so the published package carries
 # what every release channel ships: rwv and its bundled plugins.
 exclude = ["src/bin/generate-explain.rs"]
 

@@ -12,6 +12,9 @@
 //!     actually configures (`brew`'s own convention: a tap repo named
 //!     `homebrew-<x>` is addressed as `<owner>/<x>`).
 //!
+//!   - No page published in the book (every `.md` link in `docs/SUMMARY.md`)
+//!     offers `cargo install repoweave` either.
+//!
 //! Revert either page's `--git` fix, or rename the tap in
 //! `dist-workspace.toml` without updating the docs, to watch these go red.
 
@@ -72,6 +75,44 @@ fn introduction_does_not_offer_cargo_install_from_crates_io() {
         intro.contains("cargo install --git https://github.com/cwalv/repoweave"),
         "docs/introduction.md must offer the Cargo route that actually works \
          (install from this repo via --git), got:\n{intro}"
+    );
+}
+
+/// Every markdown page `docs/SUMMARY.md` links, as paths relative to the repo
+/// root. Blind spots: only inline markdown links are followed, so a page
+/// reachable solely through a non-markdown link or an `mdbook` preprocessor is
+/// not seen; and only the literal spelling `cargo install repoweave` is
+/// matched, so a reworded or line-wrapped form of the same instruction passes.
+fn published_pages() -> Vec<String> {
+    let summary = read("docs/SUMMARY.md");
+    summary
+        .split("](")
+        .skip(1)
+        .filter_map(|rest| rest.split(')').next())
+        .filter(|target| target.ends_with(".md") && !target.contains("://"))
+        .map(|target| format!("docs/{}", target.trim_start_matches("./")))
+        .collect()
+}
+
+#[test]
+fn no_published_page_offers_cargo_install_from_crates_io() {
+    let pages = published_pages();
+    assert!(
+        pages.len() >= 30,
+        "docs/SUMMARY.md should link dozens of pages, found {}: {pages:?}",
+        pages.len()
+    );
+    let mut offenders = Vec::new();
+    for page in &pages {
+        if read(page).contains("cargo install repoweave") {
+            offenders.push(page.clone());
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "published pages must not offer `cargo install repoweave` (the crate \
+         is not on crates.io); use `cargo install --git \
+         https://github.com/cwalv/repoweave`: {offenders:?}"
     );
 }
 
