@@ -18,10 +18,22 @@
 # exception: ci-checks.yml's windows-check job already owns Windows compile
 # truth authoritatively, so a contributor without the target installed gets a
 # loud skip there, not a red gate for a check CI runs regardless.
+#
+# test-autocrlf is a further stage, outside the seven above and never run
+# unless named explicitly (--stages=test-autocrlf): it re-checks out the tree
+# under a throwaway GIT_CONFIG_GLOBAL with core.autocrlf=true — matching Git
+# for Windows' installer default, which is what a Windows checkout of this
+# repo converts tracked text files with — then runs the test stage against
+# the result, and checks the tree back out under the ordinary config
+# afterward either way. It refuses on a dirty tree rather than running: the
+# checkout it needs discards uncommitted changes with no record of what they
+# were, where every other stage here only reads the tree.
 
 set -euo pipefail
 
 ALL_STAGES=(check windows test clippy doc fmt drift)
+EXTRA_STAGES=(test-autocrlf)
+KNOWN_STAGES=("${ALL_STAGES[@]}" "${EXTRA_STAGES[@]}")
 
 join_by_comma() {
     local IFS=,
@@ -30,6 +42,7 @@ join_by_comma() {
 
 usage() {
     printf 'Usage: %s [--stages=%s]\n' "$0" "$(join_by_comma "${ALL_STAGES[@]}")" >&2
+    printf '  also valid, not run by default: %s\n' "$(join_by_comma "${EXTRA_STAGES[@]}")" >&2
 }
 
 stages_csv="$(join_by_comma "${ALL_STAGES[@]}")"
@@ -49,11 +62,11 @@ done
 IFS=',' read -ra requested <<< "$stages_csv"
 for s in "${requested[@]}"; do
     known=0
-    for known_stage in "${ALL_STAGES[@]}"; do
+    for known_stage in "${KNOWN_STAGES[@]}"; do
         [ "$s" = "$known_stage" ] && known=1 && break
     done
     if [ "$known" -ne 1 ]; then
-        printf 'unknown stage: %s (valid: %s)\n' "$s" "$(join_by_comma "${ALL_STAGES[@]}")" >&2
+        printf 'unknown stage: %s (valid: %s)\n' "$s" "$(join_by_comma "${KNOWN_STAGES[@]}")" >&2
         exit 1
     fi
 done
@@ -92,6 +105,40 @@ if run_stage test; then
     cargo test --release --no-fail-fast
 fi
 
+if run_stage test-autocrlf; then
+    header "cargo test --release --no-fail-fast (core.autocrlf=true, simulating a Windows checkout)"
+    # The checkout below discards uncommitted changes with no way to get
+    # them back, so this stage insists on a clean tree rather than risk
+    # being the thing that did that.
+    if [ -n "$(git status --porcelain)" ]; then
+        printf 'test-autocrlf refuses to run: working tree is not clean (git status --porcelain is non-empty). Commit or stash first — this stage re-checks out the whole tree and a dirty one would be discarded.\n' >&2
+        exit 1
+    fi
+    # GIT_CONFIG_GLOBAL, not `git config --global`, so a developer's own
+    # ~/.gitconfig is never touched. It has to cover the `checkout` below AND
+    # the test run: the former is what converts the tree's own tracked files
+    # to CRLF the way a Windows checkout would, and the latter is what a real
+    # Windows runner's ambient git config does for every git call a test
+    # fixture makes on that platform, not only the initial checkout.
+    autocrlf_config="$(mktemp)"
+    printf '[core]\n\tautocrlf = true\n' > "$autocrlf_config"
+    restore_autocrlf_checkout() {
+        unset GIT_CONFIG_GLOBAL
+        git checkout -- .
+        rm -f "$autocrlf_config"
+    }
+    # The trap is the path back on the `set -e` exit a failing test
+    # triggers; the explicit call after a passing run is what lets a later
+    # stage, if one was named alongside this one, see the tree back at its
+    # ordinary LF checkout instead of the CRLF one this stage needs.
+    trap restore_autocrlf_checkout EXIT
+    export GIT_CONFIG_GLOBAL="$autocrlf_config"
+    git checkout -- .
+    cargo test --release --no-fail-fast
+    restore_autocrlf_checkout
+    trap - EXIT
+fi
+
 if run_stage clippy; then
     header "cargo clippy --all-targets -- -D warnings"
     cargo clippy --all-targets -- -D warnings
@@ -126,7 +173,7 @@ if run_stage drift; then
 fi
 
 ran_stages=()
-for s in "${ALL_STAGES[@]}"; do
+for s in "${KNOWN_STAGES[@]}"; do
     if run_stage "$s"; then
         ran_stages+=("$s")
     fi
