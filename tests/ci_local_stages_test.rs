@@ -578,3 +578,73 @@ fn wine_stage_refuses_with_the_install_command_when_the_target_is_missing() {
         stdout_of(&out)
     );
 }
+
+const STUB_CARGO_PROBING_DOC: &str = "#!/bin/sh\n\
+cp docs/note.md \"$CI_LOCAL_TEST_PROBE\"\n\
+sleep 1\n\
+git status --porcelain > /dev/null\n\
+exit \"$CI_LOCAL_TEST_CARGO_EXIT\"\n";
+
+/// Runs the test-autocrlf stage over a fixture whose tracked `docs/note.md`
+/// is committed LF, with a stub `cargo` that copies that file aside when the
+/// stage runs it. Returns the bytes the stage's cargo saw, the bytes left on
+/// disk afterward, and `git status --porcelain` afterward. Blind spot: the
+/// stage's real `cargo test` is never run, and the fixture holds one text file.
+/// The stub sleeps and refreshes the index so the entries are no longer
+/// racily clean when the restore runs, as they are after any real test run;
+/// without that a no-op restore still rewrites the file.
+fn run_test_autocrlf_stage(cargo_exit: &str) -> (Vec<u8>, Vec<u8>, String, Output) {
+    let fixture = common::tempdir().expect("tempdir");
+    let root = fixture.path();
+    std::fs::create_dir_all(root.join("docs")).unwrap();
+    std::fs::write(root.join("docs/note.md"), "one\ntwo\n").unwrap();
+    common::git_in(root, &["init", "-q", "--initial-branch=main"]);
+    common::git_in(root, &["add", "-A"]);
+    common::git_in(root, &["commit", "-q", "-m", "init"]);
+
+    let stub = stub_bin_dir();
+    std::fs::write(stub.path().join("cargo"), STUB_CARGO_PROBING_DOC).unwrap();
+    let probe = common::tempdir().expect("tempdir");
+    let probe_file = probe.path().join("seen");
+    let out = run_ci_local(
+        root,
+        stub.path(),
+        &["--stages=test-autocrlf"],
+        &[
+            ("CI_LOCAL_TEST_PROBE", probe_file.to_str().unwrap()),
+            ("CI_LOCAL_TEST_CARGO_EXIT", cargo_exit),
+            ("GIT_CONFIG_GLOBAL", "/dev/null"),
+        ],
+    );
+    let seen = std::fs::read(&probe_file).unwrap_or_default();
+    let after = std::fs::read(root.join("docs/note.md")).unwrap();
+    let status = common::git_in(root, &["status", "--porcelain"]);
+    (seen, after, status, out)
+}
+
+#[test]
+fn test_autocrlf_stage_runs_cargo_over_crlf_files_and_restores_lf_on_success() {
+    let (seen, after, status, out) = run_test_autocrlf_stage("0");
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert_eq!(
+        seen, b"one\r\ntwo\r\n",
+        "tracked docs file was not CRLF under the stage"
+    );
+    assert_eq!(
+        after, b"one\ntwo\n",
+        "tracked docs file was not restored to LF"
+    );
+    assert_eq!(status, "", "tree not clean after the stage");
+}
+
+#[test]
+fn test_autocrlf_stage_restores_lf_when_cargo_fails() {
+    let (seen, after, status, out) = run_test_autocrlf_stage("1");
+    assert!(!out.status.success(), "{}", stdout_of(&out));
+    assert_eq!(
+        seen, b"one\r\ntwo\r\n",
+        "tracked docs file was not CRLF under the stage"
+    );
+    assert_eq!(after, b"one\ntwo\n", "trap path left the docs file CRLF");
+    assert_eq!(status, "", "tree not clean after the failed stage");
+}

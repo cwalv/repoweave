@@ -26,13 +26,14 @@
 # under a throwaway GIT_CONFIG_SYSTEM with core.autocrlf=true — the tier Git
 # for Windows' installer sets it at, ahead of anyone's identity, which is why
 # every git repo a test creates at runtime inherits it there regardless of
-# what HOME that test points at. First it checks the tree itself out again
-# under the same setting, converting its own tracked text files to CRLF the
-# way a Windows checkout of this repo would, then checks the tree back out
-# under the ordinary config afterward either way. It refuses on a dirty tree
-# rather than running: the checkout it needs discards uncommitted changes
-# with no record of what they were, where every other stage here only reads
-# the tree.
+# what HOME that test points at. First it empties the index and resets the
+# tree to HEAD under the same setting, rewriting every tracked text file to
+# CRLF the way a Windows checkout of this repo would (paths .gitattributes
+# pins to eol=lf stay LF), then does the same under the ordinary config
+# afterward either way, leaving every tracked text file LF and
+# `git status --porcelain` empty. It refuses on a dirty tree rather than
+# running: the reset it needs discards uncommitted changes with no record of
+# what they were, where every other stage here only reads the tree.
 
 set -euo pipefail
 
@@ -112,7 +113,7 @@ fi
 
 if run_stage test-autocrlf; then
     header "cargo test --release --no-fail-fast (core.autocrlf=true, simulating a Windows checkout)"
-    # The checkout below discards uncommitted changes with no way to get
+    # The reset below discards uncommitted changes with no way to get
     # them back, so this stage insists on a clean tree rather than risk
     # being the thing that did that.
     if [ -n "$(git status --porcelain)" ]; then
@@ -128,9 +129,16 @@ if run_stage test-autocrlf; then
     # tier changes, system config having nothing in it here to lose.
     autocrlf_config="$(mktemp)"
     printf '[core]\n\tautocrlf = true\n' > "$autocrlf_config"
+    # `git checkout -- .` would do nothing here: a clean tree is stat-clean
+    # against the index, so no file is rewritten and the line endings stay as
+    # they were. Emptying the index first forces every tracked file out again.
+    recheckout_tree() {
+        git read-tree --empty
+        git reset --hard -q
+    }
     restore_autocrlf_checkout() {
         unset GIT_CONFIG_SYSTEM
-        git checkout -- .
+        recheckout_tree
         rm -f "$autocrlf_config"
     }
     # The trap is the path back on the `set -e` exit a failing test
@@ -139,7 +147,7 @@ if run_stage test-autocrlf; then
     # ordinary LF checkout instead of the CRLF one this stage needs.
     trap restore_autocrlf_checkout EXIT
     export GIT_CONFIG_SYSTEM="$autocrlf_config"
-    git checkout -- .
+    recheckout_tree
     cargo test --release --no-fail-fast
     restore_autocrlf_checkout
     trap - EXIT
