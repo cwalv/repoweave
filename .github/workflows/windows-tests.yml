@@ -47,9 +47,8 @@
 # green over their absence exactly as it is over their success. Each states its
 # reason at its own site, and they fall into three groups:
 #
-#   plugin discovery and dispatch. Windows has no executable bit and lookup
-#   selects on PATHEXT, so what a discoverable plugin is even NAMED there is
-#   an undecided product question, not a porting task.
+#   a plugin killed by a signal. Windows delivers no signals, so the 128+N
+#   exit status rwv reports for one has nothing to observe there.
 #
 #   hook, permission and rename fixtures. The settled ones are pinned by
 #   tests/hook_fixture_portability_test.rs; the rest are gated on an ACL deny
