@@ -3517,9 +3517,9 @@ const ABSENT_VERBS: &[&str] = &["branch", "commit", "exec", "publish", "pull", "
 ///
 /// The condition registers are kept apart because each is a population the
 /// scan must go on reaching. `code_words` is every other kebab-cased word the
-/// code spells: string literals in the production regions of `src/` outside
-/// `src/bin/`, clap's command, alias, flag and value names, and the enum
-/// values and field names of the generated schemas.
+/// code spells: in the production regions of `src/` outside `src/bin/`, what
+/// string literals spell and the names serde derives; and clap's command,
+/// alias, flag and value names.
 struct TokenVocabulary {
     finding_kinds: HashSet<String>,
     sub_kinds: HashMap<String, HashSet<String>>,
@@ -3555,7 +3555,6 @@ fn token_vocabulary(root: &Path, cli: &clap::Command) -> TokenVocabulary {
         .collect();
     let mut code_words = src_code_kebab_words(root);
     clap_words(cli, &mut code_words);
-    code_words.extend(schema_words(root));
     TokenVocabulary {
         finding_kinds,
         sub_kinds,
@@ -3781,40 +3780,6 @@ fn clap_words(cmd: &clap::Command, out: &mut HashSet<String>) {
     for sc in cmd.get_subcommands() {
         clap_words(sc, out);
     }
-}
-
-/// The enum values and property names of `docs/reference/schemas/*.json`:
-/// the wire vocabulary serde derives from variant and field names, which no
-/// literal in `src/` spells.
-fn schema_words(root: &Path) -> HashSet<String> {
-    fn walk(value: &serde_json::Value, out: &mut HashSet<String>) {
-        match value {
-            serde_json::Value::Object(map) => {
-                if let Some(serde_json::Value::Array(values)) = map.get("enum") {
-                    out.extend(values.iter().filter_map(|v| v.as_str().map(str::to_owned)));
-                }
-                if let Some(serde_json::Value::Object(properties)) = map.get("properties") {
-                    out.extend(properties.keys().cloned());
-                }
-                map.values().for_each(|v| walk(v, out));
-            }
-            serde_json::Value::Array(items) => items.iter().for_each(|v| walk(v, out)),
-            _ => {}
-        }
-    }
-    let mut words = HashSet::new();
-    let schemas = collect_files_in_dir(&root.join("docs/reference/schemas"), |p| {
-        p.extension().and_then(OsStr::to_str) == Some("json")
-    });
-    for path in schemas {
-        let Ok(text) = fs::read_to_string(&path) else {
-            continue;
-        };
-        if let Ok(json) = serde_json::from_str(&text) {
-            walk(&json, &mut words);
-        }
-    }
-    words
 }
 
 /// A backticked span on a page: its text, with line ends read as spaces; the
@@ -8347,8 +8312,8 @@ mod tests {
     /// What a looser scan would report: real tokens of every class, a
     /// positional before its subcommand, global options, a plugin the page
     /// names, an absent verb, placeholders, output lines, a list that stops at
-    /// a span not shaped like a token, words the code derives through clap,
-    /// serde and the schemas, and the exemptions.
+    /// a span not shaped like a token, words the code derives through clap and
+    /// serde, and the exemptions.
     #[test]
     fn real_tokens_and_look_alikes_are_not_reported() {
         let page = "# page\n\
@@ -8361,7 +8326,7 @@ mod tests {
             create`, `rwv tidy` from `rwv-tidy`, no `rwv commit`, `rwv <verb>`,\n\
             `rwv --help`, `rwv explain stale-lock`, `rwv explain sync-to`,\n\
             `rwv explain <token>`, `rwv doctor --kind tool-missing`, `rwv check-mid-op && rwv sync-to`.\n\
-            `sync-to`, `allow-stale-lock`, `cargo-config`, `up-to-date`, `web-app`,\n\
+            `sync-to`, `set-container`, `allow-stale-lock`, `cargo-config`, `up-to-date`, `web-app`,\n\
             `rwv-lint`, `owner/repo`, `--allow-stale-lock`, `project-rwv--agent-home`.\n\
             \n\
             ```text\n\

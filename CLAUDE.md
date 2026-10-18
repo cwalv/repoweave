@@ -328,9 +328,9 @@ that reads as authoritative.
 
 `check_doc_tokens` in `src/bin/generate-explain.rs` holds the rule over every
 page `docs/SUMMARY.md` lists and root `README.md`. A kebab-cased span must be
-a word the code spells — a condition register's token, a clap name, a schema
-value, or a production literal or serde-derived name in `src/` outside
-`src/bin/` — or a plugin's `rwv-` name, or be listed in `NON_TOKEN_WORDS`. A
+a word the code spells — a condition register's token, a clap name, or a
+production literal or serde-derived name in `src/` outside `src/bin/` — or a
+plugin's `rwv-` name, or be listed in `NON_TOKEN_WORDS`. A
 span written as a sub-kind of the kind before it must be one of that kind's.
 An `rwv` command, in prose or in a fenced block, must resolve in clap's tree,
 unless the page names its `rwv-<verb>` plugin or `ABSENT_VERBS` lists the
