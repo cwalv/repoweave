@@ -370,6 +370,68 @@ fn abort_converged_resets_to_savepoint_and_preserves_converged_tip() {
     );
 }
 
+/// `report_abort_outcome`'s restored arms (`RestoredFrom*`) print only
+/// `restored (from ...)`; the pre-abort ref label and op-id appear nowhere
+/// in a clean abort's output (only the `AbandonedForeignTip`/`ForeignTip`
+/// arms name it). `docs/how-to/resume-or-abort-mid-op-sync.md` documents
+/// the real discovery path for a clean restore: `git for-each-ref
+/// refs/rwv/pre-abort`. Revert this test's claim to watch it go red: the
+/// doc used to say abort's output names the reference unconditionally.
+#[test]
+fn abort_clean_restore_output_does_not_name_the_pre_abort_ref() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_fixture(tmp.path(), "primary");
+
+    let op_id = "20991231T000009Z";
+    let server_savepoint = common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]);
+    let server_converged = make_commit(
+        &ws.server_dir,
+        "converged9.txt",
+        "converged\n",
+        "server: converged",
+    );
+    let project_savepoint = common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]);
+
+    plant_savepoint(&ws.server_dir, op_id, &server_savepoint);
+    plant_savepoint(&ws.project_dir, op_id, &project_savepoint);
+    plant_owner_record(
+        &ws.root,
+        op_id,
+        "relock",
+        &[(SERVER_PATH, &server_converged)],
+    );
+
+    let output = rwv()
+        .arg("abort")
+        .current_dir(&ws.root)
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(
+        stdout.contains("restored"),
+        "fixture: expected a clean restore:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("pre-abort") && !stdout.contains(op_id),
+        "a clean restore's output must name neither the ref nor the op-id:\n{stdout}"
+    );
+
+    // The pre-abort ref exists and is how an operator finds it instead.
+    let for_each_ref = common::git()
+        .args(["for-each-ref", "refs/rwv/pre-abort"])
+        .current_dir(&ws.server_dir)
+        .output()
+        .expect("git should run");
+    let listing = String::from_utf8_lossy(&for_each_ref.stdout).into_owned();
+    assert!(
+        listing.contains(&pre_abort_ref_path(op_id)),
+        "git for-each-ref refs/rwv/pre-abort must list the ref a clean abort's \
+         own output did not name:\n{listing}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Case 3: Mid-op — repo is in a VCS-native rebase
 // ---------------------------------------------------------------------------

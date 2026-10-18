@@ -20,8 +20,9 @@ The fundamental unit is the **project**: a small repo at `projects/<name>/` carr
 **Prerequisites:** `git` on `$PATH`. On Windows, enable **Developer Mode** (or run from an elevated shell) so `rwv` can create workspace symlinks.
 
 - **Quick install (Linux/macOS):** `curl -fsSL https://cwalv.github.io/repoweave/install.sh | sh`
+- **Homebrew (macOS/Linux):** `brew install cwalv/tap/repoweave`
 - **Pre-built binaries:** download from [GitHub Releases](https://github.com/cwalv/repoweave/releases) (Linux x86_64/aarch64, macOS x86_64/aarch64, Windows x86_64)
-- **Cargo:** `cargo install repoweave`
+- **Cargo** (not published to crates.io; builds from this repo): `cargo install --git https://github.com/cwalv/repoweave`
 - **pip / uvx:** `pip install repoweave` (or `uvx repoweave`)
 
 ## Core vocabulary

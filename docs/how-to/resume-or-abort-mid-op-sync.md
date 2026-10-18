@@ -31,7 +31,7 @@ If the operation paused on a conflict, stage the resolved files in the conflicte
 | Mid-rebase / mid-merge / mid-cherry-pick | `restored` — VCS operation canceled and reset to the savepoint |
 | Anything else | `foreign-tip violation` — restore refused; op-state retained |
 
-Before resetting any repository, `rwv abort` writes a durable reference at `refs/rwv/pre-abort/<op-id>` (with the same `-target` suffix in a `sync-to` target) pointing to the pre-abort tip, and its output names the reference. That reference is kept after abort finishes, so commits discarded by `rwv abort` remain reachable in git (`git log refs/rwv/pre-abort/<op-id>`).
+Before resetting any repository, `rwv abort` writes a durable reference at `refs/rwv/pre-abort/<op-id>` (with the same `-target` suffix in a `sync-to` target) pointing to the pre-abort tip. A foreign-tip refusal or an abandoned tip names that reference in the output; on a clean restore the output names neither the ref nor the op-id, so list it with `git for-each-ref refs/rwv/pre-abort`. The reference is kept after abort finishes, so commits discarded by `rwv abort` remain reachable in git (`git log refs/rwv/pre-abort/<op-id>`).
 
 Uncommitted working-tree edits that existed before the sync started and untracked tool directories (`node_modules/`, `.venv/`, `target/`) are not snapshotted by savepoints and are not modified by `rwv abort`.
 

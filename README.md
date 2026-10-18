@@ -34,12 +34,18 @@ repoweave is in **active alpha** (`0.x`): core workflows are heavily tested, and
 curl -fsSL https://cwalv.github.io/repoweave/install.sh | sh
 ```
 
-**Pre-built binaries** — download from [GitHub Releases](https://github.com/cwalv/repoweave/releases) (Linux x86_64/aarch64, macOS x86_64/aarch64, Windows x86_64).
-
-**From source** via Cargo:
+**Homebrew** (macOS/Linux):
 
 ```bash
-cargo install repoweave
+brew install cwalv/tap/repoweave
+```
+
+**Pre-built binaries** — download from [GitHub Releases](https://github.com/cwalv/repoweave/releases) (Linux x86_64/aarch64, macOS x86_64/aarch64, Windows x86_64).
+
+**From source** via Cargo (not published to crates.io; builds from this repo):
+
+```bash
+cargo install --git https://github.com/cwalv/repoweave
 ```
 
 **Via pip/uvx:**

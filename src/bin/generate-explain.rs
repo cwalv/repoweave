@@ -5200,6 +5200,7 @@ mod tests {
         let docs = make_tree(tmp.path());
         fs::write(
             docs.join("reference/explain/verb.md"),
+            // rwv-advice: not-an-invocation
             "# verb\n\nRun `rwv verb --help` for the full clap surface.\n",
         )
         .unwrap();
