@@ -3,7 +3,9 @@
 Every file rwv manages is governed by two independent axes: **surfacing** (how the file reaches
 the weave root) and **content ownership** (who authors the bytes). Understanding both is a
 prerequisite for writing a new integration, reading an existing one, or reasoning about what
-`rwv activate` and `rwv deactivate` will do.
+rwv writes into a file and what it strips back out: `rwv materialize` strips an integration
+disabled in `rwv.toml`, and `rwv workweave delete` strips a checkout's regions before taking it
+apart.
 
 ## Axis 1 — Surfacing (universal)
 
