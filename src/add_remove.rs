@@ -169,8 +169,12 @@ pub(crate) fn settle_manifest(
 ) -> anyhow::Result<()> {
     let root = ctx.active_path();
     let manifest_path = project_dir(root, project.as_str()).join(Manifest::FILE_NAME);
-    let on_disk = Manifest::from_path(&manifest_path)
-        .with_context(|| format!("failed to load manifest at {}", operator_path(&manifest_path)))?;
+    let on_disk = Manifest::from_path(&manifest_path).with_context(|| {
+        format!(
+            "failed to load manifest at {}",
+            operator_path(&manifest_path)
+        )
+    })?;
     let manifest = edited.unwrap_or(&on_disk);
     let restore_point = RestorePoint::take(root, project, &[&on_disk, manifest])?;
     if let Some(edited) = edited {
@@ -281,8 +285,12 @@ pub fn run_add(
     let manifest_path = project_dir.join(Manifest::FILE_NAME);
 
     // Load and check existing manifest.
-    let mut manifest = Manifest::from_path(&manifest_path)
-        .with_context(|| format!("failed to load manifest at {}", operator_path(&manifest_path)))?;
+    let mut manifest = Manifest::from_path(&manifest_path).with_context(|| {
+        format!(
+            "failed to load manifest at {}",
+            operator_path(&manifest_path)
+        )
+    })?;
 
     // Clone the repo if it doesn't exist on disk. The clone always lives
     // at primary's canonical path — the canonical store, in tier-0
@@ -340,7 +348,10 @@ pub fn run_add(
         }
 
         let Some(remote_default) = vcs.remote_default_branch(&dest).with_context(|| {
-            format!("failed to determine default branch for {}", operator_path(&dest))
+            format!(
+                "failed to determine default branch for {}",
+                operator_path(&dest)
+            )
         })?
         else {
             crate::refuse!(
@@ -600,7 +611,13 @@ fn clone_into(vcs: &dyn Vcs, url: &RepoUrl, dest: &Path) -> anyhow::Result<()> {
     }
     let clone_url = crate::registry::resolve_to_clone_info(url)?.url;
     vcs.clone_repo(&clone_url.to_string(), dest)
-        .with_context(|| format!("failed to clone '{}' into {}", clone_url, operator_path(dest)))?;
+        .with_context(|| {
+            format!(
+                "failed to clone '{}' into {}",
+                clone_url,
+                operator_path(dest)
+            )
+        })?;
     Ok(())
 }
 
@@ -664,8 +681,12 @@ fn run_add_from_local_path(
     let repo_path = RepoPath::new(path_arg)?;
 
     // Load and check existing manifest.
-    let mut manifest = Manifest::from_path(manifest_path)
-        .with_context(|| format!("failed to load manifest at {}", operator_path(manifest_path)))?;
+    let mut manifest = Manifest::from_path(manifest_path).with_context(|| {
+        format!(
+            "failed to load manifest at {}",
+            operator_path(manifest_path)
+        )
+    })?;
 
     if manifest.contains_repo(&repo_path) {
         announce_already_registered(&repo_path);
@@ -726,8 +747,12 @@ pub fn run_remove(
 
     let repo_path = RepoPath::new(path)?;
 
-    let mut manifest = Manifest::from_path(&manifest_path)
-        .with_context(|| format!("failed to load manifest at {}", operator_path(&manifest_path)))?;
+    let mut manifest = Manifest::from_path(&manifest_path).with_context(|| {
+        format!(
+            "failed to load manifest at {}",
+            operator_path(&manifest_path)
+        )
+    })?;
 
     let removed = manifest.remove_repo(&repo_path);
     let vcs_type = match &removed {
@@ -884,7 +909,10 @@ fn refuse_claimed_store(vcs: &dyn Vcs, primary_root: &Path, repo_dir: &Path) -> 
             for wt in worktrees {
                 let wt_canonical = wt.canonicalize().unwrap_or_else(|_| wt.clone());
                 if wt_canonical != store {
-                    claims.push(format!("live worktree registered at {}", operator_path(&wt)));
+                    claims.push(format!(
+                        "live worktree registered at {}",
+                        operator_path(&wt)
+                    ));
                 }
             }
         }
@@ -1150,8 +1178,12 @@ pub fn run_add_new(
         .expect("a CreationPlan's minted URL is always placeable");
 
     // Load and check existing manifest.
-    let mut manifest = Manifest::from_path(&manifest_path)
-        .with_context(|| format!("failed to load manifest at {}", operator_path(&manifest_path)))?;
+    let mut manifest = Manifest::from_path(&manifest_path).with_context(|| {
+        format!(
+            "failed to load manifest at {}",
+            operator_path(&manifest_path)
+        )
+    })?;
 
     // Creation always lives at primary's canonical path (clones are global
     // infrastructure).
@@ -1221,7 +1253,10 @@ pub fn run_add_new(
                     }
                     left.made.push(Made::Repo(bare_path.clone()));
                     vcs.init_bare_repo(bare_path).with_context(|| {
-                        format!("failed to init bare upstream at {}", operator_path(bare_path))
+                        format!(
+                            "failed to init bare upstream at {}",
+                            operator_path(bare_path)
+                        )
                     })?;
                 }
 
@@ -1237,7 +1272,11 @@ pub fn run_add_new(
                     left.made.push(Made::Repo(dest.clone()));
                     vcs.clone_repo(&plan.url.to_string(), &dest)
                         .with_context(|| {
-                            format!("failed to clone '{}' into {}", plan.url, operator_path(&dest))
+                            format!(
+                                "failed to clone '{}' into {}",
+                                plan.url,
+                                operator_path(&dest)
+                            )
                         })?;
                 }
             }

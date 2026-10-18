@@ -475,6 +475,317 @@ const ROUTED: &[Routed] = &[
         prints: "the notice that a symlinked `.cargo` path kept the wrapper key from being \
                  fitted, naming the link",
     },
+    // rwv-wmr6.26: the whole add/remove refusal family (src/add_remove.rs) was
+    // un-minted before this bead — every site below is new.
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
+        needle: r#""rwv add: canonical clone at {} has no commits yet; \"#,
+        renders: 1,
+        prints: "create_worktree_in_workweave's notice that the canonical clone has no \
+                 commits yet, naming it",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
+        needle: r#""failed to create worktree at {} from canonical clone {}","#,
+        renders: 2,
+        prints: "the worktree-creation failure, naming the worktree destination and the \
+                 canonical clone it came from",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "pub(crate) fn settle_manifest(",
+        needle: r#""failed to load manifest at {}","#,
+        renders: 1,
+        prints: "settle_manifest's own manifest-load failure",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
+        needle: r#""the regeneration failed, and these files could not be put back as they \"#,
+        renders: 1,
+        prints: "settle_manifest's failed-regeneration notice, listing files the restore \
+                 could not put back",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "pub fn run_add(",
+        needle: r#""failed to load manifest at {}","#,
+        renders: 1,
+        prints: "run_add's own manifest-load failure",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "pub fn run_add(",
+        needle: r#""Directory already exists at '{}', skipping clone","#,
+        renders: 1,
+        prints: "run_add's notice that the clone destination is already occupied",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "pub fn run_add(",
+        needle: r#""failed to determine default branch for {}""#,
+        renders: 1,
+        prints: "run_add's failure to read the freshly cloned remote's default branch",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "pub fn run_add(",
+        needle: r#""rwv add: '{}' at {}: {}, then re-run `rwv add {}`","#,
+        renders: 1,
+        prints: "run_add's refusal when the remote has no default branch to read",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "fn refuse_foreign_clone_at_placement(",
+        needle: r#""could not determine the {} URL for '{}'","#,
+        renders: 1,
+        prints: "the foreign-clone-at-placement check's failure to read the existing \
+                 clone's remote URL",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
+        needle: r#""rwv add --adopt: no clone at '{}'. --adopt registers a clone already under \"#,
+        renders: 1,
+        prints: "run_add_adopt's refusal when nothing git-shaped is at the adopt path",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "fn make_dir_all(",
+        needle: r#"format!("failed to create directory {}""#,
+        renders: 1,
+        prints: "AddLeftovers::make_dir_all's failure to create a directory it is about to \
+                 track",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
+        needle: r#""removed {}, which it had created","#,
+        renders: 1,
+        prints: "AddLeftovers::refused's take-back line for a directory or repo this add \
+                 created",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
+        needle: r#""{} was created by it and could not be removed ({e}); delete it by hand","#,
+        renders: 1,
+        prints: "AddLeftovers::refused's line when taking back a creation fails",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
+        needle: r#""kept the worktree it made at {}: `{rerun}` reuses it, and \"#,
+        renders: 1,
+        prints: "AddLeftovers::refused's line naming a kept workweave worktree",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
+        needle: r#""kept the clone it made at {}: `{rerun}` reuses it, and \"#,
+        renders: 1,
+        prints: "AddLeftovers::refused's line naming a kept canonical clone",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "fn clone_into(",
+        needle: r#"format!("failed to create directory {}""#,
+        renders: 1,
+        prints: "clone_into's failure to create the clone destination's parent directory",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "fn clone_into(",
+        needle: r#""failed to clone '{}' into {}","#,
+        renders: 1,
+        prints: "clone_into's clone failure, naming the URL and the destination",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "fn run_add_from_local_path(",
+        needle: r#""could not determine the {} URL for '{}'","#,
+        renders: 1,
+        prints: "run_add_from_local_path's failure to read the adopted clone's remote URL",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
+        needle: r#""'{}' has no {} remote to read a URL from","#,
+        renders: 1,
+        prints: "the no-remote-URL refusal for a clone with nothing to adopt a URL from",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "fn run_add_from_local_path(",
+        needle: r#""failed to load manifest at {}","#,
+        renders: 1,
+        prints: "run_add_from_local_path's own manifest-load failure",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "fn run_add_from_local_path(",
+        needle: r#""failed to determine default branch for {}","#,
+        renders: 1,
+        prints: "run_add_from_local_path's failure to read the adopted clone's default \
+                 branch",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "fn run_add_from_local_path(",
+        needle: r#""rwv add: '{}' at {}: {}, then re-run `rwv add {}`","#,
+        renders: 1,
+        prints: "run_add_from_local_path's refusal when the adopted clone has no default \
+                 branch",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "pub fn run_remove(",
+        needle: r#""failed to load manifest at {}","#,
+        renders: 1,
+        prints: "run_remove's own manifest-load failure",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
+        needle: r#"eprintln!("Deleted '{}'","#,
+        renders: 1,
+        prints: "run_remove's confirmation naming the checkout it deleted",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
+        needle: r#"format!("failed to load lock at {}""#,
+        renders: 1,
+        prints: "leftover_checkout_vcs's failure to read rwv.lock",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
+        needle: r#""live worktree registered at {}","#,
+        renders: 1,
+        prints: "refuse_claimed_store's claim line naming a live worktree against the store",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
+        needle: r#""refusing to delete '{}': it is a repo whose worktree registrations \"#,
+        renders: 1,
+        prints: "refuse_claimed_store's refusal when worktree registrations cannot be read",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
+        needle: r#""refusing to delete '{}': the ownership receipts for project `{}` could \"#,
+        renders: 1,
+        prints: "refuse_claimed_store's refusal when a project's ownership receipts cannot \
+                 be read",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
+        needle: r#""refusing to delete '{}': the store is still claimed:\n  {}\n\n\"#,
+        renders: 1,
+        prints: "refuse_claimed_store's refusal naming the store with outstanding claims",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "pub fn run_add_new(",
+        needle: r#""failed to load manifest at {}","#,
+        renders: 1,
+        prints: "run_add_new's own manifest-load failure",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
+        needle: r#""the root '{}' does not exist; rwv creates '<root>/<owner>/<repo>' but \"#,
+        renders: 1,
+        prints: "run_add_new's refusal when the `--param root=` directory does not exist",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
+        needle: r#"format!("failed to resolve root {}""#,
+        renders: 1,
+        prints: "run_add_new's failure to canonicalize the `--param root=` directory",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
+        needle: r#""failed to resolve weave root {}","#,
+        renders: 1,
+        prints: "run_add_new's failure to canonicalize the primary weave root for the \
+                 inside-the-weave check",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
+        needle: r#""the root '{}' is inside the weave at '{}'; the upstream it would \"#,
+        renders: 2,
+        prints: "run_add_new's refusal when the creation root sits inside the weave it \
+                 would back",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
+        needle: r#""failed to init bare upstream at {}","#,
+        renders: 1,
+        prints: "run_add_new's failure to `git init --bare` the upstream",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "pub fn run_add_new(",
+        needle: r#""Directory already exists at '{}', skipping clone","#,
+        renders: 1,
+        prints: "run_add_new's notice that the member destination is already occupied \
+                 (InitBareAt arm)",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "pub fn run_add_new(",
+        needle: r#""failed to clone '{}' into {}","#,
+        renders: 1,
+        prints: "run_add_new's clone failure, naming the upstream URL and the member \
+                 destination",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
+        needle: r#""Directory already exists at '{}', skipping init","#,
+        renders: 1,
+        prints: "run_add_new's notice that the member destination is already occupied \
+                 (Named arm)",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
+        needle: r#"format!("failed to init repo at {}""#,
+        renders: 1,
+        prints: "run_add_new's failure to `git init` the member (Named arm)",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
+        needle: r#"format!("failed to add the remote in {}""#,
+        renders: 1,
+        prints: "run_add_new's failure to add the upstream remote to the freshly inited \
+                 member",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
+        needle: r#""rwv add: repo at {} has a detached HEAD right after creation; \"#,
+        renders: 2,
+        prints: "run_add_new's refusal when the freshly created member's HEAD is detached",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
+        needle: r#""[warning] add: clone {} is already registered by project '{}' with role {}; \"#,
+        renders: 1,
+        prints: "warn_if_shared_clone's notice naming the shared clone",
+    },
 ];
 
 /// The macros a message is rendered by. A construct is one of these calls.
