@@ -26,7 +26,7 @@ rwv explain <verb>
 - **role** — change a repo's role in the active project manifest and settle its files
 - **lock** — snapshot current repo HEADs into rwv.lock (pure local; no network)
 - **activate** — set the active project, create symlinks, run integration install hooks
-- **materialize** — run the integration install hooks for the presented project, without selecting anything
+- **materialize** — settle drift, clean up disabled integrations, repair weave-root symlinks, and run integration install hooks for the presented project, without selecting anything
 - **init** — create a new project (or adopt an existing repo) and auto-activate it
 
 `rwv explain <token>` serves the entry for a refusal token, a `rwv doctor` finding kind, or a VCS error kind.

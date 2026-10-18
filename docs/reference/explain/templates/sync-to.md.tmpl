@@ -75,7 +75,7 @@ target must be in a state to receive it. Before step 1 begins, `sync-to`
 refuses when any target repo (manifest or project) has uncommitted tracked
 changes step 3 would fast-forward over, or is on a **detached HEAD** — there
 is no branch there to advance, so the landing would be recorded nowhere.
-`rwv fetch` and `rwv update` leave repos detached; check out the receiving branch in the target and re-run.
+`rwv fetch --detach-checkouts` and `rwv update --detach-checkouts` leave repos detached; check out the receiving branch in the target and re-run.
 
 Untracked files in the target are not scanned by this preflight — a
 fast-forward only overwrites a path the incoming commits write, so an
@@ -178,7 +178,7 @@ rwv sync-to [<target>] [--json] [--strategy <ff|rebase>] [-j <N>] [--allow-stale
   asserts against that record rather than rebinding it: it must name the project
   the op was started for, and a contradicting value is refused.
 
-Run `rwv --help sync-to` for the full clap surface.
+Run `rwv sync-to --help` for the full clap surface.
 
 ## Output
 

@@ -30,7 +30,7 @@ rwv explain [<verb>]
 - With a verb, prints that verb's markdown bundle.
 - Unknown verbs return non-zero with a friendly pointer to the index.
 
-Run `rwv --help explain` for the full clap surface.
+Run `rwv explain --help` for the full clap surface.
 
 ## Output
 

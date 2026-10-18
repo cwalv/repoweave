@@ -46,7 +46,7 @@ rwv role <repo> <role> [--project <name>] [--no-materialize]
   `rwv materialize` runs them later. Inside a workweave the hooks are skipped
   either way.
 
-Run `rwv --help role` for the full clap surface.
+Run `rwv role --help` for the full clap surface.
 
 ## Output
 

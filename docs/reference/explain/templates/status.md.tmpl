@@ -18,7 +18,7 @@ rwv status [--json] [--project <name>]
 - `--project <name>` reports status for the named project without changing
   the active project (`.rwv-active` is untouched).
 
-Run `rwv --help status` for the full clap surface.
+Run `rwv status --help` for the full clap surface.
 
 ## Output
 

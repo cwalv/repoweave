@@ -28,7 +28,7 @@ rwv doctor --fix
 
 `rwv doctor --fix` regenerates when `rwv doctor` reports something it can fix — a newly enabled integration's files missing, or managed content that differs from what `rwv.toml` implies. It updates the `rwv`-managed sections of hybrid files (`Cargo.toml`, `package.json`, `pnpm-workspace.yaml`, `go.work`, `pyproject.toml`, `<project>.code-workspace`) while preserving user-authored keys, rewrites the fully-owned `gita/` CSVs, runs the install hooks, and repairs any missing surfacing symlinks in the current workspace. A clean `rwv doctor` means `--fix` has nothing to do.
 
-One setting is not compared: `cargo-workspace`'s `patch` mode with the default `patch-surface = "manifest"`. A change to it lands at the next authoring verb (`rwv add`, `remove`, `update`, `role`), or at the next `rwv doctor --fix` that regenerates for another reason.
+Three settings are not compared by `rwv doctor`, so `rwv doctor --fix` alone does not pick up a change to them: `cargo-workspace`'s `patch` mode with the default `patch-surface = "manifest"`, `workspace-package`, and a `patch-surface` switch back to `manifest`. Any intent verb (`rwv add`, `remove`, `update`, `role`) always re-applies them, because it re-authors unconditionally; otherwise the change lands only at the next `rwv doctor --fix` that regenerates for another reason.
 
 If your `rwv.toml` edit disabled an integration (`enabled = false`), follow up with `rwv materialize` to strip the disabled integration's managed blocks or files and run install hooks:
 

@@ -159,7 +159,7 @@ rwv materialize [--regenerate-drifted | --adopt-drifted]
 
 No arguments.
 
-Run `rwv --help materialize` for the full clap surface.
+Run `rwv materialize --help` for the full clap surface.
 
 ## Output
 

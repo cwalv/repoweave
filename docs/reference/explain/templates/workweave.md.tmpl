@@ -221,7 +221,7 @@ rwv workweave <project> log [--diff] [--json]
 rwv workweave <project> set-container <path>
 ```
 
-Run `rwv --help workweave` for the full clap surface.
+Run `rwv workweave --help` for the full clap surface.
 
 ## Output
 

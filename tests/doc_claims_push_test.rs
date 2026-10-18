@@ -17,6 +17,8 @@
 //!   - push --json: project-repo record is the last outcome and uses kind
 //!     `project-repo-pushed` (distinguishable from manifest-repo records)
 //!   - push --json -j N (N > 1): emits NDJSON (one record per line)
+//!   - push --help: the `-j` default is `1` (serial), not fetch/update's
+//!     min(nproc, 8)
 //!
 //! Style note: these tests reproduce the bare-remote-with-seed setup pattern
 //! used by `push_test.rs` / `push_parallel_test.rs` rather than `common`'s
@@ -1013,5 +1015,26 @@ fn push_repo_selector_overrides_default_and_pushes_named_dep() {
         bare_main_sha(other_dep_bare),
         other_dep_baseline,
         "other-dep must NOT advance under --repo local/org/dep (exact selector)"
+    );
+}
+
+/// `rwv push`'s `-j` default is 1 (serial): the `--json` envelope shape is
+/// pinned to `-j 1`, so defaulting to fetch/update's min(nproc, 8) would
+/// silently flip multi-core hosts to NDJSON. `--help` must say so, not
+/// repeat fetch/update's cap.
+#[test]
+fn push_help_names_the_serial_default_not_fetch_updates_cap() {
+    let output = rwv()
+        .args(["push", "--help"])
+        .output()
+        .expect("rwv push --help should run outside a workspace");
+    let help = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !help.contains("min(nproc"),
+        "push --help must not claim fetch/update's parallel default:\n{help}"
+    );
+    assert!(
+        help.contains("Default: 1"),
+        "push --help should name the actual serial default:\n{help}"
     );
 }

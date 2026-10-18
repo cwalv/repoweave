@@ -49,7 +49,7 @@ Commands:
   update       Advance each repo to its branch HEAD and re-snapshot the lock (network bump; analogous to `cargo update` / `npm update`). Use `rwv fetch` for the read-only counterpart that aligns clones to the existing lock
   completions  Generate shell completions
   explain      Agent-oriented reflection: per-verb markdown bundle (purpose, invocation, output, JSON Schema)
-  setup        Generate workspace-level configuration files
+  setup        Register Claude Code integration (hooks and settings) for this user
   help         Print this message or the help of the given subcommand(s)
 
 Options:

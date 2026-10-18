@@ -64,7 +64,7 @@ rwv update [--dirty] [--commit [-m <MSG>]] [--detach-checkouts] [--project <name
   `rwv materialize` runs them later. Inside a workweave the hooks are skipped
   either way.
 
-Run `rwv --help update` for the full clap surface.
+Run `rwv update --help` for the full clap surface.
 
 ## Output
 

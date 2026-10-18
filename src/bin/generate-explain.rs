@@ -516,7 +516,7 @@ fn verbs() -> Vec<Verb> {
         },
         Verb {
             name: "materialize",
-            summary: "run the integration install hooks for the presented project, without selecting anything",
+            summary: "settle drift, clean up disabled integrations, repair weave-root symlinks, and run integration install hooks for the presented project, without selecting anything",
             schema: None,
             schema_record: None,
         },
@@ -881,6 +881,40 @@ fn check_assembled_docs(docs_dir: &Path) -> Vec<String> {
     }
 
     errors
+}
+
+/// Verify that no assembled explain page tells the reader to run
+/// `rwv --help <verb>` for a subcommand's own help.
+///
+/// Clap resolves `--help` before it reads the rest of the argument list, so
+/// that spelling prints `rwv`'s top-level help rather than the named verb's.
+/// The verb's own help needs `--help` placed after it: `rwv <verb> --help`.
+/// Template directories are excluded; checking the assembled output is
+/// equivalent, since the generator copies this text through unchanged, and a
+/// generated page is what a reader (or an agent run via `rwv explain`)
+/// actually sees.
+fn check_help_flag_ordering(docs_dir: &Path) -> Vec<String> {
+    let explain_dir = docs_dir.join("reference/explain");
+    let template_dir = explain_dir.join("templates");
+    let wrong_order = Regex::new(r"rwv --help [a-z][a-z0-9-]*").unwrap();
+
+    let mut findings = Vec::new();
+    for page in collect_md_files(&explain_dir, &[template_dir]) {
+        let content = fs::read_to_string(&page).unwrap_or_default();
+        for (lineno, line) in content.lines().enumerate() {
+            if let Some(m) = wrong_order.find(line) {
+                findings.push(format!(
+                    "help-flag-ordering: {}:{}: `{}` prints rwv's top-level help, not the \
+                     verb's (clap resolves --help before the subcommand) — write \
+                     `rwv <verb> --help`",
+                    page.display(),
+                    lineno + 1,
+                    m.as_str()
+                ));
+            }
+        }
+    }
+    findings
 }
 
 /// Splice `schema_json` (raw JSON) into `template` by replacing the
@@ -4713,6 +4747,19 @@ fn main() -> anyhow::Result<()> {
         );
     }
 
+    // --- help-flag-ordering gate ------------------------------------------
+    // No assembled explain page may tell the reader to run
+    // `rwv --help <verb>`: clap resolves --help before the subcommand, so
+    // that spelling prints the top-level help, not the verb's.
+    let help_flag_errors = check_help_flag_ordering(&docs_dir);
+    if !help_flag_errors.is_empty() {
+        let msg = help_flag_errors.join("\n");
+        anyhow::bail!(
+            "docs failed help-flag-ordering check:\n{msg}\n\n\
+             Fix: write `rwv <verb> --help`, not `rwv --help <verb>`."
+        );
+    }
+
     // --- env-input inventory gate ----------------------------------------
     // Every std::env::var / var_os read in non-test src/ code must be
     // recorded in docs/env-input-allowlist.txt with a reason. Any unlisted
@@ -5098,6 +5145,88 @@ mod tests {
         assert!(
             errors.is_empty(),
             "should not flag bare autolink in non-assembled doc, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    // ── help-flag-ordering check unit tests ────────────────────────────────────
+
+    /// The fixture `make_tree` builds (`rwv <verb> --help` nowhere in it)
+    /// produces no findings.
+    #[test]
+    fn help_flag_ordering_passes_on_well_formed_fixture_tree() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let docs = make_tree(tmp.path());
+        let errors = check_help_flag_ordering(&docs);
+        assert!(
+            errors.is_empty(),
+            "expected no errors in the well-formed fixture tree, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// Seeded-failure proof: `rwv --help <verb>` in an assembled explain page
+    /// is reported, naming the file, line, and the offending text — this is
+    /// the exact line `rwv-hzs1.6` reverts to watch the check go red.
+    #[test]
+    fn rwv_help_verb_ordering_in_explain_page_is_reported() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let docs = make_tree(tmp.path());
+        fs::write(
+            docs.join("reference/explain/verb.md"),
+            "# verb\n\nRun `rwv --help verb` for the full clap surface.\n",
+        )
+        .unwrap();
+        let errors = check_help_flag_ordering(&docs);
+        assert!(
+            !errors.is_empty(),
+            "expected an error for `rwv --help verb`, got none"
+        );
+        let combined = errors.join("\n");
+        assert!(
+            combined.contains("rwv --help verb"),
+            "error should quote the offending spelling, got:\n{combined}"
+        );
+        assert!(
+            combined.contains("verb.md:3"),
+            "error should name the file and line, got:\n{combined}"
+        );
+    }
+
+    /// The fixed spelling, `rwv <verb> --help`, is not flagged.
+    #[test]
+    fn verb_before_help_flag_is_not_flagged() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let docs = make_tree(tmp.path());
+        fs::write(
+            docs.join("reference/explain/verb.md"),
+            "# verb\n\nRun `rwv verb --help` for the full clap surface.\n",
+        )
+        .unwrap();
+        let errors = check_help_flag_ordering(&docs);
+        assert!(
+            errors.is_empty(),
+            "the verb-before-flag spelling must not be flagged, got:\n{}",
+            errors.join("\n")
+        );
+    }
+
+    /// `rwv --help <verb>` inside a template is not flagged — templates are
+    /// excluded because the generator copies the text through unchanged, and
+    /// checking the assembled output they produce is equivalent.
+    #[test]
+    fn rwv_help_verb_ordering_in_template_is_excluded() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let docs = make_tree(tmp.path());
+        fs::write(
+            docs.join("reference/explain/templates/verb.md.tmpl"),
+            "{{SCHEMA}}\nRun `rwv --help verb` for the full clap surface.\n",
+        )
+        .unwrap();
+        let errors = check_help_flag_ordering(&docs);
+        assert!(
+            errors.is_empty(),
+            "template files must be excluded, got:\n{}",
             errors.join("\n")
         );
     }

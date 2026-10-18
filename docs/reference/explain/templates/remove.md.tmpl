@@ -71,7 +71,7 @@ rwv remove <path> [--delete] [--delete-shared-clone] [--project <name>] [--no-ma
   `rwv materialize` runs them later. Inside a workweave the hooks are skipped
   either way.
 
-Run `rwv --help remove` for the full clap surface.
+Run `rwv remove --help` for the full clap surface.
 
 ## Output
 

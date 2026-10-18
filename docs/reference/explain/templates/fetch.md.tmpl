@@ -153,7 +153,7 @@ rwv fetch [<source>] [--frozen] [--allow-non-empty-dir] [--no-reference]
   in-place fetch that selects the weave's only project. This skips them, and
   `rwv materialize` runs them later. The activation itself still happens.
 
-Run `rwv --help fetch` for the full clap surface.
+Run `rwv fetch --help` for the full clap surface.
 
 ## Output
 

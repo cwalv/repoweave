@@ -106,7 +106,7 @@ rwv activate <project> [--no-materialize]
   correct. `rwv materialize` runs them later, at primary or inside a
   workweave.
 
-Run `rwv --help activate` for the full clap surface.
+Run `rwv activate --help` for the full clap surface.
 
 ## Output
 

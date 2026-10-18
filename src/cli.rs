@@ -437,7 +437,7 @@ pub enum Commands {
         /// Limit the push to repos matching this selector. Bare strings match exactly; `re:<pat>` matches as regex; `glob:<pat>` matches as glob. Repeat for union. Combined as a union with --role. Lock-precondition still runs against the full manifest.
         #[arg(long = "repo")]
         repos: Vec<String>,
-        /// Number of parallel per-repo workers for member-repo pushes. Default: min(nproc, 8). `-j 1` is explicit serial. Project-repo push always runs serially as the last step.
+        /// Number of parallel per-repo workers for member-repo pushes. Default: 1 (serial), so the `--json` envelope shape is the default and the envelope/NDJSON switch only happens when `-j` > 1. Project-repo push always runs serially as the last step.
         #[arg(short = 'j', long = "jobs")]
         jobs: Option<usize>,
         /// Emit per-repo outcomes as JSON (array-of-records with stable per-variant `kind`). See `rwv explain push`.
@@ -492,7 +492,7 @@ pub enum Commands {
         /// Verb to explain. Omit to list explainable verbs.
         command: Option<String>,
     },
-    /// Generate workspace-level configuration files
+    /// Register Claude Code integration (hooks and settings) for this user
     Setup {
         #[command(subcommand)]
         action: SetupAction,

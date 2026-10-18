@@ -58,7 +58,7 @@ rwv push [--json] [-j <N>] [--dry-run] [--force] [--role <role>] [--repo <select
 - `--project <name>` operates on the named project without changing
   `.rwv-active`.
 
-Run `rwv --help push` for the full clap surface.
+Run `rwv push --help` for the full clap surface.
 
 ## Output
 
@@ -333,8 +333,10 @@ rwv push --json -j 4 | jq -c 'select(.kind == "failed" or .kind == "project-repo
   (`rwv lock --commit` or `rwv update --commit` after a relock, `git -C
   projects/<name> commit` otherwise) and re-run.
 - *lock-state mismatch* — one or more member repos' HEAD differs from the
-  recorded lock SHA. Run `rwv lock --commit` to snapshot current state, or
-  check out the locked SHA in each repo.
+  recorded lock SHA. Run `rwv lock --commit` to record each repo's HEAD in
+  the lock, or move the repo's branch to its lock commit without detaching
+  it: `git branch <name>` to keep the commits it moves off, then
+  `git reset --keep <lock commit>`.
 - *refusing to push from workweave* — run `rwv sync-to primary` (or
   `rwv sync-to`) to land changes on primary, then push from there.
 - *project repo not on canonical branch* — check out the canonical branch

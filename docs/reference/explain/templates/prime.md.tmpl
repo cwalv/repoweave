@@ -33,7 +33,7 @@ design.
 rwv prime [--no-suppress]
 ```
 
-Run `rwv --help prime` for the full clap surface.
+Run `rwv prime --help` for the full clap surface.
 
 ## Output
 

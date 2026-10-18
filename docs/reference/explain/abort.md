@@ -157,7 +157,7 @@ rwv abort --abandon-foreign-tip=<repo> [--abandon-foreign-tip=<repo> ...]
 per-repo waiver described above; without it `abort` never moves a branch off
 commits it cannot attribute to the op.
 
-Run `rwv --help abort` for the full clap surface.
+Run `rwv abort --help` for the full clap surface.
 
 ## Output
 

@@ -79,7 +79,7 @@ rwv init <source> --adopt [--no-materialize]
   weave already holds); `rwv materialize` runs them later. Refused without
   `--adopt`: a new project has no members for a hook to act on.
 
-Run `rwv --help init` for the full clap surface.
+Run `rwv init --help` for the full clap surface.
 
 ## Output
 

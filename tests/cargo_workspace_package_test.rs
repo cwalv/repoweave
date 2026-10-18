@@ -137,3 +137,60 @@ fn doctor_fix_leaves_workspace_package_parseable_and_marked() {
         "every later verb reads the file:\n{again}"
     );
 }
+
+/// `rwv doctor` does not compare `workspace-package` against the Cargo.toml
+/// it reads, so toggling the setting alone (no other drift) gives `doctor
+/// --fix` nothing to regenerate for. The change reaches Cargo.toml only via
+/// an authoring verb (`add`, `remove`, `update`, `role`), or at a later
+/// `doctor --fix` that regenerates for an unrelated reason.
+#[test]
+fn doctor_fix_does_not_regenerate_on_a_workspace_package_only_change() {
+    require_cargo!();
+    let tmp = common::tempdir().unwrap();
+    let ws = weave(tmp.path());
+    let rwv_toml = ws.join("projects/app/rwv.toml");
+    let cargo_toml = ws.join("projects/app/Cargo.toml");
+
+    // Materialize with `workspace-package` unset, so Cargo.toml is fully
+    // authored and `rwv doctor` is clean before the setting is toggled.
+    let without_knob = std::fs::read_to_string(&rwv_toml).unwrap().replace(
+        "[integrations.cargo-workspace]\nworkspace-package = true\n",
+        "",
+    );
+    std::fs::write(&rwv_toml, without_knob).unwrap();
+    let (ok, out) = rwv(&["doctor", "--fix"], &ws);
+    assert!(ok, "initial materialization must succeed:\n{out}");
+    let (_, clean) = rwv(&["doctor"], &ws);
+    assert!(
+        !clean.contains("[workspace.package]") && !clean.contains("workspace-package"),
+        "fixture: doctor must be clean before the toggle:\n{clean}"
+    );
+
+    // Toggle the setting alone — nothing else in rwv.toml changes.
+    let mut toml = std::fs::read_to_string(&rwv_toml).unwrap();
+    toml.push_str("\n[integrations.cargo-workspace]\nworkspace-package = true\n");
+    std::fs::write(&rwv_toml, toml).unwrap();
+
+    let (_, report) = rwv(&["doctor"], &ws);
+    assert!(
+        !report.contains("malformed-settings") && !report.to_lowercase().contains("workspace.package"),
+        "doctor does not compare workspace-package, so the toggle alone raises no finding:\n{report}"
+    );
+
+    let before = std::fs::read_to_string(&cargo_toml).unwrap();
+    let (ok, out) = rwv(&["doctor", "--fix"], &ws);
+    assert!(
+        ok,
+        "`doctor --fix` with nothing else to fix still exits 0:\n{out}"
+    );
+    let after = std::fs::read_to_string(&cargo_toml).unwrap();
+    assert_eq!(
+        before, after,
+        "doctor --fix must not author [workspace.package] for a workspace-package-only change:\n{after}"
+    );
+    assert!(
+        !after.contains("[workspace.package]"),
+        "current behavior: the knob reaches Cargo.toml only via an authoring verb, \
+         or a doctor --fix that regenerates for another reason:\n{after}"
+    );
+}

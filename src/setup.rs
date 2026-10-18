@@ -1,4 +1,4 @@
-//! `rwv setup` — generate workspace-level configuration files.
+//! `rwv setup` — register Claude Code integration for this user.
 //!
 //! Subcommands:
 //! - `claude`: Register `rwv prime` as a Claude Code hook in

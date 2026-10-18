@@ -94,7 +94,7 @@ rwv sync <source> [--json] [--strategy <ff|rebase>] [-j <N>] [--allow-stale-lock
   Phase 1' (project repo) and Phase 3 (re-lock + commit) are inherently
   serial and run on the caller thread regardless of `-j`.
 
-Run `rwv --help sync` for the full clap surface.
+Run `rwv sync --help` for the full clap surface.
 
 ## Output
 

@@ -68,7 +68,7 @@ that exact store (`branch-model.md` R2), and on a warrant proving the loss
 is safe (R3). A hand-made `<project>--<workweave>/<segment>` branch is
 reported — so you can see it — and never removed.
 
-Run `rwv --help doctor` for the full clap surface.
+Run `rwv doctor --help` for the full clap surface.
 
 ## Which weave `--fix` repairs
 

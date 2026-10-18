@@ -86,7 +86,7 @@ rwv lock [--dirty] [--commit [-m <MSG>]] [--project <name>]
 - `--project <name>` — operate on this project rather than the active project.
   Does not change `.rwv-active`.
 
-Run `rwv --help lock` for the full clap surface.
+Run `rwv lock --help` for the full clap surface.
 
 ## Output
 
