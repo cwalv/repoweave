@@ -409,6 +409,13 @@ In `rwv sync --json` and `rwv sync-to --json`, a failed outcome whose
 kinds. A consumer can read `failure.cause.kind` on them without an absence
 check. `head-unreadable` still omits `cause` when it has none.
 
+### Error messages keep their causes
+
+Messages that relay an underlying failure now print its whole cause chain
+rather than only its outermost line, so a failure reported by `rwv doctor
+--fix`, an ownership-receipt warning from a workweave verb, or an integration
+hook names what actually went wrong beneath the step that failed.
+
 ## 0.23.0
 
 ### Refusals carry stable names

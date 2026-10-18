@@ -165,10 +165,10 @@ pub fn unreadable_ledger(dir: &Path) -> Option<String> {
     let path = ledger_path(dir);
     match std::fs::read_to_string(&path) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => Some(format!("read failed: {e}")),
+        Err(e) => Some(format!("read failed: {e:#}")),
         Ok(text) => serde_json::from_str::<BTreeMap<String, LedgerEntry>>(&text)
             .err()
-            .map(|e| format!("parse failed: {e}")),
+            .map(|e| format!("parse failed: {e:#}")),
     }
 }
 

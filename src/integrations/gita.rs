@@ -164,7 +164,7 @@ impl Integration for Gita {
                 Err(e) => issues.push(fully_owned_drift_issue(
                     self.name(),
                     &path,
-                    &format!("read failed: {e}"),
+                    &format!("read failed: {e:#}"),
                 )),
                 Ok(on_disk) if on_disk != body.as_bytes() => {
                     issues.push(fully_owned_drift_issue(

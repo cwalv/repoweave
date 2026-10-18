@@ -105,7 +105,7 @@ impl<'a> IntegrationContext<'a> {
                 "`[integrations.{integration}]` in rwv.toml does not parse into this \
                  integration's settings: {}. Correct the field it names, or drop it to take \
                  the default",
-                e.to_string().trim_end()
+                format!("{e:#}").trim_end()
             ),
             kind: IssueKind::MalformedSettings,
             safe_to_fix: false,

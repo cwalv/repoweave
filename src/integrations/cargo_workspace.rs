@@ -1510,7 +1510,7 @@ impl CargoWorkspace {
                 return vec![fully_owned_drift_issue(
                     self.name(),
                     &path,
-                    &format!("read failed: {e}"),
+                    &format!("read failed: {e:#}"),
                 )];
             }
         };
@@ -1518,7 +1518,7 @@ impl CargoWorkspace {
             return vec![fully_owned_drift_issue(
                 self.name(),
                 &path,
-                &format!("TOML parse failed: {e}"),
+                &format!("TOML parse failed: {e:#}"),
             )];
         }
 

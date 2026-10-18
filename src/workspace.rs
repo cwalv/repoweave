@@ -2273,7 +2273,7 @@ fn observe_marker(marker_path: &Path) -> MarkerPresence {
         Ok(content) => content,
         Err(e) => {
             return unreadable(
-                format!("failed to read {}: {e}", marker_path.display()),
+                format!("failed to read {}: {e:#}", marker_path.display()),
                 None,
                 None,
             );
@@ -2287,7 +2287,7 @@ fn observe_marker(marker_path: &Path) -> MarkerPresence {
         Err(e) => {
             return unreadable(
                 format!(
-                    "failed to parse .rwv-workweave at {}: {e}",
+                    "failed to parse .rwv-workweave at {}: {e:#}",
                     marker_path.display()
                 ),
                 None,

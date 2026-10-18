@@ -1421,7 +1421,7 @@ impl Manifest {
     /// the file broke, but only the parser can say where.
     pub fn from_toml_str(content: &str) -> anyhow::Result<Self> {
         toml::from_str(content).map_err(|e| {
-            let msg = e.to_string();
+            let msg = format!("{e:#}");
             // When the error is an unknown top-level field, append a
             // "did you mean?" hint.  The TOML error already names the key and
             // its line; we add the nearest accepted spelling so the operator

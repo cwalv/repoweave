@@ -283,7 +283,7 @@ pub fn run_push(
             Ok(h) => h,
             Err(e) => {
                 lock_mismatches.push(format!(
-                    "{}: failed to resolve HEAD: {e}",
+                    "{}: failed to resolve HEAD: {e:#}",
                     repo_path.as_str()
                 ));
                 continue;
@@ -303,7 +303,7 @@ pub fn run_push(
             Ok(r) => r,
             Err(e) => {
                 lock_mismatches.push(format!(
-                    "{}: lock entry '{}' could not be resolved in clone: {e}",
+                    "{}: lock entry '{}' could not be resolved in clone: {e:#}",
                     repo_path.as_str(),
                     lock_raw
                 ));
@@ -385,7 +385,7 @@ pub fn run_push(
             Ok(a) => a,
             Err(e) => {
                 branch_errors.push(format!(
-                    "{}: failed to read current branch: {e}",
+                    "{}: failed to read current branch: {e:#}",
                     repo_path.as_str()
                 ));
                 continue;
@@ -418,7 +418,7 @@ pub fn run_push(
             Ok(t) => t,
             Err(e) => {
                 branch_errors.push(format!(
-                    "{}: manifest declares an invalid tracking branch '{}': {e}",
+                    "{}: manifest declares an invalid tracking branch '{}': {e:#}",
                     repo_path.as_str(),
                     entry.version,
                 ));
@@ -669,7 +669,7 @@ pub fn run_push(
             path: project_path_str,
             absolute_path: project_abs_str,
             project: project_name.as_str().to_string(),
-            message: e.to_string(),
+            message: format!("{e:#}"),
         },
     };
 
@@ -691,7 +691,7 @@ pub fn run_push(
             }
         }
         anyhow::bail!(
-            "project-repo push failed after all member repos pushed cleanly: {e}. \
+            "project-repo push failed after all member repos pushed cleanly: {e:#}. \
              Member-side state is published; the lock carrier is not. \
              Retry `rwv push` once the project-repo issue is resolved."
         );
@@ -819,7 +819,10 @@ fn push_one(
     ));
     match vcs.push_ref(&repo_dir, &item.publish_ref, force) {
         Ok(()) => PushOutcome::Pushed,
-        Err(e) => PushOutcome::Failed(format!("{}: git push failed: {e}", item.repo_path.as_str())),
+        Err(e) => PushOutcome::Failed(format!(
+            "{}: git push failed: {e:#}",
+            item.repo_path.as_str()
+        )),
     }
 }
 

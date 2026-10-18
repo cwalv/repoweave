@@ -805,7 +805,7 @@ fn check_assembled_docs(docs_dir: &Path) -> Vec<String> {
             Ok(c) => c,
             Err(e) => {
                 errors.push(format!(
-                    "link-check: could not read {}: {e}",
+                    "link-check: could not read {}: {e:#}",
                     md_path.display()
                 ));
                 continue;
@@ -1115,7 +1115,7 @@ fn load_coverage_allowlist(
 ) -> anyhow::Result<(HashSet<String>, HashSet<String>)> {
     let content = fs::read_to_string(allowlist_path).map_err(|e| {
         anyhow::anyhow!(
-            "cannot read coverage allowlist at {}: {e}",
+            "cannot read coverage allowlist at {}: {e:#}",
             allowlist_path.display()
         )
     })?;
@@ -1422,7 +1422,7 @@ fn run_coverage_checks(root: &Path, verbs: &[Verb]) -> anyhow::Result<Vec<String
 
     let cli_md_path = root.join("docs/reference/cli.md");
     let cli_md_content = fs::read_to_string(&cli_md_path)
-        .map_err(|e| anyhow::anyhow!("cannot read cli.md at {}: {e}", cli_md_path.display()))?;
+        .map_err(|e| anyhow::anyhow!("cannot read cli.md at {}: {e:#}", cli_md_path.display()))?;
 
     let mut errors: Vec<String> = Vec::new();
     errors.extend(check_cli_md_coverage(
@@ -1452,7 +1452,7 @@ fn run_coverage_checks(root: &Path, verbs: &[Verb]) -> anyhow::Result<Vec<String
 fn load_env_input_allowlist(allowlist_path: &Path) -> anyhow::Result<HashSet<String>> {
     let content = fs::read_to_string(allowlist_path).map_err(|e| {
         anyhow::anyhow!(
-            "cannot read env-input allowlist at {}: {e}",
+            "cannot read env-input allowlist at {}: {e:#}",
             allowlist_path.display()
         )
     })?;
@@ -1557,7 +1557,10 @@ fn check_env_input_reads(src_dir: &Path, allowlist: &HashSet<String>) -> Vec<Str
         let content = match std::fs::read_to_string(&path) {
             Ok(c) => c,
             Err(e) => {
-                errors.push(format!("env-input: could not read {}: {e}", path.display()));
+                errors.push(format!(
+                    "env-input: could not read {}: {e:#}",
+                    path.display()
+                ));
                 continue;
             }
         };
@@ -1663,7 +1666,10 @@ fn check_vcs_seam_bypasses(src_dir: &Path) -> Vec<String> {
         let content = match std::fs::read_to_string(&path) {
             Ok(c) => c,
             Err(e) => {
-                errors.push(format!("vcs-seam: could not read {}: {e}", path.display()));
+                errors.push(format!(
+                    "vcs-seam: could not read {}: {e:#}",
+                    path.display()
+                ));
                 continue;
             }
         };
@@ -1757,7 +1763,7 @@ fn run_envelope_output_check(root: &Path) -> anyhow::Result<Vec<String>> {
     let protocol_md_path = root.join("docs/reference/plugin-protocol.md");
     let protocol_md_content = fs::read_to_string(&protocol_md_path).map_err(|e| {
         anyhow::anyhow!(
-            "cannot read plugin-protocol.md at {}: {e}",
+            "cannot read plugin-protocol.md at {}: {e:#}",
             protocol_md_path.display()
         )
     })?;
@@ -4391,7 +4397,7 @@ fn check_explanation_joints_index_agreement(root: &Path) -> anyhow::Result<Vec<S
     let summary_path = root.join("docs/SUMMARY.md");
     let summary = fs::read_to_string(&summary_path).map_err(|e| {
         anyhow::anyhow!(
-            "cannot read docs/SUMMARY.md at {}: {e}",
+            "cannot read docs/SUMMARY.md at {}: {e:#}",
             summary_path.display()
         )
     })?;
@@ -4401,7 +4407,7 @@ fn check_explanation_joints_index_agreement(root: &Path) -> anyhow::Result<Vec<S
     let index_path = root.join("docs/explanation/index.md");
     let index = fs::read_to_string(&index_path).map_err(|e| {
         anyhow::anyhow!(
-            "cannot read docs/explanation/index.md at {}: {e}",
+            "cannot read docs/explanation/index.md at {}: {e:#}",
             index_path.display()
         )
     })?;
@@ -4516,7 +4522,7 @@ fn main() -> anyhow::Result<()> {
 
         let tmpl = fs::read_to_string(&prime_tmpl_path).map_err(|e| {
             anyhow::anyhow!(
-                "missing prime overview template at {}: {e}",
+                "missing prime overview template at {}: {e:#}",
                 prime_tmpl_path.display()
             )
         })?;
@@ -4539,7 +4545,7 @@ fn main() -> anyhow::Result<()> {
         let template_path = templates_dir.join(format!("{}.md.tmpl", verb.name));
         let template = fs::read_to_string(&template_path).map_err(|e| {
             anyhow::anyhow!(
-                "missing template for verb '{}' at {}: {e}",
+                "missing template for verb '{}' at {}: {e:#}",
                 verb.name,
                 template_path.display()
             )
@@ -4564,7 +4570,7 @@ fn main() -> anyhow::Result<()> {
         let after_schema = render_template(&template, schema_json_for_template.as_deref());
         // Phase 2: splice {{MSG:<key>}} placeholders from the named-string registry.
         let rendered = resolve_msg_placeholders(&after_schema, &msg_registry)
-            .map_err(|e| anyhow::anyhow!("verb '{}': {e}", verb.name))?;
+            .map_err(|e| anyhow::anyhow!("verb '{}': {e:#}", verb.name))?;
 
         let md_path = explain_dir.join(format!("{}.md", verb.name));
         // Ensure trailing newline.

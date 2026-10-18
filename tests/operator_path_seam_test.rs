@@ -568,7 +568,7 @@ const ROUTED: &[Routed] = &[
     Routed {
         file: "add_remove.rs",
         scope: "",
-        needle: r#""{} was created by it and could not be removed ({e}); delete it by hand","#,
+        needle: r#""{} was created by it and could not be removed ({e:#}); delete it by hand","#,
         renders: 1,
         prints: "AddLeftovers::refused's line when taking back a creation fails",
     },

@@ -377,7 +377,10 @@ fn unknown_verb_error(verb: &str) -> anyhow::Error {
 /// could not be spawned. The OS error (permission denied, ENOEXEC, etc.)
 /// is preserved so operators can diagnose without a second attempt.
 fn exec_failure_error(verb: &str, binary: &std::path::Path, err: std::io::Error) -> anyhow::Error {
-    anyhow::anyhow!("failed to exec `rwv-{verb}` ({}): {err}", binary.display(),)
+    anyhow::anyhow!(
+        "failed to exec `rwv-{verb}` ({}): {err:#}",
+        binary.display(),
+    )
 }
 
 /// Look up `rwv-<verb>` on `$PATH`.

@@ -6325,7 +6325,7 @@ pub fn fix_stale_ephemeral_branches(
                 {
                     errors.push(format!(
                         "deleted stale ephemeral branch `{}` in {} but could not retract \
-                         its ownership receipt: {e}",
+                         its ownership receipt: {e:#}",
                         branch_name,
                         store_path.display()
                     ));
@@ -6333,7 +6333,7 @@ pub fn fix_stale_ephemeral_branches(
                 deleted.push((store_path, branch_name));
             }
             Err(e) => errors.push(format!(
-                "failed to delete safe-class stale ephemeral branch `{}` in {}: {}",
+                "failed to delete safe-class stale ephemeral branch `{}` in {}: {:#}",
                 branch_name,
                 store_path.display(),
                 e
@@ -6427,7 +6427,7 @@ pub fn fix_branch_model_migration(
         if let Err(e) = crate::op_state::check_no_op_in_progress(&[workweave_dir.as_path()]) {
             errors.push(format!(
                 "{}: skipped the branch-model migration — an operation is in flight \
-                 ({e}). Resolve or `rwv abort` it, then re-run `rwv doctor --fix`",
+                 ({e:#}). Resolve or `rwv abort` it, then re-run `rwv doctor --fix`",
                 workweave_dir.display()
             ));
             continue;
@@ -6437,7 +6437,7 @@ pub fn fix_branch_model_migration(
             Ok(n) => n,
             Err(e) => {
                 errors.push(format!(
-                    "{}: skipped the branch-model migration — {e}",
+                    "{}: skipped the branch-model migration — {e:#}",
                     workweave_dir.display()
                 ));
                 continue;
@@ -6499,7 +6499,7 @@ pub fn fix_branch_model_migration(
                         .expect("matched Some in the guard");
                     match migrate_legacy_ref(vcs, &mut registry, &store, &a, legacy, &flat) {
                         Ok(msg) => applied.push(msg),
-                        Err(e) => errors.push(format!("{}: {e}", abs.display())),
+                        Err(e) => errors.push(format!("{}: {e:#}", abs.display())),
                     }
                 }
                 // Arm 2: the flat ref is there but unowned. Reached from any
@@ -6508,7 +6508,7 @@ pub fn fix_branch_model_migration(
                 Ok(_) if flat_present && !flat_recorded => {
                     match adopt_flat_ref(vcs, &mut registry, &store, &flat) {
                         Ok(msg) => applied.push(msg),
-                        Err(e) => errors.push(format!("{}: {e}", abs.display())),
+                        Err(e) => errors.push(format!("{}: {e:#}", abs.display())),
                     }
                 }
                 // Arms 3 and 5, and only with the operator's consent. Never
@@ -6527,7 +6527,7 @@ pub fn fix_branch_model_migration(
                         consent,
                     ) {
                         Ok(msgs) => applied.extend(msgs),
-                        Err(e) => errors.push(format!("{}: {e}", abs.display())),
+                        Err(e) => errors.push(format!("{}: {e:#}", abs.display())),
                     }
                 }
                 // Arms 4 and 6: report-only. The scan has already said so.
@@ -6637,7 +6637,7 @@ fn migrate_legacy_ref(
     if let Err(e) = registry.retract(store, &raw) {
         return Ok(format!(
             "migrated `{label}` → `{flat}` in {} (its old ownership receipt could not be \
-             retracted: {e}; `rwv doctor --fix` will clear it)",
+             retracted: {e:#}; `rwv doctor --fix` will clear it)",
             store.display()
         ));
     }
@@ -6828,7 +6828,7 @@ pub fn fix_detached_canonicals(
         match vcs.reattach_head(observed, &counterpart, consent) {
             Ok(()) => reattached.push((store.path.clone(), label)),
             Err(e) => errors.push(format!(
-                "failed to reattach detached canonical {} to `{}`: {}",
+                "failed to reattach detached canonical {} to `{}`: {:#}",
                 store.path.display(),
                 label,
                 e
@@ -6878,7 +6878,7 @@ pub fn fix_dangling_receipts(
             Ok(true) => retracted.push((store_path, ref_name)),
             Ok(false) => {}
             Err(e) => errors.push(format!(
-                "failed to retract dangling ownership receipt for `{}` in {}: {e}",
+                "failed to retract dangling ownership receipt for `{}` in {}: {e:#}",
                 ref_name,
                 store_path.display()
             )),
@@ -6948,7 +6948,7 @@ pub fn fix_pre_flat_receipts(
             Ok(true) => retracted.push((store_path, ref_name)),
             Ok(false) => {}
             Err(e) => errors.push(format!(
-                "failed to retract the ownership receipt for `{}` in {}: {e}",
+                "failed to retract the ownership receipt for `{}` in {}: {e:#}",
                 ref_name,
                 store_path.display()
             )),
@@ -8854,7 +8854,7 @@ pub fn run_check_locked(ctx: &crate::workspace::WorkspaceContext) -> anyhow::Res
                 // Warn and skip; `rwv doctor` surfaces the canonical
                 // `unparseable-project` violation for this project.
                 eprintln!(
-                    "warning: skipping project {pname}: manifest unreadable ({e}); \
+                    "warning: skipping project {pname}: manifest unreadable ({e:#}); \
                      run `rwv doctor` for details"
                 );
                 continue;
@@ -8952,7 +8952,7 @@ fn apply_prelude_repairs(ctx: &crate::workspace::WorkspaceContext, fix_errors: &
                 finding.marker_path.display()
             ),
             Ok(false) => {}
-            Err(e) => fix_errors.push(format!("legacy workweave marker fix failed: {e}")),
+            Err(e) => fix_errors.push(format!("legacy workweave marker fix failed: {e:#}")),
         }
     }
 }
@@ -9000,7 +9000,7 @@ fn apply_workspace_repairs(
                     active_name
                 ),
                 Err(e) => fix_errors.push(format!(
-                    "dangling-active-project fix failed for `{}`: {e}",
+                    "dangling-active-project fix failed for `{}`: {e:#}",
                     active_name
                 )),
             }
@@ -9028,7 +9028,7 @@ fn apply_workspace_repairs(
                     root.display()
                 ),
                 Err(e) => fix_errors.push(format!(
-                    "weave-root-identity-conflict fix failed for {}: {e}",
+                    "weave-root-identity-conflict fix failed for {}: {e:#}",
                     root.display()
                 )),
             }
@@ -9076,7 +9076,7 @@ fn apply_workspace_repairs(
             ),
             Ok(false) => {}
             Err(e) => fix_errors.push(format!(
-                "failed to migrate {}'s workweave index to the ref-ownership registry: {e}",
+                "failed to migrate {}'s workweave index to the ref-ownership registry: {e:#}",
                 project
             )),
         }
@@ -9156,7 +9156,7 @@ fn apply_workspace_repairs(
                             project.name
                         ),
                         Err(e) => fix_errors.push(format!(
-                            "{}: migrated .gitattributes but commit failed: {e}",
+                            "{}: migrated .gitattributes but commit failed: {e:#}",
                             project.name
                         )),
                     }
@@ -9168,7 +9168,7 @@ fn apply_workspace_repairs(
                 }
             }
             Err(e) => fix_errors.push(format!(
-                "{}: failed to write replay-exclusion: {e}",
+                "{}: failed to write replay-exclusion: {e:#}",
                 project.name
             )),
         }
@@ -9187,7 +9187,7 @@ fn apply_workspace_repairs(
                     project.name
                 ),
                 Err(e) => fix_errors.push(format!(
-                    "{}: failed to plant `{}`: {e}",
+                    "{}: failed to plant `{}`: {e:#}",
                     project.name,
                     crate::git::RWV_MERGE_DRIVER_CONFIG_KEY
                 )),
@@ -9249,7 +9249,7 @@ fn apply_finding_repairs(
                 }
                 Ok(false) => false,
                 Err(e) => {
-                    fix_errors.push(format!("state-hygiene --fix failed: {e}"));
+                    fix_errors.push(format!("state-hygiene --fix failed: {e:#}"));
                     true
                 }
             },
@@ -9306,7 +9306,7 @@ fn apply_finding_repairs(
                 }
                 Ok(false) => true,
                 Err(e) => {
-                    fix_errors.push(format!("dangling-parent --fix failed: {e}"));
+                    fix_errors.push(format!("dangling-parent --fix failed: {e:#}"));
                     false
                 }
             },
@@ -9341,7 +9341,7 @@ fn apply_finding_repairs(
                     Err(e) => {
                         fix_errors.push(format!(
                             "workweave-index --fix failed: prune of stale entry `{}` in `{}` \
-                             failed: {e}",
+                             failed: {e:#}",
                             workweave_name, project
                         ));
                         false
@@ -9380,7 +9380,7 @@ fn apply_finding_repairs(
                     Err(e) => {
                         fix_errors.push(format!(
                             "workweave-index --fix failed: adopt of workweave `{}` at {} \
-                             failed: {e}",
+                             failed: {e:#}",
                             workweave_name,
                             workweave_dir.display()
                         ));
@@ -9398,7 +9398,7 @@ fn apply_finding_repairs(
                     let location = location_of(workweave, repo);
                     match reset_index_to_head(repo_abs) {
                         Ok(()) => println!("[fixed] core: index refreshed for {location}"),
-                        Err(e) => fix_errors.push(format!("{location}: index fix failed: {e}")),
+                        Err(e) => fix_errors.push(format!("{location}: index fix failed: {e:#}")),
                     }
                     true
                 }
@@ -9415,7 +9415,7 @@ fn apply_finding_repairs(
                     match restore_working_tree_to_head(repo_abs) {
                         Ok(()) => println!("[fixed] core: working tree refreshed for {location}"),
                         Err(e) => {
-                            fix_errors.push(format!("{location}: working-tree fix failed: {e}"))
+                            fix_errors.push(format!("{location}: working-tree fix failed: {e:#}"))
                         }
                     }
                     true
@@ -9442,7 +9442,7 @@ fn apply_finding_repairs(
                     }
                     Ok(false) => false,
                     Err(e) => {
-                        fix_errors.push(format!("state-hygiene --fix failed: {e}"));
+                        fix_errors.push(format!("state-hygiene --fix failed: {e:#}"));
                         true
                     }
                 },
@@ -9464,7 +9464,7 @@ fn apply_finding_repairs(
                 }
                 Ok(false) => false,
                 Err(e) => {
-                    fix_errors.push(format!("state-hygiene --fix failed: {e}"));
+                    fix_errors.push(format!("state-hygiene --fix failed: {e:#}"));
                     true
                 }
             },
@@ -9698,7 +9698,7 @@ fn collect_doctor_issues(world: &DoctorWorld, repair: Repair) -> Vec<Issue> {
                     integration: "core".into(),
                     severity: Severity::Error,
                     message: format!(
-                        "doctor --fix: failed to regenerate integration content for `{}`: {e}",
+                        "doctor --fix: failed to regenerate integration content for `{}`: {e:#}",
                         project.name
                     ),
                     safe_to_fix: true,
@@ -9774,7 +9774,7 @@ fn collect_doctor_issues(world: &DoctorWorld, repair: Repair) -> Vec<Issue> {
                     integration: "core".into(),
                     severity: Severity::Error,
                     message: format!(
-                        "doctor --fix: failed to re-surface symlinks for `{}`: {e}",
+                        "doctor --fix: failed to re-surface symlinks for `{}`: {e:#}",
                         project.name
                     ),
                     safe_to_fix: true,
@@ -10201,7 +10201,7 @@ fn load_doctor_world(
             Ok(rev) => {
                 head_revisions.insert(repo_path.clone(), rev);
             }
-            Err(e) => head_read_failures.push((repo_path.clone(), e.to_string())),
+            Err(e) => head_read_failures.push((repo_path.clone(), format!("{e:#}"))),
         }
     }
 
@@ -10212,7 +10212,7 @@ fn load_doctor_world(
         // add`) is a different, unremarkable state — only a directory that
         // exists and refuses to be listed is the finding.
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => Some((projects_dir_path, e.to_string())),
+        Err(e) => Some((projects_dir_path, format!("{e:#}"))),
     };
 
     let mut projects = Vec::new();
@@ -10688,7 +10688,7 @@ fn collect_doctor_violations(
             }
             Err(e) => violations.push(CheckViolation::ReplayExclusionUnreadable {
                 project: project.name.clone(),
-                error: e.to_string(),
+                error: format!("{e:#}"),
             }),
         }
         match crate::git::has_rwv_merge_driver_config(&project_repo) {
@@ -10700,7 +10700,7 @@ fn collect_doctor_violations(
             Err(e) => violations.push(CheckViolation::MergeDriverConfigUnreadable {
                 project: project.name.clone(),
                 config_key: crate::git::RWV_MERGE_DRIVER_CONFIG_KEY.to_owned(),
-                error: e.to_string(),
+                error: format!("{e:#}"),
             }),
         }
     }
@@ -10733,7 +10733,7 @@ fn collect_doctor_violations(
         violations.push(CheckViolation::UnnameableProject {
             dir: unnameable.dir.clone(),
             derived: unnameable.derived.clone(),
-            error: unnameable.error.to_string(),
+            error: format!("{:#}", unnameable.error),
         });
     }
 

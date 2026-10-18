@@ -1921,7 +1921,7 @@ fn root_write_notices(root: &Path, project: &ProjectName, manifest: &Manifest) -
                 Ok(write) => write.map(|write| write.unadopted_message()),
                 Err(e) => Some(format!(
                     "`{name}` at the weave root could not be read to tell whether a tool \
-                     wrote it past its link: {e}"
+                     wrote it past its link: {e:#}"
                 )),
             },
         )
@@ -2747,7 +2747,7 @@ pub fn verify_surfacing(
                     integration: integration.clone(),
                     severity: Severity::Warning,
                     message: format!(
-                        "surfacing: `{file}` symlink unreadable at `{}` ({e}; safe to --fix)",
+                        "surfacing: `{file}` symlink unreadable at `{}` ({e:#}; safe to --fix)",
                         link.display()
                     ),
                     kind: IssueKind::Surfacing,

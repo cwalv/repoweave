@@ -37,6 +37,15 @@ When the silent fallback is genuinely the user's intent (an optional knob), docu
 
 Any new "fail-loud on inconsistent state" surface should have a corresponding `rwv doctor` violation kind, so an operator running doctor sees the issue before it bites in some other verb. If the inconsistent state is auto-fixable on disk (legacy marker migration, dangling-pointer cleanup), wire it into `rwv doctor --fix`. If not (e.g., broken YAML the operator must edit), surface it as a violation with no auto-fix.
 
+## Print an error with the alternate flag
+
+Render an error value as `{e:#}` — `{:#}` positionally, `format!("{e:#}")`
+where `.to_string()` would go. On an `anyhow::Error`, `{e}` prints only the
+outermost context and drops every cause under it; `{e:#}` prints the chain.
+Every other error type here renders the same either way, so the rule does not
+ask which type it is holding. `tests/error_alternate_flag_test.rs` holds it
+for bindings named `e`, `err` and `error`, and states what it cannot see.
+
 ## Origin
 
 Surfaced during the 2026-05-27 review session. Five concrete instances had landed silently and were caught only via cross-cutting audit. The pattern was named and these guidelines added so the same shape isn't re-introduced.

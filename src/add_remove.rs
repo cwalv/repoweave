@@ -576,7 +576,7 @@ impl AddLeftovers {
                         operator_path(&repo)
                     )),
                     Err(e) => lines.push(format!(
-                        "{} was created by it and could not be removed ({e}); delete it by hand",
+                        "{} was created by it and could not be removed ({e:#}); delete it by hand",
                         operator_path(&repo)
                     )),
                 },
@@ -1004,7 +1004,7 @@ fn refuse_claimed_store(vcs: &dyn Vcs, primary_root: &Path, repo_dir: &Path) -> 
                 crate::refuse!(
                     RefusalKind::StoreClaimsUnreadable,
                     "refusing to delete '{}': it is a repo whose worktree registrations \
-                     could not be read ({e}), so rwv cannot establish that no live \
+                     could not be read ({e:#}), so rwv cannot establish that no live \
                      worktree is using it.",
                     operator_path(repo_dir)
                 );
@@ -1024,7 +1024,7 @@ fn refuse_claimed_store(vcs: &dyn Vcs, primary_root: &Path, repo_dir: &Path) -> 
             Err(e) => crate::refuse!(
                 RefusalKind::StoreClaimsUnreadable,
                 "refusing to delete '{}': the ownership receipts for project `{}` could \
-                 not be read ({e}), so rwv cannot establish that no ref it created still \
+                 not be read ({e:#}), so rwv cannot establish that no ref it created still \
                  lives in this store.",
                 operator_path(repo_dir),
                 project.as_str()
@@ -1152,7 +1152,7 @@ fn build_creation_params(
         let value: serde_json::Value = serde_json::from_str(json).map_err(|e| {
             refusal(
                 RefusalKind::UnusableCreationParam,
-                format!("--params-json is not valid JSON: {e}"),
+                format!("--params-json is not valid JSON: {e:#}"),
             )
         })?;
         let obj = value.as_object().ok_or_else(|| {

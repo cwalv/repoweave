@@ -558,7 +558,7 @@ fn advance_one(
         Ok(o) => o,
         Err(e) => {
             return Err(format!(
-                "{}: git fetch failed to spawn: {e}",
+                "{}: git fetch failed to spawn: {e:#}",
                 repo_path.as_str()
             ));
         }
@@ -658,7 +658,7 @@ fn advance_checkout(
     target: &ResolvedRevisionId,
     detach_checkouts: Option<DetachConsent>,
 ) -> Result<(), String> {
-    let describe = |e: VcsError| format!("{}: {e}", repo_path.as_str());
+    let describe = |e: VcsError| format!("{}: {e:#}", repo_path.as_str());
 
     let attached = match vcs.head_attachment(repo_dir).map_err(describe)? {
         HeadAttachment::Detached(was) => {
@@ -710,7 +710,7 @@ fn advance_checkout(
     // gates use — instead of a raw string compare.
     let declared = TrackingRef::parse(RawRefName::new(entry.version.as_str())).map_err(|e| {
         format!(
-            "{}: manifest declares an invalid tracking branch '{}': {e}",
+            "{}: manifest declares an invalid tracking branch '{}': {e:#}",
             repo_path.as_str(),
             entry.version,
         )

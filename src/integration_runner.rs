@@ -230,7 +230,7 @@ fn for_each_enabled(
                 issues.push(Issue {
                     integration: integration.name().to_string(),
                     severity: Severity::Error,
-                    message: e.to_string(),
+                    message: format!("{e:#}"),
                     kind: IssueKind::IntegrationFailed,
                     safe_to_fix: true,
                 });
@@ -255,7 +255,7 @@ pub fn run_activations(
         let ctx = ctx_base.build_context(config, manifest);
         integration
             .activate(&ctx)
-            .map_err(|e| anyhow::anyhow!("activation failed: {e}"))
+            .map_err(|e| anyhow::anyhow!("activation failed: {e:#}"))
     })
 }
 
@@ -272,7 +272,7 @@ pub fn run_checks(
         let ctx = ctx_base.build_context(config, manifest);
         integration
             .check(&ctx)
-            .map_err(|e| anyhow::anyhow!("check failed: {e}"))
+            .map_err(|e| anyhow::anyhow!("check failed: {e:#}"))
     })
 }
 
@@ -313,7 +313,7 @@ pub fn run_verifications(
         let ctx = ctx_base.build_context(config, manifest);
         integration
             .verify(&ctx)
-            .map_err(|e| anyhow::anyhow!("verify failed: {e}"))
+            .map_err(|e| anyhow::anyhow!("verify failed: {e:#}"))
     })
 }
 
@@ -336,7 +336,7 @@ pub fn run_member_incompatibilities(
         let ctx = ctx_base.build_context(config, manifest);
         let found = integration
             .member_incompatibility(&ctx)
-            .map_err(|e| anyhow::anyhow!("member-incompatibility check failed: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("member-incompatibility check failed: {e:#}"))?;
         Ok(found.into_iter().map(|m| m.into_issue()).collect())
     })
 }
@@ -363,7 +363,7 @@ pub fn run_activate_hooks(
         let ctx = ctx_base.build_context(config, manifest);
         let outcome = integration
             .activate_hook(&ctx)
-            .map_err(|e| anyhow::anyhow!("activate hook failed: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("activate hook failed: {e:#}"))?;
         if let HookOutcome::ToolMissing(tool) = outcome {
             skipped.push(SkippedEffect::tool_missing(integration.name(), tool));
         }
@@ -391,7 +391,7 @@ pub fn run_host_fits(
         let ctx = ctx_base.build_context(config, manifest);
         integration
             .fit_to_host(&ctx)
-            .map_err(|e| anyhow::anyhow!("fitting to this host failed: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("fitting to this host failed: {e:#}"))?;
         Ok(Vec::new())
     })
 }
@@ -409,7 +409,7 @@ pub fn run_deactivations(
     for_each_enabled(integrations, manifest, |integration, _config| {
         integration
             .deactivate(root)
-            .map_err(|e| anyhow::anyhow!("deactivation failed: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("deactivation failed: {e:#}"))?;
         Ok(Vec::new())
     })
 }

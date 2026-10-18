@@ -990,7 +990,7 @@ fn realign_present_clone(
     target: &ResolvedRevisionId,
     detach_checkouts: Option<DetachConsent>,
 ) -> Result<(), String> {
-    let describe = |e: VcsError| format!("{}: {e}", repo_path.as_str());
+    let describe = |e: VcsError| format!("{}: {e:#}", repo_path.as_str());
 
     let attached = match vcs.head_attachment(dest).map_err(describe)? {
         HeadAttachment::Detached(was) => {
@@ -1021,7 +1021,7 @@ fn realign_present_clone(
     // gates use — instead of a raw string compare.
     let declared = TrackingRef::parse(RawRefName::new(entry.version.as_str())).map_err(|e| {
         format!(
-            "{}: manifest declares an invalid tracking branch '{}': {e}",
+            "{}: manifest declares an invalid tracking branch '{}': {e:#}",
             repo_path.as_str(),
             entry.version,
         )
@@ -1132,7 +1132,7 @@ fn fetch_one(
                 Err(e) => {
                     return FetchOutcome::Failed {
                         msg: format!(
-                            "{}: failed to resolve {}: {e}",
+                            "{}: failed to resolve {}: {e:#}",
                             repo_path.as_str(),
                             lock_entry.version,
                         ),
@@ -1173,7 +1173,7 @@ fn fetch_one(
         if let Err(e) = std::fs::create_dir_all(parent) {
             return FetchOutcome::Failed {
                 msg: format!(
-                    "{}: failed to create directory {}: {e}",
+                    "{}: failed to create directory {}: {e:#}",
                     repo_path.as_str(),
                     parent.display()
                 ),
@@ -1199,7 +1199,7 @@ fn fetch_one(
             Err(e) => {
                 return FetchOutcome::Failed {
                     msg: format!(
-                        "{}: manifest declares an invalid tracking branch '{}': {e}",
+                        "{}: manifest declares an invalid tracking branch '{}': {e:#}",
                         repo_path.as_str(),
                         entry.version,
                     ),
@@ -1220,7 +1220,7 @@ fn fetch_one(
         ) {
             return FetchOutcome::Failed {
                 msg: format!(
-                    "{}: failed to materialize {} at {}: {e}",
+                    "{}: failed to materialize {} at {}: {e:#}",
                     repo_path.as_str(),
                     entry.url,
                     lock_entry.version,
@@ -1233,7 +1233,7 @@ fn fetch_one(
     if let Err(e) = vcs.clone_repo(&entry.url.to_string(), &dest) {
         return FetchOutcome::Failed {
             msg: format!(
-                "{}: failed to clone {} into {}: {e}",
+                "{}: failed to clone {} into {}: {e:#}",
                 repo_path.as_str(),
                 entry.url,
                 dest.display()

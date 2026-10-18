@@ -1072,7 +1072,7 @@ struct StrategyError {
 impl StrategyError {
     fn from_vcs(err: VcsError) -> Self {
         Self {
-            message: err.to_string(),
+            message: format!("{err:#}"),
             cause: err,
         }
     }
@@ -1104,7 +1104,7 @@ fn apply_strategy(
                     None => String::new(),
                 };
                 let message =
-                    format!("cannot fast-forward{shape}; rerun with --strategy rebase. {e}");
+                    format!("cannot fast-forward{shape}; rerun with --strategy rebase. {e:#}");
                 return Err(StrategyError::with_message(message, e));
             }
         }
@@ -1720,7 +1720,7 @@ fn reload_replayed_project(ctx: &OpContext<'_>) -> anyhow::Result<Project> {
         crate::refusal::refusal(
             RefusalKind::UnparseableProject,
             format!(
-                "failed to reload project manifest after Phase 1' ({e}).\n\
+                "failed to reload project manifest after Phase 1' ({e:#}).\n\
                  \n\
                  The project repo was successfully rebased/merged, but the manifest \
                  in {cwd_project_dir} could not be parsed. Proceeding would silently \
@@ -4308,7 +4308,7 @@ fn check_detached_target_preflight(
         Ok(HeadAttachment::Attached(_)) => None,
         Ok(HeadAttachment::Detached(d)) => Some(format!("detached HEAD at {}", d.at())),
         Ok(HeadAttachment::Unborn(u)) => Some(format!("unborn branch '{u}', no commits yet")),
-        Err(e) => Some(format!("HEAD unreadable: {e}")),
+        Err(e) => Some(format!("HEAD unreadable: {e:#}")),
     };
 
     let mut detached: Vec<String> = Vec::new();
@@ -5286,7 +5286,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             Err(e) => {
                 any_failure = true;
                 let outcome = RepoSyncOutcome::Failed(SyncFailure::HeadUnreadable {
-                    error: e.to_string(),
+                    error: format!("{e:#}"),
                     cause: Some(e),
                 });
                 ctx.handler
@@ -5829,7 +5829,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             Ok(tip) => tip,
             Err(e) => {
                 if emit_text {
-                    eprintln!("  {}: failed to read CWD tip: {e}", repo_path);
+                    eprintln!("  {}: failed to read CWD tip: {e:#}", repo_path);
                 }
                 any_ff_failure = true;
                 continue;
@@ -6550,7 +6550,7 @@ fn apply_project_strategy(
                     ),
                     None => String::new(),
                 };
-                anyhow::bail!("project repo fast-forward failed{shape}: {e}");
+                anyhow::bail!("project repo fast-forward failed{shape}: {e:#}");
             }
         }
         SyncStrategy::Rebase => {
@@ -6600,7 +6600,7 @@ fn apply_project_strategy(
                         )
                     );
                 }
-                Err(e) => anyhow::bail!("project repo rebase failed: {e}"),
+                Err(e) => anyhow::bail!("project repo rebase failed: {e:#}"),
             }
         }
     }
@@ -6825,7 +6825,7 @@ pub fn run_abort(
                     }
                     Err(e) => {
                         eprintln!(
-                            "  warning: could not load project at {}: {e}; skipping",
+                            "  warning: could not load project at {}: {e:#}; skipping",
                             other_project_dir.display()
                         );
                     }
@@ -6833,7 +6833,7 @@ pub fn run_abort(
             }
             Err(e) => {
                 eprintln!(
-                    "  warning: could not resolve workspace at {}: {e}; skipping",
+                    "  warning: could not resolve workspace at {}: {e:#}; skipping",
                     other_dir.display()
                 );
             }

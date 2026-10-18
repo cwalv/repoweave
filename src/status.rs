@@ -274,7 +274,7 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool) -> anyhow::Result<()> {
                 // Warn and skip; run `rwv doctor` to get the canonical
                 // `unparseable-project` violation with full detail.
                 eprintln!(
-                    "warning: skipping project {pname}: manifest unreadable ({e}); \
+                    "warning: skipping project {pname}: manifest unreadable ({e:#}); \
                      run `rwv doctor` for details"
                 );
                 continue;

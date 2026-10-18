@@ -112,7 +112,7 @@ pub fn generate_lock(
         // says the commit does not exist.
         let detached = match vcs
             .head_attachment(repo_dir)
-            .map_err(|e| anyhow::anyhow!("{}: {}", repo_path, e))?
+            .map_err(|e| anyhow::anyhow!("{}: {:#}", repo_path, e))?
         {
             HeadAttachment::Attached(_) | HeadAttachment::Unborn(_) => None,
             HeadAttachment::Detached(d) => Some(d),
@@ -123,7 +123,7 @@ pub fn generate_lock(
         // the repo path and the fix.
         let version = vcs
             .head_revision(repo_dir)
-            .map_err(|e| anyhow::anyhow!("{}: {}", repo_path, e))?;
+            .map_err(|e| anyhow::anyhow!("{}: {:#}", repo_path, e))?;
 
         // Detached HEAD: warn but do not refuse. Lock runs inside automation
         // (sync auto-relock) so a hard gate would break legitimate flows.
@@ -227,7 +227,7 @@ fn stage_and_commit(
         return Err(match vcs.unstage_paths(project_dir, paths) {
             Ok(()) => refused,
             Err(e) => refused.context(format!(
-                "{} left staged: unstaging after the refused commit failed ({e})",
+                "{} left staged: unstaging after the refused commit failed ({e:#})",
                 paths.join(", ")
             )),
         });

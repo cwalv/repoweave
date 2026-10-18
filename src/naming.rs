@@ -254,7 +254,7 @@ impl fmt::Display for ProjectNameError {
                  (a workweave directory, a `-w` address, a branch name). Choose a \
                  name without `+`."
             ),
-            Self::InvalidRef(e) => write!(f, "not a valid project name: {e}"),
+            Self::InvalidRef(e) => write!(f, "not a valid project name: {e:#}"),
         }
     }
 }
@@ -347,7 +347,7 @@ impl fmt::Display for WorkweaveNameError {
                 "'{s}' is not a valid workweave name: contains `--` or starts/ends \
                  with `-`, ambiguous against the `--` that joins project to workweave."
             ),
-            Self::InvalidRef(e) => write!(f, "not a valid workweave name: {e}"),
+            Self::InvalidRef(e) => write!(f, "not a valid workweave name: {e:#}"),
         }
     }
 }

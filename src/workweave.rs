@@ -160,7 +160,7 @@ pub fn validate_registry_entry(
         Ok(None) => return RegistryEntryValidation::MissingMarker,
         Err(e) => {
             return RegistryEntryValidation::MarkerUnreadable {
-                detail: e.to_string(),
+                detail: format!("{e:#}"),
             }
         }
     };
@@ -436,7 +436,7 @@ pub fn prune_orphan_worktrees_for(vcs: &dyn Vcs, pairs: &[(PathBuf, PathBuf)]) {
             // both the on-disk tree and the `.git/worktrees/` registration.
             if let Err(e) = vcs.remove_worktree(repo_abs, worktree_path) {
                 eprintln!(
-                    "rwv workweave rollback: warning: could not remove worktree {}: {e}",
+                    "rwv workweave rollback: warning: could not remove worktree {}: {e:#}",
                     worktree_path.display()
                 );
                 // Fall through to prune to at least clear the admin entry.
@@ -445,7 +445,7 @@ pub fn prune_orphan_worktrees_for(vcs: &dyn Vcs, pairs: &[(PathBuf, PathBuf)]) {
         // Always prune stale entries regardless of remove outcome.
         if let Err(e) = vcs.worktree_prune(repo_abs) {
             eprintln!(
-                "rwv workweave rollback: warning: git worktree prune failed in {}: {e}",
+                "rwv workweave rollback: warning: git worktree prune failed in {}: {e:#}",
                 repo_abs.display()
             );
         }
@@ -638,7 +638,7 @@ impl CreateRollbackGuard {
             if worktree_path.exists() {
                 if let Err(e) = self.vcs.remove_worktree(repo_abs, worktree_path) {
                     eprintln!(
-                        "rwv workweave rollback: warning: could not remove worktree {}: {e}",
+                        "rwv workweave rollback: warning: could not remove worktree {}: {e:#}",
                         worktree_path.display()
                     );
                     failures.push(format!(
@@ -651,7 +651,7 @@ impl CreateRollbackGuard {
             // Always prune stale admin entries regardless of remove outcome.
             if let Err(e) = self.vcs.worktree_prune(repo_abs) {
                 eprintln!(
-                    "rwv workweave rollback: warning: git worktree prune failed in {}: {e}",
+                    "rwv workweave rollback: warning: git worktree prune failed in {}: {e:#}",
                     repo_abs.display()
                 );
             }
@@ -669,7 +669,7 @@ impl CreateRollbackGuard {
         if self.workweave_dir.exists() {
             if let Err(e) = std::fs::remove_dir_all(&self.workweave_dir) {
                 eprintln!(
-                    "rwv workweave rollback: warning: could not remove partial workweave dir {}: {e}",
+                    "rwv workweave rollback: warning: could not remove partial workweave dir {}: {e:#}",
                     self.workweave_dir.display()
                 );
                 failures.push(format!(
@@ -695,7 +695,7 @@ impl CreateRollbackGuard {
         for repo_abs in &self.prune_on_rollback {
             if let Err(e) = self.vcs.worktree_prune(repo_abs) {
                 eprintln!(
-                    "rwv workweave rollback: warning: git worktree prune failed in {}: {e}",
+                    "rwv workweave rollback: warning: git worktree prune failed in {}: {e:#}",
                     repo_abs.display()
                 );
             }
@@ -746,7 +746,7 @@ impl CreateRollbackGuard {
                 if let Err(e) = registry.retract(&store, owned.name()) {
                     eprintln!(
                         "rwv workweave rollback: warning: could not retract the ownership \
-                         receipt for adopted branch {owned} in {}: {e}",
+                         receipt for adopted branch {owned} in {}: {e:#}",
                         store.display()
                     );
                 }
@@ -758,7 +758,7 @@ impl CreateRollbackGuard {
                     if let Err(e) = vcs.delete_owned_ref(owned, warrant) {
                         eprintln!(
                             "rwv workweave rollback: warning: could not delete ephemeral \
-                             branch {owned} in {}: {e}",
+                             branch {owned} in {}: {e:#}",
                             store.display()
                         );
                         failures.push(format!(
@@ -771,7 +771,7 @@ impl CreateRollbackGuard {
                     if let Err(e) = registry.retract(&store, owned.name()) {
                         eprintln!(
                             "rwv workweave rollback: warning: branch {owned} deleted but its \
-                             ownership receipt could not be retracted ({e}); run \
+                             ownership receipt could not be retracted ({e:#}); run \
                              `rwv doctor --fix`"
                         );
                     }
@@ -783,7 +783,7 @@ impl CreateRollbackGuard {
                         if let Err(e) = registry.retract(&store, owned.name()) {
                             eprintln!(
                                 "rwv workweave rollback: warning: could not retract the \
-                                 dangling ownership receipt for {owned} in {}: {e}",
+                                 dangling ownership receipt for {owned} in {}: {e:#}",
                                 store.display()
                             );
                         }
@@ -840,7 +840,7 @@ impl Drop for CreateRollbackGuard {
         if self.workweave_dir.exists() {
             if let Err(e) = std::fs::remove_dir_all(&self.workweave_dir) {
                 eprintln!(
-                    "rwv workweave rollback: warning: could not remove partial workweave dir {}: {e}",
+                    "rwv workweave rollback: warning: could not remove partial workweave dir {}: {e:#}",
                     self.workweave_dir.display()
                 );
             }
@@ -853,7 +853,7 @@ impl Drop for CreateRollbackGuard {
         for repo_abs in &self.prune_on_rollback {
             if let Err(e) = vcs.worktree_prune(repo_abs) {
                 eprintln!(
-                    "rwv workweave rollback: warning: git worktree prune failed in {}: {e}",
+                    "rwv workweave rollback: warning: git worktree prune failed in {}: {e:#}",
                     repo_abs.display()
                 );
             }
@@ -1841,7 +1841,7 @@ pub fn create_workweave(
                     crate::refuse!(
                         RefusalKind::UnreadableStatus,
                         "rwv workweave create: refusing to create workweave — \
-                         could not check projects/{project} for uncommitted changes: {e}\n\n\
+                         could not check projects/{project} for uncommitted changes: {e:#}\n\n\
                          To bypass this check, use --capture-dirty.",
                         project = project.as_str(),
                     );
@@ -1994,7 +1994,7 @@ pub fn create_workweave(
                         worktree_dest.display()
                     );
                     let msg = format!(
-                        "{repo}: submodules not initialized ({e}); \
+                        "{repo}: submodules not initialized ({e:#}); \
                          fix: `{fix_cmd}`",
                         repo = repo_path.as_str(),
                     );
@@ -2009,7 +2009,7 @@ pub fn create_workweave(
                 } else {
                     ""
                 };
-                let msg = format!("{}: {e}{hook_hint}", repo_path.as_str());
+                let msg = format!("{}: {e:#}{hook_hint}", repo_path.as_str());
                 eprintln!("rwv workweave create: error: {msg}");
                 errors.push(msg);
             }
@@ -2114,7 +2114,7 @@ pub fn create_workweave(
                     )
                 };
                 bail!(
-                    "could not create project worktree projects/{}: {e}{hook_hint}{cleanup_note}",
+                    "could not create project worktree projects/{}: {e:#}{hook_hint}{cleanup_note}",
                     project.as_str()
                 );
             }
@@ -2170,7 +2170,7 @@ pub fn create_workweave(
                 Err(e) => {
                     captured.incomplete = true;
                     eprintln!(
-                        "rwv workweave create: warning: failed to overlay {}: {e}",
+                        "rwv workweave create: warning: failed to overlay {}: {e:#}",
                         dst.display()
                     );
                 }
@@ -2195,7 +2195,7 @@ pub fn create_workweave(
         ) {
             eprintln!(
                 "rwv workweave create: warning: could not carry untracked managed files \
-                 into projects/{}: {e}",
+                 into projects/{}: {e:#}",
                 project.as_str()
             );
         }
@@ -2212,7 +2212,7 @@ pub fn create_workweave(
         {
             eprintln!(
                 "rwv workweave create: warning: could not carry rwv-owned generated files \
-                 into projects/{}: {e}",
+                 into projects/{}: {e:#}",
                 project.as_str()
             );
         }
@@ -2416,7 +2416,7 @@ fn release_captured_edits(
                  working file was copied"
                     .to_string()
             }
-            Err(e) => format!("discarding it failed: {e}"),
+            Err(e) => format!("discarding it failed: {e:#}"),
         };
         eprintln!(
             "rwv workweave create: warning: projects/{project}/{fname} stays uncommitted in \
@@ -2550,7 +2550,7 @@ pub fn collect_dirty_paths(
         match project_vcs.has_uncommitted_changes(&project_wt) {
             Ok(true) => dirty.push(rel),
             Ok(false) => {}
-            Err(e) => dirty.push(format!("{rel}: status check failed: {e}")),
+            Err(e) => dirty.push(format!("{rel}: status check failed: {e:#}")),
         }
     }
 
@@ -2564,7 +2564,10 @@ pub fn collect_dirty_paths(
         match vcs.has_uncommitted_changes(&wt) {
             Ok(true) => dirty.push(repo_path.as_str().to_string()),
             Ok(false) => {}
-            Err(e) => dirty.push(format!("{}: status check failed: {e}", repo_path.as_str())),
+            Err(e) => dirty.push(format!(
+                "{}: status check failed: {e:#}",
+                repo_path.as_str()
+            )),
         }
     }
 
@@ -2574,7 +2577,7 @@ pub fn collect_dirty_paths(
         match vcs.has_uncommitted_changes(&workweave_dir.join(repo_path.as_path())) {
             Ok(true) => dirty.push(label),
             Ok(false) => {}
-            Err(e) => dirty.push(format!("{label}: status check failed: {e}")),
+            Err(e) => dirty.push(format!("{label}: status check failed: {e:#}")),
         }
     }
 
@@ -2643,7 +2646,7 @@ fn collect_diverged_paths(
         let wt_head = match vcs.head_revision(wt) {
             Ok(h) => h,
             Err(e) => {
-                diverged.push(format!("{label}: HEAD check failed: {e}"));
+                diverged.push(format!("{label}: HEAD check failed: {e:#}"));
                 return;
             }
         };
@@ -3006,7 +3009,7 @@ fn adopt_children_of(retiree_dir: &Path, primary_root: &Path) {
         if let Err(e) = marker.write(&child_dir) {
             eprintln!(
                 "warning: failed to adopt child workweave {child_name}: could not rewrite \
-                 marker ({e}); run `rwv doctor --fix` to re-point its parent"
+                 marker ({e:#}); run `rwv doctor --fix` to re-point its parent"
             );
             continue;
         }
@@ -3079,7 +3082,7 @@ fn retire_recorded_refs(
                 if let Err(e) = registry.retract(store, &raw) {
                     eprintln!(
                         "rwv workweave delete: warning: {label}: branch {owned} is already \
-                         gone but its ownership receipt could not be retracted ({e}); run \
+                         gone but its ownership receipt could not be retracted ({e:#}); run \
                          `rwv doctor --fix`"
                     );
                 }
@@ -3098,13 +3101,13 @@ fn retire_recorded_refs(
                                     eprintln!(
                                         "rwv workweave delete: warning: {label}: branch \
                                          {owned} deleted ({why}) but its ownership receipt \
-                                         could not be retracted ({e}); run `rwv doctor --fix`"
+                                         could not be retracted ({e:#}); run `rwv doctor --fix`"
                                     );
                                 }
                             }
                             Err(e) => eprintln!(
                                 "rwv workweave delete: warning: {label}: could not delete \
-                                 branch {owned} ({why}): {e}"
+                                 branch {owned} ({why}): {e:#}"
                             ),
                         }
                     }
@@ -3119,7 +3122,7 @@ fn retire_recorded_refs(
         Ok(None) => {}
         Err(e) => eprintln!(
             "rwv workweave delete: warning: {label}: could not read the ownership receipts \
-             in {}: {e}",
+             in {}: {e:#}",
             store.display()
         ),
     }
@@ -3141,7 +3144,7 @@ fn retire_recorded_refs(
             }
         }
         Err(e) => eprintln!(
-            "rwv workweave delete: warning: {label}: could not list branches in {}: {e}",
+            "rwv workweave delete: warning: {label}: could not list branches in {}: {e:#}",
             store.display()
         ),
     }
@@ -3460,7 +3463,7 @@ fn delete_workweave_inner_at(
                 continue;
             }
             if let Err(e) = vcs.remove_worktree(&repo_abs, &worktree_path) {
-                let msg = format!("{}: {e}", repo_path.as_str());
+                let msg = format!("{}: {e:#}", repo_path.as_str());
                 eprintln!("rwv workweave delete: error: {msg}");
                 errors.push(msg);
                 // Fall through to the ref pass anyway: the receipt set
@@ -3511,7 +3514,7 @@ fn delete_workweave_inner_at(
     );
     if project_worktree.exists() && crate::git::is_linked_worktree(&project_worktree) {
         if let Err(e) = project_vcs.remove_worktree(&project_store, &project_worktree) {
-            let msg = format!("{}: {e}", project_rel_path(project.as_str()));
+            let msg = format!("{}: {e:#}", project_rel_path(project.as_str()));
             eprintln!("rwv workweave delete: error: {msg}");
             errors.push(msg);
         }
@@ -3571,7 +3574,7 @@ fn delete_workweave_inner_at(
     if let Err(e) = workweave_index::forget_workweave(ws_root, project, name.as_str()) {
         eprintln!(
             "rwv workweave delete: warning: workweave directory removed but registry \
-             entry for `{}` could not be updated ({e}); run `rwv doctor --fix` to \
+             entry for `{}` could not be updated ({e:#}); run `rwv doctor --fix` to \
              prune the stale entry",
             name.as_str()
         );
@@ -3887,7 +3890,7 @@ pub fn workweave_log(
         let head = match vcs.head_revision(&ww_repo) {
             Ok(rev) => Some(rev),
             Err(e) => {
-                note = Some(format!("workweave checkout HEAD unreadable: {e}"));
+                note = Some(format!("workweave checkout HEAD unreadable: {e:#}"));
                 None
             }
         };
@@ -3899,7 +3902,7 @@ pub fn workweave_log(
             Ok(rev) => Some(rev),
             Err(e) => {
                 if note.is_none() {
-                    note = Some(format!("parent checkout HEAD unreadable: {e}"));
+                    note = Some(format!("parent checkout HEAD unreadable: {e:#}"));
                 }
                 None
             }
@@ -3920,7 +3923,7 @@ pub fn workweave_log(
                             diff_base = ud.base;
                             diff_text = Some(ud.text);
                         }
-                        Err(e) => note = Some(format!("diff failed: {e}")),
+                        Err(e) => note = Some(format!("diff failed: {e:#}")),
                     }
                 } else {
                     match vcs.unique_commits(&ww_repo, parent_rev) {
@@ -3934,7 +3937,7 @@ pub fn workweave_log(
                                 })
                                 .collect();
                         }
-                        Err(e) => note = Some(format!("log failed: {e}")),
+                        Err(e) => note = Some(format!("log failed: {e:#}")),
                     }
                 }
             }
@@ -3963,7 +3966,7 @@ pub fn workweave_log(
         let head = match vcs.head_revision(&ww_project) {
             Ok(rev) => Some(rev),
             Err(e) => {
-                note = Some(format!("workweave project checkout HEAD unreadable: {e}"));
+                note = Some(format!("workweave project checkout HEAD unreadable: {e:#}"));
                 None
             }
         };
@@ -3972,7 +3975,7 @@ pub fn workweave_log(
             Ok(rev) => Some(rev),
             Err(e) => {
                 if note.is_none() {
-                    note = Some(format!("parent project checkout HEAD unreadable: {e}"));
+                    note = Some(format!("parent project checkout HEAD unreadable: {e:#}"));
                 }
                 None
             }
@@ -3990,7 +3993,7 @@ pub fn workweave_log(
                             diff_base = ud.base;
                             diff_text = Some(ud.text);
                         }
-                        Err(e) => note = Some(format!("diff failed: {e}")),
+                        Err(e) => note = Some(format!("diff failed: {e:#}")),
                     }
                 } else {
                     match vcs.unique_commits(&ww_project, parent_rev) {
@@ -4004,7 +4007,7 @@ pub fn workweave_log(
                                 })
                                 .collect();
                         }
-                        Err(e) => note = Some(format!("log failed: {e}")),
+                        Err(e) => note = Some(format!("log failed: {e:#}")),
                     }
                 }
             }

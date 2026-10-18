@@ -101,7 +101,7 @@ fn refusal(
     on_windows: bool,
 ) -> (Option<RefusalKind>, String) {
     let mut message = format!(
-        "failed to create symlink {} -> {}: {error}",
+        "failed to create symlink {} -> {}: {error:#}",
         link.display(),
         target.display()
     );
