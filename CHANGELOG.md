@@ -19,7 +19,8 @@ file:///abs/path` clones from a local remote, and the new `rwv add --adopt
 `rwv add <url-or-shorthand>` that finds a clone of another repo already at the
 placement refuses with `foreign-clone-at-placement`, naming `--adopt`. It used
 to register that clone under the URL you typed. A clone of the same repo is
-registered as before.
+registered as before; a `file://` URL and the path it names, drive-letter or UNC
+on Windows, count as the same repo.
 
 ### Breaking: unknown integrations and settings keys in `rwv.toml` are refused
 
@@ -117,13 +118,12 @@ Without `--kind`, `rwv doctor --json` exits non-zero only when a finding —
 violation or integration issue — is error-severity, matching the text report.
 It used to exit 1 on any violation, warnings included, so a weave whose only
 finding was a warning such as `missing-merge-driver-config` failed `--json`
-while the text report exited 0. A CI job scripted against `--json`'s old,
-wider failure could be relying on it.
+while the text report exited 0.
 
 With `--kind`, a finding the filter admits exits non-zero regardless of
-severity, in both modes — `rwv doctor --kind tool-missing` included. Before
-this release the text report ignored `--kind` for its exit code and used the
-error-only rule even under a filter that matched a warning.
+severity, in both modes — `rwv doctor --kind tool-missing` included. The text
+report used to ignore `--kind` for its exit code and apply the error-only rule
+even under a filter that matched a warning.
 
 ### Added
 
@@ -138,9 +138,11 @@ error-only rule even under a filter that matched a warning.
   `local/<owner>/<repo>` creation takes `--param root=<dir>`, an absolute
   directory outside the weave, makes a bare upstream there and clones the member
   from it, so `origin` is real from the start. `--params-json` passes the
-  parameters as one JSON object. New refusals: `missing-creation-param`,
-  `unusable-creation-param`, `occupied-placement` and
-  `provider-cannot-mint-url`.
+  parameters as one JSON object. A creation whose clone takes a detached HEAD
+  from an upstream already under the root refuses, naming that upstream and the
+  `git -C <upstream> symbolic-ref HEAD refs/heads/<branch>` that repairs it. New
+  refusals: `missing-creation-param`, `unusable-creation-param`,
+  `occupied-placement` and `provider-cannot-mint-url`.
 - `--no-materialize` on `rwv add`, `remove`, `role`, `update`,
   `workweave create`, `fetch` and `init --adopt` skips the install hooks;
   `rwv materialize` runs them later.
@@ -154,11 +156,13 @@ error-only rule even under a filter that matched a warning.
 - `rwv doctor --fix` replaces a full clone standing in a workweave
   (`clone-topology` / `standalone-in-workweave`) with a worktree of the
   canonical clone. It changes nothing while the clone holds commits, files or
-  worktrees the canonical clone lacks, and lists each one.
+  worktrees the canonical clone lacks, and lists each one: for ignored files it
+  names `git clean -X -d -n` and `git clean -X -d -f`, and when the canonical
+  clone is missing it names `rwv fetch --project <project>` with the
+  workweave's project.
 - `rwv doctor --kind` accepts integration issue kinds such as `tool-missing` and
-  `managed-file-drift`. Under `--json`, any finding in the filtered view exits
-  1, warnings included, so `rwv doctor --json --kind tool-missing` fails a CI
-  job whose install hooks could not run.
+  `managed-file-drift`, so `rwv doctor --kind tool-missing` fails a CI job whose
+  install hooks could not run.
 - Member files are shared between workspaces of the same repo. A new worktree's
   tracked files are cloned by reflink from another workspace wherever the
   filesystem supports it, and written by git elsewhere; on Linux a `reference`
@@ -170,15 +174,21 @@ error-only rule even under a filter that matched a warning.
   `{ path = ".beads", from = "primary" }` links every workweave to the primary
   weave's `projects/<project>/<path>`, so state that every workweave shares has
   one copy.
-- New doctor findings: `unknown-segment-clone`, a repo under a top-level
-  directory that no registry and no manifest names, build output under
-  `node_modules/` and `target/` excepted; `placement-disagreement`, a
-  manifest path that its own URL does not derive to; `lock-pinned-by-name`, a
-  lock entry holding a tag or branch name, which `rwv status --json` also marks
-  as `lock_pinned_by_name`; `workweave-drift` sub-kinds for a member a
-  workweave lacks or still holds as a symlink, and `extra` for a checkout a
-  member removed by hand left behind; `member-permissions`; and
-  `role-disagreement`, a canonical clone the projects listing it disagree on.
+- New doctor findings:
+  - `unknown-segment-clone`: a repo under a top-level directory that no
+    registry and no manifest names, build output under `node_modules/` and
+    `target/` excepted. It names `rwv add --adopt` with the path the clone's
+    origin URL places it at, moving it there first.
+  - `placement-disagreement`: a manifest path that its own URL does not derive
+    to. It names moving the checkout to the path its URL places at, unless it
+    is already there, re-keying the entry in `rwv.toml`, and `rwv lock`.
+  - `lock-pinned-by-name`: a lock entry holding a tag or branch name, which
+    `rwv status --json` also marks as `lock_pinned_by_name`.
+  - `workweave-drift` sub-kinds for a member a workweave lacks or still holds
+    as a symlink, and `extra` for a checkout a member removed by hand left
+    behind.
+  - `member-permissions`, and `role-disagreement`, a canonical clone the
+    projects listing it disagree on.
 - `rwv doctor` checks gita: a missing or stale `repos.csv` or `groups.csv`
   reports `managed-file-missing` or `managed-file-drift`, and `rwv doctor --fix`
   writes them.
@@ -212,9 +222,9 @@ error-only rule even under a filter that matched a warning.
   pruned during its own landing. Pruning runs after every member repo has
   replayed, so a parked op removes nothing.
 - Surfacing is all-or-nothing: an occupant at any link path refuses with every
-  occupant named and no link changed. An intent verb whose regeneration fails
-  before the install hooks puts `rwv.toml` and every file it rewrote back, and
-  the error says so.
+  occupant named, a file standing where a directory belongs included, and no
+  link changed. An intent verb whose regeneration fails before the install hooks
+  puts `rwv.toml` and every file it rewrote back, and the error says so.
 - A lock file an ecosystem tool wrote as a real file at the weave root, past its
   link, is taken into the project by `add`, `remove`, `update`, `materialize`
   and `doctor --fix` when the project's copy is absent, identical, at the
@@ -223,16 +233,22 @@ error-only rule even under a filter that matched a warning.
   with `conflicting-root-write`.
 - Re-running `rwv add` for an entry `rwv.toml` already names finishes it: it
   clones a missing canonical clone, creates the workweave's worktree and
-  regenerates. A URL naming a different repo refuses with `occupied-placement`.
+  regenerates. A URL naming a different repo refuses with `occupied-placement`,
+  naming `rwv remove <path> --delete`: in a workweave whose clone is on disk,
+  there and then in the primary weave.
 - `rwv remove <path>` finishes an entry already removed from `rwv.toml` by hand
   while this workspace still holds its checkout. `--delete` removes the checkout
   in the workspace the command runs in, the canonical clone at the primary weave
   or the worktree in a workweave, after the guards that refuse uncommitted
   changes, commits no other clone reaches and a store something else claims.
+  In a workweave it also deletes the branch the workweave was given in the
+  canonical clone, unless that branch holds commits the clone's checkout lacks.
   Its refusals name `rwv remove`, not `rwv sync`.
 - A refused `rwv add --new` removes the bare upstream, member and directories it
   created, and says so. A refused `rwv add` names the clone or worktree it keeps
-  for a re-run, with the command that removes it.
+  for a re-run, with the command that removes it: in a workweave,
+  `rwv remove <path> --delete` there for its worktree and then in the primary
+  weave for its clone.
 - `rwv add` reports `member-incompatibility` when the member it adds needs more
   than the workspace file pins, as `rwv update` does.
 - rwv refuses to write a managed file whose generated content does not parse
@@ -257,21 +273,49 @@ error-only rule even under a filter that matched a warning.
 
 ### Fixed
 
-- The unset `origin/HEAD` hint of `rwv push` and `rwv add --adopt` no longer
-  offers "push once with an explicit branch", which is what leaves it unset; it
-  names `git remote set-head origin -a`.
+- A `no-remote-default-branch` refusal names a repair that works. `rwv push` and
+  `rwv add --adopt` name `git fetch origin && git remote set-head origin -a`,
+  no longer offering "push once with an explicit branch", which is what leaves
+  `origin/HEAD` unset, and `rwv add --adopt` names itself as the re-run.
+  `rwv add <url>` names the repair for its case, in the clone it keeps: for a
+  remote with no branch yet, commit there, push the branch and record it with
+  `git remote set-head origin <branch>`; for a remote whose HEAD names none of
+  its branches, check out one of those it lists and record it the same way. It
+  named `git remote set-head origin -a`, which fails in both.
+- The lock-state-mismatch hint, and the `rwv explain push` page, name
+  `rwv lock --commit` or `git reset --keep <lock commit>` in place of a
+  `git checkout` of the lock commit, which detaches HEAD and is refused next.
+- `rwv doctor --locked` names `rwv fetch` with no source for a member missing on
+  disk, and a verb that refuses `missing-canonical-clone` for a workweave
+  member names `rwv fetch --project <project>` with the workweave's project, run
+  at the primary weave. Both named `rwv sync`, which takes a source.
 - The `store-still-claimed` refusal over live worktrees names
   `rwv workweave <project> delete <name>`, the spelling the CLI accepts. It
   used to drop the project, which the CLI rejects.
 - `rwv lock`'s detached-HEAD warning says a later `rwv fetch` attaches a
   branch at the pin. It used to say fetch would materialize the member
   detached, which is the opposite of what `rwv fetch` does.
-- The lock-state-mismatch hint, and the `rwv explain push` page, name
-  `rwv lock --commit` or `git reset --keep <lock commit>` in place of a
-  `git checkout` of the lock commit, which detaches HEAD and is refused next.
-- `rwv doctor --locked` names `rwv fetch` with no source for a member missing on
-  disk, and a workweave verb that finds no canonical clone names the same fetch,
-  run at the primary weave. Both named `rwv sync`, which takes a source.
+- `rwv init <name> --provider <registry>/<owner>` refused as
+  `malformed-provider`, `unknown-registry` or `provider-cannot-mint-url`
+  creates nothing, so the plain `rwv init <name>` the refusal names succeeds. It
+  used to leave the project directory behind, and the retry refused as
+  `project-dir-occupied`.
+- `rwv fetch <source>` refused as `project-dir-occupied` names
+  `rwv fetch --project <name>` for the project already there, and an empty
+  directory to fetch the other one into. It suggested a scoped project path,
+  which no `rwv fetch` spelling can request.
+- `tracked-index` names `git -C <project dir> rm --cached .rwv-workweave-index`
+  and committing the removal, and says the index needs no `.gitignore` entry,
+  since rwv excludes it through the project repo's `.git/info/exclude`. It
+  named `git rm --cached <absolute path>`, which fails outside the project
+  repo, and adding the index to `.gitignore`.
+- A workweave checkout detached while its ephemeral branch exists, such as a
+  review workweave holding a pull request's tip, reports
+  `branch-discipline` / `detached-off-ephemeral-branch`. It names the
+  `git switch <branch>` that reattaches it, and whether that moves the working
+  tree. It reported `detached`, offering `--adopt-detached-checkouts`, which
+  refuses to mint a branch that already exists; that flag now leaves such a
+  checkout alone.
 - `rwv remove --delete` regenerates the integration files as they stand once the
   checkout is gone, so the `.code-workspace` excludes name no deleted path and
   doctor reports no drift.
@@ -301,19 +345,13 @@ error-only rule even under a filter that matched a warning.
   `[workspace.package]`.
 - The gita integration writes `repos.csv` and `groups.csv` in the headerless
   format gita reads, so `gita ll <role>` and `gita super <role>` work with
-  `GITA_PROJECT_HOME` set to the weave root. Files in the old format report
-  `managed-file-drift` until regenerated.
+  `GITA_PROJECT_HOME` set to the weave root. On Windows each `repos.csv` path is
+  spelled the way gita spells it, backslash-separated with no `\\?\` verbatim
+  prefix. Files in the old format report `managed-file-drift` until
+  regenerated.
 - Disabling cargo-workspace and running `rwv materialize` removes rwv's entries
   from the project's `.cargo/config.toml`, the weave-root `.cargo/config.toml`
   link, and the weave-root `.cargo/` when that leaves it empty.
-- `rwv fetch <source>` sets the `rwv-ours` merge driver in the cloned project
-  repo when its `.gitattributes` assigns it to `rwv.lock`.
-- `origin-url-mismatch` compares against the remote's configured URL, so a
-  `url.<base>.insteadOf` rewrite no longer reports a mismatch.
-- `rwv add github/<owner>/<repo>` for a repo not yet cloned clones from the URL
-  the registry resolves, instead of passing the shorthand to git.
-- Clone-URL comparison decodes a percent-encoded `file://` URL, so a remote
-  whose path holds a space no longer reads as a different repo.
 - cargo-workspace derives a `[patch]` entry wherever cargo's own semver rules
   accept the in-weave version. A plain requirement such as `2.4.0` against an
   in-weave `2.8.3` used to be skipped with a warning. The
@@ -321,89 +359,26 @@ error-only rule even under a filter that matched a warning.
 - go-work reports `member-incompatibility` only where Go enforces it (a member
   requiring go 1.21 or newer), and no longer doubles its marker comment when a
   second module joins a `use (...)` block.
-- An activation error over a file standing where a directory belongs names the
-  file, on Windows as on Unix.
-- On Windows, the paths `rwv add` and `rwv remove` print, including a refused
-  add's "removed …" and "kept the clone it made at …" lines, carry no `\\?\`
+- `rwv fetch <source>` sets the `rwv-ours` merge driver in the cloned project
+  repo when its `.gitattributes` assigns it to `rwv.lock`.
+- `rwv add github/<owner>/<repo>` for a repo not yet cloned clones from the URL
+  the registry resolves, instead of passing the shorthand to git.
+- `origin-url-mismatch` compares against the remote's configured URL, so a
+  `url.<base>.insteadOf` rewrite no longer reports a mismatch.
+- Clone-URL comparison decodes a percent-encoded `file://` URL, so a remote
+  whose path holds a space no longer reads as a different repo.
+- On Windows, a drive-letter path in either separator, or a UNC path, names the
+  same remote as the `file://` URL for it, so `rwv doctor` no longer reports
+  `origin-url-mismatch` for a clone whose origin records the remote's path
+  while `rwv.toml` names it by URL. On every platform, a
+  `file://server/share/…` URL no longer matches `https://server/share/…`.
+- On Windows, the paths `rwv add` and `rwv remove` print carry no `\\?\`
   verbatim prefix. Unix output is unchanged.
 - On Windows, `rwv --help` and the `plugins` array of `rwv doctor --json` name
   a plugin by the verb that runs it: `rwv-lint.exe` is listed as `lint`, not
   `lint.exe`. A `rwv-*` file is a plugin when its extension is in `PATHEXT`, and
   two such files for one verb in one directory are reported as duplicates, the
   one dispatch runs winning in `PATHEXT` order. Unix listing is unchanged.
-- On Windows, a drive-letter path in either separator, or a UNC path, names the
-  same remote as the `file://` URL for it. `rwv doctor` reported
-  `origin-url-mismatch` for a clone whose origin records the remote's path
-  while `rwv.toml` names it by URL, and `rwv add <file-url>` refused such a
-  clone at the placement with `foreign-clone-at-placement` instead of
-  registering it. On every platform, a `file://server/share/…` URL no longer
-  matches `https://server/share/…`.
-- On Windows, the gita integration spells each `repos.csv` path the way gita
-  does: backslash-separated throughout, with no `\\?\` verbatim prefix. It
-  wrote the weave root followed by a `/`-separated repo path, a string gita
-  does not match against its own spelling of the same repo. Unix output is
-  unchanged.
-- When `rwv doctor --fix` leaves a full clone in a workweave standing because
-  it holds ignored files, the commands it names are `git clean -X -d -n` and
-  `git clean -X -d -f`. Without `-d`, git leaves an ignored directory such as
-  `node_modules/` in place, and the re-run `rwv doctor --fix` refused again.
-- `placement-disagreement` names the repair that clears it: move the checkout
-  to the path its URL places at unless it is already there, re-key the entry
-  in `rwv.toml`, and run `rwv lock`. It named moving the checkout alone, which
-  leaves the finding and adds a `dangling-reference`.
-- `unknown-segment-clone` names `rwv add --adopt` with the path the clone's
-  origin URL places it at, moving it there first. It named `rwv add <url>`,
-  which for a clone anywhere else makes a second clone and leaves the first
-  one reported.
-- `rwv init <name> --provider <registry>/<owner>` refused as
-  `malformed-provider`, `unknown-registry` or `provider-cannot-mint-url`
-  creates nothing, so the plain `rwv init <name>` the refusal names succeeds. It
-  used to leave the project directory behind, and the retry refused as
-  `project-dir-occupied`.
-- `rwv add <url>` refused as `no-remote-default-branch` names the repair for its
-  case, in the clone it keeps: for a remote with no branch yet, commit there,
-  push the branch and record it with `git remote set-head origin <branch>`; for
-  a remote whose HEAD names none of its branches, check out one of those it
-  lists and record it the same way. It named `git remote set-head origin -a`,
-  which fails in both.
-- `rwv remove <path> --delete` in a workweave also deletes the branch the
-  workweave was given in the canonical clone, and gives up rwv's claim on it,
-  unless that branch holds commits the clone's checkout lacks. A refused
-  `rwv add <url>` in a workweave names `rwv remove <path> --delete` there for its
-  worktree and then in the primary weave for its clone, and the primary-side
-  delete no longer refuses as `store-still-claimed`.
-- `occupied-placement` from `rwv add <url>` names `rwv remove <path> --delete`,
-  and in a workweave whose clone is on disk, that command there and then in the
-  primary weave. It named a plain `rwv remove`, which keeps the clone, so the
-  re-run add refused as `foreign-clone-at-placement`.
-- `rwv add --new` whose clone takes a detached HEAD from an upstream already
-  under `--param root` names that upstream and
-  `git -C <upstream> symbolic-ref HEAD refs/heads/<branch>`. It named the clone,
-  which the same refusal had removed.
-- `rwv add --adopt <path>` refused as `no-remote-default-branch` names
-  `rwv add --adopt <path>` as the re-run, the spelling that registers a clone.
-- `rwv fetch <source>` refused as `project-dir-occupied` names
-  `rwv fetch --project <name>` for the project already there, and an empty
-  directory to fetch the other one into. It suggested a scoped project path,
-  which no `rwv fetch` spelling can request.
-- A verb that refuses `missing-canonical-clone` for a workweave member, and
-  `rwv doctor --fix` when it cannot replace a full clone in a workweave for
-  the same cause, name `rwv fetch --project <project>` with the workweave's
-  project. They named a bare `rwv fetch`, which at the primary fetches only
-  the active project, so for a workweave of another project a parked
-  `rwv sync --continue` parked again.
-- `tracked-index` names `git -C <project dir> rm --cached .rwv-workweave-index`
-  and committing the removal, and says the index needs no `.gitignore` entry,
-  since rwv excludes it through the project repo's `.git/info/exclude`. It
-  named `git rm --cached <absolute path>`, which fails outside the project
-  repo, and adding the index to `.gitignore`.
-- A workweave checkout detached while its ephemeral branch exists, such as a
-  review workweave holding a pull request's tip, reports
-  `branch-discipline` / `detached-off-ephemeral-branch`. It names the
-  `git switch <branch>` that reattaches it, and whether that moves the working
-  tree. It reported `detached`, offering `--adopt-detached-checkouts`, which
-  refuses to mint a branch that already exists; that flag now leaves such a
-  checkout alone.
 
 ### Documentation
 
