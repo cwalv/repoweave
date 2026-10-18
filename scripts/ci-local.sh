@@ -115,15 +115,15 @@ if run_stage test-autocrlf; then
         exit 1
     fi
     # GIT_CONFIG_GLOBAL, not `git config --global`, so a developer's own
-    # ~/.gitconfig is never touched. It has to cover the `checkout` below AND
-    # the test run: the former is what converts the tree's own tracked files
-    # to CRLF the way a Windows checkout would, and the latter is what a real
-    # Windows runner's ambient git config does for every git call a test
-    # fixture makes on that platform, not only the initial checkout.
+    # ~/.gitconfig is never touched — and scoped to this one checkout, not
+    # exported for cargo test's own run: a test that sets its own HOME to
+    # sandbox a git identity or an autocrlf matrix of its own (several do)
+    # reads GIT_CONFIG_GLOBAL instead of that HOME's .gitconfig if it is set
+    # in the environment, identity included, which is a confound this stage
+    # must not hand every test regardless of what it is testing.
     autocrlf_config="$(mktemp)"
     printf '[core]\n\tautocrlf = true\n' > "$autocrlf_config"
     restore_autocrlf_checkout() {
-        unset GIT_CONFIG_GLOBAL
         git checkout -- .
         rm -f "$autocrlf_config"
     }
@@ -132,8 +132,7 @@ if run_stage test-autocrlf; then
     # stage, if one was named alongside this one, see the tree back at its
     # ordinary LF checkout instead of the CRLF one this stage needs.
     trap restore_autocrlf_checkout EXIT
-    export GIT_CONFIG_GLOBAL="$autocrlf_config"
-    git checkout -- .
+    GIT_CONFIG_GLOBAL="$autocrlf_config" git checkout -- .
     cargo test --release --no-fail-fast
     restore_autocrlf_checkout
     trap - EXIT
