@@ -299,8 +299,11 @@ fn push_refuses_when_lock_disagrees_with_local_state() {
 // ============================================================================
 
 /// Run `rwv push`, require the uncommitted-project-state refusal naming
-/// `files`, and require that no remote moved.
-fn assert_push_refuses_uncommitted(ws: &common::PushWorkspace, files: &str) {
+/// `files`, and require that no remote moved. `dry_run` additionally adds
+/// `--dry-run` to the invocation — the precondition must still fire, and
+/// unmoved bares are then the only evidence a subprocess test can see that
+/// dry-run's own announcement never got the chance to skip it.
+fn assert_push_refuses_uncommitted(ws: &common::PushWorkspace, files: &str, dry_run: bool) {
     let manifest_before: Vec<Option<String>> = ws
         .manifest_bares
         .iter()
@@ -308,8 +311,12 @@ fn assert_push_refuses_uncommitted(ws: &common::PushWorkspace, files: &str) {
         .collect();
     let project_before = bare_main_sha(&ws.project_bare);
 
+    let mut args = vec!["push"];
+    if dry_run {
+        args.push("--dry-run");
+    }
     let output = rwv()
-        .args(["push"])
+        .args(args)
         .current_dir(&ws.workspace)
         .output()
         .expect("rwv push");
@@ -362,7 +369,30 @@ fn push_refuses_an_uncommitted_relock() {
         .assert()
         .success();
 
-    assert_push_refuses_uncommitted(&ws, "rwv.lock");
+    assert_push_refuses_uncommitted(&ws, "rwv.lock", false);
+}
+
+/// B1: preconditions run "before any network call, under `--dry-run` too"
+/// (cli.md:315, push-cross-repo-feature.md:11) — the dry-run branch
+/// (src/push.rs's `if dry_run` print-the-plan step) sits after every
+/// `refuse!`, so passing `--dry-run` must not let this one through.
+/// Revert to watch it go red: wrap the `refuse_uncommitted_project_state`
+/// call in `run_push` (src/push.rs) in `if !dry_run { ... }`.
+#[test]
+fn push_refuses_an_uncommitted_relock_under_dry_run() {
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
+    let local = ws.workspace.join("local/org/a");
+    std::fs::write(local.join("advance.txt"), "advance").unwrap();
+    common::git_in(&local, &["add", "."]);
+    common::git_in(&local, &["commit", "-m", "advance past lock"]);
+
+    rwv()
+        .args(["lock"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+
+    assert_push_refuses_uncommitted(&ws, "rwv.lock", true);
 }
 
 /// A manifest or lock that was never committed is read by the precondition
@@ -375,7 +405,7 @@ fn push_refuses_an_untracked_manifest_or_lock() {
         common::git_in(&project_dir, &["rm", "--cached", "--quiet", file]);
         common::git_in(&project_dir, &["commit", "-m", &format!("untrack {file}")]);
 
-        assert_push_refuses_uncommitted(&ws, file);
+        assert_push_refuses_uncommitted(&ws, file, false);
     }
 }
 
@@ -388,7 +418,7 @@ fn push_refuses_any_tracked_dirt_in_the_project_repo() {
     common::git_in(&project_dir, &["commit", "-m", "notes"]);
     std::fs::write(project_dir.join("notes.md"), "draft, edited\n").unwrap();
 
-    assert_push_refuses_uncommitted(&ws, "notes.md");
+    assert_push_refuses_uncommitted(&ws, "notes.md", false);
 }
 
 /// Untracked scratch is not part of anything push reads or publishes.
@@ -434,6 +464,13 @@ fn push_refuses_detached_head() {
 // Negative: project repo off canonical branch refused
 // ============================================================================
 
+/// Tightened from a loose `"canonical" || "branch"` substring to the route
+/// token: that substring also matches `head-not-on-branch`'s message, so it
+/// could not tell this refusal apart from
+/// `push_refuses_project_repo_detached_head_by_route_token` below. Revert to
+/// watch it go red: in `run_push` (src/push.rs), change the
+/// `RefusalKind::ProjectRepoOffCanonicalBranch` arm to
+/// `RefusalKind::HeadNotOnBranch`.
 #[test]
 fn push_refuses_when_project_repo_off_canonical_branch() {
     let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
@@ -452,8 +489,72 @@ fn push_refuses_when_project_repo_off_canonical_branch() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("canonical") || stderr.contains("branch"),
-        "error should mention canonical branch; got: {stderr}"
+        stderr.contains("\nrwv explain project-repo-off-canonical-branch\n"),
+        "expected the `project-repo-off-canonical-branch` route token; got: {stderr}"
+    );
+}
+
+// ============================================================================
+// Negative: project repo detached or unborn — `head-not-on-branch`
+// ============================================================================
+
+/// B2: a project repo on a detached HEAD refuses with `head-not-on-branch`
+/// (cli.md:317, push-cross-repo-feature.md:14) — distinct from
+/// `push_refuses_detached_head` above, which detaches a *member* repo and
+/// takes the `unpushable-repo-branch` route instead. Revert to watch it go
+/// red: in `run_push` (src/push.rs), change the project-repo
+/// `HeadAttachment::Detached` arm's `RefusalKind::HeadNotOnBranch` to
+/// `RefusalKind::ProjectRepoOffCanonicalBranch`.
+#[test]
+fn push_refuses_project_repo_detached_head_by_route_token() {
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    let head_sha = common::git_in(&project_dir, &["rev-parse", "HEAD"]);
+    common::git_in(&project_dir, &["checkout", &head_sha]);
+
+    let output = rwv()
+        .args(["push"])
+        .current_dir(&ws.workspace)
+        .output()
+        .expect("rwv push");
+    assert!(
+        !output.status.success(),
+        "a detached project repo must refuse"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("\nrwv explain head-not-on-branch\n"),
+        "expected the `head-not-on-branch` route token; got: {stderr}"
+    );
+}
+
+/// B2's other case: an unborn project repo (HEAD symbolic, no commits yet)
+/// also refuses with `head-not-on-branch`. Revert to watch it go red: in
+/// `run_push` (src/push.rs), change the project-repo
+/// `HeadAttachment::Unborn` arm's `RefusalKind::HeadNotOnBranch` to
+/// `RefusalKind::ProjectRepoOffCanonicalBranch`.
+#[test]
+fn push_refuses_project_repo_unborn_head_by_route_token() {
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    // `checkout --orphan` leaves HEAD symbolic but pointing at a branch with
+    // no commits — `rwv.toml`/`rwv.lock` stay on disk (still tracked from
+    // the prior HEAD), but nothing is committed on the new branch yet.
+    common::git_in(&project_dir, &["checkout", "--orphan", "newborn"]);
+
+    let output = rwv()
+        .args(["push"])
+        .current_dir(&ws.workspace)
+        .output()
+        .expect("rwv push");
+    assert!(
+        !output.status.success(),
+        "an unborn project repo must refuse"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("\nrwv explain head-not-on-branch\n"),
+        "expected the `head-not-on-branch` route token; got: {stderr}"
     );
 }
 
