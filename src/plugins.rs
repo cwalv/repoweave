@@ -360,8 +360,8 @@ pub fn build_command(
     resolution: Option<&Resolution>,
 ) -> Command {
     let mut cmd = Command::new(binary);
-    // cmd.exe reads a verbatim `\\?\` working directory as a UNC path, which it
-    // will not run in.
+    // The plugin gets its working directory in the spelling a shell would hold,
+    // never the verbatim `\\?\` form a canonicalized `-C` path carries.
     cmd.args(args)
         .current_dir(dunce::simplified(invocation_dir));
     for (name, value) in envelope_vars(resolution) {
