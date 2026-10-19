@@ -610,6 +610,40 @@ fn a_second_seat_places_submodule_files_from_the_first() {
 }
 
 #[test]
+fn deleting_the_workweave_removes_the_submodule_repositories_it_made() {
+    for role in ["owned", "reference"] {
+        let weave = weave(role, "", Store::Complete);
+        let (seat, _) = weave.seat("one");
+        let repository = PathBuf::from(common::git_in(
+            seat.join(MEMBER).join(SUB),
+            &["rev-parse", "--path-format=absolute", "--git-dir"],
+        ));
+        assert!(repository.is_dir());
+
+        rwv(&["workweave", PROJECT, "delete", "one"], &weave.primary);
+
+        assert!(!seat.exists(), "the workweave should be gone");
+        assert!(
+            !repository.exists(),
+            "{} should go with the member worktree it belongs to",
+            repository.display()
+        );
+        assert_checked_out_in_canonical(&weave);
+    }
+}
+
+/// The canonical clone's own checkout of the submodule still reads as git
+/// left it.
+fn assert_checked_out_in_canonical(weave: &Weave) {
+    assert_eq!(
+        common::git_in(weave.canonical(), &["status", "--porcelain"]),
+        "",
+        "the canonical clone, submodules included, should read clean"
+    );
+    assert!(weave.canonical().join(SUB).join(SUB_FILES[0]).is_file());
+}
+
+#[test]
 fn create_leaves_a_repo_without_submodules_alone() {
     let tmp = common::tempdir().unwrap();
     let primary = tmp.path().join("primary");
