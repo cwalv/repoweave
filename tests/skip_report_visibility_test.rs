@@ -837,6 +837,20 @@ const PANIC_ON_LOOKUP: &[(&str, &str, usize, LookupKind, &str)] = &[
         "resolves the `rwv-*` scripts the test writes into its own temp directory, so no host state can make the lookup fail",
     ),
     (
+        "tests/bundled_binaries_test.rs",
+        "a_tar_that_unpacks_xz_itself_installs_with_no_xz_on_path",
+        1,
+        LookupKind::HostTool,
+        "the stand-in `tar` reports another tar's version and hands extraction to the real one; without a `tar` the install script has nothing to unpack with",
+    ),
+    (
+        "tests/bundled_binaries_test.rs",
+        "toolbox",
+        1,
+        LookupKind::HostTool,
+        "links the POSIX tools the install script itself requires onto a `PATH` that holds nothing else; a host without them cannot run the script at all",
+    ),
+    (
         "tests/common/mod.rs",
         "cargo_stand_in_path",
         1,

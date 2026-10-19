@@ -23,6 +23,12 @@ with `adopt-path-outside-weave`; a clone of its own inside the workweave, at a
 path where the primary has a different one, refuses with
 `foreign-clone-in-workweave`, naming both.
 
+### The install script needs `xz` only with GNU tar
+
+`curl -fsSL https://cwalv.github.io/repoweave/install.sh | sh` refused on a Mac
+with no `xz` on `PATH`, though macOS's tar unpacks the archive itself. It now
+asks for `xz` only where `tar` is GNU tar, which hands the archive to it.
+
 ### Plugins start in the directory rwv runs in
 
 A plugin starts in the `-C` directory, the `-w` workweave, or else the

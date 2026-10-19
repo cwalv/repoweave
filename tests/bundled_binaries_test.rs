@@ -260,22 +260,53 @@ fn a_wheel_is_refused_when_the_archive_lacks_a_shipped_binary() {
     );
 }
 
-/// The install script against a stand-in `curl` that serves a local archive:
-/// it must install every shipped binary and nothing else the archive holds.
-#[test]
+/// What the install script runs besides `tar`, `xz` and `curl`, plus the `cp`
+/// the stand-in `curl` runs.
 #[cfg(unix)]
-fn the_install_script_installs_every_shipped_binary_from_the_archive() {
+const INSTALL_SCRIPT_TOOLS: &[&str] = &["uname", "mkdir", "mktemp", "rm", "install", "cp"];
+
+#[cfg(unix)]
+fn stub(dir: &Path, name: &str, body: &str) {
     use std::os::unix::fs::PermissionsExt;
-    if !wheel_builder_available() || common::skip_without_tool("xz") {
-        return;
+    let path = dir.join(name);
+    std::fs::write(&path, format!("#!/bin/sh\n{body}")).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// A directory of links to the host's own `tools`, for a PATH that holds
+/// those and nothing else.
+#[cfg(unix)]
+fn toolbox(dir: &Path, tools: &[&str]) -> String {
+    std::fs::create_dir_all(dir).unwrap();
+    for tool in tools {
+        std::os::unix::fs::symlink(which::which(tool).unwrap(), dir.join(tool)).unwrap();
     }
-    let tmp = common::tempdir().unwrap();
+    dir.display().to_string()
+}
+
+/// GNU tar unpacks `.tar.xz` through an `xz` on PATH; other tars need none.
+#[cfg(unix)]
+fn host_tar_lacks_its_xz() -> bool {
+    let version = Command::new("tar").arg("--version").output().unwrap();
+    String::from_utf8_lossy(&version.stdout).contains("GNU tar") && common::skip_without_tool("xz")
+}
+
+/// The install script against a stand-in `curl` that serves a local archive
+/// of every shipped binary and a maintainer tool, with the stand-ins in
+/// `stubs` ahead of `path`. `None` when the host's architecture has no
+/// release archive.
+#[cfg(unix)]
+fn run_install_script(
+    tmp: &Path,
+    stubs: &Path,
+    path: &str,
+) -> Option<(std::process::Output, PathBuf)> {
     let triple = match std::env::consts::ARCH {
         "x86_64" => "x86_64",
         "aarch64" => "aarch64",
         other => {
             common::report_skip(&format!("install.sh does not support {other}"));
-            return;
+            return None;
         }
     };
     let os = if cfg!(target_os = "macos") {
@@ -287,38 +318,106 @@ fn the_install_script_installs_every_shipped_binary_from_the_archive() {
     let mut names: Vec<String> = shipped();
     names.push("generate-explain".into());
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-    let archive = fake_archive(tmp.path(), &file, &refs);
+    let archive = fake_archive(tmp, &file, &refs);
 
-    let bin = tmp.path().join("stub");
-    std::fs::create_dir_all(&bin).unwrap();
-    let curl = bin.join("curl");
-    std::fs::write(
-        &curl,
-        format!(
-            "#!/bin/sh\nwhile [ $# -gt 0 ]; do case \"$1\" in -o) out=\"$2\"; shift 2;; *) shift;; esac; done\ncp '{}' \"$out\"\n",
+    std::fs::create_dir_all(stubs).unwrap();
+    stub(
+        stubs,
+        "curl",
+        &format!(
+            "while [ $# -gt 0 ]; do case \"$1\" in -o) out=\"$2\"; shift 2;; *) shift;; esac; done\ncp '{}' \"$out\"\n",
             archive.display()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&curl, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let dest = tmp.path().join("installed");
-    let path = format!("{}:/usr/bin:/bin", bin.display());
-    let out = Command::new("sh")
+    );
+    let dest = tmp.join("installed");
+    let out = Command::new("/bin/sh")
         .arg(root().join("docs/install.sh"))
-        .env("PATH", path)
+        .env("PATH", format!("{}:{path}", stubs.display()))
         .env("VERSION", "9.9.9")
         .env("INSTALL_DIR", &dest)
         .output()
         .unwrap();
+    Some((out, dest))
+}
+
+#[cfg(unix)]
+fn assert_installed_every_shipped_binary(out: &std::process::Output, dest: &Path) {
     assert!(
         out.status.success(),
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    let installed: BTreeSet<String> = std::fs::read_dir(&dest)
+    let installed: BTreeSet<String> = std::fs::read_dir(dest)
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     assert_eq!(installed, shipped().into_iter().collect::<BTreeSet<_>>());
+}
+
+/// It must install every shipped binary and nothing else the archive holds.
+#[test]
+#[cfg(unix)]
+fn the_install_script_installs_every_shipped_binary_from_the_archive() {
+    if !wheel_builder_available() || host_tar_lacks_its_xz() {
+        return;
+    }
+    let tmp = common::tempdir().unwrap();
+    let Some((out, dest)) =
+        run_install_script(tmp.path(), &tmp.path().join("stub"), "/usr/bin:/bin")
+    else {
+        return;
+    };
+    assert_installed_every_shipped_binary(&out, &dest);
+}
+
+/// macOS ships a tar that unpacks `.tar.xz` itself and no `xz`.
+#[test]
+#[cfg(unix)]
+fn a_tar_that_unpacks_xz_itself_installs_with_no_xz_on_path() {
+    if !wheel_builder_available() || host_tar_lacks_its_xz() {
+        return;
+    }
+    let tmp = common::tempdir().unwrap();
+    let stubs = tmp.path().join("stub");
+    std::fs::create_dir_all(&stubs).unwrap();
+    stub(
+        &stubs,
+        "tar",
+        &format!(
+            "if [ \"$1\" = --version ]; then echo 'bsdtar 3.7.4 - libarchive 3.7.4'; exit 0; fi\nPATH='{}' exec '{}' \"$@\"\n",
+            std::env::var("PATH").unwrap(),
+            which::which("tar").unwrap().display()
+        ),
+    );
+    let path = toolbox(&tmp.path().join("tools"), INSTALL_SCRIPT_TOOLS);
+    let Some((out, dest)) = run_install_script(tmp.path(), &stubs, &path) else {
+        return;
+    };
+    assert_installed_every_shipped_binary(&out, &dest);
+}
+
+/// GNU tar without `xz` would fail mid-extraction naming neither; the script
+/// refuses first and names the missing tool.
+#[test]
+#[cfg(unix)]
+fn a_gnu_tar_with_no_xz_on_path_refuses_naming_xz() {
+    if !wheel_builder_available() {
+        return;
+    }
+    let tmp = common::tempdir().unwrap();
+    let stubs = tmp.path().join("stub");
+    std::fs::create_dir_all(&stubs).unwrap();
+    stub(
+        &stubs,
+        "tar",
+        "if [ \"$1\" = --version ]; then echo 'tar (GNU tar) 1.35'; exit 0; fi\necho 'extracted without xz' >&2; exit 2\n",
+    );
+    let path = toolbox(&tmp.path().join("tools"), INSTALL_SCRIPT_TOOLS);
+    let Some((out, _)) = run_install_script(tmp.path(), &stubs, &path) else {
+        return;
+    };
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("need 'xz'"), "{stderr}");
 }

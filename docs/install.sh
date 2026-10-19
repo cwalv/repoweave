@@ -123,7 +123,10 @@ main() {
     info "downloading..."
     download "$_url" "${_tmpdir}/${_archive}"
 
-    need_cmd xz
+    # GNU tar unpacks .tar.xz through an xz on PATH; other tars need none.
+    case "$(tar --version 2>/dev/null)" in
+        *"GNU tar"*) need_cmd xz ;;
+    esac
     info "extracting..."
     tar xf "${_tmpdir}/${_archive}" -C "$_tmpdir"
 
