@@ -151,15 +151,26 @@ fn derive_local_path_from_url(url: &str) -> Option<String> {
 pub struct ParamSpec {
     pub name: &'static str,
     pub required: bool,
+    pub kind: ParamKind,
     pub help: &'static str,
+}
+
+/// How the verb reads a parameter's value before
+/// [`Registry::plan_creation`] sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamKind {
+    Text,
+    /// A filesystem path. A relative spelling resolves against the directory
+    /// rwv was invoked from, so `plan_creation` only ever sees an absolute one.
+    Path,
 }
 
 /// The parsed `--param`/`--params-json` values a creation address carries,
 /// merged with whatever the address's own shorthand supplied.
 ///
-/// String-valued only: no [`ParamSpec`] declares a type yet, so a caller
-/// parsing `--params-json` rejects a non-string value before it would reach
-/// here rather than stringifying it silently.
+/// String-valued only: a [`ParamKind`] says how a value is read, not what
+/// it holds, so a caller parsing `--params-json` rejects a non-string value
+/// before it would reach here rather than stringifying it silently.
 #[derive(Debug, Clone, Default)]
 pub struct ParamMap(std::collections::BTreeMap<String, String>);
 
@@ -368,11 +379,13 @@ const DOMAIN_CREATION_PARAMS: &[ParamSpec] = &[
     ParamSpec {
         name: "owner",
         required: true,
+        kind: ParamKind::Text,
         help: "the account or organization that owns the repo",
     },
     ParamSpec {
         name: "repo",
         required: true,
+        kind: ParamKind::Text,
         help: "the repo's name",
     },
 ];
@@ -566,16 +579,20 @@ const LOCAL_CREATION_PARAMS: &[ParamSpec] = &[
     ParamSpec {
         name: "root",
         required: true,
-        help: "the directory the repository is created under",
+        kind: ParamKind::Path,
+        help:
+            "the directory the repository is created under, absolute or relative to where rwv runs",
     },
     ParamSpec {
         name: "owner",
         required: true,
+        kind: ParamKind::Text,
         help: "the owner segment of the placement path",
     },
     ParamSpec {
         name: "repo",
         required: true,
+        kind: ParamKind::Text,
         help: "the repo segment of the placement path",
     },
 ];
@@ -1129,11 +1146,13 @@ mod tests {
         ParamSpec {
             name: "owner",
             required: true,
+            kind: ParamKind::Text,
             help: "owner",
         },
         ParamSpec {
             name: "widget_count",
             required: true,
+            kind: ParamKind::Text,
             help: "how many widgets",
         },
     ];

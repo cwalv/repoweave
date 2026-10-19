@@ -515,6 +515,14 @@ const ROUTED: &[Routed] = &[
     },
     Routed {
         file: "add_remove.rs",
+        scope: "",
+        needle: r#""creation parameter '{}' resolves to '{}', which is not valid UTF-8","#,
+        renders: 1,
+        prints: "add --new's refusal of a relative path parameter whose resolved path is \
+                 not UTF-8, naming that path",
+    },
+    Routed {
+        file: "add_remove.rs",
         scope: "pub fn run_add(",
         needle: r#""failed to load manifest at {}","#,
         renders: 1,

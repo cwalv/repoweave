@@ -5,9 +5,13 @@ use crate::integration_runner::missing_active_members;
 use crate::manifest::{
     LockFile, Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role, VcsType,
 };
-use crate::path_spelling::{file_url_suggestion, mint_file_url, operator_path};
+use crate::path_spelling::{
+    file_url_suggestion, is_absolute_spelling, mint_file_url, operator_path,
+};
 use crate::refusal::{refusal, RefusalKind};
-use crate::registry::{builtin_registries, CreationParamError, ParamMap, RegistryName, Upstream};
+use crate::registry::{
+    builtin_registries, CreationParamError, ParamKind, ParamMap, ParamSpec, RegistryName, Upstream,
+};
 use crate::vcs::{
     vcs_for, DeletionWarrant, EphemeralRefName, HeadAttachment, RefName, RemoteBranchCopies, Vcs,
 };
@@ -1180,6 +1184,35 @@ fn build_creation_params(
     Ok(map)
 }
 
+/// Respell each relative [`ParamKind::Path`] value in `params` as the
+/// absolute path it names from `invocation_dir`. An empty value names no path
+/// and is left for the planner to refuse.
+fn resolve_path_params(
+    specs: &[ParamSpec],
+    params: &mut ParamMap,
+    invocation_dir: &Path,
+) -> anyhow::Result<()> {
+    for spec in specs.iter().filter(|s| s.kind == ParamKind::Path) {
+        let Some(raw) = params.get(spec.name) else {
+            continue;
+        };
+        if raw.is_empty() || is_absolute_spelling(raw) {
+            continue;
+        }
+        let resolved = invocation_dir.join(raw);
+        let Some(spelled) = resolved.to_str().map(str::to_owned) else {
+            crate::refuse!(
+                RefusalKind::UnusableCreationParam,
+                "creation parameter '{}' resolves to '{}', which is not valid UTF-8",
+                spec.name,
+                operator_path(&resolved)
+            );
+        };
+        params.insert(spec.name, spelled);
+    }
+    Ok(())
+}
+
 /// Execute `rwv add <creation-address> --new [--param NAME=VALUE]...
 /// [--params-json JSON] [--role ROLE]`.
 ///
@@ -1191,13 +1224,16 @@ fn build_creation_params(
 /// the member's path from that URL; nothing here asserts one.
 ///
 /// `ctx` is the already-resolved invocation context. Handlers must not
-/// re-resolve.
+/// re-resolve. `invocation_dir` is the directory the context was resolved
+/// from — the process cwd, or the `-C`/`-w` directory — and is what a
+/// relative path parameter is relative to.
 pub fn run_add_new(
     address: &str,
     role: Role,
     params: &[String],
     params_json: Option<&str>,
     ctx: &WorkspaceContext,
+    invocation_dir: &Path,
     opts: ActivateOptions,
 ) -> anyhow::Result<()> {
     // `rwv add` mints the manifest entry, so the backend is an input to the
@@ -1228,7 +1264,8 @@ pub fn run_add_new(
             )
         })?;
 
-    let param_map = build_creation_params(prefix, params, params_json)?;
+    let mut param_map = build_creation_params(prefix, params, params_json)?;
+    resolve_path_params(registry.creation_params(), &mut param_map, invocation_dir)?;
 
     let plan = match registry.plan_creation(&param_map) {
         Ok(plan) => plan,
@@ -1239,7 +1276,8 @@ pub fn run_add_new(
         Err(CreationParamError::NotAbsolute(name)) => {
             crate::refuse!(
                 RefusalKind::UnusableCreationParam,
-                "creation parameter '{}' must be an absolute path; got '{}'",
+                "creation parameter '{}' must name a path, absolute or relative to the \
+                 directory rwv runs in; got '{}'",
                 name,
                 param_map.get(name).unwrap_or_default()
             );
@@ -1524,6 +1562,7 @@ mod tests {
     const FIXTURE_PARAMS: &[ParamSpec] = &[ParamSpec {
         name: "warehouse",
         required: true,
+        kind: crate::registry::ParamKind::Text,
         help: "the warehouse the widgets ship from",
     }];
 

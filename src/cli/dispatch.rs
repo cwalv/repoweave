@@ -772,6 +772,7 @@ pub fn run() -> anyhow::Result<()> {
                     &params,
                     params_json.as_deref(),
                     &ctx,
+                    &origin_dir,
                     activation,
                 )?;
             } else if adopt {

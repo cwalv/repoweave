@@ -296,34 +296,119 @@ fn add_uncloned_three_segment_shorthand_clones_the_registry_resolved_url() {
     );
 }
 
-/// A relative `--param root` would mint a `file://` URL naming a different
-/// directory than the one the bare upstream is created in, so it is refused
-/// before anything is created.
-#[test]
-fn add_new_local_registry_refuses_a_relative_root_and_creates_nothing() {
-    let tmp = common::tempdir().unwrap();
-    let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
-
+/// Run `rwv <global_args> add local --new` for `local/acme/fresh` under
+/// `root`, from `cwd`, and assert its bare upstream landed at
+/// `<lab>/acme/fresh` and the manifest under `manifest_dir` records it as
+/// `invocation_dir` joined with `root`.
+fn assert_relative_root_lands_in_lab(
+    cwd: &Path,
+    global_args: &[&str],
+    invocation_dir: &Path,
+    root: &str,
+    lab: &Path,
+    manifest_dir: &Path,
+) {
     rwv()
+        .args(global_args)
         .args([
             "add",
             "local",
             "--new",
             "--param",
-            "root=rel/dir",
+            &format!("root={root}"),
             "--param",
             "owner=acme",
             "--param",
             "repo=fresh",
         ])
+        .current_dir(cwd)
+        .assert()
+        .success();
+    let upstream = lab.join("acme").join("fresh");
+    assert_eq!(
+        common::git_in(&upstream, &["config", "--get", "core.bare"]),
+        "true",
+        "the bare upstream lands under the root as spelled from the invocation directory"
+    );
+    let manifest = std::fs::read_to_string(manifest_dir.join("rwv.toml")).unwrap();
+    let expected_url = common::file_url(invocation_dir.join(root).join("acme").join("fresh"));
+    assert!(
+        manifest.contains(&format!("\"{expected_url}\"")),
+        "the manifest records the root as the absolute path the operator could have typed: \
+         want {expected_url}, got:\n{manifest}"
+    );
+}
+
+/// A relative root means relative to where the operator stands, not to the
+/// weave root: from `projects/test-project`, `../../../lab` is the `lab`
+/// beside the weave, where from the weave root it would name nothing.
+#[test]
+fn add_new_relative_root_resolves_against_the_invocation_directory() {
+    let tmp = common::tempdir().unwrap();
+    let lab = tmp.path().join("lab");
+    std::fs::create_dir_all(&lab).unwrap();
+    let (_workspace, project_dir) = setup_workspace_with_project(&tmp, &[]);
+
+    assert_relative_root_lands_in_lab(
+        &project_dir,
+        &[],
+        &project_dir.canonicalize().unwrap(),
+        "../../../lab",
+        &lab,
+        &project_dir,
+    );
+}
+
+/// `-C` stands in for the process cwd, relative root included.
+#[test]
+fn add_new_relative_root_resolves_against_the_cwd_override() {
+    let tmp = common::tempdir().unwrap();
+    let lab = tmp.path().join("lab");
+    std::fs::create_dir_all(&lab).unwrap();
+    let elsewhere = tmp.path().join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let (_workspace, project_dir) = setup_workspace_with_project(&tmp, &[]);
+
+    assert_relative_root_lands_in_lab(
+        &elsewhere,
+        &["-C", project_dir.to_str().unwrap()],
+        &project_dir.canonicalize().unwrap(),
+        "../../../lab",
+        &lab,
+        &project_dir,
+    );
+}
+
+/// `-w` addresses the workweave as `-C` would its directory, so a relative
+/// root resolves against the workweave, not the process cwd or the primary.
+#[test]
+fn add_new_relative_root_resolves_against_the_addressed_workweave() {
+    let tmp = common::tempdir().unwrap();
+    let lab = tmp.path().join("lab");
+    std::fs::create_dir_all(&lab).unwrap();
+    let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
+    let seat = tmp.path().join("seats").join("ww");
+    rwv()
+        .args([
+            "workweave",
+            "test-project",
+            "create",
+            "ww",
+            "--dir",
+            seat.to_str().unwrap(),
+        ])
         .current_dir(&workspace)
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("'root' must be an absolute path"));
+        .success();
 
-    assert!(!workspace.join("local").exists());
-    assert!(!workspace.join("rel").exists());
-    assert!(!tmp.path().join("rel").exists());
+    assert_relative_root_lands_in_lab(
+        &workspace,
+        &["-w", "test-project--ww"],
+        &seat.canonicalize().unwrap(),
+        "../../lab",
+        &lab,
+        &seat.join("projects").join("test-project"),
+    );
 }
 
 /// `rwv add local --new --param root=<lab> --param owner=acme --param

@@ -1193,12 +1193,12 @@ they are not in any commit to recover from.
 
 **Condition.** An `rwv add --new` creation parameter's value cannot be used
 as given: a name the registry does not declare, a `--params-json` entry that
-is not a JSON string, a `root` that is not an absolute path, a `root`
-directory that does not exist, a `root` inside the weave it would create a
-member of, or a name supplied through more than one spelling (the address's
-own three-segment shorthand, `--param`, and `--params-json` all write into the
-same map, and a name given twice is a disagreement about intent rather than a
-precedence question a default could answer silently).
+is not a JSON string, an empty `root`, a `root` directory that does not
+exist, a `root` inside the weave it would create a member of, or a name
+supplied through more than one spelling (the address's own three-segment
+shorthand, `--param`, and `--params-json` all write into the same map, and a
+name given twice is a disagreement about intent rather than a precedence
+question a default could answer silently).
 
 **Why.** Each of these would silently create something other than what the
 operator asked for — a directory materialized from a typo, a parameter no
@@ -1206,8 +1206,10 @@ registry reads, an upstream the weave itself would walk, delete, and report
 on as one of its own members, or a value picked by unstated precedence
 between two the operator gave.
 
-**Exits.** Correct the named parameter and re-run. For a `root` that does not
-exist, create it first; for one inside the weave, choose a directory outside
+**Exits.** Correct the named parameter and re-run. A relative `root` is not
+refused: it resolves against the directory rwv runs in (the `-C` or `-w`
+directory when one is given), and the messages name the absolute path it
+resolved to. For a `root` that does not exist, create it first; for one inside the weave, choose a directory outside
 it; for a name given twice, supply it in only one spelling.
 
 ### `version-is-a-pin`

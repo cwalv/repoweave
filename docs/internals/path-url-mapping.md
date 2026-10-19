@@ -124,12 +124,19 @@ pub trait Registry {
     fn plan_creation(&self, params: &ParamMap) -> Result<CreationPlan, CreationParamError>;
 }
 
-pub struct ParamSpec { pub name: &'static str, pub required: bool, pub help: &'static str }
+pub struct ParamSpec {
+    pub name: &'static str,
+    pub required: bool,
+    pub kind: ParamKind,
+    pub help: &'static str,
+}
+pub enum ParamKind { Text, Path }
 pub struct ParamMap(/* name -> value, string-valued only */);
 
 pub enum CreationParamError {
     Missing(Vec<&'static str>),
     Unrecognized(String),
+    NotAbsolute(&'static str),
 }
 
 pub struct CreationPlan { pub url: RepoUrl, pub vcs: VcsType, pub upstream: Upstream }
@@ -189,8 +196,9 @@ supplied through more than one source refuses (`unusable-creation-param`):
 the three spellings write into the same map, and a name given twice is a
 real disagreement about intent, not a precedence question a silent default
 could answer. `--params-json` values that are not JSON strings refuse the
-same way — `ParamSpec` declares no types yet, so a number or object is
-rejected rather than stringified.
+same way — a `ParamSpec`'s `kind` says only whether a value is text or a
+path, and both are strings, so a number or object is rejected rather than
+stringified.
 
 **A fifth token was not minted for the multi-spelling conflict.** An earlier
 pass gave it its own `RefusalKind` variant; the token count actually shipped
@@ -224,9 +232,21 @@ decides *how* a repository comes into being, the registry only decides
 *that* one must exist and *where* — `local`'s `plan_creation` never calls
 it.
 
-`root` is resolved to an absolute path before it reaches `plan_creation` (so
-the registry's own logic stays a pure function of strings, testable with a
-fixture and no filesystem); the verb then checks the resolved
+`local` declares `root` as `ParamKind::Path`. Before any registry plans,
+`run_add_new` respells every relative `Path`-kind value as the absolute path
+it names from the invocation directory — the process cwd, or the `-C`/`-w`
+directory when one is given, the same directory the workspace context was
+resolved from — joined with the relative spelling and nothing more: the
+result is the absolute path the operator could have typed instead, and from
+there it takes exactly the path an absolute value takes. A `..` survives
+into the minted URL as it would from an absolute spelling; git resolves it.
+The resolution is driven by the declared kind,
+not by a parameter named `root`. `plan_creation` therefore stays a pure
+function of strings, testable with a fixture and no filesystem, and still
+refuses a value that is not absolute (`CreationParamError::NotAbsolute`,
+reported as `unusable-creation-param`): only an empty value reaches it that
+way, since an empty spelling names no directory to resolve. The verb then
+checks the resolved
 `Upstream::InitBareAt` path's grandparent — generically, not by
 special-casing a parameter named `root` — against two conditions, both
 `unusable-creation-param`: it must already exist (rwv creates
@@ -298,14 +318,20 @@ turning a role-shaped exemption into a hard gate.
 
 ## What this leaves undrivable, honestly
 
-**The domain-registry half of a remote-publish exit is not testable without
-a network.** `rwv add <path>` on a member whose remote has published no
-default branch prints a hint that differs by circumstance: for a
-`local`-registry member (an empty bare upstream rwv itself created) the
-working exit is `git push -u <remote> <branch>`; for a domain-registry
-member, the exit is to create the repository at the registry first. Only the
-`local` half is driven by a test — the domain half needs a real remote this
-suite does not have, and no test claims otherwise.
+**The no-default-branch hint has no registry half left undriven.** When
+`rwv add` finds no remote default in a member, its hint
+(`Vcs::clone_default_branch_repair_hint`) does not ask which registry the
+member came from. It branches on one fact: whether the clone holds copies of
+any of the remote's branches. With copies, it names those branches and the
+`git remote set-head <remote> <branch>` that records one. With none, it
+names the first push (`git push -u <remote> <branch>`, then the same
+`set-head`). `rwv add <url>` reads that fact from the clone it has just
+made, so no copies means the remote has no branch. `rwv add --adopt <path>`
+reads it from a clone that may never have fetched, so with no copies it
+leads with `git fetch <remote>` and names both exits. A domain-registry URL
+whose repository does not exist never reaches the hint: the clone fails
+first, with git's own error. Every arm is driven against `file://` fixtures,
+so none of it needs a network.
 
 **`entry.url` is a fact for locally-created members and a promise for
 remote ones.** A `local`-registry creation's URL points at a bare repository

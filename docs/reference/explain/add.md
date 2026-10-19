@@ -80,7 +80,7 @@ and plans what gets created from them.
 | `gitlab` | `repo` | yes | the repo's name |
 | `bitbucket` | `owner` | yes | the account or organization that owns the repo |
 | `bitbucket` | `repo` | yes | the repo's name |
-| `local` | `root` | yes | the directory the repository is created under |
+| `local` | `root` | yes | the directory the repository is created under, absolute or relative to where rwv runs |
 | `local` | `owner` | yes | the owner segment of the placement path |
 | `local` | `repo` | yes | the repo segment of the placement path |
 
@@ -94,7 +94,9 @@ and plans what gets created from them.
   member from it, so the member's remote is real from birth and `git push
   -u` works immediately. `root` must already exist (rwv creates
   `<root>/<owner>/<repo>`, not `<root>` itself) and must be outside the
-  weave. `rwv add local/acme/fresh --new` fills `owner` and `repo` from the
+  weave. A relative `root` resolves against the directory rwv runs in — the
+  `-C` or `-w` directory when one is given — and the manifest records the
+  absolute path it names. `rwv add local/acme/fresh --new` fills `owner` and `repo` from the
   shorthand and still needs `--param root=<dir>`.
 
 The placement path is always derived from the minted URL, the same way a
