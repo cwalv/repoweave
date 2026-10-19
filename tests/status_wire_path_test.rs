@@ -18,7 +18,9 @@ fn commit_one(repo: &std::path::Path) -> String {
     std::fs::write(repo.join("README"), "init").unwrap();
     common::git_in(repo, &["add", "."]);
     common::git_in(repo, &["commit", "-m", "initial"]);
-    common::git_in(repo, &["rev-parse", "HEAD"]).trim().to_owned()
+    common::git_in(repo, &["rev-parse", "HEAD"])
+        .trim()
+        .to_owned()
 }
 
 #[test]
@@ -82,7 +84,11 @@ fn status_json_absolute_path_arrives_in_the_wire_spelling_on_every_arm() {
         ("github/org/missing", "missing", &missing),
         ("github/org/unreachable", "unreachable", &unreachable),
     ];
-    assert_eq!(repos.len(), arms.len(), "one record per manifest repo: {parsed:#}");
+    assert_eq!(
+        repos.len(),
+        arms.len(),
+        "one record per manifest repo: {parsed:#}"
+    );
     for (path, relation, on_disk) in arms {
         let record = repos
             .iter()

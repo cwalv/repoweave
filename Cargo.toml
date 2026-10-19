@@ -114,6 +114,10 @@ tempfile = "3"
 assert_cmd = "2"
 predicates = "3"
 
+[target.'cfg(windows)'.dev-dependencies]
+# Tests raise Ctrl-C in a console of their own to interrupt a foreground job.
+windows = { version = "0.62", features = ["Win32_System_Console"] }
+
 # The profile that 'dist' will build with
 [profile.dist]
 inherits = "release"

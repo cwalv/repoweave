@@ -4,6 +4,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -630,108 +631,78 @@ fn a_workweave_runs_in_its_own_checkouts_never_the_primarys() {
     assert_ne!(canonical(&ran_in), canonical(&pw.workspace.join(APP)));
 }
 
+#[test]
+fn job_helper() {
+    common::job::serve();
+}
+
+impl Weave {
+    /// `rwv each` running a [`common::job::TREE_ROOT`] in each repo: a
+    /// process with a child of its own that ignores interrupts and would
+    /// outlive it by a minute.
+    fn each_tree(&self, flags: &[&str]) -> Command {
+        let exe = common::job::helper_exe();
+        let mut args: Vec<&str> = flags.to_vec();
+        args.push("--");
+        args.push(exe.to_str().expect("a UTF-8 test binary path"));
+        args.extend(common::job::helper_args());
+        let mut cmd = self.each_cmd(&args);
+        cmd.env(common::job::ROLE, common::job::TREE_ROOT);
+        cmd
+    }
+}
+
+#[test]
+fn a_timeout_kills_the_whole_tree_grandchildren_included() {
+    let w = Weave::standard();
+    let start = Instant::now();
+    let out = w
+        .each_tree(&["--json", "-j", "2", "--timeout", "2"])
+        .output()
+        .unwrap();
+    assert!(start.elapsed() < Duration::from_secs(30));
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    for record in json_lines(&out) {
+        assert_eq!(record["status"], "timed-out", "{record}");
+    }
+    for path in [APP, LIB] {
+        let pid = common::job::leaf_pid(&w.ws.join(path), Duration::ZERO);
+        common::job::wait_dead(pid);
+    }
+}
+
+#[test]
+fn an_interrupt_reaches_every_running_tree_starts_no_more_and_exits_130() {
+    let w = Weave::new(&[("a/one", "owned"), ("a/two", "owned"), ("a/three", "owned")]);
+    let mut cmd = w.each_tree(&["-j", "2"]);
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let child = common::job::as_foreground_job(&mut cmd).spawn().unwrap();
+    let pids: Vec<u32> = ["a/one", "a/three"]
+        .iter()
+        .map(|p| common::job::leaf_pid(&w.ws.join(p), Duration::from_secs(20)))
+        .collect();
+    common::job::interrupt_foreground_job(&child);
+    let interrupted_at = Instant::now();
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(out.status.code(), Some(130), "{}", stderr(&out));
+    assert!(
+        interrupted_at.elapsed() < Duration::from_secs(20),
+        "rwv each waited out a grandchild that ignores interrupts instead of ending its tree"
+    );
+    for pid in pids {
+        common::job::wait_dead(pid);
+    }
+    assert!(
+        !w.ws.join("a/two").join(common::job::LEAF_PID_FILE).exists(),
+        "no repo starts after an interrupt"
+    );
+    assert!(stderr(&out).contains("a/two: not run"), "{}", stderr(&out));
+}
+
 #[cfg(unix)]
 mod unix {
     use super::*;
     use std::io::Write;
-    use std::os::unix::process::CommandExt;
-    use std::time::{Duration, Instant};
-
-    fn alive(pid: &str) -> bool {
-        Command::new("kill")
-            .args(["-0", pid.trim()])
-            .stderr(Stdio::null())
-            .status()
-            .unwrap()
-            .success()
-    }
-
-    fn wait_for(path: &Path, limit: Duration) -> String {
-        let start = Instant::now();
-        loop {
-            if let Ok(s) = std::fs::read_to_string(path) {
-                if s.ends_with('\n') {
-                    return s;
-                }
-            }
-            assert!(start.elapsed() < limit, "{} never appeared", path.display());
-            std::thread::sleep(Duration::from_millis(20));
-        }
-    }
-
-    fn wait_dead(pid: &str) {
-        let start = Instant::now();
-        while alive(pid) {
-            assert!(
-                start.elapsed() < Duration::from_secs(10),
-                "grandchild {pid} outlived its tree"
-            );
-            std::thread::sleep(Duration::from_millis(20));
-        }
-    }
-
-    /// Starts a grandchild that would outlive its parent by a minute, records
-    /// its pid in the repo, and waits on it.
-    const GRANDCHILD: &str = "sleep 60 & echo $! > grandchild.pid; wait";
-
-    #[test]
-    fn a_timeout_kills_the_whole_tree_grandchildren_included() {
-        let w = Weave::standard();
-        let start = Instant::now();
-        let out = w.each(&["--json", "-j", "2", "--timeout", "1", "--shell", GRANDCHILD]);
-        assert!(start.elapsed() < Duration::from_secs(30));
-        assert_eq!(out.status.code(), Some(1));
-        for record in json_lines(&out) {
-            assert_eq!(record["status"], "timed-out", "{record}");
-        }
-        for path in [APP, LIB] {
-            let pid = std::fs::read_to_string(w.ws.join(path).join("grandchild.pid")).unwrap();
-            wait_dead(&pid);
-        }
-    }
-
-    #[test]
-    fn an_interrupt_reaches_every_running_tree_starts_no_more_and_exits_130() {
-        let w = Weave::new(&[("a/one", "owned"), ("a/two", "owned"), ("a/three", "owned")]);
-        // A terminal's Ctrl-C signals the foreground job's process group,
-        // which this reproduces by making `rwv` a group leader.
-        let child = w
-            .each_cmd(&["-j", "2", "--shell", GRANDCHILD])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .process_group(0)
-            .spawn()
-            .unwrap();
-        let pids: Vec<String> = ["a/one", "a/three"]
-            .iter()
-            .map(|p| {
-                wait_for(
-                    &w.ws.join(p).join("grandchild.pid"),
-                    Duration::from_secs(20),
-                )
-            })
-            .collect();
-        let status = Command::new("kill")
-            .args(["-INT", &format!("-{}", child.id())])
-            .status()
-            .unwrap();
-        assert!(status.success());
-        let interrupted_at = Instant::now();
-        let out = child.wait_with_output().unwrap();
-        assert_eq!(out.status.code(), Some(130), "{}", stderr(&out));
-        assert!(
-            interrupted_at.elapsed() < Duration::from_secs(20),
-            "rwv each waited out a grandchild that ignores SIGINT instead of ending its tree"
-        );
-        for pid in &pids {
-            wait_dead(pid);
-        }
-        assert!(
-            !w.ws.join("a/two/grandchild.pid").exists(),
-            "no repo starts after an interrupt"
-        );
-        assert!(stderr(&out).contains("a/two: not run"), "{}", stderr(&out));
-    }
 
     #[test]
     fn concurrent_output_lines_never_interleave_mid_line() {
