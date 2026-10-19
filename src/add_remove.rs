@@ -551,7 +551,7 @@ fn adopt_placement(
         };
         crate::refuse!(
             RefusalKind::AdoptPathOutsideWeave,
-            "rwv add --adopt: '{raw}' names '{}', which is under neither {roots}. A relative \
+            "rwv add --adopt: '{raw}' names '{}', which is not under {roots}. A relative \
              path is read from the directory rwv runs in (or -C/-w); name the clone by a path \
              inside the weave.",
             operator_path(&named)
