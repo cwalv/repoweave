@@ -530,6 +530,42 @@ const ROUTED: &[Routed] = &[
     },
     Routed {
         file: "add_remove.rs",
+        scope: "fn adopt_placement(",
+        needle: r#"format!("failed to canonicalize {}", operator_path(invocation_dir))"#,
+        renders: 1,
+        prints: "add --adopt's failure to canonicalize the invocation directory",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
+        needle: r#""this workweave ('{}') or the primary weave ('{}')","#,
+        renders: 2,
+        prints: "the two weave roots an outside-weave adopt refusal names from a workweave",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
+        needle: r#"None => format!("the weave root '{}'", operator_path(primary)),"#,
+        renders: 1,
+        prints: "the weave root an outside-weave adopt refusal names from the primary",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
+        needle: r#""rwv add --adopt: '{raw}' names '{}', which is not under {roots}. A relative \"#,
+        renders: 1,
+        prints: "add --adopt's refusal of a location under no weave root, naming it",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
+        needle: r#""rwv add --adopt: '{}' is a clone of its own, not a worktree of the primary's \"#,
+        renders: 4,
+        prints: "add --adopt's refusal of a workweave clone that is not the primary's, naming \
+                 both clones",
+    },
+    Routed {
+        file: "add_remove.rs",
         scope: "pub fn run_add(",
         needle: r#""failed to load manifest at {}","#,
         renders: 1,
