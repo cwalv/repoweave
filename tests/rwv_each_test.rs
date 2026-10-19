@@ -544,6 +544,42 @@ fn results_writes_each_repos_output_and_outcome_and_leaves_other_repos_alone() {
 }
 
 #[test]
+fn relative_results_and_joblog_under_c_land_under_the_c_directory() {
+    let w = Weave::standard();
+    let shell_cwd = common::tempdir().unwrap();
+    let out = common::rwv_std()
+        .arg("-C")
+        .arg(&w.ws)
+        .args([
+            "each",
+            "--results",
+            "out",
+            "--joblog",
+            "job.log",
+            "--shell",
+            "echo hello",
+        ])
+        .current_dir(shell_cwd.path())
+        .env("PATH", path_with_bins())
+        .stdin(Stdio::null())
+        .output()
+        .expect("rwv each runs");
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    for path in [APP, LIB] {
+        let written = w.ws.join("out").join(path).join("stdout");
+        assert_eq!(std::fs::read_to_string(&written).unwrap().trim(), "hello");
+    }
+    assert!(w.ws.join("job.log").is_file());
+    assert!(
+        std::fs::read_dir(shell_cwd.path())
+            .unwrap()
+            .next()
+            .is_none(),
+        "rwv each wrote under the shell's cwd instead of the -C directory"
+    );
+}
+
+#[test]
 fn progress_draws_nothing_when_stderr_is_not_a_terminal() {
     let w = Weave::standard();
     let plain = w.each(&["-j", "2", "--shell", "echo x&& exit 1"]);

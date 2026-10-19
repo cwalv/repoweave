@@ -426,6 +426,142 @@ fn soft_fallthrough_execs_plugin_outside_workspace() {
 }
 
 // ---------------------------------------------------------------------------
+// Working directory — the plugin starts in the invocation directory
+// ---------------------------------------------------------------------------
+
+const CWD_SH: &str = "pwd -P\necho \"RWV_WORKSPACE=$RWV_WORKSPACE\"\n";
+const CWD_CMD: &str = "cd\necho RWV_WORKSPACE=%RWV_WORKSPACE%\n";
+
+fn cwd_line(stdout: &str) -> PathBuf {
+    let line = stdout.lines().next().expect("the plugin printed its cwd");
+    dunce::canonicalize(line.trim()).unwrap()
+}
+
+fn same_dir(a: &Path, b: &Path) -> bool {
+    dunce::canonicalize(a).unwrap() == dunce::canonicalize(b).unwrap()
+}
+
+/// Under `-C X` the plugin's working directory is X, not the shell's — while
+/// the envelope keeps naming the workspace root.
+#[test]
+fn a_plugin_under_c_starts_in_the_c_directory_and_the_envelope_still_names_the_workspace() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_minimal_workspace(tmp.path(), "myproj");
+    let sub = ws.join("github");
+    let plugin_dir = common::tempdir().unwrap();
+    write_script(plugin_dir.path(), "rwv-whereami", CWD_SH, CWD_CMD);
+
+    let assert = rwv()
+        .args(["-C", &sub.to_string_lossy(), "whereami"])
+        .current_dir(plugin_dir.path())
+        .env("PATH", prepend_path(plugin_dir.path()))
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(
+        same_dir(&cwd_line(&stdout), &sub),
+        "plugin did not start in the -C directory {}: {stdout}",
+        sub.display()
+    );
+    let workspace = parse_env_dump(&stdout)
+        .remove("RWV_WORKSPACE")
+        .expect("RWV_WORKSPACE is set");
+    assert!(
+        same_dir(Path::new(&workspace), &ws),
+        "RWV_WORKSPACE moved off the workspace root: {workspace}"
+    );
+}
+
+/// A relative argument the plugin receives names a file under the `-C`
+/// directory, the way it would for a core verb.
+#[test]
+fn a_relative_argument_to_a_plugin_under_c_names_a_file_under_the_c_directory() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_minimal_workspace(tmp.path(), "myproj");
+    let sub = ws.join("github");
+    fs::write(sub.join("note.txt"), "UNDER_C\n").unwrap();
+    let plugin_dir = common::tempdir().unwrap();
+    fs::write(plugin_dir.path().join("note.txt"), "UNDER_SHELL_CWD\n").unwrap();
+    write_script(
+        plugin_dir.path(),
+        "rwv-show",
+        "cat \"$1\"\n",
+        "type \"%~1\"\n",
+    );
+
+    rwv()
+        .args(["-C", &sub.to_string_lossy(), "show", "note.txt"])
+        .current_dir(plugin_dir.path())
+        .env("PATH", prepend_path(plugin_dir.path()))
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("UNDER_C")
+                .and(predicate::str::contains("UNDER_SHELL_CWD").not()),
+        );
+}
+
+/// `-w` names the invocation directory too: the plugin starts in the
+/// workweave.
+#[test]
+fn a_plugin_under_w_starts_in_the_workweave() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_minimal_workspace(tmp.path(), "myproj");
+    let ws_canon = ws.canonicalize().unwrap();
+    let ww_dir = ws_canon
+        .parent()
+        .unwrap()
+        .join(".workweaves")
+        .join("myproj--feat");
+    fs::create_dir_all(ww_dir.join("github")).unwrap();
+    fs::create_dir_all(ww_dir.join("projects").join("myproj")).unwrap();
+    fs::write(
+        ww_dir.join(".rwv-workweave"),
+        common::workweave_marker(&ws_canon, "myproj", &ws_canon),
+    )
+    .unwrap();
+    common::register_workweave(&ws, "myproj", "feat", &ww_dir);
+    let plugin_dir = common::tempdir().unwrap();
+    write_script(plugin_dir.path(), "rwv-whereami", CWD_SH, CWD_CMD);
+
+    let assert = rwv()
+        .args(["-w", "myproj--feat", "whereami"])
+        .current_dir(&ws)
+        .env("PATH", prepend_path(plugin_dir.path()))
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(
+        same_dir(&cwd_line(&stdout), &ww_dir),
+        "plugin did not start in the workweave {}: {stdout}",
+        ww_dir.display()
+    );
+}
+
+/// A plugin found through a relative `PATH` entry is the file that entry
+/// names from the shell's cwd, even when the plugin starts somewhere else.
+#[test]
+fn a_plugin_on_a_relative_path_entry_runs_under_c() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_minimal_workspace(tmp.path(), "myproj");
+    let shell_cwd = common::tempdir().unwrap();
+    fs::create_dir_all(shell_cwd.path().join("plugins")).unwrap();
+    write_echo(
+        &shell_cwd.path().join("plugins"),
+        "rwv-relpath",
+        "RELPATH_RAN",
+    );
+
+    rwv()
+        .args(["-C", &ws.to_string_lossy(), "relpath"])
+        .current_dir(shell_cwd.path())
+        .env("PATH", prepend_path(Path::new("plugins")))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("RELPATH_RAN"));
+}
+
+// ---------------------------------------------------------------------------
 // Explicit-flag resolution failure errors BEFORE exec
 // ---------------------------------------------------------------------------
 

@@ -1,6 +1,6 @@
 # Plugin protocol
 
-A plugin is an executable named `rwv-<verb>` on `$PATH`. When `rwv <verb>` is invoked and `<verb>` is not a core verb, `rwv` execs the matching `rwv-<verb>` binary, projects the resolved workspace context into its environment, and propagates its exit status back verbatim. This page is the wire contract: discovery, the environment envelope, addressing, exit codes, the write prohibition, and the compatibility guarantee.
+A plugin is an executable named `rwv-<verb>` on `$PATH`. When `rwv <verb>` is invoked and `<verb>` is not a core verb, `rwv` execs the matching `rwv-<verb>` binary, projects the resolved workspace context into its environment, and propagates its exit status back verbatim. This page is the wire contract: discovery, the environment envelope, the working directory, addressing, exit codes, the write prohibition, and the compatibility guarantee.
 
 For the design rationale — what earns a place in core versus a plugin, and why `rwv` doesn't sandbox plugins — see the [plugin-boundary](../explanation/joints/plugin-boundary.md) joint. For a worked example, see the [write-a-plugin](../how-to/write-a-plugin.md) how-to.
 
@@ -44,9 +44,17 @@ For the design rationale — what earns a place in core versus a plugin, and why
 - **One projection, two surfaces.** The envelope is a pure projection of the same resolved value that the `resolution` block in `--json` output serializes. A plugin that reads both never sees them disagree.
 - **Version floors are a last resort.** `RWV_VERSION` is always set, but prefer probing the shape of `--json` output over gating on it — see [additive-schema guarantee](#additive-schema-guarantee) below.
 
+## Working directory
+
+The plugin starts in the **invocation directory**: the `-C` directory when `-C` is given, the workweave `-w` names when `-w` is given, and otherwise the directory `rwv` was run from. It is the directory core verbs resolve relative path arguments against, so a relative path a plugin receives as an argument names the file it would name for a core verb. `rwv -C ~/work/app lint src/main.rs` starts `rwv-lint` in `~/work/app` with the argument `src/main.rs`, as `git -C` would. A plugin resolves relative arguments against its own working directory and needs nothing from `rwv` to do so.
+
+- **The working directory is where the invocation was addressed, not where the workspace is.** `rwv -C ~/work/app/github/org/lib lint` starts the plugin in `github/org/lib`, while `RWV_WORKSPACE` still names the primary weave root.
+- **Without `-C` or `-w` nothing moves.** The plugin starts in the directory `rwv` was run from, the same directory it would have inherited.
+- **A relative `$PATH` entry is read from the directory `rwv` was run from.** The plugin it finds is the one the shell would have found, wherever the plugin then starts.
+
 ## Addressing back into `rwv`
 
-A plugin that needs to invoke `rwv` — to read status, consume `--json` output, or trigger a core verb — should address it explicitly with `-C`, `-w` (global flags before the subcommand), and `--project` (on the subcommand) rather than rely on its own `cwd`, which may not match where `rwv` itself was invoked from:
+A plugin that needs to invoke `rwv` — to read status, consume `--json` output, or trigger a core verb — should address it explicitly with `-C`, `-w` (global flags before the subcommand), and `--project` (on the subcommand) rather than rely on its working directory. A bare `rwv` run from the plugin repeats the containment walk from wherever the plugin is when it runs; the envelope already holds the walk's answer:
 
 ```sh
 rwv -C "$RWV_WORKSPACE" status --project "$RWV_PROJECT" --json

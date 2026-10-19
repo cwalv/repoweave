@@ -58,6 +58,8 @@ else
 fi
 ```
 
+A relative path the plugin takes as an argument needs no such care. The plugin starts in the directory `rwv` was invoked from — or the `-C`/`-w` directory — so under `rwv -C ~/work/app`, a plugin that opens the argument `notes.txt` as given opens `~/work/app/notes.txt`. See [Working directory](../reference/plugin-protocol.md#working-directory).
+
 ## 3. Probe the JSON shape, not `$RWV_VERSION`
 
 Check that the JSON fields your plugin depends on are present rather than comparing version strings:

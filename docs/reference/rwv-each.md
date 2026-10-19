@@ -23,7 +23,7 @@ Options come before the command. The first word that is not an option starts the
 
 ## Which checkout, which repos
 
-`rwv each` has no addressing flags of its own. Address it the way you address any `rwv` verb — `rwv -w myproj--hotfix each …` runs in that workweave's checkouts, never in the primary's.
+`rwv each` has no addressing flags of its own. Address it the way you address any `rwv` verb — `rwv -w myproj--hotfix each …` runs in that workweave's checkouts, never in the primary's. A relative `--joblog FILE` or `--results DIR` resolves against the directory `rwv` was invoked from, or the `-C`/`-w` directory, as a relative path argument to any verb does.
 
 | Flag | Selects |
 |---|---|

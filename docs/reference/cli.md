@@ -11,7 +11,8 @@ These flags precede the subcommand and apply to all verbs.
 Resolve the workspace as if `rwv` were invoked from `<path>`. Any path
 *inside* a checkout works; the normal containment walk (marker, root, `$HOME`
 ceiling) runs from there. Relative path arguments elsewhere on the command line
-resolve against this directory.
+resolve against this directory, and an [external command](#external-commands)
+starts in it.
 
 ```
 rwv -C /path/to/weave status
@@ -666,7 +667,7 @@ Exit semantics under `--json` are the same in both modes and match the text mode
 
 `rwv each` is such a plugin, shipped with `rwv`; see [rwv each](./rwv-each.md).
 
-`rwv` projects the resolved workspace context into an environment envelope on every spawn — `RWV_VERSION`, `RWV_WORKSPACE`, `RWV_WORKWEAVE`, `RWV_WORKWEAVE_UNREGISTERED`, `RWV_PROJECT` — and propagates the child's exit status back verbatim. For the full contract — the envelope table (value and unset-condition for each variable), addressing back into `rwv`, exit-code semantics, discovery and naming, the write prohibition, and the `--json` compatibility guarantee — see the [plugin-protocol](./plugin-protocol.md) reference.
+`rwv` projects the resolved workspace context into an environment envelope on every spawn — `RWV_VERSION`, `RWV_WORKSPACE`, `RWV_WORKWEAVE`, `RWV_WORKWEAVE_UNREGISTERED`, `RWV_PROJECT` — and propagates the child's exit status back verbatim. The child starts in the invocation directory — the `-C` directory, the `-w` workweave, or else the directory `rwv` was run from — so its relative arguments resolve the way a core verb's do. For the full contract — the envelope table (value and unset-condition for each variable), addressing back into `rwv`, exit-code semantics, discovery and naming, the write prohibition, and the `--json` compatibility guarantee — see the [plugin-protocol](./plugin-protocol.md) reference.
 
 ## Related
 

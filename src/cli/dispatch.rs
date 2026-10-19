@@ -1360,7 +1360,8 @@ pub fn run() -> anyhow::Result<()> {
             // dispatch exits the process from within `dispatch_external`,
             // so the Ok arm is `Infallible` — the empty match is how the
             // type-checker proves that arm is unreachable.
-            let never = plugins::dispatch_external(verb, &plugin_args, resolution.as_ref())?;
+            let never =
+                plugins::dispatch_external(verb, &plugin_args, &origin_dir, resolution.as_ref())?;
             match never {}
         }
     }

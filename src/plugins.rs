@@ -10,6 +10,11 @@
 //! - **Addressing flags are consumed by rwv.** Global `-C`, `-w`, and the
 //!   per-verb `--project` are the addressing surface for the workspace
 //!   coordinate; the external verb never sees them in its argv.
+//! - **The plugin starts in the invocation directory.** That is the `-C`
+//!   directory, the `-w` workweave, or else the process cwd — the directory
+//!   a core verb resolves relative path arguments against — so a plugin's own
+//!   relative arguments mean what they would to a core verb, as under
+//!   `git -C`.
 //! - **Exit propagation is verbatim.** A normal exit propagates the child's
 //!   status code; signal death (Unix) maps to the conventional `128 + N`
 //!   exit and is reported on stderr as `rwv-<verb> terminated by signal N`.
@@ -338,6 +343,9 @@ pub fn external_commands_help_section(paths_override: Option<&OsStr>) -> Option<
 /// surfaces (JSON and env) are projections of one value and are therefore
 /// always consistent by construction.
 ///
+/// The child starts in `invocation_dir`, the directory the invocation's
+/// relative path arguments resolve against.
+///
 /// The child inherits stdin, stdout, and stderr — [`std::process::Command`]
 /// does that by default when none of `stdin`/`stdout`/`stderr` are set.
 /// This preserves the external command's terminal control and its own I/O
@@ -348,10 +356,14 @@ pub fn external_commands_help_section(paths_override: Option<&OsStr>) -> Option<
 pub fn build_command(
     binary: &std::path::Path,
     args: &[OsString],
+    invocation_dir: &std::path::Path,
     resolution: Option<&Resolution>,
 ) -> Command {
     let mut cmd = Command::new(binary);
-    cmd.args(args);
+    // cmd.exe reads a verbatim `\\?\` working directory as a UNC path, which it
+    // will not run in.
+    cmd.args(args)
+        .current_dir(dunce::simplified(invocation_dir));
     for (name, value) in envelope_vars(resolution) {
         cmd.env(name, value);
     }
@@ -392,7 +404,11 @@ fn exec_failure_error(verb: &str, binary: &std::path::Path, err: std::io::Error)
 /// not reachable).
 fn find_plugin(verb: &str) -> Option<PathBuf> {
     let name = format!("rwv-{verb}");
-    which::which(&name).ok()
+    // A relative `PATH` entry yields a relative path, which the spawn would
+    // read against the child's working directory rather than this process's.
+    which::which(&name)
+        .ok()
+        .and_then(|found| std::path::absolute(found).ok())
 }
 
 /// Dispatch an external subcommand: locate `rwv-<verb>`, spawn it with
@@ -409,11 +425,12 @@ fn find_plugin(verb: &str) -> Option<PathBuf> {
 pub fn dispatch_external(
     verb: &str,
     args: &[OsString],
+    invocation_dir: &std::path::Path,
     resolution: Option<&Resolution>,
 ) -> anyhow::Result<std::convert::Infallible> {
     let binary = find_plugin(verb).ok_or_else(|| unknown_verb_error(verb))?;
 
-    let mut cmd = build_command(&binary, args, resolution);
+    let mut cmd = build_command(&binary, args, invocation_dir, resolution);
     let mut child = cmd
         .spawn()
         .map_err(|e| exec_failure_error(verb, &binary, e))?;
@@ -484,7 +501,7 @@ mod tests {
     fn build_command_sets_program_and_args() {
         let binary = std::path::Path::new("/tmp/rwv-example");
         let args: Vec<OsString> = vec!["--flag".into(), "value".into(), "--".into(), "-x".into()];
-        let cmd = build_command(binary, &args, None);
+        let cmd = build_command(binary, &args, std::path::Path::new("/tmp"), None);
         assert_eq!(cmd.get_program(), std::ffi::OsStr::new("/tmp/rwv-example"));
         let got_args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
         assert_eq!(

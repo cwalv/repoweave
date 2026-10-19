@@ -568,8 +568,11 @@ them before the external-subcommand fallthrough fires, so a `rwv-status` on
 
 Invocation is a plain subprocess: `build_command` is the single seam
 that constructs it, `dispatch_external` spawns and waits, and the call
-site is `src/cli/dispatch.rs`. Stdio is fully inherited — the child owns
-the terminal and rwv wraps none of its output. Exit status propagates, with
+site is `src/cli/dispatch.rs`. The child starts in the invocation dir that
+`src/cli/dispatch.rs` resolved (`-C`, `-w`, or process cwd), the same dir
+`workspace::operand_path` resolves core verbs' relative arguments against.
+Stdio is fully inherited — the child owns the terminal and rwv wraps none of
+its output. Exit status propagates, with
 signals mapped to `128 + sig`.
 
 **The envelope is environment variables.** `envelope_vars` projects
