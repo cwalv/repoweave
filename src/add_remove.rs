@@ -8,7 +8,9 @@ use crate::manifest::{
 use crate::path_spelling::{file_url_suggestion, mint_file_url, operator_path};
 use crate::refusal::{refusal, RefusalKind};
 use crate::registry::{builtin_registries, CreationParamError, ParamMap, RegistryName, Upstream};
-use crate::vcs::{vcs_for, DeletionWarrant, EphemeralRefName, HeadAttachment, RefName, Vcs};
+use crate::vcs::{
+    vcs_for, DeletionWarrant, EphemeralRefName, HeadAttachment, RefName, RemoteBranchCopies, Vcs,
+};
 use crate::workspace::{project_dir, Checkout, WorkspaceContext};
 use crate::workweave_index::RefRegistry;
 use anyhow::Context;
@@ -365,7 +367,7 @@ pub fn run_add(
                 "rwv add: '{}' at {}: {}, then re-run `rwv add {}`",
                 repo_path.as_str(),
                 operator_path(&dest),
-                vcs.clone_default_branch_repair_hint(&dest)?,
+                vcs.clone_default_branch_repair_hint(&dest, RemoteBranchCopies::JustCloned)?,
                 url
             );
         };
@@ -716,7 +718,7 @@ fn run_add_from_local_path(
             "rwv add: '{}' at {}: {}, then re-run `rwv add --adopt {}`",
             repo_path.as_str(),
             operator_path(clone_dir),
-            vcs.remote_default_branch_repair_hint(),
+            vcs.clone_default_branch_repair_hint(clone_dir, RemoteBranchCopies::AsLastFetched)?,
             path_arg
         );
     };

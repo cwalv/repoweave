@@ -1477,6 +1477,15 @@ pub enum HeadObservation {
     },
 }
 
+/// How current a clone's copies of its remote's branches are known to be.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteBranchCopies {
+    /// Made by the clone this invocation just ran.
+    JustCloned,
+    /// Whatever the clone last fetched, which may be nothing at all.
+    AsLastFetched,
+}
+
 /// What HEAD is, in a workspace that is **known to be a repo**.
 ///
 /// The `current_ref` this replaced (now deleted) collapsed four distinct
@@ -3414,16 +3423,21 @@ pub trait Vcs: Send + Sync {
     /// [`conflict_resolution_hint`]: Vcs::conflict_resolution_hint
     fn remote_default_branch_repair_hint(&self) -> String;
 
-    /// [`remote_default_branch_repair_hint`] for `clone`, a clone made from
-    /// the remote. Cloning records the remote's default whenever the remote
-    /// names one, so here it is missing because the remote has no branch
-    /// yet, or because its default names none of the branches it has; asking
-    /// the remote again repairs neither. The clone's copies of the remote's
-    /// branches tell the two apart, and the hint names the repair for the one
-    /// it finds. The seam rule above holds here too.
+    /// [`remote_default_branch_repair_hint`] for `clone`, read from the
+    /// clone's copies of the remote's branches. Where those copies show
+    /// branches, the remote's default names none of them, and the hint names
+    /// the ones it has. Where they show none, `copies` decides what that
+    /// means: on a fresh clone the remote has no branch yet and the repair is
+    /// a first push; on a clone of unknown age the remote may simply not have
+    /// been fetched, so the hint leads with the fetch and names both repairs.
+    /// The seam rule above holds here too.
     ///
     /// [`remote_default_branch_repair_hint`]: Vcs::remote_default_branch_repair_hint
-    fn clone_default_branch_repair_hint(&self, clone: &Path) -> Result<String, VcsError>;
+    fn clone_default_branch_repair_hint(
+        &self,
+        clone: &Path,
+        copies: RemoteBranchCopies,
+    ) -> Result<String, VcsError>;
 
     // ---- listing ----------------------------------------------------------
 

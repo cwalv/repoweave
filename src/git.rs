@@ -3,9 +3,9 @@
 use crate::vcs::{
     CommitSummary, ConflictOp, ContentIdentity, DerivedContentPolicy, DerivedContentResolution,
     DiscardOutcome, ForeignTipPolicy, HeadAttachment, HeadObservation, LocalRefName, PreAbortRef,
-    PublishRef, RawRefName, RawRevisionId, RefName, RemoteDefaultBranch, ReplayExclusionState,
-    ResolvedRevisionId, TrackedFile, TrackedFileKind, UniqueDiff, Vcs, VcsError,
-    VerifiedRestoreOutcome, WorkspacePopulation,
+    PublishRef, RawRefName, RawRevisionId, RefName, RemoteBranchCopies, RemoteDefaultBranch,
+    ReplayExclusionState, ResolvedRevisionId, TrackedFile, TrackedFileKind, UniqueDiff, Vcs,
+    VcsError, VerifiedRestoreOutcome, WorkspacePopulation,
 };
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
@@ -2878,7 +2878,11 @@ impl Vcs for GitVcs {
         )
     }
 
-    fn clone_default_branch_repair_hint(&self, clone: &Path) -> Result<String, VcsError> {
+    fn clone_default_branch_repair_hint(
+        &self,
+        clone: &Path,
+        copies: RemoteBranchCopies,
+    ) -> Result<String, VcsError> {
         let remote = GIT_DEFAULT_REMOTE_NAME;
         let listing = Self::run_trimmed(
             &[
@@ -2907,11 +2911,21 @@ impl Vcs for GitVcs {
             HeadAttachment::Attached(a) => a.to_string(),
             HeadAttachment::Detached(_) => "<branch>".to_owned(),
         };
-        Ok(format!(
-            "{remote} has no branch there, so {remote}/HEAD is unset; commit there, push the \
-             branch (`git push -u {remote} {branch}`) and record it (`git remote set-head \
-             {remote} {branch}`)"
-        ))
+        let first_push = format!(
+            "commit there, push the branch (`git push -u {remote} {branch}`) and record it \
+             (`git remote set-head {remote} {branch}`)"
+        );
+        Ok(match copies {
+            RemoteBranchCopies::JustCloned => {
+                format!("{remote} has no branch there, so {remote}/HEAD is unset; {first_push}")
+            }
+            RemoteBranchCopies::AsLastFetched => format!(
+                "{remote}/HEAD is unset and no branch of {remote} has been fetched there; run \
+                 `git fetch {remote}` there, then, if {remote} has a branch, record its \
+                 canonical one (`git remote set-head {remote} -a`), and if it has none, \
+                 {first_push}"
+            ),
+        })
     }
 
     fn list_branch_names_with_prefix(

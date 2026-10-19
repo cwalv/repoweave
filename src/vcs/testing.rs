@@ -432,7 +432,11 @@ impl Vcs for FakeVcs {
         unsupported("remote_default_branch_repair_hint")
     }
 
-    fn clone_default_branch_repair_hint(&self, _clone: &Path) -> Result<String, VcsError> {
+    fn clone_default_branch_repair_hint(
+        &self,
+        _clone: &Path,
+        _copies: super::RemoteBranchCopies,
+    ) -> Result<String, VcsError> {
         unsupported("clone_default_branch_repair_hint")
     }
 

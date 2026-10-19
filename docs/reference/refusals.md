@@ -520,7 +520,10 @@ records any default the remote names, so the remote has either no branch yet
 or a default that names none of its branches. For the first, commit in the
 clone and push the branch; for the second, check out one of the branches the
 message lists. Either way, record the branch with
-`git remote set-head origin <branch>`.
+`git remote set-head origin <branch>`. `rwv add --adopt` reads the same two
+cases from what the clone has fetched; where it has fetched no branch, the
+message leads with `git fetch origin`, then names `set-head -a` if the remote
+has a branch and the first push if it has none.
 
 ### `no-remote-url`
 

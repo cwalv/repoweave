@@ -631,8 +631,8 @@ fn add_local_path_refuses_rather_than_fabricate_main_when_origin_head_is_unset()
 
     let stderr = String::from_utf8_lossy(&result.get_output().stderr).to_string();
     assert!(
-        stderr.contains("origin/HEAD") && stderr.contains("remote set-head"),
-        "refusal must name the resolving command, got: {stderr}"
+        stderr.contains("`git fetch origin`") && stderr.contains("`git remote set-head origin -a`"),
+        "refusal must lead with the fetch a never-fetched clone needs, got: {stderr}"
     );
     assert!(
         stderr.contains(&format!("then re-run `rwv add --adopt {repo_path}`")),
@@ -667,6 +667,59 @@ fn add_local_path_refuses_rather_than_fabricate_main_when_origin_head_is_unset()
         manifest_content.contains(repo_path),
         "the advised repair must unblock the same add, got:\n{manifest_content}"
     );
+}
+
+/// An adopted clone of a remote with no branch yet has nothing for
+/// `set-head -a` to find, fetched or not: the refusal names the first push
+/// as the exit when the fetch finds no branch, and that push unblocks the
+/// re-run.
+#[test]
+fn add_adopt_of_a_clone_whose_remote_has_no_branch_names_the_first_push() {
+    let tmp = common::tempdir().unwrap();
+    let bare = tmp.path().join("acme/empty");
+    init_bare_repo(&bare);
+    let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
+    let repo_path = "local/acme/empty";
+    let clone = workspace.join(repo_path);
+    std::fs::create_dir_all(clone.parent().unwrap()).unwrap();
+    common::git_in(
+        clone.parent().unwrap(),
+        &["clone", "-q", &common::file_url(&bare), "empty"],
+    );
+    let branch = common::git_in(&clone, &["symbolic-ref", "--short", "HEAD"]);
+
+    let out = rwv()
+        .args(["add", "--adopt", repo_path])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(
+        !out.status.success() && stderr.contains("rwv explain no-remote-default-branch"),
+        "the adopt refuses for the clone's unset default:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(&format!("`git push -u origin {branch}`"))
+            && stderr.contains(&format!("`git remote set-head origin {branch}`")),
+        "the refusal names the first push of the clone's branch and records it:\n{stderr}"
+    );
+
+    std::fs::write(clone.join("README"), "first\n").unwrap();
+    common::git_in(&clone, &["add", "README"]);
+    common::git_in(&clone, &["commit", "-qm", "first"]);
+    common::git_in(&clone, &["push", "-q", "-u", "origin", &branch]);
+    common::git_in(&clone, &["remote", "set-head", "origin", &branch]);
+
+    rwv()
+        .args(["add", "--adopt", repo_path])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+    let manifest = Manifest::from_path(&workspace.join("projects/test-project/rwv.toml")).unwrap();
+    let entry = manifest
+        .get_entry(&RepoPath::new(repo_path).unwrap())
+        .expect("the re-run adopt lists the repo");
+    assert_eq!(entry.version.as_str(), branch);
 }
 
 /// `rwv add <url>` refused for the default its fresh clone lacks, run in
