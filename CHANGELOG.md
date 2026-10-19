@@ -4,6 +4,141 @@ This changelog starts at 0.23.0. Releases 0.4.0 through 0.22.0 shipped without
 entries, and none are reconstructed here — the gap is a gap in the record, not a
 claim that nothing changed in them.
 
+## Unreleased
+
+### Breaking: relative path arguments are read from the directory rwv runs in
+
+A relative path on the command line names the place it names in your shell, or
+under `-C`/`-w`, in that directory. That holds for `rwv sync <source>`, `rwv
+sync-to <target>`, `rwv workweave create --from`/`--dir`, `rwv workweave
+set-container`, `rwv add --adopt <path>` and `rwv add --new --param root=<dir>`;
+each used to read a relative path from the weave root, and `--param root`
+refused one. `rwv remove <path>` and `rwv role <repo>` take a member as
+`rwv.toml` lists it, not a filesystem path, and are unchanged.
+
+`rwv add --adopt <path>` names the member by where the path lands: under the
+primary weave root or under the workweave you run it from, the clone it
+registers is the primary's at that member path. A path under neither refuses
+with `adopt-path-outside-weave`; a clone of its own inside the workweave, at a
+path where the primary has a different one, refuses with
+`foreign-clone-in-workweave`, naming both.
+
+### Plugins start in the directory rwv runs in
+
+A plugin starts in the `-C` directory, the `-w` workweave, or else the
+directory rwv was run from, and on Unix its `PWD` names that directory, so a
+relative argument means to a plugin what it means to a core verb. A plugin
+found through a relative `PATH` entry still runs. `rwv each --results` and
+`--joblog` with a relative path write under that directory.
+
+### Member checkouts have their submodules
+
+Every way rwv creates a member checkout (`rwv workweave create`, `rwv fetch`,
+`rwv add`, `rwv sync`, `rwv sync-to`, `rwv doctor --fix`) checks out its
+submodules, nested ones included, from what the canonical clone already holds,
+never from the network, and places their files by reflink where the filesystem
+supports it. A submodule whose recorded commit the canonical clone lacks stays
+empty, and `rwv doctor` reports `uninitialized-submodule`, now with a
+`sub_kind`: `fetched` (`--fix` checks it out locally) or `unfetched` (report
+only). `submodules = "skip"` on a `[repositories."<path>"]` entry leaves a
+member's submodules empty and unreported.
+
+### Breaking: unknown keys in a `[repositories]` entry are refused
+
+A key a `[repositories."<path>"]` entry does not define fails to load on every
+verb that reads the manifest, naming the key, the way an unknown top-level key
+does. It used to be ignored, so a misspelled `submodules` would have changed
+nothing.
+
+### `rwv add` refuses something other than a clone at the placement
+
+A directory that is not a clone, empty or not, or a file at the placement
+`rwv add` would use refuses with `non-clone-at-placement`, naming the placement,
+before anything is cloned or written. It used to fail with a low-level VCS
+error and no refusal name. `rwv add --adopt` refuses the same way when the
+workweave's placement holds one.
+
+### `rwv add --adopt` names the right repair for a remote with no branch
+
+When the clone's `origin/HEAD` is unset, the refusal tells a clone that has
+never fetched to `git fetch origin` first, then names `git remote set-head
+origin -a` if the remote has a branch and the first push if it has none.
+
+### `rwv workweave delete` leaves nothing behind for checkouts the manifest does not list
+
+A checkout at member depth that the manifest does not name is checked and
+cleaned up like a member: delete refuses when it hosts another directory's
+worktree, unregisters its worktree, and retires the branch rwv made for it. A
+member a workweave added and that workweave's deletion no longer leaves the
+primary unable to `rwv remove <path> --delete` it.
+
+### `rwv doctor --json` reports `safe_to_fix` as what `--fix` will do
+
+`safe_to_fix` is `true` only for a finding `--fix` acts on. `config-rejected`
+and `tool-missing` findings used to say `true` though `--fix` never repairs
+them.
+
+### `rwv lock --commit` names a dropped repo
+
+A lock commit that drops a member's entry says so in its subject (`lock: drop
+<path>`, or `lock: drop N repos`) and lists each dropped entry in its body.
+
+### `rwv workweave log` names a missing checkout
+
+A member checkout missing from the workweave or its parent is reported as
+missing, naming `rwv fetch`, instead of as a failure to run git.
+
+### `rwv each` ships with rwv
+
+`rwv each` runs a command in every repo of the checkout you are in, in
+parallel: `rwv each --role fork -- git checkout -b feat/x`. It is a plugin,
+`rwv-each`, installed beside `rwv`. With no `--role` or `--repo` it runs in
+every repo except reference repos; output lines are prefixed with their repo
+(`--group` holds each repo's output until it finishes); every repo runs even
+after one fails, and a summary names the failures; the exit status is 0 only if
+every repo succeeded. `--json`, `--fail-fast`, `--dry-run`, `--shell`,
+`--timeout`, `--joblog`, `--results` and `--progress` are described in the
+`rwv each` reference. Ctrl-C and `--timeout` end a command's whole process tree.
+
+### Every release channel installs `rwv-each` beside `rwv`, and no longer `generate-explain`
+
+The release archives, the Homebrew formula, the PyPI wheels, the install script
+and `cargo install --git https://github.com/cwalv/repoweave` all carry `rwv-each` next to `rwv`. Earlier
+archives, formulae and crates also installed `generate-explain`, a tool that
+regenerates this repository's own documentation; it is no longer shipped.
+After upgrading by hand, `rm` any `generate-explain` an earlier install left
+beside `rwv`.
+
+### rwv waits for a plugin through Ctrl-C
+
+A Ctrl-C while a plugin runs no longer ends `rwv` ahead of the plugin. `rwv`
+waits for the plugin to exit and reports the plugin's own exit status, so a
+plugin that winds down on an interrupt is not cut off from the terminal and
+its status is the one the shell sees.
+
+### `ff-impossible` and `rebase-failed` always carry a `cause`
+
+In `rwv sync --json` and `rwv sync-to --json`, a failed outcome whose
+`failure.kind` is `ff-impossible` or `rebase-failed` always has
+`failure.cause`, and the published schemas list it as required for those two
+kinds. A consumer can read `failure.cause.kind` on them without an absence
+check. `head-unreadable` still omits `cause` when it has none.
+
+### Error messages keep their causes
+
+Messages that relay an underlying failure now print its whole cause chain
+rather than only its outermost line, so a failure reported by `rwv doctor
+--fix`, an ownership-receipt warning from a workweave verb, or an integration
+hook names what actually went wrong beneath the step that failed.
+
+### `rwv status` takes `--role` and `--repo`
+
+`rwv status` accepts the selector flags `fetch`, `update` and `push` take:
+`--role <role>` and `--repo <selector>` (exact path, `re:<pat>`, or
+`glob:<pat>`), repeatable and combined as a union. They narrow both the table
+and the `--json` `repos` array. A filter that matches no repo reports nothing
+and exits 0.
+
 ## 0.24.0
 
 ### Breaking: `rwv add <path>` no longer adopts a clone
@@ -105,34 +240,6 @@ a member whose files disagree with its role as `member-permissions`, which
 Nothing raised it: an entry with no `role` fails to parse and is reported as
 `unparseable-project`. `rwv doctor --kind missing-role` refuses with
 `unknown-finding-kind`, and the kind is gone from `doctor.json`.
-
-### `rwv each` ships with rwv
-
-`rwv each` runs a command in every repo of the checkout you are in, in
-parallel: `rwv each --role fork -- git checkout -b feat/x`. It is a plugin,
-`rwv-each`, installed beside `rwv`. With no `--role` or `--repo` it runs in
-every repo except reference repos; output lines are prefixed with their repo
-(`--group` holds each repo's output until it finishes); every repo runs even
-after one fails, and a summary names the failures; the exit status is 0 only if
-every repo succeeded. `--json`, `--fail-fast`, `--dry-run`, `--shell`,
-`--timeout`, `--joblog`, `--results` and `--progress` are described in the
-`rwv each` reference. Ctrl-C and `--timeout` end a command's whole process tree.
-
-### Every release channel installs `rwv-each` beside `rwv`, and no longer `generate-explain`
-
-The release archives, the Homebrew formula, the PyPI wheels, the install script
-and `cargo install repoweave` all carry `rwv-each` next to `rwv`. Earlier
-archives, formulae and crates also installed `generate-explain`, a tool that
-regenerates this repository's own documentation; it is no longer shipped.
-After upgrading by hand, `rm` any `generate-explain` an earlier install left
-beside `rwv`.
-
-### rwv waits for a plugin through Ctrl-C
-
-A Ctrl-C while a plugin runs no longer ends `rwv` ahead of the plugin. `rwv`
-waits for the plugin to exit and reports the plugin's own exit status, so a
-plugin that winds down on an interrupt is not cut off from the terminal and
-its status is the one the shell sees.
 
 ### Breaking: the `[lock]` table is gone from `rwv.toml`
 
@@ -428,29 +535,6 @@ even under a filter that matched a warning.
   without `-j` the job count is min(nproc, 8). `rwv lock --help` names
   `rwv materialize`, and `rwv setup claude --help` names every hook it
   registers.
-
-### `ff-impossible` and `rebase-failed` always carry a `cause`
-
-In `rwv sync --json` and `rwv sync-to --json`, a failed outcome whose
-`failure.kind` is `ff-impossible` or `rebase-failed` always has
-`failure.cause`, and the published schemas list it as required for those two
-kinds. A consumer can read `failure.cause.kind` on them without an absence
-check. `head-unreadable` still omits `cause` when it has none.
-
-### Error messages keep their causes
-
-Messages that relay an underlying failure now print its whole cause chain
-rather than only its outermost line, so a failure reported by `rwv doctor
---fix`, an ownership-receipt warning from a workweave verb, or an integration
-hook names what actually went wrong beneath the step that failed.
-
-### `rwv status` takes `--role` and `--repo`
-
-`rwv status` accepts the selector flags `fetch`, `update` and `push` take:
-`--role <role>` and `--repo <selector>` (exact path, `re:<pat>`, or
-`glob:<pat>`), repeatable and combined as a union. They narrow both the table
-and the `--json` `repos` array. A filter that matches no repo reports nothing
-and exits 0.
 
 ## 0.23.0
 
