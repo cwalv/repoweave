@@ -752,7 +752,7 @@ fn abort_restores_repos_and_removes_op_state() {
 }
 
 // ---------------------------------------------------------------------------
-// Cross-verb mutex (Correction 1 COVERAGE + ORDERING).
+// Cross-verb mutex.
 //
 // The op-state mutex must extend beyond `sync`: every verb that mutates repo
 // state in an involved workspace (`update`, `lock --commit`, `workweave
@@ -829,7 +829,7 @@ fn mid_op_lock_commit_refuses_with_in_flight_message() {
 }
 
 /// Plain `rwv lock` (no `--commit`) is NOT gated: writing the working-tree
-/// `rwv.lock` is the auto-relock's own input (Correction 3 carve-out), so the
+/// `rwv.lock` is the auto-relock's own input, so the
 /// mutex is scoped to `--commit`. This guards the scope from over-broadening.
 #[test]
 fn mid_op_plain_lock_is_not_gated() {
@@ -971,7 +971,7 @@ fn mid_op_lease_side_verb_refuses_and_names_owner() {
     common::assert_names_operator_path(&stderr, &ww.root);
 }
 
-/// Correction 1 ORDERING: the op guard fires BEFORE lock-relation
+/// The op guard fires BEFORE lock-relation
 /// classification. A mid-op workspace whose lock is ALSO in an anomalous
 /// relation (would otherwise trip a lock/relation refusal) must report the
 /// in-flight op, not the stale-lock error — that is the whole point of the

@@ -2936,7 +2936,7 @@ fn refuse_if_checkouts_host_foreign_worktrees(
 /// Resolve the parent that children of the workweave at `retiree_dir` should
 /// be adopted by when the retiree is retired or deleted.
 ///
-/// Per Correction 5: children re-point to the RETIREE'S OWN recorded parent
+/// Children re-point to the RETIREE'S OWN recorded parent
 /// (the grandparent), so the lineage stays transitive by construction — the
 /// retiree's unique commits have just landed in that grandparent. If the
 /// retiree's marker is unreadable, records no parent, or records a parent that

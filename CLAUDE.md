@@ -141,6 +141,11 @@ Three gates in `src/bin/generate-explain.rs`:
   stating this ban, the one root-level source file, nor the dependency
   manifest goes unchecked.
 
+  The same gate also reports review-record shorthand: the word "correction"
+  followed by a number, case-insensitive, at a word boundary. It names an
+  entry in a design record the reader does not have, as a tracker ID does.
+  The number is required, so the ordinary word never matches.
+
   All three are dead schemes: nothing is issued under any of them, so a hit is
   old text coming back rather than a new author's habit. The prefix the tracker
   issues now is `rwv-`, which is also this repo's own vocabulary namespace.

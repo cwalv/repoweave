@@ -1325,8 +1325,8 @@ impl Phase {
 ///
 /// `live_conflict` is `Some(op)` only when a manifest repo is genuinely left
 /// in a VCS-native in-flight state (a live [`ConflictOp`]); the VCS-native
-/// resolution steps (`cd <repo>` / stage the resolution) are emitted ONLY then
-/// (Correction 4). A non-conflict batch of failures (e.g. a fetch error) omits
+/// resolution steps (`cd <repo>` / stage the resolution) are emitted ONLY then.
+/// A non-conflict batch of failures (e.g. a fetch error) omits
 /// the VCS block and points straight at the resume command. For
 /// [`ConflictOp::Rebase`] the VCS hint stops at staging — the rwv-native
 /// `{resume}` line IS the continue step; merge/cherry-pick
@@ -1370,7 +1370,7 @@ fn manifest_repo_failure_message(
 ///
 /// `live_conflict` is `Some(op)` only when the project repo is actually left
 /// mid-op (a rebase/merge/cherry-pick conflict). The VCS-native resolution
-/// steps are emitted ONLY then (Correction 4) — Phase 3 (relock) is never a
+/// steps are emitted ONLY then — Phase 3 (relock) is never a
 /// VCS conflict, so it always passes `None` and never teaches a spurious
 /// `git rebase --continue` (which would print "No rebase in progress").
 fn phase1_or_phase3_failure_message(
@@ -3550,7 +3550,7 @@ fn guard_and_mark<'a>(
     // abort` exits) rather than any downstream lock-relation / dirty
     // refusal computed against a workspace another op is mutating.
     //
-    // ORDERING (Correction 1, retained): every precondition that could
+    // ORDERING: every precondition that could
     // refuse the op runs AFTER acquisition; on refusal we call
     // `release_acquired` so the acquired records are cleared (cleanup
     // table's "precondition refusal → cleared everywhere" row). Refusal
@@ -4855,9 +4855,8 @@ fn unresolvable_lock_refusal(
         return None;
     }
     let side_str = side.as_str();
-    // Atomic `--commit` form (Correction 4): the two-step `rwv lock` +
-    // "commit before syncing" teaches the broken pattern where a
-    // written-but-unstaged `rwv.lock` then kills the re-run mid-op. `rwv lock
+    // The two-step `rwv lock` + "commit before syncing" leaves a
+    // written-but-unstaged `rwv.lock` that kills the re-run mid-op; `rwv lock
     // --commit` writes AND commits in one step.
     let recovery = relock_recovery(side, project_name);
     let mut lines = String::new();
@@ -4910,9 +4909,8 @@ fn lock_relation_refusal(
         lines.push_str(&format!("\n  {}: HEAD {} lock", r.repo_path, r.relation));
     }
     let side_str = side.as_str();
-    // Atomic `--commit` form (Correction 4): teach `rwv lock --commit`, not the
-    // two-step `rwv lock` + "commit before syncing" whose written-but-unstaged
-    // `rwv.lock` kills a re-run mid-op.
+    // Teach `rwv lock --commit`, not the two-step `rwv lock` + "commit before
+    // syncing" whose written-but-unstaged `rwv.lock` kills a re-run mid-op.
     let recovery = relock_recovery(side, project_name);
     // Lead with the documented phrase (`lock-freshness precondition`) so the
     // `--allow-stale-lock` doc stays accurate; keep the "stale lock" wording the
@@ -5121,7 +5119,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             eprintln!("Phase 1' (project repo) failed: {e:#}");
         }
         // Only teach the VCS-native resume when the project repo is actually
-        // left mid-op (Correction 4). A `--discard-local-commits` hard-reset
+        // left mid-op. A `--discard-local-commits` hard-reset
         // failure or a non-conflict rebase error leaves no in-flight VCS op.
         let live_conflict = ctx.project_vcs.mid_op(&ctx.cwd_project_dir);
         crate::refuse!(
@@ -5438,7 +5436,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 
     if any_failure {
         // A VCS-native resolution hint is only correct when a manifest repo is
-        // genuinely left mid-op (Correction 4). Probe the involved repos for a
+        // genuinely left mid-op. Probe the involved repos for a
         // live conflict rather than assuming one from the strategy — a batch of
         // fetch/head-unreadable failures leaves no rebase to `--continue`.
         let live_conflict = sync_tasks
@@ -5744,7 +5742,7 @@ fn run_relock(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         }
         // Phase 3 (relock) is a lock regeneration + commit, never a VCS
         // rebase/merge — so there is never a live ConflictOp to resume with a
-        // `git … --continue` (Correction 4). Pass `None`: the message points at
+        // `git … --continue`. Pass `None`: the message points at
         // `rwv {verb} --continue`, not a spurious `git rebase --continue`.
         crate::refuse!(
             RefusalKind::OpParked,
@@ -9360,7 +9358,7 @@ mod tests {
         assert_resolution_first_abort_last(&msg);
     }
 
-    // Correction 4 — the stale-lock recovery hint teaches the ATOMIC
+    // The stale-lock recovery hint teaches the ATOMIC
     // `rwv lock --commit`, never the broken two-step `rwv lock` + "commit"
     // (whose written-but-unstaged `rwv.lock` kills a re-run mid-op).
     #[test]

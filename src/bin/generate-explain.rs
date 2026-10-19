@@ -1872,6 +1872,32 @@ const RETIRED_ID_SPELLINGS: &[(&str, RangeInclusive<usize>, u8)] = &[
     ("project-reporoot-", 1..=8, b'.'),
 ];
 
+/// Leftmost review-record shorthand on `line`: the word "correction"
+/// immediately followed by a number, at a word boundary,
+/// case-insensitive.
+///
+/// That shorthand names an entry in a design record the reader does not have,
+/// which is what a tracker ID does. The number is required, so the ordinary
+/// word ("a correction to the lock") is never matched. Measured over every
+/// tracked file in the repository, the pattern reports only the shorthand.
+fn find_review_shorthand(line: &str) -> Option<String> {
+    const WORD: &str = "correction";
+    let lower = line.to_ascii_lowercase();
+    let bytes = lower.as_bytes();
+    lower.match_indices(WORD).find_map(|(i, _)| {
+        let before_ok = i == 0 || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_');
+        let mut j = i + WORD.len();
+        while j < bytes.len() && bytes[j] == b' ' {
+            j += 1;
+        }
+        let digits_from = j;
+        while j < bytes.len() && bytes[j].is_ascii_digit() {
+            j += 1;
+        }
+        (before_ok && j > digits_from).then(|| line[i..j].to_string())
+    })
+}
+
 /// Match a retired-scheme ID at a word boundary, reporting the leftmost one on
 /// the line so the finding names the token a reader scanning left to right hits
 /// first.
@@ -2078,6 +2104,12 @@ fn check_no_tracker_ids(root: &Path) -> Vec<String> {
         for (n, line) in content.lines().enumerate() {
             if let Some(id) = find_tracker_id(line) {
                 errors.push(format!("{rel}:{}: tracker ID `{id}`", n + 1));
+            }
+            if let Some(token) = find_review_shorthand(line) {
+                errors.push(format!(
+                    "{rel}:{}: review-record shorthand `{token}`",
+                    n + 1
+                ));
             }
         }
     }
@@ -6410,6 +6442,25 @@ mod tests {
             "expected a tracker-ID hit, got:\n{}",
             errors.join("\n")
         );
+    }
+
+    /// Review-record shorthand is reported; the ordinary word is not.
+    #[test]
+    fn tracker_id_check_fails_on_review_shorthand() {
+        let planted = format!("{} {}", "Correction", "4");
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let src = tmp.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(
+            src.join("lib.rs"),
+            format!(
+                "// Atomic form ({planted}).\n// A correction to the lock; correction: none.\npub fn f() {{}}\n"
+            ),
+        )
+        .unwrap();
+        let errors = check_no_tracker_ids(tmp.path());
+        assert_eq!(errors.len(), 1, "got:\n{}", errors.join("\n"));
+        assert!(errors[0].contains(&planted), "got:\n{}", errors[0]);
     }
 
     /// `tests/` carries no exemption from this gate either — a tracker ID
