@@ -6,7 +6,10 @@
 //! member covers goes with it: a member replay dropped but could not prune, or
 //! one the workweave added that the primary has not taken. Its uncommitted
 //! work is waived by `--discard-uncommitted` and its unmerged commits by
-//! `--discard-unmerged-commits`, exactly as a member's are.
+//! `--discard-unmerged-commits`, exactly as a member's are. Delete refuses
+//! when one hosts another tree's worktree, unregisters it from the clone it
+//! links into, and retires the seat's branch there, as it does for a member;
+//! `sync-to --retire` weighs it the same way before deleting the seat.
 
 use std::path::{Path, PathBuf};
 use std::process::Output;
@@ -245,6 +248,10 @@ fn delete_refuses_over_commits_in_a_member_only_the_workweave_names() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(!s1.exists());
+    assert!(
+        !branch_exists(&common::under(&weave.root, ADDED), "app--s1"),
+        "the waiver consents to losing the commits the branch holds"
+    );
 }
 
 /// A clone placed in the workweave by hand, with a commit of its own: no
@@ -309,4 +316,153 @@ fn a_delete_with_only_members_is_unchanged() {
     std::fs::remove_file(common::under(&s1, LIB).join("scratch.txt")).unwrap();
     succeed(&weave.root, &["workweave", PROJECT, "delete", "s1"]);
     assert!(!s1.exists());
+}
+
+fn worktree_list(store: &Path) -> String {
+    common::git_in(store, &["worktree", "list", "--porcelain"])
+}
+
+fn branch_exists(store: &Path, branch: &str) -> bool {
+    !common::git_in(store, &["branch", "--list", branch]).is_empty()
+}
+
+fn registers(store: &Path, checkout: &Path) -> bool {
+    let checkout = checkout.canonicalize().unwrap_or(checkout.to_path_buf());
+    worktree_list(store)
+        .lines()
+        .filter_map(|line| line.strip_prefix("worktree "))
+        .any(|listed| {
+            let listed = Path::new(listed);
+            listed.canonicalize().unwrap_or(listed.to_path_buf()) == checkout
+        })
+}
+
+/// A clone placed in the workweave by hand that other worktrees link into:
+/// removing the workweave would orphan them, and no waiver consents to that.
+#[test]
+fn delete_refuses_when_an_unlisted_checkout_hosts_a_foreign_worktree_even_with_waivers() {
+    let weave = weave();
+    let s1 = weave.seat("s1");
+    let stray = common::under(&s1, "local/owner/stray");
+    common::git_in(
+        &s1,
+        &["clone", &weave.url("added"), &stray.to_string_lossy()],
+    );
+    let foreign = weave.root.parent().unwrap().join("foreign");
+    common::git_in(
+        &stray,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "foreign",
+            &foreign.to_string_lossy(),
+        ],
+    );
+
+    let out = delete(
+        &weave,
+        &["--discard-uncommitted", "--discard-unmerged-commits"],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("\n\nrwv explain standalone-in-workweave\n")
+            && stderr.contains(&format!(
+                "local/owner/stray {OUTSIDE}: checkout is itself a canonical store with 1 \
+                 dependent worktree(s):"
+            )),
+        "{stderr}"
+    );
+    assert!(stray.join(".git").is_dir(), "{stderr}");
+    common::git_in(&foreign, &["status"]);
+}
+
+/// The primary dropped a member the seat still has checked out: delete takes
+/// the checkout's registration and the seat's branch out of the clone the
+/// primary keeps, as it does for a member.
+#[test]
+fn delete_unregisters_a_dropped_members_checkout_and_retires_its_branch() {
+    let weave = weave();
+    let s1 = weave.seat("s1");
+    let checkout = common::under(&s1, EXTRA);
+    let clone = common::under(&weave.root, EXTRA);
+    succeed(&weave.root, &["remove", EXTRA]);
+    succeed(&weave.root, &["lock"]);
+    commit_all(&weave.root, "drop extra");
+    assert!(registers(&clone, &checkout) && branch_exists(&clone, "app--s1"));
+
+    succeed(&weave.root, &["workweave", PROJECT, "delete", "s1"]);
+
+    assert!(!s1.exists());
+    assert!(
+        !worktree_list(&clone).contains("app--s1"),
+        "{}",
+        worktree_list(&clone)
+    );
+    assert!(!branch_exists(&clone, "app--s1"));
+}
+
+/// A member only the seat added has its clone in the primary. Deleting the
+/// seat retires the branch, which holds nothing the clone lacks, and its
+/// receipt there, so the primary can then remove the clone.
+#[test]
+fn delete_releases_the_primary_clone_of_a_member_only_the_workweave_added() {
+    let weave = weave();
+    let s1 = weave.seat("s1");
+    succeed(&s1, &["add", &weave.url("added"), "--role", "owned"]);
+    let clone = common::under(&weave.root, ADDED);
+    assert!(registers(&clone, &common::under(&s1, ADDED)));
+
+    succeed(
+        &weave.root,
+        &[
+            "workweave",
+            PROJECT,
+            "delete",
+            "s1",
+            "--discard-uncommitted",
+        ],
+    );
+
+    assert!(!s1.exists());
+    assert!(
+        !worktree_list(&clone).contains("app--s1"),
+        "{}",
+        worktree_list(&clone)
+    );
+    assert!(!branch_exists(&clone, "app--s1"));
+    succeed(&weave.root, &["remove", ADDED, "--delete"]);
+    assert!(!clone.exists());
+}
+
+/// `sync-to --retire` weighs a checkout its manifest does not name before it
+/// deletes the seat, as it weighs a member.
+#[test]
+fn retire_refuses_over_untracked_work_in_a_checkout_no_member_covers() {
+    let weave = weave();
+    let s1 = weave.seat("s1");
+    let stray = common::under(&s1, "local/owner/stray");
+    common::git_in(
+        &s1,
+        &["clone", &weave.url("added"), &stray.to_string_lossy()],
+    );
+    std::fs::write(stray.join("scratch.txt"), "untracked\n").unwrap();
+
+    let out = run(&s1, &["sync-to", "--retire"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        std::fs::read_to_string(stray.join("scratch.txt")).ok(),
+        Some("untracked\n".to_owned()),
+        "the untracked work must survive the refused retire:\n{stderr}"
+    );
+    assert!(!out.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("\n\nrwv explain dirty-checkout\n")
+            && stderr.contains(&format!(
+                "--retire: workweave has uncommitted changes after sync-to; refusing to \
+                 delete:\n  local/owner/stray {OUTSIDE}\n"
+            )),
+        "{stderr}"
+    );
 }

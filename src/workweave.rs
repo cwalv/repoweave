@@ -2530,10 +2530,10 @@ fn short_sha(sha: &str) -> &str {
 /// Return the relative paths within `workweave_dir` whose worktrees have
 /// uncommitted changes (staged, unstaged, or untracked).
 ///
-/// Checks the project worktree (`projects/<project>`) and each manifest-repo
-/// worktree. A repo that is missing on disk is skipped; a repo whose dirty
-/// check itself fails is reported as dirty (conservative: "we couldn't
-/// confirm clean").
+/// Checks the project worktree (`projects/<project>`), every manifest
+/// member, and every checkout at member depth the manifest does not name. A
+/// repo that is missing on disk is skipped; a repo whose dirty check itself
+/// fails is reported as dirty (conservative: "we couldn't confirm clean").
 pub fn collect_dirty_paths(
     project_vcs: &dyn Vcs,
     workweave_dir: &Path,
@@ -2553,51 +2553,64 @@ pub fn collect_dirty_paths(
         }
     }
 
-    // Manifest-repo worktrees.
-    for (repo_path, entry) in manifest.iter_entries() {
-        let wt = workweave_dir.join(repo_path.as_path());
+    for checkout in member_depth_checkouts(workweave_dir, manifest) {
+        let wt = workweave_dir.join(checkout.repo_path.as_path());
         if !wt.exists() {
             continue;
         }
-        let vcs = vcs_for(entry.vcs_type);
-        match vcs.has_uncommitted_changes(&wt) {
-            Ok(true) => dirty.push(repo_path.as_str().to_string()),
+        match checkout.vcs.has_uncommitted_changes(&wt) {
+            Ok(true) => dirty.push(checkout.label()),
             Ok(false) => {}
-            Err(e) => dirty.push(format!(
-                "{}: status check failed: {e:#}",
-                repo_path.as_str()
-            )),
-        }
-    }
-
-    let vcs = crate::vcs::probe_vcs();
-    for repo_path in checkouts_outside_manifest(workweave_dir, manifest) {
-        let label = format!("{repo_path} {OUTSIDE_MANIFEST}");
-        match vcs.has_uncommitted_changes(&workweave_dir.join(repo_path.as_path())) {
-            Ok(true) => dirty.push(label),
-            Ok(false) => {}
-            Err(e) => dirty.push(format!("{label}: status check failed: {e:#}")),
+            Err(e) => dirty.push(format!("{}: status check failed: {e:#}", checkout.label())),
         }
     }
 
     dirty
 }
 
-/// How a report labels a checkout [`checkouts_outside_manifest`] found.
-const OUTSIDE_MANIFEST: &str = "(not a manifest member)";
+/// A slot at member depth in a workweave that removing the workweave would
+/// take with it.
+struct MemberDepthCheckout {
+    repo_path: RepoPath,
+    vcs: Box<dyn Vcs>,
+    in_manifest: bool,
+}
 
-/// Checkouts at member depth under `workweave_dir` that `manifest` does not
-/// name: a member replay dropped but could not prune, or one this workweave
-/// added that the manifest has not taken. Removing the workweave directory
-/// takes them with it, so every check of what a removal would lose weighs
-/// them as it weighs members. A symlinked slot is not a checkout of this
-/// workweave and is left out.
-fn checkouts_outside_manifest(workweave_dir: &Path, manifest: &Manifest) -> Vec<RepoPath> {
-    crate::workspace::scan_member_depth_repos(workweave_dir, crate::vcs::probe_vcs().as_ref())
-        .into_iter()
-        .filter(|repo_path| !manifest.contains_repo(repo_path))
-        .filter(|repo_path| !is_symlinked_member(&workweave_dir.join(repo_path.as_path())))
-        .collect()
+impl MemberDepthCheckout {
+    fn label(&self) -> String {
+        if self.in_manifest {
+            self.repo_path.as_str().to_string()
+        } else {
+            format!("{} (not a manifest member)", self.repo_path)
+        }
+    }
+}
+
+/// Every member the manifest names, whether or not it is on disk, then every
+/// checkout at member depth it does not name: a member replay dropped but
+/// could not prune, or one this workweave added that the manifest has not
+/// taken. Removing the workweave directory takes the latter with it, so every
+/// check and cleanup of a removal treats them as it treats members. A
+/// symlinked slot is not a checkout of this workweave and is left out.
+fn member_depth_checkouts(workweave_dir: &Path, manifest: &Manifest) -> Vec<MemberDepthCheckout> {
+    let members = manifest
+        .iter_entries()
+        .map(|(repo_path, entry)| MemberDepthCheckout {
+            repo_path: repo_path.clone(),
+            vcs: vcs_for(entry.vcs_type),
+            in_manifest: true,
+        });
+    let outside =
+        crate::workspace::scan_member_depth_repos(workweave_dir, crate::vcs::probe_vcs().as_ref())
+            .into_iter()
+            .filter(|repo_path| !manifest.contains_repo(repo_path))
+            .filter(|repo_path| !is_symlinked_member(&workweave_dir.join(repo_path.as_path())))
+            .map(|repo_path| MemberDepthCheckout {
+                repo_path,
+                vcs: crate::vcs::probe_vcs(),
+                in_manifest: false,
+            });
+    members.chain(outside).collect()
 }
 
 /// Merge baselines for a workweave: workspace roots whose lineage counts as
@@ -2722,28 +2735,16 @@ fn collect_diverged_paths(
         );
     }
 
-    for (repo_path, entry) in manifest.iter_entries() {
-        let wt = workweave_dir.join(repo_path.as_path());
-        check(
-            vcs_for(entry.vcs_type).as_ref(),
-            &wt,
-            repo_path.as_path(),
-            repo_path.as_str().to_string(),
-            false,
-        );
-    }
-
     // No manifest entry says where a checkout outside it came from, so a
     // baseline lacking the repo is no reason to skip it: nothing else may
     // hold its commits.
-    let vcs = crate::vcs::probe_vcs();
-    for repo_path in checkouts_outside_manifest(workweave_dir, manifest) {
+    for checkout in member_depth_checkouts(workweave_dir, manifest) {
         check(
-            vcs.as_ref(),
-            &workweave_dir.join(repo_path.as_path()),
-            repo_path.as_path(),
-            format!("{repo_path} {OUTSIDE_MANIFEST}"),
-            true,
+            checkout.vcs.as_ref(),
+            &workweave_dir.join(checkout.repo_path.as_path()),
+            checkout.repo_path.as_path(),
+            checkout.label(),
+            !checkout.in_manifest,
         );
     }
 
@@ -2900,13 +2901,11 @@ fn refuse_if_checkouts_host_foreign_worktrees(
     let project_wt = project_dir(workweave_dir, project.as_str());
     check(project_vcs, &project_wt, project_rel_path(project.as_str()));
 
-    // Manifest repos.
-    for (repo_path, entry) in manifest.iter_entries() {
-        let wt = workweave_dir.join(repo_path.as_path());
+    for checkout in member_depth_checkouts(workweave_dir, manifest) {
         check(
-            vcs_for(entry.vcs_type).as_ref(),
-            &wt,
-            repo_path.as_str().to_string(),
+            checkout.vcs.as_ref(),
+            &workweave_dir.join(checkout.repo_path.as_path()),
+            checkout.label(),
         );
     }
 
@@ -3420,8 +3419,8 @@ fn delete_workweave_inner_at(
     // Remove worktrees for each repo, collecting errors.
     let mut errors: Vec<String> = Vec::new();
 
-    for (repo_path, entry) in manifest.iter_entries() {
-        let vcs = vcs_for(entry.vcs_type);
+    for checkout in member_depth_checkouts(&workweave_dir, &manifest) {
+        let (repo_path, vcs) = (&checkout.repo_path, &checkout.vcs);
         let worktree_path = workweave_dir.join(repo_path.as_path());
 
         // Resolve the worktree's ACTUAL canonical store on disk rather than
@@ -3454,7 +3453,7 @@ fn delete_workweave_inner_at(
                 continue;
             }
             if let Err(e) = vcs.remove_worktree(&repo_abs, &worktree_path) {
-                let msg = format!("{}: {e:#}", repo_path.as_str());
+                let msg = format!("{}: {e:#}", checkout.label());
                 eprintln!("rwv workweave delete: error: {msg}");
                 errors.push(msg);
                 // Fall through to the ref pass anyway: the receipt set
@@ -3475,7 +3474,7 @@ fn delete_workweave_inner_at(
             &mut registry,
             &repo_abs,
             &ephemeral,
-            repo_path.as_str(),
+            &checkout.label(),
             &baseline_tips,
             discard_unmerged,
         );
