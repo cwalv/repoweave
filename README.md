@@ -1,10 +1,12 @@
 # repoweave (`rwv`)
 
-**Workspace tooling for a project split across several repos.**
+**Monorepo ergonomics without the monorepo, built for parallel agents.**
 
-If your project spans more than one repo, you've probably felt at least one of these: a setup README that drifts away from what people actually clone; cross-cutting scripts, manifests, and decision records with no obvious home; a publish-and-reinstall cycle every time a shared library changes; no way to say *exactly* this set of revisions was running in production on a given day; explaining the repository topology to an AI agent every new session.
+If your project spans more than one repo — or even a single `owned` member repo paired with a `projects/<name>/` coordination envelope, read-only `reference` repos for study, and isolated parallel agent workweaves — you've probably felt at least one of these: a setup README that drifts away from what people actually clone; cross-cutting scripts, manifests, and decision records with no obvious home; a publish-and-reinstall cycle every time a shared library changes; no way to say *exactly* this set of revisions was running in production on a given day; two coding agents colliding in the same checkout or explaining the repository topology every new session.
 
-repoweave is a coordination layer that addresses those without merging the repos. A committable manifest lists which repos belong to the project. A single lock pins every revision for reproducibility. One command (`rwv fetch <url>`) clones the project and every repo it lists. Workweaves give you isolated parallel cross-repo work — or an agent sandbox — without disturbing the primary. The repos themselves stay independent.
+repoweave is a coordination layer that addresses those without merging the repos. A committable manifest lists which repos belong to the project — whether ten polyrepo services or one `owned` member repo alongside `reference` dependencies. A single lock pins every revision for reproducibility. One command (`rwv fetch <url>`) clones the project and every repo it lists. Workweaves give you isolated parallel cross-repo work — or an agent sandbox with transactional landing (`rwv sync-to --retire`) and one-command rollback (`rwv abort`) — without disturbing the primary. The repos themselves stay independent.
+
+**Start where you are:** [Shared workspaces for polyrepo teams](docs/explanation/lenses/workspace.md) · [Monorepo speed without migration](docs/explanation/lenses/monorepo.md) · [Parallel sandboxes for agents](docs/explanation/lenses/agent.md)
 
 ### Why it exists
 
@@ -12,7 +14,7 @@ A monorepo eliminates most of the coordination pain — at the cost of vendoring
 
 - **A committable manifest and lock.** `projects/<name>/rwv.toml` lists the repos; `rwv.lock` pins every revision. `sha256sum rwv.lock` is the multi-repo equivalent of `git rev-parse HEAD`.
 - **One command reproduces the workspace.** `rwv fetch <url>` clones the project and every repo it lists, surfaces ecosystem workspace files at the weave root where they apply, and runs install commands. For toolchain pins, env activation, or full OS-level reproduction, drop a `.mise.toml` / `.envrc` / `devcontainer.json` into the project repo (they're cross-cutting artifacts) — `rwv fetch` carries them with everything else. See [adjacent-tools](docs/adjacent-tools.md).
-- **A natural home for cross-cutting artifacts that don't quite fit anywhere else.** Operational scripts, k8s manifests, ADRs, demos, release notes, devcontainer configs, `.mise.toml` toolchain pins, Nix flakes — they live in the project repo without contaminating any single library's history, and they come along on every `rwv fetch`.
+- **A dedicated `projects/<name>/` envelope for intent and cross-cutting artifacts.** Keeping `rwv.toml`, `rwv.lock`, deliberative design records, issue trackers, `CLAUDE.md`, operational scripts, k8s manifests, devcontainer configs, `.mise.toml` toolchain pins, and Nix flakes in `projects/<name>/` gives them versioned correspondence with your code without polluting any product repository's commit history or public landing page — and they come along on every `rwv fetch`.
 - **Isolated parallel work via workweaves.** `git worktree` extended across N repos, with per-workweave `node_modules` / `.venv` / `target` and automatic copy-on-write file sharing where the filesystem supports reflinks. Use for feature branches, PR review, or agent sandboxes — the primary weave stays undisturbed.
 - **A bounded surface for automation.** `rwv prime` advertises the workspace; `rwv explain <verb>` returns a markdown bundle with the verb's JSON Schema embedded; `rwv setup claude` wires `SessionStart`/`PreCompact` context hooks and `WorktreeCreate`/`WorktreeRemove` lifecycle hooks so `claude --worktree` provisions a full multi-repo workweave; roles surface repo change-resistance as machine-readable metadata (`reference` repos are physically read-only — their tracked files carry no write bits; `dependency` repos are writable but conventionally off-limits and excluded from `rwv push` by default). Together they give an agent harness everything it needs to drive the workspace without scraping help text.
 - **Built-in failure recovery and drift repair.** Every `rwv sync` and `rwv sync-to` records savepoint refs under `refs/rwv/pre-op/<id>` so `rwv abort` can restore every touched repo to its exact pre-operation state; `rwv doctor` detects and repairs workspace drift (`--fix`); destructive overrides require explicit, narrowly scoped flags (`--discard-local-commits`, `--allow-stale-lock`).
@@ -66,6 +68,8 @@ rm ~/.local/bin/rwv ~/.local/bin/rwv-each
 
 ### Quick start
 
+**Cloning an existing project:**
+
 ```bash
 mkdir my-workspace && cd my-workspace
 rwv fetch chatly/web-app          # clone project + all its repos, activate, install
@@ -76,20 +80,30 @@ That single command clones the project repo, reads its `rwv.toml` manifest, clon
 ```bash
 # edit across repos freely — cross-package imports resolve locally
 cd github/chatly/server
-# ... make changes ...
+# ... make changes and commit ...
 npm test --workspaces             # from weave root — tests span all repos
 
-rwv lock                          # snapshot repo SHAs into rwv.lock
-cd projects/web-app
-git add rwv.lock && git commit -m "lock: update after payment feature"
+rwv lock --commit -m "lock: update after payment feature"   # snapshot repo SHAs into projects/web-app/rwv.lock and commit
 ```
 
-Create an isolated working copy when you need parallel work, PR review, or agent isolation:
+**Starting a new project from scratch (Day 0)** — see [create a project](docs/how-to/create-a-project.md) for the full walkthrough:
+
+```bash
+mkdir my-workspace && cd my-workspace
+rwv init web-app
+rwv add https://github.com/chatly/server.git
+rwv add https://github.com/chatly/shared-types.git --role dependency
+rwv lock --commit -m "lock: initial project snapshot"
+```
+
+**Working in an isolated workweave (parallel features, PR review, or agent sandboxes):**
 
 ```bash
 rwv workweave web-app create payments    # creates isolated working copy with git worktrees
 cd ../.workweaves/web-app--payments
-# independent branches, node_modules, .venv — weave is undisturbed
+# independent branches, node_modules, .venv — primary weave is undisturbed
+# ... commit changes across member repos ...
+rwv sync-to --retire                     # rebase onto parent, auto-relock, fast-forward parent, and delete workweave
 ```
 
 (Workweaves live at `<parent>/.workweaves/<project>--<name>/`, a sibling of the weave root by default — so `../.workweaves/...` from the weave root.)

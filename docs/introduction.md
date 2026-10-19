@@ -1,10 +1,10 @@
 # Introduction
 
-**repoweave** coordinates work across multiple repos that share a project. It gives you:
+**Monorepo ergonomics without the monorepo, built for parallel agents.** **repoweave** coordinates work across repositories that share a project — from a ten-repo polyrepo down to a single `owned` member repo paired with a `projects/<name>/` coordination envelope, read-only `reference` repos, and parallel agent workweaves. It gives you:
 
 - **A committable manifest and lock.** `rwv.toml` says which repos belong; `rwv.lock` pins every revision. `sha256sum rwv.lock` is the project fingerprint — the multi-repo equivalent of `git rev-parse HEAD`.
 - **One command reproduces the workspace.** `rwv fetch <url>` clones the project and every repo it lists, surfaces ecosystem workspace files at the weave root where they apply, and runs install commands. For toolchain pins, env activation, or full OS-level reproduction, drop a `.mise.toml` / `.envrc` / `devcontainer.json` into the project repo (they're cross-cutting artifacts) — `rwv fetch` carries them with everything else. See [adjacent-tools](./adjacent-tools.md).
-- **A natural home for cross-cutting artifacts that don't quite fit anywhere else.** Operational scripts, k8s manifests, ADRs, demos, release notes, devcontainer configs, `.mise.toml` toolchain pins, Nix flakes — they live in the project repo without contaminating any single library's history, and they come along on every `rwv fetch`.
+- **A dedicated `projects/<name>/` envelope for intent and cross-cutting artifacts.** Keeping `rwv.toml`, `rwv.lock`, deliberative design records, issue trackers, `CLAUDE.md`, operational scripts, k8s manifests, devcontainer configs, `.mise.toml` toolchain pins, and Nix flakes in `projects/<name>/` gives them versioned correspondence with your code without polluting any product repository's commit history or public landing page — and they come along on every `rwv fetch`.
 - **Isolated parallel work via workweaves.** Worktree-derived sandboxed copies of the whole workspace, with automatic copy-on-write file sharing where the filesystem supports reflinks. Use them for feature branches, PR review, or agent sandboxes; the primary weave stays undisturbed.
 - **A bounded surface for automation.** `rwv prime` advertises the workspace; `rwv explain <verb>` returns a markdown bundle with the verb's JSON Schema embedded; `rwv setup claude` registers both `SessionStart`/`PreCompact` context hooks and `WorktreeCreate`/`WorktreeRemove` lifecycle hooks so `claude --worktree` creates a full multi-repo workweave; roles (`owned` / `fork` / `dependency` / `reference`) surface repo change-resistance (`reference` repos have read-only tracked files on disk; `dependency` repos are writable but excluded from `rwv push` by default); workweaves isolate the blast radius. Together they give an agent harness everything it needs to drive the workspace without scraping help text.
 - **Local cross-repo imports where languages line up.** Generated workspace files (`Cargo.toml [workspace]`, `go.work`, `package.json` workspaces, `pyproject.toml [tool.uv.workspace]`, ...) mean a change in a shared library is immediately visible to its consumer — no publish step during development.
@@ -42,13 +42,14 @@ For the full vocabulary, see [reference/glossary](./reference/glossary.md).
 You'll get the most out of repoweave if any of these describe your setup:
 
 - A product that spans **two or more repos** that have to work together.
+- Even a **single `owned` member repo paired with a `projects/<name>/` coordination repo, read-only `reference` repos, and parallel agent workweaves** — keeping design records, issue tracking, and `CLAUDE.md` versioned alongside the product without cluttering its public commit history, while giving each agent session an isolated workweave with transactional `rwv sync-to --retire` landing.
 - A **single product whose source build needs sibling clones** — your README says "clone these seven repos next to this one" but nothing pins the revisions.
 - A **shared internal library** consumed by other repos in your project.
 - An ambition to do **agent-driven refactoring** across repos with safe blast radius.
 - An existing **polyrepo setup** suffering from "wrong-version clone" ambient confusion.
 - **Cross-cutting artifacts** (scripts, manifests, demos, decision records) that have nowhere obvious to live.
 
-The unit is *repos your dev environment depends on*, not *repos under your project directory*. A project that looks like one repo from the outside can still be a strong fit if its build pulls in several siblings.
+The unit is *repos your dev environment depends on*, not *repos under your project directory*. A project that looks like one repo from the outside can still be a strong fit if its workflow pulls in sibling references, coordination state, or parallel agent sandboxes.
 
 ## Where to start
 
