@@ -252,13 +252,13 @@ fn place(
             .filter(|mode| {
                 *mode == Mode::Reflink || may_link(role, backend_declares, *source_is_reference)
             })
-            .filter(|mode| can_place_from(&source, dest, uncovered.keys().copied(), fs, *mode))
+            .filter(|mode| can_place_from(source, dest, uncovered.keys().copied(), fs, *mode))
             .collect();
         if modes.is_empty() {
             continue;
         }
         let asked: Vec<String> = uncovered.keys().map(|p| (*p).to_owned()).collect();
-        let Ok(held) = population.files_holding_recorded_content(&source, &asked) else {
+        let Ok(held) = population.files_holding_recorded_content(source, &asked) else {
             continue;
         };
         for offered in held {
@@ -272,7 +272,7 @@ fn place(
                 continue;
             }
             for mode in modes.clone() {
-                match place_one(&source, dest, &want.path, fs, mode, placing) {
+                match place_one(source, dest, &want.path, fs, mode, placing) {
                     Ok(()) => {
                         uncovered.remove(want.path.as_str());
                         placed.push((want.path.clone(), mode));

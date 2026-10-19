@@ -1391,6 +1391,11 @@ fn repair_bindings() -> Vec<(&'static str, Binding)> {
             "replaced the full clone of",
             Findings(&["clone-topology/standalone-in-workweave"]),
         ),
+        // --- repair_uninitialized_submodules ----------------------------
+        (
+            "checked out submodule",
+            Findings(&["uninitialized-submodule/fetched"]),
+        ),
         // --- repair_member_permissions ---------------------------------
         (
             "settled {changed} tracked file(s)",

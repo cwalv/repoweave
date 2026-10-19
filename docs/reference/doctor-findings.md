@@ -33,11 +33,11 @@ rwv doctor --json | jq -r '.issues[] |
     (if (.kind | type) == "string" then .kind else (.kind | keys[0]) end)'
 ```
 
-Twelve kinds carry a `sub_kind` — `branch-discipline`, `clone-topology`,
+Thirteen kinds carry a `sub_kind` — `branch-discipline`, `clone-topology`,
 `dead-op-lease`, `index-drift`, `member-permissions`,
 `missing-replay-exclusion`, `orphaned-savepoint`, `provenance`,
-`weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`,
-`workweave-tree-integrity`. Where the
+`uninitialized-submodule`, `weave-root-identity-conflict`,
+`working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`. Where the
 sub-kind decides the disposition the entry has a sub-heading per `sub_kind`;
 where it only narrows what was found, one entry covers them all.
 

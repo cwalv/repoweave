@@ -1414,14 +1414,14 @@ Schema:
       "description": "Whether an uninitialized submodule's recorded commit is on this machine.",
       "oneOf": [
         {
-          "description": "The canonical clone's copy of the submodule holds it; `--fix` checks the submodule out from there without the network.",
+          "description": "The canonical clone's copy of the submodule holds it. Auto-fixable: `--fix` checks the submodule out from there without the network.",
           "type": "string",
           "enum": [
             "fetched"
           ]
         },
         {
-          "description": "Nothing local holds it, so only a fetch into the canonical clone can.",
+          "description": "Nothing local holds it, so only a fetch into the canonical clone can. Report-only.",
           "type": "string",
           "enum": [
             "unfetched"

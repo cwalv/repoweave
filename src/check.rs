@@ -640,10 +640,8 @@ pub enum CheckViolation {
     /// out with `submodules = "skip"` has a `.gitmodules` file, and one or
     /// more of its listed submodule paths are empty directories (or absent).
     ///
-    /// Warning severity. Detection reads only local data. Paths whose
-    /// recorded commit the canonical clone's copy of the submodule holds are
-    /// one finding, which `--fix` checks out from that copy; the rest are
-    /// another, report-only, since only a fetch can supply them.
+    /// Warning severity. Detection reads only local data. The paths are
+    /// split by [`SubmoduleCommitKind`] into one finding per sub-kind.
     UninitializedSubmodule {
         /// Workweave name.
         workweave: WorkweaveName,
@@ -1053,10 +1051,11 @@ fn replay_exclusion_finding(state: ReplayExclusionState) -> Option<ReplayExclusi
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum SubmoduleCommitKind {
-    /// The canonical clone's copy of the submodule holds it; `--fix` checks
-    /// the submodule out from there without the network.
+    /// The canonical clone's copy of the submodule holds it. Auto-fixable:
+    /// `--fix` checks the submodule out from there without the network.
     Fetched,
     /// Nothing local holds it, so only a fetch into the canonical clone can.
+    /// Report-only.
     Unfetched,
 }
 
