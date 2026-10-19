@@ -1479,8 +1479,16 @@ fn a_rebase_landing_leaves_the_target_lock_pinning_the_tips_it_holds() {
 // A relative <source>/<target> is read from the directory rwv runs in (or
 // -C), never from the primary weave root. The fixture's primary sits one
 // directory below the temp dir, so the weave-root reading of the same
-// spelling lands at a path that does not exist.
+// spelling lands at a path that does not exist. Under -C the process runs
+// from a directory where the spelling also names nothing, so a path left
+// for the OS to read against the process cwd misses too.
 // ---------------------------------------------------------------------------
+
+fn elsewhere(tmp: &Path) -> PathBuf {
+    let dir = tmp.join("elsewhere/inner");
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
 
 #[test]
 fn sync_reads_a_relative_source_from_the_invocation_directory() {
@@ -1525,12 +1533,41 @@ fn sync_to_reads_a_relative_target_from_the_c_directory() {
         .arg("-C")
         .arg(&ww_root)
         .args(["sync-to", "../../primary", "--strategy=ff"])
-        .current_dir(tmp.path())
+        .current_dir(elsewhere(tmp.path()))
         .assert()
         .success();
 
     assert_eq!(
         common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]),
         ww_tip
+    );
+}
+
+#[test]
+fn sync_reads_a_relative_source_from_the_c_directory() {
+    let tmp = common::tempdir().unwrap();
+    let parent = tmp.path().join("deep");
+    let (primary, ww_root, ww_project, _ww_server, _initial_sha) = make_marker_ww(&parent);
+
+    let c2 = make_commit(&primary.server_dir, "p.txt", "p\n", "primary: advance");
+    common::fixture_lock(&primary.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::git_in(&primary.project_dir, &["add", "rwv.lock"]);
+    common::git_in(
+        &primary.project_dir,
+        &["commit", "-m", "lock: primary advance"],
+    );
+    let primary_tip = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
+
+    rwv()
+        .arg("-C")
+        .arg(&ww_root)
+        .args(["sync", "../../primary", "--strategy=ff"])
+        .current_dir(elsewhere(tmp.path()))
+        .assert()
+        .success();
+
+    common::git_in(
+        &ww_project,
+        &["merge-base", "--is-ancestor", &primary_tip, "HEAD"],
     );
 }
