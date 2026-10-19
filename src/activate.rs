@@ -297,10 +297,10 @@ fn remove_undeclared_links(root: &Path, project: &ProjectName) -> anyhow::Result
     }
     for link in &links {
         println!(
-            "[removed] core: `{}` -> `{}` (a link at a name `{}` no longer declares; \
+            "[removed] core: `{}` -> {} (a link at a name `{}` no longer declares; \
              the file it pointed at is untouched)",
             link.name(),
-            crate::path_spelling::weave_relative(link.target()),
+            link.quoted_target(),
             project
         );
     }
@@ -2292,10 +2292,25 @@ impl UndeclaredLink {
         &self.target
     }
 
+    fn quoted_target(&self) -> String {
+        quoted_link_target(&self.target)
+    }
+
     /// The project directory it resolves into.
     pub fn owner(&self) -> &str {
         &self.owner
     }
+}
+
+fn quoted_link_target(target: &Path) -> String {
+    format!(
+        "`{}`",
+        if target.is_absolute() {
+            crate::path_spelling::operator_path(target)
+        } else {
+            crate::path_spelling::weave_relative(target)
+        }
+    )
 }
 
 /// Weave-root symlinks that surface into the PRESENTED project at a name it no
@@ -2581,7 +2596,7 @@ pub fn verify_surfacing(
                 severity: Severity::Warning,
                 message: format!(
                     "surfacing: `{}` is a weave-root link into project `{}` at a name \
-                     `{}` no longer declares (it resolves to `{}`). Not auto-fixed: on \
+                     `{}` no longer declares (it resolves to {}). Not auto-fixed: on \
                      disk this is indistinguishable from a link you made by hand at the \
                      same shape, so `rwv doctor --fix` leaves it. Remove it with \
                      `rwv materialize --remove-undeclared-links`, which removes exactly \
@@ -2590,7 +2605,7 @@ pub fn verify_surfacing(
                     link.name(),
                     link.owner(),
                     project,
-                    crate::path_spelling::weave_relative(link.target())
+                    link.quoted_target()
                 ),
                 kind: IssueKind::Surfacing,
                 safe_to_fix: false,
@@ -3266,6 +3281,23 @@ mod tests {
             std::fs::read_link(root.join(".claude")).unwrap(),
             Path::new("projects/old-app/.claude"),
             "the link the pass replaced before failing must be put back"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn an_absolute_link_target_keeps_its_backslashes_and_a_relative_one_takes_slashes() {
+        assert_eq!(
+            quoted_link_target(Path::new(r"C:\primary\projects\p\a.md")),
+            r"`C:\primary\projects\p\a.md`"
+        );
+        assert_eq!(
+            quoted_link_target(Path::new(r"\\?\C:\primary\projects\p\a.md")),
+            r"`C:\primary\projects\p\a.md`"
+        );
+        assert_eq!(
+            quoted_link_target(Path::new(r"projects\p\a.md")),
+            "`projects/p/a.md`"
         );
     }
 

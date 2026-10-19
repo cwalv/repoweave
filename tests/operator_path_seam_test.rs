@@ -79,6 +79,13 @@ const ROUTED: &[Routed] = &[
     },
     Routed {
         file: "activate.rs",
+        scope: "fn quoted_link_target(",
+        needle: r#""`{}`","#,
+        renders: 1,
+        prints: "the target of an undeclared surfacing link, as doctor and materialize report it",
+    },
+    Routed {
+        file: "activate.rs",
         scope: "",
         needle: r#"cd to primary ({}) and rerun.","#,
         renders: 1,
