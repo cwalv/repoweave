@@ -324,6 +324,7 @@ pub fn run_add(
                 url,
             );
         }
+        refuse_non_clone_at_placements(vcs.as_ref(), ctx, &repo_path, &format!("rwv add {url}"))?;
         announce_already_registered(&repo_path);
         if !dest.exists() {
             warn_if_shared_clone(
@@ -339,6 +340,7 @@ pub fn run_add(
         return settle_manifest(ctx, &project, None, &[], opts);
     }
 
+    refuse_non_clone_at_placements(vcs.as_ref(), ctx, &repo_path, &format!("rwv add {url}"))?;
     if vcs.is_repo(&dest) {
         refuse_foreign_clone_at_placement(vcs.as_ref(), &parsed_url, &dest, &repo_path)?;
     }
@@ -399,6 +401,46 @@ pub fn run_add(
 
     eprintln!("Added '{}' to manifest", repo_path.as_str());
     Ok(())
+}
+
+/// Anything at a placement this add materializes into — the primary's, and
+/// from a workweave the workweave's own — that is not a clone: a directory,
+/// empty or not, or a file. It has no remote to compare, so the add can
+/// neither register it nor place a checkout over it.
+fn refuse_non_clone_at_placements(
+    vcs: &dyn Vcs,
+    ctx: &WorkspaceContext,
+    repo_path: &RepoPath,
+    retry: &str,
+) -> anyhow::Result<()> {
+    let placements = [ctx.primary_path(), ctx.active_path()];
+    for at in placements.map(|root| root.join(repo_path.as_path())) {
+        refuse_non_clone_at(vcs, &at, repo_path, retry)?;
+    }
+    Ok(())
+}
+
+fn refuse_non_clone_at(
+    vcs: &dyn Vcs,
+    at: &Path,
+    repo_path: &RepoPath,
+    retry: &str,
+) -> anyhow::Result<()> {
+    if !at.exists() || vcs.is_repo(at) {
+        return Ok(());
+    }
+    let found = if at.is_dir() {
+        "a directory that is not a clone"
+    } else {
+        "a file"
+    };
+    crate::refuse!(
+        RefusalKind::NonCloneAtPlacement,
+        "rwv add: the placement '{}' ({}) holds {found}, which can be neither registered \
+         nor have a checkout placed over it. Move it aside and re-run `{retry}`.",
+        repo_path.as_str(),
+        operator_path(at),
+    )
 }
 
 /// A clone already at the placement stands in for the one this add would make
@@ -579,6 +621,12 @@ fn adopt_placement(
                 operator_path(&canonical)
             );
         }
+        refuse_non_clone_at(
+            vcs,
+            &checkout,
+            &repo_path,
+            &format!("rwv add --adopt {raw}"),
+        )?;
     }
     Ok((repo_path, canonical))
 }

@@ -202,7 +202,9 @@ fn adopt_refuses_a_path_with_no_clone_including_a_bare_remote() {
     common::init_bare_repo_with_commit(&bare);
     let before = project_files(&ws);
 
-    for path in ["vendor/missing", "remotes/lib.git"] {
+    std::fs::create_dir_all(ws.join("vendor/plain")).unwrap();
+    std::fs::write(ws.join("vendor/plain/notes.txt"), "not a clone\n").unwrap();
+    for path in ["vendor/missing", "remotes/lib.git", "vendor/plain"] {
         let stderr = refusal_stderr(&["add", "--adopt", path], &ws);
         assert_routes_to(&stderr, "no-clone-to-adopt");
         assert!(stderr.contains("file://"), "{stderr}");
@@ -343,33 +345,68 @@ fn add_registers_a_clone_of_the_same_remote_already_at_the_placement() {
     );
 }
 
-/// A directory at the placement that is not a clone has no remote to compare,
-/// so it takes the path it always took: the clone is skipped and reading the
-/// default branch fails on a directory that is not a repository.
+/// Whatever sits at the placement without being a clone — a directory with
+/// content, an empty one, a file — has no remote to compare, so the add
+/// refuses, names the placement, and leaves it as it was.
 #[test]
-fn add_over_a_plain_directory_at_the_placement_keeps_its_old_path() {
+fn add_refuses_anything_but_a_clone_at_the_placement() {
     let tmp = common::tempdir().unwrap();
     let ws = two_project_weave(tmp.path());
     let (ours, _theirs) = two_remotes_one_placement(tmp.path());
     let placed = ws.join("local/remotes/lib");
+    std::fs::create_dir_all(placed.parent().unwrap()).unwrap();
+    let before = project_files(&ws);
+
+    type Occupy = fn(&Path);
+    let occupants: [(&str, Occupy); 3] = [
+        ("directory", |p| {
+            std::fs::create_dir_all(p).unwrap();
+            std::fs::write(p.join("notes.txt"), "not a clone\n").unwrap();
+        }),
+        ("directory", |p| std::fs::create_dir_all(p).unwrap()),
+        ("file", |p| std::fs::write(p, "not a clone\n").unwrap()),
+    ];
+    for (shape, occupy) in occupants {
+        occupy(&placed);
+        let stderr = refusal_stderr(&["add", &common::file_url(&ours)], &ws);
+        assert_routes_to(&stderr, "non-clone-at-placement");
+        assert!(
+            stderr.contains("local/remotes/lib") && stderr.contains(shape),
+            "{stderr}"
+        );
+        assert!(!stderr.contains("skipping clone"), "{stderr}");
+        assert_eq!(project_files(&ws), before);
+        if placed.is_dir() {
+            std::fs::remove_dir_all(&placed).unwrap();
+        } else {
+            std::fs::remove_file(&placed).unwrap();
+        }
+    }
+}
+
+/// A member the manifest already names, whose placement holds a directory
+/// that is not a clone, refuses the same way rather than re-running its
+/// activation over it.
+#[test]
+fn re_add_of_a_listed_member_refuses_a_non_clone_at_its_placement() {
+    let tmp = common::tempdir().unwrap();
+    let ws = two_project_weave(tmp.path());
+    let (ours, _theirs) = two_remotes_one_placement(tmp.path());
+    let url = common::file_url(&ours);
+    common::rwv()
+        .args(["add", &url])
+        .current_dir(&ws)
+        .assert()
+        .success();
+    let placed = ws.join("local/remotes/lib");
+    std::fs::remove_dir_all(&placed).unwrap();
     std::fs::create_dir_all(&placed).unwrap();
     std::fs::write(placed.join("notes.txt"), "not a clone\n").unwrap();
     let before = project_files(&ws);
 
-    let output = common::rwv()
-        .args(["add", &common::file_url(&ours)])
-        .current_dir(&ws)
-        .output()
-        .expect("rwv should run");
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-    assert_eq!(output.status.code(), Some(1), "{stderr}");
-    assert!(
-        stderr.contains("skipping clone") && stderr.contains("is not a vcs repository"),
-        "{stderr}"
-    );
-    assert!(
-        !stderr.contains("rwv explain "),
-        "no refusal judges a directory with no remote to compare:\n{stderr}"
-    );
+    let stderr = refusal_stderr(&["add", &url], &ws);
+    assert_routes_to(&stderr, "non-clone-at-placement");
+    assert!(stderr.contains("local/remotes/lib"), "{stderr}");
     assert_eq!(project_files(&ws), before);
+    assert!(placed.join("notes.txt").is_file());
 }

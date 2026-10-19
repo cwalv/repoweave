@@ -297,3 +297,55 @@ fn adopt_of_a_workweave_clone_that_is_not_the_primarys_refuses_naming_both() {
     );
     assert!(manifest_keys(&w.workweave.join("projects/test-project")).is_empty());
 }
+
+#[test]
+fn adopt_into_a_workweave_whose_placement_holds_a_plain_directory_refuses_naming_it() {
+    let tmp = common::tempdir().unwrap();
+    let w = adopt_weave(tmp.path());
+    clone_at(tmp.path(), "dup", &w.primary.join("bar/dup"));
+    let occupied = w.workweave.join("bar/dup");
+    std::fs::create_dir_all(&occupied).unwrap();
+    std::fs::write(occupied.join("notes.txt"), "not a clone\n").unwrap();
+
+    let out = common::rwv()
+        .args(["add", "--adopt", "bar/dup"])
+        .current_dir(&w.workweave)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "stderr was:\n{stderr}");
+    assert_routes_to(&stderr, "non-clone-at-placement");
+    assert!(
+        stderr.contains(&canonical(&occupied)),
+        "stderr was:\n{stderr}"
+    );
+    assert!(manifest_keys(&w.workweave.join("projects/test-project")).is_empty());
+    assert!(occupied.join("notes.txt").is_file());
+}
+
+#[test]
+fn add_from_a_workweave_whose_placement_holds_a_plain_directory_refuses_naming_it() {
+    let tmp = common::tempdir().unwrap();
+    let w = adopt_weave(tmp.path());
+    let bare = tmp.path().join("ours/remotes/lib.git");
+    std::fs::create_dir_all(bare.parent().unwrap()).unwrap();
+    common::init_bare_repo_with_commit(&bare);
+    let occupied = w.workweave.join("local/remotes/lib");
+    std::fs::create_dir_all(&occupied).unwrap();
+    std::fs::write(occupied.join("notes.txt"), "not a clone\n").unwrap();
+
+    let out = common::rwv()
+        .args(["add", &common::file_url(&bare)])
+        .current_dir(&w.workweave)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "stderr was:\n{stderr}");
+    assert_routes_to(&stderr, "non-clone-at-placement");
+    assert!(
+        stderr.contains(&canonical(&occupied)),
+        "stderr was:\n{stderr}"
+    );
+    assert!(manifest_keys(&w.workweave.join("projects/test-project")).is_empty());
+    assert!(occupied.join("notes.txt").is_file());
+}

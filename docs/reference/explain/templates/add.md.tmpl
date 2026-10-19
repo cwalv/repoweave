@@ -21,7 +21,10 @@ with `git worktree` providing per-workweave isolation. (See
 If a clone already exists on disk at the canonical path and its origin names
 the same repository, `add` skips the network clone and registers it. A clone
 of anything else refuses (`foreign-clone-at-placement`), naming `rwv add
---adopt <path>` to register it under its own origin.
+--adopt <path>` to register it under its own origin. A directory (empty or
+not) or file at the placement that is not a clone refuses
+(`non-clone-at-placement`); so does one at the workweave's own placement when
+`add` or `add --adopt` runs from a workweave.
 
 ### Workweave-aware worktree materialization
 
@@ -248,6 +251,9 @@ rwv add local --new --params-json '{"root": "/srv/repos", "owner": "myorg", "rep
 - *foreign clone in workweave* (`foreign-clone-in-workweave`) — `--adopt`
   names a clone inside the workweave that is not a worktree of the primary's
   clone at the same path.
+- *non-clone at placement* (`non-clone-at-placement`) — the placement, or
+  from a workweave the workweave's own placement, holds a directory or file
+  that is not a clone. Move it aside and re-run.
 - *foreign clone at placement* (`foreign-clone-at-placement`) — the URL's
   placement already holds a clone of a different repository; register it with
   `--adopt`, or move it aside.

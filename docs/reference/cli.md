@@ -222,7 +222,7 @@ The positional argument has one spelling per meaning:
 
 `rwv add` writes to CWD's workspace's manifest (the active workspace's `rwv.toml`), not always primary's.
 
-**A clone already at the placement.** When the URL's placement already holds a git clone, `add` registers it only if its `origin` URL is equivalent to the one given (`Directory already exists at '<path>', skipping clone`). A clone of any other remote, or one with no `origin`, refuses with `foreign-clone-at-placement`, naming `rwv add --adopt <path>`; nothing is written.
+**A clone already at the placement.** When the URL's placement already holds a git clone, `add` registers it only if its `origin` URL is equivalent to the one given (`Directory already exists at '<path>', skipping clone`). A clone of any other remote, or one with no `origin`, refuses with `foreign-clone-at-placement`, naming `rwv add --adopt <path>`; nothing is written. Anything at the placement that is not a clone (a directory, empty or not, or a file) refuses with `non-clone-at-placement`, naming it; so does one at the workweave's own placement when `add` or `add --adopt` runs from a workweave.
 
 **Canonical path.** Every URL lands at `<registry>/<owner>/<repo>/`. `<registry>` is the matched built-in registry's name (`github`, `gitlab`, `bitbucket`) when the host is one of those; for a host none of them recognize, it's the URL's own host (e.g. `git.corp.example/team/repo/`); for `file://`, which has no host, it's `local`.
 

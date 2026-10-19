@@ -296,6 +296,8 @@ pub enum RefusalKind {
     OccupiedPlacement,
     /// The placement already holds a clone whose origin names another repo.
     ForeignCloneAtPlacement,
+    /// The placement holds a directory or file that is not a clone.
+    NonCloneAtPlacement,
     /// `--provider` names a registry that cannot mint a clone URL from an
     /// owner and a project name alone.
     ProviderCannotMintUrl,

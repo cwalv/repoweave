@@ -589,6 +589,21 @@ there is no frame to interpret the command in.
 
 **Where this sits.** [Weave root](../explanation/joints/weave-root.md).
 
+### `non-clone-at-placement`
+
+**Condition.** `rwv add <url>` finds something at the member's placement that
+is not a clone: a directory, empty or not, or a file. From a workweave the
+workweave's own placement is checked too, and so is it for `rwv add --adopt
+<path>` when `<path>` lands inside the workweave.
+
+**Why.** A clone at the placement can stand in for the one `add` would make,
+because its `origin` can be compared with the URL. Anything else has no remote
+to compare, cannot be registered, and leaves no room to clone or place a
+checkout.
+
+**Exits.** Move it aside and re-run the command the message names. Nothing
+was written.
+
 ### `not-fast-forwardable`
 
 **Condition.** The tips are not in the fast-forward relation `--strategy=ff`

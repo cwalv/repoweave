@@ -538,6 +538,14 @@ const ROUTED: &[Routed] = &[
     Routed {
         file: "add_remove.rs",
         scope: "",
+        needle: r#""rwv add: the placement '{}' ({}) holds {found}, which can be neither registered \"#,
+        renders: 1,
+        prints: "add's refusal of a directory or file that is not a clone at a placement, \
+                 naming it",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
         needle: r#""this workweave ('{}') or the primary weave ('{}')","#,
         renders: 2,
         prints: "the two weave roots an outside-weave adopt refusal names from a workweave",
