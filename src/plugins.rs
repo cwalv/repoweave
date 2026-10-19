@@ -364,6 +364,10 @@ pub fn build_command(
     // never the verbatim `\\?\` form a canonicalized `-C` path carries.
     cmd.args(args)
         .current_dir(dunce::simplified(invocation_dir));
+    // An inherited `PWD` names the shell's directory, not the one the plugin
+    // starts in.
+    #[cfg(unix)]
+    cmd.env("PWD", invocation_dir);
     for (name, value) in envelope_vars(resolution) {
         cmd.env(name, value);
     }

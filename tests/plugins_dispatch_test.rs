@@ -472,6 +472,34 @@ fn a_plugin_under_c_starts_in_the_c_directory_and_the_envelope_still_names_the_w
     );
 }
 
+/// The plugin's inherited `PWD` names the `-C` directory too. A shell would
+/// correct a stale one on startup, so the plugin here is `env` itself, which
+/// prints the environment exactly as it was handed over.
+#[cfg(unix)]
+#[test]
+fn a_plugin_under_c_inherits_pwd_naming_the_c_directory() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_minimal_workspace(tmp.path(), "myproj");
+    let sub = ws.join("github");
+    let plugin_dir = common::tempdir().unwrap();
+    std::os::unix::fs::symlink("/usr/bin/env", plugin_dir.path().join("rwv-envdump")).unwrap();
+
+    let assert = rwv()
+        .args(["-C", &sub.to_string_lossy(), "envdump"])
+        .current_dir(plugin_dir.path())
+        .env("PATH", prepend_path(plugin_dir.path()))
+        .env("PWD", plugin_dir.path())
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    let pwd = parse_env_dump(&stdout).remove("PWD").expect("PWD is set");
+    assert!(
+        same_dir(Path::new(&pwd), &sub),
+        "the plugin inherited PWD={pwd}, not the -C directory {}",
+        sub.display()
+    );
+}
+
 /// A relative argument the plugin receives names a file under the `-C`
 /// directory, the way it would for a core verb.
 #[test]
