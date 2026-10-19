@@ -3340,16 +3340,8 @@ fn delete_workweave_inner_at(
         )?;
     }
 
-    // Cross-verb advisory refusal (Correction 1, COVERAGE). A workweave that
-    // is mid-op
-    // (holds an `.rwv-op` owner record or an `.rwv-op-lease`) must not be
-    // deleted out from under the op — that would strand the owner record's
-    // pointer or destroy the workspace `--continue`/`rwv abort` restore into.
-    // Refuse FIRST (before the dirty/unmerged checks) so a mid-op delete reports
-    // the in-flight op, not a dirty-tree error, mirroring the sync entry
-    // ordering. No override flag bypasses this: the hazard is to the op's
-    // recovery, and `rwv abort` (not a forced delete) is the way to clear a
-    // stale record. Runs only when the dir exists (nothing to lose otherwise).
+    // Refuse before the dirty/unmerged checks so a mid-op delete reports the
+    // in-flight op. No override: `rwv abort` is the way to clear a stale record.
     // The op's OWN terminal retire (`delete_workweave_for_retire`) skips this —
     // its record is present by design and is cleared in the later cleanup phase.
     if workweave_dir.exists() && !skip_op_guard {
@@ -3819,6 +3811,13 @@ pub struct WorkweaveLogOutput {
     pub project_repo: Option<WorkweaveLogRepo>,
 }
 
+fn missing_checkout_note(which: &str, path: &Path) -> String {
+    format!(
+        "{which} checkout missing at {}; run `rwv fetch` in that workweave to re-materialize it",
+        crate::path_spelling::operator_path(path)
+    )
+}
+
 /// Print (or JSON-emit) the workweave's UNIQUE commits vs the recorded parent,
 /// per manifest repo.
 ///
@@ -3887,24 +3886,36 @@ pub fn workweave_log(
 
         // This workweave checkout's tip. Kept as the resolved id for the
         // output's `head` field; the trait methods re-resolve HEAD internally.
-        let head = match vcs.head_revision(&ww_repo) {
-            Ok(rev) => Some(rev),
-            Err(e) => {
-                note = Some(format!("workweave checkout HEAD unreadable: {e:#}"));
-                None
+        let head = if !ww_repo.exists() {
+            note = Some(missing_checkout_note("workweave", &ww_repo));
+            None
+        } else {
+            match vcs.head_revision(&ww_repo) {
+                Ok(rev) => Some(rev),
+                Err(e) => {
+                    note = Some(format!("workweave checkout HEAD unreadable: {e:#}"));
+                    None
+                }
             }
         };
 
         // The recorded parent's tip for THIS repo — HEAD in the parent's
         // checkout of the same path. Used as the exclusion boundary for
         // unique commits and as one endpoint of the diff's common ancestor.
-        let parent_tip = match vcs.head_revision(&parent_repo) {
-            Ok(rev) => Some(rev),
-            Err(e) => {
-                if note.is_none() {
-                    note = Some(format!("parent checkout HEAD unreadable: {e:#}"));
+        let parent_tip = if !parent_repo.exists() {
+            if note.is_none() {
+                note = Some(missing_checkout_note("parent", &parent_repo));
+            }
+            None
+        } else {
+            match vcs.head_revision(&parent_repo) {
+                Ok(rev) => Some(rev),
+                Err(e) => {
+                    if note.is_none() {
+                        note = Some(format!("parent checkout HEAD unreadable: {e:#}"));
+                    }
+                    None
                 }
-                None
             }
         };
 

@@ -400,6 +400,13 @@ const ROUTED: &[Routed] = &[
     Routed {
         file: "workweave.rs",
         scope: "",
+        needle: r#""{which} checkout missing at {}; run `rwv fetch` in that workweave to re-materialize it","#,
+        renders: 1,
+        prints: "workweave log's note for a workweave or parent checkout that is not on disk",
+    },
+    Routed {
+        file: "workweave.rs",
+        scope: "",
         needle: r#""failed to move the full clone at {} aside to {}","#,
         renders: 2,
         prints: "the standalone repair's failure to rename the clone aside, naming both paths",

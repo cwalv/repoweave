@@ -73,11 +73,11 @@ rwv lock [--dirty] [--commit [-m <MSG>]] [--project <name>]
   this check; use only when you deliberately want to snapshot an in-flight state
   (e.g., a workweave that hasn't been cleaned up yet).
 - `--commit` — after writing `rwv.lock`, stage and commit it from the project
-  directory, with an auto-generated message listing which repos advanced. A
+  directory, with an auto-generated message listing which repos advanced or were dropped. A
   `rwv.toml` with uncommitted changes, or one never committed, goes into the
   same commit: the lock is derived from the manifest, so a membership edit and
   the relock it calls for are one change. The message then also names
-  `rwv.toml` (`lock: refresh 2 repos, record rwv.toml`, or `lock: record
+  `rwv.toml` (`lock: refresh 2 repos, record rwv.toml`, `lock: drop <repo>` for a removal, or `lock: record
   rwv.toml` when no pin moved). Refuses if the project repo has
   uncommitted changes outside `rwv.lock` and `rwv.toml` — the auto-commit must
   not bundle unrelated work-in-progress.

@@ -797,6 +797,40 @@ fn workweave_log_json_includes_project_repo_unique_commits() {
     );
 }
 
+/// A member whose checkout is gone from the workweave is reported as missing,
+/// with the verb that restores it, not as a failure to spawn git.
+#[test]
+fn workweave_log_names_a_missing_checkout() {
+    let tmp = common::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+    let ww = create_workweave(&main, "feat", None);
+    std::fs::remove_dir_all(&ww.manifest_repo).unwrap();
+
+    let out = rwv()
+        .args(["workweave", PROJECT, "log", "--json"])
+        .current_dir(&ww.root)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "workweave log failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let note = v["repos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["path"] == MANIFEST_REPO_PATH)
+        .expect("lib repo")["note"]
+        .as_str()
+        .expect("a missing checkout carries a note")
+        .to_owned();
+    assert!(note.contains("checkout missing"), "got: {note}");
+    assert!(note.contains("rwv fetch"), "got: {note}");
+    assert!(!note.contains("spawn"), "got: {note}");
+}
+
 /// `rwv workweave log` text output includes an `=== (project) ===` section.
 #[test]
 fn workweave_log_text_includes_project_repo_section() {

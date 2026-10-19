@@ -8,7 +8,7 @@ use anyhow::Context;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-/// Build a commit message summarizing which repos' lock entries changed,
+/// Build a commit message summarizing which repos' lock entries changed or were dropped,
 /// and naming `rwv.toml` when `records_manifest` says it is in the commit.
 ///
 /// When `old_lock` is `None` (fresh lock), all repos appear in the list.
@@ -29,6 +29,12 @@ fn build_commit_message(
             })
         })
         .collect();
+    let dropped: Vec<_> = old_lock
+        .into_iter()
+        .flat_map(|old| old.iter_entries())
+        .filter(|(path, _)| new_lock.get_entry(path).is_none())
+        .map(|(path, _)| path)
+        .collect();
 
     let n = changed.len();
     let mut summary = Vec::new();
@@ -38,6 +44,11 @@ fn build_commit_message(
             n,
             if n == 1 { "" } else { "s" }
         ));
+    }
+    match dropped.as_slice() {
+        [] => {}
+        [only] => summary.push(format!("drop {only}")),
+        many => summary.push(format!("drop {} repos", many.len())),
     }
     if records_manifest {
         summary.push(format!("record {}", Manifest::FILE_NAME));
@@ -56,6 +67,9 @@ fn build_commit_message(
             ver
         };
         msg.push_str(&format!("  - {}: {}\n", path, abbrev));
+    }
+    for path in &dropped {
+        msg.push_str(&format!("  - {path}: dropped\n"));
     }
     msg.trim_end().to_string()
 }
@@ -356,13 +370,9 @@ pub(crate) fn write_project_lock(
     dirty: bool,
     commit: Option<CommitMessage>,
 ) -> anyhow::Result<Option<PendingLockCommit>> {
-    // Cross-verb advisory refusal (Correction 1, COVERAGE), scoped to
-    // `--commit`. Writing
-    // the working-tree `rwv.lock` (plain `rwv lock`) is benign — it is the
-    // auto-relock's own input and the carve-out in Correction 3 treats a dirty
-    // `rwv.lock` as non-dirt. But `--commit` writes a NEW lock commit into the
-    // project repo, mutating the same history a mid-op replay is reconciling;
-    // refuse while an op involves this workspace, via the shared op-state guard.
+    // `--commit` writes a new lock commit into the history a mid-op replay is
+    // reconciling; a plain lock write is the auto-relock's own input and is
+    // not refused.
     if commit.is_some() {
         crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
     }

@@ -2,9 +2,9 @@
 //!
 //! Subcommands:
 //! - `claude`: Register `rwv prime` as a Claude Code hook in
-//!   `~/.claude/settings.json` (SessionStart + PreCompact). Also installs
-//!   WorktreeCreate/WorktreeRemove hook scripts to `~/.claude/hooks/` and
-//!   registers them. Idempotent.
+//!   `~/.claude/settings.json` (SessionStart + PreCompact) and
+//!   `rwv workweave --claude-hook` under WorktreeCreate/WorktreeRemove. No
+//!   hook scripts are written to disk. Idempotent.
 
 use anyhow::Context;
 use serde_json::Value;

@@ -1789,6 +1789,44 @@ fn lock_commit_message_names_a_manifest_only_change() {
     );
 }
 
+/// A repo removed from the manifest and dropped from the lock in one commit
+/// is named in the subject and listed in the body.
+#[test]
+fn lock_commit_message_names_a_dropped_repo() {
+    let ws = common::build_workspace(
+        "alpha",
+        &[("local/org/a", "owned"), ("local/org/b", "owned")],
+    );
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    let manifest_path = project_dir.join("rwv.toml");
+    let manifest = std::fs::read_to_string(&manifest_path).unwrap();
+    let kept: Vec<&str> = {
+        let mut out = Vec::new();
+        let mut skipping = false;
+        for line in manifest.lines() {
+            if line.starts_with('[') {
+                skipping = line.contains("local/org/b");
+            }
+            if !skipping {
+                out.push(line);
+            }
+        }
+        out
+    };
+    std::fs::write(&manifest_path, kept.join("\n") + "\n").unwrap();
+
+    rwv_cmd()
+        .args(["lock", "--commit"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+
+    assert_eq!(
+        common::git_in(&project_dir, &["log", "-1", "--format=%B"]),
+        "lock: drop local/org/b, record rwv.toml\n\n  - local/org/b: dropped"
+    );
+}
+
 /// A membership edit to a committed manifest and the relock it calls for are
 /// one change.
 #[test]
