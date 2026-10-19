@@ -74,7 +74,7 @@ mv ~/some-other-place/some-lib github/example/some-lib
 rwv add --adopt github/example/some-lib --role dependency
 ```
 
-`rwv add --adopt` skips the network clone, reads `origin` and its default branch to populate `url` and `version`, and updates `rwv.toml` and integration files. With no clone at that path it refuses with `no-clone-to-adopt`.
+A relative path resolves against the directory you run `rwv` in, so from `github/example/` the same clone is `rwv add --adopt some-lib`; the member path recorded is always its position under the weave root. `rwv add --adopt` skips the network clone, reads `origin` and its default branch to populate `url` and `version`, and updates `rwv.toml` and integration files. With no clone at that path it refuses with `no-clone-to-adopt`.
 
 Passing the URL instead also skips the clone when the clone at the placement already has that URL as its `origin`. When its `origin` names a different repository, `rwv add <url>` refuses with `foreign-clone-at-placement` and writes nothing; the message names `rwv add --adopt <path>` to register the clone under the URL it records.
 

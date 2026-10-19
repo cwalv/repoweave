@@ -54,6 +54,14 @@ pub fn acquire_origin_dir() -> anyhow::Result<PathBuf> {
     std::env::current_dir().context("failed to read current directory")
 }
 
+/// The location a path argument on the command line names: `raw` read
+/// against the origin dir the invocation resolved from, unchanged when it is
+/// already absolute. Never the weave root — a relative argument means what it
+/// means in the operator's shell, or under `-C`/`-w`, in that directory.
+pub fn operand_path(origin_dir: &Path, raw: impl AsRef<Path>) -> PathBuf {
+    origin_dir.join(raw)
+}
+
 // ---------------------------------------------------------------------------
 // Context — where are we?
 // ---------------------------------------------------------------------------

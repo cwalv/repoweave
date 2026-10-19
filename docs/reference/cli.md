@@ -206,14 +206,14 @@ Clone a repo (if not present), register it in the target project's `rwv.toml`, s
 The positional argument has one spelling per meaning:
 
 - **A URL** (`https://…`, `git@…`, `file://` for a local remote) or **registry shorthand** (`github/owner/repo`) clones from that remote.
-- **`--adopt <path>`** registers the clone already at `<path>` under the weave root, reading its URL from its `origin` remote. No clone there (a bare repo counts as none) refuses with `no-clone-to-adopt`.
+- **`--adopt <path>`** registers the clone already at `<path>` under the weave root, reading its URL from its `origin` remote. A relative `<path>` resolves against the directory `rwv` runs in (or the `-C`/`-w` directory), and the member path recorded is its position under the weave root containing it; from a workweave, a path inside the workweave names the primary's clone at the same position. No clone there (a bare repo counts as none) refuses with `no-clone-to-adopt`; a location under no weave root refuses with `adopt-path-outside-weave`; a workweave path holding a clone that is not a worktree of the primary's refuses with `foreign-clone-in-workweave`.
 - **`--new <address>`** creates a repo; see below.
 - **Anything else** — a plain path, relative or absolute — refuses with `unresolvable-repo-source`, naming both the `file://` and the `--adopt` spelling. A URL-shaped argument no registry can place (`https://example.com`) refuses with `no-matching-registry`.
 
 | Flag | Effect |
 |---|---|
 | `--role <role>` | Sets the role (`owned` / `fork` / `dependency` / `reference`). Defaults to `owned`. |
-| `--adopt` | Register an existing clone; the positional argument is its path under the weave root. Conflicts with `--new` |
+| `--adopt` | Register an existing clone; the positional argument is its path (relative to the invocation directory) under the weave root. Conflicts with `--new` |
 | `--new` | Create a new repo instead of cloning; the positional argument becomes a creation address (a bare registry name, or `registry/owner/repo`) rather than a URL or path. See `rwv explain add`. |
 | `--param <name>=<value>` | A creation parameter for `--new` (repeatable). Requires `--new` |
 | `--params-json <json>` | The same parameters as one JSON object of string values. Requires `--new` |
@@ -250,7 +250,7 @@ Change the repo's `role` in `rwv.toml`, regenerate integration-managed workspace
 
 ### `rwv sync <source> [...]`
 
-Absorb `<source>`'s committed state into CWD. `<source>` is required: a workspace name (`primary`, a workweave name) or a path. Bare `rwv sync` (no `<source>`) is an error with a hint pointing at `rwv sync-to`.
+Absorb `<source>`'s committed state into CWD. `<source>` is required: a workspace name (`primary`, a workweave name) or a path, relative paths resolving against the directory `rwv` runs in (or the `-C`/`-w` directory). Bare `rwv sync` (no `<source>`) is an error with a hint pointing at `rwv sync-to`.
 
 | Flag | Effect |
 |---|---|
@@ -281,7 +281,7 @@ Re-running sync will not prune it. Once nothing in it is needed, remove it by ha
 
 Advance `<target>` to CWD's tip via a three-step orchestration: (1) rebase CWD against target; (2) auto-relock CWD if manifest tips moved; (3) FF-advance target to CWD's new tip. All rewriting happens in CWD; target is only ever advanced via fast-forward.
 
-`<target>` is a workspace name (`primary`, a workweave name) or a path. Omit inside a workweave to auto-target the parent recorded in `.rwv-workweave`. Required in a primary weave.
+`<target>` is a workspace name (`primary`, a workweave name) or a path, relative paths resolving against the directory `rwv` runs in (or the `-C`/`-w` directory). Omit inside a workweave to auto-target the parent recorded in `.rwv-workweave`. Required in a primary weave.
 
 | Flag | Effect |
 |---|---|
@@ -400,17 +400,17 @@ A failure before the install hooks rolls the workweave back. An install hook tha
 
 | Flag | Effect |
 |---|---|
-| `--from <source>` | Fork from a specific source (default: CWD's active workspace). Accepts `primary`, an absolute or relative path, or omitted to fork from CWD's active workspace. Forking from an existing workweave is how you **duplicate** one; copying a workweave with `cp` aliases the original's git state rather than duplicating it |
+| `--from <source>` | Fork from a specific source (default: CWD's active workspace). Accepts `primary`, an absolute path, a path relative to the invocation directory, or omitted to fork from CWD's active workspace. Forking from an existing workweave is how you **duplicate** one; copying a workweave with `cp` aliases the original's git state rather than duplicating it |
 | `--replace-existing` | Destroy an existing workweave at this path before recreating. Without this flag, re-invoking `create` against an existing workweave is the idempotent path. Refuses if the existing workweave has uncommitted or unmerged work |
 | `--capture-dirty` | Allow creation when the source project directory has uncommitted changes. Uncommitted edits to `rwv.toml` and `rwv.lock` are **moved**: copied into the new workweave's project worktree, then returned to their committed version in the source, so a later `rwv sync-to` from the workweave is not refused over the source's copy. Other uncommitted files stay in the source only, and `create` lists them. Without this flag, `create` refuses (`dirty-project-dir`) |
-| `--dir <path>` | Per-invocation placement override. Places the workweave at exactly this path (recorded verbatim in the index). Absolute paths are used as-is; relative paths resolve against the primary root. Overrides the recorded container for this invocation only |
+| `--dir <path>` | Per-invocation placement override. Places the workweave at exactly this path (recorded verbatim in the index). Absolute paths are used as-is; relative paths resolve against the invocation directory. Overrides the recorded container for this invocation only |
 | `--no-materialize` | Skip the install hooks in the new workweave; `rwv materialize` inside it runs them later |
 
 Workweaves live at `<container>/<project>--<name>/` where `<container>` is recorded per-project in `projects/<project>/.rwv-workweave-index` (machine-local JSON, excluded from git through the project repo's `.git/info/exclude`, never `.gitignore`). The default container is `<parent-of-primary>/.workweaves`. Set the container explicitly with `rwv workweave <project> set-container <path>`; `create` records new entries into the index; every `find`-direction verb (list, delete, sync targets by bare name) resolves via the recorded `name → absolute path` entries with `.rwv-workweave` marker round-trip validation. Doctor reconciles the index against on-disk state — stale entries are pruned, orphan workweaves are adopted, a tracked index is flagged as a hygiene finding.
 
 ### `rwv workweave <project> set-container <path>`
 
-Record the workweave container for `project`. Writes the `container` field of `projects/<project>/.rwv-workweave-index`. Absolute paths are used as-is; relative paths resolve against the primary root. Existing registry entries are preserved. An explicit, recorded, audit-visible act, not ambient process state.
+Record the workweave container for `project`. Writes the `container` field of `projects/<project>/.rwv-workweave-index`. Absolute paths are used as-is; relative paths resolve against the invocation directory. Existing registry entries are preserved. An explicit, recorded, audit-visible act, not ambient process state.
 
 ### `rwv workweave <project> delete <name> [--discard-uncommitted] [--discard-unmerged-commits]`
 

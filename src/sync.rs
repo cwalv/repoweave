@@ -230,8 +230,8 @@ pub fn auto_relock_commit_message(source: &str) -> String {
 /// - `Workweave(name)` — a bare identifier with no path separators or leading
 ///   dot. Resolves via the primary-side registry
 ///   ([`crate::workweave_index`]) with marker round-trip validation.
-/// - `Path(p)` — anything else: an absolute path is used as-is, a relative
-///   path is joined against the primary workspace root.
+/// - `Path(p)` — anything else: a location, read against the invocation
+///   directory by [`SyncSource::anchored_at`].
 ///
 /// `SyncSource` is the single source of truth for this disambiguation; the
 /// resolver matches on the enum rather than re-parsing strings.
@@ -266,13 +266,18 @@ impl SyncSource {
                 };
                 ensure_registered_workweave(ctx.primary_path(), &project, name)
             }
-            Self::Path(p) => {
-                if p.is_absolute() {
-                    Ok(p.clone())
-                } else {
-                    Ok(ctx.primary_path().join(p))
-                }
-            }
+            Self::Path(p) => Ok(p.clone()),
+        }
+    }
+
+    /// This source with a `Path` read against `invocation_dir` — the process
+    /// cwd, or the `-C`/`-w` directory. [`Self::resolve`] takes a `Path` as
+    /// the location it already is, so dispatch anchors every parsed source
+    /// before it reaches the engine.
+    pub fn anchored_at(self, invocation_dir: &Path) -> Self {
+        match self {
+            Self::Path(p) => Self::Path(crate::workspace::operand_path(invocation_dir, p)),
+            other => other,
         }
     }
 }

@@ -38,9 +38,15 @@ creation is skipped; after the first commit, run `rwv lock` then
 ### Adopting an existing clone (`--adopt`)
 
 With `--adopt`, the argument is the path of a clone already under the primary
-weave root, and that path is the one recorded. `add` reads the URL from the
-clone's `origin` remote and registers it without a network clone. A path that
-holds no clone refuses (`no-clone-to-adopt`).
+weave root; a relative path resolves against the directory rwv runs in (or the
+`-C`/`-w` directory). The member path recorded is the clone's position under
+the weave root containing it. From a workweave, a path inside the workweave
+names the member at that position, and the clone registered is the primary's
+clone there. `add` reads the URL from the clone's `origin` remote and
+registers it without a network clone. A path that holds no clone refuses
+(`no-clone-to-adopt`); a path under no weave root refuses
+(`adopt-path-outside-weave`); a workweave path holding a clone that is not a
+worktree of the primary's refuses (`foreign-clone-in-workweave`).
 
 ### Spelling the argument
 
@@ -246,6 +252,12 @@ rwv add local --new --params-json '{"root": "/srv/repos", "owner": "myorg", "rep
   `--adopt` to register the clone at that path.
 - *no clone to adopt* (`no-clone-to-adopt`) — `--adopt` names a path with no
   clone.
+- *adopt path outside weave* (`adopt-path-outside-weave`) — `--adopt` names a
+  location under neither the primary weave root nor the current workweave.
+  A relative path resolves against the directory rwv runs in.
+- *foreign clone in workweave* (`foreign-clone-in-workweave`) — `--adopt`
+  names a clone inside the workweave that is not a worktree of the primary's
+  clone at the same path.
 - *foreign clone at placement* (`foreign-clone-at-placement`) — the URL's
   placement already holds a clone of a different repository; register it with
   `--adopt`, or move it aside.

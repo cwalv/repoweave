@@ -237,6 +237,12 @@ pub enum RefusalKind {
     NoRemoteUrl,
     /// `--adopt` names a path that holds no clone.
     NoCloneToAdopt,
+    /// `--adopt` names a location inside neither the primary weave root nor
+    /// the workweave it runs in.
+    AdoptPathOutsideWeave,
+    /// `--adopt` names a clone inside a workweave that is not a worktree of
+    /// the primary's clone at the same member path.
+    ForeignCloneInWorkweave,
     /// The project directory name is taken.
     ProjectDirOccupied,
     /// The name would nest a project inside a project.

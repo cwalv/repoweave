@@ -1628,8 +1628,8 @@ fn refuse_symlinked_component(root: &Path, rel: &Path) -> anyhow::Result<()> {
 /// `no_materialize` skips the install hooks.
 ///
 /// `dir_override` is the optional per-invocation placement override. When
-/// `Some(p)`, the workweave lands at `p` verbatim (canonicalized against the
-/// primary root if relative); when `None`, it lands at
+/// `Some(p)`, the workweave lands at `p`, which the caller has already made
+/// absolute; when `None`, it lands at
 /// `<container>/<project>--<name>` where `container` comes from
 /// [`workweave_container`]. Either way the resulting absolute path is
 /// recorded in the registry so per-workweave overrides are as visible to
@@ -1655,8 +1655,7 @@ pub fn create_workweave(
     // provides the default. The registry entry is written after the marker
     // lands — see the bottom of this function.
     let workweave_dir = match dir_override {
-        Some(p) if p.is_absolute() => p.to_path_buf(),
-        Some(p) => primary_root.join(p),
+        Some(p) => p.to_path_buf(),
         None => {
             let container = workweave_container(primary_root, project)?;
             container.join(weave_dir_name(project, name))

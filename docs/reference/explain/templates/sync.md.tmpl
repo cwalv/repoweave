@@ -67,7 +67,8 @@ rwv sync <source> [--json] [--strategy <ff|rebase>] [-j <N>] [--allow-stale-lock
 ```
 
 - `<source>` is the source workspace: `primary`, a bare workweave name, or
-  a path. Required — `rwv sync` has no auto-target.
+  a path (absolute, or relative to the directory rwv runs in, or the
+  `-C`/`-w` directory). Required — `rwv sync` has no auto-target.
 - `--json` emits machine-readable output (see Output below).
 - `--strategy` picks the reconciliation strategy (`ff` default or
   `rebase`). `rebase` replays CWD's project commits onto the

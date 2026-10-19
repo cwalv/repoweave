@@ -31,7 +31,7 @@ use crate::update;
 
 use crate::manifest::{ProjectName, WorkweaveName};
 use crate::refusal::{refusal, RefusalKind};
-use crate::workspace::{acquire_origin_dir, WorkspaceContext};
+use crate::workspace::{acquire_origin_dir, operand_path, WorkspaceContext};
 use anyhow::Context;
 use clap::{CommandFactory, FromArgMatches};
 use std::ffi::OsString;
@@ -776,7 +776,7 @@ pub fn run() -> anyhow::Result<()> {
                     activation,
                 )?;
             } else if adopt {
-                add_remove::run_add_adopt(&url, role, &ctx, activation)?;
+                add_remove::run_add_adopt(&url, role, &ctx, &origin_dir, activation)?;
             } else {
                 add_remove::run_add(&url, role, &ctx, activation)?;
             }
@@ -976,16 +976,9 @@ pub fn run() -> anyhow::Result<()> {
                             {
                                 primary_root.to_path_buf()
                             }
-                            Some(s) => {
-                                let p = std::path::PathBuf::from(s);
-                                if p.is_absolute() {
-                                    p
-                                } else {
-                                    primary_root.join(s)
-                                }
-                            }
+                            Some(s) => operand_path(&origin_dir, s),
                         };
-                        let dir_override = dir.as_deref().map(std::path::Path::new);
+                        let dir_override = dir.as_deref().map(|d| operand_path(&origin_dir, d));
                         let created = crate::workweave::create_workweave(
                             primary_root,
                             &source_root,
@@ -993,7 +986,7 @@ pub fn run() -> anyhow::Result<()> {
                             &WorkweaveName::new(name)?,
                             replace_existing,
                             capture_dirty,
-                            dir_override,
+                            dir_override.as_deref(),
                             activate::ActivateOptions { no_materialize },
                         );
                         let workweave_path = if hook_mode {
@@ -1009,14 +1002,11 @@ pub fn run() -> anyhow::Result<()> {
                         crate::workweave::workweave_log(&ctx, diff, json)?;
                     }
                     Some(WorkweaveAction::SetContainer { path }) => {
-                        let raw = std::path::PathBuf::from(&path);
-                        let abs = if raw.is_absolute() {
-                            raw
-                        } else {
-                            primary_root.join(&raw)
-                        };
-                        let recorded =
-                            crate::workweave_index::set_container(primary_root, &project, abs)?;
+                        let recorded = crate::workweave_index::set_container(
+                            primary_root,
+                            &project,
+                            operand_path(&origin_dir, &path),
+                        )?;
                         eprintln!(
                             "recorded workweave container for project `{}`: {}",
                             project.as_str(),
@@ -1147,7 +1137,7 @@ pub fn run() -> anyhow::Result<()> {
             // When --continue is set, source is None (read from op-state).
             // When --continue is absent, source is Some (required by clap).
             let request = sync::SyncRequest {
-                source,
+                source: source.map(|s| s.anchored_at(&origin_dir)),
                 strategy,
                 allow_stale_lock,
                 discard_local_commits,
@@ -1188,7 +1178,7 @@ pub fn run() -> anyhow::Result<()> {
                 None
             } else {
                 Some(match target {
-                    Some(t) => t,
+                    Some(t) => t.anchored_at(&origin_dir),
                     None => {
                         // Bare `rwv sync-to` — must be inside a workweave. Reuse
                         // the invocation context we already resolved above.

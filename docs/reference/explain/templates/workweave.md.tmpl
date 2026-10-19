@@ -39,8 +39,8 @@ rwv workweave <project> create <name> [--from <source>] [--replace-existing] [--
 ```
 
 - `--from <source>` — workspace to fork from. Accepts `primary`, an absolute
-  path, or a relative path resolved against primary (e.g., a sibling workweave
-  name). Defaults to CWD's active workspace. Forking from an existing
+  path, or a relative path resolved against the directory rwv runs in (or
+  the `-C`/`-w` directory). Defaults to CWD's active workspace. Forking from an existing
   workweave is how you DUPLICATE one — for a scratch variant, an experiment,
   or a throwaway baseline. Do not copy a workweave with `cp`: the result
   aliases the original's git state rather than duplicating it.
@@ -63,8 +63,8 @@ rwv workweave <project> create <name> [--from <source>] [--replace-existing] [--
   files. Default behavior is recommended; use `--capture-dirty` only when you
   intentionally want to continue in-flight edits inside the workweave.
 - `--dir <path>` — per-invocation placement override. Places the workweave at
-  exactly `<path>` (absolute; relative paths resolve against the primary
-  root). The absolute path is recorded in `.rwv-workweave-index`, so every
+  exactly `<path>` (relative paths resolve against the directory rwv runs
+  in, or the `-C`/`-w` directory). The absolute path is recorded in `.rwv-workweave-index`, so every
   `find`-direction verb (list, delete, sync targets by bare name) resolves
   it via the registry — the workweave does not have to live under the
   default container to be addressable. Useful for big-disk workweaves and
@@ -122,7 +122,8 @@ is the standard "ensure workweave exists" path.
 Record the workweave container for `project` — the directory `create` places
 new workweaves under by default. Writes the `container` field of
 `projects/<project>/.rwv-workweave-index`. Absolute paths are used as-is;
-relative paths resolve against the primary root. Existing entries in the
+relative paths resolve against the directory rwv runs in (or the `-C`/`-w`
+directory). Existing entries in the
 registry are preserved. Per-workweave `--dir` overrides on `create` are
 unaffected.
 
@@ -252,10 +253,11 @@ Create a workweave for the `foundations` project:
 rwv workweave foundations create my-feature
 ```
 
-Create a workweave forked from a peer workweave (useful for stacked work):
+Create a workweave forked from a peer workweave (useful for stacked work),
+run from the primary weave root with the default container beside it:
 
 ```
-rwv workweave foundations create child-feature --from .workweaves/foundations--my-feature
+rwv workweave foundations create child-feature --from ../.workweaves/foundations--my-feature
 ```
 
 Land work and clean up in one step (from inside the workweave):

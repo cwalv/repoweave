@@ -8,7 +8,9 @@ src/activate.rs	surfacing-path-occupied	tests/intent_verb_atomicity_test.rs	1
 src/activate.rs	unaccepted-generated-content	-	1
 src/activate.rs	wrong-checkout-kind	-	1
 src/add_remove.rs	(untokened:internal-invariant)	-	2
+src/add_remove.rs	adopt-path-outside-weave	tests/invocation_relative_paths_test.rs	1
 src/add_remove.rs	foreign-clone-at-placement	tests/project_and_source_spelling_test.rs	1
+src/add_remove.rs	foreign-clone-in-workweave	tests/invocation_relative_paths_test.rs	1
 src/add_remove.rs	malformed-repo-path	-	1
 src/add_remove.rs	missing-creation-param	tests/refusal_arrival_test.rs	1
 src/add_remove.rs	no-clone-to-adopt	tests/project_and_source_spelling_test.rs	1

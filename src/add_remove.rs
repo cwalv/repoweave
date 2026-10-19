@@ -15,7 +15,7 @@ use crate::registry::{
 use crate::vcs::{
     vcs_for, DeletionWarrant, EphemeralRefName, HeadAttachment, RefName, RemoteBranchCopies, Vcs,
 };
-use crate::workspace::{project_dir, Checkout, WorkspaceContext};
+use crate::workspace::{operand_path, project_dir, Checkout, WorkspaceContext};
 use crate::workweave_index::RefRegistry;
 use anyhow::Context;
 use std::path::{Path, PathBuf};
@@ -437,34 +437,36 @@ fn refuse_foreign_clone_at_placement(
     )
 }
 
-/// `rwv add --adopt <path>`: register the clone already at `path` under the
-/// primary weave root — the canonical layout regardless of CWD — recording
-/// the URL its origin remote names.
+/// `rwv add --adopt <path>`: register the clone `path` names, read against
+/// `invocation_dir` — the process cwd, or the `-C`/`-w` directory. Its member
+/// path is its position inside whichever weave root contains it, and the
+/// clone itself is always the canonical one under the primary root.
 pub fn run_add_adopt(
     path: &str,
     role: Role,
     ctx: &WorkspaceContext,
+    invocation_dir: &Path,
     opts: ActivateOptions,
 ) -> anyhow::Result<()> {
     let vcs_type = VcsType::Git;
     let vcs = vcs_for(vcs_type);
     let (project, project_dir) = find_project(ctx)?;
     let manifest_path = project_dir.join(Manifest::FILE_NAME);
-    let candidate = ctx.primary_path().join(path);
+    let (repo_path, candidate) = adopt_placement(vcs.as_ref(), ctx, invocation_dir, path)?;
     if !vcs.is_repo(&candidate) {
         crate::refuse!(
             RefusalKind::NoCloneToAdopt,
             "rwv add --adopt: no clone at '{}'. --adopt registers a clone already under \
-             the weave root, named by its path there; to clone from a remote instead, drop \
-             --adopt and give its URL (`file://` for a local one).",
+             the weave root; to clone from a remote instead, drop --adopt and give its URL \
+             (`file://` for a local one).",
             operator_path(&candidate)
         );
     }
-    let repo_path = RepoPath::new(path)?;
     warn_if_shared_clone(ctx.primary_path(), &project, &repo_path, &candidate, role);
     let registration = run_add_from_local_path(
         vcs.as_ref(),
         vcs_type,
+        &repo_path,
         path,
         &candidate,
         role,
@@ -508,6 +510,101 @@ pub fn run_add_adopt(
         );
     }
     Ok(())
+}
+
+/// The member path an `--adopt` argument names, and the canonical clone at
+/// that member path under the primary root.
+///
+/// The weave roots in play are the primary and, from a workweave, that
+/// workweave. The innermost one containing the named location decides the
+/// member path. Named inside a workweave, a clone already there that is not a
+/// worktree of the primary's clone refuses: adopting would register the
+/// primary's copy while the operator pointed at another.
+fn adopt_placement(
+    vcs: &dyn Vcs,
+    ctx: &WorkspaceContext,
+    invocation_dir: &Path,
+    raw: &str,
+) -> anyhow::Result<(RepoPath, PathBuf)> {
+    let base = invocation_dir
+        .canonicalize()
+        .with_context(|| format!("failed to canonicalize {}", operator_path(invocation_dir)))?;
+    let named = lexically_normal(&operand_path(&base, raw));
+    let primary = ctx.primary_path();
+    let workweave = match &ctx.checkout {
+        Checkout::Workweave { dir, .. } => Some(dir.as_path()),
+        Checkout::Primary { .. } => None,
+    };
+    let containing = [Some(primary), workweave]
+        .into_iter()
+        .flatten()
+        .filter(|root| named.starts_with(root))
+        .max_by_key(|root| root.components().count());
+    let Some(root) = containing else {
+        let roots = match workweave {
+            Some(ww) => format!(
+                "this workweave ('{}') or the primary weave ('{}')",
+                operator_path(ww),
+                operator_path(primary)
+            ),
+            None => format!("the weave root '{}'", operator_path(primary)),
+        };
+        crate::refuse!(
+            RefusalKind::AdoptPathOutsideWeave,
+            "rwv add --adopt: '{raw}' names '{}', which is under neither {roots}. A relative \
+             path is read from the directory rwv runs in (or -C/-w); name the clone by a path \
+             inside the weave.",
+            operator_path(&named)
+        );
+    };
+    let member: Vec<String> = named
+        .strip_prefix(root)
+        .unwrap_or(Path::new(""))
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    let repo_path = RepoPath::new(member.join("/"))?;
+    let canonical = primary.join(repo_path.as_path());
+    if let Some(ww) = workweave.filter(|ww| *ww == root) {
+        let checkout = ww.join(repo_path.as_path());
+        if vcs.is_repo(&checkout) && !shares_store(vcs, &checkout, &canonical) {
+            crate::refuse!(
+                RefusalKind::ForeignCloneInWorkweave,
+                "rwv add --adopt: '{}' is a clone of its own, not a worktree of the primary's \
+                 clone at '{}'. --adopt registers the clone under the primary weave root; move \
+                 '{}' there, or name '{}' directly.",
+                operator_path(&checkout),
+                operator_path(&canonical),
+                operator_path(&checkout),
+                operator_path(&canonical)
+            );
+        }
+    }
+    Ok((repo_path, canonical))
+}
+
+fn shares_store(vcs: &dyn Vcs, a: &Path, b: &Path) -> bool {
+    let store = |p: &Path| {
+        vcs.resolve_canonical_store(p)
+            .and_then(|s| s.canonicalize().ok())
+    };
+    matches!((store(a), store(b)), (Some(x), Some(y)) if x == y)
+}
+
+/// `path` with `.` dropped and each `..` taking back the component before it,
+/// without consulting the filesystem: the location may not exist yet.
+fn lexically_normal(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
 }
 
 /// [`place_member`], noting in `left` a workweave worktree it created.
@@ -648,7 +745,7 @@ fn announce_already_registered(repo_path: &RepoPath) {
     );
 }
 
-/// Register the clone at `clone_dir` under `path_arg`, inferring the URL by
+/// Register the clone at `clone_dir` as `repo_path`, inferring the URL by
 /// reading the clone's `origin` remote.
 ///
 /// Returns the manifest with the member added and the URL it was recorded
@@ -656,6 +753,7 @@ fn announce_already_registered(repo_path: &RepoPath) {
 fn run_add_from_local_path(
     vcs: &dyn Vcs,
     vcs_type: VcsType,
+    repo_path: &RepoPath,
     path_arg: &str,
     clone_dir: &Path,
     role: Role,
@@ -695,8 +793,6 @@ fn run_add_from_local_path(
         raw_url
     };
 
-    let repo_path = RepoPath::new(path_arg)?;
-
     // Load and check existing manifest.
     let mut manifest = Manifest::from_path(manifest_path).with_context(|| {
         format!(
@@ -705,8 +801,8 @@ fn run_add_from_local_path(
         )
     })?;
 
-    if manifest.contains_repo(&repo_path) {
-        announce_already_registered(&repo_path);
+    if manifest.contains_repo(repo_path) {
+        announce_already_registered(repo_path);
         return Ok(None);
     }
 
@@ -735,7 +831,7 @@ fn run_add_from_local_path(
         version: default_branch,
         role,
     };
-    manifest.insert_repo(repo_path, entry);
+    manifest.insert_repo(repo_path.clone(), entry);
     Ok(Some((manifest, origin_url)))
 }
 
@@ -1199,7 +1295,7 @@ fn resolve_path_params(
         if raw.is_empty() || is_absolute_spelling(raw) {
             continue;
         }
-        let resolved = invocation_dir.join(raw);
+        let resolved = operand_path(invocation_dir, raw);
         let Some(spelled) = resolved.to_str().map(str::to_owned) else {
             crate::refuse!(
                 RefusalKind::UnusableCreationParam,

@@ -128,8 +128,9 @@ pub enum Commands {
         #[arg(long, conflicts_with = "adopt")]
         new: bool,
         /// Register an existing clone instead of cloning: the argument is its
-        /// path under the weave root, and the URL is read from its origin
-        /// remote
+        /// path, relative paths resolving against the invocation directory, and
+        /// its position under the weave root is the path recorded. The URL is
+        /// read from its origin remote
         #[arg(long)]
         adopt: bool,
         /// A creation parameter as NAME=VALUE (repeatable). See `rwv explain add`
@@ -212,7 +213,7 @@ pub enum Commands {
     },
     /// Remove a repo from the active project
     Remove {
-        /// Path of the repo to remove
+        /// Path of the repo to remove, as `rwv.toml` lists it
         path: String,
         /// Delete the clone directory
         #[arg(long)]
@@ -332,7 +333,7 @@ pub enum Commands {
     ///   rwv sync primary --strategy=rebase
     Sync {
         /// Source workspace: `primary`, a bare workweave name, or a path
-        /// (absolute, or relative to the primary workspace). Required unless
+        /// (absolute, or relative to the invocation directory). Required unless
         /// `--continue` is passed (source is then read from the in-progress
         /// op-state file). If you meant to land work upward, use `rwv sync-to`.
         #[arg(required_unless_present = "do_continue")]
@@ -379,7 +380,7 @@ pub enum Commands {
     /// contribution.
     SyncTo {
         /// Target workspace: `primary`, a bare workweave name, or a path
-        /// (absolute, or relative to the primary weave root). Omit to target
+        /// (absolute, or relative to the invocation directory). Omit to target
         /// the recorded parent from `.rwv-workweave`; errors if not in a workweave.
         /// Must not be passed alongside `--continue` (target is then read from op-state).
         #[arg(conflicts_with = "do_continue")]
@@ -540,9 +541,8 @@ pub enum WorkweaveAction {
         /// Workspace to fork the new workweave from. Accepts `primary`, an
         /// absolute or relative path, or is omitted to fork from CWD's
         /// active workspace (the workweave when invoked from inside one,
-        /// otherwise primary). Relative paths resolve against primary, so
-        /// peer workweaves can be referenced by directory name (e.g.
-        /// `--from .workweaves/myproj--hotfix`).
+        /// otherwise primary). Relative paths resolve against the invocation
+        /// directory, like any path argument.
         ///
         /// Forking from an existing workweave is how you DUPLICATE one — for
         /// a scratch variant, an experiment, or a throwaway baseline. Do not
@@ -565,7 +565,7 @@ pub enum WorkweaveAction {
         /// registry). Overrides the default container for this
         /// invocation only. Useful for big-disk workweaves, tmpfs
         /// experiments, or one-off placements. Absolute paths are used
-        /// as-is; relative paths resolve against the primary root.
+        /// as-is; relative paths resolve against the invocation directory.
         #[arg(long)]
         dir: Option<String>,
         /// Skip integration install hooks (e.g., `npm install`, `uv sync`) in the new workweave; `rwv materialize` inside it runs them later
@@ -597,8 +597,8 @@ pub enum WorkweaveAction {
     /// The recorded container is an explicit act, visible in the checked-in
     /// tree via `.gitignore` and audit-visible via the file itself.
     SetContainer {
-        /// Absolute path to record. Relative paths resolve against the
-        /// primary weave root.
+        /// Path to record. Relative paths resolve against the invocation
+        /// directory.
         path: String,
     },
     /// Show this workweave's UNIQUE commits vs its recorded parent, per repo.

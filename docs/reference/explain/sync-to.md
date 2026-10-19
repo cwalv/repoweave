@@ -146,7 +146,8 @@ rwv sync-to [<target>] [--json] [--strategy <ff|rebase>] [-j <N>] [--allow-stale
 ```
 
 - `<target>` is the target workspace: `primary`, a bare workweave name, or
-  a path (absolute, or relative to the primary weave root). Omit inside
+  a path (absolute, or relative to the directory rwv runs in, or the `-C`/`-w`
+  directory). Omit inside
   a workweave to auto-target the parent recorded in `.rwv-workweave`. Required
   in a primary weave.
 - `--json` emits machine-readable output (see Output below).

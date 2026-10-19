@@ -40,6 +40,20 @@ print `error:` and exit 2, where a refusal prints `Error:` and exits 1.
 
 ---
 
+### `adopt-path-outside-weave`
+
+**Condition.** `rwv add --adopt <path>` names a location under neither the
+primary weave root nor, when run from a workweave, that workweave. A relative
+`<path>` resolves against the directory `rwv` runs in, or the `-C`/`-w`
+directory.
+
+**Why.** The member path `--adopt` records is the clone's position under the
+weave root containing it. A location outside every weave root has no such
+position, so there is nothing to record.
+
+**Exits.** Name the clone by a path inside the weave: relative to where you
+run `rwv`, or absolute.
+
 ### `ambiguous-workweave-address`
 
 **Condition.** Two recorded `(project, workweave)` pairs render the same flat
@@ -246,6 +260,20 @@ rewrites, and treats a `file://` URL as equal to the path it encodes.
 
 **Exits.** Register the existing clone under the URL it records with `rwv add
 --adopt <path>`, or move it aside and re-run the add. Nothing was written.
+
+### `foreign-clone-in-workweave`
+
+**Condition.** `rwv add --adopt <path>`, run from a workweave, names a
+location inside the workweave that holds a clone of its own rather than a
+worktree of the primary's clone at the same member path.
+
+**Why.** `--adopt` registers the canonical clone under the primary weave root,
+and the workweave gets a worktree of it. Registering the primary's copy while
+`<path>` names a different clone would adopt something other than what was
+pointed at.
+
+**Exits.** Move the clone to its member path under the primary weave root and
+name it there, or name the primary's clone directly. Nothing was written.
 
 ### `foreign-tip`
 
@@ -462,7 +490,7 @@ bare repository is not a clone here: it has no checkout to register.
 that clone. With nothing there, there is no URL to record and nothing to
 register.
 
-**Exits.** Name the clone by its path under the weave root, or drop `--adopt`
+**Exits.** Name the clone by its path (relative to the directory `rwv` runs in), or drop `--adopt`
 and give the URL to clone from (`file://` for a local remote, which is the
 spelling for a bare repository on disk).
 

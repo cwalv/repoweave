@@ -32,7 +32,8 @@ rwv workweave <project> create <name> --from ../.workweaves/<project>--other
 ```
 
 `--from` accepts `primary`, an absolute path, or a relative path resolved
-against the primary weave root. The source must be a workspace whose
+against the directory rwv runs in (or the `-C`/`-w` directory); the example
+above runs from the primary weave root. The source must be a workspace whose
 `rwv.lock` is committed and current.
 
 ### What create writes
