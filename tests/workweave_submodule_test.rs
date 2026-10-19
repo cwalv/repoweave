@@ -307,14 +307,14 @@ fn assert_checked_out(weave: &Weave, member: &Path, role: &str) {
     for file in SUB_FILES {
         let path = member.join(SUB).join(file);
         assert_eq!(
-            std::fs::read_to_string(&path).unwrap_or_default(),
+            common::read_normalized(&path),
             format!("{file}\n"),
             "{} should hold the submodule's content",
             path.display()
         );
     }
     assert_eq!(
-        std::fs::read_to_string(member.join(NESTED).join("deep.txt")).unwrap_or_default(),
+        common::read_normalized(member.join(NESTED).join("deep.txt")),
         "deep.txt\n",
         "the nested submodule should be checked out too"
     );
