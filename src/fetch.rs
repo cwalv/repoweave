@@ -497,6 +497,7 @@ fn materialize_workweave_members(
             workweave,
             repo_path,
             entry.role,
+            entry.submodules,
             pin.version.as_str(),
         ) {
             Ok(born) => {
@@ -1310,6 +1311,7 @@ mod tests {
             url: "https://example.com/repo.git".parse().unwrap(),
             version: crate::vcs::RefName::new("main"),
             role,
+            submodules: crate::manifest::Submodules::Local,
         }
     }
 

@@ -364,3 +364,79 @@ the canonical clone. rwv no longer operates on that shape:
 The operator-facing entries for both tokens are in
 `docs/reference/doctor-findings.md`; the refusal shares the finding's
 `workweave-drift` entry.
+
+## 9. Submodules
+
+A member checkout records its submodules as nested repositories, which a
+worktree does not carry: `git worktree add` leaves each submodule directory
+empty. Every path that creates a member checkout — `workweave create`'s member
+loop and `materialize_member` — then calls `populate_submodules` in
+`src/share.rs`, unless the member's manifest entry says
+`submodules = "skip"` (`Submodules` in `src/manifest.rs`). `doctor --fix` calls
+it too, for a member whose submodule directories are empty and whose recorded
+commits are held locally (`uninitialized-submodule` / `fetched`).
+
+**The data is local or it is not used.** A submodule is checked out only from
+the copy of its repository the canonical store already holds. One whose
+recorded commit is not there stays empty, and doctor reports it
+(`uninitialized-submodule` / `unfetched`). Nothing in this path fetches.
+
+**Each checkout has a repository of its own, where git keeps it.** The
+submodule's repository lives at the checkout's own `modules/<name>`, which for
+a linked worktree is under that worktree's private git directory. Git's own
+`git submodule update --init` uses the same location, so every later git
+command in the member treats it natively, and removing the worktree removes
+it. It is a local clone of the canonical store's `modules/<name>`, which hard
+links the object files where the filesystem allows. That means no object data
+is copied. It is safe against garbage collection in the canonical store: each
+repository holds its own names for the objects, where a borrowed object store
+would be corrupted by the canonical store pruning one.
+
+A worktree *of* the canonical store's module repository was rejected. git keeps
+`core.worktree` in that repository's shared config. An ordinary
+`git submodule update` in either checkout rewrites the value to point at
+itself, and the other then reads the wrong tree.
+`extensions.worktreeConfig` does not prevent it: a `git submodule update` in
+the canonical checkout writes `core.worktree` back into the shared config.
+
+**The questions.** `WorkspacePopulation` adds five:
+
+- `recorded_submodules`: every submodule a workspace records, with its name,
+  path and recorded commit. A name that could leave `modules/` is omitted.
+- `module_data_holds`: whether a store holds the recorded commit.
+- `create_unpopulated_submodule`: the checkout with no tracked file written.
+- `connect_submodule_upstream`: the remotes of the copy it was made from.
+- `discard_submodule`: the undo.
+
+Git:
+
+- `cat-file -e` under `protocol.allow=never`;
+- `clone --no-checkout --separate-git-dir` from the store's path, then
+  `update-ref --no-deref HEAD`, then `read-tree HEAD`;
+- `remote.*` config copied in.
+
+**Why nothing can fetch.** These two hold it, and a test turns red if either
+is removed:
+
+- `module_data_holds` reads under `protocol.allow=never`. A partial clone
+  otherwise fetches an object it lacks from its promisor remote on the read.
+- The new repository's only remote, while its files are placed, is the local
+  path it was cloned from, and it is not a promisor. The canonical copy's
+  upstream remotes, including a partial clone's promisor settings, are written
+  by `connect_submodule_upstream` only once population has finished. A file
+  the copy lacks is therefore a failed checkout, never a fetch.
+
+A failure at any step discards the checkout and its repository and leaves the
+directory empty.
+
+**Files are placed as a member's are.** `fill` (§4) runs on the submodule
+checkout with sources derived from the parent's sources: the same submodule
+path in every other checkout of the superproject, those at the recorded commit
+first. Each source inherits its parent's `reference` standing, so the hardlink
+rule of §4 holds unchanged. Then `settle` gives the submodule's files the
+member's role, so a `reference` member's submodules are read-only too.
+
+**Nesting.** A submodule's own submodules are populated the same way, one level
+at a time. Their copies are looked up under the copy the parent was cloned
+from (`<copy>/modules/<name>`), which is where git nests them. A nested
+`.gitmodules` URL is never followed.

@@ -3,7 +3,7 @@
 use crate::activate::{activate_intent_for, ActivateOptions, ActivationFailure, RestorePoint};
 use crate::integration_runner::missing_active_members;
 use crate::manifest::{
-    LockFile, Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role, VcsType,
+    LockFile, Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role, Submodules, VcsType,
 };
 use crate::path_spelling::{
     file_url_suggestion, is_absolute_spelling, mint_file_url, operator_path,
@@ -68,6 +68,7 @@ fn create_worktree_in_workweave(
     project: &ProjectName,
     workweave_name: &crate::manifest::WorkweaveName,
     role: Role,
+    submodules: Submodules,
 ) -> anyhow::Result<()> {
     let dest = workweave_dir.join(repo_path.as_path());
     if !crate::workweave::is_symlinked_member(&dest) && dest.exists() {
@@ -96,6 +97,7 @@ fn create_worktree_in_workweave(
         workweave_name,
         repo_path,
         role,
+        submodules,
         start.as_str(),
     )
     .with_context(|| {
@@ -112,15 +114,16 @@ fn create_worktree_in_workweave(
 }
 
 /// Give the workspace `ctx` resolves to the member whose canonical clone is
-/// `canonical`, settled for `role`: in a workweave, its worktree; at primary,
-/// the canonical clone itself. Nothing to do while the canonical clone is not
-/// on disk.
+/// `canonical`, settled for `role`: in a workweave, its worktree, with its
+/// submodules as `submodules` asks; at primary, the canonical clone itself.
+/// Nothing to do while the canonical clone is not on disk.
 fn place_member(
     vcs: &dyn Vcs,
     ctx: &WorkspaceContext,
     canonical: &Path,
     repo_path: &RepoPath,
     role: Role,
+    submodules: Submodules,
 ) -> anyhow::Result<()> {
     if !canonical.exists() {
         return Ok(());
@@ -137,6 +140,7 @@ fn place_member(
             project,
             name.require(dir, project)?,
             role,
+            submodules,
         ),
         Checkout::Primary { .. } => crate::settle::settle(vcs, canonical, role).map(|_| ()),
     }
@@ -336,7 +340,14 @@ pub fn run_add(
             );
             clone_into(vcs.as_ref(), &existing.url, &dest)?;
         }
-        place_member(vcs.as_ref(), ctx, &dest, &repo_path, existing.role)?;
+        place_member(
+            vcs.as_ref(),
+            ctx,
+            &dest,
+            &repo_path,
+            existing.role,
+            existing.submodules,
+        )?;
         return settle_manifest(ctx, &project, None, &[], opts);
     }
 
@@ -385,6 +396,7 @@ pub fn run_add(
             url: parsed_url,
             version: default_branch,
             role,
+            submodules: crate::manifest::Submodules::Local,
         };
         manifest.insert_repo(repo_path.clone(), entry);
 
@@ -666,7 +678,7 @@ fn place_member_noting(
 ) -> anyhow::Result<()> {
     let checkout = ctx.active_path().join(repo_path.as_path());
     let fresh = matches!(ctx.checkout, Checkout::Workweave { .. }) && !checkout.exists();
-    let placed = place_member(vcs, ctx, canonical, repo_path, role);
+    let placed = place_member(vcs, ctx, canonical, repo_path, role, Submodules::Local);
     if fresh && checkout.exists() {
         left.worktree = Some(checkout);
     }
@@ -878,6 +890,7 @@ fn run_add_from_local_path(
         url: origin_url.parse()?,
         version: default_branch,
         role,
+        submodules: crate::manifest::Submodules::Local,
     };
     manifest.insert_repo(repo_path.clone(), entry);
     Ok(Some((manifest, origin_url)))
@@ -1456,7 +1469,14 @@ pub fn run_add_new(
     if let Some(existing) = manifest.get_entry(&repo_path) {
         if existing.url == plan.url {
             announce_already_registered(&repo_path);
-            place_member(vcs.as_ref(), ctx, &dest, &repo_path, existing.role)?;
+            place_member(
+                vcs.as_ref(),
+                ctx,
+                &dest,
+                &repo_path,
+                existing.role,
+                existing.submodules,
+            )?;
             return settle_manifest(ctx, &project, None, &[], opts);
         }
         crate::refuse!(
@@ -1595,6 +1615,7 @@ pub fn run_add_new(
             url: plan.url.clone(),
             version: default_branch,
             role,
+            submodules: crate::manifest::Submodules::Local,
         };
         manifest.insert_repo(repo_path.clone(), entry);
 

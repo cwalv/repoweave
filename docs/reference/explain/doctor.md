@@ -200,7 +200,7 @@ The `$schema` URL points to the committed schema artifact. Variants are
 discriminated by the `kind` tag — `branch-discipline`, `cargo-patch-shadowing`, `cargo-version-skew`, `clone-topology`, `confusable-siblings`, `dangling-active-project`, `dangling-ref-receipt`, `dangling-reference`, `dead-op-lease`, `head-unreadable`, `incomplete-lock`, `index-drift`, `legacy-manifest-format`, `legacy-workweave-index`, `legacy-workweave-marker`, `lock-pinned-by-name`, `member-permissions`, `merge-driver-config-unreadable`, `missing-canonical-clone`, `missing-merge-driver-config`, `missing-replay-exclusion`, `orphaned-clone`, `orphaned-savepoint`, `phantom-merge-driver`, `pre-flat-ref-receipt`, `projectless-dir`, `projects-dir-unreadable`, `provenance`, `replay-exclusion-unreadable`, `role-disagreement`, `stale-lock`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unknown-segment-clone`, `unnameable-project`, `unparseable-project`, `unreadable-owned-state`, `unreadable-workweave-index`, `unresolvable-lock-entry`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
 Every per-repo variant carries `path` (manifest-relative) and
 `absolute_path` (fully resolved). Variants with subkinds
-(`branch-discipline`, `clone-topology`, `dead-op-lease`, `index-drift`, `member-permissions`, `missing-replay-exclusion`, `orphaned-savepoint`, `provenance`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
+(`branch-discipline`, `clone-topology`, `dead-op-lease`, `index-drift`, `member-permissions`, `missing-replay-exclusion`, `orphaned-savepoint`, `provenance`, `uninitialized-submodule`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
 `workweave-tree-integrity` carries `workweave_dir` and a `sub_kind`
 (`dangling-parent`, `foreign-primary`, `foreign-primary-other-workspace`, `misnamed-dir`, `nested-workweave-dir`, `parent-chain-anomaly`, `stale-registry-entry`, `tracked-index`, `unreadable-marker`, `unregistered-dir`, `unregistered-workweave`).
 
@@ -1408,6 +1408,25 @@ Schema:
       "enum": [
         "warning",
         "error"
+      ]
+    },
+    "SubmoduleCommitKind": {
+      "description": "Whether an uninitialized submodule's recorded commit is on this machine.",
+      "oneOf": [
+        {
+          "description": "The canonical clone's copy of the submodule holds it; `--fix` checks the submodule out from there without the network.",
+          "type": "string",
+          "enum": [
+            "fetched"
+          ]
+        },
+        {
+          "description": "Nothing local holds it, so only a fetch into the canonical clone can.",
+          "type": "string",
+          "enum": [
+            "unfetched"
+          ]
+        }
       ]
     },
     "ViolationOutput": {
@@ -2630,6 +2649,7 @@ Schema:
             "empty_paths",
             "kind",
             "path",
+            "sub_kind",
             "workweave"
           ],
           "properties": {
@@ -2653,6 +2673,9 @@ Schema:
             "path": {
               "description": "Manifest-relative path to the repo.",
               "type": "string"
+            },
+            "sub_kind": {
+              "$ref": "#/definitions/SubmoduleCommitKind"
             },
             "workweave": {
               "description": "Workweave name.",

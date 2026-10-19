@@ -25,7 +25,7 @@
 use repoweave::check::{
     BranchDisciplineKind, CheckViolation, CloneTopologyKind, DeadOpLeaseKind, DriftKind,
     IndexDriftKind, LegacyRefAtTip, OrphanedSavepointKind, PermissionsKind, ProvenanceKind,
-    ReplayExclusionKind, WeaveRootIdentityConflictKind, WorkingTreeDriftKind,
+    ReplayExclusionKind, SubmoduleCommitKind, WeaveRootIdentityConflictKind, WorkingTreeDriftKind,
     WorkweaveTreeIntegrityKind,
 };
 use repoweave::integration::MemberIncompatibility;
@@ -226,7 +226,10 @@ pub fn case_token(v: &CheckViolation) -> String {
         CheckViolation::CargoVersionSkew { .. } => "cargo-version-skew".into(),
         CheckViolation::CargoPatchShadowing { .. } => "cargo-patch-shadowing".into(),
         CheckViolation::MissingCanonicalClone { .. } => "missing-canonical-clone".into(),
-        CheckViolation::UninitializedSubmodule { .. } => "uninitialized-submodule".into(),
+        CheckViolation::UninitializedSubmodule { sub_kind, .. } => match sub_kind {
+            SubmoduleCommitKind::Fetched => "uninitialized-submodule/fetched".into(),
+            SubmoduleCommitKind::Unfetched => "uninitialized-submodule/unfetched".into(),
+        },
         CheckViolation::PhantomMergeDriver { .. } => "phantom-merge-driver".into(),
     }
 }
@@ -742,6 +745,13 @@ pub fn corpus() -> Vec<CheckViolation> {
         CheckViolation::UninitializedSubmodule {
             workweave: workweave(),
             repo: repo(),
+            sub_kind: SubmoduleCommitKind::Fetched,
+            empty_paths: vec!["vendor/dep".into()],
+        },
+        CheckViolation::UninitializedSubmodule {
+            workweave: workweave(),
+            repo: repo(),
+            sub_kind: SubmoduleCommitKind::Unfetched,
             empty_paths: vec!["vendor/dep".into()],
         },
         CheckViolation::PhantomMergeDriver {

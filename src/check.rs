@@ -636,22 +636,20 @@ pub enum CheckViolation {
         canonical_path: PathBuf,
     },
 
-    /// A worktree inside a workweave has a `.gitmodules` file but one or more
-    /// of its listed submodule paths are empty directories (or absent),
-    /// indicating that `git submodule update --init` has never run there.
+    /// A member checkout in a workweave whose manifest entry does not opt
+    /// out with `submodules = "skip"` has a `.gitmodules` file, and one or
+    /// more of its listed submodule paths are empty directories (or absent).
     ///
-    /// Warning severity; report-only. The fix is a single git command named in
-    /// the finding message. No network is required for detection — the scanner
-    /// only stats the paths listed in `.gitmodules`.
-    ///
-    /// Emitted by `rwv doctor` when scanning workweave repos. `create_workweave`
-    /// attempts the init automatically and emits this state as a warning when
-    /// the init fails (e.g., network unreachable at create time).
+    /// Warning severity. Detection reads only local data. Paths whose
+    /// recorded commit the canonical clone's copy of the submodule holds are
+    /// one finding, which `--fix` checks out from that copy; the rest are
+    /// another, report-only, since only a fetch can supply them.
     UninitializedSubmodule {
         /// Workweave name.
         workweave: WorkweaveName,
         /// Manifest-relative path to the repo that has uninitialized submodules.
         repo: RepoPath,
+        sub_kind: SubmoduleCommitKind,
         /// Submodule paths (relative to the repo root) that are empty on disk.
         empty_paths: Vec<String>,
     },
@@ -717,7 +715,6 @@ impl CheckViolation {
             | CheckViolation::CargoVersionSkew { .. }
             | CheckViolation::CargoPatchShadowing { .. }
             | CheckViolation::MissingCanonicalClone { .. }
-            | CheckViolation::UninitializedSubmodule { .. }
             | CheckViolation::ReplayExclusionUnreadable { .. }
             | CheckViolation::MergeDriverConfigUnreadable { .. }
             | CheckViolation::HeadUnreadable { .. }
@@ -744,6 +741,10 @@ impl CheckViolation {
                 ReplayExclusionKind::Absent
                 | ReplayExclusionKind::LegacySpelling
                 | ReplayExclusionKind::LegacyAlongsideCurrent => Auto,
+            },
+            CheckViolation::UninitializedSubmodule { sub_kind, .. } => match sub_kind {
+                SubmoduleCommitKind::Fetched => Auto,
+                SubmoduleCommitKind::Unfetched => ReportOnly,
             },
             CheckViolation::WorkweaveDrift { kind, .. } => match kind {
                 DriftKind::Missing | DriftKind::Symlink => Auto,
@@ -1046,6 +1047,17 @@ fn replay_exclusion_finding(state: ReplayExclusionState) -> Option<ReplayExclusi
             Some(ReplayExclusionKind::LegacyAlongsideCurrent)
         }
     }
+}
+
+/// Whether an uninitialized submodule's recorded commit is on this machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum SubmoduleCommitKind {
+    /// The canonical clone's copy of the submodule holds it; `--fix` checks
+    /// the submodule out from there without the network.
+    Fetched,
+    /// Nothing local holds it, so only a fetch into the canonical clone can.
+    Unfetched,
 }
 
 /// How a stale index should be treated.
@@ -2119,6 +2131,8 @@ pub enum ViolationOutput {
         path: String,
         /// Workweave name.
         workweave: String,
+        #[serde(rename = "sub_kind")]
+        sub_kind: SubmoduleCommitKind,
         /// Submodule paths (relative to the repo root) that are empty on disk.
         empty_paths: Vec<String>,
     },
@@ -2545,6 +2559,7 @@ impl ViolationOutput {
             CheckViolation::UninitializedSubmodule {
                 workweave,
                 repo,
+                sub_kind,
                 empty_paths,
             } => {
                 let ww_dir = workweave_dirs.get(&workweave);
@@ -2557,6 +2572,7 @@ impl ViolationOutput {
                     absolute_path,
                     path: repo.to_string(),
                     workweave: workweave.as_str().to_string(),
+                    sub_kind,
                     empty_paths,
                 }
             }
@@ -5419,19 +5435,14 @@ fn scan_pre_flat_receipts(
 
 /// Scan every workweave repo checkout for uninitialized submodules.
 ///
-/// For each workweave repo whose worktree has a `.gitmodules` file, this
-/// function checks whether any of the listed submodule paths are empty
-/// directories. An empty submodule directory indicates that
-/// `git submodule update --init` has never run — the commit records the
-/// submodule but the content is absent.
+/// A member whose manifest entry says `submodules = "skip"` is left out: its
+/// empty submodule directories are what the operator asked for. Each checkout
+/// yields up to two findings, one per [`SubmoduleCommitKind`].
 ///
 /// **Cost**: one `Path::exists` call per repo per workweave when `.gitmodules`
-/// is absent (the common case). The `.gitmodules` parse + directory stat only
-/// runs when the file exists. No network I/O.
+/// is absent (the common case). No network I/O.
 ///
-/// **Scope**: workweave checkouts only. Primary weave clones are expected to
-/// have submodules initialized at clone time; workweave worktrees are created
-/// by `git worktree add`, which does NOT re-run submodule init.
+/// **Scope**: workweave checkouts only.
 pub fn scan_uninitialized_submodules_in_workweaves(
     ws_root: &Path,
     projects: &[crate::manifest::Project],
@@ -5443,24 +5454,99 @@ pub fn scan_uninitialized_submodules_in_workweaves(
             continue;
         };
         for project in projects {
-            for (repo_path, _entry) in project.manifest.iter_entries() {
+            for (repo_path, entry) in project.manifest.iter_entries() {
+                if entry.submodules == crate::manifest::Submodules::Skip {
+                    continue;
+                }
                 let worktree = workweave_dir.join(repo_path.as_path());
                 if crate::workweave::is_symlinked_member(&worktree) || !worktree.is_dir() {
                     continue;
                 }
                 let empty_paths = crate::workweave::scan_uninitialized_submodules(&worktree);
-                if !empty_paths.is_empty() {
-                    violations.push(CheckViolation::UninitializedSubmodule {
-                        workweave: workweave_name.clone(),
-                        repo: repo_path.clone(),
-                        empty_paths,
-                    });
+                if empty_paths.is_empty() {
+                    continue;
+                }
+                let vcs = crate::vcs::vcs_for(entry.vcs_type);
+                let (fetched, unfetched): (Vec<String>, Vec<String>) = empty_paths
+                    .into_iter()
+                    .partition(|path| submodule_commit_is_local(vcs.as_ref(), &worktree, path));
+                for (sub_kind, empty_paths) in [
+                    (SubmoduleCommitKind::Fetched, fetched),
+                    (SubmoduleCommitKind::Unfetched, unfetched),
+                ] {
+                    if !empty_paths.is_empty() {
+                        violations.push(CheckViolation::UninitializedSubmodule {
+                            workweave: workweave_name.clone(),
+                            repo: repo_path.clone(),
+                            sub_kind,
+                            empty_paths,
+                        });
+                    }
                 }
             }
         }
     }
 
     violations
+}
+
+/// Whether the submodule `worktree` records at `path` has its recorded commit
+/// in the canonical clone's copy of it.
+fn submodule_commit_is_local(vcs: &dyn crate::vcs::Vcs, worktree: &Path, path: &str) -> bool {
+    let Some(population) = vcs.population() else {
+        return false;
+    };
+    let (Some(store), Ok(recorded)) = (
+        vcs.resolve_canonical_store(worktree),
+        population.recorded_submodules(worktree),
+    ) else {
+        return false;
+    };
+    recorded
+        .iter()
+        .find(|submodule| submodule.path == path)
+        .is_some_and(|submodule| population.module_data_holds(&store, submodule))
+}
+
+/// `--fix` for `uninitialized-submodule` / `fetched` in the workweaves
+/// [`workweaves_in_scope`] names: check out each empty submodule of a member
+/// that does not opt out, from the canonical clone's copies. What cannot be
+/// checked out stays, and the scan that follows reports it.
+fn repair_uninitialized_submodules(
+    ctx: &crate::workspace::WorkspaceContext,
+    project_scope: Option<&str>,
+) {
+    for (workweave, workweave_dir, loaded) in workweaves_in_scope(ctx, project_scope) {
+        for (repo, entry) in loaded.manifest.iter_entries() {
+            let member = workweave_dir.join(repo.as_path());
+            if entry.submodules == crate::manifest::Submodules::Skip
+                || crate::workweave::is_symlinked_member(&member)
+                || !member.is_dir()
+                || crate::workweave::scan_uninitialized_submodules(&member).is_empty()
+            {
+                continue;
+            }
+            let vcs = crate::vcs::vcs_for(entry.vcs_type);
+            let populated = crate::share::populate_submodules(
+                vcs.as_ref(),
+                &member,
+                entry.role,
+                &crate::share::Filesystem,
+            );
+            for (path, placement) in &populated.populated {
+                println!(
+                    "[fixed] core: checked out submodule {repo}/{path} in workweave {workweave} \
+                     ({placement})"
+                );
+            }
+            for (path, why) in &populated.left {
+                eprintln!(
+                    "rwv doctor: {repo}/{path} in workweave {workweave}: submodule left \
+                     uninitialized: {why}"
+                );
+            }
+        }
+    }
 }
 
 /// The workweaves doctor answers for, each with its own project: the one it
@@ -5667,6 +5753,7 @@ struct MemberGap {
     repo: RepoPath,
     vcs_type: crate::manifest::VcsType,
     role: Role,
+    submodules: crate::manifest::Submodules,
     symlinked: bool,
     /// The pinned revision, when the canonical clone holds it; the worktree
     /// can then be created without the network.
@@ -5736,6 +5823,7 @@ fn scan_member_gaps(
                 repo: repo.clone(),
                 vcs_type: entry.vcs_type,
                 role: entry.role,
+                submodules: entry.submodules,
                 symlinked,
                 local_revision,
             });
@@ -5824,6 +5912,7 @@ fn repair_member_gaps(
             &gap.workweave,
             &gap.repo,
             gap.role,
+            gap.submodules,
             revision.as_str(),
         ) {
             Ok(born) => println!(
@@ -5875,6 +5964,7 @@ fn repair_standalone_members(
                 &workweave,
                 repo,
                 entry.role,
+                entry.submodules,
             ) {
                 Ok(born) => println!(
                     "[fixed] core: replaced the full clone of {repo} in workweave {workweave} \
@@ -8498,15 +8588,24 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                 CheckViolation::UninitializedSubmodule {
                     workweave,
                     repo,
+                    sub_kind,
                     empty_paths,
                 } => {
-                    let fix_cmd = format!(
-                        "git -C <worktree>/{repo} submodule update --init --recursive"
-                    );
+                    let remedy = match sub_kind {
+                        SubmoduleCommitKind::Fetched => {
+                            "`rwv doctor --fix` checks them out from the canonical clone's \
+                             copies"
+                                .to_owned()
+                        }
+                        SubmoduleCommitKind::Unfetched => format!(
+                            "their recorded commits are not in the canonical clone's copies; \
+                             fetch them there (`git -C {repo} submodule update --init` at the \
+                             primary), then run `rwv doctor --fix`"
+                        ),
+                    };
                     format!(
                         "{workweave}/{repo}: submodules not initialized — \
-                         {n} submodule path(s) are empty on disk: {paths}; \
-                         fix: `{fix_cmd}`",
+                         {n} submodule path(s) are empty on disk: {paths}; {remedy}",
                         n = empty_paths.len(),
                         paths = empty_paths.join(", "),
                     )
@@ -9881,6 +9980,7 @@ pub fn run_check(
         };
         repair_member_gaps(ctx, project_scope, &mut fix_errors);
         repair_standalone_members(ctx, project_scope, &mut fix_errors);
+        repair_uninitialized_submodules(ctx, project_scope);
     }
 
     let world = load_doctor_world(ctx, scope_all)?;

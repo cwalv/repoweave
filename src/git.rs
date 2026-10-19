@@ -3,9 +3,9 @@
 use crate::vcs::{
     CommitSummary, ConflictOp, ContentIdentity, DerivedContentPolicy, DerivedContentResolution,
     DiscardOutcome, ForeignTipPolicy, HeadAttachment, HeadObservation, LocalRefName, PreAbortRef,
-    PublishRef, RawRefName, RawRevisionId, RefName, RemoteBranchCopies, RemoteDefaultBranch,
-    ReplayExclusionState, ResolvedRevisionId, TrackedFile, TrackedFileKind, UniqueDiff, Vcs,
-    VcsError, VerifiedRestoreOutcome, WorkspacePopulation,
+    PublishRef, RawRefName, RawRevisionId, RecordedSubmodule, RefName, RemoteBranchCopies,
+    RemoteDefaultBranch, ReplayExclusionState, ResolvedRevisionId, SubmoduleBirth, TrackedFile,
+    TrackedFileKind, UniqueDiff, Vcs, VcsError, VerifiedRestoreOutcome, WorkspacePopulation,
 };
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
@@ -799,22 +799,6 @@ pub fn restore_paths_from_head(repo: &Path, paths: &[String]) -> Result<(), VcsE
 /// `None` when the probe itself failed — the caller cannot read that as clean.
 pub fn repo_is_dirty(repo: &Path) -> Option<bool> {
     GitVcs.has_uncommitted_changes(repo).ok()
-}
-
-/// Check out every submodule `worktree_path` declares, recursively.
-///
-/// Does **not** inject `protocol.file.allow=always`. Git's restrictive default
-/// (`user`) is the mitigation for hostile-`.gitmodules` attacks — a
-/// third-party repo's `.gitmodules` naming `file://` paths on the operator's
-/// host — and workweaves materialize third-party reference repos. This runs
-/// with the operator's own config posture; a weave that genuinely uses
-/// `file://` submodules already has config allowing it.
-pub fn init_submodules(worktree_path: &Path) -> Result<(), VcsError> {
-    GitVcs::run(
-        &["submodule", "update", "--init", "--recursive"],
-        worktree_path,
-    )
-    .map(|_| ())
 }
 
 /// A `git fetch` that refreshes every remote and drops remote-tracking refs
@@ -3693,6 +3677,215 @@ impl WorkspacePopulation for GitVcs {
         // Declared where tests/shared_file_conformance_test.rs holds the
         // property; a platform joins when its CI leg shows it green.
         cfg!(target_os = "linux")
+    }
+
+    fn recorded_submodules(&self, workspace: &Path) -> Result<Vec<RecordedSubmodule>, VcsError> {
+        let gitlinks: Vec<IndexEntry> = Self::index_entries(workspace)?
+            .into_iter()
+            .filter(|e| e.mode == GITLINK_MODE)
+            .collect();
+        if gitlinks.is_empty() {
+            return Ok(Vec::new());
+        }
+        let names = Self::submodule_names_by_path(workspace)?;
+        Ok(gitlinks
+            .into_iter()
+            .filter_map(|entry| {
+                let name = names.get(&entry.path)?;
+                is_confined_submodule_name(name).then(|| RecordedSubmodule {
+                    name: name.clone(),
+                    path: entry.path,
+                    commit: entry.blob,
+                })
+            })
+            .collect())
+    }
+
+    fn module_data_holds(&self, module_data: &Path, submodule: &RecordedSubmodule) -> bool {
+        let source = module_repository(module_data, submodule);
+        let commit = format!("{}^{{commit}}", submodule.commit);
+        // A partial clone fetches a missing object from its promisor remote
+        // on read; refusing every transport makes the absence the answer.
+        source.is_dir()
+            && Self::run(
+                &["-c", "protocol.allow=never", "cat-file", "-e", &commit],
+                &source,
+            )
+            .is_ok()
+    }
+
+    fn create_unpopulated_submodule(
+        &self,
+        workspace: &Path,
+        submodule: &RecordedSubmodule,
+        module_data: &Path,
+    ) -> Result<SubmoduleBirth, VcsError> {
+        let repository = Self::submodule_repository(workspace, submodule)?;
+        if repository.exists() {
+            return Ok(SubmoduleBirth::RepositoryPresent {
+                existing: repository,
+            });
+        }
+        if !self.module_data_holds(module_data, submodule) {
+            return Ok(SubmoduleBirth::NotLocal);
+        }
+        let source = module_repository(module_data, submodule);
+        let dest = workspace.join(&submodule.path);
+        for dir in [Some(dest.as_path()), repository.parent()]
+            .into_iter()
+            .flatten()
+        {
+            std::fs::create_dir_all(dir).map_err(|e| VcsError::Io {
+                ctx: format!("failed to create {}", dir.display()),
+                source: e,
+            })?;
+        }
+        let repository_arg = path_as_git_arg(&repository, "submodule repository")?;
+        let source_arg = path_as_git_arg(&source, "module data")?;
+        let dest_arg = path_as_git_arg(&dest, "submodule path")?;
+        // A path that names a repository is cloned by copying its objects
+        // (as hard links where it can), never through a transport.
+        Self::run(
+            &[
+                "clone",
+                "--quiet",
+                "--no-checkout",
+                "--separate-git-dir",
+                repository_arg,
+                source_arg,
+                dest_arg,
+            ],
+            workspace,
+        )?;
+        Self::run(&["config", "core.worktree", dest_arg], &dest)?;
+        Self::run(
+            &["update-ref", "--no-deref", "HEAD", &submodule.commit],
+            &dest,
+        )?;
+        Self::run(&["read-tree", "HEAD"], &dest)?;
+        Ok(SubmoduleBirth::Born { source })
+    }
+
+    fn connect_submodule_upstream(
+        &self,
+        workspace: &Path,
+        submodule: &RecordedSubmodule,
+        source: &Path,
+    ) -> Result<(), VcsError> {
+        let remotes = match Self::run(
+            &["config", "--local", "-z", "--get-regexp", r"^remote\."],
+            source,
+        ) {
+            Ok(listing) => listing,
+            Err(VcsError::CommandFailed { stderr, .. }) if stderr.trim().is_empty() => {
+                return Ok(())
+            }
+            Err(e) => return Err(e),
+        };
+        let dest = workspace.join(&submodule.path);
+        Self::run(&["config", "--remove-section", "remote.origin"], &dest)?;
+        for record in remotes.split_terminator('\0') {
+            let (key, value) = record.split_once('\n').unwrap_or((record, ""));
+            Self::run(&["config", "--add", key, value], &dest)?;
+        }
+        Ok(())
+    }
+
+    fn discard_submodule(
+        &self,
+        workspace: &Path,
+        submodule: &RecordedSubmodule,
+    ) -> Result<(), VcsError> {
+        let repository = Self::submodule_repository(workspace, submodule)?;
+        let dest = workspace.join(&submodule.path);
+        let io = |what: &Path| {
+            let what = what.to_path_buf();
+            move |e| VcsError::Io {
+                ctx: format!("failed to remove {}", what.display()),
+                source: e,
+            }
+        };
+        crate::workweave::remove_tree_outlasting_child_handles(&dest).map_err(io(&dest))?;
+        std::fs::create_dir_all(&dest).map_err(io(&dest))?;
+        if repository.exists() {
+            crate::workweave::remove_tree_outlasting_child_handles(&repository)
+                .map_err(io(&repository))?;
+        }
+        Ok(())
+    }
+}
+
+/// The copy of `submodule`'s repository kept under `module_data`.
+fn module_repository(module_data: &Path, submodule: &RecordedSubmodule) -> PathBuf {
+    module_data.join("modules").join(&submodule.name)
+}
+
+/// The index mode git records a submodule's commit under.
+const GITLINK_MODE: &str = "160000";
+
+/// Whether a `.gitmodules` name stays inside the `modules/` directory it is
+/// joined under. git refuses a `..` component for the same reason; a name
+/// rooted or carrying a drive or stream separator would leave it outright.
+fn is_confined_submodule_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.contains(':')
+        && name
+            .split(['/', '\\'])
+            .all(|part| !part.is_empty() && part != "..")
+}
+
+impl GitVcs {
+    /// `submodule path` → `submodule name`, from the checkout's `.gitmodules`.
+    fn submodule_names_by_path(workspace: &Path) -> Result<HashMap<String, String>, VcsError> {
+        if !workspace.join(".gitmodules").is_file() {
+            return Ok(HashMap::new());
+        }
+        let listing = match Self::run(
+            &[
+                "config",
+                "--file",
+                ".gitmodules",
+                "-z",
+                "--get-regexp",
+                r"^submodule\..*\.path$",
+            ],
+            workspace,
+        ) {
+            Ok(listing) => listing,
+            Err(VcsError::CommandFailed { stderr, .. }) if stderr.trim().is_empty() => {
+                return Ok(HashMap::new())
+            }
+            Err(e) => return Err(e),
+        };
+        Ok(listing
+            .split_terminator('\0')
+            .filter_map(|record| {
+                let (key, path) = record.split_once('\n')?;
+                let name = key.strip_prefix("submodule.")?.strip_suffix(".path")?;
+                Some((path.to_owned(), name.to_owned()))
+            })
+            .collect())
+    }
+
+    /// Where `workspace` keeps the repository of `submodule`, whether or not
+    /// one is there: git's own `modules/<name>` under the checkout's private
+    /// git directory, so a linked worktree's never shares the main
+    /// checkout's.
+    fn submodule_repository(
+        workspace: &Path,
+        submodule: &RecordedSubmodule,
+    ) -> Result<PathBuf, VcsError> {
+        let git_path = format!("modules/{}", submodule.name);
+        Self::run_trimmed(
+            &[
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                &git_path,
+            ],
+            workspace,
+        )
+        .map(PathBuf::from)
     }
 }
 

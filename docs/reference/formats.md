@@ -58,6 +58,9 @@ Keyed by canonical local path (`<registry>/<owner>/<repo>`). Each entry:
 | `url` | yes | Clone URL. Used by `rwv fetch` on other machines. |
 | `version` | yes | Tracked branch name (manifest); 40-character commit SHA (lock). |
 | `role` | yes | One of `owned`, `fork`, `dependency`, `reference`. |
+| `submodules` | no | `"local"` (the default) or `"skip"`. See [Submodules](#submodules). |
+
+Any other key in an entry is rejected, naming it.
 
 `version` in `rwv.toml` is branch-only by design: the manifest declares which branch to *track*, while `rwv.lock` records the exact commit SHA you *are* on. Specifically:
 
@@ -67,6 +70,14 @@ Keyed by canonical local path (`<registry>/<owner>/<repo>`). Each entry:
 - **`rwv fetch`** and **`rwv sync`** align checkouts to the 40-character commit SHA in `rwv.lock` (falling back to `version` only on `rwv fetch` without `--frozen` when a newly added repo has no lock entry yet).
 
 The role for your own code is spelled `role = "owned"`; a manifest spelling it `primary` fails to parse. See [reference/roles — Migrating from `role: primary`](./roles.md#migrating-from-role-primary).
+
+#### Submodules
+
+When rwv creates a checkout of a member — `rwv workweave create`, or a member a workweave lacks created by `rwv fetch`, `rwv add`, `rwv sync`, `rwv sync-to` or `rwv doctor --fix` — it checks out each submodule the member records from the copy of that submodule's repository the canonical clone already holds, nested submodules included. It never uses the network for this. The files are cloned or linked from the same submodule in the weave's other checkouts where the filesystem allows, as a member's own files are. A `reference` member's submodule files are read-only like the rest of its files.
+
+A submodule whose recorded commit the canonical clone does not hold stays empty, and `rwv doctor` reports it as [`uninitialized-submodule`](./doctor-findings.md#uninitialized-submodule) / `unfetched`. Fetch the commit into the canonical clone (for example `git submodule update --init` there), then run `rwv doctor --fix`.
+
+`submodules = "skip"` leaves a member's submodules empty in every checkout rwv creates, and doctor does not report them.
 
 The repo set is modeled on vcstool's `.repos` format, extended with `role` and optional `integrations` and `workweave` tables.
 

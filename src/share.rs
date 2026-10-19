@@ -8,9 +8,10 @@
 //! VCS stores content. Nothing records how a file was placed: a later
 //! operation asks the backend again.
 
-use crate::manifest::Role;
+use crate::manifest::{RepoPath, Role};
 use crate::vcs::{
-    BornRef, OwnedRef, ResolvedRevisionId, TrackedFile, Vcs, VcsError, WorkspacePopulation,
+    BornRef, OwnedRef, RecordedSubmodule, ResolvedRevisionId, SubmoduleBirth, TrackedFile, Vcs,
+    VcsError, WorkspacePopulation,
 };
 use anyhow::Context;
 use schemars::JsonSchema;
@@ -124,28 +125,29 @@ pub(crate) fn create_worktree_populated(
     };
     let created = population.create_unpopulated_worktree_on(owned, dest);
     let filled = match &created {
-        Ok(_) => fill(vcs, population, dest, role, owned.created_at(), fs).map(Some),
+        Ok(_) => {
+            let sources = sources(vcs, dest, owned.created_at());
+            fill(population, dest, role, &sources, fs).map(Some)
+        }
         Err(_) => Ok(None),
     };
     Populated { created, filled }
 }
 
 fn fill(
-    vcs: &dyn Vcs,
     population: &dyn WorkspacePopulation,
     dest: &Path,
     role: Role,
-    at: &ResolvedRevisionId,
+    sources: &[Source],
     fs: &dyn FilePrimitives,
 ) -> anyhow::Result<FilePlacement> {
     let tracked = population.tracked_files(dest)?;
     let wanted: Vec<&TrackedFile> = tracked.iter().filter(|f| f.identity().is_some()).collect();
     let placed = place(
-        vcs,
         population,
         dest,
         role,
-        at,
+        sources,
         &wanted,
         fs,
         Placing::IntoEmpty,
@@ -200,11 +202,10 @@ pub(crate) fn reshare(
         .collect();
     let at = vcs.head_revision(member)?;
     let placed = place(
-        vcs,
         population,
         member,
         role,
-        &at,
+        &sources(vcs, member, &at),
         &wanted,
         fs,
         Placing::OverIntact,
@@ -225,13 +226,11 @@ enum Placing {
 /// Place each of `wanted` into `dest` from a workspace holding its content,
 /// trying each mode in turn, and return the paths placed with how. A file
 /// nothing can be placed from is left for the backend.
-#[allow(clippy::too_many_arguments)]
 fn place(
-    vcs: &dyn Vcs,
     population: &dyn WorkspacePopulation,
     dest: &Path,
     role: Role,
-    at: &ResolvedRevisionId,
+    sources: &[Source],
     wanted: &[&TrackedFile],
     fs: &dyn FilePrimitives,
     placing: Placing,
@@ -240,19 +239,18 @@ fn place(
         wanted.iter().map(|f| (f.path.as_str(), *f)).collect();
     let mut placed = Vec::new();
     let backend_declares = population.updates_replace_files();
-    for source in sources(vcs, dest, at) {
+    for Source {
+        path: source,
+        reference: source_is_reference,
+    } in sources
+    {
         if uncovered.is_empty() {
             break;
         }
         let mut modes: Vec<Mode> = [Mode::Reflink, Mode::Hardlink]
             .into_iter()
             .filter(|mode| {
-                *mode == Mode::Reflink
-                    || may_link(
-                        role,
-                        backend_declares,
-                        crate::settle::Listing::of(&source).is_reference(),
-                    )
+                *mode == Mode::Reflink || may_link(role, backend_declares, *source_is_reference)
             })
             .filter(|mode| can_place_from(&source, dest, uncovered.keys().copied(), fs, *mode))
             .collect();
@@ -289,9 +287,16 @@ fn place(
     placed
 }
 
+/// A workspace files may be placed from.
+struct Source {
+    path: PathBuf,
+    /// Whether its files hold the `reference` role's permissions.
+    reference: bool,
+}
+
 /// Every other workspace of the repository `dest` belongs to, those at
 /// `at` first and then the primary's checkout.
-fn sources(vcs: &dyn Vcs, dest: &Path, at: &ResolvedRevisionId) -> Vec<PathBuf> {
+fn sources(vcs: &dyn Vcs, dest: &Path, at: &ResolvedRevisionId) -> Vec<Source> {
     let same = |a: &Path, b: &Path| match (a.canonicalize(), b.canonicalize()) {
         (Ok(a), Ok(b)) => a == b,
         _ => false,
@@ -311,7 +316,13 @@ fn sources(vcs: &dyn Vcs, dest: &Path, at: &ResolvedRevisionId) -> Vec<PathBuf> 
         })
         .collect();
     found.sort_by_key(|(elsewhere, secondary, _)| (*elsewhere, *secondary));
-    found.into_iter().map(|(_, _, w)| w).collect()
+    found
+        .into_iter()
+        .map(|(_, _, path)| Source {
+            reference: crate::settle::Listing::of(&path).is_reference(),
+            path,
+        })
+        .collect()
 }
 
 /// Whether anything can be placed from `source` into `dest` in `mode`, asked
@@ -425,6 +436,181 @@ fn verify_and_repair(
         .check_out_paths(workspace, &mismatched)
         .with_context(|| format!("failed to repair placed files in {}", workspace.display()))?;
     Ok(placement)
+}
+
+/// What [`populate_submodules`] did, one line per submodule at any depth,
+/// each named by its path from the member's root.
+#[derive(Debug, Default)]
+pub(crate) struct SubmodulePopulation {
+    /// Checked out, with how their files were placed.
+    pub(crate) populated: Vec<(String, FilePlacement)>,
+    /// Left uninitialized, with why.
+    pub(crate) left: Vec<(String, String)>,
+}
+
+impl SubmodulePopulation {
+    /// One stderr line per submodule, each opening with `prefix` and naming
+    /// it under `member`.
+    pub(crate) fn report(&self, prefix: &str, member: &RepoPath) {
+        for (path, placement) in &self.populated {
+            eprintln!("{prefix}{member}/{path}: submodule checked out ({placement})");
+        }
+        for (path, why) in &self.left {
+            eprintln!("{prefix}warning: {member}/{path}: submodule left uninitialized: {why}");
+        }
+    }
+}
+
+/// Check out every submodule the member at `member` records whose directory
+/// is empty, at depth, from the copies of their repositories the member's
+/// canonical store already holds, with files placed from the same submodule
+/// in the repository's other workspaces where they can be. Nothing is fetched:
+/// a submodule whose commit is not held locally is left as it was.
+pub(crate) fn populate_submodules(
+    vcs: &dyn Vcs,
+    member: &Path,
+    role: Role,
+    fs: &dyn FilePrimitives,
+) -> SubmodulePopulation {
+    let mut done = SubmodulePopulation::default();
+    let Some(population) = vcs.population() else {
+        return done;
+    };
+    let (Some(store), Ok(at)) = (
+        vcs.resolve_canonical_store(member),
+        vcs.head_revision(member),
+    ) else {
+        return done;
+    };
+    let level = Level {
+        workspace: member,
+        shown_as: String::new(),
+        module_data: &store,
+        sources: sources(vcs, member, &at),
+    };
+    populate_level(vcs, population, &level, role, fs, &mut done);
+    done
+}
+
+/// One checkout whose submodules are being populated.
+struct Level<'a> {
+    workspace: &'a Path,
+    /// Its path from the member's root, `/`-terminated unless it is the member.
+    shown_as: String,
+    module_data: &'a Path,
+    /// The same checkout in the repository's other workspaces.
+    sources: Vec<Source>,
+}
+
+fn populate_level(
+    vcs: &dyn Vcs,
+    population: &dyn WorkspacePopulation,
+    level: &Level<'_>,
+    role: Role,
+    fs: &dyn FilePrimitives,
+    done: &mut SubmodulePopulation,
+) {
+    let submodules = match population.recorded_submodules(level.workspace) {
+        Ok(submodules) => submodules,
+        Err(e) => {
+            let shown = level.shown_as.trim_end_matches('/');
+            let shown = if shown.is_empty() { "." } else { shown };
+            done.left.push((shown.to_owned(), format!("{e:#}")));
+            return;
+        }
+    };
+    for submodule in submodules {
+        let shown = format!("{}{}", level.shown_as, submodule.path);
+        let dest = level.workspace.join(&submodule.path);
+        if !is_empty_or_absent(&dest) {
+            continue;
+        }
+        let source = match population.create_unpopulated_submodule(
+            level.workspace,
+            &submodule,
+            level.module_data,
+        ) {
+            Ok(SubmoduleBirth::Born { source }) => source,
+            Ok(SubmoduleBirth::NotLocal) => {
+                done.left.push((
+                    shown,
+                    format!(
+                        "commit {} is not in the canonical clone's copy of it",
+                        &submodule.commit[..submodule.commit.len().min(12)]
+                    ),
+                ));
+                continue;
+            }
+            Ok(SubmoduleBirth::RepositoryPresent { existing }) => {
+                done.left.push((
+                    shown,
+                    format!(
+                        "a repository for it already exists at {}",
+                        existing.display()
+                    ),
+                ));
+                continue;
+            }
+            Err(e) => {
+                let _ = population.discard_submodule(level.workspace, &submodule);
+                done.left.push((shown, format!("{e:#}")));
+                continue;
+            }
+        };
+        let nested = Level {
+            workspace: &dest,
+            shown_as: format!("{shown}/"),
+            module_data: &source,
+            sources: submodule_sources(vcs, &level.sources, &submodule),
+        };
+        let filled = fill(population, &dest, role, &nested.sources, fs).and_then(|placement| {
+            population.connect_submodule_upstream(level.workspace, &submodule, &source)?;
+            crate::settle::settle(vcs, &dest, role)?;
+            Ok(placement)
+        });
+        match filled {
+            Ok(placement) => {
+                done.populated.push((shown, placement));
+                populate_level(vcs, population, &nested, role, fs, done);
+            }
+            Err(e) => {
+                let _ = population.discard_submodule(level.workspace, &submodule);
+                done.left.push((shown, format!("{e:#}")));
+            }
+        }
+    }
+}
+
+/// The checkouts of `submodule` inside `parents`, those at its recorded
+/// commit first.
+fn submodule_sources(
+    vcs: &dyn Vcs,
+    parents: &[Source],
+    submodule: &RecordedSubmodule,
+) -> Vec<Source> {
+    let mut found: Vec<(bool, Source)> = parents
+        .iter()
+        .map(|parent| Source {
+            path: parent.path.join(&submodule.path),
+            reference: parent.reference,
+        })
+        .filter(|source| vcs.is_repo(&source.path))
+        .map(|source| {
+            let elsewhere = vcs
+                .head_revision(&source.path)
+                .map_or(true, |head| head.as_str() != submodule.commit);
+            (elsewhere, source)
+        })
+        .collect();
+    found.sort_by_key(|(elsewhere, _)| *elsewhere);
+    found.into_iter().map(|(_, source)| source).collect()
+}
+
+fn is_empty_or_absent(dir: &Path) -> bool {
+    match std::fs::read_dir(dir) {
+        Ok(mut entries) => entries.next().is_none(),
+        Err(e) => e.kind() == io::ErrorKind::NotFound,
+    }
 }
 
 #[cfg(test)]

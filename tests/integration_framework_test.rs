@@ -26,6 +26,7 @@ fn make_repo_entry(role: Role) -> RepoEntry {
         url: "https://example.com/repo.git".parse().unwrap(),
         version: RefName::new("main"),
         role,
+        submodules: repoweave::manifest::Submodules::Local,
     }
 }
 

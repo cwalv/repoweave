@@ -556,6 +556,7 @@ mod tests {
                 url: "https://github.com/acme/server.git".parse().unwrap(),
                 version: RefName::new("main"),
                 role: crate::manifest::Role::Owned,
+                submodules: crate::manifest::Submodules::Local,
             },
         );
         Manifest {

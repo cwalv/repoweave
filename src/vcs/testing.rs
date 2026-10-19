@@ -748,6 +748,40 @@ impl WorkspacePopulation for FakeVcs {
     fn updates_replace_files(&self) -> bool {
         unsupported("updates_replace_files")
     }
+
+    fn recorded_submodules(&self, _workspace: &Path) -> Result<Vec<RecordedSubmodule>, VcsError> {
+        Ok(Vec::new())
+    }
+
+    fn module_data_holds(&self, _module_data: &Path, _submodule: &RecordedSubmodule) -> bool {
+        unsupported("module_data_holds")
+    }
+
+    fn create_unpopulated_submodule(
+        &self,
+        _workspace: &Path,
+        _submodule: &RecordedSubmodule,
+        _module_data: &Path,
+    ) -> Result<SubmoduleBirth, VcsError> {
+        unsupported("create_unpopulated_submodule")
+    }
+
+    fn connect_submodule_upstream(
+        &self,
+        _workspace: &Path,
+        _submodule: &RecordedSubmodule,
+        _source: &Path,
+    ) -> Result<(), VcsError> {
+        unsupported("connect_submodule_upstream")
+    }
+
+    fn discard_submodule(
+        &self,
+        _workspace: &Path,
+        _submodule: &RecordedSubmodule,
+    ) -> Result<(), VcsError> {
+        unsupported("discard_submodule")
+    }
 }
 
 #[cfg(test)]

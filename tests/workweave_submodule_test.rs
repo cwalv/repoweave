@@ -1,87 +1,77 @@
-//! Integration tests for workweave submodule initialization (R23 GAP fix).
+//! A member checkout rwv creates has its submodules checked out from the
+//! copies of their repositories the canonical clone already holds, never from
+//! the network, unless its manifest entry says `submodules = "skip"`.
 //!
-//! After `create_workweave`, repos containing `.gitmodules` should have
-//! submodules initialized in the new worktree. When submodule init fails
-//! (e.g. unreachable remote), the create still succeeds and emits a named
-//! warning with the fix command. Repos without `.gitmodules` must not invoke
-//! git submodule at all (verified behaviorally: no empty-paths finding).
-//!
-//! Also covers the doctor-side scanner: `scan_uninitialized_submodules_in_workweaves`
-//! surfaces a `UninitializedSubmodule` warning when a worktree has `.gitmodules`
-//! with empty submodule dirs, and is silent for workweaves where submodules are
-//! correctly initialized.
+//! Every fixture cuts the network off: the upstream repositories are deleted
+//! once the canonical clone has its submodules, and every URL that could
+//! reach them points at a [`Trap`] that counts connections. A test passing
+//! with the trap at zero is what shows nothing was fetched.
 
+use std::io::Read;
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
-use repoweave::manifest::{ProjectName, WorkweaveName};
-use repoweave::workweave::{create_workweave, scan_uninitialized_submodules};
+use repoweave::workweave::scan_uninitialized_submodules;
 
 mod common;
 
-// ---------------------------------------------------------------------------
-// Git helpers
-// ---------------------------------------------------------------------------
+const PROJECT: &str = "proj";
+const MEMBER: &str = "github/org/app";
+const SUB: &str = "libs/sub";
+const NESTED: &str = "libs/sub/deep";
+const SUB_FILES: &[&str] = &["lib.txt", "src/a.txt"];
 
-/// Initialize a git repo with one commit.
-fn init_repo_with_commit(path: &Path) {
-    std::fs::create_dir_all(path).unwrap();
-    common::git_in(path, &["init", "--initial-branch=main"]);
-    common::git_in(path, &["config", "user.email", "test@test.com"]);
-    common::git_in(path, &["config", "user.name", "Test"]);
-    std::fs::write(path.join("README"), "init").unwrap();
-    common::git_in(path, &["add", "."]);
-    common::git_in(path, &["commit", "-m", "initial"]);
+/// A local listener every remote URL in a fixture points at. A connection
+/// is a fetch attempt.
+struct Trap {
+    url: String,
+    hits: Arc<AtomicUsize>,
 }
 
-/// Create a minimal workspace with one project and one member repo.
-///
-/// Layout:
-///   `tmp/ws/`
-///   `tmp/ws/github/org/repo/` — git repo
-///   `tmp/ws/projects/{project}/rwv.toml`
-fn make_workspace(tmp: &Path, project: &str) -> PathBuf {
-    let ws = tmp.join("ws");
-    let repo_path = ws.join("github/org/repo");
-    init_repo_with_commit(&repo_path);
+impl Trap {
+    fn new() -> Trap {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&hits);
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                counted.fetch_add(1, Ordering::SeqCst);
+                if let Ok(mut stream) = stream {
+                    let _ = stream.read(&mut [0u8; 64]);
+                }
+            }
+        });
+        Trap { url, hits }
+    }
 
-    let project_dir = ws.join("projects").join(project);
-    std::fs::create_dir_all(&project_dir).unwrap();
-
-    let manifest = format!(
-        r#"[repositories."github/org/repo"]
-type = "git"
-url = "file://{repo}"
-version = "main"
-role = "owned"
-"#,
-        repo = common::url_path(&repo_path)
-    );
-    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
-    ws
+    fn assert_untouched(&self) {
+        assert_eq!(
+            self.hits.load(Ordering::SeqCst),
+            0,
+            "something connected to the remote at {}: a fetch was attempted",
+            self.url
+        );
+    }
 }
 
-/// Build a git command with `protocol.file.allow=always` (appended to the
-/// existing GIT_CONFIG_* chain from `common::git()`).
-///
-/// Recent git versions default `protocol.file.allow=user`, which blocks
-/// `git submodule add` with a `file://` URL in test contexts where the
-/// caller is not an interactive user (i.e. CI and `cargo test`). Injecting
-/// `always` via the GIT_CONFIG env-var mechanism avoids touching any disk
-/// config and stacks on top of whatever common::git() already sets.
-///
-/// Not [`common::git_in`]: that helper carries no protocol allowance, and
-/// this is the one call in the suite that needs one.
-fn git_with_file_protocol(args: &[&str], dir: &Path) {
-    // common::git() already sets GIT_CONFIG_COUNT=1 for init.defaultBranch.
-    // We stack one more entry by bumping the count and adding the next key.
+/// `git` with `protocol.file.allow=always`, which `git submodule add` from a
+/// local path needs and the code under test must never rely on.
+fn git_allowing_file_protocol(dir: &Path, args: &[&str]) {
     let output = common::git()
         .env("GIT_CONFIG_COUNT", "2")
         .env("GIT_CONFIG_KEY_1", "protocol.file.allow")
         .env("GIT_CONFIG_VALUE_1", "always")
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@test.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@test.com")
         .args(args)
         .current_dir(dir)
         .output()
-        .expect("git should be available");
+        .unwrap();
     assert!(
         output.status.success(),
         "git {args:?} in {} failed:\n{}",
@@ -90,464 +80,601 @@ fn git_with_file_protocol(args: &[&str], dir: &Path) {
     );
 }
 
-/// Add a real submodule to `repo_dir`, pointing at `submodule_remote`.
-/// The submodule is committed so `git worktree add` inherits the `.gitmodules`.
-fn add_submodule(repo_dir: &Path, sub_path: &str, submodule_remote: &Path) {
-    git_with_file_protocol(
+fn init_repo(path: &Path, files: &[&str]) {
+    std::fs::create_dir_all(path).unwrap();
+    common::git_in(path, &["init", "-b", "main"]);
+    for file in files {
+        let at = path.join(file);
+        std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+        std::fs::write(at, format!("{file}\n")).unwrap();
+    }
+    common::git_in(path, &["add", "."]);
+    common::git_in(path, &["commit", "-m", "initial"]);
+}
+
+/// How the canonical clone's copy of the submodule is left once the network
+/// is cut.
+#[derive(Clone, Copy, PartialEq)]
+enum Store {
+    /// A full copy, its nested submodule included.
+    Complete,
+    /// A partial clone holding no file contents, whose promisor remote is
+    /// the trap; the canonical clone's own checkout of it is emptied, so
+    /// nothing local holds the files.
+    WithoutContents,
+}
+
+struct Weave {
+    _tmp: tempfile::TempDir,
+    primary: PathBuf,
+    trap: Trap,
+}
+
+impl Weave {
+    fn canonical(&self) -> PathBuf {
+        self.primary.join(MEMBER)
+    }
+
+    fn module_store(&self) -> PathBuf {
+        self.canonical().join(".git/modules").join(SUB)
+    }
+
+    fn seat_path(&self, name: &str) -> PathBuf {
+        self.primary
+            .parent()
+            .unwrap()
+            .join(".workweaves")
+            .join(format!("{PROJECT}--{name}"))
+    }
+
+    /// Create seat `name`; returns its root and create's stderr.
+    fn seat(&self, name: &str) -> (PathBuf, String) {
+        let output = common::rwv()
+            .args(["workweave", PROJECT, "create", name])
+            .current_dir(&self.primary)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        assert!(output.status.success(), "create {name} failed:\n{stderr}");
+        (self.seat_path(name), stderr)
+    }
+
+    fn findings(&self) -> Vec<serde_json::Value> {
+        let output = common::rwv()
+            .args(["doctor", "--json"])
+            .current_dir(&self.primary)
+            .output()
+            .unwrap();
+        let report: serde_json::Value =
+            serde_json::from_slice(&output.stdout).unwrap_or_else(|e| {
+                panic!(
+                    "doctor --json printed no report ({e}):\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                )
+            });
+        report["violations"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|v| v["kind"] == "uninitialized-submodule")
+            .collect()
+    }
+}
+
+fn rwv(args: &[&str], cwd: &Path) -> String {
+    let output = common::rwv().args(args).current_dir(cwd).output().unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.status.success(), "rwv {args:?} failed:\n{text}");
+    text
+}
+
+/// A primary whose one project lists [`MEMBER`] with `role`, plus
+/// `extra_entry_line` under its entry; the member records [`SUB`], which
+/// records [`NESTED`].
+fn weave(role: &str, extra_entry_line: &str, store: Store) -> Weave {
+    let tmp = common::tempdir().unwrap();
+    let trap = Trap::new();
+    let upstream = tmp.path().join("upstream");
+    let deep_up = upstream.join("deep");
+    init_repo(&deep_up, &["deep.txt"]);
+    let sub_up = upstream.join("sub");
+    init_repo(&sub_up, SUB_FILES);
+    common::git_in(&sub_up, &["config", "uploadpack.allowFilter", "true"]);
+    git_allowing_file_protocol(
+        &sub_up,
+        &["submodule", "add", &common::file_url(&deep_up), "deep"],
+    );
+    common::git_in(&sub_up, &["commit", "-m", "add deep"]);
+
+    let primary = tmp.path().join("primary");
+    let canonical = primary.join(MEMBER);
+    init_repo(&canonical, &["README"]);
+    git_allowing_file_protocol(
+        &canonical,
+        &["submodule", "add", &common::file_url(&sub_up), SUB],
+    );
+    common::git_in(&canonical, &["commit", "-m", "add sub"]);
+    git_allowing_file_protocol(
+        &canonical,
+        &["submodule", "update", "--init", "--recursive"],
+    );
+
+    let store_dir = canonical.join(".git/modules").join(SUB);
+    if store == Store::WithoutContents {
+        std::fs::remove_dir_all(&store_dir).unwrap();
+        let partial = tmp.path().join("partial.git");
+        git_allowing_file_protocol(
+            tmp.path(),
+            &[
+                "clone",
+                "--bare",
+                "--filter=blob:none",
+                &common::file_url(&sub_up),
+                partial.to_str().unwrap(),
+            ],
+        );
+        std::fs::rename(&partial, &store_dir).unwrap();
+        common::git_in(&store_dir, &["config", "core.bare", "false"]);
+        for entry in std::fs::read_dir(canonical.join(SUB)).unwrap() {
+            let entry = entry.unwrap().path();
+            if entry.file_name().unwrap() != ".git" {
+                if entry.is_dir() {
+                    std::fs::remove_dir_all(entry).unwrap();
+                } else {
+                    std::fs::remove_file(entry).unwrap();
+                }
+            }
+        }
+    }
+    common::git_in(
+        &canonical,
         &[
-            "submodule",
-            "add",
-            &common::file_url(submodule_remote),
-            sub_path,
+            "config",
+            &format!("submodule.{SUB}.url"),
+            &format!("{}/sub", trap.url),
         ],
-        repo_dir,
     );
-    common::git_in(repo_dir, &["add", ".gitmodules", sub_path]);
-    common::git_in(repo_dir, &["commit", "-m", "add submodule"]);
-}
-
-// ---------------------------------------------------------------------------
-// Test 1: workweave create initializes submodules when .gitmodules exists
-// ---------------------------------------------------------------------------
-
-/// Workweave create: submodule content is present after create when the
-/// member repo has a submodule backed by a reachable (local) remote.
-///
-/// Production no longer injects `protocol.file.allow=always` (CVE-2022-39253
-/// class mitigation — see `init_submodules_in_worktree`), so this test runs
-/// the create through the CLI binary and sets the allowance on ITS OWN
-/// spawned command. The rwv process's child `git submodule update` inherits
-/// the env; nothing is widened in the production code path.
-#[test]
-fn create_initializes_submodules_when_gitmodules_present() {
-    let tmp = common::tempdir().unwrap();
-    let ws = make_workspace(tmp.path(), "proj");
-
-    // Create a small repo that will serve as the submodule remote.
-    let sub_remote = tmp.path().join("sub-remote");
-    init_repo_with_commit(&sub_remote);
-    std::fs::write(sub_remote.join("lib.txt"), "submodule content").unwrap();
-    common::git_in(&sub_remote, &["add", "."]);
-    common::git_in(&sub_remote, &["commit", "-m", "submodule initial"]);
-
-    // Add the submodule to the member repo and commit it.
-    let repo = ws.join("github/org/repo");
-    add_submodule(&repo, "libs/sub", &sub_remote);
-
-    // Create the workweave via the CLI. The file-protocol allowance is set
-    // on the spawned rwv process only (common::rwv() already sets
-    // GIT_CONFIG_COUNT=1 for init.defaultBranch; stack entry 1 on top).
-    let ww_dir = tmp.path().join(".workweaves");
-    std::fs::create_dir_all(&ww_dir).unwrap();
-
-    common::rwv()
-        .args(["workweave", "proj", "create", "feat"])
-        .env("GIT_CONFIG_COUNT", "2")
-        .env("GIT_CONFIG_KEY_1", "protocol.file.allow")
-        .env("GIT_CONFIG_VALUE_1", "always")
-        .current_dir(&ws)
-        .assert()
-        .success();
-
-    // The submodule directory in the workweave should be non-empty.
-    let workweave_path = ww_dir.join("proj--feat");
-    assert!(
-        workweave_path.is_dir(),
-        "workweave should exist at {}",
-        workweave_path.display()
+    common::git_in(
+        &store_dir,
+        &["config", "remote.origin.url", &format!("{}/sub", trap.url)],
     );
-    let sub_dir = workweave_path.join("github/org/repo/libs/sub");
-    assert!(
-        sub_dir.is_dir(),
-        "submodule directory should exist at {}",
-        sub_dir.display()
-    );
-    let sub_file = sub_dir.join("lib.txt");
-    assert!(
-        sub_file.exists(),
-        "submodule content (lib.txt) should be present after init at {}",
-        sub_file.display()
-    );
+    let nested_store = store_dir.join("modules/deep");
+    if nested_store.is_dir() {
+        common::git_in(
+            &nested_store,
+            &["config", "remote.origin.url", &format!("{}/deep", trap.url)],
+        );
+    }
+    std::fs::remove_dir_all(&upstream).unwrap();
 
-    // scan_uninitialized_submodules sees no empty paths.
-    let empty = scan_uninitialized_submodules(&workweave_path.join("github/org/repo"));
-    assert!(
-        empty.is_empty(),
-        "scan_uninitialized_submodules should find no empty paths after successful init, \
-         got: {empty:?}"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Test 2: create succeeds with warning when submodule remote is unreachable
-// ---------------------------------------------------------------------------
-
-/// Workweave create: when the submodule remote is unreachable (bad URL),
-/// create still succeeds but emits a warning naming the repo, the state
-/// ("submodules not initialized"), and the fix command. The worktree exists;
-/// the submodule directory is empty (or absent). Doctor can later flag it.
-///
-/// We commit BOTH halves of a real submodule pointer — the `.gitmodules`
-/// entry (with a URL that will never resolve) AND a gitlink index entry
-/// (mode 160000, planted via `git update-index --cacheinfo`) — without ever
-/// running `git submodule add`, so no cached submodule objects exist in
-/// `.git/modules/`. The gitlink matters: `git submodule update` iterates
-/// gitlink entries in the index, not `.gitmodules` lines, so a fixture with
-/// only `.gitmodules` would make init a successful no-op and never reach
-/// the failure arm.
-///
-/// Run through the CLI so the per-repo warning and the partial-
-/// materialization summary can be asserted on stderr BY TEXT — the exact
-/// git failure underneath (protocol blocked vs. path not found) is not
-/// asserted; both take the same warn-and-continue arm.
-#[test]
-fn create_succeeds_with_warning_when_submodule_remote_unreachable() {
-    let tmp = common::tempdir().unwrap();
-    let ws = make_workspace(tmp.path(), "proj");
-
-    let repo = ws.join("github/org/repo");
-
-    // Write a .gitmodules pointing at a non-existent path.
-    // This mimics a repo that declares a submodule but whose remote is
-    // unreachable (or has never been fetched). There is no .git/modules/
-    // entry because we never ran `git submodule add`.
+    let sha = common::git_in(&canonical, &["rev-parse", "HEAD"]);
+    let project_dir = primary.join("projects").join(PROJECT);
+    std::fs::create_dir_all(&project_dir).unwrap();
+    common::git_in(&project_dir, &["init", "-b", "main"]);
     std::fs::write(
-        repo.join(".gitmodules"),
-        "[submodule \"libs/sub\"]\n\
-         \tpath = libs/sub\n\
-         \turl = file:///nonexistent/rwv-test/sub-that-does-not-exist\n",
+        project_dir.join(".gitattributes"),
+        "rwv.lock merge=rwv-ours\n",
     )
     .unwrap();
-    common::git_in(&repo, &["add", ".gitmodules"]);
-    // Plant the gitlink entry itself (mode 160000). The recorded commit sha
-    // does not need to exist anywhere — gitlink checkout only creates the
-    // placeholder dir, and submodule update will fail at clone time (which
-    // is the point of this test).
+    std::fs::write(
+        project_dir.join("rwv.toml"),
+        format!(
+            "[repositories.\"{MEMBER}\"]\ntype = \"git\"\nurl = \"file://{}\"\n\
+             version = \"main\"\nrole = \"{role}\"\n{extra_entry_line}\n",
+            common::url_path(&canonical)
+        ),
+    )
+    .unwrap();
+    common::fixture_lock(
+        &project_dir,
+        &[(MEMBER, common::file_url(&canonical).as_str(), sha.as_str())],
+    );
+    common::git_in(&project_dir, &["add", "."]);
+    common::git_in(&project_dir, &["commit", "-m", "lock: initial"]);
+    std::fs::write(primary.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
+    Weave {
+        _tmp: tmp,
+        primary,
+        trap,
+    }
+}
+
+fn is_empty(dir: &Path) -> bool {
+    std::fs::read_dir(dir).map_or(true, |mut entries| entries.next().is_none())
+}
+
+/// Whether this filesystem clones files: where it does, every submodule
+/// file is placed from the canonical clone's checkout and none is written.
+fn reflinks(dir: &Path) -> bool {
+    let from = dir.join(".reflink-probe-from");
+    let to = dir.join(".reflink-probe-to");
+    std::fs::write(&from, "probe").unwrap();
+    let cloned = reflink_copy::reflink(&from, &to).is_ok();
+    let _ = std::fs::remove_file(&from);
+    let _ = std::fs::remove_file(&to);
+    cloned
+}
+
+/// The submodule and the one nested in it are checked out in `member` at the
+/// commits the member records, from repositories of its own, clean, with the
+/// remotes the canonical clone's copies have.
+fn assert_checked_out(weave: &Weave, member: &Path, role: &str) {
+    for file in SUB_FILES {
+        let path = member.join(SUB).join(file);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap_or_default(),
+            format!("{file}\n"),
+            "{} should hold the submodule's content",
+            path.display()
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(member.join(NESTED).join("deep.txt")).unwrap_or_default(),
+        "deep.txt\n",
+        "the nested submodule should be checked out too"
+    );
+    assert_eq!(
+        common::git_in(member.join(SUB), &["rev-parse", "HEAD"]),
+        common::git_in(member, &["rev-parse", &format!("HEAD:{SUB}")]),
+    );
+    assert_eq!(
+        common::git_in(member, &["status", "--porcelain"]),
+        "",
+        "the member should read clean, submodules included"
+    );
+    let store = common::git_in(
+        member.join(SUB),
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    );
+    assert_ne!(
+        PathBuf::from(&store).canonicalize().unwrap(),
+        weave.module_store().canonicalize().unwrap(),
+        "the submodule must have a repository of its own, not the canonical clone's"
+    );
+    assert_eq!(
+        common::git_in(member.join(SUB), &["config", "remote.origin.url"]),
+        format!("{}/sub", weave.trap.url),
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(member.join(SUB).join(SUB_FILES[0]))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(
+            mode & 0o222 == 0,
+            role == "reference",
+            "a submodule's files hold its member's role"
+        );
+    }
+    #[cfg(not(unix))]
+    let _ = role;
+}
+
+/// Remove the member's worktree as git does, so the next creation path has
+/// it to create.
+fn remove_member(weave: &Weave, seat: &Path) {
     common::git_in(
-        &repo,
+        weave.canonical(),
         &[
-            "update-index",
-            "--add",
-            "--cacheinfo",
-            "160000,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,libs/sub",
+            "worktree",
+            "remove",
+            "--force",
+            seat.join(MEMBER).to_str().unwrap(),
         ],
     );
-    common::git_in(&repo, &["commit", "-m", "record submodule with bad url"]);
-
-    let ww_dir = tmp.path().join(".workweaves");
-    std::fs::create_dir_all(&ww_dir).unwrap();
-
-    // Create MUST succeed (exit 0) even though submodule init fails, and
-    // the warning must name the state and the fix.
-    let assert = common::rwv()
-        .args(["workweave", "proj", "create", "feat"])
-        .current_dir(&ws)
-        .assert()
-        .success();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
-    assert!(
-        stderr.contains("submodules not initialized"),
-        "stderr should name the state 'submodules not initialized'; got:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("submodule update --init --recursive"),
-        "stderr should name the fix command; got:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("github/org/repo"),
-        "stderr should name the affected repo; got:\n{stderr}"
-    );
-
-    // The worktree exists and .gitmodules is there (submodule declared).
-    let workweave_path = ww_dir.join("proj--feat");
-    let worktree_repo = workweave_path.join("github/org/repo");
-    assert!(worktree_repo.is_dir(), "worktree should exist");
-    assert!(
-        worktree_repo.join(".gitmodules").exists(),
-        ".gitmodules should be present in worktree"
-    );
-
-    // The submodule directory should be empty / absent (init failed).
-    let sub_dir = worktree_repo.join("libs/sub");
-    let is_empty = if sub_dir.is_dir() {
-        std::fs::read_dir(&sub_dir)
-            .map(|mut rd| rd.next().is_none())
-            .unwrap_or(true)
-    } else {
-        true
-    };
-    assert!(
-        is_empty,
-        "submodule directory should be empty when remote is unreachable"
-    );
-
-    // scan_uninitialized_submodules should detect the empty path.
-    let empty = scan_uninitialized_submodules(&worktree_repo);
-    assert!(
-        !empty.is_empty(),
-        "scan_uninitialized_submodules should find empty paths when init failed"
-    );
-    assert!(
-        empty.iter().any(|p| p.contains("sub")),
-        "expected 'sub' in empty paths, got: {empty:?}"
-    );
 }
 
-// ---------------------------------------------------------------------------
-// Test 3: repo without .gitmodules — no submodule invocation
-// ---------------------------------------------------------------------------
-
-/// Workweave create: a repo with no `.gitmodules` should not trigger any
-/// submodule logic. The worktree is created cleanly and
-/// `scan_uninitialized_submodules` finds nothing.
 #[test]
-fn create_no_submodule_invocation_for_repo_without_gitmodules() {
-    let tmp = common::tempdir().unwrap();
-    let ws = make_workspace(tmp.path(), "proj");
+fn workweave_create_checks_out_submodules_from_local_data_in_each_role() {
+    for role in ["owned", "reference"] {
+        let weave = weave(role, "", Store::Complete);
+        let store_config = std::fs::read(weave.module_store().join("config")).unwrap();
 
-    // No submodule added — the repo has no .gitmodules.
-    let repo = ws.join("github/org/repo");
-    assert!(
-        !repo.join(".gitmodules").exists(),
-        "test precondition: repo must not have .gitmodules"
-    );
+        let (seat, stderr) = weave.seat("one");
 
-    let ww_dir = tmp.path().join(".workweaves");
-    std::fs::create_dir_all(&ww_dir).unwrap();
-
-    let result = create_workweave(
-        &ws,
-        &ws,
-        &ProjectName::new("proj").unwrap(),
-        &WorkweaveName::new("feat").unwrap(),
-        false,
-        false,
-        None,
-        repoweave::activate::ActivateOptions::default(),
-    );
-
-    assert!(
-        result.is_ok(),
-        "create_workweave should succeed for repo without .gitmodules: {:?}",
-        result.err()
-    );
-
-    let workweave_path = result.unwrap();
-    let worktree_repo = workweave_path.join("github/org/repo");
-
-    // No .gitmodules in the worktree either.
-    assert!(
-        !worktree_repo.join(".gitmodules").exists(),
-        ".gitmodules should not appear in worktree when not in source"
-    );
-
-    // scan_uninitialized_submodules sees nothing.
-    let empty = scan_uninitialized_submodules(&worktree_repo);
-    assert!(
-        empty.is_empty(),
-        "scan_uninitialized_submodules should find nothing for repo without .gitmodules, \
-         got: {empty:?}"
-    );
+        assert_checked_out(&weave, &seat.join(MEMBER), role);
+        let line = stderr
+            .lines()
+            .find(|l| l.contains(&format!("{MEMBER}/{SUB}: submodule checked out")))
+            .unwrap_or_else(|| panic!("create should report the submodule:\n{stderr}"));
+        if reflinks(&seat) {
+            assert!(
+                line.contains(&format!("{} reflinked", SUB_FILES.len() + 1)),
+                "every file, .gitmodules included, is cloned from the canonical checkout: {line}"
+            );
+        }
+        assert_eq!(
+            std::fs::read(weave.module_store().join("config")).unwrap(),
+            store_config,
+            "the canonical clone's copy is read, never written"
+        );
+        assert!(weave.findings().is_empty(), "{:?}", weave.findings());
+        weave.trap.assert_untouched();
+    }
 }
 
-// ---------------------------------------------------------------------------
-// Test 4: scan_uninitialized_submodules — standalone unit tests
-// ---------------------------------------------------------------------------
+#[test]
+fn fetch_into_a_workweave_checks_out_the_submodules_of_the_member_it_creates() {
+    for role in ["owned", "reference"] {
+        let weave = weave(role, "", Store::Complete);
+        let (seat, _) = weave.seat("one");
+        remove_member(&weave, &seat);
 
-/// `scan_uninitialized_submodules` returns empty when no `.gitmodules` exists.
+        rwv(&["fetch"], &seat);
+
+        assert_checked_out(&weave, &seat.join(MEMBER), role);
+        weave.trap.assert_untouched();
+    }
+}
+
+#[test]
+fn doctor_fix_checks_out_the_submodules_of_the_member_it_creates() {
+    for role in ["owned", "reference"] {
+        let weave = weave(role, "", Store::Complete);
+        let (seat, _) = weave.seat("one");
+        remove_member(&weave, &seat);
+
+        rwv(&["doctor", "--fix"], &seat);
+
+        assert_checked_out(&weave, &seat.join(MEMBER), role);
+        weave.trap.assert_untouched();
+    }
+}
+
+#[test]
+fn doctor_fix_checks_out_the_empty_submodules_of_an_existing_member() {
+    for role in ["owned", "reference"] {
+        let weave = weave(role, "", Store::Complete);
+        let (seat, _) = weave.seat("one");
+        let sub = seat.join(MEMBER).join(SUB);
+        let repository =
+            common::git_in(&sub, &["rev-parse", "--path-format=absolute", "--git-dir"]);
+        std::fs::remove_dir_all(&sub).unwrap();
+        std::fs::create_dir(&sub).unwrap();
+        std::fs::remove_dir_all(&repository).unwrap();
+        let findings = weave.findings();
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_eq!(findings[0]["sub_kind"], "fetched");
+
+        rwv(&["doctor", "--fix"], &weave.primary);
+
+        assert_checked_out(&weave, &seat.join(MEMBER), role);
+        assert!(weave.findings().is_empty(), "{:?}", weave.findings());
+        weave.trap.assert_untouched();
+    }
+}
+
+#[test]
+fn a_member_that_skips_submodules_keeps_them_empty_and_unreported() {
+    let weave = weave("owned", "submodules = \"skip\"", Store::Complete);
+    let (seat, _) = weave.seat("one");
+    let member = seat.join(MEMBER);
+
+    assert!(
+        is_empty(&member.join(SUB)),
+        "the opt-out leaves the submodule empty"
+    );
+    assert_eq!(scan_uninitialized_submodules(&member), vec![SUB.to_owned()]);
+    assert!(weave.findings().is_empty(), "{:?}", weave.findings());
+
+    rwv(&["doctor", "--fix"], &weave.primary);
+    assert!(is_empty(&member.join(SUB)), "--fix honors the opt-out too");
+    weave.trap.assert_untouched();
+}
+
+#[test]
+fn a_misspelled_opt_out_is_refused_rather_than_ignored() {
+    let weave = weave("owned", "submodule = \"skip\"", Store::Complete);
+    let output = common::rwv()
+        .args(["workweave", PROJECT, "create", "one"])
+        .current_dir(&weave.primary)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "a misspelled key must not parse");
+    assert!(stderr.contains("submodule"), "{stderr}");
+}
+
+#[test]
+fn a_recorded_commit_the_canonical_copy_lacks_stays_uninitialized_and_reported() {
+    let weave = weave("owned", "", Store::Complete);
+    let canonical = weave.canonical();
+    let absent = "1234567890abcdef1234567890abcdef12345678";
+    common::git_in(
+        &canonical,
+        &[
+            "update-index",
+            "--cacheinfo",
+            &format!("160000,{absent},{SUB}"),
+        ],
+    );
+    common::git_in(
+        &canonical,
+        &["commit", "-m", "bump sub to an unfetched commit"],
+    );
+    let sha = common::git_in(&canonical, &["rev-parse", "HEAD"]);
+    let project_dir = weave.primary.join("projects").join(PROJECT);
+    common::fixture_lock(
+        &project_dir,
+        &[(MEMBER, common::file_url(&canonical).as_str(), sha.as_str())],
+    );
+    common::git_in(&project_dir, &["commit", "-am", "lock: bump"]);
+
+    let (seat, stderr) = weave.seat("one");
+
+    assert!(is_empty(&seat.join(MEMBER).join(SUB)));
+    assert!(
+        stderr.contains(&format!("{MEMBER}/{SUB}: submodule left uninitialized")),
+        "{stderr}"
+    );
+    let findings = weave.findings();
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0]["sub_kind"], "unfetched");
+    rwv(&["doctor", "--fix"], &weave.primary);
+    assert!(is_empty(&seat.join(MEMBER).join(SUB)));
+    weave.trap.assert_untouched();
+}
+
+#[test]
+fn a_partial_copy_is_never_asked_for_a_commit_it_lacks() {
+    let weave = weave("owned", "", Store::WithoutContents);
+    let canonical = weave.canonical();
+    let absent = "1234567890abcdef1234567890abcdef12345678";
+    common::git_in(
+        &canonical,
+        &[
+            "update-index",
+            "--cacheinfo",
+            &format!("160000,{absent},{SUB}"),
+        ],
+    );
+    common::git_in(
+        &canonical,
+        &["commit", "-m", "bump sub to an unfetched commit"],
+    );
+    let sha = common::git_in(&canonical, &["rev-parse", "HEAD"]);
+    let project_dir = weave.primary.join("projects").join(PROJECT);
+    common::fixture_lock(
+        &project_dir,
+        &[(MEMBER, common::file_url(&canonical).as_str(), sha.as_str())],
+    );
+    common::git_in(&project_dir, &["commit", "-am", "lock: bump"]);
+
+    let (seat, _) = weave.seat("one");
+
+    assert!(is_empty(&seat.join(MEMBER).join(SUB)));
+    assert_eq!(weave.findings()[0]["sub_kind"], "unfetched");
+    weave.trap.assert_untouched();
+}
+
+#[test]
+fn a_partial_copy_is_never_asked_for_contents_it_lacks() {
+    let weave = weave("owned", "", Store::WithoutContents);
+
+    let (seat, stderr) = weave.seat("one");
+
+    let sub = seat.join(MEMBER).join(SUB);
+    assert!(is_empty(&sub), "a checkout missing contents is undone");
+    assert!(
+        !Path::new(&common::git_in(
+            seat.join(MEMBER),
+            &[
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                &format!("modules/{SUB}")
+            ],
+        ))
+        .exists(),
+        "the repository made for it is removed with it"
+    );
+    assert!(
+        stderr.contains(&format!("{MEMBER}/{SUB}: submodule left uninitialized")),
+        "{stderr}"
+    );
+    weave.trap.assert_untouched();
+}
+
+#[test]
+fn a_second_seat_places_submodule_files_from_the_first() {
+    let weave = weave("reference", "", Store::Complete);
+    let (one, _) = weave.seat("one");
+    let (two, stderr) = weave.seat("two");
+
+    assert_checked_out(&weave, &two.join(MEMBER), "reference");
+    let line = stderr
+        .lines()
+        .find(|l| l.contains(&format!("{MEMBER}/{SUB}: submodule checked out")))
+        .unwrap_or_else(|| panic!("create should report the submodule:\n{stderr}"));
+    if cfg!(target_os = "linux") {
+        let count = |mode: &str| -> usize {
+            line.split(['(', ','])
+                .find_map(|part| part.trim().strip_suffix(mode)?.trim().parse().ok())
+                .unwrap_or(0)
+        };
+        assert_eq!(
+            count("reflinked") + count("hardlinked"),
+            SUB_FILES.len() + 1,
+            "every file is cloned, or linked to a read-only reference copy: {line}"
+        );
+    }
+    assert!(one.join(MEMBER).join(SUB).join(SUB_FILES[0]).is_file());
+    weave.trap.assert_untouched();
+}
+
+#[test]
+fn create_leaves_a_repo_without_submodules_alone() {
+    let tmp = common::tempdir().unwrap();
+    let primary = tmp.path().join("primary");
+    let canonical = primary.join(MEMBER);
+    init_repo(&canonical, &["README"]);
+    let sha = common::git_in(&canonical, &["rev-parse", "HEAD"]);
+    let project_dir = primary.join("projects").join(PROJECT);
+    std::fs::create_dir_all(&project_dir).unwrap();
+    common::git_in(&project_dir, &["init", "-b", "main"]);
+    std::fs::write(
+        project_dir.join(".gitattributes"),
+        "rwv.lock merge=rwv-ours\n",
+    )
+    .unwrap();
+    std::fs::write(
+        project_dir.join("rwv.toml"),
+        format!(
+            "[repositories.\"{MEMBER}\"]\ntype = \"git\"\nurl = \"file://{}\"\n\
+             version = \"main\"\nrole = \"owned\"\n",
+            common::url_path(&canonical)
+        ),
+    )
+    .unwrap();
+    common::fixture_lock(
+        &project_dir,
+        &[(MEMBER, common::file_url(&canonical).as_str(), sha.as_str())],
+    );
+    common::git_in(&project_dir, &["add", "."]);
+    common::git_in(&project_dir, &["commit", "-m", "lock: initial"]);
+    std::fs::write(primary.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
+
+    let output = common::rwv()
+        .args(["workweave", PROJECT, "create", "one"])
+        .current_dir(&primary)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert!(!stderr.contains("submodule"), "{stderr}");
+}
+
 #[test]
 fn scan_no_gitmodules_returns_empty() {
     let tmp = common::tempdir().unwrap();
     let repo = tmp.path().join("repo");
     std::fs::create_dir_all(&repo).unwrap();
-    // No .gitmodules written.
-    let empty = scan_uninitialized_submodules(&repo);
-    assert!(empty.is_empty(), "expected empty, got {empty:?}");
+    assert!(scan_uninitialized_submodules(&repo).is_empty());
 }
 
-/// `scan_uninitialized_submodules` returns the path when the submodule dir
-/// is empty.
 #[test]
-fn scan_empty_submodule_dir_is_reported() {
+fn scan_reports_an_empty_or_absent_submodule_dir_and_not_a_populated_one() {
     let tmp = common::tempdir().unwrap();
     let repo = tmp.path().join("repo");
-    std::fs::create_dir_all(&repo).unwrap();
-
-    // Write a minimal .gitmodules with one submodule path.
+    std::fs::create_dir_all(repo.join("libs/empty")).unwrap();
+    std::fs::create_dir_all(repo.join("libs/full")).unwrap();
+    std::fs::write(repo.join("libs/full/lib.h"), "// content").unwrap();
     std::fs::write(
         repo.join(".gitmodules"),
-        "[submodule \"libs/util\"]\n\tpath = libs/util\n\turl = https://example.com/util\n",
+        "[submodule \"empty\"]\n\tpath = libs/empty\n\turl = https://example.com/e\n\
+         [submodule \"full\"]\n\tpath = libs/full\n\turl = https://example.com/f\n\
+         [submodule \"absent\"]\n\tpath = vendor/absent\n\turl = https://example.com/a\n",
     )
     .unwrap();
-
-    // Create the submodule directory but leave it empty (never initialized).
-    std::fs::create_dir_all(repo.join("libs/util")).unwrap();
-
-    let empty = scan_uninitialized_submodules(&repo);
     assert_eq!(
-        empty,
-        vec!["libs/util".to_string()],
-        "empty submodule dir should be reported"
-    );
-}
-
-/// `scan_uninitialized_submodules` returns empty when the submodule dir is
-/// populated.
-#[test]
-fn scan_populated_submodule_dir_is_not_reported() {
-    let tmp = common::tempdir().unwrap();
-    let repo = tmp.path().join("repo");
-    std::fs::create_dir_all(&repo).unwrap();
-
-    std::fs::write(
-        repo.join(".gitmodules"),
-        "[submodule \"libs/util\"]\n\tpath = libs/util\n\turl = https://example.com/util\n",
-    )
-    .unwrap();
-
-    // Populate the submodule dir with a file.
-    let sub_dir = repo.join("libs/util");
-    std::fs::create_dir_all(&sub_dir).unwrap();
-    std::fs::write(sub_dir.join("lib.h"), "// content").unwrap();
-
-    let empty = scan_uninitialized_submodules(&repo);
-    assert!(
-        empty.is_empty(),
-        "populated submodule dir should not be reported, got: {empty:?}"
-    );
-}
-
-/// `scan_uninitialized_submodules` returns the path when the submodule dir
-/// is absent (was never created by git submodule update).
-#[test]
-fn scan_absent_submodule_dir_is_reported() {
-    let tmp = common::tempdir().unwrap();
-    let repo = tmp.path().join("repo");
-    std::fs::create_dir_all(&repo).unwrap();
-
-    std::fs::write(
-        repo.join(".gitmodules"),
-        "[submodule \"vendor/foo\"]\n\tpath = vendor/foo\n\turl = https://example.com/foo\n",
-    )
-    .unwrap();
-    // Do NOT create vendor/foo — the worktree git creates the placeholder
-    // dir only for the checked-out commit, but submodule update fills it.
-
-    let empty = scan_uninitialized_submodules(&repo);
-    assert_eq!(
-        empty,
-        vec!["vendor/foo".to_string()],
-        "absent submodule dir should be reported"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Test 5: doctor scan (scan_uninitialized_submodules_in_workweaves)
-// ---------------------------------------------------------------------------
-
-/// Doctor-side: scan_uninitialized_submodules_in_workweaves emits a
-/// UninitializedSubmodule finding when a workweave repo has an empty
-/// submodule dir, and is silent for repos without .gitmodules.
-#[test]
-fn doctor_scan_reports_uninitialized_submodule_in_workweave() {
-    use repoweave::check::{scan_uninitialized_submodules_in_workweaves, CheckViolation};
-    use repoweave::manifest::Project;
-
-    let tmp = common::tempdir().unwrap();
-    let ws = make_workspace(tmp.path(), "proj");
-
-    // Create a submodule remote and add it to the member repo.
-    let sub_remote = tmp.path().join("sub-remote");
-    init_repo_with_commit(&sub_remote);
-
-    let repo = ws.join("github/org/repo");
-    add_submodule(&repo, "libs/sub", &sub_remote);
-
-    // Create the workweave. Under git's default `protocol.file.allow=user`
-    // posture the create-time submodule init is blocked (production does not
-    // inject an allowance — CVE-2022-39253 class), so the create succeeds
-    // with a warning and the workweave lands with the submodule dir empty:
-    // exactly the state doctor must detect.
-    let ww_dir = tmp.path().join(".workweaves");
-    std::fs::create_dir_all(&ww_dir).unwrap();
-
-    let workweave_path = create_workweave(
-        &ws,
-        &ws,
-        &ProjectName::new("proj").unwrap(),
-        &WorkweaveName::new("feat").unwrap(),
-        false,
-        false,
-        None,
-        repoweave::activate::ActivateOptions::default(),
-    )
-    .expect("create should succeed");
-
-    // Defense-in-depth: if the environment's git config DID allow the init
-    // (e.g. an operator global `protocol.file.allow=always`), empty the
-    // submodule dir so the uninitialized state holds either way.
-    let sub_dir = workweave_path.join("github/org/repo/libs/sub");
-    if sub_dir.is_dir() {
-        for entry in std::fs::read_dir(&sub_dir).unwrap().flatten() {
-            let p = entry.path();
-            if p.is_file() {
-                std::fs::remove_file(&p).unwrap();
-            }
-        }
-    }
-
-    // Now the submodule dir exists but is empty → should be detected.
-    let project_dir = ws.join("projects/proj");
-    let project = Project::from_dir(&project_dir, ProjectName::new("proj").unwrap())
-        .expect("project should load");
-
-    let violations =
-        scan_uninitialized_submodules_in_workweaves(&ws, std::slice::from_ref(&project));
-
-    let found = violations
-        .iter()
-        .any(|v| matches!(v, CheckViolation::UninitializedSubmodule { .. }));
-    assert!(
-        found,
-        "expected UninitializedSubmodule finding; got {violations:?}"
-    );
-}
-
-/// Doctor-side: scan_uninitialized_submodules_in_workweaves is silent for
-/// a workweave repo with no .gitmodules.
-#[test]
-fn doctor_scan_silent_for_repo_without_gitmodules() {
-    use repoweave::check::scan_uninitialized_submodules_in_workweaves;
-    use repoweave::manifest::Project;
-
-    let tmp = common::tempdir().unwrap();
-    let ws = make_workspace(tmp.path(), "proj");
-
-    // No submodule added.
-    let ww_dir = tmp.path().join(".workweaves");
-    std::fs::create_dir_all(&ww_dir).unwrap();
-
-    let _workweave_path = create_workweave(
-        &ws,
-        &ws,
-        &ProjectName::new("proj").unwrap(),
-        &WorkweaveName::new("feat").unwrap(),
-        false,
-        false,
-        None,
-        repoweave::activate::ActivateOptions::default(),
-    )
-    .expect("create should succeed");
-
-    let project_dir = ws.join("projects/proj");
-    let project = Project::from_dir(&project_dir, ProjectName::new("proj").unwrap())
-        .expect("project should load");
-
-    let violations =
-        scan_uninitialized_submodules_in_workweaves(&ws, std::slice::from_ref(&project));
-
-    assert!(
-        violations.is_empty(),
-        "expected no findings for repo without .gitmodules, got: {violations:?}"
+        scan_uninitialized_submodules(&repo),
+        vec!["libs/empty".to_owned(), "vendor/absent".to_owned()]
     );
 }

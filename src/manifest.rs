@@ -509,13 +509,39 @@ pub enum VcsType {
 }
 
 /// A single repo entry in an `rwv.toml` manifest.
+///
+/// `deny_unknown_fields` for the reason [`Manifest`] has it: `submodules` is
+/// an opt-out, and a misspelling of it read as absent would populate what the
+/// operator declined.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RepoEntry {
     #[serde(rename = "type")]
     pub vcs_type: VcsType,
     pub url: RepoUrl,
     pub version: RefName,
     pub role: Role,
+    #[serde(default, skip_serializing_if = "Submodules::is_local")]
+    pub submodules: Submodules,
+}
+
+/// Where a new checkout of a member gets the content of the submodules it
+/// records.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Submodules {
+    /// From the module data the canonical clone already holds, never the
+    /// network; a submodule whose commit is not there stays uninitialized.
+    #[default]
+    Local,
+    /// Left uninitialized.
+    Skip,
+}
+
+impl Submodules {
+    fn is_local(&self) -> bool {
+        *self == Submodules::Local
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -1177,6 +1177,25 @@
         "error"
       ]
     },
+    "SubmoduleCommitKind": {
+      "description": "Whether an uninitialized submodule's recorded commit is on this machine.",
+      "oneOf": [
+        {
+          "description": "The canonical clone's copy of the submodule holds it; `--fix` checks the submodule out from there without the network.",
+          "type": "string",
+          "enum": [
+            "fetched"
+          ]
+        },
+        {
+          "description": "Nothing local holds it, so only a fetch into the canonical clone can.",
+          "type": "string",
+          "enum": [
+            "unfetched"
+          ]
+        }
+      ]
+    },
     "ViolationOutput": {
       "description": "One violation as it appears in `rwv doctor --json` output.",
       "oneOf": [
@@ -2397,6 +2416,7 @@
             "empty_paths",
             "kind",
             "path",
+            "sub_kind",
             "workweave"
           ],
           "properties": {
@@ -2420,6 +2440,9 @@
             "path": {
               "description": "Manifest-relative path to the repo.",
               "type": "string"
+            },
+            "sub_kind": {
+              "$ref": "#/definitions/SubmoduleCommitKind"
             },
             "workweave": {
               "description": "Workweave name.",

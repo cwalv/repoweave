@@ -1804,6 +1804,7 @@ fn materialize_missing_repo(
                 name.require(dir, project)?,
                 repo_path,
                 entry.role,
+                entry.submodules,
                 start,
             )?
             .files);
@@ -5851,6 +5852,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                         name,
                         repo_path,
                         entry.role,
+                        entry.submodules,
                         cwd_tip.as_str(),
                     )
                 }) {
@@ -8864,6 +8866,7 @@ mod tests {
             url: "https://example.com/server.git".parse().unwrap(),
             version: crate::vcs::RefName::new("main"),
             role: crate::manifest::Role::Owned,
+            submodules: crate::manifest::Submodules::Local,
         };
         (ctx, canonical, ProjectName::new("web-app").unwrap(), entry)
     }

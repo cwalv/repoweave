@@ -3601,6 +3601,76 @@ pub trait WorkspacePopulation: Send + Sync {
     /// `true` only where a conformance test proves it; nothing may be shared
     /// by hardlink otherwise.
     fn updates_replace_files(&self) -> bool;
+
+    /// The submodules `workspace` records, each with the commit it is
+    /// recorded at. One whose name could address a place outside the store
+    /// it belongs in is omitted.
+    fn recorded_submodules(&self, workspace: &Path) -> Result<Vec<RecordedSubmodule>, VcsError>;
+
+    /// Whether `module_data` holds a copy of `submodule`'s repository with
+    /// its recorded commit, read without reaching any remote.
+    /// `module_data` is as [`WorkspacePopulation::create_unpopulated_submodule`]
+    /// takes it.
+    fn module_data_holds(&self, module_data: &Path, submodule: &RecordedSubmodule) -> bool;
+
+    /// Make `submodule`'s directory in `workspace`, which must be empty, a
+    /// checkout of it at its recorded commit with no tracked file written,
+    /// from the copy of its repository held under `module_data` and from
+    /// nothing else.
+    ///
+    /// `module_data` is the store a checkout of `workspace`'s repository
+    /// keeps its submodules' repositories under: the canonical store for a
+    /// member, and the returned [`SubmoduleBirth::Born`] source for a
+    /// submodule of a submodule.
+    ///
+    /// No remote outside this machine is reachable from the new checkout
+    /// until [`WorkspacePopulation::connect_submodule_upstream`]: content it
+    /// lacks is a failure, never a fetch.
+    fn create_unpopulated_submodule(
+        &self,
+        workspace: &Path,
+        submodule: &RecordedSubmodule,
+        module_data: &Path,
+    ) -> Result<SubmoduleBirth, VcsError>;
+
+    /// Give the submodule checkout in `workspace` the remotes of `source`,
+    /// the repository it was created from, so a later fetch there reaches
+    /// what one in `source` would.
+    fn connect_submodule_upstream(
+        &self,
+        workspace: &Path,
+        submodule: &RecordedSubmodule,
+        source: &Path,
+    ) -> Result<(), VcsError>;
+
+    /// Undo a [`SubmoduleBirth::Born`]: the directory left empty and the
+    /// repository created for it removed.
+    fn discard_submodule(
+        &self,
+        workspace: &Path,
+        submodule: &RecordedSubmodule,
+    ) -> Result<(), VcsError>;
+}
+
+/// A repository a workspace records as checked out at `path`, at `commit`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordedSubmodule {
+    pub name: String,
+    pub path: String,
+    pub commit: String,
+}
+
+/// What [`WorkspacePopulation::create_unpopulated_submodule`] came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SubmoduleBirth {
+    /// The checkout exists, created from `source`.
+    Born { source: PathBuf },
+    /// The module data holds no copy of the repository with the recorded
+    /// commit.
+    NotLocal,
+    /// The workspace already keeps a repository for this submodule at
+    /// `existing`, which is not replaced.
+    RepositoryPresent { existing: PathBuf },
 }
 
 #[cfg(test)]

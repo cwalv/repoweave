@@ -30,7 +30,7 @@
 
 use crate::cli::consent::DiscardUnmergedConsent;
 use crate::manifest::{
-    project_repo_key, LockFile, Manifest, ProjectName, RepoPath, Role, WorkweaveName,
+    project_repo_key, LockFile, Manifest, ProjectName, RepoPath, Role, Submodules, WorkweaveName,
 };
 use crate::refusal::RefusalKind;
 use crate::share::{FilePlacement, FilePrimitives, Filesystem};
@@ -414,7 +414,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
 /// itself when the handle closes. A bounded retry outlasts the release
 /// without masking a tree something genuinely holds; every other error, and
 /// every error elsewhere, returns on first sight.
-fn remove_tree_outlasting_child_handles(dir: &Path) -> std::io::Result<()> {
+pub(crate) fn remove_tree_outlasting_child_handles(dir: &Path) -> std::io::Result<()> {
     let mut last: Option<std::io::Error> = None;
     for _ in 0..10 {
         match std::fs::remove_dir_all(dir) {
@@ -929,26 +929,23 @@ pub fn preflight_check_heads(
     )
 }
 
-/// Try to initialize submodules in `worktree_path` if the repo contains
-/// `.gitmodules`.
-///
-/// Returns `Ok(())` when there is nothing to do (no `.gitmodules`) or when
-/// submodule init succeeds. Returns `Err` only when submodule init is
-/// attempted and fails (network unreachable, upstream gone, etc.).
-///
-/// Cost: one `Path::exists` call per worktree when `.gitmodules` is absent
-/// (the common case). The full `git submodule update` runs only when
-/// `.gitmodules` exists.
-fn init_submodules_in_worktree(worktree_path: &Path) -> anyhow::Result<()> {
-    if !worktree_path.join(".gitmodules").exists() {
-        return Ok(());
+/// [`crate::share::populate_submodules`] for a member whose manifest entry
+/// asks for `submodules`, reporting each under `prefix`; the count left
+/// uninitialized.
+pub(crate) fn populate_member_submodules(
+    vcs: &dyn Vcs,
+    member: &Path,
+    repo_path: &RepoPath,
+    role: Role,
+    submodules: Submodules,
+    prefix: &str,
+) -> usize {
+    if submodules == Submodules::Skip {
+        return 0;
     }
-    crate::git::init_submodules(worktree_path).with_context(|| {
-        format!(
-            "failed to check out submodules in {}",
-            worktree_path.display()
-        )
-    })
+    let populated = crate::share::populate_submodules(vcs, member, role, &Filesystem);
+    populated.report(prefix, repo_path);
+    populated.left.len()
 }
 
 /// Scan `.gitmodules` in `worktree_path` and return the submodule `path =`
@@ -1086,8 +1083,9 @@ pub(crate) struct Materialized {
 /// Give the workweave at `workweave_dir` the workspace it lacks for
 /// `repo_path`: an ephemeral worktree of the canonical clone under
 /// `primary_root`, born at `start` with its files shared where they can be,
-/// and settled for `role`. A symlink in the slot, dangling or not, is
-/// unlinked first; what it pointed at is never touched.
+/// settled for `role`, and its submodules populated as `submodules` asks. A
+/// symlink in the slot, dangling or not, is unlinked first; what it pointed
+/// at is never touched.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn materialize_member(
     vcs: &dyn Vcs,
@@ -1097,6 +1095,7 @@ pub(crate) fn materialize_member(
     workweave: &WorkweaveName,
     repo_path: &RepoPath,
     role: Role,
+    submodules: Submodules,
     start: &str,
 ) -> anyhow::Result<Materialized> {
     let canonical = primary_root.join(repo_path.as_path());
@@ -1137,6 +1136,7 @@ pub(crate) fn materialize_member(
         .into_authored(&mut registry)
         .with_context(|| format!("worktree add for {repo_path} failed"))?;
     crate::settle::settle(vcs, &dest, role)?;
+    populate_member_submodules(vcs, &dest, repo_path, role, submodules, "rwv: ");
     Ok(Materialized { at: start, files })
 }
 
@@ -1166,6 +1166,7 @@ pub(crate) fn replace_standalone_member(
     workweave: &WorkweaveName,
     repo_path: &RepoPath,
     role: Role,
+    submodules: Submodules,
 ) -> anyhow::Result<Materialized> {
     let slot = workweave_dir.join(repo_path.as_path());
     let canonical = primary_root.join(repo_path.as_path());
@@ -1198,6 +1199,7 @@ pub(crate) fn replace_standalone_member(
                 workweave,
                 repo_path,
                 role,
+                submodules,
                 at.as_str(),
             )
         });
@@ -1915,10 +1917,6 @@ pub fn create_workweave(
     let mut registry = RefRegistry::for_project(primary_root, project);
 
     let mut errors: Vec<String> = Vec::new();
-    // Submodule warnings: repos where submodule init was attempted but failed
-    // (network down, upstream unreachable, etc.). Collected separately so a
-    // submodule-init failure does NOT abort the whole create — the worktree
-    // itself is valid and usable; only submodule content is missing.
     let mut submodule_warnings: Vec<String> = Vec::new();
 
     // Materialize each repo in the manifest. Forks come from source_root so
@@ -1982,22 +1980,15 @@ pub fn create_workweave(
                 if let Some(placement) = placement {
                     eprintln!("rwv workweave create: {repo_path}: {placement}");
                 }
-                // R23 GAP: init submodules in the new worktree. Only runs
-                // when `.gitmodules` exists (no per-repo overhead otherwise).
-                // Failure is warn-and-continue: network may be down or
-                // submodule remotes may be unreachable, but the worktree
-                // itself is valid.
-                if let Err(e) = init_submodules_in_worktree(&worktree_dest) {
-                    let fix_cmd = format!(
-                        "git -C {} submodule update --init --recursive",
-                        worktree_dest.display()
-                    );
-                    let msg = format!(
-                        "{repo}: submodules not initialized ({e:#}); \
-                         fix: `{fix_cmd}`",
-                        repo = repo_path.as_str(),
-                    );
-                    eprintln!("rwv workweave create: warning: {msg}");
+                if populate_member_submodules(
+                    vcs.as_ref(),
+                    &worktree_dest,
+                    repo_path,
+                    entry.role,
+                    entry.submodules,
+                    "rwv workweave create: ",
+                ) > 0
+                {
                     submodule_warnings.push(repo_path.as_str().to_string());
                 }
             }
@@ -2037,12 +2028,9 @@ pub fn create_workweave(
     }
 
     if !submodule_warnings.is_empty() {
-        // Submodule init failed for one or more repos but the workweave itself
-        // was created. Surface a summary so the operator knows the create
-        // completed with partial materialization.
         eprintln!(
             "rwv workweave create: warning: submodules not initialized in {} repo(s): {}; \
-             run `git -C <worktree-path> submodule update --init --recursive` per repo above to complete",
+             once the canonical clone holds what they record, `rwv doctor --fix` checks them out",
             submodule_warnings.len(),
             submodule_warnings.join(", ")
         );
@@ -4307,6 +4295,7 @@ mod tests {
             &WorkweaveName::new("ww").unwrap(),
             &RepoPath::new("github/org/absent").unwrap(),
             Role::Owned,
+            Submodules::Local,
             "main",
         )
         .err()

@@ -85,7 +85,8 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`clone-topology`](#clone-topology) / `standalone-in-workweave` | Error | Auto-fixable |
 | [`clone-topology`](#clone-topology) / `disconnected-weave-clone`, `wrong-parent-worktree`, `weave-clone-is-worktree` | Error | Report-only |
 | [`missing-canonical-clone`](#missing-canonical-clone) | Warning | Report-only |
-| [`uninitialized-submodule`](#uninitialized-submodule) | Warning | Report-only |
+| [`uninitialized-submodule`](#uninitialized-submodule) / `fetched` | Warning | Auto-fixable |
+| [`uninitialized-submodule`](#uninitialized-submodule) / `unfetched` | Warning | Report-only |
 | [`provenance`](#provenance) / `origin-url-mismatch`, `placement-disagreement` | Warning | Report-only |
 | [`provenance`](#provenance) / `lock-sha-unreachable` | Error | Report-only |
 | [`branch-discipline`](#branch-discipline) / `unmigrated-ephemeral-branch`, `unrecorded-ephemeral-branch`, `stale-ephemeral-branch-safe` | Warning | Auto-fixable |
@@ -989,12 +990,26 @@ it.
 
 ### `uninitialized-submodule`
 
-**Warning. Report-only.** A worktree has a `.gitmodules` file but one or more
-of its listed submodule paths are empty. `git submodule update --init` has
-never run there. Detection needs no network — the scan only stats the paths
-`.gitmodules` lists.
+A member checkout in a workweave has a `.gitmodules` file, but one or more of
+its listed submodule paths are empty. A member whose manifest entry says
+`submodules = "skip"` is not reported. Detection reads only local data. See
+[Submodules](./formats.md#submodules) for how rwv checks submodules out.
 
-**What to do:** run the git command the finding names.
+#### `fetched`
+
+**Warning. Auto-fixable.** The canonical clone's copy of each listed submodule
+holds the commit the member records.
+
+**What to do:** `rwv doctor --fix` checks them out from those copies. No
+network is involved.
+
+#### `unfetched`
+
+**Warning. Report-only.** The canonical clone holds no copy of each listed
+submodule with the commit the member records.
+
+**What to do:** fetch the commits into the canonical clone, for example with
+`git submodule update --init` there, then run `rwv doctor --fix`.
 
 ### `provenance`
 
