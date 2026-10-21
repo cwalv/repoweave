@@ -538,18 +538,19 @@ pub enum WorkweaveAction {
         /// --discard-uncommitted --discard-unmerged-commits`.
         #[arg(long)]
         replace_existing: bool,
-        /// Workspace to fork the new workweave from. Accepts `primary`, an
-        /// absolute or relative path, or is omitted to fork from CWD's
-        /// active workspace (the workweave when invoked from inside one,
-        /// otherwise primary). Relative paths resolve against the invocation
-        /// directory, like any path argument.
+        /// Workspace to fork the new workweave from: `primary`, a bare
+        /// workweave name of this project, or a path (absolute, or relative to
+        /// the invocation directory), read as `rwv sync <SOURCE>` reads it. A
+        /// directory with a bare name is written `./<dir>`. Omit to fork from
+        /// CWD's active workspace (the workweave when invoked from inside one,
+        /// otherwise primary).
         ///
         /// Forking from an existing workweave is how you DUPLICATE one — for
         /// a scratch variant, an experiment, or a throwaway baseline. Do not
         /// copy a workweave with `cp`: the result aliases the original's git
         /// state rather than duplicating it.
         #[arg(long)]
-        from: Option<String>,
+        from: Option<SyncSource>,
         /// Allow creation even when the source project directory has
         /// uncommitted changes. Uncommitted edits to `rwv.toml` and `rwv.lock`
         /// are moved into the new workweave's project worktree: copied there,

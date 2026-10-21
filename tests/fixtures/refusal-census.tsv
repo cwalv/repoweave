@@ -96,6 +96,7 @@ src/sync.rs	head-not-on-branch	-	4
 src/sync.rs	mid-operation	-	1
 src/sync.rs	missing-replay-exclusion	-	4
 src/sync.rs	no-op-recorded	tests/refusal_arrival_test.rs	1
+src/sync.rs	no-such-workweave	-	1
 src/sync.rs	not-fast-forwardable	-	2
 src/sync.rs	op-parked	-	7
 src/sync.rs	resume-contradicts-record	-	3

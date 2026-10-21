@@ -38,9 +38,11 @@ Create a new workweave. Forks from CWD's active workspace by default; use
 rwv workweave <project> create <name> [--from <source>] [--replace-existing] [--capture-dirty] [--dir <path>] [--no-materialize]
 ```
 
-- `--from <source>` — workspace to fork from. Accepts `primary`, an absolute
-  path, or a relative path resolved against the directory rwv runs in (or
-  the `-C`/`-w` directory). Defaults to CWD's active workspace. Forking from an existing
+- `--from <source>` — workspace to fork from: `primary`, a bare workweave name
+  of this project, or a path (absolute, or relative to the directory rwv runs
+  in, or the `-C`/`-w` directory), read as `rwv sync <source>` reads it. A
+  directory with a bare name is written `./<dir>`; a bare word that names no
+  workweave refuses. Defaults to CWD's active workspace. Forking from an existing
   workweave is how you DUPLICATE one — for a scratch variant, an experiment,
   or a throwaway baseline. Do not copy a workweave with `cp`: the result
   aliases the original's git state rather than duplicating it.

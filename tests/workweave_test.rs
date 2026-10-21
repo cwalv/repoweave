@@ -1503,6 +1503,103 @@ fn workweave_create_from_workweave_cwd_forks_from_workweave() {
     );
 }
 
+/// A seat created under `ws/seats/<dir>` with the workweave name `rig`, whose
+/// member repo carries a commit primary does not, so a fork's HEAD says which
+/// of the two it came from. Returns `(ws, seats, rig_head)`.
+fn seat_named_apart_from_its_dir(
+    tmp: &Path,
+    dir: &str,
+) -> (std::path::PathBuf, std::path::PathBuf, String) {
+    let ws = make_workspace(tmp, "web-app");
+    std::fs::create_dir_all(tmp.join(".workweaves")).unwrap();
+    let seats = ws.join("seats");
+    std::fs::create_dir_all(&seats).unwrap();
+
+    rwv()
+        .args(["workweave", "web-app", "create", "rig", "--dir"])
+        .arg(seats.join(dir))
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let rig_repo = seats.join(dir).join("github/org/repo");
+    std::fs::write(rig_repo.join("rig-marker.txt"), "advanced\n").unwrap();
+    common::git_in(&rig_repo, &["add", "rig-marker.txt"]);
+    common::git_in(&rig_repo, &["commit", "-m", "advance rig"]);
+    let rig_head = head_sha(&rig_repo);
+    assert_ne!(rig_head, head_sha(&ws.join("github/org/repo")));
+    (ws, seats, rig_head)
+}
+
+#[test]
+fn workweave_create_from_a_bare_name_forks_that_workweave() {
+    let tmp = common::tempdir().unwrap();
+    let (_ws, seats, rig_head) = seat_named_apart_from_its_dir(tmp.path(), "rig-dir");
+
+    // No `./rig` exists here: only the workweave can answer to the name.
+    assert!(!seats.join("rig").exists());
+    rwv()
+        .args(["workweave", "web-app", "create", "peer", "--from", "rig"])
+        .current_dir(&seats)
+        .assert()
+        .success();
+
+    assert_eq!(
+        head_sha(&tmp.path().join(".workweaves/web-app--peer/github/org/repo")),
+        rig_head,
+        "`--from rig` must fork the workweave named rig"
+    );
+}
+
+#[test]
+fn workweave_create_from_a_bare_word_naming_no_workweave_refuses_and_names_the_path_spelling() {
+    let tmp = common::tempdir().unwrap();
+    let (_ws, seats, rig_head) = seat_named_apart_from_its_dir(tmp.path(), "rig-dir");
+    let peer = tmp.path().join(".workweaves/web-app--peer");
+
+    // `rig-dir` is a directory here, and no workweave carries that name.
+    let out = rwv()
+        .args([
+            "workweave",
+            "web-app",
+            "create",
+            "peer",
+            "--from",
+            "rig-dir",
+        ])
+        .current_dir(&seats)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success(),
+        "a bare word is a workweave name:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("\n\nrwv explain no-such-workweave\n") && stderr.contains("`./rig-dir`"),
+        "the refusal must name the directory spelling:\n{stderr}"
+    );
+    assert!(!peer.exists(), "a refused create leaves nothing behind");
+
+    rwv()
+        .args([
+            "workweave",
+            "web-app",
+            "create",
+            "peer",
+            "--from",
+            "./rig-dir",
+        ])
+        .current_dir(&seats)
+        .assert()
+        .success();
+    assert_eq!(
+        head_sha(&peer.join("github/org/repo")),
+        rig_head,
+        "`./rig-dir` names the directory, and the directory is the seat"
+    );
+}
+
 #[test]
 fn workweave_create_from_primary_flag_overrides_active_path() {
     // When invoked from inside a workweave with `--from primary`, the new

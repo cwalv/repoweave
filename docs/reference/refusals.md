@@ -573,7 +573,9 @@ looks like a workweave but is not recorded in `.rwv-workweave-index` is not addr
 
 **Exits.** `rwv workweave <project> list` shows what is recorded. If the
 directory exists but is unrecorded, `rwv doctor --fix` adopts it when it sits
-in the recorded container under the expected name.
+in the recorded container under the expected name. A source for `rwv sync`,
+`rwv sync-to` or `rwv workweave create --from` that is a bare word names a
+workweave; to name a directory, write `./<dir>`.
 
 **Where this sits.** [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md).
 

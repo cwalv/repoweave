@@ -28,13 +28,16 @@ primary. To specify a different source:
 
 ```bash
 rwv workweave <project> create <name> --from primary
+rwv workweave <project> create <name> --from other
 rwv workweave <project> create <name> --from ../.workweaves/<project>--other
 ```
 
-`--from` accepts `primary`, an absolute path, or a relative path resolved
-against the directory rwv runs in (or the `-C`/`-w` directory); the example
-above runs from the primary weave root. The source must be a workspace whose
-`rwv.lock` is committed and current.
+`--from` reads its source as `rwv sync` does: `primary`, a bare workweave name
+of the project, or a path, absolute or relative to the directory rwv runs in
+(or the `-C`/`-w` directory). The last example runs from the primary weave
+root. A bare word always names a workweave, so a directory with a bare name is
+written `./<dir>`. The source must be a workspace whose `rwv.lock` is committed
+and current.
 
 ### What create writes
 

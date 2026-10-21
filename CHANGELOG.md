@@ -25,6 +25,16 @@ load, naming the value, before any repo is classified. The health floor
 record reads a malformed tip the way it reads any unparseable floor: as
 absent.
 
+### Breaking: `rwv workweave create --from <word>` names a workweave
+
+`--from` now reads its source as `rwv sync` and `rwv sync-to` do: `primary`, a
+bare workweave name of the project, or a path. A bare word used to name a
+directory relative to where rwv ran, so `--from agent-7` reached `./agent-7`
+rather than the workweave `agent-7`. It now forks from the workweave, and a bare
+word that names no workweave refuses with `no-such-workweave`, saying to write
+`./<dir>` for a directory. A path with a separator, a leading `.`, or an
+absolute path still names a directory.
+
 ### Breaking: a malformed `hide-dotfiles` stops materialize and the install hooks
 
 A `hide-dotfiles` that is not a boolean in `[integrations.vscode-workspace]` was

@@ -936,17 +936,11 @@ pub fn run() -> anyhow::Result<()> {
                         dir,
                         no_materialize,
                     }) => {
-                        let source_root = match from.as_deref() {
+                        let source_root = match from {
                             None => ctx.active_path().to_path_buf(),
-                            Some(s)
-                                if matches!(
-                                    s.parse::<sync::SyncSource>(),
-                                    Ok(sync::SyncSource::Primary)
-                                ) =>
-                            {
-                                primary_root.to_path_buf()
-                            }
-                            Some(s) => operand_path(&origin_dir, s),
+                            Some(source) => source
+                                .anchored_at(&origin_dir)
+                                .resolve_in_project(primary_root, &project)?,
                         };
                         let dir_override = dir.as_deref().map(|d| operand_path(&origin_dir, d));
                         let created = crate::workweave::create_workweave(

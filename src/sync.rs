@@ -224,7 +224,8 @@ pub fn auto_relock_commit_message(source: &str) -> String {
 // SyncSource — typed source workspace for `rwv sync`
 // ---------------------------------------------------------------------------
 
-/// Source workspace for `rwv sync <source>`.
+/// A workspace named on the command line: `rwv sync <source>`, `rwv sync-to
+/// <target>` and `rwv workweave create --from <source>` all read it this way.
 ///
 /// The boundary parser ([`FromStr`]) disambiguates by shape:
 /// - `Primary` — the literal string `"primary"` (the primary workspace root).
@@ -253,20 +254,47 @@ impl SyncSource {
     /// constructed, and proceeding would silently produce a garbage path.
     /// `require_active_project` emits an actionable error message.
     pub fn resolve(&self, ctx: &WorkspaceContext) -> anyhow::Result<PathBuf> {
+        // The workweave we're syncing FROM belongs to the same project as the
+        // workspace we're syncing INTO (sync is per-project). When CWD is the
+        // primary weave, require an active project rather than silently
+        // falling back to an empty string.
+        self.resolve_with(ctx.primary_path(), || match &ctx.checkout {
+            Checkout::Workweave { project, .. } => Ok(project.clone()),
+            Checkout::Primary { .. } => Ok(ctx.require_active_project()?.clone()),
+        })
+    }
+
+    /// [`Self::resolve`] for a verb that names its project, so a workweave
+    /// name is looked up in that project rather than the context's.
+    pub fn resolve_in_project(
+        &self,
+        primary_root: &Path,
+        project: &ProjectName,
+    ) -> anyhow::Result<PathBuf> {
+        self.resolve_with(primary_root, || Ok(project.clone()))
+    }
+
+    fn resolve_with(
+        &self,
+        primary_root: &Path,
+        project: impl FnOnce() -> anyhow::Result<ProjectName>,
+    ) -> anyhow::Result<PathBuf> {
         match self {
-            Self::Primary => Ok(ctx.primary_path().to_path_buf()),
-            Self::Workweave(name) => {
-                // Resolve the project from the current context: the workweave
-                // we're syncing FROM is assumed to belong to the same project
-                // as the workspace we're syncing INTO (sync is per-project).
-                // When CWD is the primary weave, require an active project
-                // rather than silently falling back to an empty string.
-                let project = match &ctx.checkout {
-                    Checkout::Workweave { project, .. } => project.clone(),
-                    Checkout::Primary { .. } => ctx.require_active_project()?.clone(),
-                };
-                ensure_registered_workweave(ctx.primary_path(), &project, name)
-            }
+            Self::Primary => Ok(primary_root.to_path_buf()),
+            Self::Workweave(name) => ensure_registered_workweave(primary_root, &project()?, name)
+                .map_err(|e| {
+                    if crate::refusal::kind_of(&e) == Some(RefusalKind::NoSuchWorkweave) {
+                        crate::refusal::refusal(
+                            RefusalKind::NoSuchWorkweave,
+                            format!(
+                                "{e:#}\n\nA bare word names a workweave. To name a directory, \
+                                 write `./{name}`."
+                            ),
+                        )
+                    } else {
+                        e
+                    }
+                }),
             Self::Path(p) => Ok(p.clone()),
         }
     }
