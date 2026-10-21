@@ -167,11 +167,13 @@ fn remote_tracking(branch: &RefName) -> String {
     format!("{}{branch}", remote_tracking_namespace())
 }
 
+const LOCAL_BRANCH_NAMESPACE: &str = "refs/heads/";
+
 /// The only spelling of a local branch handed to git where git resolves a
 /// revision or refspec. A bare `<branch>` there resolves to a tag of that name
 /// before `refs/heads/<branch>`.
 fn local_branch(name: &str) -> String {
-    format!("refs/heads/{name}")
+    format!("{LOCAL_BRANCH_NAMESPACE}{name}")
 }
 
 fn local_branch_tip_args(name: &str) -> Vec<String> {
@@ -1121,7 +1123,7 @@ impl GitVcs {
     /// reported as an error rather than folded into one of the three
     /// attachment states.
     fn local_branch_name_from_full_ref(full: &str, repo: &Path) -> Result<RawRefName, VcsError> {
-        match full.strip_prefix("refs/heads/") {
+        match full.strip_prefix(LOCAL_BRANCH_NAMESPACE) {
             Some(name) if !name.is_empty() => Ok(RawRefName::new(name)),
             _ => Err(VcsError::CommandFailed {
                 args: vec!["symbolic-ref".to_owned(), "HEAD".to_owned()],
@@ -2530,7 +2532,10 @@ impl Vcs for GitVcs {
                 current_prunable = false;
                 continue;
             }
-            if let Some(rest) = line.strip_prefix("branch refs/heads/") {
+            if let Some(rest) = line
+                .strip_prefix("branch ")
+                .and_then(|full| full.strip_prefix(LOCAL_BRANCH_NAMESPACE))
+            {
                 current_branch = Some(RawRefName::new(rest));
             } else if line == "prunable" || line.starts_with("prunable ") {
                 current_prunable = true;
@@ -2962,19 +2967,18 @@ impl Vcs for GitVcs {
     }
 
     fn list_local_branch_names(&self, repo: &Path) -> Result<Vec<RawRefName>, VcsError> {
-        // `lstrip=2`, not `short` — see `list_branch_names_with_prefix`.
         let output = Self::run_trimmed(
             &[
                 "for-each-ref",
-                "--format=%(refname:lstrip=2)",
-                "refs/heads/",
+                "--format=%(refname)",
+                LOCAL_BRANCH_NAMESPACE,
             ],
             repo,
         )?;
         Ok(output
             .lines()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
+            .filter_map(|full| full.trim().strip_prefix(LOCAL_BRANCH_NAMESPACE))
+            .filter(|name| !name.is_empty())
             .map(RawRefName::new)
             .collect())
     }

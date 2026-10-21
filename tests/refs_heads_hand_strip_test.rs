@@ -28,6 +28,7 @@ const SEAM_FILE: &str = "git.rs";
 const PATTERNS: &[&str] = &[
     "trim_start_matches(\"refs/heads/\"",
     "strip_prefix(\"refs/heads/\"",
+    "strip_prefix(LOCAL_BRANCH_NAMESPACE",
 ];
 
 #[test]
