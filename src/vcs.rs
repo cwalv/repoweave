@@ -2010,9 +2010,10 @@ pub trait Vcs: Send + Sync {
 
     /// Resolve `branch` on `repo`'s conventional remote.
     ///
-    /// For git: builds the qualified ref `"origin/{branch}"` and resolves it
-    /// via [`resolve_revision`]. There is no bare-branch fallback — a missing
-    /// `origin` remote yields [`VcsError::RevisionNotFound`] so callers
+    /// For git: resolves the remote-tracking ref `refs/remotes/origin/{branch}`
+    /// via [`resolve_revision`] and displays it as `origin/{branch}`. There is
+    /// no bare-branch fallback — a missing `origin` remote yields
+    /// [`VcsError::RevisionNotFound`] naming the qualified ref, so callers
     /// don't silently advance to the local branch tip.
     ///
     /// [`resolve_revision`]: Vcs::resolve_revision

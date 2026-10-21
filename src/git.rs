@@ -155,6 +155,17 @@ fn path_as_git_arg<'a>(path: &'a Path, subject: &str) -> Result<&'a str, VcsErro
 /// time rather than by review.
 const GIT_DEFAULT_REMOTE_NAME: &str = "origin";
 
+fn remote_tracking_namespace() -> String {
+    format!("refs/remotes/{GIT_DEFAULT_REMOTE_NAME}/")
+}
+
+/// The only spelling of a remote-tracking ref handed to git. The short
+/// `origin/<branch>` is never one: git resolves it to a local branch or tag of
+/// that name before `refs/remotes/origin/<branch>`.
+fn remote_tracking(branch: &RefName) -> String {
+    format!("{}{branch}", remote_tracking_namespace())
+}
+
 // ---------------------------------------------------------------------------
 // Replay-exclusion (rwv.lock) — merge-driver constants
 // ---------------------------------------------------------------------------
@@ -1378,8 +1389,11 @@ impl Vcs for GitVcs {
         repo: &Path,
         branch: &RefName,
     ) -> Result<ResolvedRevisionId, VcsError> {
-        let qualified = format!("origin/{}", branch.as_str());
-        self.resolve_revision(repo, &qualified)
+        let tip = self.resolve_revision(repo, &remote_tracking(branch))?;
+        Ok(ResolvedRevisionId::from_canonical(
+            tip.as_str(),
+            Some(format!("{GIT_DEFAULT_REMOTE_NAME}/{branch}")),
+        ))
     }
 
     fn head_revision(&self, repo: &Path) -> Result<ResolvedRevisionId, VcsError> {
@@ -2253,7 +2267,7 @@ impl Vcs for GitVcs {
         repo: &Path,
         branch: &RefName,
     ) -> Result<bool, VcsError> {
-        let qualified = format!("refs/remotes/origin/{}", branch.as_str());
+        let qualified = remote_tracking(branch);
         let status = git_command()
             .args(["rev-parse", "--verify", "--quiet", &qualified])
             .current_dir(repo)
@@ -2276,11 +2290,7 @@ impl Vcs for GitVcs {
         repo: &Path,
         branch: &RefName,
     ) -> Result<usize, VcsError> {
-        let range = format!(
-            "refs/remotes/origin/{}..{}",
-            branch.as_str(),
-            branch.as_str()
-        );
+        let range = format!("{}..{}", remote_tracking(branch), branch.as_str());
         let out = Self::run_trimmed(&["rev-list", "--count", &range], repo)?;
         Ok(out.trim().parse::<usize>().unwrap_or(0))
     }
@@ -2844,12 +2854,17 @@ impl Vcs for GitVcs {
         if !self.is_repo(repo) {
             return Err(VcsError::NotARepo(repo.to_path_buf()));
         }
-        const NAMESPACE: &str = "refs/remotes/origin/";
-        match Self::run_trimmed(&["symbolic-ref", "refs/remotes/origin/HEAD"], repo) {
+        match Self::run_trimmed(
+            &["symbolic-ref", &remote_tracking(&RefName::new("HEAD"))],
+            repo,
+        ) {
             // No fallback: an unset or malformed symref is an absence, not
             // a guess. A caller that invents a name here trades an honest
             // refusal for a comparison against a fabrication.
-            Ok(target) => Ok(RemoteDefaultBranch::from_symref_target(&target, NAMESPACE)),
+            Ok(target) => Ok(RemoteDefaultBranch::from_symref_target(
+                &target,
+                &remote_tracking_namespace(),
+            )),
             Err(_) => Ok(None),
         }
     }
@@ -2868,18 +2883,13 @@ impl Vcs for GitVcs {
         copies: RemoteBranchCopies,
     ) -> Result<String, VcsError> {
         let remote = GIT_DEFAULT_REMOTE_NAME;
-        let listing = Self::run_trimmed(
-            &[
-                "for-each-ref",
-                "--format=%(refname:lstrip=3)",
-                &format!("refs/remotes/{remote}/"),
-            ],
-            clone,
-        )?;
+        let namespace = remote_tracking_namespace();
+        let listing =
+            Self::run_trimmed(&["for-each-ref", "--format=%(refname)", &namespace], clone)?;
         let branches: Vec<String> = listing
             .lines()
-            .map(str::trim)
-            .filter(|b| !b.is_empty() && *b != "HEAD")
+            .filter_map(|r| r.trim().strip_prefix(namespace.as_str()))
+            .filter(|b| *b != "HEAD")
             .map(|b| format!("`{b}`"))
             .collect();
         if !branches.is_empty() {
@@ -4305,6 +4315,57 @@ mod branch_model_tests {
                 .resolve_local_branch_tip(store.path(), &RawRefName::new("main"))
                 .unwrap(),
             Some(head)
+        );
+    }
+
+    /// A clone whose local `main` has moved past `refs/remotes/origin/main`,
+    /// and the remote-tracking tip.
+    fn clone_ahead_of_its_remote() -> (tempfile::TempDir, PathBuf, ResolvedRevisionId) {
+        let (tmp, clone, _bare) = clone_of_bare_origin();
+        let remote_tip = GitVcs
+            .resolve_revision(&clone, "refs/remotes/origin/main")
+            .unwrap();
+        let local_tip = commit(&clone, "local");
+        assert_ne!(local_tip, remote_tip, "the shadow must point elsewhere");
+        (tmp, clone, remote_tip)
+    }
+
+    #[test]
+    fn resolve_branch_on_remote_is_not_answered_by_a_local_branch_named_origin_slash_main() {
+        let (_tmp, clone, remote_tip) = clone_ahead_of_its_remote();
+        git(&clone, &["branch", "origin/main"]);
+
+        let resolved = GitVcs
+            .resolve_branch_on_remote(&clone, &RefName::new("main"))
+            .unwrap();
+
+        assert_eq!(resolved, remote_tip);
+    }
+
+    #[test]
+    fn resolve_branch_on_remote_is_not_answered_by_a_tag_named_origin_slash_main() {
+        let (_tmp, clone, remote_tip) = clone_ahead_of_its_remote();
+        git(&clone, &["tag", "origin/main"]);
+
+        let resolved = GitVcs
+            .resolve_branch_on_remote(&clone, &RefName::new("main"))
+            .unwrap();
+
+        assert_eq!(resolved, remote_tip);
+    }
+
+    #[test]
+    fn resolve_branch_on_remote_finds_nothing_when_only_a_shadow_exists() {
+        let (_tmp, clone, _remote_tip) = clone_ahead_of_its_remote();
+        git(&clone, &["branch", "origin/feature"]);
+
+        let err = GitVcs
+            .resolve_branch_on_remote(&clone, &RefName::new("feature"))
+            .expect_err("a local branch named origin/feature is not a remote-tracking ref");
+
+        assert!(
+            matches!(err, VcsError::RevisionNotFound { ref rev, .. } if rev == "refs/remotes/origin/feature"),
+            "got {err:?}"
         );
     }
 

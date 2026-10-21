@@ -714,8 +714,8 @@ fn resolve_branch_on_remote_missing_remote_errors() {
 
     let err = result.expect_err("missing origin remote must error");
     assert!(
-        matches!(err, VcsError::RevisionNotFound { ref rev, .. } if rev == "origin/main"),
-        "expected RevisionNotFound for origin/main, got {err:?}"
+        matches!(err, VcsError::RevisionNotFound { ref rev, .. } if rev == "refs/remotes/origin/main"),
+        "expected RevisionNotFound for refs/remotes/origin/main, got {err:?}"
     );
 }
 
@@ -740,8 +740,8 @@ fn resolve_branch_on_remote_missing_branch_errors() {
 
     let err = result.expect_err("nonexistent branch on remote must error");
     assert!(
-        matches!(err, VcsError::RevisionNotFound { ref rev, .. } if rev == "origin/nonexistent-branch"),
-        "expected RevisionNotFound for origin/nonexistent-branch, got {err:?}"
+        matches!(err, VcsError::RevisionNotFound { ref rev, .. } if rev == "refs/remotes/origin/nonexistent-branch"),
+        "expected RevisionNotFound for refs/remotes/origin/nonexistent-branch, got {err:?}"
     );
 }
 
