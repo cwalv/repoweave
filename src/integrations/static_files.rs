@@ -36,7 +36,7 @@
 //! tie-breaking (defense in depth).
 
 use crate::integration::{
-    Integration, IntegrationContext, Issue, IssueKind, Severity, SurfacedFile,
+    Integration, IntegrationContext, Issue, IssueKind, IssueSource, Severity, SurfacedFile,
 };
 use crate::workspace::ContainerKind;
 use serde::Deserialize;
@@ -251,7 +251,7 @@ impl Integration for StaticFiles {
         // re-run in `activate()` as a defense-in-depth bail.
         for name in collision_names(&cfg, ctx) {
             issues.push(Issue {
-                integration: self.name().to_string(),
+                source: IssueSource::integration(self.name()),
                 severity: Severity::Error,
                 message: collision_message(&name),
                 kind: IssueKind::ConfigRejected,
@@ -262,7 +262,7 @@ impl Integration for StaticFiles {
         for file in checked_at_output_dir(&cfg, ctx) {
             if !ctx.output_dir.join(file).exists() {
                 issues.push(Issue {
-                    integration: self.name().to_string(),
+                    source: IssueSource::integration(self.name()),
                     severity: Severity::Warning,
                     message: format!("declared file '{}' not found in project directory", file),
                     kind: IssueKind::ConfigRejected,

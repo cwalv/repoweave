@@ -7,6 +7,7 @@
 //! the same fact in its `--json` envelope as a record. A run that skipped
 //! nothing prints nothing.
 
+use crate::integration::{Integration, IssueSource};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -73,10 +74,10 @@ impl SkippedEffect {
     }
 
     /// `integration`'s hook, skipped because `tool` is not on `PATH`.
-    pub fn tool_missing(integration: &str, tool: &str) -> Self {
+    pub fn tool_missing(integration: &dyn Integration, tool: &str) -> Self {
         Self {
             effect: Effect::InstallHooks,
-            integration: Some(integration.to_string()),
+            integration: Some(integration.name().to_string()),
             reason: SkipReason::ToolMissing {
                 tool: tool.to_string(),
             },
@@ -135,6 +136,13 @@ impl SkippedEffect {
         })
     }
 
+    fn source(&self) -> IssueSource {
+        match &self.integration {
+            Some(name) => IssueSource::integration(name),
+            None => IssueSource::Core,
+        }
+    }
+
     /// The one line an operator reads for this skip.
     pub fn line(&self) -> String {
         let remedy = &self.remedy;
@@ -143,7 +151,7 @@ impl SkippedEffect {
                 return format!(
                     "[warning] {}: {tool} is not on PATH, so this integration's install hook \
                      did not run; install {tool}, then run `{remedy}`",
-                    self.integration.as_deref().unwrap_or("core")
+                    self.source()
                 )
             }
             SkipReason::ProjectAlreadyActive { project } if self.effect == Effect::Activation => {
@@ -173,11 +181,45 @@ impl SkippedEffect {
             Effect::WeaveRootLinks => ("the weave-root links were not refreshed", "refreshes them"),
             Effect::Activation => ("the fetched project was not activated", "activates it"),
         };
-        format!("[skipped] core: {what} ({why}); `{remedy}` {does}")
+        format!(
+            "[skipped] {}: {what} ({why}); `{remedy}` {does}",
+            self.source()
+        )
     }
 
     /// Print [`Self::line`] on stderr, where a verb's stdout may be a machine's.
     pub fn report(&self) {
         eprintln!("{}", self.line());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::integrations::NpmWorkspaces;
+
+    #[test]
+    fn a_missing_tool_names_the_integration_and_the_tool_apart() {
+        let skip = SkippedEffect::tool_missing(&NpmWorkspaces, "npm");
+
+        assert_eq!(skip.integration.as_deref(), Some("npm-workspaces"));
+        assert_eq!(
+            skip.reason,
+            SkipReason::ToolMissing {
+                tool: "npm".to_string()
+            }
+        );
+        assert!(
+            skip.line()
+                .starts_with("[warning] npm-workspaces: npm is not on PATH"),
+            "got: {}",
+            skip.line()
+        );
+    }
+
+    #[test]
+    fn a_skip_no_integration_owns_is_reported_by_core() {
+        let line = SkippedEffect::install_hooks(SkipReason::NoMaterialize).line();
+        assert!(line.starts_with("[skipped] core: "), "got: {line}");
     }
 }

@@ -75,8 +75,8 @@
 //! gitignore-eligible.
 
 use crate::integration::{
-    HookOutcome, Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity,
-    SurfacedFile,
+    HookOutcome, Integration, IntegrationContext, Issue, IssueKind, IssueSource, OwnedPath,
+    Severity, SurfacedFile,
 };
 use crate::integrations::merge::{
     drift_issues, holds_owned_region, keypath, merge_activate, missing_issue,
@@ -488,7 +488,7 @@ impl Integration for UvWorkspace {
         let mut issues = Vec::new();
         if which::which("uv").is_err() {
             issues.push(Issue {
-                integration: self.name().to_string(),
+                source: IssueSource::integration(self.name()),
                 severity: Severity::Warning,
                 message: "uv is not on PATH".to_string(),
                 kind: IssueKind::ToolMissing,

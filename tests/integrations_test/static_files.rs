@@ -122,7 +122,7 @@ fn check_warns_on_missing_files() {
     assert_eq!(issues.len(), 1);
     assert_eq!(issues[0].severity, Severity::Warning);
     assert!(issues[0].message.contains(".eslintrc.json"));
-    assert_eq!(issues[0].integration, "static-files");
+    assert_eq!(issues[0].source, IssueSource::integration("static-files"));
 }
 
 #[test]
@@ -257,7 +257,7 @@ fn check_emits_error_for_workweave_link_collision() {
         "expected exactly one error-level collision issue, got: {issues:?}"
     );
     let issue = collisions[0];
-    assert_eq!(issue.integration, "static-files");
+    assert_eq!(issue.source, IssueSource::integration("static-files"));
     assert!(
         issue.message.contains(".beads")
             && issue.message.contains("workweave.link")

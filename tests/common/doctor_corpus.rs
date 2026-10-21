@@ -29,7 +29,7 @@ use repoweave::check::{
     WorkweaveTreeIntegrityKind,
 };
 use repoweave::integration::MemberIncompatibility;
-use repoweave::integration::{Issue, IssueKind, Severity};
+use repoweave::integration::{Issue, IssueKind, IssueSource, Severity};
 use repoweave::integrations::cargo_workspace::CargoSkewOccurrence;
 use repoweave::manifest::{ProjectName, RepoPath, Role, WorkweaveId, WorkweaveName};
 use repoweave::op_state::{OpVerb, SavepointKey};
@@ -819,7 +819,7 @@ pub fn issue_corpus() -> Vec<Issue> {
     ]
     .into_iter()
     .map(|kind| Issue {
-        integration: "go-work".into(),
+        source: IssueSource::integration("go-work"),
         severity: Severity::Warning,
         message: format!("sample finding for `{}`", kind.tag()),
         kind,

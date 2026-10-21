@@ -453,7 +453,7 @@ fn update_for_project(
         for issue in
             crate::activate::member_incompatibilities(active_root, project_name, &project.manifest)
         {
-            eprintln!("[warning] {}: {}", issue.integration, issue.message);
+            eprintln!("[warning] {}: {}", issue.source, issue.message);
         }
         skipped
     } else {

@@ -12,7 +12,9 @@
 mod common;
 
 use common::contract;
-use repoweave::integration::{Integration, IntegrationContext, Severity, SurfacedFile};
+use repoweave::integration::{
+    Integration, IntegrationContext, IssueSource, Severity, SurfacedFile,
+};
 use repoweave::integrations::*;
 use repoweave::manifest::{
     IntegrationConfig, Manifest, ProjectName, RepoPath, Role, WorkweaveConfig,

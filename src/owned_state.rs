@@ -34,7 +34,7 @@
 //! cargo-workspace is the first consumer; uv/npm/pnpm lockfiles have the
 //! identical story and can port by calling the same three helpers.
 
-use crate::integration::{Issue, IssueKind, Severity};
+use crate::integration::{Issue, IssueKind, IssueSource, Severity};
 use crate::refusal::RefusalKind;
 use crate::workweave_index;
 use anyhow::Context;
@@ -962,7 +962,7 @@ pub fn stale_generations(
 /// refused there.
 pub fn fully_owned_digest_mismatch_issue(name: &str, path: &Path) -> Issue {
     Issue {
-        integration: name.to_string(),
+        source: IssueSource::integration(name),
         severity: Severity::Warning,
         message: format!(
             "{name} generated file has drift: {}; content differs from the last \
@@ -1467,7 +1467,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("Cargo.lock");
         let i = fully_owned_digest_mismatch_issue("cargo-workspace", &path);
-        assert_eq!(i.integration, "cargo-workspace");
+        assert_eq!(i.source, IssueSource::integration("cargo-workspace"));
         assert_eq!(
             i.severity,
             Severity::Warning,

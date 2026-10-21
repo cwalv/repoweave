@@ -154,8 +154,8 @@
 //! (so leaving a stale entry behind after removing a repo is not an error).
 
 use crate::integration::{
-    HookOutcome, Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity,
-    SurfacedFile,
+    HookOutcome, Integration, IntegrationContext, Issue, IssueKind, IssueSource, OwnedPath,
+    Severity, SurfacedFile,
 };
 use crate::integrations::merge::{
     drift_issues, fully_owned_drift_issue, holds_owned_region, keypath, merge_activate,
@@ -804,7 +804,7 @@ impl Integration for CargoWorkspace {
         let mut issues = Vec::new();
         if which::which("cargo").is_err() {
             issues.push(Issue {
-                integration: self.name().to_string(),
+                source: IssueSource::integration(self.name()),
                 severity: Severity::Warning,
                 message: "cargo is not on PATH".to_string(),
                 kind: IssueKind::ToolMissing,
@@ -817,7 +817,7 @@ impl Integration for CargoWorkspace {
         let (_, _, nested_conflicts) = Self::partition(ctx, &cfg)?;
         if !nested_conflicts.is_empty() {
             issues.push(Issue {
-                integration: self.name().to_string(),
+                source: IssueSource::integration(self.name()),
                 severity: Severity::Error,
                 message: nested_workspace_error(&nested_conflicts),
                 kind: IssueKind::ConfigRejected,

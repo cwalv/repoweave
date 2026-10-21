@@ -1,5 +1,6 @@
 use crate::integration::{
-    Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity, SurfacedFile,
+    Integration, IntegrationContext, Issue, IssueKind, IssueSource, OwnedPath, Severity,
+    SurfacedFile,
 };
 use crate::integrations::merge::{fully_owned_drift_issue, missing_issue};
 use std::collections::BTreeMap;
@@ -140,7 +141,7 @@ impl Integration for Gita {
         let mut issues = Vec::new();
         if which::which("gita").is_err() {
             issues.push(Issue {
-                integration: self.name().to_string(),
+                source: IssueSource::integration(self.name()),
                 severity: Severity::Warning,
                 message: "gita is not on PATH".to_string(),
                 kind: IssueKind::ToolMissing,

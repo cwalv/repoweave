@@ -4,7 +4,7 @@
 //! a series of checks. Integration check hooks are run separately.
 
 use crate::git::RWV_MERGE_DRIVER_PREFIX;
-use crate::integration::{Issue, IssueKind};
+use crate::integration::{Issue, IssueKind, IssueSource};
 use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoPath, Role, WorkweaveId};
 use crate::op_state::SavepointKey;
 use crate::refusal::{refusal, RefusalKind};
@@ -2725,7 +2725,7 @@ impl IssueOutput {
         let safe_to_fix = issue.fix_permitted();
         Self {
             kind: IssueKindOutput::from_kind(&issue.kind),
-            integration: issue.integration,
+            integration: issue.source.name().to_string(),
             severity: match issue.severity {
                 crate::integration::Severity::Warning => SeverityOutput::Warning,
                 crate::integration::Severity::Error => SeverityOutput::Error,
@@ -7474,7 +7474,7 @@ impl CollapsedClass {
         let message = format!("{body}; per-item detail: `rwv doctor --json`");
         Issue {
             kind: IssueKind::CoreFinding,
-            integration: "core".into(),
+            source: IssueSource::Core,
             severity,
             message,
             safe_to_fix: self.auto_fixed(),
@@ -8670,7 +8670,7 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
             };
             Some(Issue {
                 kind: IssueKind::CoreFinding,
-                integration: "core".into(),
+                source: IssueSource::Core,
                 severity,
                 message,
                 safe_to_fix,
@@ -9545,7 +9545,7 @@ fn stale_generation_issue(finding: &crate::owned_state::StaleGeneration) -> Issu
         )
     };
     Issue {
-        integration: "core".into(),
+        source: IssueSource::Core,
         severity: Severity::Warning,
         message: format!(
             "{} may no longer match this checkout — {cause}. Run `rwv materialize` \
@@ -9612,7 +9612,7 @@ fn disabled_integration_issues(
                 format!(", surfaced at the weave root as {}", surfaced.join(", "))
             };
             Issue {
-                integration: found.integration.clone(),
+                source: IssueSource::integration(&found.integration),
                 severity: Severity::Warning,
                 message: format!(
                     "{} is disabled for project `{project}`, so nothing here is its \
@@ -9661,10 +9661,10 @@ fn collect_doctor_issues(world: &DoctorWorld, repair: Repair) -> Vec<Issue> {
             project.manifest.workweave.as_ref(),
         );
         let check_issues = run_checks(&integrations, &project.manifest, &ctx_base);
-        let malformed_per_check: std::collections::BTreeSet<String> = check_issues
+        let malformed_per_check: std::collections::BTreeSet<IssueSource> = check_issues
             .iter()
             .filter(|issue| issue.kind == IssueKind::MalformedSettings)
-            .map(|issue| issue.integration.clone())
+            .map(|issue| issue.source.clone())
             .collect();
         issues.extend(check_issues);
         issues.extend(disabled_integration_issues(
@@ -9699,7 +9699,7 @@ fn collect_doctor_issues(world: &DoctorWorld, repair: Repair) -> Vec<Issue> {
         // The block `check()` already reported is one finding, not two.
         issues.extend(user_held_issues.into_iter().filter(|issue| {
             !(issue.kind == IssueKind::MalformedSettings
-                && malformed_per_check.contains(&issue.integration))
+                && malformed_per_check.contains(&issue.source))
         }));
         if fix && !fixable_issues.is_empty() && !user_held_content {
             // The repair primitive must be pointed at the same weave the
@@ -9714,7 +9714,7 @@ fn collect_doctor_issues(world: &DoctorWorld, repair: Repair) -> Vec<Issue> {
                 ),
                 Err(e) => issues.push(Issue {
                     kind: IssueKind::CoreFinding,
-                    integration: "core".into(),
+                    source: IssueSource::Core,
                     severity: Severity::Error,
                     message: format!(
                         "doctor --fix: failed to regenerate integration content for `{}`: {e:#}",
@@ -9727,7 +9727,7 @@ fn collect_doctor_issues(world: &DoctorWorld, repair: Repair) -> Vec<Issue> {
             if fix && !fixable_issues.is_empty() {
                 issues.push(Issue {
                     kind: IssueKind::CoreFinding,
-                    integration: "core".into(),
+                    source: IssueSource::Core,
                     severity: Severity::Warning,
                     message: format!(
                         "doctor --fix: withheld the regeneration of `{}`'s integration \
@@ -9790,7 +9790,7 @@ fn collect_doctor_issues(world: &DoctorWorld, repair: Repair) -> Vec<Issue> {
                 ),
                 Err(e) => issues.push(Issue {
                     kind: IssueKind::CoreFinding,
-                    integration: "core".into(),
+                    source: IssueSource::Core,
                     severity: Severity::Error,
                     message: format!(
                         "doctor --fix: failed to re-surface symlinks for `{}`: {e:#}",
@@ -10078,7 +10078,7 @@ pub fn run_check(
     for msg in fix_errors {
         all_issues.push(Issue {
             kind: IssueKind::CoreFinding,
-            integration: "core".into(),
+            source: IssueSource::Core,
             severity: Severity::Error,
             message: msg,
             safe_to_fix: true,
@@ -10106,7 +10106,7 @@ pub fn run_check(
                 "error"
             }
         };
-        println!("[{prefix}] {}: {}", issue.integration, issue.message);
+        println!("[{prefix}] {}: {}", issue.source, issue.message);
     }
 
     // The P1 record: a clean weave-wide unfiltered run advances the health

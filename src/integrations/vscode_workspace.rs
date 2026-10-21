@@ -14,7 +14,8 @@
 //! disagree about what the region should hold.
 
 use crate::integration::{
-    Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity, SurfacedFile,
+    Integration, IntegrationContext, Issue, IssueKind, IssueSource, OwnedPath, Severity,
+    SurfacedFile,
 };
 use crate::integrations::merge::{
     drift_issues, holds_owned_region, keypath, missing_issue, JsonDoc, JsonMarker, ManagedDoc,
@@ -545,7 +546,7 @@ impl Integration for VscodeWorkspace {
         let mut issues = Vec::new();
         if !filepath.is_file() {
             issues.push(Issue {
-                integration: self.name().to_string(),
+                source: IssueSource::integration(self.name()),
                 severity: Severity::Warning,
                 message: format!("{} does not exist", filename),
                 kind: IssueKind::ManagedFileMissing,

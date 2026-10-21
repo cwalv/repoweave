@@ -56,8 +56,8 @@
 //! taken regardless of whether `go` happens to be on PATH in the test runner.
 
 use crate::integration::{
-    Integration, IntegrationContext, Issue, IssueKind, MemberIncompatibility, OwnedPath, Severity,
-    SurfacedFile,
+    Integration, IntegrationContext, Issue, IssueKind, IssueSource, MemberIncompatibility,
+    OwnedPath, Severity, SurfacedFile,
 };
 use crate::integrations::merge::{
     drift_issues, holds_owned_region, keypath, merge_activate, missing_issue,
@@ -203,7 +203,7 @@ impl Integration for GoWork {
         let mut issues = Vec::new();
         if which::which("go").is_err() {
             issues.push(Issue {
-                integration: self.name().to_string(),
+                source: IssueSource::integration(self.name()),
                 severity: Severity::Warning,
                 message: "go is not on PATH; using hand-edit fallback for go.work".to_string(),
                 kind: IssueKind::ToolMissing,
@@ -1298,7 +1298,7 @@ mod tests {
             panic!("expected one finding, got {issues:?}");
         };
         assert_eq!(issue.kind, IssueKind::MalformedSettings);
-        assert_eq!(issue.integration, "go-work");
+        assert_eq!(issue.source, IssueSource::integration("go-work"));
         assert!(
             issue.message.contains("go-version"),
             "the finding names the key: {}",
@@ -1965,7 +1965,7 @@ mod tests {
         let found = probe(Some("1.21"), "1.26").expect("go 1.21 under a member's 1.26 is a breach");
         let issue = found.into_issue();
 
-        assert_eq!(issue.integration, "go-work");
+        assert_eq!(issue.source, IssueSource::integration("go-work"));
         assert!(
             !issue.safe_to_fix,
             "member-incompatibility is never auto-repairable: {issue:?}"

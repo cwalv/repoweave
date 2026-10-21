@@ -208,7 +208,7 @@ pub(crate) fn settle_manifest(
         Ok(_) => {
             // Report only: the manifest change has already landed.
             for issue in crate::activate::member_incompatibilities(root, project, manifest) {
-                eprintln!("[warning] {}: {}", issue.integration, issue.message);
+                eprintln!("[warning] {}: {}", issue.source, issue.message);
             }
             Ok(())
         }

@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use repoweave::integration::{
-    is_enabled, HookOutcome, Integration, IntegrationContext, Issue, IssueKind, Severity,
-    SurfacedFile,
+    is_enabled, HookOutcome, Integration, IntegrationContext, Issue, IssueKind, IssueSource,
+    Severity, SurfacedFile,
 };
 use repoweave::manifest::{IntegrationConfig, ProjectName, RepoEntry, RepoPath, Role, VcsType};
 use repoweave::vcs::{RawRefName, TrackingRef};
@@ -277,14 +277,14 @@ fn mock_deactivate_receives_correct_root() {
 fn mock_check_returns_issues() {
     let issues = vec![
         Issue {
-            integration: "cargo".into(),
+            source: IssueSource::integration("cargo"),
             severity: Severity::Warning,
             message: "missing dependency".into(),
             kind: IssueKind::ToolMissing,
             safe_to_fix: true,
         },
         Issue {
-            integration: "cargo".into(),
+            source: IssueSource::integration("cargo"),
             severity: Severity::Error,
             message: "build failure".into(),
             kind: IssueKind::ConfigRejected,
@@ -339,13 +339,13 @@ fn mock_check_returns_issues() {
 #[test]
 fn issue_creation_with_warning_severity() {
     let issue = Issue {
-        integration: "npm".into(),
+        source: IssueSource::integration("npm"),
         severity: Severity::Warning,
         message: "outdated lockfile".into(),
         kind: IssueKind::ManagedFileDrift,
         safe_to_fix: true,
     };
-    assert_eq!(issue.integration, "npm");
+    assert_eq!(issue.source, IssueSource::integration("npm"));
     assert_eq!(issue.severity, Severity::Warning);
     assert_eq!(issue.message, "outdated lockfile");
 }
@@ -353,13 +353,13 @@ fn issue_creation_with_warning_severity() {
 #[test]
 fn issue_creation_with_error_severity() {
     let issue = Issue {
-        integration: "cargo".into(),
+        source: IssueSource::integration("cargo"),
         severity: Severity::Error,
         message: "unresolvable version conflict".into(),
         kind: IssueKind::ConfigRejected,
         safe_to_fix: true,
     };
-    assert_eq!(issue.integration, "cargo");
+    assert_eq!(issue.source, IssueSource::integration("cargo"));
     assert_eq!(issue.severity, Severity::Error);
     assert_eq!(issue.message, "unresolvable version conflict");
 }
@@ -1319,7 +1319,7 @@ mod generated_managed_split_and_trigger_model {
             }
             fn check(&self, _ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
                 Ok(vec![Issue {
-                    integration: "check-warner".into(),
+                    source: repoweave::integration::IssueSource::integration("check-warner"),
                     severity: Severity::Warning,
                     message: "env precondition".into(),
                     kind: IssueKind::ToolMissing,

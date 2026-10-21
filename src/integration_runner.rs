@@ -11,7 +11,8 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
 use crate::integration::{
-    is_enabled, HookOutcome, Integration, IntegrationContext, Issue, IssueKind, Severity,
+    is_enabled, HookOutcome, Integration, IntegrationContext, Issue, IssueKind, IssueSource,
+    Severity,
 };
 use crate::manifest::{IntegrationConfig, Manifest, ProjectName, RepoEntry, RepoPath};
 use crate::skipped::SkippedEffect;
@@ -228,7 +229,7 @@ fn for_each_enabled(
             Ok(new_issues) => issues.extend(new_issues),
             Err(e) => {
                 issues.push(Issue {
-                    integration: integration.name().to_string(),
+                    source: IssueSource::integration(integration.name()),
                     severity: Severity::Error,
                     message: format!("{e:#}"),
                     kind: IssueKind::IntegrationFailed,
@@ -365,7 +366,7 @@ pub fn run_activate_hooks(
             .activate_hook(&ctx)
             .map_err(|e| anyhow::anyhow!("activate hook failed: {e:#}"))?;
         if let HookOutcome::ToolMissing(tool) = outcome {
-            skipped.push(SkippedEffect::tool_missing(integration.name(), tool));
+            skipped.push(SkippedEffect::tool_missing(integration, tool));
         }
         Ok(Vec::new())
     });
@@ -658,7 +659,7 @@ mod tests {
 
         let issues = run_activations(&integrations, &manifest, &ctx_base);
         assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].integration, "cargo");
+        assert_eq!(issues[0].source, IssueSource::integration("cargo"));
         assert_eq!(issues[0].severity, Severity::Error);
         assert!(issues[0].message.contains("kaboom"));
 
@@ -699,14 +700,14 @@ mod tests {
     #[test]
     fn checks_collects_issues_from_all_integrations() {
         let cargo = MockIntegration::new("cargo", true).with_check_issues(vec![Issue {
-            integration: "cargo".into(),
+            source: IssueSource::integration("cargo"),
             severity: Severity::Warning,
             message: "missing dep".into(),
             kind: IssueKind::ToolMissing,
             safe_to_fix: true,
         }]);
         let npm = MockIntegration::new("npm", true).with_check_issues(vec![Issue {
-            integration: "npm".into(),
+            source: IssueSource::integration("npm"),
             severity: Severity::Error,
             message: "lockfile mismatch".into(),
             kind: IssueKind::ManagedFileDrift,
@@ -721,8 +722,8 @@ mod tests {
 
         let issues = run_checks(&integrations, &manifest, &ctx_base);
         assert_eq!(issues.len(), 2);
-        assert_eq!(issues[0].integration, "cargo");
-        assert_eq!(issues[1].integration, "npm");
+        assert_eq!(issues[0].source, IssueSource::integration("cargo"));
+        assert_eq!(issues[1].source, IssueSource::integration("npm"));
     }
 
     #[test]
@@ -744,7 +745,7 @@ mod tests {
     fn checks_error_captured_others_still_run() {
         let failing = MockIntegration::new("cargo", true).with_check_err("check exploded");
         let succeeding = MockIntegration::new("npm", true).with_check_issues(vec![Issue {
-            integration: "npm".into(),
+            source: IssueSource::integration("npm"),
             severity: Severity::Warning,
             message: "minor issue".into(),
             kind: IssueKind::ToolMissing,
@@ -760,11 +761,11 @@ mod tests {
         let issues = run_checks(&integrations, &manifest, &ctx_base);
         assert_eq!(issues.len(), 2);
         // First issue is the error from "cargo"
-        assert_eq!(issues[0].integration, "cargo");
+        assert_eq!(issues[0].source, IssueSource::integration("cargo"));
         assert_eq!(issues[0].severity, Severity::Error);
         assert!(issues[0].message.contains("check exploded"));
         // Second is the normal issue from "npm"
-        assert_eq!(issues[1].integration, "npm");
+        assert_eq!(issues[1].source, IssueSource::integration("npm"));
         assert_eq!(issues[1].severity, Severity::Warning);
     }
 
@@ -800,7 +801,7 @@ mod tests {
 
         let issues = run_deactivations(&integrations, &manifest, root);
         assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].integration, "cargo");
+        assert_eq!(issues[0].source, IssueSource::integration("cargo"));
         assert!(issues[0].message.contains("cleanup failed"));
 
         assert_eq!(succeeding.calls().len(), 1);
@@ -863,7 +864,7 @@ mod tests {
 
         let issues = run_activate_hooks(&integrations, &manifest, &ctx_base).issues;
         assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].integration, "cargo");
+        assert_eq!(issues[0].source, IssueSource::integration("cargo"));
         assert_eq!(issues[0].severity, Severity::Error);
         assert!(issues[0].message.contains("install command failed"));
 
@@ -878,8 +879,8 @@ mod tests {
 
     #[test]
     fn activate_hooks_tool_missing_is_a_skip_and_others_still_run() {
-        let toolless =
-            MockIntegration::new("pnpm", true).with_hook_outcome(HookOutcome::ToolMissing("pnpm"));
+        let toolless = MockIntegration::new("pnpm-workspaces", true)
+            .with_hook_outcome(HookOutcome::ToolMissing("pnpm"));
         let succeeding = MockIntegration::new("npm", true);
         let integrations: Vec<&dyn Integration> = vec![&toolless, &succeeding];
 
@@ -892,7 +893,7 @@ mod tests {
         assert!(run.issues.is_empty(), "a missing tool is no failure");
         assert_eq!(
             run.skipped,
-            vec![SkippedEffect::tool_missing("pnpm", "pnpm")],
+            vec![SkippedEffect::tool_missing(&toolless, "pnpm")],
             "the skipped hook is recorded, naming its tool"
         );
 

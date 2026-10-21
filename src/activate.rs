@@ -116,7 +116,7 @@ fn report_and_check_activation_issues(issues: &[crate::integration::Issue]) -> a
                 "error"
             }
         };
-        eprintln!("[{prefix}] {}: {}", issue.integration, issue.message);
+        eprintln!("[{prefix}] {}: {}", issue.source, issue.message);
     }
     if error_count > 0 {
         anyhow::bail!(
@@ -802,7 +802,7 @@ fn author_and_surface(
                     Severity::Warning => "warning",
                     Severity::Error => "warning",
                 };
-                eprintln!("[{prefix}] {}: {}", issue.integration, issue.message);
+                eprintln!("[{prefix}] {}: {}", issue.source, issue.message);
             }
             let verify_issues = run_verifications(integrations, manifest, ctx_base);
             for issue in &verify_issues {
@@ -810,7 +810,7 @@ fn author_and_surface(
                     Severity::Warning => "warning (drift)",
                     Severity::Error => "warning (drift)",
                 };
-                eprintln!("[{prefix}] {}: {}", issue.integration, issue.message);
+                eprintln!("[{prefix}] {}: {}", issue.source, issue.message);
             }
         }
         ActivationMode::Materialize(consent) => {
@@ -885,7 +885,7 @@ fn fit_to_host(
 ) -> anyhow::Result<()> {
     let issues = run_host_fits(integrations, manifest, ctx_base);
     for issue in &issues {
-        eprintln!("[error] {}: {}", issue.integration, issue.message);
+        eprintln!("[error] {}: {}", issue.source, issue.message);
     }
     if !issues.is_empty() {
         anyhow::bail!(
@@ -1075,7 +1075,7 @@ fn refuse_over_malformed_settings(
     }
     let listed = malformed
         .iter()
-        .map(|issue| format!("\n  {}: {}", issue.integration, issue.message))
+        .map(|issue| format!("\n  {}: {}", issue.source, issue.message))
         .collect::<String>();
     anyhow::bail!(
         "{refused}. {} `[integrations.<name>]` block(s) in rwv.toml yielded no \
@@ -1104,7 +1104,7 @@ fn report_and_check_activate_hook_issues(
                 "error"
             }
         };
-        eprintln!("[{prefix}] {}: {}", issue.integration, issue.message);
+        eprintln!("[{prefix}] {}: {}", issue.source, issue.message);
     }
     if error_count > 0 {
         anyhow::bail!(
@@ -2578,7 +2578,7 @@ pub fn verify_surfacing(
     project: &ProjectName,
     manifest: &Manifest,
 ) -> Vec<crate::integration::Issue> {
-    use crate::integration::{Issue, IssueKind, Severity};
+    use crate::integration::{Issue, IssueKind, IssueSource, Severity};
 
     let sites = SurfacingSites::of(root);
     let presents_project = observe_root(root)
@@ -2592,7 +2592,7 @@ pub fn verify_surfacing(
         let declared: BTreeSet<String> = owned.keys().cloned().collect();
         for link in undeclared_project_links(root, project, manifest, &declared) {
             issues.push(Issue {
-                integration: "core".into(),
+                source: IssueSource::Core,
                 severity: Severity::Warning,
                 message: format!(
                     "surfacing: `{}` is a weave-root link into project `{}` at a name \
@@ -2613,7 +2613,7 @@ pub fn verify_surfacing(
         }
         for (file, owner) in foreign_shared_name_links(root, project, &declared) {
             issues.push(Issue {
-                integration: "core".into(),
+                source: IssueSource::Core,
                 severity: Severity::Warning,
                 message: format!(
                     "surfacing: `{file}` resolves into project `{owner}` while the weave root \
@@ -2649,7 +2649,7 @@ pub fn verify_surfacing(
                     continue;
                 }
                 issues.push(Issue {
-                    integration: integration.clone(),
+                    source: IssueSource::integration(integration),
                     severity: Severity::Warning,
                     message: format!(
                         "surfacing: `{file}` is not surfaced (no symlink at `{}`; safe to --fix)",
@@ -2692,7 +2692,7 @@ pub fn verify_surfacing(
                     ),
                 };
                 issues.push(Issue {
-                    integration: integration.clone(),
+                    source: IssueSource::integration(integration),
                     severity,
                     message: format!("surfacing: {message}"),
                     kind: IssueKind::Surfacing,
@@ -2708,7 +2708,7 @@ pub fn verify_surfacing(
             // as not-safe-to-fix so doctor --fix never clobbers user content
             // sitting at the surfacing path.
             issues.push(Issue {
-                integration: integration.clone(),
+                source: IssueSource::integration(integration),
                 severity: Severity::Warning,
                 message: format!(
                     "surfacing: `{file}` is not a symlink (a real file/dir occupies `{}`; \
@@ -2725,7 +2725,7 @@ pub fn verify_surfacing(
             Ok(actual) if actual == *expected_target => {
                 if source_missing {
                     issues.push(Issue {
-                        integration: integration.clone(),
+                        source: IssueSource::integration(integration),
                         severity: Severity::Warning,
                         message: format!(
                             "surfacing: `{file}` is surfaced but its source no longer exists \
@@ -2740,7 +2740,7 @@ pub fn verify_surfacing(
             Ok(actual) => {
                 let replaceable = target_resolves_to_projects(&sites, Path::new(file), &actual);
                 issues.push(Issue {
-                    integration: integration.clone(),
+                    source: IssueSource::integration(integration),
                     severity: Severity::Warning,
                     message: format!(
                         "surfacing: `{file}` symlink resolves to `{}` (expected `{}`; {})",
@@ -2759,7 +2759,7 @@ pub fn verify_surfacing(
             }
             Err(e) => {
                 issues.push(Issue {
-                    integration: integration.clone(),
+                    source: IssueSource::integration(integration),
                     severity: Severity::Warning,
                     message: format!(
                         "surfacing: `{file}` symlink unreadable at `{}` ({e:#}; safe to --fix)",
@@ -2778,12 +2778,12 @@ pub fn verify_surfacing(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::integration::{Issue, IssueKind};
+    use crate::integration::{Issue, IssueKind, IssueSource};
     use crate::vcs::project_vcs;
 
     fn issue(integration: &str, severity: Severity, message: &str) -> Issue {
         Issue {
-            integration: integration.into(),
+            source: IssueSource::integration(integration),
             severity,
             message: message.into(),
             kind: IssueKind::ToolMissing,
@@ -3473,7 +3473,7 @@ mod tests {
         let issues = verify_surfacing(project_vcs().as_ref(), root, &project, &manifest);
         assert_eq!(issues.len(), 1, "expected one missing-surfacing issue");
         let issue = &issues[0];
-        assert_eq!(issue.integration, "static-files");
+        assert_eq!(issue.source, IssueSource::integration("static-files"));
         assert_eq!(issue.severity, Severity::Warning);
         assert!(issue.safe_to_fix, "missing symlink is safe to --fix");
         assert!(

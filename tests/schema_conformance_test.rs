@@ -74,7 +74,8 @@ use repoweave::fetch::{
     FETCH_RECORD_SCHEMA_URL, FETCH_SCHEMA_URL,
 };
 use repoweave::integration::MemberIncompatibility;
-use repoweave::integration::{Issue, IssueKind, Severity};
+use repoweave::integration::{Issue, IssueKind, IssueSource, Severity};
+use repoweave::integrations::NpmWorkspaces;
 use repoweave::op_state::{OpPhase, OpVerb, Override};
 use repoweave::placement::{PlacementNdjsonRecord, PlacementOutput, PLACEMENT_RECORD_SCHEMA_URL};
 use repoweave::push::{
@@ -313,7 +314,7 @@ fn doctor_corpus_supplement() -> (Vec<CheckViolation>, Vec<Issue>) {
         started_at: "2026-01-01T00:00:00Z".to_owned(),
     }];
     let issues = vec![Issue {
-        integration: "go-work".to_owned(),
+        source: IssueSource::integration("go-work"),
         severity: Severity::Error,
         message: "member-incompatibility: go.work sets `go` to `1.21`".to_owned(),
         kind: IssueKind::MemberIncompatibility(Box::new(MemberIncompatibility::new(
@@ -397,7 +398,7 @@ fn every_skip() -> Vec<SkippedEffect> {
     let mut skips = vec![
         SkippedEffect::install_hooks(SkipReason::NoMaterialize),
         SkippedEffect::install_hooks(SkipReason::InsideWorkweave),
-        SkippedEffect::tool_missing("npm-workspaces", "npm"),
+        SkippedEffect::tool_missing(&NpmWorkspaces, "npm"),
         SkippedEffect::activation_while_active("other", "app"),
         SkippedEffect::hooks_while_active("app"),
     ];

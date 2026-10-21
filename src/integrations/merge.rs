@@ -48,7 +48,7 @@
 //! through `set_owned`, it merges into the existing map rather than replacing
 //! the whole value. Leaf variants (`Bool`, `String`, `Array`) replace.
 
-use crate::integration::{Issue, IssueKind, Severity};
+use crate::integration::{Issue, IssueKind, IssueSource, Severity};
 use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
@@ -1868,7 +1868,7 @@ pub fn drift_issues(
     let on_disk = match pen {
         Pen::User => {
             return vec![Issue {
-                integration: name.to_string(),
+                source: IssueSource::integration(name),
                 severity: Severity::Warning,
                 message: format!(
                     "{name} managed file present but unmarked: {}; \
@@ -1891,7 +1891,7 @@ pub fn drift_issues(
         return vec![];
     }
     vec![Issue {
-        integration: name.to_string(),
+        source: IssueSource::integration(name),
         severity: Severity::Warning,
         message: format!(
             "{name} managed file has drift: {}; {} \
@@ -1911,7 +1911,7 @@ pub fn drift_issues(
 /// Centralized here so the template stays byte-identical across integrations.
 pub fn missing_issue(name: &str, path: &Path) -> Issue {
     Issue {
-        integration: name.to_string(),
+        source: IssueSource::integration(name),
         severity: Severity::Warning,
         message: format!(
             "{name} managed file missing: {}; run rwv doctor --fix to regenerate",
@@ -1952,7 +1952,7 @@ pub fn orphaned_region_issues<D: ManagedDoc>(
         return vec![];
     }
     vec![Issue {
-        integration: name.to_string(),
+        source: IssueSource::integration(name),
         severity: Severity::Warning,
         message: format!(
             "{name} managed file has drift: {}; {detail} \
@@ -1981,7 +1981,7 @@ pub fn orphaned_region_issues<D: ManagedDoc>(
 /// by [`missing_issue`].
 pub fn fully_owned_drift_issue(name: &str, path: &Path, detail: &str) -> Issue {
     Issue {
-        integration: name.to_string(),
+        source: IssueSource::integration(name),
         severity: Severity::Warning,
         message: format!(
             "{name} generated file has drift: {} ({detail}); \
@@ -3067,7 +3067,7 @@ replace example.com/legacy => ./vendor/legacy
             let issues = drift_issues("cargo-workspace", &p(), Pen::User, &[], remedy());
             assert_eq!(issues.len(), 1);
             let i = &issues[0];
-            assert_eq!(i.integration, "cargo-workspace");
+            assert_eq!(i.source, IssueSource::integration("cargo-workspace"));
             assert_eq!(i.severity, Severity::Warning);
             assert!(!i.safe_to_fix, "USER-HELD must be safe_to_fix=false");
             assert!(i.message.contains("present but unmarked"));
@@ -3149,7 +3149,7 @@ replace example.com/legacy => ./vendor/legacy
         #[test]
         fn missing_issue_shape() {
             let i = missing_issue("go-work", &p());
-            assert_eq!(i.integration, "go-work");
+            assert_eq!(i.source, IssueSource::integration("go-work"));
             assert_eq!(i.severity, Severity::Warning);
             assert!(i.safe_to_fix, "MISSING must be safe_to_fix=true");
             assert!(i.message.contains("managed file missing"));

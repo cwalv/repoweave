@@ -7,6 +7,7 @@
 use crate::manifest::{IntegrationConfig, ProjectName, RepoEntry, RepoPath, WorkweaveConfig};
 use crate::workspace::ContainerKind;
 use std::collections::HashMap;
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 // ---------------------------------------------------------------------------
@@ -99,7 +100,7 @@ impl<'a> IntegrationContext<'a> {
         integration: &str,
     ) -> Result<T, Issue> {
         self.config.settings().map_err(|e| Issue {
-            integration: integration.to_string(),
+            source: IssueSource::integration(integration),
             severity: Severity::Error,
             message: format!(
                 "`[integrations.{integration}]` in rwv.toml does not parse into this \
@@ -388,10 +389,38 @@ impl OwnedPath {
     }
 }
 
+/// Where a finding comes from: rwv's own checks, or one integration's hook.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum IssueSource {
+    Core,
+    Integration(String),
+}
+
+impl IssueSource {
+    pub fn integration(name: &str) -> Self {
+        Self::Integration(name.to_string())
+    }
+
+    /// The name an operator reads and `--json` publishes: `core`, or the
+    /// integration's own.
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Core => "core",
+            Self::Integration(name) => name,
+        }
+    }
+}
+
+impl fmt::Display for IssueSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
 /// A single issue reported by an integration's check or verify hook.
 #[derive(Debug, Clone)]
 pub struct Issue {
-    pub integration: String,
+    pub source: IssueSource,
     pub severity: Severity,
     pub message: String,
     /// What this finding is, independent of how the message words it.
@@ -549,7 +578,7 @@ impl MemberIncompatibility {
             tag = kind.tag(),
         );
         Issue {
-            integration: self.integration,
+            source: IssueSource::integration(&self.integration),
             severity: Severity::Warning,
             message,
             kind,
@@ -857,4 +886,23 @@ pub fn settings_struct_keys<T: serde::de::DeserializeOwned>() -> &'static [&'sta
 /// Whether an integration should run, considering its default and any override.
 pub fn is_enabled(integration: &dyn Integration, config: &IntegrationConfig) -> bool {
     config.enablement().resolve(integration)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn core_and_an_integration_named_core_are_different_sources() {
+        assert_ne!(IssueSource::Core, IssueSource::integration("core"));
+    }
+
+    #[test]
+    fn a_source_prints_as_the_name_an_operator_reads() {
+        assert_eq!(IssueSource::Core.to_string(), "core");
+        assert_eq!(
+            IssueSource::integration("cargo-workspace").to_string(),
+            "cargo-workspace"
+        );
+    }
 }

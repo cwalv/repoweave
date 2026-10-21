@@ -35,7 +35,7 @@ use repoweave::check::{
     WorkingTreeDriftKind, DOCTOR_SCHEMA_URL,
 };
 use repoweave::integration::MemberIncompatibility;
-use repoweave::integration::{Issue, IssueKind, Severity};
+use repoweave::integration::{Issue, IssueKind, IssueSource, Severity};
 use repoweave::manifest::{ProjectName, RepoPath, WorkweaveId, WorkweaveName};
 use repoweave::plugins::PluginRecord;
 use repoweave::vcs::ResolvedRevisionId;
@@ -162,14 +162,14 @@ fn resolution() -> Resolution {
 fn issues() -> Vec<Issue> {
     vec![
         Issue {
-            integration: "static-files".into(),
+            source: IssueSource::integration("static-files"),
             severity: Severity::Warning,
             message: "projects/proj/CLAUDE.md is declared but not surfaced".into(),
             kind: IssueKind::Surfacing,
             safe_to_fix: true,
         },
         Issue {
-            integration: "go-work".into(),
+            source: IssueSource::integration("go-work"),
             severity: Severity::Error,
             message: "member-incompatibility: go.work sets `go` to `1.21`".into(),
             kind: IssueKind::MemberIncompatibility(Box::new(MemberIncompatibility::new(
@@ -391,5 +391,27 @@ fn an_unimplemented_keyword_is_reported() {
             .iter()
             .any(|e| e.contains("unsupported schema keyword `pattern`")),
         "an unimplemented keyword must be reported, got {errors:?}"
+    );
+}
+
+/// `--json` publishes a finding's source as the string it always has: `core`
+/// for rwv's own, the integration's name for an integration's.
+#[test]
+fn an_issue_publishes_its_source_by_name() {
+    let issue = |source| Issue {
+        source,
+        severity: Severity::Warning,
+        message: "m".to_owned(),
+        kind: IssueKind::CoreFinding,
+        safe_to_fix: false,
+    };
+
+    let wire =
+        |issue| serde_json::to_value(repoweave::check::IssueOutput::from_issue(issue)).unwrap();
+
+    assert_eq!(wire(issue(IssueSource::Core))["integration"], "core");
+    assert_eq!(
+        wire(issue(IssueSource::integration("go-work")))["integration"],
+        "go-work"
     );
 }

@@ -1,6 +1,6 @@
 use crate::integration::{
-    HookOutcome, Integration, IntegrationContext, Issue, IssueKind, OwnedPath, Severity,
-    SurfacedFile,
+    HookOutcome, Integration, IntegrationContext, Issue, IssueKind, IssueSource, OwnedPath,
+    Severity, SurfacedFile,
 };
 use crate::integrations::merge::{
     drift_issues, holds_owned_region, keypath, merge_activate, missing_issue,
@@ -196,7 +196,7 @@ impl Integration for NpmWorkspaces {
         let mut issues = Vec::new();
         if which::which("npm").is_err() {
             issues.push(Issue {
-                integration: self.name().to_string(),
+                source: IssueSource::integration(self.name()),
                 severity: Severity::Warning,
                 message: "npm is not on PATH".to_string(),
                 kind: IssueKind::ToolMissing,

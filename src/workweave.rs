@@ -3332,7 +3332,7 @@ fn delete_workweave_inner_at(
         for issue in crate::activate::strip_project_regions(&project_checkout, &manifest) {
             eprintln!(
                 "rwv workweave delete: warning: {}: {}",
-                issue.integration, issue.message
+                issue.source, issue.message
             );
         }
     }
