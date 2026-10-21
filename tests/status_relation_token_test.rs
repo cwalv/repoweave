@@ -22,28 +22,10 @@ fn commit_file(repo: &Path, name: &str) -> String {
     common::git_in(repo, &["rev-parse", "HEAD"])
 }
 
-fn enum_tokens(schema: &Value, out: &mut Vec<String>) {
-    match schema {
-        Value::Object(map) => {
-            for (key, value) in map {
-                match (key.as_str(), value) {
-                    ("enum", Value::Array(tokens)) => {
-                        out.extend(tokens.iter().filter_map(Value::as_str).map(str::to_owned));
-                    }
-                    _ => enum_tokens(value, out),
-                }
-            }
-        }
-        Value::Array(items) => items.iter().for_each(|item| enum_tokens(item, out)),
-        _ => {}
-    }
-}
-
 #[test]
 fn every_variant_displays_as_the_token_it_serializes_to() {
     let schema = serde_json::to_value(schemars::schema_for!(LockRelation)).unwrap();
-    let mut tokens = Vec::new();
-    enum_tokens(&schema, &mut tokens);
+    let tokens = common::json_schema::enum_member_tokens(&schema);
     assert!(
         tokens.len() > 1,
         "the schema lists the variants as enum members: {schema:#}"

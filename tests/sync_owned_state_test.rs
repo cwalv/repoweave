@@ -621,7 +621,7 @@ fn sync_json_advisories_carries_the_materialize_remedy_when_a_member_manifest_ar
         "expected exactly one advisory: {envelope}"
     );
     let advisory = &advisories[0];
-    assert_eq!(advisory["kind"], "derived_state_stale");
+    assert_eq!(advisory["kind"], "derived-state-stale");
     assert_eq!(advisory["remedy"], "rwv materialize");
     assert_eq!(
         advisory["inputs"],
@@ -685,7 +685,7 @@ fn sync_ndjson_carries_no_advisory_even_when_serial_json_would() {
         );
         assert_ne!(
             parsed.get("kind").and_then(serde_json::Value::as_str),
-            Some("derived_state_stale"),
+            Some("derived-state-stale"),
             "NDJSON has no per-line advisory record shape: {line}"
         );
     }

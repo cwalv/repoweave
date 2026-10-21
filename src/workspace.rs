@@ -1960,7 +1960,7 @@ pub struct AdvisoryOutput {
 /// Closed vocabulary for [`AdvisoryOutput::kind`]. Adding a member is
 /// additive — existing consumers keep matching the members they know.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "kebab-case")]
 pub enum AdvisoryKindOutput {
     /// Generated ecosystem state may no longer agree with the inputs it was
     /// derived from.

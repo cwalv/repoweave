@@ -173,7 +173,7 @@ fn an_input_that_moved_makes_the_generation_stale_on_both_surfaces() {
         1,
         "one advisory, one stale generation: {found:?}"
     );
-    assert_eq!(found[0]["kind"], "derived_state_stale");
+    assert_eq!(found[0]["kind"], "derived-state-stale");
     assert_eq!(found[0]["remedy"], "rwv materialize");
     assert_eq!(
         found[0]["inputs"],
@@ -452,7 +452,7 @@ fn a_path_dependency_into_a_non_member_directory_fires_the_staleness_axis() {
         1,
         "the outside manifest's edit is a moved input on the same axis: {found:?}"
     );
-    assert_eq!(found[0]["kind"], "derived_state_stale");
+    assert_eq!(found[0]["kind"], "derived-state-stale");
     assert_eq!(found[0]["remedy"], "rwv materialize");
     let inputs = found[0]["inputs"]
         .as_array()
@@ -611,7 +611,7 @@ fn a_second_producer_between_regenerate_and_stamp_is_refused() {
     // stale against the input that moved, until a rerun earns the record.
     let found = advisories(&ws);
     assert_eq!(found.len(), 1, "{found:?}");
-    assert_eq!(found[0]["kind"], "derived_state_stale");
+    assert_eq!(found[0]["kind"], "derived-state-stale");
     assert!(
         found[0]["inputs"]
             .as_array()
@@ -750,7 +750,7 @@ fn a_producer_writing_while_the_generator_runs_is_refused_by_the_verb() {
 
     let found = advisories(&ws);
     assert_eq!(found.len(), 1, "{found:?}");
-    assert_eq!(found[0]["kind"], "derived_state_stale");
+    assert_eq!(found[0]["kind"], "derived-state-stale");
     assert!(
         found[0]["inputs"]
             .as_array()
@@ -1001,7 +1001,7 @@ fn a_member_manifest_is_not_a_recorded_input() {
         1,
         "the lock is an input and it moved: {found:?}"
     );
-    assert_eq!(found[0]["kind"], "derived_state_stale");
+    assert_eq!(found[0]["kind"], "derived-state-stale");
     assert_eq!(
         found[0]["inputs"],
         serde_json::json!(["projects/app/rwv.lock"]),

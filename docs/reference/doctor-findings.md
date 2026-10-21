@@ -1629,9 +1629,10 @@ from current inputs, and the next generation rewrites the entry in the attested
 shape.
 
 On `--json` this finding also appears in the `advisories` array, in the same
-`{kind, remedy, inputs}` shape `rwv sync --json` emits, so an agent branches on
-one vocabulary rather than two. `inputs` names the paths that moved, and is
-empty exactly when the entry records no inputs to compare.
+`{kind, remedy, inputs}` shape `rwv sync --json` emits, with `kind` spelled
+`derived-state-stale`, so an agent branches on one vocabulary rather than two.
+`inputs` names the paths that moved, and is empty exactly when the entry
+records no inputs to compare.
 
 **What to do:** run `rwv materialize`. If the generated file also holds content
 rwv never accepted, materialize refuses first and names the two consents — see

@@ -564,3 +564,28 @@ pub fn census(schema: &Value) -> Census {
     }
     Census { seen, unknown }
 }
+
+/// Every string member of every `enum` in `schema`: the tokens a fieldless
+/// enum's generated schema declares, whichever of schemars' `oneOf` shapes the
+/// variants' doc comments gave it.
+pub fn enum_member_tokens(schema: &Value) -> BTreeSet<String> {
+    fn walk(node: &Value, out: &mut BTreeSet<String>) {
+        match node {
+            Value::Object(map) => {
+                for (key, value) in map {
+                    match (key.as_str(), value) {
+                        ("enum", Value::Array(members)) => {
+                            out.extend(members.iter().filter_map(Value::as_str).map(str::to_owned));
+                        }
+                        _ => walk(value, out),
+                    }
+                }
+            }
+            Value::Array(items) => items.iter().for_each(|item| walk(item, out)),
+            _ => {}
+        }
+    }
+    let mut out = BTreeSet::new();
+    walk(schema, &mut out);
+    out
+}

@@ -314,13 +314,7 @@ fn refusal_tokens() -> BTreeSet<String> {
 }
 
 /// The op names `ConflictOp` puts on the wire, read from the declaration that
-/// serializes them rather than from the `Display` impl that spells them a
-/// second time.
-///
-/// Reading `Display` would be reading the wrong producer: a `#[serde(rename)]`
-/// moves the wire token and leaves the `Display` arm untouched. The two are
-/// compared in [`an_op_name_is_not_also_a_condition_name`], which is what makes
-/// the second spelling safe to keep.
+/// serializes them.
 fn conflict_op_tokens() -> BTreeSet<String> {
     serde_enum_tokens(&source("vcs.rs"), "pub enum ConflictOp {")
 }
@@ -496,29 +490,25 @@ fn the_declaration_walk_reads_the_same_tokens_on_a_crlf_checkout() {
 /// condition minted as `merge` would make `rwv explain merge` owe an answer
 /// that names the wrong kind of thing.
 ///
-/// The count and the `Display` arms are what keep this from passing vacuously.
-/// A parser that stopped reading the declaration would assert disjointness over
-/// nothing, and a `#[serde(rename)]` that moved a wire token would leave the
-/// second spelling behind — the failure mode that put an op name in the VCS
-/// register once, read off `Display` by a walk that had no business there.
+/// The committed schema is what keeps this from passing vacuously. A parser
+/// that stopped reading the declaration would assert disjointness over nothing,
+/// and the schema is generated from the type, so it is a second reading the
+/// walk must agree with. `Display` is not read: it is the serialized token by
+/// construction, and `tests/display_is_wire_token_test.rs` holds it there.
 #[test]
 fn an_op_name_is_not_also_a_condition_name() {
-    let vcs = source("vcs.rs");
     let ops = conflict_op_tokens();
-    let display = "impl std::fmt::Display for ConflictOp {";
-    let spelled = arm_tokens(&vcs, display);
-    let arms = arm_count(&vcs, display);
-    assert_eq!(
-        ops.len(),
-        arms,
-        "ConflictOp declares {} serialized op names against {arms} `Display` arms; one \
-         producer moved without the other, or the declaration walk has gone blind:\n{ops:#?}",
-        ops.len()
+    let declared = kebab_vocabularies()
+        .remove("ConflictOp")
+        .unwrap_or_default();
+    assert!(
+        !declared.is_empty(),
+        "ConflictOp's schema yielded no tokens"
     );
     assert_eq!(
-        ops, spelled,
-        "ConflictOp's wire spelling and its `Display` spelling have diverged, so a caller \
-         composing a message from `Display` names an op the wire does not"
+        ops, declared,
+        "ConflictOp's declaration walk and its committed schema disagree: the walk has gone \
+         blind, or the artifact is stale"
     );
 
     let conditions: BTreeSet<String> = registers().values().flatten().cloned().collect();
@@ -725,8 +715,8 @@ fn every_published_token_is_servable_or_a_recorded_exception() {
 /// unfiltered when every one of its members happens to be one word (`ok`,
 /// `failed`) — snake_case and kebab-case coincide until a name needs a
 /// separator. What this excludes is a literal underscore surviving into a
-/// token (`AdvisoryKindOutput`'s `derived_state_stale`), the same character
-/// class `arm_tokens` already holds every hand-parsed register to.
+/// token, the same character class `arm_tokens` already holds every
+/// hand-parsed register to.
 fn is_kebab_token(s: &str) -> bool {
     !s.is_empty()
         && s.chars()
@@ -852,8 +842,8 @@ fn kebab_vocabularies() -> BTreeMap<String, BTreeSet<String>> {
 /// The schema `definitions` names this file already holds to the
 /// disjointness property by another route: the four condition registers'
 /// wire mirrors, plus `ConflictOp`, which
-/// [`an_op_name_is_not_also_a_condition_name`] already checks with its own
-/// arm-count and `Display`-agreement pins — a stronger shape than the generic
+/// [`an_op_name_is_not_also_a_condition_name`] already checks, reading its
+/// source declaration against the schema — a stronger shape than the generic
 /// walk below has any way to give it. `RefusalKind` earns no entry here
 /// because it is not a wire type; nothing in `docs/reference/schemas/`
 /// declares it.
@@ -872,7 +862,7 @@ const ALREADY_WALKED: &[&str] = &[
 /// sub-kinds and missed four vocabularies outright; this file's own walk is
 /// the source of truth for the number below, and a mismatch here means the
 /// walk moved, not that the constant needs editing to match.
-const UNWALKED_KEBAB_CENSUS: (usize, usize) = (29, 116);
+const UNWALKED_KEBAB_CENSUS: (usize, usize) = (30, 117);
 
 /// A residue sub-kind token deliberately mirrored from `RefusalKind`, and the
 /// vocabulary that mirrors it — the D1 sentence again, one level deeper than
@@ -892,12 +882,15 @@ const UNWALKED_KEBAB_CENSUS: (usize, usize) = (29, 116);
 /// sub-kind is not part of `ViolationOutput`'s own `kind`, so `registers()`
 /// never sees it, and only `RefusalKind` half of each pair does.
 ///
-/// One pair mirrors an integration issue kind instead: `SkipReason`'s
+/// Two pairs mirror an integration issue kind instead. `SkipReason`'s
 /// `tool-missing` is the reason an install hook was skipped, and that reason
 /// is the `tool-missing` finding — one condition, read off `rwv update --json`
-/// or `rwv fetch --json` as off `rwv doctor --json`.
+/// or `rwv fetch --json` as off `rwv doctor --json`. `AdvisoryKindOutput`'s
+/// `derived-state-stale` is the advisory `rwv sync --json` emits for the
+/// condition `rwv doctor` reports as the `derived-state-stale` finding.
 const INTENDED_SUBKIND_REUSE: &[(&str, &str)] = &[
     ("tool-missing", "SkipReason"),
+    ("derived-state-stale", "AdvisoryKindOutput"),
     ("unmigrated-ephemeral-branch", "BranchDisciplineKind"),
     ("standalone-in-workweave", "CloneTopologyKind"),
     ("dangling-primary", "MarkerDefect"),

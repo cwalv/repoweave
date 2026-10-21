@@ -82,6 +82,7 @@
 use crate::durable_file::CreateNewError;
 use crate::manifest::ProjectName;
 use crate::refusal::RefusalKind;
+use crate::wire_token::{parse_wire_token, wire_token};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -165,8 +166,8 @@ pub fn resume_command(verb: OpVerb) -> String {
 /// `merge` is intentionally not offered (state-space shrink). See
 /// `docs/explanation/joints/sync-semantics.md` §"Why no `merge` strategy" for
 /// the justification test and the origin-less weave-to-weave escape hatch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-#[clap(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "kebab-case")]
 pub enum SyncStrategy {
     /// Fast-forward only; bail if not possible.
     Ff,
@@ -176,10 +177,7 @@ pub enum SyncStrategy {
 
 impl fmt::Display for SyncStrategy {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Ff => "ff",
-            Self::Rebase => "rebase",
-        })
+        f.write_str(&wire_token(self))
     }
 }
 
@@ -187,19 +185,20 @@ impl FromStr for SyncStrategy {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "ff" => Ok(Self::Ff),
-            "rebase" => Ok(Self::Rebase),
-            // `merge` was removed (state-space shrink). A pre-removal in-flight
-            // op recorded with strategy=merge resolves here as an invalid
-            // op-state strategy. No migration path.
-            other => {
-                anyhow::bail!(
-                    "unknown sync strategy `{other}` in op-state; expected ff or rebase — \
-                     run `rwv abort` and re-invoke"
-                )
-            }
-        }
+        // `merge` was removed (state-space shrink). A pre-removal in-flight
+        // op recorded with strategy=merge resolves here as an invalid
+        // op-state strategy. No migration path.
+        parse_wire_token(s).ok_or_else(|| {
+            let accepted: Vec<String> = <Self as clap::ValueEnum>::value_variants()
+                .iter()
+                .map(ToString::to_string)
+                .collect();
+            anyhow::anyhow!(
+                "unknown sync strategy `{s}` in op-state; expected {} — \
+                 run `rwv abort` and re-invoke",
+                accepted.join(" or ")
+            )
+        })
     }
 }
 
@@ -219,10 +218,7 @@ pub enum OpVerb {
 
 impl std::fmt::Display for OpVerb {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Sync => f.write_str("sync"),
-            Self::SyncTo => f.write_str("sync-to"),
-        }
+        f.write_str(&wire_token(self))
     }
 }
 
@@ -257,12 +253,7 @@ pub enum OpPhase {
 
 impl std::fmt::Display for OpPhase {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Replay => f.write_str("replay"),
-            Self::Relock => f.write_str("relock"),
-            Self::AdvanceTarget => f.write_str("advance-target"),
-            Self::Retire => f.write_str("retire"),
-        }
+        f.write_str(&wire_token(self))
     }
 }
 

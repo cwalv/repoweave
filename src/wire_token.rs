@@ -1,5 +1,6 @@
-//! The one string a closed enum serializes to.
+//! The one string a closed enum is written to and read from.
 
+use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 /// The token a fieldless enum serializes to, for a `Display` that must be the
@@ -13,4 +14,10 @@ pub(crate) fn wire_token<T: Serialize>(value: &T) -> String {
         Ok(serde_json::Value::String(token)) => token,
         other => panic!("a fieldless enum must serialize to a string, got {other:?}"),
     }
+}
+
+/// The variant a token deserializes to, for a `FromStr` that must read exactly
+/// what [`wire_token`] writes.
+pub(crate) fn parse_wire_token<T: DeserializeOwned>(token: &str) -> Option<T> {
+    serde_json::from_value(serde_json::Value::String(token.to_owned())).ok()
 }

@@ -294,7 +294,7 @@ Schema:
           "description": "Generated ecosystem state may no longer agree with the inputs it was derived from.",
           "type": "string",
           "enum": [
-            "derived_state_stale"
+            "derived-state-stale"
           ]
         }
       ]

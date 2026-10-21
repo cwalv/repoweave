@@ -1,13 +1,11 @@
-//! Pins the mid-op label vocabulary (`rebase`, `merge`, `cherry-pick`) to
-//! `ConflictOp` in `src/vcs.rs`.
-//!
-//! sync used to carry its own table mapping each variant to its hyphen
-//! spelling. Two tables agree only until someone edits one of them, and the
-//! one in sync is the one an operator reads in a `mid-<op>` refusal.
+//! `src/sync.rs` composes a `mid-<op>` refusal from `ConflictOp`'s `Display`
+//! and spells none of the mid-op labels (`rebase`, `merge`, `cherry-pick`)
+//! itself. Two tables agree only until someone edits one of them, and the one
+//! in sync is the one an operator reads.
 //!
 //! Neither side of the comparison is typed into this file: the labels come out
-//! of serializing the enum, whose kebab-case wire spelling is the same
-//! vocabulary the display text uses, and the corpus is `src/` itself.
+//! of serializing the enum, whose kebab-case wire spelling is the vocabulary
+//! the display text uses, and the corpus is `src/` itself.
 
 mod common;
 
@@ -58,32 +56,19 @@ fn lines_quoting_a_label(lines: &[SourceLine], file: &str) -> Vec<SourceLine> {
 }
 
 #[test]
-fn the_display_label_is_the_wire_spelling() {
-    let ops = all_conflict_ops();
-    assert!(!ops.is_empty(), "no variants to check");
-    for op in ops {
-        assert_eq!(
-            op.to_string(),
-            wire_label(op),
-            "ConflictOp's display label and its serialized form are one \
-             vocabulary; they must not drift apart"
-        );
-    }
-}
-
-#[test]
 fn sync_does_not_re_mint_the_conflict_op_labels() {
     let lines = production_lines();
 
-    let minted = lines_quoting_a_label(&lines, "vcs.rs");
-    assert!(
-        minted.len() >= all_conflict_ops().len(),
-        "expected every label quoted at its mint in src/vcs.rs, found {} of {} \
-         — the needles no longer match the source shape, so emptiness \
-         elsewhere would prove nothing. Found: {minted:#?}",
-        minted.len(),
-        all_conflict_ops().len()
-    );
+    let spelled_to_git = lines_quoting_a_label(&lines, "git.rs");
+    for op in all_conflict_ops() {
+        let needle = format!("\"{}\"", wire_label(op));
+        assert!(
+            spelled_to_git.iter().any(|l| l.text.contains(&needle)),
+            "expected {needle} quoted where src/git.rs names the git subcommand — the \
+             needles no longer match the source shape, so emptiness elsewhere would \
+             prove nothing"
+        );
+    }
 
     assert!(
         lines

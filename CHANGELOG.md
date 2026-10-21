@@ -6,6 +6,12 @@ claim that nothing changed in them.
 
 ## Unreleased
 
+### Breaking: the stale-generation advisory's `kind` is `derived-state-stale`
+
+An entry of the `advisories` array in `rwv sync --json` and `rwv doctor --json`
+has `kind` `derived-state-stale`, the name of the doctor finding it repeats; it
+was `derived_state_stale`.
+
 ### Breaking: `rwv.toml` refuses a `version` that reads as a tag or commit id
 
 `version` declares the branch a member tracks. A value that reads as a release
