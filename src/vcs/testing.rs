@@ -704,7 +704,7 @@ impl Vcs for FakeVcs {
         unsupported("birth_ref_at_head")
     }
 
-    fn push_ref(&self, _repo: &Path, _r: &PublishRef, _force: bool) -> Result<(), VcsError> {
+    fn push_ref(&self, _repo: &Path, _r: &PublishRef, _force: Force) -> Result<(), VcsError> {
         unsupported("push_ref")
     }
 

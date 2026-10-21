@@ -11,7 +11,7 @@ use crate::manifest::{
 use crate::parallel::{run_in_parallel, Reporter};
 use crate::refusal::RefusalKind;
 use crate::selector::RepoFilter;
-use crate::vcs::{project_vcs, vcs_for, HeadAttachment, PublishRef, RawRevisionId, Vcs};
+use crate::vcs::{project_vcs, vcs_for, Force, HeadAttachment, PublishRef, RawRevisionId, Vcs};
 use crate::workspace::{project_dir, project_rel_path, Checkout, Resolution, WorkspaceContext};
 use anyhow::Context;
 use schemars::JsonSchema;
@@ -120,6 +120,14 @@ pub struct PushOutcomeNdjsonRecord<'a> {
     pub outcome: &'a PushOutcomeOutput,
 }
 
+/// What `rwv push` does once its preconditions pass.
+#[derive(Debug, Clone, Copy)]
+pub enum PushMode {
+    /// Print the plan and push nothing.
+    DryRun,
+    Publish(Force),
+}
+
 /// Run `rwv push` for the current workspace context.
 ///
 /// Refuses if invoked from a workweave (workweave branches shouldn't leak
@@ -134,8 +142,8 @@ pub struct PushOutcomeNdjsonRecord<'a> {
 /// selectors are used verbatim — selectors override the default and can
 /// include non-writable roles.
 ///
-/// `force` propagates to every git push in the operation. `dry_run` prints
-/// the plan without executing any pushes.
+/// `mode` is a dry run, which prints the plan without executing any pushes,
+/// or a publish whose [`Force`] applies to every git push in the operation.
 ///
 /// `json` enables structured output. Under `json && jobs == 1`, the result
 /// is a pretty-printed [`PushJsonOutput`] envelope. Under `json && jobs > 1`,
@@ -150,8 +158,7 @@ pub struct PushOutcomeNdjsonRecord<'a> {
 /// runs serially as the last step, regardless of `jobs`.
 pub fn run_push(
     ctx: &WorkspaceContext,
-    dry_run: bool,
-    force: bool,
+    mode: PushMode,
     filter: &RepoFilter,
     jobs: usize,
     json: bool,
@@ -436,31 +443,34 @@ pub fn run_push(
     }
 
     // 5. Dry-run: print the plan.
-    if dry_run {
-        println!("rwv push (dry-run):");
-        for item in &plan {
-            let vcs = vcs_for(item.vcs_type);
+    let force = match mode {
+        PushMode::Publish(force) => force,
+        PushMode::DryRun => {
+            println!("rwv push (dry-run):");
+            for item in &plan {
+                let vcs = vcs_for(item.vcs_type);
+                println!(
+                    "  {}: would push {} -> {}",
+                    item.repo_path.as_str(),
+                    item.branch,
+                    vcs.conventional_remote_name(),
+                );
+            }
+            for (repo_path, _) in &default_skipped_repos {
+                println!(
+                    "  {}: skipped (non-writable role; pass --repo or --role to include)",
+                    repo_path.as_str(),
+                );
+            }
             println!(
-                "  {}: would push {} -> {}",
-                item.repo_path.as_str(),
-                item.branch,
-                vcs.conventional_remote_name(),
+                "  projects/{}: would push {} -> {} (last)",
+                project_name,
+                project_current,
+                project_vcs.conventional_remote_name(),
             );
+            return Ok(());
         }
-        for (repo_path, _) in &default_skipped_repos {
-            println!(
-                "  {}: skipped (non-writable role; pass --repo or --role to include)",
-                repo_path.as_str(),
-            );
-        }
-        println!(
-            "  projects/{}: would push {} -> {} (last)",
-            project_name,
-            project_current,
-            project_vcs.conventional_remote_name(),
-        );
-        return Ok(());
-    }
+    };
 
     // 6. Manifest-repo push loop. Attempt all and collect — same shape as
     //    update.rs. Fans out over `jobs` workers when `jobs > 1`; per-line
@@ -789,7 +799,7 @@ fn push_one(
     item: &PushPlanItem,
     primary_root: &Path,
     reporter: &Reporter<'_>,
-    force: bool,
+    force: Force,
 ) -> PushOutcome {
     let repo_dir = primary_root.join(item.repo_path.as_path());
     reporter.out(&format!(

@@ -5,7 +5,7 @@
 
 use crate::cli::consent::{
     AdoptDetachedConsent, DetachConsent, DiscardLocalCommitsConsent, DiscardUnmergedConsent,
-    ReattachConsent,
+    ForcePushConsent, ReattachConsent,
 };
 use crate::manifest::{ProjectName, WorkweaveName};
 use crate::op_state::SavepointKey;
@@ -1802,6 +1802,15 @@ impl fmt::Display for HeadAttachment {
 // name two categorically different consequences — losing the name your
 // commits hang off, versus moving which name they hang off — so they are
 // two tokens, not one `ChangeAttachmentConsent`.
+
+/// Whether a push may replace a remote tip that is not an ancestor of the one
+/// it pushes.
+#[derive(Debug, Clone, Copy)]
+pub enum Force {
+    FfOnly,
+    /// Discards the remote history the pushed tip does not contain.
+    Overwrite(ForcePushConsent),
+}
 
 /// A savepoint that has actually been written.
 ///
@@ -3614,7 +3623,7 @@ pub trait Vcs: Send + Sync {
     /// at one site in `push.rs` instead of being implicit inside the VCS
     /// impl. What that site passes is still policy; this signature only
     /// makes the decision visible.
-    fn push_ref(&self, repo: &Path, r: &PublishRef, force: bool) -> Result<(), VcsError>;
+    fn push_ref(&self, repo: &Path, r: &PublishRef, force: Force) -> Result<(), VcsError>;
 
     /// The remote's declared primary branch, or `None` when it is unset or
     /// malformed. **No fallback** — see [`RemoteDefaultBranch`].

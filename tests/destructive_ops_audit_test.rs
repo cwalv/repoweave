@@ -306,9 +306,9 @@ const ALLOWLIST: &[Allowed] = &[
         pattern: "push(\"--force\")",
         count: 1,
         callers: &[],
-        justification: "push_ref: force only when the operator passed \
-            rwv push --force; lock-freshness and branch preconditions run \
-            first. The branch-model form takes the ref to publish as a \
+        justification: "push_ref: force only under Force::Overwrite, whose \
+            ForcePushConsent is minted only from rwv push --force; \
+            lock-freshness and branch preconditions run first. The branch-model form takes the ref to publish as a \
             parameter (PublishRef) instead of reading whatever branch the \
             checkout happens to be on, so the choice belongs to the caller \
             rather than to the VCS impl, and no caller can publish a ref it \

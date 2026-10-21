@@ -1220,7 +1220,15 @@ pub fn run() -> anyhow::Result<()> {
                 Some(n) => crate::parallel::resolve_jobs(Some(n)),
                 None => 1,
             };
-            push::run_push(&ctx, dry_run, force, &filter, jobs, json)?;
+            let mode = if dry_run {
+                push::PushMode::DryRun
+            } else {
+                push::PushMode::Publish(
+                    consent::ForcePushConsent::from_flag(force)
+                        .map_or(crate::vcs::Force::FfOnly, crate::vcs::Force::Overwrite),
+                )
+            };
+            push::run_push(&ctx, mode, &filter, jobs, json)?;
         }
         Some(Commands::Update {
             dirty,

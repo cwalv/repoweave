@@ -123,6 +123,30 @@ impl DiscardUnmergedConsent {
     }
 }
 
+/// Proof that the operator consented to `rwv push` replacing a remote tip
+/// the pushed one does not descend from, discarding the remote history it
+/// does not contain. Minted from `--force`.
+///
+/// `Copy`: see [`DetachConsent`]'s doc comment.
+#[derive(Debug, Clone, Copy)]
+pub struct ForcePushConsent(());
+
+impl ForcePushConsent {
+    /// Mint unconditionally. `#[cfg(test)]`: see
+    /// [`DetachConsent::granted`]'s doc comment.
+    #[cfg(test)]
+    pub(crate) fn granted() -> Self {
+        Self(())
+    }
+
+    /// Mint from the parsed `--force` value: `Some` iff the operator passed
+    /// it. `pub(in crate::cli)`: see [`DetachConsent::from_flag`]'s doc
+    /// comment.
+    pub(in crate::cli) fn from_flag(force: bool) -> Option<Self> {
+        force.then_some(Self(()))
+    }
+}
+
 /// Proof that the operator consented to `rwv sync` / `rwv sync-to` rewinding
 /// the project repo past commits the source does not carry. Minted from
 /// `--discard-local-commits` on a fresh op, and on `--continue` from the

@@ -5,11 +5,12 @@ use crate::path_spelling::resolve;
 use crate::registry::CloneUrl;
 use crate::vcs::{
     CommitId, CommitSummary, ConflictOp, ContentIdentity, DerivedContentPolicy,
-    DerivedContentResolution, DiscardOutcome, ForeignTipPolicy, HeadAttachment, HeadObservation,
-    LocalRefName, MidOperation, PreAbortRef, PublishRef, RawRefName, RawRevisionId,
-    RecordedSubmodule, RefOrigin, RemoteBranchCopies, RemoteDefaultBranch, RemoteRef,
-    ReplayExclusionState, ResolvedRevisionId, SavepointListing, SubmoduleBirth, TrackedFile,
-    TrackedFileKind, UniqueDiff, Vcs, VcsError, VerifiedRestoreOutcome, WorkspacePopulation,
+    DerivedContentResolution, DiscardOutcome, Force, ForeignTipPolicy, HeadAttachment,
+    HeadObservation, LocalRefName, MidOperation, PreAbortRef, PublishRef, RawRefName,
+    RawRevisionId, RecordedSubmodule, RefOrigin, RemoteBranchCopies, RemoteDefaultBranch,
+    RemoteRef, ReplayExclusionState, ResolvedRevisionId, SavepointListing, SubmoduleBirth,
+    TrackedFile, TrackedFileKind, UniqueDiff, Vcs, VcsError, VerifiedRestoreOutcome,
+    WorkspacePopulation,
 };
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
@@ -2865,9 +2866,9 @@ impl Vcs for GitVcs {
         Ok(())
     }
 
-    fn push_ref(&self, repo: &Path, r: &PublishRef, force: bool) -> Result<(), VcsError> {
+    fn push_ref(&self, repo: &Path, r: &PublishRef, force: Force) -> Result<(), VcsError> {
         let mut args: Vec<&str> = vec!["push"];
-        if force {
+        if let Force::Overwrite(_) = force {
             args.push("--force");
         }
         args.push(GIT_DEFAULT_REMOTE_NAME);
@@ -3952,7 +3953,8 @@ mod branch_model_tests {
 
     use super::*;
     use crate::cli::consent::{
-        DetachConsent, DiscardLocalCommitsConsent, DiscardUnmergedConsent, ReattachConsent,
+        DetachConsent, DiscardLocalCommitsConsent, DiscardUnmergedConsent, ForcePushConsent,
+        ReattachConsent,
     };
     use crate::op_state::OpId;
     use crate::vcs::{
@@ -4955,7 +4957,7 @@ mod branch_model_tests {
         let local_tip = commit(&clone, "local");
 
         let err = GitVcs
-            .push_ref(&clone, &publish_ref_of(&clone), false)
+            .push_ref(&clone, &publish_ref_of(&clone), Force::FfOnly)
             .expect_err("a non-fast-forward push must refuse without force");
         assert_eq!(err.kind(), VcsErrorKind::CommandFailed);
         assert_eq!(
@@ -4965,7 +4967,11 @@ mod branch_model_tests {
         );
 
         GitVcs
-            .push_ref(&clone, &publish_ref_of(&clone), true)
+            .push_ref(
+                &clone,
+                &publish_ref_of(&clone),
+                Force::Overwrite(ForcePushConsent::granted()),
+            )
             .expect("force should overwrite the divergent remote tip");
         assert_eq!(
             git_bare(&bare, &["rev-parse", "main"]),
@@ -4980,7 +4986,7 @@ mod branch_model_tests {
         git(&clone, &["tag", "main"]);
 
         GitVcs
-            .push_ref(&clone, &publish_ref_of(&clone), false)
+            .push_ref(&clone, &publish_ref_of(&clone), Force::FfOnly)
             .expect("a tag named like the branch must not make the push ambiguous");
 
         assert_eq!(
@@ -5004,7 +5010,7 @@ mod branch_model_tests {
         let side_tip = commit(&clone, "on-sideshow");
         assert_ne!(main_tip, side_tip, "the two branches must differ");
 
-        GitVcs.push_ref(&clone, &publish, false).unwrap();
+        GitVcs.push_ref(&clone, &publish, Force::FfOnly).unwrap();
 
         assert_eq!(
             git_bare(&bare, &["rev-parse", "main"]),
