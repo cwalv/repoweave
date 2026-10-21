@@ -907,8 +907,8 @@ fn in_place_fetch_from_workweave_materializes_at_primary() {
     );
     let common_dir = common::git_in(&workweave_dest, &["rev-parse", "--git-common-dir"]);
     assert_eq!(
-        std::fs::canonicalize(workweave_dest.join(common_dir)).unwrap(),
-        std::fs::canonicalize(primary_dest.join(".git")).unwrap(),
+        repoweave::path_spelling::resolve(&workweave_dest.join(common_dir)).unwrap(),
+        repoweave::path_spelling::resolve(&primary_dest.join(".git")).unwrap(),
         "the workweave's worktree must share primary's canonical store (clone-topology I1)"
     );
     assert_eq!(

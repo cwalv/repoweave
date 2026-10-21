@@ -820,7 +820,7 @@ fn doctor_reports_a_distinct_marker_unverifiable_finding_per_defect() {
     let doc: serde_json::Value = serde_json::from_str(&stdout)
         .unwrap_or_else(|e| panic!("doctor --json must emit JSON ({e}); got: {stdout}"));
     let defect_tag = |root: &Path| -> String {
-        let canonical = root.canonicalize().unwrap();
+        let canonical = repoweave::path_spelling::resolve(root).unwrap();
         // The wire spelling, because that is what the field carries — a
         // canonicalized root stringified as the host holds it matches only
         // where the two happen to coincide.

@@ -73,7 +73,7 @@ fn build_large_workspace(parent: &Path, n_repos: usize, n_ww: usize) -> PathBuf 
     std::fs::write(root.join("projects/app/rwv.toml"), manifest).unwrap();
 
     // --- Workweaves, each materializing every repo via `git worktree add` ---
-    let primary_canon = root.canonicalize().unwrap();
+    let primary_canon = repoweave::path_spelling::resolve(&root).unwrap();
     for k in 0..n_ww {
         let ww_dir = parent.join(".workweaves").join(format!("app--wk{k}"));
         std::fs::create_dir_all(ww_dir.join("github/acme")).unwrap();

@@ -111,6 +111,18 @@ manifest load like any other malformed key: every verb that reads the manifest
 refuses it, naming the key, the table and the line, and `rwv doctor` reports the
 project as `unparseable-project`. Write `enabled = true` or `enabled = false`.
 
+### Windows: paths carry no `\\?\` prefix, a weave on a network share included
+
+A path rwv resolves on Windows — a weave root, a workweave, a `-C` directory —
+is spelled `C:\…`, or `\\server\share\…` for a weave on a network share or a
+mapped drive, in refusals, error messages, `--json` and `file://` URLs. An error
+message could spell one `\\?\C:\…`, and a weave on a share showed
+`\\?\UNC\server\share\…` in operator text and `//?/UNC/…` on `--json`, minted
+a `file://` URL git could not clone, and handed git a path it refused. A clone
+whose `origin` is recorded as a `\\?\` path now compares equal to the same path
+spelled plain. A path with no plain spelling — longer than 260 characters, or
+naming a reserved device such as `CON` — keeps the prefix.
+
 ### `rwv --version` leads with the release version on every build
 
 A binary built inside a git checkout reported the checkout's `git describe` as

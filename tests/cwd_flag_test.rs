@@ -49,7 +49,7 @@ fn make_minimal_workspace(tmp: &Path, project: &str) -> std::path::PathBuf {
 fn make_workweave(tmp: &Path, ws: &Path, project: &str, name: &str) -> std::path::PathBuf {
     let ww_dir = tmp.join(format!("{project}--{name}"));
     std::fs::create_dir_all(&ww_dir).unwrap();
-    let primary_canon = ws.canonicalize().unwrap();
+    let primary_canon = repoweave::path_spelling::resolve(ws).unwrap();
     let marker = WorkweaveMarker::new(
         primary_canon.clone(),
         ProjectName::new(project).unwrap(),
@@ -70,7 +70,7 @@ fn c_flag_addresses_workweave_from_tmp() {
     let tmp = common::tempdir().unwrap();
     let ws = make_minimal_workspace(tmp.path(), "myproj");
     let ww = make_workweave(tmp.path(), &ws, "myproj", "feature-1");
-    let ww_canon = ww.canonicalize().unwrap();
+    let ww_canon = repoweave::path_spelling::resolve(&ww).unwrap();
 
     // Run from /tmp but address the workweave via -C.
     rwv()
@@ -87,7 +87,7 @@ fn cwd_long_flag_addresses_workweave_from_tmp() {
     let tmp = common::tempdir().unwrap();
     let ws = make_minimal_workspace(tmp.path(), "myproj");
     let ww = make_workweave(tmp.path(), &ws, "myproj", "feature-1");
-    let ww_canon = ww.canonicalize().unwrap();
+    let ww_canon = repoweave::path_spelling::resolve(&ww).unwrap();
 
     rwv()
         .args(["--cwd", &ww.to_string_lossy(), "resolve"])
@@ -102,7 +102,7 @@ fn cwd_long_flag_addresses_workweave_from_tmp() {
 fn c_flag_addresses_primary_workspace() {
     let tmp = common::tempdir().unwrap();
     let ws = make_minimal_workspace(tmp.path(), "myproj");
-    let ws_canon = ws.canonicalize().unwrap();
+    let ws_canon = repoweave::path_spelling::resolve(&ws).unwrap();
 
     rwv()
         .args(["-C", &ws.to_string_lossy(), "resolve"])
@@ -126,7 +126,9 @@ fn c_flag_resolves_from_subdir_inside_workspace() {
         .assert()
         .success()
         // Should print the workspace root (active_path for primary = primary root).
-        .stdout(common::operator_path_stdout(ws.canonicalize().unwrap()));
+        .stdout(common::operator_path_stdout(
+            repoweave::path_spelling::resolve(&ws).unwrap(),
+        ));
 }
 
 // ===========================================================================
@@ -225,7 +227,9 @@ fn c_flag_resolves_from_subdir_inside_workweave() {
         .current_dir(std::env::temp_dir())
         .assert()
         .success()
-        .stdout(common::operator_path_stdout(ww.canonicalize().unwrap()));
+        .stdout(common::operator_path_stdout(
+            repoweave::path_spelling::resolve(&ww).unwrap(),
+        ));
 }
 
 // ===========================================================================

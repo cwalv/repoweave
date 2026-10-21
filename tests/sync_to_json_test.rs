@@ -225,8 +225,8 @@ fn sync_to_retire_json_round_trip() {
         .and_then(Value::as_str)
         .unwrap_or_else(|| panic!("target must be present; got:\n{stdout}"));
     assert_eq!(
-        Path::new(target).canonicalize().ok(),
-        primary.canonicalize().ok(),
+        repoweave::path_spelling::resolve(Path::new(target)).ok(),
+        repoweave::path_spelling::resolve(&primary).ok(),
         "target must name the workspace step 3 advanced; got:\n{stdout}"
     );
 
@@ -753,8 +753,8 @@ fn resumed_sync_to_json_run_reports_the_op_not_the_invocation() {
          primary weave this resume was invoked from"
     );
     assert_eq!(
-        Path::new(&envelope.target).canonicalize().ok(),
-        primary.canonicalize().ok(),
+        repoweave::path_spelling::resolve(Path::new(&envelope.target)).ok(),
+        repoweave::path_spelling::resolve(&primary).ok(),
         "target must be the workspace the op recorded; the request carries none"
     );
     // The record was planted at advance-target and the resume RE-ENTERS
@@ -795,8 +795,8 @@ fn resumed_sync_to_json_run_reports_the_retire_that_did_not_run() {
          not an accident of the fixture"
     );
     assert_eq!(
-        Path::new(&envelope.target).canonicalize().ok(),
-        primary.canonicalize().ok(),
+        repoweave::path_spelling::resolve(Path::new(&envelope.target)).ok(),
+        repoweave::path_spelling::resolve(&primary).ok(),
         "target must be the workspace the op recorded; the request carries none"
     );
 }
@@ -904,10 +904,11 @@ fn sync_to_continue_json_emits_conforming_envelope_after_conflict() {
         "envelope:\n{doc:#}"
     );
     assert_eq!(
-        Path::new(doc["target"].as_str().expect("target is a string"))
-            .canonicalize()
-            .ok(),
-        primary.canonicalize().ok(),
+        repoweave::path_spelling::resolve(Path::new(
+            doc["target"].as_str().expect("target is a string")
+        ))
+        .ok(),
+        repoweave::path_spelling::resolve(&primary).ok(),
     );
     assert_eq!(doc["retired"], false, "envelope:\n{doc:#}");
 }

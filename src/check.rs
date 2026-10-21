@@ -7,6 +7,7 @@ use crate::git::RWV_MERGE_DRIVER_PREFIX;
 use crate::integration::{Issue, IssueKind, IssueSource};
 use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoPath, Role, WorkweaveId};
 use crate::op_state::SavepointKey;
+use crate::path_spelling::resolve;
 use crate::refusal::{refusal, RefusalKind};
 use crate::vcs::{RawRevisionId, ReplayExclusionState, ResolvedRevisionId};
 use crate::workspace::{
@@ -2918,7 +2919,7 @@ fn nested_workweave_findings(ws_root: &Path, dir: &Path) -> Vec<CheckViolation> 
 fn workweave_containers_for_scan(ws_root: &Path) -> Vec<PathBuf> {
     let mut containers: Vec<PathBuf> = Vec::new();
     let push_unique = |p: PathBuf, containers: &mut Vec<PathBuf>| {
-        let canonical = p.canonicalize().unwrap_or(p);
+        let canonical = resolve(&p).unwrap_or(p);
         if !containers.contains(&canonical) {
             containers.push(canonical);
         }
@@ -3169,7 +3170,7 @@ fn scan_registry_reconciliation(vcs: &dyn crate::vcs::Vcs, ws_root: &Path) -> Ve
             let validation = crate::workweave::validate_registry_entry(ws_root, &project, path);
             match validation {
                 crate::workweave::RegistryEntryValidation::Valid => {
-                    let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+                    let canonical = resolve(path).unwrap_or_else(|_| path.clone());
                     recorded_valid_paths.insert((project.as_str().to_string(), canonical));
                 }
                 other => {
@@ -3235,7 +3236,7 @@ fn scan_registry_reconciliation(vcs: &dyn crate::vcs::Vcs, ws_root: &Path) -> Ve
             if unreadable_index_projects.contains(workweave.project.as_str()) {
                 continue;
             }
-            let canonical = dir.canonicalize().unwrap_or_else(|_| dir.clone());
+            let canonical = resolve(&dir).unwrap_or_else(|_| dir.clone());
             let key = (workweave.project.as_str().to_string(), canonical.clone());
             if recorded_valid_paths.contains(&key) {
                 continue;
@@ -3286,9 +3287,7 @@ pub fn fix_unregistered_workweave(
     workweave_name: &str,
     workweave_dir: &Path,
 ) -> anyhow::Result<()> {
-    let canonical = workweave_dir
-        .canonicalize()
-        .unwrap_or_else(|_| workweave_dir.to_path_buf());
+    let canonical = resolve(workweave_dir).unwrap_or_else(|_| workweave_dir.to_path_buf());
     crate::workweave_index::record_workweave(ws_root, project, workweave_name, canonical)
 }
 
@@ -3370,7 +3369,7 @@ fn scan_weave_root_identity(primary_root: &Path, active_path: &Path) -> Vec<Chec
     let mut seen: BTreeSet<PathBuf> = BTreeSet::new();
     let mut violations = Vec::new();
     for root in roots {
-        let canonical = root.canonicalize().unwrap_or_else(|_| root.clone());
+        let canonical = resolve(&root).unwrap_or_else(|_| root.clone());
         if !seen.insert(canonical.clone()) {
             continue;
         }
@@ -3440,7 +3439,7 @@ fn classify_weave_root_identity(primary_root: &Path, root: &Path) -> Option<Chec
         .and_then(|idx| {
             idx.workweaves
                 .into_iter()
-                .find(|(_, path)| path.canonicalize().unwrap_or_else(|_| path.clone()) == *root)
+                .find(|(_, path)| resolve(path).unwrap_or_else(|_| path.clone()) == *root)
         });
 
     match recorded {
@@ -3550,9 +3549,7 @@ pub fn scan_workweave_tree_integrity(
     vcs: &dyn crate::vcs::Vcs,
     ws_root: &Path,
 ) -> Vec<CheckViolation> {
-    let ws_canonical = ws_root
-        .canonicalize()
-        .unwrap_or_else(|_| ws_root.to_path_buf());
+    let ws_canonical = resolve(ws_root).unwrap_or_else(|_| ws_root.to_path_buf());
 
     let mut violations = Vec::new();
 
@@ -3580,7 +3577,7 @@ pub fn scan_workweave_tree_integrity(
             if !path.is_dir() {
                 continue;
             }
-            let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+            let canonical = resolve(&path).unwrap_or_else(|_| path.clone());
             if seen.insert(canonical) {
                 dirs.push(path);
             }
@@ -3750,22 +3747,19 @@ pub fn scan_workweave_tree_integrity(
         marker_entries
             .iter()
             .filter_map(|e| {
-                let canon = e.dir.canonicalize().ok()?;
+                let canon = resolve(&e.dir).ok()?;
                 Some((canon, (e.project.clone(), e.parent.clone())))
             })
             .collect();
 
     for entry in &marker_entries {
-        let dir_canon = match entry.dir.canonicalize() {
+        let dir_canon = match resolve(&entry.dir) {
             Ok(c) => c,
             Err(_) => continue,
         };
 
         // (a) parent == self
-        let parent_canon = entry
-            .parent
-            .canonicalize()
-            .unwrap_or_else(|_| entry.parent.clone());
+        let parent_canon = resolve(&entry.parent).unwrap_or_else(|_| entry.parent.clone());
         if parent_canon == dir_canon {
             violations.push(CheckViolation::WorkweaveTreeIntegrity {
                 workweave_dir: entry.dir.clone(),
@@ -3820,9 +3814,7 @@ pub fn scan_workweave_tree_integrity(
                     break;
                 }
                 // Keep climbing.
-                current_parent = next_parent
-                    .canonicalize()
-                    .unwrap_or_else(|_| next_parent.clone());
+                current_parent = resolve(next_parent).unwrap_or_else(|_| next_parent.clone());
             } else {
                 // Parent is not in our lookup (not one of the dirs we
                 // scanned). It may be a nested workweave's own child
@@ -4249,13 +4241,12 @@ pub fn scan_clone_topology(
         // Expected canonical store path: `<canonical_slot>/.git`. Compare via
         // canonicalize to absorb any trailing-slash / symlink differences.
         let expected_store = crate::git::store_path_in(&canonical_slot);
-        let expected_store_canon = expected_store
-            .canonicalize()
-            .unwrap_or_else(|_| expected_store.clone());
+        let expected_store_canon =
+            resolve(&expected_store).unwrap_or_else(|_| expected_store.clone());
 
         let canonical_store_canon: Option<PathBuf> = canonical_store_raw
             .as_ref()
-            .map(|p| p.canonicalize().unwrap_or_else(|_| p.clone()));
+            .map(|p| resolve(p).unwrap_or_else(|_| p.clone()));
 
         // Sub-kind: weave-clone-is-worktree.
         //
@@ -4301,9 +4292,7 @@ pub fn scan_clone_topology(
                 Some(p) => p,
                 None => continue, // not a workspace there; skip silently
             };
-            let ww_store_canon = ww_store_raw
-                .canonicalize()
-                .unwrap_or_else(|_| ww_store_raw.clone());
+            let ww_store_canon = resolve(&ww_store_raw).unwrap_or_else(|_| ww_store_raw.clone());
 
             // Capture a representative for the disconnected-weave-clone
             // diagnosis below. Prefer a store that disagrees with the
@@ -4373,7 +4362,7 @@ pub fn scan_clone_topology(
         if let Some(ref canonical_store_canon_pb) = canonical_store_canon {
             if canonical_store_canon_pb == &expected_store_canon {
                 if let Some(rep) = representative_ww_store {
-                    let rep_canon = rep.canonicalize().unwrap_or_else(|_| rep.clone());
+                    let rep_canon = resolve(&rep).unwrap_or_else(|_| rep.clone());
                     if rep_canon != expected_store_canon {
                         violations.push(CheckViolation::CloneTopology {
                             workspace_path: canonical_slot.clone(),

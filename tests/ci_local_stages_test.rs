@@ -6,8 +6,8 @@
 //! and naming the remedy when regeneration disagrees with the committed
 //! tree; the windows stage skips loudly, printing the install command,
 //! whenever the target isn't there — never a hard failure, because
-//! ci-checks.yml's windows-check job already owns Windows compile truth
-//! authoritatively; a subset run's terminal line names the stages that ran,
+//! ci-checks.yml's windows-check job already owns Windows compile and lint
+//! truth authoritatively; a subset run's terminal line names the stages that ran,
 //! so it can never be mistaken for a full gate by a reader holding only the
 //! log; and the windows-wine stage runs only when named.
 //!
@@ -138,6 +138,7 @@ fn stderr_of(out: &Output) -> String {
 const HEADERS_IN_ORDER: &[&str] = &[
     "==> cargo check",
     "==> cargo check --locked --all-targets --target x86_64-pc-windows-msvc",
+    "==> cargo clippy --locked --all-targets --target x86_64-pc-windows-msvc -- -D warnings",
     "==> cargo test --release --no-fail-fast",
     "==> cargo clippy --all-targets -- -D warnings",
     "==> cargo doc --no-deps --document-private-items (rustdoc warnings deny)",
@@ -166,9 +167,9 @@ fn cargo_args_claimed_by(header: &str) -> Option<&str> {
 /// name the same argv — the direction a header and its command actually
 /// disagree.
 ///
-/// Scope: covers only headers `cargo_args_claimed_by` recognizes (six of
-/// the seven — drift's header is prose, not a command echo, and is outside
-/// what this can see).
+/// Scope: covers only headers `cargo_args_claimed_by` recognizes — every one
+/// but drift's, whose header is prose, not a command echo, and is outside
+/// what this can see.
 fn assert_cargo_headers_agree_with_invocations(stdout: &str) {
     let positions: Vec<(usize, &str)> = HEADERS_IN_ORDER
         .iter()
@@ -215,10 +216,11 @@ fn assert_cargo_headers_agree_with_invocations(stdout: &str) {
 /// `assert_eq!` has nothing to object to. Only the comparison count catches
 /// the drop.
 #[test]
-#[should_panic(expected = "expected 6 header/invocation comparisons")]
+#[should_panic(expected = "expected 7 header/invocation comparisons")]
 fn header_invocation_floor_catches_a_header_the_position_scan_never_finds() {
     let stdout = "\n==> cargo check\nSTUB_CARGO: check\n\
 \n==> cargo check --locked --all-targets --target x86_64-pc-windows-msvc\nSTUB_CARGO: check --locked --all-targets --target x86_64-pc-windows-msvc\n\
+\n==> cargo clippy --locked --all-targets --target x86_64-pc-windows-msvc -- -D warnings\nSTUB_CARGO: clippy --locked --all-targets --target x86_64-pc-windows-msvc -- -D warnings\n\
 \n==> cargo test --release\nSTUB_CARGO: test --release\n\
 \n==> cargo doc --no-deps (rustdoc warnings deny)\nSTUB_CARGO: doc --no-deps\n\
 \n==> cargo fmt --all -- --check\nSTUB_CARGO: fmt --all -- --check\n\
@@ -255,8 +257,8 @@ fn default_run_executes_all_seven_stages_in_order() {
     );
     assert_eq!(
         stdout.matches("STUB_CARGO:").count(),
-        7,
-        "expected one cargo invocation per stage:\n{stdout}"
+        HEADERS_IN_ORDER.len(),
+        "expected one cargo invocation per header:\n{stdout}"
     );
     assert_cargo_headers_agree_with_invocations(&stdout);
 }
@@ -349,7 +351,10 @@ fn stages_flag_naming_all_seven_explicitly_gets_the_full_run_line() {
         stdout.trim_end().ends_with("All checks passed."),
         "naming all seven stages should print the full-run line:\n{stdout}"
     );
-    assert_eq!(stdout.matches("STUB_CARGO:").count(), 7);
+    assert_eq!(
+        stdout.matches("STUB_CARGO:").count(),
+        HEADERS_IN_ORDER.len()
+    );
 }
 
 #[test]
@@ -415,6 +420,9 @@ fn windows_stage_runs_the_cross_check_when_the_target_is_installed() {
     assert!(
         stdout.contains("STUB_CARGO: check --locked --all-targets --target x86_64-pc-windows-msvc")
     );
+    assert!(stdout.contains(
+        "STUB_CARGO: clippy --locked --all-targets --target x86_64-pc-windows-msvc -- -D warnings"
+    ));
     assert!(
         !stdout.contains("windows cross-check skipped"),
         "should not skip when the target is installed:\n{stdout}"
@@ -444,9 +452,8 @@ fn windows_stage_skips_loudly_with_the_install_command_when_the_target_is_missin
         "missing the loud skip line with its remedy:\n{stdout}"
     );
     assert!(
-        !stdout
-            .contains("STUB_CARGO: check --locked --all-targets --target x86_64-pc-windows-msvc"),
-        "the cross-check itself should not have run:\n{stdout}"
+        !stdout.contains("STUB_CARGO:"),
+        "neither cross-target command should have run:\n{stdout}"
     );
 }
 

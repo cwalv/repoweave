@@ -453,7 +453,8 @@ fn make_legacy_nested_workweave(tmp: &Path) -> (PathBuf, PathBuf) {
     let index_path = ws.join("projects/chatly/web-app/.rwv-workweave-index");
     let mut index: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&index_path).unwrap()).unwrap();
-    index["workweaves"]["wtest"] = serde_json::json!(nested.canonicalize().unwrap());
+    index["workweaves"]["wtest"] =
+        serde_json::json!(repoweave::path_spelling::resolve(&nested).unwrap());
     std::fs::write(&index_path, serde_json::to_string(&index).unwrap()).unwrap();
     (ws, nested)
 }
@@ -525,7 +526,7 @@ fn doctor_fix_never_renames_a_legacy_nested_workweave() {
         serde_json::from_str(&std::fs::read_to_string(&index_path).unwrap()).unwrap();
     assert_eq!(
         index["workweaves"]["wtest"].as_str().map(PathBuf::from),
-        Some(nested.canonicalize().unwrap()),
+        Some(repoweave::path_spelling::resolve(&nested).unwrap()),
         "the recorded path must still name the directory on disk"
     );
 

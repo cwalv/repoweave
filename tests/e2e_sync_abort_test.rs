@@ -1421,7 +1421,10 @@ fn make_marker_workweave(parent: &Path, ww_name: &str) -> MarkerSharedWorkspaces
         ],
     );
 
-    let primary_canon = primary.root.canonicalize().unwrap().display().to_string();
+    let primary_canon = repoweave::path_spelling::resolve(&primary.root)
+        .unwrap()
+        .display()
+        .to_string();
     let marker = common::workweave_marker(&primary_canon, "web-app", &primary_canon);
     std::fs::write(ww_root.join(".rwv-workweave"), marker).unwrap();
     common::register_workweave(&primary_canon, "web-app", ww_name, &ww_root);

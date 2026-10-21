@@ -238,7 +238,8 @@ fn workweave_create_runs_the_install_hooks_in_the_new_seat() {
     let runs = weave.npm_runs();
     assert!(
         runs.iter()
-            .any(|cwd| cwd.canonicalize().ok() == seat.canonicalize().ok()),
+            .any(|cwd| repoweave::path_spelling::resolve(cwd).ok()
+                == repoweave::path_spelling::resolve(&seat).ok()),
         "create must run the install hook from the new seat's root; npm ran in {runs:?}"
     );
 
@@ -266,8 +267,8 @@ fn hook_mode_create_prints_only_the_path_while_the_hooks_write_to_stdout() {
     );
     let seat = weave.tmp.path().join(".workweaves/app--seat");
     assert_eq!(
-        PathBuf::from(stdout.trim_end()).canonicalize().ok(),
-        seat.canonicalize().ok(),
+        repoweave::path_spelling::resolve(&PathBuf::from(stdout.trim_end())).ok(),
+        repoweave::path_spelling::resolve(&seat).ok(),
         "stdout must be the bare path the agent runtime reads; got:\n{stdout}"
     );
     assert!(
@@ -352,8 +353,8 @@ fn claude_hook_create_hands_over_a_seat_whose_hooks_failed() {
 fn assert_hook_failure_handed_over(weave: &Weave, name: &str, stdout: &str, stderr: &str) {
     let seat = weave.tmp.path().join(format!(".workweaves/app--{name}"));
     assert_eq!(
-        PathBuf::from(stdout.trim_end()).canonicalize().ok(),
-        seat.canonicalize().ok(),
+        repoweave::path_spelling::resolve(&PathBuf::from(stdout.trim_end())).ok(),
+        repoweave::path_spelling::resolve(&seat).ok(),
         "stdout must be the bare path, as for a clean create; got:\n{stdout}"
     );
     assert!(

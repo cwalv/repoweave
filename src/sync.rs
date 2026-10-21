@@ -16,6 +16,7 @@ use crate::op_state::{
     self, OpId, OpVerb, Override, Overrides, OwnerRecord, SavepointKey, SyncStrategy,
 };
 use crate::parallel::run_in_parallel;
+use crate::path_spelling::resolve;
 use crate::placement::PlacementOutput;
 use crate::refusal::RefusalKind;
 use crate::share::FilePlacement;
@@ -1895,10 +1896,10 @@ fn check_store_unclaimed(
     // canonicalized: the registration records a resolved path, and the
     // store path here is built by joining onto the workspace root, which
     // may reach it through a symlink.
-    let store_key = std::fs::canonicalize(store).unwrap_or_else(|_| store.to_path_buf());
+    let store_key = resolve(store).unwrap_or_else(|_| store.to_path_buf());
     let live: Vec<String> = registered
         .iter()
-        .filter(|p| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf()) != store_key)
+        .filter(|p| resolve(p).unwrap_or_else(|_| p.to_path_buf()) != store_key)
         .map(|p| p.display().to_string())
         .collect();
     if !live.is_empty() {
@@ -2114,7 +2115,7 @@ pub(crate) fn plan_checkout_removal(
                 // The fallback is `dest` itself, which makes an unresolvable
                 // store refuse rather than be assumed linked.
                 let store = crate::workweave::resolved_worktree_parent(vcs, &dest, &dest);
-                let dest_canonical = dest.canonicalize().unwrap_or_else(|_| dest.clone());
+                let dest_canonical = resolve(&dest).unwrap_or_else(|_| dest.clone());
                 if store == dest_canonical {
                     crate::refuse!(
                         RefusalKind::CloneTopology,
@@ -4247,16 +4248,10 @@ fn warn_on_sibling_sync(cwd_ctx: &WorkspaceContext, source_workspace_dir: &Path,
             Err(_) => return,
         };
         if let Checkout::Workweave { dir: source_ww, .. } = &source_ctx.checkout {
-            let cwd_canonical = cwd_ww
-                .canonicalize()
-                .unwrap_or_else(|_| cwd_ww.to_path_buf());
-            let source_canonical = source_ww
-                .canonicalize()
-                .unwrap_or_else(|_| source_ww.to_path_buf());
+            let cwd_canonical = resolve(cwd_ww).unwrap_or_else(|_| cwd_ww.to_path_buf());
+            let source_canonical = resolve(source_ww).unwrap_or_else(|_| source_ww.to_path_buf());
             if cwd_canonical != source_canonical {
-                let cwd_parent = cwd_parent
-                    .canonicalize()
-                    .unwrap_or_else(|_| cwd_parent.clone());
+                let cwd_parent = resolve(cwd_parent).unwrap_or_else(|_| cwd_parent.clone());
                 if cwd_parent != source_canonical && emit_text {
                     eprintln!(
                         "warning: syncing across workweave siblings ({} → {}); \
@@ -6697,8 +6692,8 @@ fn regenerate_lock_phase3(
 /// every workspace resolution canonicalizes. Textual comparison
 /// would misclassify the workspace and pick the wrong savepoint namespace.
 fn same_workspace(a: &Path, b: &Path) -> bool {
-    let ca = a.canonicalize().unwrap_or_else(|_| a.to_path_buf());
-    let cb = b.canonicalize().unwrap_or_else(|_| b.to_path_buf());
+    let ca = resolve(a).unwrap_or_else(|_| a.to_path_buf());
+    let cb = resolve(b).unwrap_or_else(|_| b.to_path_buf());
     ca == cb
 }
 
@@ -8741,7 +8736,7 @@ mod tests {
 
         let ww = primary.join(".workweaves").join("web-app--feat");
         std::fs::create_dir_all(ww.join("github/example")).unwrap();
-        let primary_canon = primary.canonicalize().unwrap();
+        let primary_canon = resolve(&primary).unwrap();
         crate::workspace::WorkweaveMarker::new(
             primary_canon.clone(),
             ProjectName::new("web-app").unwrap(),
@@ -8894,7 +8889,7 @@ mod tests {
 
         let ww = primary.join(".workweaves").join("web-app--feat");
         std::fs::create_dir_all(ww.join("github/example")).unwrap();
-        let primary_canon = primary.canonicalize().unwrap();
+        let primary_canon = resolve(&primary).unwrap();
         crate::workspace::WorkweaveMarker::new(
             primary_canon.clone(),
             ProjectName::new("web-app").unwrap(),

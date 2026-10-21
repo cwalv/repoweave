@@ -178,7 +178,7 @@ fn canonical_state(canonical: &Path) -> (String, String, String) {
 
 fn store_of(checkout: &Path) -> PathBuf {
     let common_dir = common::git_in(checkout, &["rev-parse", "--git-common-dir"]);
-    std::fs::canonicalize(checkout.join(common_dir)).unwrap()
+    repoweave::path_spelling::resolve(&checkout.join(common_dir)).unwrap()
 }
 
 fn assert_worktree_at(checkout: &Path, canonical: &Path, pin: &str) {
@@ -194,7 +194,7 @@ fn assert_worktree_at(checkout: &Path, canonical: &Path, pin: &str) {
     );
     assert_eq!(
         store_of(checkout),
-        std::fs::canonicalize(canonical.join(".git")).unwrap(),
+        repoweave::path_spelling::resolve(&canonical.join(".git")).unwrap(),
         "{} must link into its canonical clone's store",
         checkout.display()
     );

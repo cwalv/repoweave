@@ -1,9 +1,9 @@
 //! Pins that a path becomes a `git` argument in exactly one place inside
 //! `src/git.rs`, and that the place strips the Windows extended-length prefix.
 //!
-//! `std::fs::canonicalize` on Windows always answers in the `\\?\` form, rwv
-//! walks to a canonicalized weave root, and git refuses an argument spelled
-//! that way — `git worktree add` rejects a destination of `//?/C:/…` outright.
+//! A weave root rwv reads back from a record can carry the Windows `\\?\`
+//! form, and git refuses an argument spelled that way — `git worktree add`
+//! rejects a destination of `//?/C:/…` outright.
 //! So a path has to lose the prefix before it reaches argv, and the cheap way
 //! for that to regress is one more conversion written the way the others used
 //! to be written.

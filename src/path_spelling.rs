@@ -1,9 +1,15 @@
-//! The spellings a path takes on its way out of rwv.
+//! Where a resolved path comes from, and the spellings a path takes on its
+//! way out of rwv.
 //!
-//! Two of them answer for an absolute path. Both drop the Windows verbatim
-//! (`\\?\`) prefix, which a canonicalized weave root carries and which nothing
-//! outside rwv wants. They differ on the separator, and the difference is a
-//! difference of audience:
+//! [`resolve`] is the one producer of a resolved path. `std::fs::canonicalize`
+//! answers on Windows in the verbatim (`\\?\`) spelling, which no consumer of
+//! a path wants, and under which a join folds `..` away; `resolve` answers in
+//! the plain spelling wherever one names the same path ([`plain_spelling`]).
+//! `clippy.toml` bans every other way to canonicalize, so no path rwv holds
+//! carries the prefix unless no plain spelling exists for it.
+//!
+//! Two spellings answer for an absolute path. They differ on the separator,
+//! and the difference is a difference of audience:
 //!
 //! - [`wire_path`] answers a **program**. `--json` documents shell
 //!   composition as its consumer (`jq -r … | xargs -I {} git -C {}` is the
@@ -11,18 +17,17 @@
 //!   `xargs` — the measured failure. `C:/Users/…` carries no `xargs`-active
 //!   bytes and is accepted by git, cmd and PowerShell alike.
 //! - [`operator_path`] answers a **person**: the native spelling, which is
-//!   what pastes into their own shell and file manager. `\\?\C:\…` in a
-//!   refusal is an internal spelling leaking out.
+//!   what pastes into their own shell and file manager.
 //!
 //! The third, [`weave_relative`], answers for a path *inside* a weave, where
 //! the audience question does not arise: a location rwv keeps a name for is
 //! spelled the way rwv spells it.
 //!
-//! On Unix all three are the identity — `dunce::simplified` is a no-op off
-//! Windows, and no separator is rewritten, because `\` is an ordinary
-//! character in a Unix filename and rewriting it would corrupt the path
-//! rather than respell it. So the wire output on Unix is byte-for-byte what
-//! it was before any of them existed.
+//! On Unix all three are the identity on an absolute path — a `/`-rooted path
+//! never carries the verbatim prefix, and no separator is rewritten, because
+//! `\` is an ordinary character in a Unix filename and rewriting it would
+//! corrupt the path rather than respell it. So the wire output on Unix is
+//! byte-for-byte what it was before any of them existed.
 //!
 //! [`mint_file_url`] is a fourth spelling, for a path becoming a `file://`
 //! URL rather than a path on some other path-shaped surface.
@@ -30,7 +35,106 @@
 //! [`native_join`] spells a path into a file another tool keeps, the way that
 //! tool's own path library would have written it.
 
-use std::path::Path;
+use std::borrow::Cow;
+use std::io;
+use std::path::{Path, PathBuf};
+
+/// `path` with every symlink and `.`/`..` resolved, spelled as
+/// [`plain_spelling`] spells it.
+pub fn resolve(path: &Path) -> io::Result<PathBuf> {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the one canonicalize, whose verbatim answer is respelled before it leaves"
+    )]
+    let resolved = std::fs::canonicalize(path)?;
+    Ok(plain_path(&resolved).into_owned())
+}
+
+fn plain_path(path: &Path) -> Cow<'_, Path> {
+    match path.to_str().map(plain_spelling) {
+        Some(Cow::Owned(plain)) => Cow::Owned(PathBuf::from(plain)),
+        Some(Cow::Borrowed(plain)) => Cow::Borrowed(Path::new(plain)),
+        None => Cow::Borrowed(path),
+    }
+}
+
+/// `path` without the Windows verbatim prefix, where Win32 reads the plain
+/// spelling as the same path: `\\?\C:\…` becomes `C:\…` and `\\?\UNC\h\s\…`
+/// becomes `\\h\s\…`.
+///
+/// Win32 opens a verbatim path as written, and rewrites a plain one first: it
+/// trims a trailing dot or space from a name, folds `.` and `..`, reads `/`
+/// as a separator, maps a reserved device name such as `CON` or `nul.txt` to
+/// the device, and refuses one longer than `MAX_PATH` (260) units. The prefix
+/// therefore stays on a path any of those rewrites would change, on one
+/// longer than 260 units, and on every input that is not a verbatim drive or
+/// UNC path.
+///
+/// Read from the string's shape, not from `cfg(windows)`, so a Windows-shaped
+/// path drives the same code on every host.
+pub fn plain_spelling(path: &str) -> Cow<'_, str> {
+    const LEGACY_MAX_PATH: usize = 260;
+    let Some(verbatim) = path.strip_prefix(r"\\?\") else {
+        return Cow::Borrowed(path);
+    };
+    if path.encode_utf16().count() > LEGACY_MAX_PATH {
+        return Cow::Borrowed(path);
+    }
+    if let Some(unc) = verbatim.strip_prefix(r"UNC\") {
+        let mut names = without_trailing_separator(unc).split('\\');
+        let host_and_share =
+            names.next().is_some_and(is_plain_name) && names.next().is_some_and(is_plain_name);
+        if host_and_share && names.all(is_plain_name) {
+            return Cow::Owned(format!(r"\\{unc}"));
+        }
+    } else if let Some(below_root) = drive_root(verbatim) {
+        if below_root.is_empty()
+            || without_trailing_separator(below_root)
+                .split('\\')
+                .all(is_plain_name)
+        {
+            return Cow::Borrowed(verbatim);
+        }
+    }
+    Cow::Borrowed(path)
+}
+
+fn without_trailing_separator(names: &str) -> &str {
+    names.strip_suffix('\\').unwrap_or(names)
+}
+
+fn drive_root(path: &str) -> Option<&str> {
+    let bytes = path.as_bytes();
+    (bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && &bytes[1..3] == br":\")
+        .then(|| &path[3..])
+}
+
+fn is_plain_name(name: &str) -> bool {
+    const MAX_NAME_UNITS: usize = 255;
+    !name.is_empty()
+        && name.encode_utf16().count() <= MAX_NAME_UNITS
+        && !name.ends_with(['.', ' '])
+        && !name
+            .chars()
+            .any(|c| c < ' ' || matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'))
+        && !is_reserved_device_name(name)
+}
+
+fn is_reserved_device_name(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or(name).trim_end_matches(' ');
+    let upper = stem.to_uppercase();
+    matches!(
+        upper.as_str(),
+        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+    ) || ["COM", "LPT"].iter().any(|port| {
+        upper.strip_prefix(port).is_some_and(|n| {
+            matches!(
+                n,
+                "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+            )
+        })
+    })
+}
 
 /// The spelling a program receives: verbatim prefix dropped, `/`-separated on
 /// every platform.
@@ -38,7 +142,7 @@ use std::path::Path;
 /// Every `--json` field whose value is a filesystem absolute path is built
 /// from this. Two surfaces that must agree consume one function's result.
 pub fn wire_path(path: &Path) -> String {
-    let simplified = dunce::simplified(path);
+    let simplified = plain_path(path);
     #[cfg(windows)]
     {
         simplified.to_string_lossy().replace('\\', "/")
@@ -57,7 +161,7 @@ pub fn wire_path(path: &Path) -> String {
 /// text keep rendering through their own `Display`; this is for locations, not
 /// for names.
 pub fn operator_path(path: &Path) -> String {
-    dunce::simplified(path).to_string_lossy().into_owned()
+    plain_path(path).to_string_lossy().into_owned()
 }
 
 /// The spelling an absolute symlink target is written in, so that
@@ -67,8 +171,8 @@ pub fn operator_path(path: &Path) -> String {
 /// drive-letter target without the verbatim prefix whatever spelling created
 /// it. A link planned as `\\?\C:\…` therefore reads back as `C:\…`, and any
 /// comparison of the read-back against the plan misjudges rwv's own link.
-pub fn link_target(path: &Path) -> &Path {
-    dunce::simplified(path)
+pub fn link_target(path: &Path) -> Cow<'_, Path> {
+    plain_path(path)
 }
 
 /// The spelling a location inside a weave takes: `/`-separated everywhere.
@@ -103,8 +207,11 @@ pub fn weave_relative(path: &Path) -> String {
 /// separator and needs the authority slot `C:` would otherwise fill left
 /// empty behind an extra `/`; anything else is passed through unsplit, so a
 /// `/`-rooted path (its `\` is filename content, not a separator) keeps its
-/// bytes.
+/// bytes. A verbatim path is read in its [`plain_spelling`]: git config and
+/// manifests can hold one that rwv did not resolve.
 pub fn mint_file_url(path: &str) -> String {
+    let path = plain_spelling(path);
+    let path = path.as_ref();
     if let Some(unc) = path
         .strip_prefix(r"\\")
         .filter(|rest| !rest.starts_with('?'))
@@ -135,7 +242,8 @@ pub fn mint_file_url(path: &str) -> String {
 /// root's shape, like [`mint_file_url`], so a Windows-shaped root drives the
 /// same code on every host.
 pub fn native_join(root: &Path, relative: &str) -> String {
-    let root = dunce::simplified(root).to_string_lossy();
+    let root = root.to_string_lossy();
+    let root = plain_spelling(&root);
     if starts_with_drive_letter(&root) || root.starts_with(r"\\") {
         format!(r"{}\{relative}", root.trim_end_matches(['\\', '/'])).replace('/', r"\")
     } else {
@@ -271,34 +379,194 @@ mod tests {
         );
     }
 
-    /// A UNC share keeps its prefix — `dunce::simplified` drops it only where
-    /// Windows itself accepts the short form, and that judgment is the whole
-    /// reason this seam calls a crate instead of stripping by hand.
+    /// Win32 reads `\\server\share\…` as the share `\\?\UNC\server\share\…`
+    /// names, so neither spelling keeps the prefix.
     #[cfg(windows)]
     #[test]
-    fn a_unc_share_keeps_the_prefix_it_needs() {
+    fn a_unc_share_drops_the_verbatim_prefix() {
         let unc = PathBuf::from(r"\\?\UNC\server\share\weave");
-        let wire = wire_path(&unc);
+        assert_eq!(wire_path(&unc), "//server/share/weave");
+        assert_eq!(operator_path(&unc), r"\\server\share\weave");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_resolved_path_carries_no_verbatim_prefix() {
+        let tmp = tempfile::tempdir().unwrap();
+        let resolved = resolve(tmp.path()).unwrap();
         assert!(
-            wire.starts_with("//"),
-            "a UNC path must keep the prefix Windows requires: {wire}"
+            !resolved.as_os_str().to_string_lossy().starts_with(r"\\?\"),
+            "{}",
+            resolved.display()
         );
+        assert!(resolved.is_absolute(), "{}", resolved.display());
+        assert_eq!(resolve(&resolved).unwrap(), resolved);
     }
 
     #[cfg(windows)]
     #[test]
     fn a_link_written_in_the_link_target_spelling_reads_back_unchanged() {
         let tmp = tempfile::tempdir().unwrap();
-        let canonical = tmp.path().canonicalize().unwrap().join("shared.db");
-        std::fs::write(&canonical, "").unwrap();
-        let target = link_target(&canonical);
+        let plain = resolve(tmp.path()).unwrap().join("shared.db");
+        std::fs::write(&plain, "").unwrap();
+        let verbatim = PathBuf::from(format!(r"\\?\{}", plain.display()));
+        let target = link_target(&verbatim);
         let link = tmp.path().join("link");
-        crate::symlink::create(target, &link, crate::symlink::LinkTarget::File).unwrap();
+        crate::symlink::create(&target, &link, crate::symlink::LinkTarget::File).unwrap();
         assert_eq!(std::fs::read_link(&link).unwrap(), target);
     }
 
     // -----------------------------------------------------------------------
+    // plain_spelling
+
+    #[test]
+    fn a_verbatim_drive_path_is_spelled_plain() {
+        assert_eq!(
+            plain_spelling(r"\\?\C:\Users\dev\weave"),
+            r"C:\Users\dev\weave"
+        );
+        assert_eq!(plain_spelling(r"\\?\C:\"), r"C:\");
+        assert_eq!(plain_spelling(r"\\?\d:\w\"), r"d:\w\");
+        assert_eq!(
+            plain_spelling(r"\\?\C:\Users\José\weave"),
+            r"C:\Users\José\weave"
+        );
+    }
+
+    #[test]
+    fn a_verbatim_unc_path_is_spelled_as_a_share() {
+        assert_eq!(
+            plain_spelling(r"\\?\UNC\server\share\weave"),
+            r"\\server\share\weave"
+        );
+        assert_eq!(plain_spelling(r"\\?\UNC\server\share"), r"\\server\share");
+        assert_eq!(plain_spelling(r"\\?\UNC\server\share\"), r"\\server\share\");
+    }
+
+    /// The limit is measured on the verbatim spelling, in UTF-16 units: a
+    /// four-byte character is two of them.
+    #[test]
+    fn a_verbatim_path_over_the_legacy_limit_keeps_its_prefix() {
+        let within = format!(r"\\?\C:\{}", "a".repeat(253));
+        assert_eq!(within.encode_utf16().count(), 260);
+        assert_eq!(plain_spelling(&within), &within[4..]);
+
+        let over = format!("{within}b");
+        assert_eq!(plain_spelling(&over), over);
+
+        let within_in_units = format!(r"\\?\C:\{}", "é".repeat(253));
+        assert!(within_in_units.len() > 260);
+        assert_eq!(plain_spelling(&within_in_units), &within_in_units[4..]);
+
+        let over_in_units = format!(r"\\?\C:\{}🦀", "a".repeat(252));
+        assert_eq!(over_in_units.encode_utf16().count(), 261);
+        assert_eq!(plain_spelling(&over_in_units), over_in_units);
+
+        let unc_over = format!(r"\\?\UNC\server\share\{}", "a".repeat(240));
+        assert_eq!(plain_spelling(&unc_over), unc_over);
+    }
+
+    #[test]
+    fn a_reserved_device_name_keeps_the_prefix() {
+        for name in [
+            "CON",
+            "nul",
+            "Aux.txt",
+            "com1",
+            "LPT9.tar.gz",
+            "COM¹",
+            "prn .log",
+            "CONIN$",
+        ] {
+            let verbatim = format!(r"\\?\C:\w\{name}\x");
+            assert_eq!(plain_spelling(&verbatim), verbatim, "{name}");
+        }
+        for name in ["CONSOLE", "COM10", ".con", " nul", "auxiliary.txt"] {
+            let verbatim = format!(r"\\?\C:\w\{name}");
+            assert_eq!(plain_spelling(&verbatim), &verbatim[4..], "{name}");
+        }
+        let share = r"\\?\UNC\server\share\NUL";
+        assert_eq!(plain_spelling(share), share);
+    }
+
+    #[test]
+    fn a_trailing_dot_or_space_keeps_the_prefix() {
+        for verbatim in [r"\\?\C:\w\a.", r"\\?\C:\w\a \x", r"\\?\UNC\server\share.\x"] {
+            assert_eq!(plain_spelling(verbatim), verbatim);
+        }
+        assert_eq!(plain_spelling(r"\\?\C:\w\a.b"), r"C:\w\a.b");
+    }
+
+    #[test]
+    fn a_literal_dot_component_keeps_the_prefix() {
+        for verbatim in [
+            r"\\?\C:\w\..\x",
+            r"\\?\C:\w\.\x",
+            r"\\?\C:\w\..",
+            r"\\?\UNC\server\share\..\other",
+        ] {
+            assert_eq!(plain_spelling(verbatim), verbatim);
+        }
+    }
+
+    /// Each of these names one file verbatim and a different path, or none, to
+    /// Win32: `/` is a separator there, `:` opens a stream, and an empty name
+    /// collapses.
+    #[test]
+    fn a_name_win32_would_split_or_reject_keeps_the_prefix() {
+        for verbatim in [
+            r"\\?\C:\w\a/b",
+            r"\\?\C:\w\a:b",
+            r"\\?\C:\w\a*",
+            r"\\?\C:\w\\x",
+            r"\\?\C:\\",
+            r"\\?\UNC\server\\share",
+        ] {
+            assert_eq!(plain_spelling(verbatim), verbatim);
+        }
+    }
+
+    #[test]
+    fn a_verbatim_path_with_no_plain_spelling_is_unchanged() {
+        for verbatim in [
+            r"\\?\C:",
+            r"\\?\C:w",
+            r"\\?\UNC\server",
+            r"\\?\UNC\",
+            r"\\?\Volume{b75e2c83-0000-0000-0000-602f00000000}\w",
+            r"\\?\GLOBALROOT\Device\HarddiskVolume1\w",
+        ] {
+            assert_eq!(plain_spelling(verbatim), verbatim);
+        }
+    }
+
+    #[test]
+    fn a_path_without_the_verbatim_prefix_is_unchanged() {
+        for path in [
+            "/srv/weave",
+            r"/srv/\\?\C:\x",
+            r"C:\Users\dev",
+            r"\\server\share\weave",
+            r"\\.\pipe\x",
+            r"relative\dir",
+            "",
+        ] {
+            assert_eq!(plain_spelling(path), path);
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // mint_file_url
+
+    #[test]
+    fn a_verbatim_drive_path_mints_the_plain_url() {
+        assert_eq!(mint_file_url(r"\\?\C:\Users\x"), "file:///C:/Users/x");
+    }
+
+    #[test]
+    fn a_verbatim_unc_path_mints_the_share_url() {
+        assert_eq!(mint_file_url(r"\\?\UNC\srv\share\x"), "file://srv/share/x");
+    }
 
     #[test]
     fn mint_file_url_names_a_unc_share_by_host() {
@@ -384,11 +652,10 @@ mod tests {
         );
     }
 
-    /// A canonicalized weave root carries the verbatim prefix, under which
+    /// A root read from a record can carry the verbatim prefix, under which
     /// Windows translates no `/`; gita is never handed that spelling.
-    #[cfg(windows)]
     #[test]
-    fn native_join_drops_the_verbatim_prefix_of_a_canonicalized_root() {
+    fn native_join_drops_the_verbatim_prefix_of_a_recorded_root() {
         assert_eq!(
             native_join(
                 Path::new(r"\\?\C:\Users\dev\weave"),

@@ -46,6 +46,10 @@ fn git_init_with_commit(dir: &Path) {
 }
 
 /// The paths a fixture hands back to a test.
+#[cfg_attr(
+    not(unix),
+    expect(dead_code, reason = "only the unix stand-in tests read these")
+)]
 struct Fixture {
     tmp: tempfile::TempDir,
     ww_dir: PathBuf,
@@ -56,6 +60,7 @@ struct Fixture {
 impl Fixture {
     /// A path beside the weave rather than inside it, for fixture apparatus
     /// that must not read as workspace content.
+    #[cfg(unix)]
     fn beside_the_weave(&self, name: &str) -> PathBuf {
         self.tmp.path().join(name)
     }

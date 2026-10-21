@@ -577,7 +577,7 @@ mod cargo {
         // The workspace root Cargo.toml is a symlink; we edit through the symlink.
         let cargo_symlink = ws.join("Cargo.toml");
         let real_path = if cargo_symlink.is_symlink() {
-            std::fs::canonicalize(&cargo_symlink).unwrap()
+            repoweave::path_spelling::resolve(&cargo_symlink).unwrap()
         } else {
             cargo_symlink.clone()
         };

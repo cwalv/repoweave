@@ -173,7 +173,8 @@ impl Weave {
             .lines()
             .any(|line| {
                 line.split_once(' ').is_some_and(|(cwd, args)| {
-                    Path::new(cwd).canonicalize().ok() == seat.canonicalize().ok()
+                    repoweave::path_spelling::resolve(Path::new(cwd)).ok()
+                        == repoweave::path_spelling::resolve(&seat).ok()
                         && args.starts_with("fetch")
                 })
             });

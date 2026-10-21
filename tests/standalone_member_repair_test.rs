@@ -194,7 +194,7 @@ fn listed_under<'a>(report: &'a str, heading: &str) -> Vec<&'a str> {
 
 fn store_of(checkout: &Path) -> PathBuf {
     let common_dir = common::git_in(checkout, &["rev-parse", "--git-common-dir"]);
-    std::fs::canonicalize(checkout.join(common_dir)).unwrap()
+    repoweave::path_spelling::resolve(&checkout.join(common_dir)).unwrap()
 }
 
 fn aside(weave: &Weave) -> PathBuf {
@@ -246,7 +246,7 @@ fn doctor_fix_replaces_the_clone_with_a_worktree_at_the_commit_it_had_checked_ou
     );
     assert_eq!(
         store_of(&weave.clone),
-        std::fs::canonicalize(weave.canonical.join(".git")).unwrap(),
+        repoweave::path_spelling::resolve(&weave.canonical.join(".git")).unwrap(),
         "the worktree must link into the canonical clone's store"
     );
     assert_eq!(

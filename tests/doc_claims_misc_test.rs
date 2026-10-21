@@ -135,7 +135,7 @@ fn rwv_display_shows_repos() {
 
     let stdout = String::from_utf8(output).expect("stdout should be valid UTF-8");
 
-    common::assert_weave_line(&stdout, ws.canonicalize().unwrap());
+    common::assert_weave_line(&stdout, repoweave::path_spelling::resolve(&ws).unwrap());
 
     let line = |prefix: &str| {
         stdout
@@ -173,7 +173,7 @@ fn rwv_display_no_active_project() {
     let stdout = String::from_utf8(output).expect("stdout should be valid UTF-8");
 
     // Root path must appear.
-    common::assert_weave_line(&stdout, ws.canonicalize().unwrap());
+    common::assert_weave_line(&stdout, repoweave::path_spelling::resolve(&ws).unwrap());
 
     // The available project should be listed (the projects/ dir is scanned).
     assert!(
@@ -234,9 +234,11 @@ fn rwv_display_in_workweave() {
         .unwrap_or_else(|| panic!("context display has no `Workweave:` line:\n{stdout}"));
     assert_eq!(
         named,
-        repoweave::path_spelling::operator_path(&ww_dir.canonicalize().unwrap())
+        repoweave::path_spelling::operator_path(
+            &repoweave::path_spelling::resolve(&ww_dir).unwrap()
+        )
     );
 
     // Root path (primary weave root) must appear.
-    common::assert_weave_line(&stdout, ws.canonicalize().unwrap());
+    common::assert_weave_line(&stdout, repoweave::path_spelling::resolve(&ws).unwrap());
 }

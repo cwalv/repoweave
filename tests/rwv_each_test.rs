@@ -263,7 +263,7 @@ fn a_child_gets_its_repo_in_the_environment_and_runs_in_its_checkout() {
         .collect();
     assert_eq!(fields[0], LIB);
     assert_eq!(fields[1], "dependency");
-    let canonical = |p: &str| std::fs::canonicalize(p).unwrap();
+    let canonical = |p: &str| repoweave::path_spelling::resolve(Path::new(p)).unwrap();
     assert_eq!(
         canonical(&fields[2]),
         canonical(w.ws.join(LIB).to_str().unwrap())
@@ -698,7 +698,7 @@ fn a_workweave_runs_in_its_own_checkouts_never_the_primarys() {
     )
     .unwrap();
     let seat_dir = PathBuf::from(status["repos"][0]["absolute_path"].as_str().unwrap());
-    let canonical = |p: &Path| std::fs::canonicalize(p).unwrap();
+    let canonical = |p: &Path| repoweave::path_spelling::resolve(p).unwrap();
     assert_eq!(canonical(&ran_in), canonical(&seat_dir));
     assert_ne!(canonical(&ran_in), canonical(&pw.workspace.join(APP)));
 }

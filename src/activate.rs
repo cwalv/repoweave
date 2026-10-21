@@ -31,6 +31,7 @@
 //!
 //! `deactivate` removes the symlinks and `.rwv-active`.
 
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -2162,7 +2163,7 @@ enum PrimaryProjects {
 }
 
 impl PrimaryProjects {
-    fn under(primary: &Path, read_back_spelling: fn(&Path) -> &Path) -> Self {
+    fn under(primary: &Path, read_back_spelling: fn(&Path) -> Cow<'_, Path>) -> Self {
         PrimaryProjects::At(read_back_spelling(primary).join(PROJECTS_DIR))
     }
 }
@@ -4667,10 +4668,12 @@ mod tests {
     /// link reads back, and that the read-back is recognized as rwv's.
     #[test]
     fn a_primary_sourced_link_is_planned_in_the_spelling_it_reads_back_in() {
-        fn as_read_back(path: &Path) -> &Path {
-            path.to_str()
-                .and_then(|s| s.strip_prefix("/verbatim"))
-                .map_or(path, Path::new)
+        fn as_read_back(path: &Path) -> Cow<'_, Path> {
+            Cow::Borrowed(
+                path.to_str()
+                    .and_then(|s| s.strip_prefix("/verbatim"))
+                    .map_or(path, Path::new),
+            )
         }
         let sites = workweave_sites(PrimaryProjects::under(
             Path::new("/verbatim/primary"),

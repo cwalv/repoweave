@@ -34,7 +34,9 @@ fn make_legacy_workweave(tmp_root: &Path, primary: &Path, flat_name: &str) -> Pa
     std::fs::create_dir_all(&ww_dir).unwrap();
     let legacy_marker = format!(
         "primary: {}\nproject: my-app\n",
-        primary.canonicalize().unwrap().display()
+        repoweave::path_spelling::resolve(primary)
+            .unwrap()
+            .display()
     );
     std::fs::write(ww_dir.join(".rwv-workweave"), legacy_marker).unwrap();
     ww_dir

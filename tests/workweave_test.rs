@@ -473,7 +473,7 @@ fn create_workweave_writes_marker() {
     // spelling never appears in the content on Windows.
     let content = std::fs::read_to_string(&marker_file).unwrap();
     let marker: serde_json::Value = serde_json::from_str(&content).expect("marker is JSON");
-    let ws_canonical = ws.canonicalize().unwrap();
+    let ws_canonical = repoweave::path_spelling::resolve(&ws).unwrap();
     assert_eq!(
         Path::new(marker["primary"].as_str().expect("primary is a string")),
         ws_canonical,
@@ -1091,10 +1091,9 @@ fn resolve_from_inside_workweave_returns_workweave_path() {
     let resolved = stdout.trim();
 
     // The resolved path should be the workweave directory (not the primary).
-    let ww_canonical = ww_dir.canonicalize().unwrap();
+    let ww_canonical = repoweave::path_spelling::resolve(&ww_dir).unwrap();
     let resolved_path = std::path::Path::new(resolved);
-    let resolved_canonical = resolved_path
-        .canonicalize()
+    let resolved_canonical = repoweave::path_spelling::resolve(resolved_path)
         .unwrap_or_else(|_| resolved_path.to_path_buf());
 
     assert_eq!(
@@ -1494,7 +1493,7 @@ fn workweave_create_from_workweave_cwd_forks_from_workweave() {
 
     // Marker still points at primary, regardless of source.
     let marker = std::fs::read_to_string(peer_dir.join(".rwv-workweave")).unwrap();
-    let ws_canonical = ws.canonicalize().unwrap();
+    let ws_canonical = repoweave::path_spelling::resolve(&ws).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&marker).expect("marker is JSON");
     assert_eq!(
         Path::new(parsed["primary"].as_str().expect("primary is a string")),
@@ -1987,7 +1986,10 @@ fn list_omits_unregistered_workweave_and_doctor_can_adopt_it() {
     // The directory name must be `<project>--<name>` for parse to succeed.
     let legacy = weaveroot.join("web-app--from-old");
     std::fs::create_dir_all(&legacy).unwrap();
-    let ws_canon = ws.canonicalize().unwrap().display().to_string();
+    let ws_canon = repoweave::path_spelling::resolve(&ws)
+        .unwrap()
+        .display()
+        .to_string();
     let marker = common::workweave_marker(&ws_canon, "web-app", &ws_canon);
     std::fs::write(legacy.join(".rwv-workweave"), marker).unwrap();
 
@@ -2923,7 +2925,7 @@ fn workweave_create_records_primary_as_parent() {
     );
     // For a workweave forked from primary, parent should resolve to the
     // canonicalized primary path.
-    let ws_canonical = ws.canonicalize().unwrap();
+    let ws_canonical = repoweave::path_spelling::resolve(&ws).unwrap();
     let marker: serde_json::Value = serde_json::from_str(&content).expect("marker is JSON");
     assert_eq!(
         Path::new(marker["parent"].as_str().expect("parent is a string")),
@@ -2957,7 +2959,7 @@ fn workweave_forked_from_other_workweave_records_that_parent() {
 
     let ww2_marker = weaveroot.join("web-app--ww2/.rwv-workweave");
     let content = std::fs::read_to_string(&ww2_marker).unwrap();
-    let ww1_canonical = ww1.canonicalize().unwrap();
+    let ww1_canonical = repoweave::path_spelling::resolve(&ww1).unwrap();
     let marker: serde_json::Value = serde_json::from_str(&content).expect("marker is JSON");
     assert_eq!(
         Path::new(marker["parent"].as_str().expect("parent is a string")),

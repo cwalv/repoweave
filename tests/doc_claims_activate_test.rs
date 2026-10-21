@@ -99,7 +99,7 @@ fn workspace_context_from_project_dir_resolve() {
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     // Canonicalize the expected path so /var vs /private/var symlinks (macOS)
     // don't cause spurious mismatches.
-    let ws_canonical = std::fs::canonicalize(&ws).unwrap();
+    let ws_canonical = repoweave::path_spelling::resolve(&ws).unwrap();
     assert_eq!(
         stdout,
         common::operator_path_stdout(&ws_canonical),

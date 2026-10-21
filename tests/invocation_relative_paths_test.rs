@@ -43,7 +43,10 @@ fn index(ws: &Path) -> serde_json::Value {
 }
 
 fn canonical(p: &Path) -> String {
-    p.canonicalize().unwrap().to_string_lossy().into_owned()
+    repoweave::path_spelling::resolve(p)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn assert_routes_to(stderr: &str, token: &str) {
@@ -152,7 +155,7 @@ fn adopt_weave(tmp: &Path) -> AdoptWeave {
 
     let workweave = tmp.join(".workweaves/test-project--feat");
     std::fs::create_dir_all(&workweave).unwrap();
-    let primary_canonical = primary.canonicalize().unwrap();
+    let primary_canonical = repoweave::path_spelling::resolve(&primary).unwrap();
     std::fs::write(
         workweave.join(".rwv-workweave"),
         common::workweave_marker(&primary_canonical, "test-project", &primary_canonical),
@@ -261,8 +264,14 @@ fn adopt_of_a_location_under_neither_weave_root_refuses_naming_both() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(!out.status.success());
     assert_routes_to(&stderr, "adopt-path-outside-weave");
-    common::assert_names_operator_path(&stderr, w.primary.canonicalize().unwrap());
-    common::assert_names_operator_path(&stderr, w.workweave.canonicalize().unwrap());
+    common::assert_names_operator_path(
+        &stderr,
+        repoweave::path_spelling::resolve(&w.primary).unwrap(),
+    );
+    common::assert_names_operator_path(
+        &stderr,
+        repoweave::path_spelling::resolve(&w.workweave).unwrap(),
+    );
     assert!(manifest_keys(&w.workweave.join("projects/test-project")).is_empty());
 }
 
@@ -281,10 +290,13 @@ fn adopt_of_a_workweave_clone_that_is_not_the_primarys_refuses_naming_both() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(!out.status.success());
     assert_routes_to(&stderr, "foreign-clone-in-workweave");
-    common::assert_names_operator_path(&stderr, w.primary.join("bar/dup").canonicalize().unwrap());
     common::assert_names_operator_path(
         &stderr,
-        w.workweave.join("bar/dup").canonicalize().unwrap(),
+        repoweave::path_spelling::resolve(&w.primary.join("bar/dup")).unwrap(),
+    );
+    common::assert_names_operator_path(
+        &stderr,
+        repoweave::path_spelling::resolve(&w.workweave.join("bar/dup")).unwrap(),
     );
     assert!(manifest_keys(&w.workweave.join("projects/test-project")).is_empty());
 }
@@ -306,7 +318,10 @@ fn adopt_into_a_workweave_whose_placement_holds_a_plain_directory_refuses_naming
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(1), "stderr was:\n{stderr}");
     assert_routes_to(&stderr, "non-clone-at-placement");
-    common::assert_names_operator_path(&stderr, occupied.canonicalize().unwrap());
+    common::assert_names_operator_path(
+        &stderr,
+        repoweave::path_spelling::resolve(&occupied).unwrap(),
+    );
     assert!(manifest_keys(&w.workweave.join("projects/test-project")).is_empty());
     assert!(occupied.join("notes.txt").is_file());
 }
@@ -330,7 +345,10 @@ fn add_from_a_workweave_whose_placement_holds_a_plain_directory_refuses_naming_i
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(1), "stderr was:\n{stderr}");
     assert_routes_to(&stderr, "non-clone-at-placement");
-    common::assert_names_operator_path(&stderr, occupied.canonicalize().unwrap());
+    common::assert_names_operator_path(
+        &stderr,
+        repoweave::path_spelling::resolve(&occupied).unwrap(),
+    );
     assert!(manifest_keys(&w.workweave.join("projects/test-project")).is_empty());
     assert!(occupied.join("notes.txt").is_file());
 }

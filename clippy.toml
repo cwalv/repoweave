@@ -1,0 +1,5 @@
+disallowed-methods = [
+    { path = "std::fs::canonicalize", reason = "resolve through path_spelling::resolve, which never yields the Windows verbatim spelling" },
+    { path = "std::path::Path::canonicalize", reason = "resolve through path_spelling::resolve, which never yields the Windows verbatim spelling" },
+    { path = "dunce::canonicalize", reason = "resolve through path_spelling::resolve, which also respells a UNC path" },
+]

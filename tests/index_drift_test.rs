@@ -152,7 +152,10 @@ fn make_workspace_with_ww(parent: &Path) -> (Workspace, String) {
     );
 
     // .rwv-workweave marker so `rwv` resolves the workweave correctly.
-    let primary_canon = primary_root.canonicalize().unwrap().display().to_string();
+    let primary_canon = repoweave::path_spelling::resolve(&primary_root)
+        .unwrap()
+        .display()
+        .to_string();
     let marker_content = common::workweave_marker(&primary_canon, "web-app", &primary_canon);
     std::fs::write(ww_root.join(".rwv-workweave"), marker_content).unwrap();
     common::register_workweave(&primary_canon, "web-app", "ww", &ww_root);
@@ -369,7 +372,10 @@ fn sync_post_refresh_clears_stale_index() {
     // The ww project worktree inherits the already-committed rwv.lock@c1 from
     // project_primary. No additional commit needed — the lock already matches HEAD.
 
-    let primary_canon = primary_root.canonicalize().unwrap().display().to_string();
+    let primary_canon = repoweave::path_spelling::resolve(&primary_root)
+        .unwrap()
+        .display()
+        .to_string();
     let marker_content = common::workweave_marker(&primary_canon, "web-app", &primary_canon);
     std::fs::write(ww_root.join(".rwv-workweave"), marker_content).unwrap();
     common::register_workweave(&primary_canon, "web-app", "ww", &ww_root);

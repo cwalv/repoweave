@@ -45,8 +45,8 @@ pub(crate) fn node_tool(name: &str) -> String {
 }
 
 /// The working directory an ecosystem tool can stand in: the Windows
-/// verbatim (`\\?\`) spelling a canonicalized workspace root carries is a
-/// spelling many tools' own relative joins cannot survive — a `/`-separated
+/// verbatim (`\\?\`) spelling a workspace root read from a record can carry
+/// is a spelling many tools' own relative joins cannot survive — a `/`-separated
 /// component under a verbatim prefix is an invalid path, so a tool spawned
 /// there fails to find its own config (cargo's `.cargo/config.toml`
 /// discovery is the measured case). `dunce::simplified` drops the prefix

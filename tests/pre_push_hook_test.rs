@@ -63,7 +63,7 @@ fn names_the_cargo_command(line: &str) -> bool {
 
 /// Structural license: a prohibition over an enumerable population — the
 /// hook's own non-comment lines. The behavioral sibling below
-/// (`stub_cargo_count == gate runs * 7`) sees only invocations on a path the
+/// (`stub_cargo_count == gate runs * CARGO_RUNS_PER_GATE`) sees only invocations on a path the
 /// fixture drives whose output reaches the hook's stdout, and both of those
 /// are escapable: a `cargo` call in the CI-not-green refusal arm, which the
 /// `gh` stub makes unreachable, and a `cargo` call whose output is redirected
@@ -235,6 +235,10 @@ fn run_hook(cwd: &Path, stdin: &str) -> std::process::Output {
     child.wait_with_output().expect("hook should exit")
 }
 
+/// What one `scripts/ci-local.sh` run invokes `cargo` for: once per default
+/// stage, and twice for the windows stage, which checks and lints.
+const CARGO_RUNS_PER_GATE: usize = 8;
+
 fn stub_cargo_count(out: &std::process::Output) -> usize {
     String::from_utf8_lossy(&out.stdout)
         .matches("STUB_CARGO:")
@@ -251,8 +255,8 @@ fn assert_green(out: &std::process::Output, expected_gate_runs: usize) {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert_eq!(
         stub_cargo_count(out),
-        expected_gate_runs * 7,
-        "expected one cargo invocation per ci-local.sh stage per gated commit:\n{stdout}"
+        expected_gate_runs * CARGO_RUNS_PER_GATE,
+        "expected {CARGO_RUNS_PER_GATE} cargo invocations per gated commit:\n{stdout}"
     );
     assert!(stdout.contains("pre-push: all checks passed"));
 }

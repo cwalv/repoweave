@@ -126,7 +126,10 @@ fn make_workspace_with_ww(parent: &Path) -> (Workspace, String) {
         ],
     );
 
-    let primary_canon = primary_root.canonicalize().unwrap().display().to_string();
+    let primary_canon = repoweave::path_spelling::resolve(&primary_root)
+        .unwrap()
+        .display()
+        .to_string();
     let marker_content = common::workweave_marker(&primary_canon, "web-app", &primary_canon);
     std::fs::write(ww_root.join(".rwv-workweave"), marker_content).unwrap();
     common::register_workweave(&primary_canon, "web-app", "ww", &ww_root);
@@ -333,7 +336,10 @@ fn sync_post_refresh_clears_stale_working_tree() {
         ],
     );
 
-    let primary_canon = primary_root.canonicalize().unwrap().display().to_string();
+    let primary_canon = repoweave::path_spelling::resolve(&primary_root)
+        .unwrap()
+        .display()
+        .to_string();
     let marker_content = common::workweave_marker(&primary_canon, "web-app", &primary_canon);
     std::fs::write(ww_root.join(".rwv-workweave"), marker_content).unwrap();
     common::register_workweave(&primary_canon, "web-app", "ww", &ww_root);
@@ -436,9 +442,7 @@ fn doctor_detects_working_tree_drift_in_three_worktrees() {
         ],
     );
 
-    let primary_canon2 = ws
-        .primary_root
-        .canonicalize()
+    let primary_canon2 = repoweave::path_spelling::resolve(&ws.primary_root)
         .unwrap()
         .display()
         .to_string();

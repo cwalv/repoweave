@@ -327,13 +327,13 @@ fn branch_exists(store: &Path, branch: &str) -> bool {
 }
 
 fn registers(store: &Path, checkout: &Path) -> bool {
-    let checkout = checkout.canonicalize().unwrap_or(checkout.to_path_buf());
+    let checkout = repoweave::path_spelling::resolve(checkout).unwrap_or(checkout.to_path_buf());
     worktree_list(store)
         .lines()
         .filter_map(|line| line.strip_prefix("worktree "))
         .any(|listed| {
             let listed = Path::new(listed);
-            listed.canonicalize().unwrap_or(listed.to_path_buf()) == checkout
+            repoweave::path_spelling::resolve(listed).unwrap_or(listed.to_path_buf()) == checkout
         })
 }
 

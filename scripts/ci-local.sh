@@ -18,8 +18,9 @@
 #
 # Exits non-zero on the first failure. The windows stage is the one
 # exception: ci-checks.yml's windows-check job already owns Windows compile
-# truth authoritatively, so a contributor without the target installed gets a
-# loud skip there, not a red gate for a check CI runs regardless.
+# and lint truth authoritatively, so a contributor without the target
+# installed gets a loud skip there, not a red gate for a check CI runs
+# regardless.
 #
 # test-autocrlf is a further stage, outside the seven above and never run
 # unless named explicitly (--stages=test-autocrlf): it runs the test stage
@@ -98,6 +99,11 @@ if run_stage windows; then
     header "cargo check --locked --all-targets --target x86_64-pc-windows-msvc"
     if command -v rustup >/dev/null 2>&1 && rustup target list --installed 2>/dev/null | grep -qx x86_64-pc-windows-msvc; then
         cargo check --locked --all-targets --target x86_64-pc-windows-msvc
+        # Host clippy never sees a cfg(windows) item, so clippy.toml's bans
+        # reach those only through a run for the Windows target. Linting
+        # needs no linker.
+        header "cargo clippy --locked --all-targets --target x86_64-pc-windows-msvc -- -D warnings"
+        cargo clippy --locked --all-targets --target x86_64-pc-windows-msvc -- -D warnings
     else
         printf 'windows cross-check skipped: x86_64-pc-windows-msvc not installed — rustup target add x86_64-pc-windows-msvc\n'
     fi

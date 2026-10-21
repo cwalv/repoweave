@@ -187,7 +187,7 @@ fn landing_into_a_workweave_of_another_project_is_refused_naming_both() {
     // A workweave of the OTHER project, marker and all.
     let stray = tmp.path().join("stray");
     std::fs::create_dir_all(&stray).unwrap();
-    let primary = source.root.canonicalize().unwrap();
+    let primary = repoweave::path_spelling::resolve(&source.root).unwrap();
     let marker = common::workweave_marker(&primary, OTHER_PROJECT, &primary);
     std::fs::write(stray.join(".rwv-workweave"), marker).unwrap();
 

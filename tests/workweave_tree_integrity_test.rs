@@ -46,12 +46,10 @@ fn workweaves_dir(ws_root: &Path) -> PathBuf {
 /// Write a well-formed `.rwv-workweave` marker file into `ww_dir`.
 fn write_marker(ww_dir: &Path, primary: &Path, project: &str, parent: &Path) {
     std::fs::create_dir_all(ww_dir).unwrap();
-    let primary_str = primary
-        .canonicalize()
-        .unwrap_or_else(|_| primary.to_path_buf());
-    let parent_str = parent
-        .canonicalize()
-        .unwrap_or_else(|_| parent.to_path_buf());
+    let primary_str =
+        repoweave::path_spelling::resolve(primary).unwrap_or_else(|_| primary.to_path_buf());
+    let parent_str =
+        repoweave::path_spelling::resolve(parent).unwrap_or_else(|_| parent.to_path_buf());
     let content = common::workweave_marker(&primary_str, project, &parent_str);
     std::fs::write(ww_dir.join(".rwv-workweave"), content).unwrap();
 }
@@ -390,7 +388,7 @@ fn foreign_primary_other_workspace_is_visible_via_json() {
             panic!("expected a foreign-primary-other-workspace finding; got: {violations:?}")
         });
 
-    let other_ws_canonical = other_ws.canonicalize().unwrap();
+    let other_ws_canonical = repoweave::path_spelling::resolve(&other_ws).unwrap();
     assert_eq!(
         finding["sub_kind"]["foreign-primary-other-workspace"]["marker_primary"],
         serde_json::Value::String(repoweave::path_spelling::wire_path(&other_ws_canonical)),
@@ -542,9 +540,8 @@ fn legacy_marker_with_no_primary_fix_neither_claims_nor_performs_a_repair() {
 /// construct.
 fn write_marker_with_no_project(ww_dir: &Path, primary: &Path) {
     std::fs::create_dir_all(ww_dir).unwrap();
-    let primary_str = primary
-        .canonicalize()
-        .unwrap_or_else(|_| primary.to_path_buf());
+    let primary_str =
+        repoweave::path_spelling::resolve(primary).unwrap_or_else(|_| primary.to_path_buf());
     std::fs::write(
         ww_dir.join(".rwv-workweave"),
         format!("primary: {}\n", primary_str.display()),

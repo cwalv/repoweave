@@ -167,6 +167,7 @@ use crate::owned_state::{
     check_owned_digest, fully_owned_digest_mismatch_issue, stamp_owned_generation, ObservedInputs,
     OwnedDigestCheck,
 };
+use crate::path_spelling::resolve;
 use anyhow::Context;
 use semver::{Version, VersionReq};
 use std::collections::{BTreeMap, BTreeSet};
@@ -1728,7 +1729,7 @@ impl CargoWorkspace {
                 .get("version")
                 .and_then(|i| i.as_str())
                 .map(String::from);
-            let abs = std::fs::canonicalize(&member_dir).unwrap_or(member_dir.clone());
+            let abs = resolve(&member_dir).unwrap_or(member_dir.clone());
             out.insert(
                 p.clone(),
                 PackageIndexEntry {
@@ -1810,7 +1811,7 @@ impl CargoWorkspace {
                     let Some(rel) = path_str else { continue };
 
                     let target = member_dir.join(rel);
-                    let target_abs = std::fs::canonicalize(&target).unwrap_or(target.clone());
+                    let target_abs = resolve(&target).unwrap_or(target.clone());
 
                     let Some((target_member, target_crate)) = by_abs.get(&target_abs) else {
                         continue;
@@ -3005,8 +3006,7 @@ impl CargoWorkspace {
         let mut seen: BTreeSet<(std::path::PathBuf, String, String)> = BTreeSet::new();
 
         // Canonicalize the ceiling once for identity comparison.
-        let ceiling =
-            std::fs::canonicalize(workspace_root).unwrap_or_else(|_| workspace_root.to_path_buf());
+        let ceiling = resolve(workspace_root).unwrap_or_else(|_| workspace_root.to_path_buf());
 
         for member in members {
             let member_dir = workspace_root.join(member);
@@ -3084,7 +3084,7 @@ fn collect_patch_keys(
 /// at filesystem root.
 fn walk_cargo_configs(start: &Path, ceiling: &Path) -> Vec<std::path::PathBuf> {
     let mut out = Vec::new();
-    let start_canonical = std::fs::canonicalize(start).unwrap_or_else(|_| start.to_path_buf());
+    let start_canonical = resolve(start).unwrap_or_else(|_| start.to_path_buf());
     let mut cur: Option<&Path> = Some(&start_canonical);
     while let Some(dir) = cur {
         if dir == ceiling {

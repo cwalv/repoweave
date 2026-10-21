@@ -306,6 +306,13 @@ impl Runner<'_> {
                 thread::sleep(POLL);
             }
         });
+        #[cfg_attr(
+            windows,
+            expect(
+                clippy::drop_non_drop,
+                reason = "the Windows guard holds no terminal to give back"
+            )
+        )]
         drop(foreground);
 
         let duration = clock.elapsed();

@@ -81,8 +81,7 @@ fn create_records_workweave_in_the_index() {
     // Container was recorded from the compiled-in default.
     assert_eq!(
         idx["container"].as_str().unwrap(),
-        weaveroot
-            .canonicalize()
+        repoweave::path_spelling::resolve(&weaveroot)
             .unwrap_or_else(|_| weaveroot.clone())
             .to_string_lossy()
     );
@@ -90,8 +89,7 @@ fn create_records_workweave_in_the_index() {
     let ww_dir = weaveroot.join("web-app--feat");
     assert_eq!(
         recorded_path,
-        ww_dir
-            .canonicalize()
+        repoweave::path_spelling::resolve(&ww_dir)
             .unwrap_or_else(|_| ww_dir.clone())
             .to_string_lossy()
     );
@@ -131,7 +129,12 @@ fn a_symlinked_container_is_recorded_canonicalized() {
 
     let idx = read_index(&ws, "web-app");
     let container = idx["container"].as_str().unwrap();
-    assert_eq!(container, real.canonicalize().unwrap().to_string_lossy());
+    assert_eq!(
+        container,
+        repoweave::path_spelling::resolve(&real)
+            .unwrap()
+            .to_string_lossy()
+    );
 
     let placement = idx["workweaves"]["feat"].as_str().unwrap();
     assert!(
@@ -160,7 +163,9 @@ fn set_container_records_a_symlinked_path_canonicalized() {
     let idx = read_index(&ws, "web-app");
     assert_eq!(
         idx["container"].as_str().unwrap(),
-        real.canonicalize().unwrap().to_string_lossy()
+        repoweave::path_spelling::resolve(&real)
+            .unwrap()
+            .to_string_lossy()
     );
 }
 
@@ -543,9 +548,9 @@ fn env_var_no_longer_steers_placement_or_output() {
 
     let idx = read_index(&ws, "web-app");
     let recorded_path = PathBuf::from(idx["workweaves"]["feat"].as_str().unwrap());
-    let default_container = repoweave::workweave_index::default_container(&ws)
-        .canonicalize()
-        .unwrap();
+    let default_container =
+        repoweave::path_spelling::resolve(&repoweave::workweave_index::default_container(&ws))
+            .unwrap();
     assert_eq!(
         recorded_path.parent().unwrap(),
         default_container,
@@ -584,8 +589,7 @@ fn per_workweave_dir_override_lands_and_records_absolute_path() {
 
     let idx = read_index(&ws, "web-app");
     let recorded_path = idx["workweaves"]["feat"].as_str().unwrap();
-    let expected = custom
-        .canonicalize()
+    let expected = repoweave::path_spelling::resolve(&custom)
         .unwrap_or_else(|_| custom.clone())
         .to_string_lossy()
         .into_owned();
@@ -633,8 +637,7 @@ fn set_container_verb_records_the_container() {
 
     let idx = read_index(&ws, "web-app");
     let recorded = idx["container"].as_str().unwrap();
-    let expected = alt
-        .canonicalize()
+    let expected = repoweave::path_spelling::resolve(&alt)
         .unwrap_or_else(|_| alt.clone())
         .to_string_lossy()
         .into_owned();

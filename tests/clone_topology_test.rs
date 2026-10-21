@@ -55,12 +55,10 @@ fn write_manifest(ws: &Path) {
 /// Write a healthy `.rwv-workweave` marker.
 fn write_marker(ww_dir: &Path, primary: &Path, project: &str, parent: &Path) {
     std::fs::create_dir_all(ww_dir).unwrap();
-    let primary_canon = primary
-        .canonicalize()
-        .unwrap_or_else(|_| primary.to_path_buf());
-    let parent_canon = parent
-        .canonicalize()
-        .unwrap_or_else(|_| parent.to_path_buf());
+    let primary_canon =
+        repoweave::path_spelling::resolve(primary).unwrap_or_else(|_| primary.to_path_buf());
+    let parent_canon =
+        repoweave::path_spelling::resolve(parent).unwrap_or_else(|_| parent.to_path_buf());
     let content = common::workweave_marker(&primary_canon, project, &parent_canon);
     std::fs::write(ww_dir.join(".rwv-workweave"), content).unwrap();
 }

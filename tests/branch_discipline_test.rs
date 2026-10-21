@@ -65,12 +65,10 @@ fn workweaves_dir(ws_root: &Path) -> PathBuf {
 /// Write a well-formed `.rwv-workweave` marker file into `ww_dir`.
 fn write_marker(ww_dir: &Path, primary: &Path, project: &str, parent: &Path) {
     std::fs::create_dir_all(ww_dir).unwrap();
-    let primary_str = primary
-        .canonicalize()
-        .unwrap_or_else(|_| primary.to_path_buf());
-    let parent_str = parent
-        .canonicalize()
-        .unwrap_or_else(|_| parent.to_path_buf());
+    let primary_str =
+        repoweave::path_spelling::resolve(primary).unwrap_or_else(|_| primary.to_path_buf());
+    let parent_str =
+        repoweave::path_spelling::resolve(parent).unwrap_or_else(|_| parent.to_path_buf());
     let content = common::workweave_marker(&primary_str, project, &parent_str);
     std::fs::write(ww_dir.join(".rwv-workweave"), content).unwrap();
 }
@@ -1170,13 +1168,13 @@ fn rm_rf_of_a_container_placed_seat_is_fixed_in_one_pass() {
         .current_dir(&canonical)
         .output()
         .unwrap();
-    let canonical_canon = canonical.canonicalize().unwrap();
+    let canonical_canon = repoweave::path_spelling::resolve(&canonical).unwrap();
     let seat_checkout = String::from_utf8_lossy(&list.stdout)
         .lines()
         .filter_map(|l| l.strip_prefix("worktree "))
         .map(PathBuf::from)
         .find(|p| {
-            p.canonicalize()
+            repoweave::path_spelling::resolve(p)
                 .map(|c| c != canonical_canon)
                 .unwrap_or(true)
         })

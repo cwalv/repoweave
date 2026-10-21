@@ -733,7 +733,7 @@ fn activate_from_workweave_is_rejected() {
     // primary. The workweave lives at ws/../ws--ww1 (sibling of primary).
     let workweave_dir = tmp.path().join("ws--ww1");
     std::fs::create_dir_all(&workweave_dir).unwrap();
-    let primary_canon = ws.canonicalize().unwrap();
+    let primary_canon = repoweave::path_spelling::resolve(&ws).unwrap();
     let marker = WorkweaveMarker::new(
         primary_canon.clone(),
         ProjectName::new("my-proj").unwrap(),
@@ -784,7 +784,7 @@ fn activate_different_project_from_workweave_is_rejected() {
 
     let workweave_dir = tmp.path().join("ws--ww2");
     std::fs::create_dir_all(&workweave_dir).unwrap();
-    let primary_canon = ws.canonicalize().unwrap();
+    let primary_canon = repoweave::path_spelling::resolve(&ws).unwrap();
     let marker = WorkweaveMarker::new(
         primary_canon.clone(),
         ProjectName::new("proj-a").unwrap(),
@@ -841,7 +841,7 @@ fn activate_intent_from_a_workweave_checkout_authors_at_primary() {
     std::fs::create_dir_all(&workweave_project_dir).unwrap();
     std::fs::write(workweave_project_dir.join("rwv.toml"), gita_manifest).unwrap();
     std::fs::create_dir_all(workweave_dir.join("github/acme/server")).unwrap();
-    let primary_canon = ws.canonicalize().unwrap();
+    let primary_canon = repoweave::path_spelling::resolve(&ws).unwrap();
     WorkweaveMarker::new(
         primary_canon.clone(),
         ProjectName::new("web-app").unwrap(),
@@ -852,7 +852,10 @@ fn activate_intent_from_a_workweave_checkout_authors_at_primary() {
 
     let ctx =
         repoweave::workspace::WorkspaceContext::resolve_invocation(&workweave_dir, None).unwrap();
-    assert_eq!(ctx.active_path(), workweave_dir.canonicalize().unwrap());
+    assert_eq!(
+        ctx.active_path(),
+        repoweave::path_spelling::resolve(&workweave_dir).unwrap()
+    );
     repoweave::activate::activate_intent_with_options(
         "web-app",
         &ctx,

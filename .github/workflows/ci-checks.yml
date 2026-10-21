@@ -66,7 +66,8 @@ jobs:
     # than at release-tag time. A block gated `#[cfg(unix)]` with no windows
     # arm is not a compile error anywhere; it vanishes and the caller reports
     # success, so compiling the test surface is what keeps the tests that
-    # cover such a block from silently ceasing to exist.
+    # cover such a block from silently ceasing to exist. It lints the same
+    # surface, since a lint on a `#[cfg(windows)]` item fires nowhere else.
     #
     # It does NOT establish that anything PASSES on Windows. Executing the
     # suite there is windows-tests.yml's job, which is advisory and deliberately
@@ -85,3 +86,9 @@ jobs:
 
       - name: Check the whole crate compiles on Windows
         run: cargo check --locked --all-targets
+
+      - name: Lint the whole crate on Windows
+        # clippy.toml's bans cover cfg(windows) code only in a Windows-target
+        # run; scripts/ci-local.sh's windows stage runs the same lint
+        # cross-target where the target is installed.
+        run: cargo clippy --locked --all-targets -- -D warnings

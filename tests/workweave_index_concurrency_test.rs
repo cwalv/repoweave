@@ -292,14 +292,12 @@ fn unreceipted(root: &Path) -> Vec<String> {
     let held = recorded_receipts(root);
     let mut orphans = Vec::new();
     for repo in [MEMBER, &format!("projects/{PROJECT}")] {
-        let store = root
-            .join(repo)
-            .canonicalize()
-            .expect("minted repo store exists");
+        let store =
+            repoweave::path_spelling::resolve(&root.join(repo)).expect("minted repo store exists");
         for branch in minted_branches(&root.join(repo)) {
-            let covered = held
-                .iter()
-                .any(|(s, n)| *n == branch && s.canonicalize().is_ok_and(|c| c == store));
+            let covered = held.iter().any(|(s, n)| {
+                *n == branch && repoweave::path_spelling::resolve(s).is_ok_and(|c| c == store)
+            });
             if !covered {
                 orphans.push(format!("{repo}:{branch}"));
             }

@@ -1,6 +1,7 @@
 //! Git implementation of the [`Vcs`] trait.
 
 use crate::op_state::SavepointKey;
+use crate::path_spelling::resolve;
 use crate::registry::CloneUrl;
 use crate::vcs::{
     CommitId, CommitSummary, ConflictOp, ContentIdentity, DerivedContentPolicy,
@@ -124,11 +125,9 @@ macro_rules! under_both_line_endings {
 pub(crate) use under_both_line_endings;
 
 /// The one conversion from a path to a `git` argument, and the reason it is
-/// one: on Windows `std::fs::canonicalize` always answers in the `\\?\`
-/// extended-length form, and git refuses an argument spelled that way —
-/// `git worktree add //?/C:/…` fails outright. rwv derives every path it
-/// hands git from a canonicalized weave root, so the prefix rides along to
-/// argv unless it comes off here.
+/// one: git refuses an argument in the Windows `\\?\` extended-length
+/// spelling — `git worktree add //?/C:/…` fails outright — and a weave root
+/// read from a record can carry it, so the prefix comes off here.
 ///
 /// `dunce::simplified` drops the prefix only where Windows itself accepts the
 /// short form — not over the legacy length limit, not a UNC share, not a
@@ -935,13 +934,13 @@ impl GitVcs {
     /// This runs inside the failing add, so the registration is observed
     /// before any rwv-side rollback can prune it.
     fn is_registered_worktree(&self, store: &Path, dest: &Path) -> bool {
-        let Ok(dest) = dest.canonicalize() else {
+        let Ok(dest) = resolve(dest) else {
             return false;
         };
         self.list_worktrees(store).is_ok_and(|worktrees| {
             worktrees
                 .iter()
-                .any(|w| w.canonicalize().is_ok_and(|w| w == dest))
+                .any(|w| resolve(w).is_ok_and(|w| w == dest))
         })
     }
 
@@ -1492,7 +1491,7 @@ impl Vcs for GitVcs {
         let Ok(top) = Self::run_trimmed(&["rev-parse", "--show-toplevel"], path) else {
             return false;
         };
-        match (std::fs::canonicalize(top), std::fs::canonicalize(path)) {
+        match (resolve(Path::new(&top)), resolve(path)) {
             (Ok(top), Ok(path)) => top == path,
             _ => false,
         }

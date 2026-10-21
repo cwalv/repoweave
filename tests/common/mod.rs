@@ -89,13 +89,6 @@ pub fn skip_without_tool(tool: &str) -> bool {
     true
 }
 
-/// `ETXTBSY`. Not worth a dependency for one number, and it is the same on
-/// every unix this suite builds for.
-#[cfg(unix)]
-pub fn etxtbsy() -> i32 {
-    26
-}
-
 /// Where `tool` is, confirmed to start, or `None` with the skip announced.
 ///
 /// For the caller that needs the tool's LOCATION rather than whether it is
@@ -135,10 +128,9 @@ pub fn resolve_tool_or_skip(tool: &str) -> Option<PathBuf> {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status();
-        #[cfg(unix)]
         if started
             .as_ref()
-            .is_err_and(|e| e.raw_os_error() == Some(etxtbsy()))
+            .is_err_and(|e| e.kind() == std::io::ErrorKind::ExecutableFileBusy)
         {
             std::thread::sleep(std::time::Duration::from_millis(20));
             continue;
@@ -187,21 +179,15 @@ pub fn resolve_tool_or_skip(tool: &str) -> Option<PathBuf> {
 /// every fixture inside it, and the suite's "outside a workspace" tests then
 /// fail for that reason instead.
 ///
-/// On Windows `canonicalize` always answers in the `\\?\` extended-length
-/// form, and git refuses an argument spelled that way — so a root left in
-/// that spelling fails every fixture helper that runs git against a fixture
-/// path. `dunce::simplified` drops the prefix only where Windows itself
-/// accepts the short form and is the identity on every other platform, the
-/// same strip production applies in `src/git.rs` where a path becomes a git
-/// argument.
+/// The root is resolved by the function rwv resolves its own paths with, so
+/// a fixture path and the path rwv reports for it are one spelling on every
+/// platform, Windows included.
 pub fn tempdir() -> std::io::Result<tempfile::TempDir> {
     static ROOT: OnceLock<PathBuf> = OnceLock::new();
     let root = ROOT.get_or_init(|| {
         let raw = std::env::temp_dir();
-        let canonical = raw
-            .canonicalize()
-            .unwrap_or_else(|e| panic!("temp dir {} does not resolve: {e}", raw.display()));
-        dunce::simplified(&canonical).to_path_buf()
+        repoweave::path_spelling::resolve(&raw)
+            .unwrap_or_else(|e| panic!("temp dir {} does not resolve: {e}", raw.display()))
     });
     tempfile::TempDir::new_in(root)
 }
@@ -295,7 +281,7 @@ pub fn register_workweave(
 ) {
     let primary = primary.as_ref();
     let dir = dir.as_ref();
-    let canonical = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    let canonical = repoweave::path_spelling::resolve(dir).unwrap_or_else(|_| dir.to_path_buf());
     let index_path = primary
         .join("projects")
         .join(project)

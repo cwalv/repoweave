@@ -206,6 +206,7 @@ fn render_directory_layout(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::path_spelling::resolve;
     use std::path::{Path, PathBuf};
 
     fn make_test_workspace(parent: &Path, name: &str) -> PathBuf {
@@ -426,7 +427,7 @@ enabled = true
 
         // Write the .rwv-workweave marker so resolve() recognizes this as a
         // workweave (marker-less resolution was removed).
-        let primary_canon = root.canonicalize().unwrap();
+        let primary_canon = resolve(&root).unwrap();
         crate::workspace::WorkweaveMarker::new(
             primary_canon.clone(),
             crate::manifest::ProjectName::new("ws").unwrap(),

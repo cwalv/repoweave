@@ -255,6 +255,7 @@ fn a_write_into_a_member_while_a_verb_runs_is_not_prevented() {
 // Fixture
 // ---------------------------------------------------------------------------
 
+#[cfg(unix)]
 fn rwv(args: &[&str], cwd: &Path) -> (bool, String) {
     let output = common::rwv()
         .args(args)
@@ -290,6 +291,7 @@ fn rwv_with_path_prefix(args: &[&str], cwd: &Path, prepend: &Path) -> (bool, Str
     )
 }
 
+#[cfg(unix)]
 fn git_init_with_commit(dir: &Path) {
     common::git_in(dir, &["init", "--initial-branch=main"]);
     common::git_in(dir, &["config", "user.email", "test@test.com"]);

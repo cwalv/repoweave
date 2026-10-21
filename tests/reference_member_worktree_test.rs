@@ -162,7 +162,7 @@ fn rwv_lock_commit(workspace_root: &Path) {
 /// The store `checkout`'s objects and refs live in.
 fn store_of(checkout: &Path) -> PathBuf {
     let common_dir = common::git_in(checkout, &["rev-parse", "--git-common-dir"]);
-    std::fs::canonicalize(checkout.join(common_dir)).unwrap()
+    repoweave::path_spelling::resolve(&checkout.join(common_dir)).unwrap()
 }
 
 /// What every member of a workweave is: a linked worktree of the canonical
@@ -180,7 +180,7 @@ fn assert_member_worktree(checkout: &Path, canonical: &Path, branch: &str) {
     );
     assert_eq!(
         store_of(checkout),
-        std::fs::canonicalize(canonical.join(".git")).unwrap(),
+        repoweave::path_spelling::resolve(&canonical.join(".git")).unwrap(),
         "{} must link into the canonical clone's store",
         checkout.display()
     );

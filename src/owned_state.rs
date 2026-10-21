@@ -35,6 +35,7 @@
 //! identical story and can port by calling the same three helpers.
 
 use crate::integration::{Issue, IssueKind, IssueSource, Severity};
+use crate::path_spelling::resolve;
 use crate::refusal::RefusalKind;
 use crate::workweave_index;
 use anyhow::Context;
@@ -697,7 +698,7 @@ fn collect_path_deps(
 /// Best-effort canonicalize; fall back to the input on error so unmapped
 /// filesystems and missing files still yield a deterministic key.
 fn canonicalize_or_owned(path: &Path) -> std::path::PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    resolve(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// A stable workspace-relative string spelling of `target`. Paths inside

@@ -21,7 +21,7 @@ fn rwv() -> assert_cmd::Command {
 }
 
 fn canon(p: &Path) -> String {
-    p.canonicalize()
+    repoweave::path_spelling::resolve(p)
         .unwrap_or_else(|_| p.to_path_buf())
         .to_string_lossy()
         .to_string()

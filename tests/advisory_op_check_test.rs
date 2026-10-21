@@ -66,6 +66,7 @@ fn rwv_with_path_prefix(args: &[&str], cwd: &Path, prepend: &Path) -> (bool, Str
     )
 }
 
+#[cfg(unix)]
 fn git_init_with_commit(dir: &Path) {
     common::git_in(dir, &["init", "--initial-branch=main"]);
     common::git_in(dir, &["config", "user.email", "test@test.com"]);
@@ -76,6 +77,7 @@ fn git_init_with_commit(dir: &Path) {
 
 /// A weave whose `materialize` really runs a generator: one Rust member and
 /// cargo-workspace enabled, so there is a subprocess to stand inside.
+#[cfg(unix)]
 fn weave_with_a_generator(root: &Path) -> PathBuf {
     let ws = root.join("ws");
     let project_dir = ws.join("projects/app");

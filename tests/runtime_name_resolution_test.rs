@@ -162,7 +162,7 @@ fn make_drifted_workweave(ws: &Path, container: &Path) -> PathBuf {
     );
     assert_eq!(
         read_index(ws)["workweaves"]["feat"].as_str().map(Path::new),
-        Some(dir.canonicalize().unwrap().as_path()),
+        Some(repoweave::path_spelling::resolve(&dir).unwrap().as_path()),
         "fixture: the registry must record `feat` at the drifted directory"
     );
     dir
@@ -254,7 +254,9 @@ fn unregistered_workweave_is_addressed_by_directory_in_push_refusal() {
     assert!(
         stderr.contains(&format!(
             "workweave at {}",
-            repoweave::path_spelling::operator_path(&dir.canonicalize().unwrap())
+            repoweave::path_spelling::operator_path(
+                &repoweave::path_spelling::resolve(&dir).unwrap()
+            )
         )),
         "the refusal must address the workweave by directory: {stderr}"
     );

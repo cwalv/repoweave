@@ -185,8 +185,8 @@ fn placed_total(placement: &Value) -> u64 {
 fn same_checkout(reported: &Value, checkout: &Path) -> bool {
     reported
         .as_str()
-        .and_then(|p| std::fs::canonicalize(p).ok())
-        == std::fs::canonicalize(checkout).ok()
+        .and_then(|p| repoweave::path_spelling::resolve(Path::new(p)).ok())
+        == repoweave::path_spelling::resolve(checkout).ok()
 }
 
 /// The one placement naming `checkout`, among `placements`.

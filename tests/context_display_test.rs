@@ -23,7 +23,7 @@ fn make_workspace(parent: &Path, name: &str) -> std::path::PathBuf {
 /// with the given project name. Required because marker-less resolution has
 /// been removed.
 fn write_marker(weave_dir: &Path, primary: &Path, project: &str) {
-    let primary_canon = primary.canonicalize().unwrap();
+    let primary_canon = repoweave::path_spelling::resolve(primary).unwrap();
     let marker = common::workweave_marker(&primary_canon, project, &primary_canon);
     fs::write(weave_dir.join(".rwv-workweave"), marker).unwrap();
 }
@@ -54,7 +54,7 @@ fn context_display_in_primary_shows_root_and_projects() {
         .clone();
 
     let stdout = String::from_utf8(out).expect("stdout should be valid UTF-8");
-    common::assert_weave_line(&stdout, root.canonicalize().unwrap());
+    common::assert_weave_line(&stdout, repoweave::path_spelling::resolve(&root).unwrap());
 }
 
 #[test]
@@ -75,7 +75,7 @@ fn context_display_in_primary_subdir() {
         .clone();
 
     let stdout = String::from_utf8(out).expect("stdout should be valid UTF-8");
-    common::assert_weave_line(&stdout, root.canonicalize().unwrap());
+    common::assert_weave_line(&stdout, repoweave::path_spelling::resolve(&root).unwrap());
 }
 
 // ============================================================================
@@ -135,7 +135,7 @@ fn resolve_in_primary_prints_root_path() {
     let deep = root.join("github").join("acme").join("server");
     fs::create_dir_all(&deep).unwrap();
 
-    let canonical_root = root.canonicalize().unwrap();
+    let canonical_root = repoweave::path_spelling::resolve(&root).unwrap();
 
     Command::cargo_bin("rwv")
         .unwrap()
@@ -152,7 +152,7 @@ fn resolve_at_workspace_root_prints_root_path() {
     let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
-    let canonical_root = root.canonicalize().unwrap();
+    let canonical_root = repoweave::path_spelling::resolve(&root).unwrap();
 
     Command::cargo_bin("rwv")
         .unwrap()
@@ -177,7 +177,7 @@ fn resolve_in_weave_prints_weave_dir_path() {
     fs::create_dir_all(&weave_dir).unwrap();
     write_marker(&weave_dir, &root, "ws");
 
-    let canonical_weave = weave_dir.canonicalize().unwrap();
+    let canonical_weave = repoweave::path_spelling::resolve(&weave_dir).unwrap();
 
     Command::cargo_bin("rwv")
         .unwrap()
@@ -199,7 +199,7 @@ fn resolve_in_weave_subdir_prints_weave_dir_path() {
     fs::create_dir_all(&repo_dir).unwrap();
     write_marker(&weave_dir, &root, "ws");
 
-    let canonical_weave = weave_dir.canonicalize().unwrap();
+    let canonical_weave = repoweave::path_spelling::resolve(&weave_dir).unwrap();
 
     Command::cargo_bin("rwv")
         .unwrap()

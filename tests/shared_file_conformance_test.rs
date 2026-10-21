@@ -57,7 +57,7 @@ impl Weave {
         common::git_in(&store, &["config", "core.autocrlf", "false"]);
         let before = commit(&store, first);
         let after = commit(&store, second);
-        let store = store.canonicalize().unwrap();
+        let store = repoweave::path_spelling::resolve(&store).unwrap();
         Self {
             tmp,
             primary,

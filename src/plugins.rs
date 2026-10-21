@@ -361,7 +361,7 @@ pub fn build_command(
 ) -> Command {
     let mut cmd = Command::new(binary);
     // The plugin gets its working directory in the spelling a shell would hold,
-    // never the verbatim `\\?\` form a canonicalized `-C` path carries.
+    // never the verbatim `\\?\` form a recorded `-w` path can carry.
     cmd.args(args)
         .current_dir(dunce::simplified(invocation_dir));
     // An inherited `PWD` names the shell's directory, not the one the plugin

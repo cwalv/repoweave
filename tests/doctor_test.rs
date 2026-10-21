@@ -1857,7 +1857,7 @@ fn legacy_workweave_marker_causes_error_on_rwv_invocation() {
     // Write a legacy marker without `parent:`.
     let legacy_marker = format!(
         "primary: {}\nproject: my-app\n",
-        root.canonicalize().unwrap().display()
+        repoweave::path_spelling::resolve(&root).unwrap().display()
     );
     std::fs::write(ww_dir.join(".rwv-workweave"), &legacy_marker).unwrap();
 
@@ -1891,7 +1891,7 @@ fn doctor_reports_legacy_workweave_marker() {
     // Write a legacy marker without `parent:`.
     let legacy_marker = format!(
         "primary: {}\nproject: my-app\n",
-        root.canonicalize().unwrap().display()
+        repoweave::path_spelling::resolve(&root).unwrap().display()
     );
     std::fs::write(ww_dir.join(".rwv-workweave"), &legacy_marker).unwrap();
 
@@ -1915,7 +1915,7 @@ fn doctor_reports_legacy_workweave_marker() {
 fn doctor_fix_migrates_legacy_workweave_marker() {
     let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
-    let primary_canon = root.canonicalize().unwrap();
+    let primary_canon = repoweave::path_spelling::resolve(&root).unwrap();
     // The default container: doctor's scan always covers it, with no
     // registry entry required — these markers are hand-written, not
     // created via `rwv workweave create`.
@@ -2044,7 +2044,10 @@ fn doctor_does_not_report_a_legacy_marker_with_no_project() {
     std::fs::create_dir_all(&ww_dir).unwrap();
 
     // Legacy shape (no `parent:`), with `primary:` but no `project:`.
-    let legacy_marker = format!("primary: {}\n", root.canonicalize().unwrap().display());
+    let legacy_marker = format!(
+        "primary: {}\n",
+        repoweave::path_spelling::resolve(&root).unwrap().display()
+    );
     std::fs::write(ww_dir.join(".rwv-workweave"), &legacy_marker).unwrap();
 
     let stdout = rwv_cmd()
@@ -2081,7 +2084,10 @@ fn doctor_fix_does_not_error_on_legacy_marker_with_no_project() {
     let ww_dir = ww_dir_container.join("ws--feat");
     std::fs::create_dir_all(&ww_dir).unwrap();
 
-    let legacy_marker = format!("primary: {}\n", root.canonicalize().unwrap().display());
+    let legacy_marker = format!(
+        "primary: {}\n",
+        repoweave::path_spelling::resolve(&root).unwrap().display()
+    );
     std::fs::write(ww_dir.join(".rwv-workweave"), &legacy_marker).unwrap();
 
     rwv_cmd()

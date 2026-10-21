@@ -187,8 +187,9 @@ fn sync_json_reports_the_placement_as_its_own_record(endings: LineEndings) {
     let placement = &placements[0];
     assert_eq!(placement["path"], MEMBER);
     assert_eq!(
-        std::fs::canonicalize(placement["absolute_path"].as_str().unwrap()).unwrap(),
-        std::fs::canonicalize(seat.join(MEMBER)).unwrap()
+        repoweave::path_spelling::resolve(Path::new(placement["absolute_path"].as_str().unwrap()))
+            .unwrap(),
+        repoweave::path_spelling::resolve(&seat.join(MEMBER)).unwrap()
     );
     let files = &placement["files"];
     let count = |key: &str| files[key].as_u64().unwrap();

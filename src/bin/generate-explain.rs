@@ -749,7 +749,7 @@ fn collect_md_files_inner(dir: &Path, exclude_dirs: &[PathBuf], out: &mut Vec<Pa
     entries.sort_by_key(|e| e.file_name());
     for entry in entries {
         let path = entry.path();
-        let canonical = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+        let canonical = repoweave::path_spelling::resolve(&path).unwrap_or_else(|_| path.clone());
         if path.is_dir() {
             if exclude_dirs
                 .iter()
@@ -792,7 +792,7 @@ fn check_assembled_docs(docs_dir: &Path) -> Vec<String> {
     let mut exclude_dirs: Vec<PathBuf> = Vec::new();
     for tmpl_rel in &["reference/explain/templates", "reference/prime/templates"] {
         let p = docs_dir.join(tmpl_rel);
-        let canonical = std::fs::canonicalize(&p).unwrap_or(p);
+        let canonical = repoweave::path_spelling::resolve(&p).unwrap_or(p);
         exclude_dirs.push(canonical);
     }
 
@@ -800,7 +800,7 @@ fn check_assembled_docs(docs_dir: &Path) -> Vec<String> {
     let mut assembled_dirs: Vec<PathBuf> = Vec::new();
     for asm_rel in &["reference/explain", "reference/prime"] {
         let p = docs_dir.join(asm_rel);
-        let canonical = std::fs::canonicalize(&p).unwrap_or(p);
+        let canonical = repoweave::path_spelling::resolve(&p).unwrap_or(p);
         assembled_dirs.push(canonical);
     }
 
@@ -837,7 +837,8 @@ fn check_assembled_docs(docs_dir: &Path) -> Vec<String> {
         };
 
         // Determine whether this file is in an assembled-output directory.
-        let canonical_file = std::fs::canonicalize(md_path).unwrap_or_else(|_| md_path.clone());
+        let canonical_file =
+            repoweave::path_spelling::resolve(md_path).unwrap_or_else(|_| md_path.clone());
         let is_assembled = assembled_dirs
             .iter()
             .any(|ad| canonical_file.starts_with(ad));

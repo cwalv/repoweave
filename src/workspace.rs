@@ -27,6 +27,7 @@
 
 use crate::integration_runner::IntegrationContextBase;
 use crate::manifest::{Manifest, ProjectName, RepoPath, WorkweaveName};
+use crate::path_spelling::resolve;
 use crate::refusal::RefusalKind;
 use crate::registry::builtin_registry_names;
 use crate::vcs::Vcs;
@@ -1177,9 +1178,7 @@ struct RootSite {
 /// is shaped exactly like a primary and walking past one hands the tree a
 /// primary's authority on the strength of its own broken claim.
 fn walk_to_weave_root(cwd: &Path) -> anyhow::Result<(RootSite, RootObservation)> {
-    let cwd = cwd
-        .canonicalize()
-        .with_context(|| format!("failed to canonicalize {}", cwd.display()))?;
+    let cwd = resolve(cwd).with_context(|| format!("failed to canonicalize {}", cwd.display()))?;
 
     // Hard ceiling: never search above $HOME.
     //
@@ -1204,7 +1203,7 @@ fn walk_to_weave_root(cwd: &Path) -> anyhow::Result<(RootSite, RootObservation)>
     // above has already been canonicalized.  Without canonicalization the
     // `starts_with` test always returns false (the paths are spelled
     // differently) and the ceiling silently never fires.
-    let home_dir = std::env::home_dir().and_then(|h| h.canonicalize().ok());
+    let home_dir = std::env::home_dir().and_then(|h| resolve(&h).ok());
 
     let mut current = cwd.as_path();
     loop {
@@ -1990,7 +1989,7 @@ pub struct CanonicalPath(PathBuf);
 
 impl CanonicalPath {
     pub fn of(path: &Path) -> Self {
-        CanonicalPath(path.canonicalize().unwrap_or_else(|_| path.to_path_buf()))
+        CanonicalPath(resolve(path).unwrap_or_else(|_| path.to_path_buf()))
     }
 
     pub fn as_path(&self) -> &Path {
@@ -2776,7 +2775,7 @@ mod tests {
         let ctx = WorkspaceContext::resolve_invocation(&member, None).unwrap();
         assert_eq!(
             ctx.primary_path(),
-            member.canonicalize().unwrap(),
+            resolve(&member).unwrap(),
             "the walk stops at the first workspace-shaped ancestor, so the \
              member checkout resolves as its own primary rather than reaching \
              the real weave root above it"
@@ -2791,7 +2790,7 @@ mod tests {
         std::fs::create_dir_all(&deep).unwrap();
 
         let ctx = WorkspaceContext::resolve_invocation(&deep, None).unwrap();
-        assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
+        assert_eq!(ctx.primary_path(), resolve(&root).unwrap());
         match &ctx.checkout {
             Checkout::Primary { project } => {
                 assert!(project.is_none());
@@ -2816,7 +2815,7 @@ mod tests {
         std::fs::create_dir_all(&project_dir).unwrap();
 
         let ctx = WorkspaceContext::resolve_invocation(&project_dir, None).unwrap();
-        assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
+        assert_eq!(ctx.primary_path(), resolve(&root).unwrap());
         match &ctx.checkout {
             Checkout::Primary { project } => {
                 assert!(
@@ -2883,7 +2882,7 @@ mod tests {
                 // Correct: treated as an anonymous workspace root, not a workweave.
                 assert_eq!(
                     ctx.primary_path(),
-                    weave_dir.canonicalize().unwrap(),
+                    resolve(&weave_dir).unwrap(),
                     "should resolve to the marker-less dir as workspace root"
                 );
             }
@@ -2941,7 +2940,7 @@ mod tests {
         std::fs::create_dir_all(&weave_dir).unwrap();
 
         // Write a marker so the workweave is recognized.
-        let primary_canon = root.canonicalize().unwrap();
+        let primary_canon = resolve(&root).unwrap();
         let marker = WorkweaveMarker {
             primary: primary_canon.clone(),
             project: ProjectName::new("ws").unwrap(),
@@ -2972,7 +2971,7 @@ mod tests {
         let root = make_workspace(tmp.path(), "ws");
 
         let ctx = WorkspaceContext::resolve_invocation(&root, None).unwrap();
-        assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
+        assert_eq!(ctx.primary_path(), resolve(&root).unwrap());
         match &ctx.checkout {
             Checkout::Primary { project } => {
                 assert!(project.is_none());
@@ -3283,7 +3282,7 @@ mod tests {
         let marker = WorkweaveMarker::read(&dir).unwrap().unwrap();
         assert_eq!(
             marker.parent().as_path(),
-            primary.canonicalize().unwrap(),
+            resolve(&primary).unwrap(),
             "a parent read off disk must arrive in the same spelling one built here would"
         );
     }
@@ -3551,7 +3550,7 @@ mod tests {
         let weave_dir = workweaves_dir.join("feat");
         std::fs::create_dir_all(&weave_dir).unwrap();
 
-        let primary_canon = root.canonicalize().unwrap();
+        let primary_canon = resolve(&root).unwrap();
         let marker = WorkweaveMarker {
             primary: primary_canon.clone(),
             project: ProjectName::new("web-app").unwrap(),
@@ -3567,7 +3566,7 @@ mod tests {
                 name, dir, project, ..
             } => {
                 assert_eq!(name.recorded().unwrap().as_str(), "feat");
-                assert_eq!(*dir, weave_dir.canonicalize().unwrap());
+                assert_eq!(*dir, resolve(&weave_dir).unwrap());
                 assert_eq!(project.as_str(), "web-app");
             }
             Checkout::Primary { .. } => panic!("expected Workweave"),
@@ -3580,7 +3579,7 @@ mod tests {
         let root = make_workspace(tmp, "ws");
         let weave_dir = tmp.join(".workweaves").join("feat");
         std::fs::create_dir_all(&weave_dir).unwrap();
-        let primary_canon = root.canonicalize().unwrap();
+        let primary_canon = resolve(&root).unwrap();
         WorkweaveMarker::new(
             primary_canon.clone(),
             ProjectName::new("web-app").unwrap(),
@@ -3674,7 +3673,7 @@ mod tests {
         let repo_dir = weave_dir.join("github").join("acme").join("server");
         std::fs::create_dir_all(&repo_dir).unwrap();
 
-        let primary_canon = root.canonicalize().unwrap();
+        let primary_canon = resolve(&root).unwrap();
         let marker = WorkweaveMarker {
             primary: primary_canon.clone(),
             project: ProjectName::new("web-app").unwrap(),
@@ -3684,13 +3683,13 @@ mod tests {
         register_workweave(&primary_canon, "web-app", "feat", &weave_dir);
 
         let ctx = WorkspaceContext::resolve_invocation(&repo_dir, None).unwrap();
-        assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
+        assert_eq!(ctx.primary_path(), resolve(&root).unwrap());
         match &ctx.checkout {
             Checkout::Workweave {
                 name, dir, project, ..
             } => {
                 assert_eq!(name.recorded().unwrap().as_str(), "feat");
-                assert_eq!(*dir, weave_dir.canonicalize().unwrap());
+                assert_eq!(*dir, resolve(&weave_dir).unwrap());
                 assert_eq!(project.as_str(), "web-app");
             }
             Checkout::Primary { .. } => panic!("expected Workweave"),
@@ -3708,7 +3707,7 @@ mod tests {
         let weave_dir = tmp.path().join("ws--dash-name");
         std::fs::create_dir_all(&weave_dir).unwrap();
 
-        let primary_canon = root.canonicalize().unwrap();
+        let primary_canon = resolve(&root).unwrap();
         let marker = WorkweaveMarker {
             primary: primary_canon.clone(),
             project: ProjectName::new("marker-project").unwrap(),
@@ -3785,7 +3784,7 @@ mod tests {
 
         let err = WorkspaceContext::resolve_invocation(&dir, None).unwrap_err();
         let msg = format!("{err}");
-        let canon = dir.canonicalize().unwrap();
+        let canon = resolve(&dir).unwrap();
         assert!(
             msg.contains(&canon.join(WORKWEAVE_MARKER_FILE).display().to_string()),
             "must name the marker: {msg}"
@@ -3826,7 +3825,7 @@ mod tests {
         let root = make_workspace(parent, "ws");
         let dir = parent.join(".workweaves").join("web-app--feat");
         std::fs::create_dir_all(&dir).unwrap();
-        let primary_canon = root.canonicalize().unwrap();
+        let primary_canon = resolve(&root).unwrap();
         WorkweaveMarker {
             primary: primary_canon.clone(),
             project: ProjectName::new("web-app").unwrap(),
@@ -3846,7 +3845,7 @@ mod tests {
 
         let err = WorkspaceContext::resolve_invocation(&dir, None).unwrap_err();
         let msg = format!("{err}");
-        let canon = dir.canonicalize().unwrap();
+        let canon = resolve(&dir).unwrap();
         assert!(
             msg.contains(&canon.join(WORKWEAVE_MARKER_FILE).display().to_string()),
             "must name the marker: {msg}"
@@ -3871,7 +3870,7 @@ mod tests {
 
         let ctx =
             WorkspaceContext::resolve_invocation_tolerating_disputed_root(&dir, None).unwrap();
-        assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
+        assert_eq!(ctx.primary_path(), resolve(&root).unwrap());
         assert_eq!(ctx.project_provenance(), Some(ProjectProvenance::Marker));
         match &ctx.checkout {
             Checkout::Workweave { name, project, .. } => {
@@ -3900,7 +3899,7 @@ mod tests {
         let err =
             WorkspaceContext::resolve_invocation_tolerating_disputed_root(&dir, None).unwrap_err();
         let msg = format!("{err}");
-        let canon = dir.canonicalize().unwrap();
+        let canon = resolve(&dir).unwrap();
         assert!(msg.contains("not a weave root"), "unexpected error: {msg}");
         assert!(
             msg.contains(&canon.join(WORKWEAVE_MARKER_FILE).display().to_string()),
@@ -3926,7 +3925,7 @@ mod tests {
         let root = make_workspace(tmp.path(), "ws");
         let dir = tmp.path().join(".workweaves").join("web-app--feat");
         std::fs::create_dir_all(&dir).unwrap();
-        let primary_canon = root.canonicalize().unwrap();
+        let primary_canon = resolve(&root).unwrap();
         WorkweaveMarker {
             primary: primary_canon.clone(),
             project: ProjectName::new("web-app").unwrap(),
@@ -3950,7 +3949,7 @@ mod tests {
     fn checkout_workweave_carries_a_parent_that_is_not_the_primary() {
         let tmp = tempfile::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
-        let primary_canon = root.canonicalize().unwrap();
+        let primary_canon = resolve(&root).unwrap();
 
         let upper = tmp.path().join(".workweaves").join("web-app--upper");
         std::fs::create_dir_all(&upper).unwrap();
@@ -3964,7 +3963,7 @@ mod tests {
 
         let lower = tmp.path().join(".workweaves").join("web-app--lower");
         std::fs::create_dir_all(&lower).unwrap();
-        let upper_canon = upper.canonicalize().unwrap();
+        let upper_canon = resolve(&upper).unwrap();
         WorkweaveMarker {
             primary: primary_canon.clone(),
             project: ProjectName::new("web-app").unwrap(),
@@ -4021,7 +4020,7 @@ mod tests {
         let deep = root.join("github").join("acme").join("deep");
         std::fs::create_dir_all(&deep).unwrap();
         let ctx = WorkspaceContext::resolve_invocation(&deep, None).unwrap();
-        assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
+        assert_eq!(ctx.primary_path(), resolve(&root).unwrap());
     }
 
     /// The $HOME ceiling fires when the walk-up tries to go above $HOME.
@@ -4056,7 +4055,7 @@ mod tests {
 
         // Should find the workspace even with the $HOME ceiling active.
         let ctx = WorkspaceContext::resolve_invocation(&deep, None).unwrap();
-        assert_eq!(ctx.primary_path(), root.canonicalize().unwrap());
+        assert_eq!(ctx.primary_path(), resolve(&root).unwrap());
     }
 
     // ========================================================================
@@ -4114,8 +4113,8 @@ mod tests {
         std::fs::create_dir_all(&above).unwrap();
 
         // Canonicalize paths as `resolve()` does for `current` and `parent`.
-        let current_canon = subdir.canonicalize().unwrap();
-        let parent_canon = above.canonicalize().unwrap();
+        let current_canon = resolve(&subdir).unwrap();
+        let parent_canon = resolve(&above).unwrap();
 
         // Pre-fix: passing the raw symlink spelling → ceiling silently no-ops.
         assert!(
@@ -4124,7 +4123,7 @@ mod tests {
         );
 
         // Post-fix: passing the canonicalized home → ceiling fires correctly.
-        let canon_home = link_home.canonicalize().unwrap();
+        let canon_home = resolve(&link_home).unwrap();
         assert!(
             home_ceiling_blocks(&current_canon, &parent_canon, Some(&canon_home)),
             "canonicalized home must make the ceiling fire and block the walk"
@@ -4142,9 +4141,9 @@ mod tests {
         let real_home = base.join("real_home");
         std::fs::create_dir_all(real_home.join("deep").join("inner")).unwrap();
 
-        let current = real_home.join("deep").join("inner").canonicalize().unwrap();
-        let parent = real_home.join("deep").canonicalize().unwrap();
-        let canon_home = real_home.canonicalize().unwrap();
+        let current = resolve(&real_home.join("deep").join("inner")).unwrap();
+        let parent = resolve(&real_home.join("deep")).unwrap();
+        let canon_home = resolve(&real_home).unwrap();
 
         assert!(
             !home_ceiling_blocks(&current, &parent, Some(&canon_home)),
@@ -4206,12 +4205,12 @@ mod tests {
         let found = ctx.primary_path();
         assert_ne!(
             found,
-            decoy.canonicalize().unwrap(),
+            resolve(&decoy).unwrap(),
             "nearest workspace root (ws) must win; the decoy above home is never reached"
         );
         assert_eq!(
             found,
-            ws_real.canonicalize().unwrap(),
+            resolve(&ws_real).unwrap(),
             "must find the workspace inside the (symlinked) home"
         );
     }
@@ -4377,7 +4376,7 @@ mod tests {
         make_projects(&root, &["one", "two"]);
         let weave_dir = tmp.path().join("ws--feat");
         std::fs::create_dir_all(&weave_dir).unwrap();
-        write_marker(&weave_dir, &root.canonicalize().unwrap(), "one");
+        write_marker(&weave_dir, &resolve(&root).unwrap(), "one");
 
         let ctx = WorkspaceContext::resolve_invocation(
             &weave_dir,
@@ -4401,7 +4400,7 @@ mod tests {
         std::fs::write(root.join(".rwv-active"), "two\n").unwrap();
         let weave_dir = tmp.path().join("ws--feat");
         std::fs::create_dir_all(&weave_dir).unwrap();
-        write_marker(&weave_dir, &root.canonicalize().unwrap(), "one");
+        write_marker(&weave_dir, &resolve(&root).unwrap(), "one");
 
         let ctx = WorkspaceContext::resolve_invocation(&weave_dir, None).unwrap();
         assert_eq!(ctx.active_project().unwrap().as_str(), "one");
@@ -4469,7 +4468,7 @@ mod tests {
         std::fs::write(root.join(".rwv-active"), "active-p\n").unwrap();
         let weave_dir = tmp.path().join("ws--feat");
         std::fs::create_dir_all(&weave_dir).unwrap();
-        write_marker(&weave_dir, &root.canonicalize().unwrap(), "marker-p");
+        write_marker(&weave_dir, &resolve(&root).unwrap(), "marker-p");
 
         let ctx = WorkspaceContext::resolve_invocation(
             &weave_dir,
@@ -4531,7 +4530,7 @@ mod tests {
         // Marker: silent.
         let weave_dir = tmp.path().join("ws--feat");
         std::fs::create_dir_all(&weave_dir).unwrap();
-        write_marker(&weave_dir, &root.canonicalize().unwrap(), "p");
+        write_marker(&weave_dir, &resolve(&root).unwrap(), "p");
         let ctx = WorkspaceContext::resolve_invocation(&weave_dir, None).unwrap();
         assert_eq!(ctx.project_provenance(), Some(ProjectProvenance::Marker));
         ctx.emit_target_line(); // must not panic; policy says silent
@@ -4684,7 +4683,7 @@ mod tests {
 
         assert_eq!(
             res.workspace,
-            crate::path_spelling::wire_path(&root.canonicalize().unwrap()),
+            crate::path_spelling::wire_path(&resolve(&root).unwrap()),
             "the published root is the wire mint of the resolved root, not the \
              resolved root as this host holds it"
         );
@@ -4721,7 +4720,7 @@ mod tests {
     fn resolution_in_workweave_has_workweave_identity() {
         let tmp = tempfile::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
-        let primary_canon = root.canonicalize().unwrap();
+        let primary_canon = resolve(&root).unwrap();
 
         // Create a registered workweave directory with the marker.
         let weave_dir = tmp.path().join("ws--fo-abc");
@@ -4752,14 +4751,7 @@ mod tests {
         assert_eq!(
             res.workspace,
             crate::path_spelling::wire_path(
-                &weave_dir
-                    .canonicalize()
-                    .unwrap()
-                    .parent()
-                    .unwrap()
-                    .join("ws")
-                    .canonicalize()
-                    .unwrap()
+                &resolve(&resolve(&weave_dir).unwrap().parent().unwrap().join("ws")).unwrap()
             ),
             "the workspace a workweave publishes is the primary root in the \
              wire spelling"
@@ -4781,7 +4773,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         std::fs::write(root.join(".rwv-active"), "myproject\n").unwrap();
-        let primary_canon = root.canonicalize().unwrap();
+        let primary_canon = resolve(&root).unwrap();
 
         let weave_dir = tmp.path().join("ws--w1");
         std::fs::create_dir_all(&weave_dir).unwrap();
@@ -4839,7 +4831,7 @@ mod tests {
     fn resolution_json_key_set_in_workweave() {
         let tmp = tempfile::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
-        let primary_canon = root.canonicalize().unwrap();
+        let primary_canon = resolve(&root).unwrap();
 
         let weave_dir = tmp.path().join("ws--fo-abc");
         std::fs::create_dir_all(&weave_dir).unwrap();
@@ -4880,7 +4872,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         std::fs::write(root.join(".rwv-active"), "myproject\n").unwrap();
-        let primary_canon = root.canonicalize().unwrap();
+        let primary_canon = resolve(&root).unwrap();
 
         let weave_dir = tmp.path().join("myproject--unrecorded");
         std::fs::create_dir_all(&weave_dir).unwrap();

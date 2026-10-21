@@ -202,7 +202,7 @@ fn lock_in_workweave_writes_to_workweave_project_dir_not_primary() {
     // workweave. The marker alone does it, and is the workweave root's only
     // identity file — a `.rwv-active` beside it is the state doctor reports
     // as `weave-root-identity-conflict`.
-    let primary_canon = root.canonicalize().unwrap();
+    let primary_canon = repoweave::path_spelling::resolve(&root).unwrap();
     let marker = common::workweave_marker(&primary_canon, "ws", &primary_canon);
     std::fs::write(workweave_dir.join(".rwv-workweave"), marker).unwrap();
 

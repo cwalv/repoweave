@@ -35,6 +35,7 @@ use crate::manifest::{
     project_repo_key, LockFile, Manifest, ProjectName, RepoPath, Role, Submodules, WorkweaveId,
     WorkweaveName,
 };
+use crate::path_spelling::resolve;
 use crate::refusal::RefusalKind;
 use crate::share::{FilePlacement, FilePrimitives, Filesystem};
 use crate::symlink::LinkTarget;
@@ -1148,7 +1149,7 @@ pub(crate) fn materialize_member(
 /// elsewhere.
 pub(crate) fn is_own_store(store: &Path, checkout: &Path) -> bool {
     let own = crate::git::store_path_in(checkout);
-    let resolved = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let resolved = |p: &Path| resolve(p).unwrap_or_else(|_| p.to_path_buf());
     resolved(store) == resolved(&own)
 }
 
@@ -1277,13 +1278,11 @@ fn refuse_unless_replaceable(
         Some(_) => true,
     };
 
-    let own = standalone
-        .canonicalize()
-        .unwrap_or_else(|_| standalone.to_path_buf());
+    let own = resolve(standalone).unwrap_or_else(|_| standalone.to_path_buf());
     let dependents: Vec<String> = vcs
         .list_worktrees(standalone)?
         .into_iter()
-        .filter(|wt| wt.canonicalize().unwrap_or_else(|_| wt.clone()) != own)
+        .filter(|wt| resolve(wt).unwrap_or_else(|_| wt.clone()) != own)
         .map(|wt| wt.display().to_string())
         .collect();
     if !dependents.is_empty() {
@@ -2219,10 +2218,8 @@ pub fn create_workweave(
 
         // Link entries — absolute symlinks to the source's canonical paths.
         for entry in &ww_config.link {
-            let source = source_root
-                .join(entry)
-                .canonicalize()
-                .unwrap_or_else(|_| source_root.join(entry));
+            let source =
+                resolve(&source_root.join(entry)).unwrap_or_else(|_| source_root.join(entry));
             let dest = workweave_dir.join(entry);
             if source.exists() {
                 if let Some(parent) = dest.parent() {
@@ -2267,9 +2264,7 @@ pub fn create_workweave(
     // registry entry becomes an on-disk orphan that consumers cannot address
     // by name, and silent auto-adoption in read paths is deliberately not
     // provided (see module docs).
-    let recorded_dir = workweave_dir
-        .canonicalize()
-        .unwrap_or_else(|_| workweave_dir.clone());
+    let recorded_dir = resolve(&workweave_dir).unwrap_or_else(|_| workweave_dir.clone());
     workweave_index::record_workweave(primary_root, project, name.as_str(), recorded_dir)
         .context("failed to record workweave in the primary-side registry")?;
 
@@ -2652,7 +2647,7 @@ fn collect_diverged_paths(
             .resolve_canonical_store(wt)
             .and_then(|s| s.parent().map(|p| p.to_path_buf()))
         {
-            Some(p) => p.canonicalize().unwrap_or(p),
+            Some(p) => resolve(&p).unwrap_or(p),
             None => {
                 diverged.push(format!(
                     "{label}: canonical-store lookup failed: not a repo"
@@ -2678,7 +2673,7 @@ fn collect_diverged_paths(
                 .resolve_canonical_store(&canonical)
                 .and_then(|s| s.parent().map(|p| p.to_path_buf()))
             {
-                Some(p) => p.canonicalize().unwrap_or(p),
+                Some(p) => resolve(&p).unwrap_or(p),
                 None => continue,
             };
             if base_canonical != wt_canonical {
@@ -2792,7 +2787,7 @@ pub(crate) fn resolved_worktree_parent(vcs: &dyn Vcs, checkout: &Path, fallback:
         .resolve_canonical_store(checkout)
         .and_then(|s| s.parent().map(|p| p.to_path_buf()))
     {
-        Some(p) => p.canonicalize().unwrap_or(p),
+        Some(p) => resolve(&p).unwrap_or(p),
         None => fallback.to_path_buf(),
     }
 }
@@ -2833,10 +2828,10 @@ fn refuse_if_checkouts_host_foreign_worktrees(
             .resolve_canonical_store(checkout)
             .and_then(|s| s.parent().map(|p| p.to_path_buf()))
         {
-            Some(p) => p.canonicalize().unwrap_or(p),
+            Some(p) => resolve(&p).unwrap_or(p),
             None => return, // not a repo; nothing to host
         };
-        let checkout_canonical = checkout.canonicalize().unwrap_or(checkout.to_path_buf());
+        let checkout_canonical = resolve(checkout).unwrap_or(checkout.to_path_buf());
         if canonical != checkout_canonical {
             // Linked workspace — the canonical store lives elsewhere; this
             // checkout cannot have foreign dependents.
@@ -2849,12 +2844,10 @@ fn refuse_if_checkouts_host_foreign_worktrees(
             Ok(ws) => ws,
             Err(_) => return,
         };
-        let ww_canonical = workweave_dir
-            .canonicalize()
-            .unwrap_or(workweave_dir.to_path_buf());
+        let ww_canonical = resolve(workweave_dir).unwrap_or(workweave_dir.to_path_buf());
         let mut foreign: Vec<PathBuf> = Vec::new();
         for wt in worktrees {
-            let wt_canon = wt.canonicalize().unwrap_or(wt.clone());
+            let wt_canon = resolve(&wt).unwrap_or(wt.clone());
             if wt_canon == checkout_canonical {
                 continue; // the canonical store's own "main" entry
             }
@@ -3373,9 +3366,8 @@ fn delete_workweave_inner_at(
             // the registration cleanup (there is no parent to clean) and
             // also the prune / branch-delete loop (nothing else can know
             // about this store's refs once the dir is gone).
-            let checkout_canonical = worktree_path
-                .canonicalize()
-                .unwrap_or_else(|_| worktree_path.clone());
+            let checkout_canonical =
+                resolve(&worktree_path).unwrap_or_else(|_| worktree_path.clone());
             let is_lone_canonical = repo_abs == checkout_canonical;
             if is_lone_canonical {
                 // Nothing to unregister; the dir-removal at the end of
@@ -3471,8 +3463,8 @@ fn delete_workweave_inner_at(
     // purpose: `-C` points the origin elsewhere while the handle stays put.
     if workweave_dir.exists() {
         let cwd_inside = match (
-            std::env::current_dir().and_then(|d| d.canonicalize()),
-            workweave_dir.canonicalize(),
+            std::env::current_dir().and_then(|d| resolve(&d)),
+            resolve(&workweave_dir),
         ) {
             (Ok(cwd), Ok(ww)) => cwd.starts_with(&ww),
             _ => true,
@@ -3576,7 +3568,7 @@ fn list_workweave_dirs_for_project(
 pub fn list_workweave_dirs(ws_root: &Path) -> Vec<(WorkweaveId, PathBuf)> {
     let mut containers: Vec<PathBuf> = Vec::new();
     let push_unique = |p: PathBuf, containers: &mut Vec<PathBuf>| {
-        let canonical = p.canonicalize().unwrap_or(p);
+        let canonical = resolve(&p).unwrap_or(p);
         if !containers.contains(&canonical) {
             containers.push(canonical);
         }
@@ -3592,7 +3584,7 @@ pub fn list_workweave_dirs(ws_root: &Path) -> Vec<(WorkweaveId, PathBuf)> {
     let mut result: Vec<(WorkweaveId, PathBuf)> = Vec::new();
     for container in &containers {
         for (id, dir) in doctor_scan_container(ws_root, container) {
-            let canonical = dir.canonicalize().unwrap_or_else(|_| dir.clone());
+            let canonical = resolve(&dir).unwrap_or_else(|_| dir.clone());
             if seen.insert(canonical) {
                 result.push((id, dir));
             }
@@ -4552,7 +4544,7 @@ mod tests {
         std::fs::create_dir_all(primary.join("projects/web-app")).unwrap();
         let store = primary.join("github/org/repo");
         std::fs::create_dir_all(&store).unwrap();
-        let store = store.canonicalize().unwrap();
+        let store = resolve(&store).unwrap();
         (tmp, primary, project, store)
     }
 
@@ -4772,8 +4764,8 @@ mod tests {
         let (_tmp, primary, workweave_dir) = forked_from_primary();
         let detoured = primary.join("..").join("ws");
         assert_eq!(
-            detoured.canonicalize().unwrap(),
-            primary.canonicalize().unwrap(),
+            resolve(&detoured).unwrap(),
+            resolve(&primary).unwrap(),
             "precondition: the detoured spelling resolves to the primary"
         );
 

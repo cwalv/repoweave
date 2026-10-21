@@ -108,13 +108,11 @@ fn surfaced_config(ws: &Path, project: &str) -> Option<String> {
     let is_link = link
         .symlink_metadata()
         .is_ok_and(|m| m.file_type().is_symlink());
-    let resolves_to_project = link.canonicalize().ok()
-        == ws
-            .join("projects")
-            .join(project)
-            .join(".cargo/config.toml")
-            .canonicalize()
-            .ok();
+    let resolves_to_project = repoweave::path_spelling::resolve(&link).ok()
+        == repoweave::path_spelling::resolve(
+            &ws.join("projects").join(project).join(".cargo/config.toml"),
+        )
+        .ok();
     (is_link && resolves_to_project)
         .then(|| std::fs::read_to_string(&link).ok())
         .flatten()

@@ -126,12 +126,13 @@ fn canonical_store_resolves_to_linked_clone_under_correct_topology() {
         .resolve_canonical_store(&checkout)
         .expect("resolve_canonical_store returned None");
     // `.parent()` strips the trailing `.git` component to get the clone directory.
-    let resolved = store_path
-        .parent()
-        .expect("store path should have a parent")
-        .canonicalize()
-        .unwrap();
-    let expected = repo.canonicalize().unwrap();
+    let resolved = repoweave::path_spelling::resolve(
+        store_path
+            .parent()
+            .expect("store path should have a parent"),
+    )
+    .unwrap();
+    let expected = repoweave::path_spelling::resolve(&repo).unwrap();
     assert_eq!(
         resolved,
         expected,

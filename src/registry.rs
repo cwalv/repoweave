@@ -1239,6 +1239,18 @@ mod tests {
         }
     }
 
+    /// An origin recorded from a resolved Windows path can hold the verbatim
+    /// spelling; it names the remote its plain spelling names.
+    #[test]
+    fn same_remote_a_verbatim_origin_and_its_plain_spelling() {
+        assert!(same(r"\\?\C:\a\b", r"C:\a\b"));
+        assert!(same(r"\\?\C:\a\b", "file:///C:/a/b"));
+        assert!(same(
+            r"\\?\UNC\server\share\lib.git",
+            r"\\server\share\lib.git"
+        ));
+    }
+
     #[test]
     fn same_remote_a_unc_path_and_its_host_file_url() {
         assert!(same(

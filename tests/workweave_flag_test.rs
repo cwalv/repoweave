@@ -65,7 +65,7 @@ fn make_workspace(root: &Path, project: &str) -> PathBuf {
 /// workweave create` (which needs git worktrees). The tests exercise the
 /// registry lookup and resolution path, not the full workweave lifecycle.
 fn register_workweave(ws: &Path, project: &str, name: &str) -> PathBuf {
-    let ws_canon = ws.canonicalize().unwrap();
+    let ws_canon = repoweave::path_spelling::resolve(ws).unwrap();
     let container = ws_canon.parent().unwrap().join(".workweaves");
     std::fs::create_dir_all(&container).unwrap();
 
@@ -113,7 +113,7 @@ fn w_flag_resolves_workweave_from_primary_cwd() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "myproj");
     let ww = register_workweave(&ws, "myproj", "feat");
-    let ww_canon = ww.canonicalize().unwrap();
+    let ww_canon = repoweave::path_spelling::resolve(&ww).unwrap();
 
     rwv()
         .args(["-w", "myproj--feat", "resolve"])
@@ -129,7 +129,7 @@ fn workweave_long_flag_resolves_workweave_from_primary_cwd() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "myproj");
     let ww = register_workweave(&ws, "myproj", "feat");
-    let ww_canon = ww.canonicalize().unwrap();
+    let ww_canon = repoweave::path_spelling::resolve(&ww).unwrap();
 
     rwv()
         .args(["--workweave", "myproj--feat", "resolve"])
@@ -147,7 +147,7 @@ fn w_flag_resolves_from_workweave_cwd() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "myproj");
     let ww = register_workweave(&ws, "myproj", "feat");
-    let ww_canon = ww.canonicalize().unwrap();
+    let ww_canon = repoweave::path_spelling::resolve(&ww).unwrap();
 
     // Run from INSIDE the workweave; -w should still find it by name.
     rwv()
@@ -169,7 +169,7 @@ fn w_flag_composed_with_c_flag_from_tmp() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "myproj");
     let ww = register_workweave(&ws, "myproj", "feat");
-    let ww_canon = ww.canonicalize().unwrap();
+    let ww_canon = repoweave::path_spelling::resolve(&ww).unwrap();
 
     rwv()
         .args(["-C", &ws.to_string_lossy(), "-w", "myproj--feat", "resolve"])
@@ -186,7 +186,7 @@ fn w_flag_and_c_flag_in_reverse_order() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "myproj");
     let ww = register_workweave(&ws, "myproj", "feat");
-    let ww_canon = ww.canonicalize().unwrap();
+    let ww_canon = repoweave::path_spelling::resolve(&ww).unwrap();
 
     rwv()
         .args(["-w", "myproj--feat", "-C", &ws.to_string_lossy(), "resolve"])
@@ -296,7 +296,9 @@ fn w_flag_does_not_pair_a_name_with_a_project_that_never_recorded_it() {
         .current_dir(&ws)
         .assert()
         .success()
-        .stdout(common::operator_path_stdout(ww_a.canonicalize().unwrap()));
+        .stdout(common::operator_path_stdout(
+            repoweave::path_spelling::resolve(&ww_a).unwrap(),
+        ));
 
     let out = rwv()
         .args(["-w", "proj-b--seat", "resolve"])
@@ -510,7 +512,7 @@ fn w_flag_project_override_wins_over_w_prefix() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let _ = ww.canonicalize().unwrap();
+    let _ = repoweave::path_spelling::resolve(&ww).unwrap();
 
     // Must succeed: --project proj-b exists on disk, so status can resolve it.
     // The verb operates from the -w addressed workweave dir (proj-a--my-ww)
@@ -537,8 +539,8 @@ fn w_flag_selects_correct_workweave_when_multiple_registered() {
     let ws = make_workspace(tmp.path(), "myproj");
     let ww_a = register_workweave(&ws, "myproj", "feature-a");
     let ww_b = register_workweave(&ws, "myproj", "feature-b");
-    let ww_a_canon = ww_a.canonicalize().unwrap();
-    let ww_b_canon = ww_b.canonicalize().unwrap();
+    let ww_a_canon = repoweave::path_spelling::resolve(&ww_a).unwrap();
+    let ww_b_canon = repoweave::path_spelling::resolve(&ww_b).unwrap();
 
     // Selecting feature-a must return feature-a's path, not feature-b's.
     let out_a = rwv()

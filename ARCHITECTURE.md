@@ -651,8 +651,14 @@ error code — the type-level rules of §6.3 fail the suite if they are relaxed.
 `scripts/ci-local.sh` is the single gate: `cargo check`, `cargo test --release`,
 `cargo clippy -D warnings`, `cargo fmt --check`, then the explain-artifact drift
 gate. `.github/workflows/ci.yml` runs that same script; a separate Windows job
-runs `cargo check` only, because the suite assumes symlinks, permission bits and
-signals.
+runs `cargo check` and `cargo clippy` only, because the suite assumes symlinks,
+permission bits and signals.
+
+`clippy.toml` bans every way to canonicalize a path but one:
+`path_spelling::resolve` (`src/path_spelling.rs`) is the only producer of a
+resolved path, and it never yields the Windows verbatim `\\?\` spelling where
+a plain one names the same path. Host clippy cannot see a `cfg(windows)` item,
+so the gate's windows stage also lints for the Windows target.
 
 ## 9. Where the contract lives
 

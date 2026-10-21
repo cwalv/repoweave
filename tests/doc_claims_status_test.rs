@@ -179,8 +179,8 @@ fn status_json_per_repo_record_has_identifying_fields() {
         .unwrap_or_else(|| panic!("record.absolute_path should be a string; got:\n{stdout}"));
     // absolute_path should be a real on-disk path. Compare via canonicalize
     // to neutralize macOS /var vs /private/var symlinks.
-    let expected_abs = std::fs::canonicalize(&repo_dir).unwrap();
-    let got_abs = std::fs::canonicalize(abs).unwrap();
+    let expected_abs = repoweave::path_spelling::resolve(&repo_dir).unwrap();
+    let got_abs = repoweave::path_spelling::resolve(Path::new(abs)).unwrap();
     assert_eq!(
         got_abs, expected_abs,
         "record.absolute_path must point at the on-disk clone; got: {abs}"

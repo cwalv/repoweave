@@ -574,6 +574,7 @@ macro_rules! require_cargo {
 /// on disk and is listed by the committed manifest, but is deliberately absent
 /// from the `include:` list in `rwv.toml` — it is the member an authoring pass
 /// would drop.
+#[cfg(unix)]
 const LIB_SUBCRATES: &[&str] = &["core", "cli", "legacy"];
 
 /// `rwv.toml` for a project whose single repo contributes sub-path members.

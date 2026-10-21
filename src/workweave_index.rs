@@ -82,6 +82,7 @@
 //! until it lets go, which the publish waits out.
 
 use crate::manifest::ProjectName;
+use crate::path_spelling::resolve;
 use crate::refusal::RefusalKind;
 use crate::vcs::{
     CommitId, EphemeralRefName, LegacyEphemeralRefName, OwnedRef, RawRefName, ResolvedRevisionId,
@@ -216,12 +217,11 @@ pub fn default_container(primary_root: &Path) -> PathBuf {
 /// a temporary directory reached through `/var` records one way and resolves
 /// the other.
 pub(crate) fn canonical_recorded_path(dir: &Path) -> PathBuf {
-    if let Ok(p) = dir.canonicalize() {
+    if let Ok(p) = resolve(dir) {
         return p;
     }
     match (dir.parent(), dir.file_name()) {
-        (Some(parent), Some(leaf)) => parent
-            .canonicalize()
+        (Some(parent), Some(leaf)) => resolve(parent)
             .map(|p| p.join(leaf))
             .unwrap_or_else(|_| dir.to_path_buf()),
         _ => dir.to_path_buf(),
@@ -736,7 +736,7 @@ impl RefRegistry {
         raw_name: RawRefName,
         created_at: ResolvedRevisionId,
     ) -> anyhow::Result<OwnedRef> {
-        let key_store = std::fs::canonicalize(store).with_context(|| {
+        let key_store = resolve(store).with_context(|| {
             format!(
                 "cannot record an ownership receipt for {}: the store does not exist",
                 store.display()
@@ -961,7 +961,7 @@ impl RefReceipt {
 /// would mean matching a receipt from a *different* store, and claiming
 /// ownership of someone else's ref is the failure R2 exists to prevent.
 fn store_key(store: &Path) -> PathBuf {
-    std::fs::canonicalize(store).unwrap_or_else(|_| store.to_path_buf())
+    resolve(store).unwrap_or_else(|_| store.to_path_buf())
 }
 
 /// Whether a recorded store key and an already-keyed query name the same
@@ -1104,7 +1104,7 @@ mod tests {
     fn make_store(weave: &Path, rel: &str) -> PathBuf {
         let p = weave.join(rel);
         std::fs::create_dir_all(&p).unwrap();
-        p.canonicalize().unwrap()
+        resolve(&p).unwrap()
     }
 
     /// A distinct canonical revision per `hex` character.
@@ -1460,7 +1460,7 @@ mod tests {
             "fixture precondition: `link` must be a symlink, or neither spelling differs"
         );
 
-        let resolved = real.canonicalize().unwrap();
+        let resolved = resolve(&real).unwrap();
         assert_eq!(canonical_recorded_path(&link), resolved);
         assert_eq!(
             canonical_recorded_path(&link.join("not-created-yet")),

@@ -30,6 +30,7 @@ use crate::sync;
 use crate::update;
 
 use crate::manifest::{ProjectName, WorkweaveName};
+use crate::path_spelling::resolve;
 use crate::refusal::{refusal, RefusalKind};
 use crate::workspace::{acquire_origin_dir, operand_path, WorkspaceContext};
 use anyhow::Context;
@@ -63,8 +64,7 @@ fn resolve_cwd_override(raw: &str) -> anyhow::Result<PathBuf> {
         );
     }
 
-    p.canonicalize()
-        .with_context(|| format!("'-C {raw}': path does not exist or cannot be accessed"))
+    resolve(p).with_context(|| format!("'-C {raw}': path does not exist or cannot be accessed"))
 }
 
 /// The `-w` address for a `<project>--<name>` argument whose project half was

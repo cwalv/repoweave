@@ -609,7 +609,7 @@ fn e2e_cargo_config_surface_reaches_nested_workspace_opt_out() {
     // the canonical protocol dir.
     let expected_source = format!(
         "path+{}/github/chatly/protocol",
-        common::file_url(root.canonicalize().unwrap())
+        common::file_url(repoweave::path_spelling::resolve(root).unwrap())
     );
     let non_canonical = format!("path+{}/github/chatly/protocol", common::file_url(root));
     assert!(

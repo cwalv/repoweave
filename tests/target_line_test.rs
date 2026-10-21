@@ -49,7 +49,7 @@ fn set_active(ws: &Path, name: &str) {
 /// The expected target line, matching the resolver's format:
 /// `target: workspace <path> · project <name> (.rwv-active)`.
 fn expected_target_line(ws: &Path, project: &str) -> String {
-    let canon = ws.canonicalize().unwrap();
+    let canon = repoweave::path_spelling::resolve(ws).unwrap();
     format!(
         "target: workspace {} · project {} (.rwv-active)",
         repoweave::path_spelling::operator_path(&canon),
@@ -305,7 +305,7 @@ fn target_line_silent_inside_workweave() {
     // Create a workweave dir with a .rwv-workweave marker naming p1.
     let weave_dir = tmp.path().join("ws--feat");
     std::fs::create_dir_all(weave_dir.join("github")).unwrap();
-    let canon_ws = ws.canonicalize().unwrap();
+    let canon_ws = repoweave::path_spelling::resolve(&ws).unwrap();
     let marker_yaml = common::workweave_marker(&canon_ws, "p1", &canon_ws);
     std::fs::write(weave_dir.join(".rwv-workweave"), marker_yaml).unwrap();
 

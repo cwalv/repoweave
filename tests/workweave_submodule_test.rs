@@ -332,8 +332,8 @@ fn assert_checked_out(weave: &Weave, member: &Path, role: &str) {
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
     );
     assert_ne!(
-        PathBuf::from(&store).canonicalize().unwrap(),
-        weave.module_store().canonicalize().unwrap(),
+        repoweave::path_spelling::resolve(&PathBuf::from(&store)).unwrap(),
+        repoweave::path_spelling::resolve(&weave.module_store()).unwrap(),
         "the submodule must have a repository of its own, not the canonical clone's"
     );
     assert_eq!(

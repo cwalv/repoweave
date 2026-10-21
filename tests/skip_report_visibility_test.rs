@@ -118,7 +118,7 @@ fn the_guards_resolver_accepts_files_the_os_will_not_run() {
                 .status();
             if done
                 .as_ref()
-                .is_err_and(|e| e.raw_os_error() == Some(common::etxtbsy()))
+                .is_err_and(|e| e.kind() == std::io::ErrorKind::ExecutableFileBusy)
             {
                 std::thread::sleep(std::time::Duration::from_millis(20));
                 continue;

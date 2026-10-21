@@ -503,7 +503,7 @@ fn add_new_relative_root_resolves_against_the_invocation_directory() {
     assert_relative_root_lands_in_lab(
         &project_dir,
         &[],
-        &dunce::canonicalize(&project_dir).unwrap(),
+        &repoweave::path_spelling::resolve(&project_dir).unwrap(),
         "../../../lab",
         &lab,
         &project_dir,
@@ -523,7 +523,7 @@ fn add_new_relative_root_resolves_against_the_cwd_override() {
     assert_relative_root_lands_in_lab(
         &elsewhere,
         &["-C", project_dir.to_str().unwrap()],
-        &dunce::canonicalize(&project_dir).unwrap(),
+        &repoweave::path_spelling::resolve(&project_dir).unwrap(),
         "../../../lab",
         &lab,
         &project_dir,
@@ -555,7 +555,7 @@ fn add_new_relative_root_resolves_against_the_addressed_workweave() {
     assert_relative_root_lands_in_lab(
         &workspace,
         &["-w", "test-project--ww"],
-        &dunce::canonicalize(&seat).unwrap(),
+        &repoweave::path_spelling::resolve(&seat).unwrap(),
         "../../lab",
         &lab,
         &seat.join("projects").join("test-project"),
@@ -1861,7 +1861,7 @@ fn setup_workweave_for_add_tests(
     std::fs::create_dir_all(workweave_dir.join("github")).unwrap();
 
     // Marker file pointing at primary (canonical, so resolve matches).
-    let primary_canonical = primary.canonicalize().unwrap();
+    let primary_canonical = repoweave::path_spelling::resolve(&primary).unwrap();
     let marker = common::workweave_marker(&primary_canonical, "test-project", &primary_canonical);
     std::fs::write(workweave_dir.join(".rwv-workweave"), marker).unwrap();
     common::register_workweave(&primary_canonical, "test-project", "feat", &workweave_dir);
@@ -2122,7 +2122,7 @@ fn git_common_dir(repo: &std::path::Path) -> std::path::PathBuf {
     } else {
         repo.join(&raw)
     };
-    joined.canonicalize().unwrap_or_else(|_| joined.clone())
+    repoweave::path_spelling::resolve(&joined).unwrap_or_else(|_| joined.clone())
 }
 
 /// The ref this checkout is on, or `None` when HEAD is detached.
@@ -2191,7 +2191,7 @@ fn add_url_arm_from_workweave_git_common_dir_points_to_primary_clone() {
     // 2. git-common-dir must be inside the canonical clone's .git, not
     //    inside the workweave directory.
     let common_dir = git_common_dir(&workweave_repo);
-    let canonical_git = canonical.join(".git").canonicalize().unwrap();
+    let canonical_git = repoweave::path_spelling::resolve(&canonical.join(".git")).unwrap();
     assert!(
         common_dir.starts_with(&canonical_git),
         "git-common-dir ({}) must be inside the canonical clone's .git ({})",
@@ -2303,7 +2303,7 @@ fn add_local_path_arm_from_workweave_git_common_dir_points_to_primary_clone() {
 
     // git-common-dir must be inside the canonical clone's .git directory.
     let common_dir = git_common_dir(&workweave_repo);
-    let canonical_git = canonical.join(".git").canonicalize().unwrap();
+    let canonical_git = repoweave::path_spelling::resolve(&canonical.join(".git")).unwrap();
     assert!(
         common_dir.starts_with(&canonical_git),
         "git-common-dir ({}) must be inside the canonical clone's .git ({}) [adopt arm]",

@@ -9,6 +9,7 @@
 //! operation asks the backend again.
 
 use crate::manifest::{RepoPath, Role};
+use crate::path_spelling::resolve;
 use crate::vcs::{
     BornRef, OwnedRef, RecordedSubmodule, ResolvedRevisionId, SubmoduleBirth, TrackedFile, Vcs,
     VcsError, WorkspacePopulation,
@@ -297,7 +298,7 @@ struct Source {
 /// Every other workspace of the repository `dest` belongs to, those at
 /// `at` first and then the primary's checkout.
 fn sources(vcs: &dyn Vcs, dest: &Path, at: &ResolvedRevisionId) -> Vec<Source> {
-    let same = |a: &Path, b: &Path| match (a.canonicalize(), b.canonicalize()) {
+    let same = |a: &Path, b: &Path| match (resolve(a), resolve(b)) {
         (Ok(a), Ok(b)) => a == b,
         _ => false,
     };
@@ -643,6 +644,7 @@ pub(crate) mod testing {
         }
 
         /// Every link from under `source` fails with `kind`.
+        #[cfg(unix)]
         pub(crate) fn fail_links_from(&self, source: &Path, kind: io::ErrorKind) {
             self.failures
                 .lock()
@@ -662,6 +664,7 @@ pub(crate) mod testing {
         }
 
         /// Every link that succeeded, as `(from, to)`.
+        #[cfg(unix)]
         pub(crate) fn links(&self) -> Vec<(PathBuf, PathBuf)> {
             self.links.lock().unwrap().clone()
         }
@@ -780,7 +783,7 @@ mod tests {
             let tmp = tempfile::tempdir().unwrap();
             // git reports worktree paths resolved, so the fakes must key on the
             // same spelling (macOS temp dirs sit behind the /var symlink).
-            let root = dunce::canonicalize(tmp.path()).unwrap();
+            let root = resolve(tmp.path()).unwrap();
             let primary = root.join("primary");
             let project = crate::workspace::project_dir(&primary, "app");
             std::fs::create_dir_all(&project).unwrap();
@@ -1398,6 +1401,7 @@ mod tests {
 
     /// The paths, relative to `source`, every link that placed a file came
     /// from; probes are left out.
+    #[cfg(unix)]
     fn linked_from(fs: &FakePrimitives, source: &Path) -> Vec<String> {
         fs.links()
             .into_iter()
@@ -1417,6 +1421,7 @@ mod tests {
     }
 
     /// Whether this backend links at all on this platform.
+    #[cfg(unix)]
     fn declared() -> bool {
         git_vcs().population().unwrap().updates_replace_files()
     }

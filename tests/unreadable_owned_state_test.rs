@@ -36,6 +36,7 @@ fn git_init_with_commit(dir: &Path) {
 
 /// `path` replaces the child's whole `PATH`, so which tools the run can reach
 /// is the caller's decision rather than the machine's.
+#[cfg(unix)]
 fn rwv_on_path(args: &[&str], cwd: &Path, path: &OsStr) -> (bool, String) {
     let output = common::rwv()
         .args(args)

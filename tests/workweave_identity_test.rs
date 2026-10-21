@@ -139,8 +139,8 @@ fn delete_accepts_an_equivalent_spelling_of_the_registered_path() {
     let wa = create(&ws, "proj", "wa");
     let detoured = wa.join(REPO).join("..").join("..").join("..");
     assert_eq!(
-        detoured.canonicalize().unwrap(),
-        wa.canonicalize().unwrap(),
+        repoweave::path_spelling::resolve(&detoured).unwrap(),
+        repoweave::path_spelling::resolve(&wa).unwrap(),
         "precondition: the detoured spelling resolves to wa"
     );
 

@@ -5,7 +5,7 @@ use crate::integration_runner::missing_active_members;
 use crate::manifest::{
     LockFile, Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role, Submodules, VcsType,
 };
-use crate::path_spelling::{file_url_suggestion, is_absolute_spelling, operator_path};
+use crate::path_spelling::{file_url_suggestion, is_absolute_spelling, operator_path, resolve};
 use crate::refusal::{refusal, RefusalKind};
 use crate::registry::{
     builtin_registries, recorded_remote, resolve_to_clone_info, CloneUrl, CreationParamError,
@@ -581,8 +581,7 @@ fn adopt_placement(
     invocation_dir: &Path,
     raw: &str,
 ) -> anyhow::Result<(RepoPath, PathBuf)> {
-    let base = invocation_dir
-        .canonicalize()
+    let base = resolve(invocation_dir)
         .with_context(|| format!("failed to canonicalize {}", operator_path(invocation_dir)))?;
     let named = lexically_normal(&operand_path(&base, raw));
     let primary = ctx.primary_path();
@@ -647,7 +646,7 @@ fn adopt_placement(
 fn shares_store(vcs: &dyn Vcs, a: &Path, b: &Path) -> bool {
     let store = |p: &Path| {
         vcs.resolve_canonical_store(p)
-            .and_then(|s| s.canonicalize().ok())
+            .and_then(|s| resolve(&s).ok())
     };
     matches!((store(a), store(b)), (Some(x), Some(y)) if x == y)
 }
@@ -1150,11 +1149,9 @@ fn refuse_claimed_store(vcs: &dyn Vcs, primary_root: &Path, repo_dir: &Path) -> 
 
     match vcs.list_worktrees(repo_dir) {
         Ok(worktrees) => {
-            let store = repo_dir
-                .canonicalize()
-                .unwrap_or_else(|_| repo_dir.to_path_buf());
+            let store = resolve(repo_dir).unwrap_or_else(|_| repo_dir.to_path_buf());
             for wt in worktrees {
-                let wt_canonical = wt.canonicalize().unwrap_or_else(|_| wt.clone());
+                let wt_canonical = resolve(&wt).unwrap_or_else(|_| wt.clone());
                 if wt_canonical != store {
                     claims.push(format!(
                         "live worktree registered at {}",
@@ -1360,7 +1357,7 @@ fn resolve_path_params(
         if raw.is_empty() || is_absolute_spelling(raw) {
             continue;
         }
-        // A canonicalized `-C`/`-w` dir carries the Windows verbatim prefix,
+        // A `-w` dir read from a record can carry the Windows verbatim prefix,
         // under which a join folds `..` away and which no `file://` URL can spell.
         let resolved = operand_path(dunce::simplified(invocation_dir), raw);
         let Some(spelled) = resolved.to_str().map(str::to_owned) else {
@@ -1522,10 +1519,9 @@ pub fn run_add_new(
                         operator_path(root)
                     );
                 }
-                let root_canon = root
-                    .canonicalize()
+                let root_canon = resolve(root)
                     .with_context(|| format!("failed to resolve root {}", operator_path(root)))?;
-                let weave_canon = ctx.primary_path().canonicalize().with_context(|| {
+                let weave_canon = resolve(ctx.primary_path()).with_context(|| {
                     format!(
                         "failed to resolve weave root {}",
                         operator_path(ctx.primary_path())

@@ -52,7 +52,7 @@ fn weave() -> (TempDir, PathBuf, ProjectName, PathBuf) {
     common::git_in(&store, &["add", "."]);
     common::git_in(&store, &["commit", "-m", "one"]);
 
-    let store = store.canonicalize().unwrap();
+    let store = repoweave::path_spelling::resolve(&store).unwrap();
     (tmp, primary, ProjectName::new("web-app").unwrap(), store)
 }
 

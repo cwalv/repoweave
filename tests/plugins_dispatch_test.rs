@@ -456,11 +456,11 @@ const CWD_CMD: &str = "cd\necho RWV_WORKSPACE=%RWV_WORKSPACE%\n";
 
 fn cwd_line(stdout: &str) -> PathBuf {
     let line = stdout.lines().next().expect("the plugin printed its cwd");
-    dunce::canonicalize(line.trim()).unwrap()
+    repoweave::path_spelling::resolve(Path::new(line.trim())).unwrap()
 }
 
 fn same_dir(a: &Path, b: &Path) -> bool {
-    dunce::canonicalize(a).unwrap() == dunce::canonicalize(b).unwrap()
+    repoweave::path_spelling::resolve(a).unwrap() == repoweave::path_spelling::resolve(b).unwrap()
 }
 
 /// Under `-C X` the plugin's working directory is X, not the shell's — while
@@ -557,7 +557,7 @@ fn a_relative_argument_to_a_plugin_under_c_names_a_file_under_the_c_directory() 
 fn a_plugin_under_w_starts_in_the_workweave() {
     let tmp = common::tempdir().unwrap();
     let ws = make_minimal_workspace(tmp.path(), "myproj");
-    let ws_canon = ws.canonicalize().unwrap();
+    let ws_canon = repoweave::path_spelling::resolve(&ws).unwrap();
     let ww_dir = ws_canon
         .parent()
         .unwrap()
@@ -844,7 +844,7 @@ fn envelope_primary_workspace_sets_workspace_and_project() {
 fn envelope_via_w_flag_sets_workweave_var() {
     let tmp = common::tempdir().unwrap();
     let ws = make_minimal_workspace(tmp.path(), "myproj");
-    let ws_canon = ws.canonicalize().unwrap();
+    let ws_canon = repoweave::path_spelling::resolve(&ws).unwrap();
     let plugin_dir = common::tempdir().unwrap();
     write_env_dump_plugin(plugin_dir.path(), "rwv-envcheck", ENVELOPE_VARS);
 
@@ -899,7 +899,7 @@ fn envelope_via_w_flag_sets_workweave_var() {
 fn envelope_marks_an_unregistered_workweave_apart_from_primary() {
     let tmp = common::tempdir().unwrap();
     let ws = make_minimal_workspace(tmp.path(), "myproj");
-    let ws_canon = ws.canonicalize().unwrap();
+    let ws_canon = repoweave::path_spelling::resolve(&ws).unwrap();
     let plugin_dir = common::tempdir().unwrap();
     write_env_dump_plugin(plugin_dir.path(), "rwv-envcheck", ENVELOPE_VARS);
 

@@ -285,7 +285,7 @@ fn unix_wire_output_is_unchanged_by_the_seam() {
 
 /// `src/add_remove.rs` builds every path in its refused-add, kept-clone and
 /// kept-worktree messages from `ctx.primary_path()` or `ctx.active_path()` —
-/// both canonicalized roots, which carry the Windows verbatim `\\?\` prefix.
+/// a root read from a record can carry the Windows verbatim `\\?\` prefix.
 /// A raw `.display()` on one of those leaks the prefix into text the operator
 /// never typed. `every_wire_path_field_is_minted_by_the_seam` above does not
 /// catch this: it reads struct-literal `field: value,` syntax keyed on wire
@@ -304,7 +304,7 @@ fn add_remove_prints_every_path_through_the_operator_mint() {
         leaked.is_empty(),
         "these lines print a path straight off `.display()` instead of through \
          `path_spelling::operator_path`, which is what drops the Windows \
-         verbatim prefix a canonicalized workspace root carries:\n{leaked:#?}"
+         verbatim prefix a workspace root read from a record can carry:\n{leaked:#?}"
     );
 }
 
