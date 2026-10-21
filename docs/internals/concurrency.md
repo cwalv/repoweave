@@ -35,6 +35,17 @@ invocation's write. A missing property here is a defect, not a hardening
 opportunity. The lease machinery in [op-state.md](op-state.md) is this tier's
 exclusion primitive.
 
+Readers of these records take no claim, as git's readers take no
+`index.lock`: the claim serializes writers, and write-then-rename is all a
+reader needs. Windows will not rename onto a file while any handle to it is
+open — POSIX rename semantics lift that only on a filesystem that has them,
+and only for holders that share deletion — so there a reader, or a scanner
+that opened what rwv just wrote, fails a publish for as long as it holds the
+file. The publish retries the replacement for the claim budget
+(`rename_over` in `src/durable_file.rs`), as git for Windows retries its own
+rename, rather than make every reader take the claim git's readers never
+take.
+
 **The working tree: detect, don't prevent.** Member checkouts, manifests, and
 everything else that editors, builds, and other processes legitimately touch is
 shared, unlocked space. rwv never locks it and never assumes exclusive access —

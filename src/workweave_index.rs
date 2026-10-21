@@ -71,16 +71,15 @@
 //! Destructive ops hard-require the marker round-trip before touching the
 //! directory — a foreign registry cannot direct a deletion at the wrong tree.
 //!
-//! ## Atomic writes
+//! ## Claimed writes, unclaimed reads
 //!
 //! Two `workweave create` invocations from sibling workweaves race on the
-//! primary's shared index. `write` uses temp+rename so a concurrent writer
-//! never sees a half-written file. Read-modify-write is not lock-serialized
-//! (rwv has no daemon); the last writer wins for its whole snapshot. Callers
-//! that need read-modify-atomicity (e.g. registering a new workweave) use the
-//! `record_workweave` helper, which re-reads immediately before writing so a
-//! late-losing race at worst drops an entry another writer already recorded —
-//! doctor's container scan re-adopts it.
+//! primary's shared index. Every write is a read-modify-write under
+//! [`IndexClaim`], published by temp+rename, so a reader sees the old file or
+//! the new one and no writer publishes a snapshot taken before a peer's
+//! landed. Reads take no claim, as git's readers take no `index.lock`. On
+//! Windows a reader holding the file open makes the replacing rename fail
+//! until it lets go, which the publish waits out.
 
 use crate::manifest::ProjectName;
 use crate::refusal::RefusalKind;
@@ -310,11 +309,10 @@ pub fn write(claim: &IndexClaim, index: &WorkweaveIndex) -> anyhow::Result<()> {
 /// An exclusive claim on one project's index, released when it drops.
 ///
 /// The placement entries could live with last-writer-wins: a dropped entry
-/// is re-adopted by doctor's container scan, which is what the module docs
-/// above describe. A dropped **receipt** cannot be re-adopted — under R2 a
-/// ref with no receipt is not rwv's, permanently — so a whole-snapshot
-/// write that lost one disowns a live ref, and every doctor class then goes
-/// quiet on it once the workweave directory is gone.
+/// is re-adopted by doctor's container scan. A dropped **receipt** cannot be
+/// re-adopted — under R2 a ref with no receipt is not rwv's, permanently — so
+/// a whole-snapshot write that lost one disowns a live ref, and every doctor
+/// class then goes quiet on it once the workweave directory is gone.
 ///
 /// Two concurrent `rwv` processes creating workweaves in the same project
 /// produce exactly that write, and in a fleet they are not a corner case:
@@ -476,11 +474,7 @@ pub fn set_container(
 /// Record a workweave entry `name → path` in the index for
 /// `(primary_root, project)`, creating the index if it does not exist.
 ///
-/// Read-modify-write with atomic rename. Concurrent writers may race on
-/// this: the last writer wins with its whole snapshot. A losing writer's
-/// entry then goes missing until doctor's container-scoped scan re-adopts
-/// the on-disk workweave into the registry — which is exactly the reconcile
-/// path the design describes.
+/// Read-modify-write under the index claim.
 ///
 /// `default_container` is used to seed the container when the index does
 /// not yet exist and no override is available.

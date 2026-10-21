@@ -46,7 +46,9 @@ pub(crate) enum CreateNewError {
 static TMP_SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// How long a caller waits for a peer's claim on a state file before it
-/// refuses, and how long a holder retries the removal that releases one.
+/// refuses, how long a holder retries the removal that releases one, and how
+/// long a [`replace`] retries a replacement Windows refuses while another
+/// handle has the file open.
 ///
 /// A waiter queues behind every holder ahead of it, so this bounds a queue of
 /// held sections rather than one, and it has to outlast a full queue on a slow
@@ -55,7 +57,7 @@ static TMP_SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::
 /// file it was.
 pub(crate) const CLAIM_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// How often a wait re-attempts the claim.
+/// How often a wait re-attempts the claim, the removal, or the replacement.
 pub(crate) const CLAIM_POLL: std::time::Duration = std::time::Duration::from_millis(5);
 
 /// Why a [`claim`] was not won.
@@ -157,7 +159,7 @@ pub(crate) fn replace(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     let parent = parent_of(path);
     let tmp = staged_temp(path, bytes)
         .with_context(|| format!("failed to stage a write of {}", path.display()))?;
-    if let Err(e) = std::fs::rename(&tmp, path) {
+    if let Err(e) = rename_over(&tmp, path) {
         let _ = std::fs::remove_file(&tmp);
         return Err(anyhow::Error::new(e).context(format!(
             "failed to rename {} to {}",
@@ -166,6 +168,36 @@ pub(crate) fn replace(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
         )));
     }
     sync_dir(parent).with_context(|| format!("failed to fsync directory {}", parent.display()))
+}
+
+#[cfg(not(windows))]
+fn rename_over(from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::rename(from, to)
+}
+
+/// Windows refuses to rename onto a file while any handle to it is open, with
+/// `ERROR_ACCESS_DENIED` or `ERROR_SHARING_VIOLATION`. POSIX rename semantics
+/// lift that for holders that share deletion, but only on a filesystem that
+/// has them. Readers of rwv's state files take no claim, and scanners and
+/// indexers open what rwv has just written; each lets go in moments, so the
+/// replacement is retried rather than reported.
+#[cfg(windows)]
+fn rename_over(from: &Path, to: &Path) -> std::io::Result<()> {
+    use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION};
+    let held_open = |e: &std::io::Error| {
+        [ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION]
+            .iter()
+            .any(|code| e.raw_os_error() == Some(code.0 as i32))
+    };
+    let deadline = std::time::Instant::now() + CLAIM_WAIT;
+    loop {
+        match std::fs::rename(from, to) {
+            Err(e) if held_open(&e) && std::time::Instant::now() < deadline => {
+                std::thread::sleep(CLAIM_POLL)
+            }
+            outcome => return outcome,
+        }
+    }
 }
 
 /// Publish `bytes` at `path` only if nothing is there.
@@ -352,6 +384,66 @@ mod tests {
 
         released.expect("a removal that fails only for a moment must be retried");
         assert!(!path.exists(), "the retried release must remove the claim");
+    }
+
+    /// Holds `f` open under `share_mode` while replacing it, and lets go
+    /// `HOLD` after the staged temp appears, so the first attempt meets the
+    /// open handle unless staging outlasts it.
+    #[cfg(windows)]
+    fn replace_while_held_open(share_mode: u32) {
+        use std::os::windows::fs::OpenOptionsExt;
+        const HOLD: std::time::Duration = std::time::Duration::from_millis(300);
+
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("f");
+        replace(&path, b"one").unwrap();
+        let holder = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(share_mode)
+            .open(&path)
+            .unwrap();
+
+        let replaced = std::thread::scope(|s| {
+            s.spawn(|| {
+                let deadline = std::time::Instant::now() + CLAIM_WAIT;
+                while leftover_temps(tmp.path()).is_empty() && std::time::Instant::now() < deadline
+                {
+                    std::thread::sleep(CLAIM_POLL);
+                }
+                std::thread::sleep(HOLD);
+                drop(holder);
+            });
+            replace(&path, b"two")
+        });
+
+        replaced
+            .unwrap_or_else(|e| panic!("the replace failed while the holder had it open: {e:#}"));
+        assert_eq!(std::fs::read(&path).unwrap(), b"two");
+        assert_eq!(leftover_temps(tmp.path()), Vec::<String>::new());
+    }
+
+    #[cfg(windows)]
+    const FILE_SHARE_READ: u32 = 0x1;
+    #[cfg(windows)]
+    const FILE_SHARE_WRITE: u32 = 0x2;
+    #[cfg(windows)]
+    const FILE_SHARE_DELETE: u32 = 0x4;
+
+    /// Shares deletion, as rwv's own readers do. Windows refuses the
+    /// replacement where the filesystem lacks POSIX rename semantics, and Wine
+    /// refuses it everywhere.
+    #[test]
+    #[cfg(windows)]
+    fn a_replace_waits_out_a_reader_holding_the_target_open() {
+        replace_while_held_open(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE);
+    }
+
+    /// Does not share deletion, as a scanner may not. Every Windows
+    /// filesystem refuses the replacement.
+    #[test]
+    #[cfg(windows)]
+    fn a_replace_waits_out_a_holder_that_does_not_share_deletion() {
+        replace_while_held_open(FILE_SHARE_READ);
     }
 
     fn leftover_temps(dir: &Path) -> Vec<String> {
