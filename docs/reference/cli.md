@@ -63,6 +63,15 @@ renders to is refused as ambiguous, and an address whose registry entry
 fails the marker round-trip is refused with the mismatch named —
 `rwv doctor --fix` repairs the registry side.
 
+### `-V` / `--version` — release version
+
+Prints `rwv <version>`, where `<version>` is the release version in semver form
+(`0.24.0`). A binary built inside a git checkout adds the checkout's `git
+describe` in parentheses as build information (`0.24.0 (v0.24.0-46-gae23167)`);
+a binary built from a source archive has none. `RWV_VERSION` in the
+[plugin envelope](./plugin-protocol.md) and the version a clean `rwv doctor
+--all` records carry the release version alone.
+
 ## Verbs
 
 ### `rwv` (bare)

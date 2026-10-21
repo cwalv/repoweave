@@ -103,10 +103,10 @@ fn a_clean_weave_wide_run_records_the_floor() {
     assert!(out.status.success(), "clean run exits 0; got:\n{stdout}");
 
     let floor = read_floor(&root);
-    let version = floor["version"].as_str().expect("floor records a version");
-    assert!(
-        !version.is_empty(),
-        "the floor records the running version; got: {floor}"
+    assert_eq!(
+        floor["version"].as_str(),
+        Some(env!("CARGO_PKG_VERSION")),
+        "the floor records the Cargo version of the running binary; got: {floor}"
     );
     let tip = floor["project_tips"]["my-app"]
         .as_str()

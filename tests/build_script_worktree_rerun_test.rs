@@ -1,5 +1,5 @@
 //! `build.rs` pins `cargo:rerun-if-changed` on the repo's HEAD and refs so a
-//! dev build's embedded version string tracks the checkout. In a `git
+//! dev build's embedded `git describe` tracks the checkout. In a `git
 //! worktree` checkout `.git` is a file, not a directory, so a path assumed
 //! relative to the crate root can name nothing on disk — and cargo treats a
 //! missing `rerun-if-changed` path as permanently dirty, not as "unwatched".

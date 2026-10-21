@@ -846,7 +846,7 @@ pub fn rwv() -> assert_cmd::Command {
 /// against. Panics if `stdout` does not open with exactly that banner, so a
 /// caller that reaches for this has that much already pinned for free.
 pub fn strip_version_banner(stdout: &str) -> &str {
-    let banner = format!("rwv {}\n\n", repoweave::rwv_version());
+    let banner = format!("rwv {}\n\n", repoweave::rwv_version_with_build());
     stdout
         .strip_prefix(&banner)
         .unwrap_or_else(|| panic!("expected stdout to open with {banner:?}; got:\n{stdout}"))

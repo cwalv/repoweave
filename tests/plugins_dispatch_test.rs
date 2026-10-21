@@ -752,7 +752,7 @@ fn parse_env_dump(stdout: &str) -> std::collections::HashMap<String, String> {
         .collect()
 }
 
-/// `RWV_VERSION` is always set, even outside a workspace.
+/// `RWV_VERSION` is always set to the Cargo version, even outside a workspace.
 #[test]
 fn envelope_rwv_version_always_set_outside_workspace() {
     let plugin_dir = common::tempdir().unwrap();
@@ -767,11 +767,10 @@ fn envelope_rwv_version_always_set_outside_workspace() {
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
     let env = parse_env_dump(&stdout);
 
-    assert!(
-        env.get("RWV_VERSION")
-            .map(|v| !v.is_empty() && v != "UNSET")
-            .unwrap_or(false),
-        "RWV_VERSION must be set outside a workspace; got: {env:?}"
+    assert_eq!(
+        env.get("RWV_VERSION").map(|s| s.as_str()),
+        Some(env!("CARGO_PKG_VERSION")),
+        "RWV_VERSION is the Cargo version outside a workspace; got: {env:?}"
     );
     assert_eq!(
         env.get("RWV_WORKSPACE").map(|s| s.as_str()),
@@ -809,11 +808,10 @@ fn envelope_primary_workspace_sets_workspace_and_project() {
     let env = parse_env_dump(&stdout);
 
     // RWV_VERSION is always set.
-    assert!(
-        env.get("RWV_VERSION")
-            .map(|v| v != "UNSET")
-            .unwrap_or(false),
-        "RWV_VERSION must be set; got: {env:?}"
+    assert_eq!(
+        env.get("RWV_VERSION").map(|s| s.as_str()),
+        Some(env!("CARGO_PKG_VERSION")),
+        "RWV_VERSION is the Cargo version; got: {env:?}"
     );
     // RWV_WORKSPACE is the canonical workspace root.
     let ws_val = env.get("RWV_WORKSPACE").expect("RWV_WORKSPACE must be set");

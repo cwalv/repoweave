@@ -22,11 +22,32 @@
 //! `ARCHITECTURE.md` at the repo root is the module map, dataflow and seam
 //! description; `docs/explanation/joints/` holds the normative contracts.
 
-/// The `rwv` version: `build.rs`'s `git describe` output when built inside a
-/// git checkout (e.g. `0.16.0-3-ge5bfa9f`), else `Cargo.toml`'s version.
-/// The one fact `--version` and the plugin envelope's `RWV_VERSION` both read.
-pub fn rwv_version() -> &'static str {
-    option_env!("RWV_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
+/// The version `Cargo.toml` declares: the only version `--version`, the plugin
+/// envelope's `RWV_VERSION` and the health floor carry.
+pub fn rwv_version() -> &'static semver::Version {
+    static VERSION: std::sync::LazyLock<semver::Version> = std::sync::LazyLock::new(|| {
+        env!("CARGO_PKG_VERSION")
+            .parse()
+            .expect("cargo builds only a package whose version is semver")
+    });
+    &VERSION
+}
+
+/// The `git describe` of the checkout this binary was built in; absent for a
+/// build outside one. Build information to print, never to compare or record.
+pub fn rwv_git_describe() -> Option<&'static str> {
+    option_env!("RWV_GIT_DESCRIBE")
+}
+
+/// The Cargo version, followed in parentheses by the build's `git describe`
+/// when it has one.
+pub fn rwv_version_with_build() -> &'static str {
+    static TEXT: std::sync::LazyLock<String> =
+        std::sync::LazyLock::new(|| match rwv_git_describe() {
+            Some(describe) => format!("{} ({describe})", rwv_version()),
+            None => rwv_version().to_string(),
+        });
+    &TEXT
 }
 
 /// Announce a test that is about to return without measuring anything.

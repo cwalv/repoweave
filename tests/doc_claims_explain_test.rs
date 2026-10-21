@@ -51,7 +51,7 @@ fn rwv_explain(verb: &str) -> String {
 /// The banner every `explain` invocation opens with: the same string `rwv
 /// --version` reports, which the committed doc does not carry.
 fn version_banner() -> String {
-    format!("rwv {}\n\n", repoweave::rwv_version())
+    format!("rwv {}\n\n", repoweave::rwv_version_with_build())
 }
 
 /// Verb-by-verb byte comparison. A custom assertion message surfaces a

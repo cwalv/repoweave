@@ -46,6 +46,7 @@
 //! window parameterization is deliberately absent until v1.
 
 use anyhow::Context;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -58,7 +59,8 @@ pub const FLOOR_FILE: &str = ".rwv-health-floor";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthFloor {
     /// The rwv version that observed the weave clean.
-    pub version: String,
+    #[serde(with = "version_text")]
+    pub version: Version,
     /// HEAD of each project repo at the time, keyed by project name — the
     /// structural anchor for what the attestation was about.
     #[serde(default)]
@@ -72,11 +74,11 @@ pub struct HealthFloor {
 /// A floor requirement a release declares when a migratory arm is removed.
 pub struct FloorRequirement {
     /// The minimum recorded floor version this binary can serve.
-    pub minimum: &'static str,
+    pub minimum: Version,
     /// The version to step through: the newest release that still carries
     /// every arm a below-minimum weave might need. Must be runnable — it is
     /// the remedy the refusal names.
-    pub bridge: &'static str,
+    pub bridge: Version,
 }
 
 /// The requirement this binary ships with. `None` while every migratory arm
@@ -86,22 +88,11 @@ pub const ACTIVE_REQUIREMENT: Option<FloorRequirement> = None;
 
 /// Read the weave's floor record. `Ok(None)` when none was ever recorded;
 /// an unreadable or unparseable file also reads as `None` (the conservative
-/// direction: an illegible floor licenses nothing).
+/// direction: an illegible floor licenses nothing). A record whose version is
+/// not a semver is unparseable.
 pub fn read(ws_root: &Path) -> Option<HealthFloor> {
     let raw = std::fs::read_to_string(ws_root.join(FLOOR_FILE)).ok()?;
     serde_json::from_str(&raw).ok()
-}
-
-/// The leading `major.minor.patch` triple of a version string, tolerating a
-/// `git describe` tail and tag prefix (`v0.16.0-3-ge5bfa9f`).
-fn version_triple(v: &str) -> Option<(u64, u64, u64)> {
-    let head = v.split('-').next()?;
-    let head = head.strip_prefix('v').unwrap_or(head);
-    let mut parts = head.split('.');
-    let major = parts.next()?.parse().ok()?;
-    let minor = parts.next()?.parse().ok()?;
-    let patch = parts.next()?.parse().ok()?;
-    Some((major, minor, patch))
 }
 
 /// Record a clean weave-wide doctor observation under the running version.
@@ -113,15 +104,8 @@ fn version_triple(v: &str) -> Option<(u64, u64, u64)> {
 /// that earned it.
 pub fn record_clean_run(ws_root: &Path, vcs: &dyn crate::vcs::Vcs) -> anyhow::Result<()> {
     let running = crate::rwv_version();
-    if let Some(existing) = read(ws_root) {
-        match (version_triple(&existing.version), version_triple(running)) {
-            (Some(old), Some(new)) if old > new => return Ok(()),
-            // A version that does not parse — a describe-less build in a
-            // shallow or tagless checkout reports a bare commit id — cannot
-            // outrank a floor that does: unknown never lowers known.
-            (Some(_), None) => return Ok(()),
-            _ => {}
-        }
+    if read(ws_root).is_some_and(|existing| existing.version > *running) {
+        return Ok(());
     }
 
     let mut project_tips = BTreeMap::new();
@@ -133,7 +117,7 @@ pub fn record_clean_run(ws_root: &Path, vcs: &dyn crate::vcs::Vcs) -> anyhow::Re
     }
 
     let floor = HealthFloor {
-        version: running.to_string(),
+        version: running.clone(),
         project_tips,
         recorded_at: Some(crate::op_state::utc_now_rfc3339()),
     };
@@ -157,27 +141,35 @@ pub fn enforce(ws_root: &Path) -> anyhow::Result<()> {
 /// requirement ships: a floor below the requirement — or no floor at all —
 /// refuses, naming the bridge version to step through.
 pub fn enforce_with(floor: Option<&HealthFloor>, req: &FloorRequirement) -> anyhow::Result<()> {
-    let minimum = version_triple(req.minimum)
-        .context("a floor requirement's minimum must be a version triple")?;
-    let recorded = floor.and_then(|f| version_triple(&f.version));
-    match recorded {
-        Some(v) if v >= minimum => Ok(()),
-        Some(_) | None => {
-            let state = match floor {
-                Some(f) => format!("records version {}", f.version),
-                None => "records no clean run".to_string(),
-            };
-            crate::refuse!(
-                crate::refusal::RefusalKind::HealthFloorTooLow,
-                "this weave's health floor {state}, below the {min} this rwv \
-                 requires: migratory repair arms for older states were removed \
-                 in this release. Step through version {bridge}: install rwv \
-                 {bridge}, run `rwv doctor --fix --all` until `rwv doctor --all` \
-                 reports clean (which records the floor), then upgrade again",
-                min = req.minimum,
-                bridge = req.bridge,
-            )
-        }
+    let state = match floor {
+        Some(f) if f.version >= req.minimum => return Ok(()),
+        Some(f) => format!("records version {}", f.version),
+        None => "records no clean run".to_string(),
+    };
+    crate::refuse!(
+        crate::refusal::RefusalKind::HealthFloorTooLow,
+        "this weave's health floor {state}, below the {min} this rwv \
+         requires: migratory repair arms for older states were removed \
+         in this release. Step through version {bridge}: install rwv \
+         {bridge}, run `rwv doctor --fix --all` until `rwv doctor --all` \
+         reports clean (which records the floor), then upgrade again",
+        min = req.minimum,
+        bridge = req.bridge,
+    )
+}
+
+mod version_text {
+    use semver::Version;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(version: &Version, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(version)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Version, D::Error> {
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(serde::de::Error::custom)
     }
 }
 
@@ -185,29 +177,43 @@ pub fn enforce_with(floor: Option<&HealthFloor>, req: &FloorRequirement) -> anyh
 mod tests {
     use super::*;
 
-    #[test]
-    fn version_triple_tolerates_describe_tails() {
-        assert_eq!(version_triple("0.16.0-3-ge5bfa9f"), Some((0, 16, 0)));
-        assert_eq!(
-            version_triple("v0.18.0-86-gd52f24e-dirty"),
-            Some((0, 18, 0))
-        );
-        assert_eq!(version_triple("0.18.0"), Some((0, 18, 0)));
-        assert_eq!(version_triple("junk"), None);
-    }
-
     fn floor(version: &str) -> HealthFloor {
         HealthFloor {
-            version: version.into(),
+            version: version.parse().unwrap(),
             project_tips: BTreeMap::new(),
             recorded_at: None,
         }
     }
 
     const REQ: FloorRequirement = FloorRequirement {
-        minimum: "0.18.0",
-        bridge: "0.18.0",
+        minimum: Version::new(0, 18, 0),
+        bridge: Version::new(0, 18, 0),
     };
+
+    #[test]
+    fn a_floor_round_trips_its_version_as_semver_text() {
+        let text = serde_json::to_string(&floor("0.18.0")).unwrap();
+        assert!(text.contains(r#""version":"0.18.0""#), "got: {text}");
+        let back: HealthFloor = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.version, Version::new(0, 18, 0));
+    }
+
+    #[test]
+    fn a_floor_whose_version_is_not_semver_does_not_parse() {
+        for version in [
+            "v0.18.0",
+            "v0.18.0-86-gd52f24e-dirty",
+            "d52f24e",
+            "junk",
+            "",
+        ] {
+            let record = format!(r#"{{"version":"{version}"}}"#);
+            assert!(
+                serde_json::from_str::<HealthFloor>(&record).is_err(),
+                "{version:?} must not read as a floor version"
+            );
+        }
+    }
 
     #[test]
     fn a_floor_at_or_above_the_minimum_passes() {

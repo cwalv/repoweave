@@ -218,7 +218,7 @@ pub(crate) fn select_rlib(
 /// which is how CI builds it. Referencing a concrete non-generic function
 /// makes the marker a property of the link rather than of the optimizer.
 #[used]
-static REPOWEAVE_IDENTITY_ANCHOR: fn() -> &'static str = repoweave::rwv_version;
+static REPOWEAVE_IDENTITY_ANCHOR: fn() -> &'static str = repoweave::rwv_version_with_build;
 
 /// The crate identity the currently-running test binary was linked against
 /// for the `repoweave` crate.

@@ -232,7 +232,7 @@ fn suggest(input: &str) -> Option<&'static str> {
 /// --version` reports, so a committed page can go stale with the release that
 /// cut it without lying about which binary printed it.
 fn version_banner() -> String {
-    format!("rwv {}\n\n", crate::rwv_version())
+    format!("rwv {}\n\n", crate::rwv_version_with_build())
 }
 
 /// Print the explain bundle for the requested verb, or the index when none given.

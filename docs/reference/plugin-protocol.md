@@ -25,7 +25,7 @@ For the design rationale — what earns a place in core versus a plugin, and why
 
 | Variable | Value | Unset when |
 |---|---|---|
-| `RWV_VERSION` | `rwv` semver | never |
+| `RWV_VERSION` | `rwv` release version, semver (`0.24.0`); never a `git describe` string | never |
 | `RWV_WORKSPACE` | primary weave root (absolute path) | no workspace resolved |
 | `RWV_WORKWEAVE` | `<project>--<name>` | not in a workweave, or in one the registry does not name |
 | `RWV_WORKWEAVE_UNREGISTERED` | `1` | anywhere else |

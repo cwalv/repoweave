@@ -30,6 +30,23 @@ manifest load like any other malformed key: every verb that reads the manifest
 refuses it, naming the key, the table and the line, and `rwv doctor` reports the
 project as `unparseable-project`. Write `enabled = true` or `enabled = false`.
 
+### `rwv --version` leads with the release version on every build
+
+A binary built inside a git checkout reported the checkout's `git describe` as
+its version (`rwv v0.24.0-46-gae23167`, `rwv v0.24.0` at a release tag, a bare
+commit id where no tag was reachable), while the same source built from an
+archive reported `rwv 0.24.0`. The plugin envelope's `RWV_VERSION`, documented
+as semver, and the version a clean `rwv doctor --all` records in the health
+floor carried the describe string too. All three are now the release version
+from `Cargo.toml` (`0.24.0`) on every build. A build inside a git checkout
+prints its `git describe` after the version, in parentheses, as build
+information: `rwv 0.24.0 (v0.24.0-46-gae23167)`. `rwv explain` opens its pages
+with the same line.
+
+A health-floor record whose version is not semver, as an earlier build wrote
+when it was built from a git checkout (`v0.24.0`), reads as no record, and the
+next clean `rwv doctor --all` writes a new one.
+
 ### Breaking: `rwv doctor` names a workweave by its project and name
 
 A workweave name is unique only within its project. Every `rwv doctor --json`

@@ -261,7 +261,7 @@ fn explain_sync_to_returns_the_sync_to_bundle() {
     let mut lines = stdout.lines();
     assert_eq!(
         lines.next(),
-        Some(format!("rwv {}", repoweave::rwv_version())).as_deref(),
+        Some(format!("rwv {}", repoweave::rwv_version_with_build())).as_deref(),
         "every explain invocation opens with the runtime version line; got:\n{stdout}"
     );
     assert_eq!(
