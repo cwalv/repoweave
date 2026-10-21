@@ -373,9 +373,9 @@ fn levenshtein(a: &str, b: &str) -> usize {
 /// from *below* the process boundary. `workweave_delete_topology_test` and
 /// `e2e_workweave_isolation_test` build clone topologies that would be
 /// laborious to reach through argv, and then assert on the `Err` value
-/// rather than on stderr. They cannot mint a
-/// [`consent::DiscardUnmergedConsent`] themselves — that is the point of the
-/// token — so they pass the flags and come through the door dispatch uses.
+/// rather than on stderr. They cannot mint the consent tokens themselves —
+/// that is the point of a token — so they pass the flags and come through the
+/// door dispatch uses.
 pub fn workweave_delete(
     primary_root: &Path,
     project: &ProjectName,
@@ -383,17 +383,13 @@ pub fn workweave_delete(
     discard_uncommitted: bool,
     discard_unmerged_commits: bool,
 ) -> anyhow::Result<()> {
-    // The token IS the warrant an unmerged ref's DESTROY needs:
-    // `delete_workweave` waives the verb-level precondition on it AND hands
-    // it to `DeletionWarrant::operator_discarded` per ref.
-    let discard_unmerged = consent::DiscardUnmergedConsent::from_flag(discard_unmerged_commits);
     crate::workweave::delete_workweave(
         primary_root,
         project,
         name,
         None,
-        discard_uncommitted,
-        discard_unmerged,
+        consent::DiscardUncommittedConsent::from_flag(discard_uncommitted),
+        consent::DiscardUnmergedConsent::from_flag(discard_unmerged_commits),
     )
 }
 
@@ -984,8 +980,12 @@ pub fn run() -> anyhow::Result<()> {
                             &source_root,
                             &project,
                             &WorkweaveName::new(name)?,
-                            replace_existing,
-                            capture_dirty,
+                            consent::ReplaceExistingConsent::from_flag(replace_existing),
+                            if capture_dirty {
+                                crate::workweave::DirtySource::Capture
+                            } else {
+                                crate::workweave::DirtySource::Refuse
+                            },
                             dir_override.as_deref(),
                             activate::ActivateOptions { no_materialize },
                         );

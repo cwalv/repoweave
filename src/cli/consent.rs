@@ -1,16 +1,16 @@
 //! Consent tokens.
 //!
 //! This is the CLI layer's flag module, and it is the *only* place that can
-//! construct `DetachConsent`, `ReattachConsent`, `DiscardUnmergedConsent` and
-//! `AdoptDetachedConsent`. Not by convention — there is no route a reviewer
-//! has to watch for. Two compiler-checked seals, one per construction route a
-//! token has:
+//! construct the tokens it defines. Not by convention — there is no route a
+//! reviewer has to watch for. Two compiler-checked seals, one per construction
+//! route a token has:
 //!
 //!  1. The tuple literal. Each struct's field is unnamed and unmarked
 //!     (private), and Rust resolves field privacy against the *declaring
 //!     module*, not the call site — so `DetachConsent(())` cannot be written
-//!     from any other module, in this crate or any other. Pinned per token by
-//!     `tests/branch_model_compile_fail_test.rs`, by error code.
+//!     from any other module, in this crate or any other. Pinned per token, by
+//!     error code, in `tests/branch_model_compile_fail_test.rs` and
+//!     `tests/workweave_consent_compile_fail_test.rs`.
 //!
 //!  2. The minting function. `from_flag` is `pub(in crate::cli)`: visible to
 //!     this module tree and nowhere else. The only other member of the tree
@@ -120,6 +120,42 @@ impl DiscardUnmergedConsent {
     /// mint's only caller.
     pub(in crate::cli) fn from_flag(discard_unmerged_commits: bool) -> Option<Self> {
         discard_unmerged_commits.then_some(Self(()))
+    }
+}
+
+/// Proof that the operator consented to losing uncommitted changes in a
+/// workweave being deleted. Minted from `--discard-uncommitted`.
+///
+/// `Copy`: see [`DetachConsent`]'s doc comment.
+#[derive(Debug, Clone, Copy)]
+pub struct DiscardUncommittedConsent(());
+
+impl DiscardUncommittedConsent {
+    /// Mint from the parsed `--discard-uncommitted` value: `Some` iff the
+    /// operator passed it. `pub(in crate::cli)`: see
+    /// [`DetachConsent::from_flag`]'s doc comment.
+    pub(in crate::cli) fn from_flag(discard_uncommitted: bool) -> Option<Self> {
+        discard_uncommitted.then_some(Self(()))
+    }
+}
+
+/// Proof that the operator consented to `workweave create` destroying an
+/// existing workweave at the name it creates. Minted from
+/// `--replace-existing`.
+///
+/// Replacing covers the workweave, not work inside it: uncommitted or
+/// unmerged work there still refuses, because the operator never saw it.
+///
+/// `Copy`: see [`DetachConsent`]'s doc comment.
+#[derive(Debug, Clone, Copy)]
+pub struct ReplaceExistingConsent(());
+
+impl ReplaceExistingConsent {
+    /// Mint from the parsed `--replace-existing` value: `Some` iff the
+    /// operator passed it. `pub(in crate::cli)`: see
+    /// [`DetachConsent::from_flag`]'s doc comment.
+    pub(in crate::cli) fn from_flag(replace_existing: bool) -> Option<Self> {
+        replace_existing.then_some(Self(()))
     }
 }
 

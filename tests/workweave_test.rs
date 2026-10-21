@@ -3388,8 +3388,8 @@ role = "owned"
         &ws,
         &project,
         &ww_name,
-        false,
-        false,
+        None,
+        repoweave::workweave::DirtySource::Refuse,
         None,
         repoweave::activate::ActivateOptions::default(),
     );

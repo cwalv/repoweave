@@ -17,7 +17,7 @@
 //! against the live weave.
 
 use repoweave::manifest::{ProjectName, WorkweaveName};
-use repoweave::workweave::{create_workweave, delete_workweave};
+use repoweave::workweave::{create_workweave, delete_workweave, DirtySource};
 use std::path::{Path, PathBuf};
 
 mod common;
@@ -63,8 +63,8 @@ fn create(ws: &Path, project: &str, name: &str) -> PathBuf {
         ws,
         &ProjectName::new(project).unwrap(),
         &WorkweaveName::new(name).unwrap(),
-        false,
-        false,
+        None,
+        DirtySource::Refuse,
         None,
         repoweave::activate::ActivateOptions::default(),
     )
@@ -84,7 +84,7 @@ fn delete_refuses_a_name_and_a_path_that_denote_different_workweaves() {
         &ProjectName::new("proj").unwrap(),
         &WorkweaveName::new("wa").unwrap(),
         Some(wb.as_path()),
-        false,
+        None,
         None,
     )
     .expect_err("naming `wa` while holding `wb`'s path must refuse");
@@ -120,7 +120,7 @@ fn delete_proceeds_when_the_name_and_the_path_agree() {
         &ProjectName::new("proj").unwrap(),
         &WorkweaveName::new("wa").unwrap(),
         Some(wa.as_path()),
-        false,
+        None,
         None,
     )
     .expect("naming `wa` while holding `wa`'s path must delete it");
@@ -149,7 +149,7 @@ fn delete_accepts_an_equivalent_spelling_of_the_registered_path() {
         &ProjectName::new("proj").unwrap(),
         &WorkweaveName::new("wa").unwrap(),
         Some(detoured.as_path()),
-        false,
+        None,
         None,
     )
     .expect("an equivalent spelling is the same directory and must not refuse");

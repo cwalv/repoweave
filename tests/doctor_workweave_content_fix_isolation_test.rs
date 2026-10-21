@@ -340,8 +340,8 @@ fn doctor_fix_from_workweave_leaves_primary_project_dir_byte_identical() {
         &ws,
         &ww_project,
         &ww_name,
-        false,
-        false,
+        None,
+        repoweave::workweave::DirtySource::Refuse,
         None,
         repoweave::activate::ActivateOptions::default(),
     )

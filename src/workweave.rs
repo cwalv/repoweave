@@ -28,7 +28,9 @@
 //!   orphans. Silent auto-adoption in read paths is deliberately not done —
 //!   adoption is a doctor act with the operator's consent.
 
-use crate::cli::consent::DiscardUnmergedConsent;
+use crate::cli::consent::{
+    DiscardUncommittedConsent, DiscardUnmergedConsent, ReplaceExistingConsent,
+};
 use crate::manifest::{
     project_repo_key, LockFile, Manifest, ProjectName, RepoPath, Role, Submodules, WorkweaveId,
     WorkweaveName,
@@ -1587,6 +1589,18 @@ fn refuse_symlinked_component(root: &Path, rel: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// What [`create_workweave`] does with uncommitted changes in the source
+/// project directory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DirtySource {
+    /// Refuse, naming the dirty files.
+    Refuse,
+    /// Move uncommitted edits to `rwv.toml` and `rwv.lock` into the new
+    /// workweave's project worktree, discarding from the source only what the
+    /// copy holds, once the workweave exists.
+    Capture,
+}
+
 /// Create a workweave: for each repo in the manifest, create a worktree in the
 /// workweave directory on an ephemeral branch `{project}--{workweave_name}`.
 /// Also creates a worktree for the project repo, processes `workweave:` artifacts,
@@ -1606,7 +1620,7 @@ fn refuse_symlinked_component(root: &Path, rel: &Path) -> anyhow::Result<()> {
 ///
 /// If the workweave directory already exists, behavior depends on
 /// `replace_existing`:
-/// - `replace_existing == false`: validate that the existing workweave matches this
+/// - `None`: validate that the existing workweave matches this
 ///   `(primary, project)` pair and has no local modifications relative to
 ///   `source_root`, then short-circuit. This preserves non-git state (e.g.
 ///   `.runtime/`, `.claude/`) written by agents between invocations, which
@@ -1614,18 +1628,8 @@ fn refuse_symlinked_component(root: &Path, rel: &Path) -> anyhow::Result<()> {
 ///   Returns an error if the marker is missing or for a different project,
 ///   or if any worktree has uncommitted changes or has diverged from the
 ///   source.
-/// - `replace_existing == true`: destroy the existing workweave and recreate
-///   from scratch. Intended for explicit rebuild scenarios (corruption
-///   recovery, or switching a slot to a different project).
-///
-/// `capture_dirty` controls how uncommitted changes in the source project
-/// directory are handled at create time:
-/// - `false` (default): refuse with a clear error if `projects/<project>/`
-///   has uncommitted changes. The error names the dirty files and suggests
-///   committing, stashing, or passing `--capture-dirty`.
-/// - `true`: move uncommitted edits to `rwv.toml` and `rwv.lock` into the
-///   workweave's project worktree, discarding them from the source once the
-///   workweave is created, and only what the copy holds.
+/// - `Some`: destroy the existing workweave and recreate from scratch,
+///   refusing while it holds uncommitted or unmerged work.
 ///
 /// `activation` is what the workweave's activation runs with; its
 /// `no_materialize` skips the install hooks.
@@ -1645,8 +1649,8 @@ pub fn create_workweave(
     source_root: &Path,
     project: &ProjectName,
     name: &WorkweaveName,
-    replace_existing: bool,
-    capture_dirty: bool,
+    replace_existing: Option<ReplaceExistingConsent>,
+    dirty_source: DirtySource,
     dir_override: Option<&Path>,
     activation: crate::activate::ActivateOptions,
 ) -> anyhow::Result<PathBuf> {
@@ -1712,7 +1716,7 @@ pub fn create_workweave(
             );
         }
         refuse_symlinked_members(&workweave_dir, project)?;
-        if replace_existing {
+        if replace_existing.is_some() {
             // Destructive reuse. Prefer delete_workweave (which also
             // prunes worktrees and ephemeral branches) when the marker
             // belongs to this project; fall back to a raw remove
@@ -1764,24 +1768,14 @@ pub fn create_workweave(
                 );
             }
             if can_use_structured_delete {
-                // Both waivers on the internal delete: the at-risk scan
-                // above just confirmed there is nothing uncommitted or
-                // unmerged to lose, and the operator's --replace-existing
-                // already authorized replacing the (clean) workweave.
-                // `--discard-uncommitted` on the internal delete: the at-risk
-                // scan above just confirmed there is nothing uncommitted to
-                // lose, and --replace-existing authorized replacing the (clean)
-                // workweave. No unmerged-commits consent is passed and none is
-                // constructible here — that token is minted only from
-                // `--discard-unmerged-commits` at CLI dispatch. The scan
-                // proved there is nothing unmerged either, so every recorded ref
-                // gets a `Merged` warrant on its own merits.
+                // No waiver: the scan above found nothing to lose, so the
+                // delete's own preconditions pass on their merits.
                 delete_workweave(
                     primary_root,
                     project,
                     name,
                     Some(&workweave_dir),
-                    true,
+                    None,
                     None,
                 )?;
             } else {
@@ -1809,17 +1803,15 @@ pub fn create_workweave(
         }
     }
 
-    // Pre-flight: refuse to create a workweave when the source project directory
-    // has uncommitted changes, unless the caller explicitly opted in with
-    // `capture_dirty`. Dirty state captured into a workweave becomes an
-    // obstacle at retire time ("Your local changes to the following files would
-    // be overwritten by merge").
+    // Dirty state captured into a workweave becomes an obstacle at retire
+    // time ("Your local changes to the following files would be overwritten
+    // by merge"), so capturing it is opt-in.
     //
     // Only the project directory is checked here — manifest-repo worktrees are
     // forked at HEAD (committed state) by `git worktree add`, so dirty state
     // in those repos is not captured. The project dir is special because we
     // explicitly overlay its working-tree `rwv.toml`/`rwv.lock` below.
-    if !capture_dirty {
+    if dirty_source == DirtySource::Refuse {
         let project_dir = project_dir(source_root, project.as_str());
         if project_vcs.is_repo(&project_dir) {
             match project_vcs.dirty_file_names(&project_dir) {
@@ -2286,7 +2278,7 @@ pub fn create_workweave(
 
     // Only now does the workweave certainly keep what was copied into it: a
     // failure above rolled it back, and with it the only other copy.
-    if capture_dirty {
+    if dirty_source == DirtySource::Capture {
         release_captured_edits(project_vcs.as_ref(), &project_dir, project, &captured);
     }
 
@@ -3141,15 +3133,13 @@ fn retire_recorded_refs(
 /// the workweave directory.
 ///
 /// Refuses to delete a workweave with uncommitted changes (in the project
-/// worktree or any manifest-repo worktree) unless `discard_uncommitted` is
-/// true, and one holding commits not merged into its parent weave unless
-/// `discard_unmerged` carries the operator's consent. Each error lists the
-/// paths so the operator knows what would have been lost.
-///
-/// `discard_unmerged` is a token rather than a bool because it is also the
-/// [`DeletionWarrant::operator_discarded`] warrant every unmerged ref's
-/// DESTROY needs (R3). Only CLI dispatch can mint one, which is what leaves
-/// the Claude `WorktreeRemove` hook unable to ask for this.
+/// worktree or any manifest-repo worktree) unless `discard_uncommitted` carries
+/// the operator's consent, and one holding commits not merged into its parent
+/// weave unless `discard_unmerged` does. Each error lists the paths so the
+/// operator knows what would have been lost. Only CLI dispatch can mint either
+/// token, so no other caller can waive either refusal. `discard_unmerged` is
+/// also the [`DeletionWarrant::operator_discarded`] warrant every unmerged
+/// ref's DESTROY needs.
 ///
 /// Independently of both waivers, refuses when any per-repo checkout in the
 /// workweave is itself a canonical store with foreign worktrees linked into
@@ -3158,103 +3148,22 @@ fn retire_recorded_refs(
 /// removal would orphan the dependents. The operator must repair topology
 /// via `rwv doctor` first.
 ///
-/// `expected_dir` is the directory the caller believes `name` denotes, for a
-/// caller that reached this workweave through a path rather than through the
-/// name alone. The registry decides where the deletion lands either way; a
-/// caller that supplies one and disagrees with the registry gets a refusal
-/// instead of a deletion somewhere else. A caller holding nothing but a name
-/// passes `None`.
+/// The directory comes from the registry, and a missing, stale or foreign
+/// entry refuses (see [`ensure_registered_workweave`]) rather than guessing
+/// where the workweave lives. That round-trip witnesses that the victim is a
+/// legitimate workweave of `project`, never that it is the one the caller
+/// meant. `expected_dir` witnesses the latter: a caller that reached this
+/// workweave through a path passes the directory it believes `name` denotes,
+/// and a disagreement with the registry refuses instead of deleting somewhere
+/// else. A caller holding nothing but a name passes `None`.
 pub fn delete_workweave(
     ws_root: &Path,
     project: &ProjectName,
     name: &WorkweaveName,
     expected_dir: Option<&Path>,
-    discard_uncommitted: bool,
+    discard_uncommitted: Option<DiscardUncommittedConsent>,
     discard_unmerged: Option<DiscardUnmergedConsent>,
 ) -> anyhow::Result<()> {
-    // Public `rwv workweave delete`: an INTERRUPTING verb. A mid-op workweave
-    // refuses (op guard on).
-    delete_workweave_inner(
-        ws_root,
-        project,
-        name,
-        expected_dir,
-        discard_uncommitted,
-        discard_unmerged,
-        false,
-    )
-}
-
-/// Delete a workweave as the terminal step of the OWNING op (`sync-to
-/// --retire`).
-///
-/// Same as [`delete_workweave`] but skips the cross-verb op guard: the op that
-/// is deleting this workweave still holds its own `.rwv-op` record here (the
-/// record is cleared in the later `cleanup` phase), so the guard would
-/// otherwise refuse the op's own retire. Only the sync engine's retire phase
-/// calls this — never a standalone verb.
-///
-/// `workweave_dir` is the on-disk path resolved by the sync engine at op
-/// start; this path is authoritative here and bypasses the primary-side
-/// registry lookup. Retire runs from inside the workweave and has already
-/// validated its marker; a missing registry entry (mid-crash resume, or
-/// bootstrap workspace that never wrote its index) must not prevent retire
-/// from cleaning up. The marker round-trip is still enforced inside
-/// `delete_workweave_inner_at`.
-pub(crate) fn delete_workweave_for_retire(
-    ws_root: &Path,
-    project: &ProjectName,
-    name: &WorkweaveName,
-    workweave_dir: &Path,
-    discard_uncommitted: bool,
-) -> anyhow::Result<()> {
-    // `--retire` has no `--discard-unmerged-commits` flag, so no
-    // DiscardUnmergedConsent exists for this path to pass on — and minting
-    // one here would be exactly the laundering the token exists to prevent.
-    // Without it an unmerged ref is reported and left in place rather than
-    // destroyed, which is also what the retire phase's own
-    // diverged-and-dirty refusals already guarantee.
-    delete_workweave_inner_at(
-        ws_root,
-        project,
-        name,
-        workweave_dir,
-        discard_uncommitted,
-        None,
-        true,
-    )
-}
-
-/// Shared delete implementation. `skip_op_guard` is `true` only for the
-/// op-owned retire path (see [`delete_workweave_for_retire`]).
-///
-/// Registry-backed with a **hard** marker round-trip: the workweave path
-/// comes from the recorded registry, and destructive action only proceeds
-/// when the marker at that path canonicalizes to this primary and names
-/// this project. A missing / stale / foreign entry surfaces as an
-/// actionable error (see [`ensure_registered_workweave`]) — not as a
-/// silent no-op or, worse, a computed guess at where the directory might
-/// live. `workweave_path_for` (the pre-registry reconstruction) has been
-/// deleted; there is no fallback address rwv is willing to invent.
-///
-/// The round-trip validates the resolved directory against `(ws_root,
-/// project)` — which a wrong-but-registered workweave of the same project
-/// satisfies. It witnesses that the victim is a legitimate workweave, never
-/// that it is the one the caller meant; `expected_dir` is the only thing that
-/// witnesses the latter, and only a caller that already holds a path can
-/// supply it.
-fn delete_workweave_inner(
-    ws_root: &Path,
-    project: &ProjectName,
-    name: &WorkweaveName,
-    expected_dir: Option<&Path>,
-    discard_uncommitted: bool,
-    discard_unmerged: Option<DiscardUnmergedConsent>,
-    skip_op_guard: bool,
-) -> anyhow::Result<()> {
-    // Registry lookup + hard round-trip. Consulted for every destructive path
-    // (create --replace-existing also gets here indirectly via
-    // `can_use_structured_delete` in create_workweave).
     let workweave_dir = ensure_registered_workweave(ws_root, project, name)?;
     if let Some(expected) = expected_dir {
         let expected = CanonicalPath::of(expected);
@@ -3279,8 +3188,47 @@ fn delete_workweave_inner(
         &workweave_dir,
         discard_uncommitted,
         discard_unmerged,
-        skip_op_guard,
+        OpGuard::Enforce,
     )
+}
+
+/// Delete a workweave as the terminal step of the op that owns it (`sync-to
+/// --retire`).
+///
+/// `workweave_dir` is the on-disk path resolved by the sync engine at op
+/// start; this path is authoritative here and bypasses the primary-side
+/// registry lookup. Retire runs from inside the workweave and has already
+/// validated its marker; a missing registry entry (mid-crash resume, or
+/// bootstrap workspace that never wrote its index) must not prevent retire
+/// from cleaning up. The marker round-trip is still enforced inside
+/// `delete_workweave_inner_at`.
+///
+/// `--retire` has no waiver flag, so it holds neither consent: uncommitted or
+/// unmerged work refuses, which the retire phase's own refusals already
+/// guarantee before this runs.
+pub(crate) fn delete_workweave_for_retire(
+    ws_root: &Path,
+    project: &ProjectName,
+    name: &WorkweaveName,
+    workweave_dir: &Path,
+) -> anyhow::Result<()> {
+    delete_workweave_inner_at(
+        ws_root,
+        project,
+        name,
+        workweave_dir,
+        None,
+        None,
+        OpGuard::HeldByRetiringOp,
+    )
+}
+
+/// Whether a delete refuses a workweave that carries an in-flight op record.
+enum OpGuard {
+    Enforce,
+    /// The op deleting the workweave holds its record there until its own
+    /// cleanup phase, after the delete.
+    HeldByRetiringOp,
 }
 
 /// Delete a workweave whose on-disk path is already known.
@@ -3289,9 +3237,8 @@ fn delete_workweave_inner(
 /// the marker via workspace resolution). This bypasses the
 /// registry lookup so an unrecorded workweave (crash-matrix scaffolding,
 /// bootstrap workspace) is still delete-able by callers that already hold
-/// the resolved path. Callers arriving through name-only entry points
-/// ([`delete_workweave`], `create --replace-existing`) route through
-/// [`delete_workweave_inner`] which enforces the registry lookup first.
+/// the resolved path. Callers arriving through a name route through
+/// [`delete_workweave`], which enforces the registry lookup first.
 ///
 /// The registry entry is still removed at the end (best effort), so a
 /// mid-crash resume that finds a pre-crash entry keeps the index in sync.
@@ -3300,9 +3247,9 @@ fn delete_workweave_inner_at(
     project: &ProjectName,
     name: &WorkweaveName,
     workweave_dir: &Path,
-    discard_uncommitted: bool,
+    discard_uncommitted: Option<DiscardUncommittedConsent>,
     discard_unmerged: Option<DiscardUnmergedConsent>,
-    skip_op_guard: bool,
+    op_guard: OpGuard,
 ) -> anyhow::Result<()> {
     let project_vcs = project_vcs();
     let manifest = load_manifest(ws_root, project)?;
@@ -3329,15 +3276,13 @@ fn delete_workweave_inner_at(
 
     // Refuse before the dirty/unmerged checks so a mid-op delete reports the
     // in-flight op. No override: `rwv abort` is the way to clear a stale record.
-    // The op's OWN terminal retire (`delete_workweave_for_retire`) skips this —
-    // its record is present by design and is cleared in the later cleanup phase.
-    if workweave_dir.exists() && !skip_op_guard {
+    if workweave_dir.exists() && matches!(op_guard, OpGuard::Enforce) {
         crate::op_state::check_no_op_in_progress(&[workweave_dir.as_path()])?;
     }
 
     // Safety checks: each refusal has its own waiver. Skipped when the
     // workweave directory doesn't exist (nothing to lose).
-    if !discard_uncommitted && workweave_dir.exists() {
+    if discard_uncommitted.is_none() && workweave_dir.exists() {
         let dirty = collect_dirty_paths(project_vcs.as_ref(), &workweave_dir, project, &manifest);
         if !dirty.is_empty() {
             crate::refuse!(
@@ -4161,8 +4106,8 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
                 source_root,
                 &project,
                 &WorkweaveName::new(&name)?,
-                false,
-                false,
+                None,
+                DirtySource::Refuse,
                 None,
                 crate::activate::ActivateOptions::default(),
             ))?;
@@ -4194,27 +4139,14 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
                     })
                 })
                 .and_then(|name| {
-                    // Waives NOTHING. Passing either waiver here would make
-                    // this the one path where a dirty *and* diverged workweave
-                    // is destroyed with no operator confirmation.
-                    //
-                    // The unmerged half is now unconstructible rather than
-                    // merely unpassed: the warrant an unmerged ref's DESTROY
-                    // needs is `DeletionWarrant::operator_discarded`, which
-                    // takes a `DiscardUnmergedConsent` that only CLI dispatch
-                    // can mint. There is no flag on this path to mint it
-                    // from, so an unmerged ref is reported and left standing.
-                    // The uncommitted half is a verb-level precondition rather
-                    // than a warrant, so it stays a bool — passed `false` here
-                    // for the same reason: "Claude moved on" is not the
-                    // operator consenting to lose their edits, and a refusal on
-                    // stderr is strictly better than a silent destroy.
+                    // "Claude moved on" is not the operator consenting to lose
+                    // work: dirty or unmerged work refuses on stderr.
                     delete_workweave(
                         marker.primary(),
                         marker.project(),
                         &name,
                         Some(Path::new(&worktree_path)),
-                        false,
+                        None,
                         None,
                     )
                 });

@@ -154,8 +154,8 @@ func Message() string {
         &ws,
         &ww_project,
         &ww_name,
-        false,
-        false,
+        None,
+        repoweave::workweave::DirtySource::Refuse,
         None,
         repoweave::activate::ActivateOptions::default(),
     )

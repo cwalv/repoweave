@@ -6410,22 +6410,11 @@ fn retire_workweave_after_sync_to(
         );
     }
 
-    // Both invariants hold: delete the workweave. `--retire` has no flag that
-    // could waive the delete's own dirty check, so `false` is the absence of
-    // consent to waive rather than a judgment about the check — the refusal
-    // above evaluates the same predicate, and the second evaluation is the
-    // delete primitive's precondition, which every caller of it pays. Pass the
-    // primary path (the delete resolves the workweave under the primary's
-    // parent dir). Use the retire-specific entry point, which skips the
-    // cross-verb op guard: THIS op still holds its `.rwv-op` record on the
-    // workweave (cleared later in cleanup), so the guard would otherwise
-    // refuse the op's own retire.
     crate::workweave::delete_workweave_for_retire(
         ctx.primary_path(),
         project,
         workweave_name,
         workweave_dir,
-        false,
     )
     .context("--retire: workweave delete failed")?;
 

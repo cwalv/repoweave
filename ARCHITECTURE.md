@@ -78,7 +78,7 @@ empty is what lets the consent tokens in `src/cli/consent.rs` stay
 | Module | Owns |
 |---|---|
 | `cli` (`src/cli.rs`, 563) | The clap type tree: `Cli` and `Commands`. |
-| `cli::consent` (`src/cli/consent.rs`) | The seven consent tokens plus the `DriftConsent` either/or enum, each minted only from its named flag by a `pub(in crate::cli)` `from_flag`. |
+| `cli::consent` (`src/cli/consent.rs`) | The consent tokens and the `DriftConsent` either/or enum, each token minted only from its named flag by a `pub(in crate::cli)` `from_flag`. |
 | `cli::dispatch` (`src/cli/dispatch.rs`) | `run()` — argv interception, parse, the single resolution point, and the verb match. |
 | `workspace` (`src/workspace.rs`, 5171) | `WorkspaceContext` and its `resolve`; `Checkout`; `Resolution`; the `.rwv-active` / `.rwv-workweave` marker constants. |
 | `registry` (`src/registry.rs`, 685) | Host-to-local-prefix mapping. `Registry` trait; `CloneUrl`, the only URL a `Vcs` method hands git, constructed only here; `resolve_to_clone_info`, which turns a manifest `url` or CLI source, shorthand included, into one. Unrelated to integrations despite the name. |
