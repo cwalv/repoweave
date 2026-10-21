@@ -2294,6 +2294,90 @@ fn detached_checkout_with_commit_bearing_legacy_branch_reports_both_tips() {
     );
 }
 
+/// The `detached` finding `doctor --json` reports, under its sub-kind tag.
+fn detached_finding_json(ws: &Path) -> serde_json::Value {
+    let out = rwv()
+        .args(["doctor", "--json"])
+        .current_dir(ws)
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_else(|e| {
+        panic!(
+            "doctor --json produced invalid JSON: {e}\n{}",
+            String::from_utf8_lossy(&out.stdout)
+        )
+    });
+    json["violations"]
+        .as_array()
+        .expect("violations is an array")
+        .iter()
+        .find_map(|v| v["sub_kind"].get("detached").cloned())
+        .unwrap_or_else(|| panic!("no detached finding in {json}"))
+}
+
+/// A workweave checkout detached at the store's first commit, beside its
+/// pre-flat branch `myproj--feat-a/main` at a commit only that branch
+/// reaches. Returns the primary, the canonical store, HEAD and the branch tip.
+fn detached_beside_a_pre_flat_branch(tmp: &Path) -> (PathBuf, PathBuf, String, String) {
+    let ws = make_primary(tmp);
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+    let lock_sha = rev(&canonical, "HEAD");
+    let ww_dir = workweaves_dir(&ws).join("myproj--feat-a");
+    write_marker(&ww_dir, &ws, "myproj", &ws);
+    record_placement(&ws, "myproj", "feat-a", &ww_dir);
+    let ww_checkout = ww_dir.join("github").join("acme").join("repo");
+    std::fs::create_dir_all(ww_checkout.parent().unwrap()).unwrap();
+    worktree_add(&canonical, &ww_checkout, "myproj--feat-a/main");
+    add_commit(&ww_checkout, "W.txt", "operator commit W");
+    let w_sha = rev(&ww_checkout, "HEAD");
+    git_in(&ww_checkout, &["checkout", "--detach", &lock_sha, "-q"]);
+    (ws, canonical, lock_sha, w_sha)
+}
+
+#[test]
+fn a_detached_finding_names_both_commits_by_full_id_in_json() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, _, lock_sha, w_sha) = detached_beside_a_pre_flat_branch(tmp.path());
+
+    let detached = detached_finding_json(&ws);
+    assert_eq!(
+        detached["at_sha"],
+        serde_json::json!(lock_sha),
+        "{detached}"
+    );
+    assert_eq!(
+        detached["legacy_branch"]["tip_sha"],
+        serde_json::json!(w_sha),
+        "{detached}"
+    );
+}
+
+/// git lists a branch whose ref file names no commit, so the pre-flat
+/// branch is still found; its tip is `null`, not an empty string.
+#[test]
+fn a_pre_flat_branch_naming_no_commit_has_a_null_tip_in_json() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, canonical, _, _) = detached_beside_a_pre_flat_branch(tmp.path());
+    let missing = "0123456789abcdef0123456789abcdef01234567";
+    std::fs::write(
+        canonical.join(".git/refs/heads/myproj--feat-a/main"),
+        format!("{missing}\n"),
+    )
+    .unwrap();
+
+    let detached = detached_finding_json(&ws);
+    assert_eq!(
+        detached["legacy_branch"]["branch"],
+        serde_json::json!("myproj--feat-a/main"),
+        "{detached}"
+    );
+    assert!(
+        detached["legacy_branch"]["tip_sha"].is_null(),
+        "a tip that names no commit is null: {detached}"
+    );
+}
+
 /// The same, with the flag: the checkout is adopted at HEAD, the pre-flat
 /// name is given up to make room, and the stranding is announced.
 #[test]

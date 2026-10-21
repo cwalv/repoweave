@@ -1542,6 +1542,54 @@ fn a_dropped_field_inside_a_record_is_reported_for_every_verb() {
     }
 }
 
+/// A commit a doctor finding names is a commit id, so the empty string that
+/// once stood for "none" is reported, as is an abbreviation; the one tip
+/// that can be absent is `null`.
+#[test]
+fn a_doctor_commit_field_holds_a_full_commit_id_or_null() {
+    let schema = json_schema::committed_schema("doctor");
+    let case = cases()
+        .into_iter()
+        .find(|c| c.verb == "doctor")
+        .expect("registered above");
+    let doc = first_doc(&case);
+    let with = |edit: &dyn Fn(&mut Value)| {
+        let mut doc = doc.clone();
+        let detached = doc["violations"]
+            .as_array_mut()
+            .expect("violations is an array")
+            .iter_mut()
+            .find_map(|v| v.get_mut("sub_kind")?.get_mut("detached"))
+            .expect("the corpus carries a detached finding");
+        edit(detached);
+        json_schema::conform(&doc, &schema).0
+    };
+
+    let unedited = with(&|_| {});
+    assert!(
+        unedited.is_empty(),
+        "the corpus document conforms: {unedited:?}"
+    );
+    for not_an_id in ["", "aaaaaaaaaaaa", "not-a-commit"] {
+        assert!(
+            !with(&|d| d["at_sha"] = json!(not_an_id)).is_empty(),
+            "at_sha {not_an_id:?} was not reported"
+        );
+        assert!(
+            !with(&|d| d["legacy_branch"]["tip_sha"] = json!(not_an_id)).is_empty(),
+            "legacy tip_sha {not_an_id:?} was not reported"
+        );
+    }
+    assert!(
+        with(&|d| d["legacy_branch"]["tip_sha"] = Value::Null).is_empty(),
+        "an absent legacy tip is null"
+    );
+    assert!(
+        !with(&|d| d["at_sha"] = Value::Null).is_empty(),
+        "HEAD always names a commit, so at_sha is never null"
+    );
+}
+
 /// `commits_ahead` is the only place a numeric width reaches these artifacts,
 /// and it is the one member `type: integer` alone does not pin: a negative
 /// count is an integer. The pin is `format: uint` plus `minimum: 0`.

@@ -383,13 +383,13 @@ fn a_drifted_leaf_type_is_reported() {
 /// pass silently, or every later addition to the schema goes unchecked.
 #[test]
 fn an_unimplemented_keyword_is_reported() {
-    let schema = json!({ "type": "string", "pattern": "^a+$" });
+    let schema = json!({ "type": "string", "minLength": 5 });
     let mut walk = Walk::default();
     let errors = json_schema::validate(&json!("bbb"), &schema, &schema, "", &mut walk);
     assert!(
         errors
             .iter()
-            .any(|e| e.contains("unsupported schema keyword `pattern`")),
+            .any(|e| e.contains("unsupported schema keyword `minLength`")),
         "an unimplemented keyword must be reported, got {errors:?}"
     );
 }
@@ -413,5 +413,22 @@ fn an_issue_publishes_its_source_by_name() {
     assert_eq!(
         wire(issue(IssueSource::integration("go-work")))["integration"],
         "go-work"
+    );
+}
+
+#[test]
+fn a_string_outside_its_pattern_is_reported() {
+    let schema = json!({ "type": "string", "pattern": "^a+$" });
+    let mut walk = Walk::default();
+    let errors = json_schema::validate(&json!("bbb"), &schema, &schema, "", &mut walk);
+    assert!(
+        errors.iter().any(|e| e.contains("does not match pattern")),
+        "a string outside the pattern must be reported, got {errors:?}"
+    );
+    let mut walk = Walk::default();
+    let errors = json_schema::validate(&json!("aaa"), &schema, &schema, "", &mut walk);
+    assert!(
+        errors.is_empty(),
+        "a matching string conforms, got {errors:?}"
     );
 }

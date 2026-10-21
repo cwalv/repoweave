@@ -6,6 +6,15 @@ claim that nothing changed in them.
 
 ## Unreleased
 
+### Breaking: a commit a doctor finding cannot name is `null`, not `""`
+
+In `rwv doctor --json`, a `branch-discipline` / `detached` finding whose
+pre-flat branch names no commit carries `legacy_branch.tip_sha: null`; it was
+`""`. Every other `at_sha`, `branch_tip` and `tip_sha` is always a full commit
+id. The published schemas describe a commit id as 40 lowercase hex digits (64
+in a SHA-256 repository) rather than any string: in `doctor.json`, and for the
+`tip` in `status.json`, whose values are unchanged.
+
 ### Abbreviated commit ids are 12 characters everywhere
 
 A commit id abbreviated for reading was 7 characters in `rwv push`'s

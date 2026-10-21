@@ -9,7 +9,7 @@ use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoPath, Role, 
 use crate::op_state::SavepointKey;
 use crate::path_spelling::resolve;
 use crate::refusal::{refusal, RefusalKind};
-use crate::vcs::{RawRevisionId, ReplayExclusionState, ResolvedRevisionId};
+use crate::vcs::{CommitId, RawRevisionId, ReplayExclusionState, ResolvedRevisionId};
 use crate::workspace::{
     project_dir, project_rel_path, projects_dir, strip_projects_prefix, Resolution,
 };
@@ -1593,7 +1593,7 @@ pub enum BranchDisciplineKind {
         /// name.
         recorded_ref: Option<String>,
         /// The commit HEAD names directly.
-        at_sha: String,
+        at_sha: CommitId,
         /// A pre-flat branch of this workweave's own namespace, with its
         /// tip. **Both** tips are reported, because they are the two things
         /// the operator is choosing between.
@@ -1657,7 +1657,7 @@ pub enum BranchDisciplineKind {
         /// (`<project>--<workweave>`).
         expected_ref: String,
         /// The commit HEAD names directly.
-        at_sha: String,
+        at_sha: CommitId,
         /// Every pre-flat ref found under that namespace, in listing order.
         blocking_refs: Vec<String>,
     },
@@ -1676,9 +1676,9 @@ pub enum BranchDisciplineKind {
         /// The flat ref (`<project>--<workweave>`).
         expected_ref: String,
         /// The commit HEAD names directly.
-        at_sha: String,
+        at_sha: CommitId,
         /// The commit the flat ref names.
-        branch_tip: String,
+        branch_tip: CommitId,
     },
     /// (a) The workweave's flat ref exists in the canonical store, but rwv
     /// holds no receipt for it.
@@ -1749,7 +1749,7 @@ pub enum BranchDisciplineKind {
     /// minority; it is not weave-wide reattachment.
     CanonicalDetached {
         /// The commit HEAD names directly.
-        at_sha: String,
+        at_sha: CommitId,
         /// The local counterpart of the ref this repo tracks — the
         /// manifest's `version:` for a member, the remote's declared
         /// default branch for the project repo. `None` when no tracking
@@ -1795,7 +1795,7 @@ pub enum BranchDisciplineKind {
         project: String,
         /// The branch tip SHA, surfaced so the operator can recover the
         /// commits before deleting (e.g. `git log <tip_sha>`).
-        tip_sha: String,
+        tip_sha: CommitId,
     },
     /// (c) A branch shaped like one rwv minted before the naming scheme was
     /// flattened, sitting in a canonical store, which **rwv holds no
@@ -1833,8 +1833,8 @@ pub enum BranchDisciplineKind {
 pub struct LegacyRefAtTip {
     /// The pre-flat branch name (`<project>--<workweave>/<segment>`).
     pub branch: String,
-    /// Its tip.
-    pub tip_sha: String,
+    /// Its tip, or `null` where the branch names no commit.
+    pub tip_sha: Option<CommitId>,
     /// Whether that tip carries commits the detached HEAD does not — i.e.
     /// whether adopting the checkout would **strand** work. Arm 3 makes the
     /// warning mandatory in exactly this case.
@@ -4891,7 +4891,7 @@ fn scan_workweave_repo_branches(
                 if legacy_refs.len() > 1 {
                     BranchDisciplineKind::BlockedDetachedNamespace {
                         expected_ref: expected_ref.clone(),
-                        at_sha: d.at().id().as_str().to_string(),
+                        at_sha: d.at().id().clone(),
                         blocking_refs: legacy_refs.iter().map(|r| r.to_string()).collect(),
                     }
                 } else if let Some(tip) = flat_present
@@ -4904,14 +4904,14 @@ fn scan_workweave_repo_branches(
                 {
                     BranchDisciplineKind::DetachedOffEphemeralBranch {
                         expected_ref: expected_ref.clone(),
-                        at_sha: d.at().id().as_str().to_string(),
-                        branch_tip: tip.id().as_str().to_string(),
+                        at_sha: d.at().id().clone(),
+                        branch_tip: tip.id().clone(),
                     }
                 } else {
                     BranchDisciplineKind::Detached {
                         expected_ref: expected_ref.clone(),
                         recorded_ref: recorded_ref.clone(),
-                        at_sha: d.at().id().as_str().to_string(),
+                        at_sha: d.at().id().clone(),
                         legacy_branch: legacy_refs
                             .first()
                             .map(|legacy| legacy_ref_at_tip(vcs, &store, legacy, d.at())),
@@ -4956,7 +4956,7 @@ fn legacy_ref_at_tip(
     };
     LegacyRefAtTip {
         branch: legacy.to_string(),
-        tip_sha: tip.map(|t| t.id().as_str().to_string()).unwrap_or_default(),
+        tip_sha: tip.map(|t| t.id().clone()),
         strands_commits,
     }
 }
@@ -5188,7 +5188,7 @@ fn scan_canonical_stores(
                 out.push(CheckViolation::BranchDiscipline {
                     repo_path: abs.clone(),
                     sub_kind: BranchDisciplineKind::CanonicalDetached {
-                        at_sha: d.at().id().as_str().to_string(),
+                        at_sha: d.at().id().clone(),
                         counterpart: counterpart.map(|c| c.to_string()),
                         reattachable,
                     },
@@ -5238,12 +5238,9 @@ fn scan_canonical_stores(
             // The ref may be gone: that is the dangling-receipt state, which
             // `scan_dangling_receipts` owns. Reporting it here as well would
             // give one condition two findings and two `--fix` paths.
-            if !matches!(
-                vcs.resolve_local_branch_tip(abs, rec.owned.name()),
-                Ok(Some(_))
-            ) {
+            let Ok(Some(tip)) = vcs.resolve_local_branch_tip(abs, rec.owned.name()) else {
                 continue;
-            }
+            };
             // The receipt may name a pre-flat ref, which
             // `scan_pre_flat_receipts` owns — same reason, and here the
             // stakes are the other way round. The guard above has already
@@ -5272,16 +5269,10 @@ fn scan_canonical_stores(
                     project: rec.project.to_string(),
                 }
             } else {
-                let tip_sha = vcs
-                    .resolve_local_branch_tip(abs, rec.owned.name())
-                    .ok()
-                    .flatten()
-                    .map(|t| t.id().as_str().to_string())
-                    .unwrap_or_default();
                 BranchDisciplineKind::StaleEphemeralBranchLive {
                     branch: rec.owned.to_string(),
                     project: rec.project.to_string(),
-                    tip_sha,
+                    tip_sha: tip.id().clone(),
                 }
             };
             out.push(CheckViolation::BranchDiscipline {
@@ -6314,11 +6305,20 @@ fn branch_discipline_in_scope(
     active_project: &str,
     known_repos: &BTreeSet<RepoPath>,
 ) -> bool {
-    let repo_path = match violation {
-        CheckViolation::BranchDiscipline { repo_path, .. } => repo_path,
-        _ => return true, // non-BD violations: caller handles them separately
-    };
+    match violation {
+        CheckViolation::BranchDiscipline { repo_path, .. } => {
+            branch_discipline_path_in_scope(repo_path, ws_root, active_project, known_repos)
+        }
+        _ => true, // non-BD violations: caller handles them separately
+    }
+}
 
+fn branch_discipline_path_in_scope(
+    repo_path: &Path,
+    ws_root: &Path,
+    active_project: &str,
+    known_repos: &BTreeSet<RepoPath>,
+) -> bool {
     // Try every recorded container: a workweave repo path may live under
     // the compiled-in default, an env-var container, or any per-project
     // recorded container.
@@ -6927,16 +6927,7 @@ pub fn fix_detached_canonicals(
     let stores = canonical_stores(vcs, ws_root, projects);
     for store in &stores {
         if let Some(ap) = active_project {
-            let probe = CheckViolation::BranchDiscipline {
-                repo_path: store.path.clone(),
-                sub_kind: BranchDisciplineKind::Detached {
-                    expected_ref: String::new(),
-                    recorded_ref: None,
-                    at_sha: String::new(),
-                    legacy_branch: None,
-                },
-            };
-            if !branch_discipline_in_scope(&probe, ws_root, ap, known_repos) {
+            if !branch_discipline_path_in_scope(&store.path, ws_root, ap, known_repos) {
                 continue;
             }
         }
@@ -8211,9 +8202,13 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                                 } else {
                                     String::new()
                                 };
+                                let sits_at = match &legacy.tip_sha {
+                                    Some(tip) => format!("sits at {tip} ({relation})"),
+                                    None => "names no commit".to_owned(),
+                                };
                                 format!(
                                     "{}: workweave checkout is detached at {} while its \
-                                     pre-flat branch `{}` sits at {} ({}). Reattach to it \
+                                     pre-flat branch `{}` {}. Reattach to it \
                                      (`git switch {}`) and re-run `rwv doctor --fix`, which \
                                      renames it to `{}`; or run `rwv doctor --fix \
                                      --adopt-detached-checkouts` to mint `{}` here at {} \
@@ -8221,8 +8216,7 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                                     repo_path.display(),
                                     at_sha,
                                     legacy.branch,
-                                    legacy.tip_sha,
-                                    relation,
+                                    sits_at,
                                     legacy.branch,
                                     expected_ref,
                                     expected_ref,

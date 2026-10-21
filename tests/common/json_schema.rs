@@ -10,12 +10,12 @@
 //! # What the validator covers, and what it refuses to
 //!
 //! It implements `$ref`, `type`, `enum`, `required`, `properties`,
-//! `additionalProperties`, `items`, `oneOf`, `anyOf`, `allOf`, `format` and
-//! `minimum`. Every other keyword is **reported as an error**, not ignored. A
-//! validator that skips what it does not understand green-lights the part it
-//! looked at and reads as green over the part it did not — so if schemars ever
-//! starts emitting `pattern` or `minItems`, this stops the tree until someone
-//! implements it. [`census`] is the same rule applied to an artifact ahead of
+//! `additionalProperties`, `items`, `oneOf`, `anyOf`, `allOf`, `format`,
+//! `minimum` and `pattern`. Every other keyword is **reported as an error**,
+//! not ignored. A validator that skips what it does not understand
+//! green-lights the part it looked at and reads as green over the part it did
+//! not — so if schemars ever starts emitting `minItems`, this stops the tree
+//! until someone implements it. [`census`] is the same rule applied to an artifact ahead of
 //! any instance.
 //!
 //! Two deliberate departures from draft-07 semantics, both tightening:
@@ -65,6 +65,7 @@ pub const IMPLEMENTED: &[&str] = &[
     "allOf",
     "format",
     "minimum",
+    "pattern",
 ];
 
 // ---------------------------------------------------------------------------
@@ -284,6 +285,20 @@ fn apply_keyword(
                 }
             }
             None => errors.push(format!("{at}: `minimum` is not a number: {argument}")),
+        },
+        "pattern" => match argument.as_str().map(regex::Regex::new) {
+            Some(Ok(pattern)) => {
+                if let Some(text) = instance.as_str() {
+                    if !pattern.is_match(text) {
+                        errors.push(format!(
+                            "{at}: value {instance} does not match pattern {argument}"
+                        ));
+                    }
+                }
+            }
+            _ => errors.push(format!(
+                "{at}: `pattern` is not a regular expression: {argument}"
+            )),
         },
         "enum" => {
             let allowed = argument.as_array().cloned().unwrap_or_default();

@@ -56,8 +56,12 @@ pub fn sha() -> String {
     "a".repeat(40)
 }
 
+pub fn commit() -> repoweave::vcs::CommitId {
+    repoweave::vcs::CommitId::parse(&sha()).unwrap()
+}
+
 pub fn rev() -> ResolvedRevisionId {
-    ResolvedRevisionId::from_canonical(repoweave::vcs::CommitId::parse(&sha()).unwrap(), None)
+    ResolvedRevisionId::from_canonical(commit(), None)
 }
 
 pub fn path(p: &str) -> PathBuf {
@@ -608,10 +612,10 @@ pub fn corpus() -> Vec<CheckViolation> {
             sub_kind: BranchDisciplineKind::Detached {
                 expected_ref: "proj--feat-a".into(),
                 recorded_ref: None,
-                at_sha: sha(),
+                at_sha: commit(),
                 legacy_branch: Some(LegacyRefAtTip {
                     branch: "proj--feat-a/main".into(),
-                    tip_sha: sha(),
+                    tip_sha: Some(commit()),
                     strands_commits: false,
                 }),
             },
@@ -634,7 +638,7 @@ pub fn corpus() -> Vec<CheckViolation> {
             repo_path: path("/ws/github/acme/repo"),
             sub_kind: BranchDisciplineKind::BlockedDetachedNamespace {
                 expected_ref: "proj--feat-a".into(),
-                at_sha: sha(),
+                at_sha: commit(),
                 blocking_refs: vec!["proj--feat-a/main".into(), "proj--feat-a/master".into()],
             },
         },
@@ -642,8 +646,8 @@ pub fn corpus() -> Vec<CheckViolation> {
             repo_path: path("/ws/github/acme/repo"),
             sub_kind: BranchDisciplineKind::DetachedOffEphemeralBranch {
                 expected_ref: "proj--feat-a".into(),
-                at_sha: sha(),
-                branch_tip: sha(),
+                at_sha: commit(),
+                branch_tip: commit(),
             },
         },
         CheckViolation::BranchDiscipline {
@@ -675,7 +679,7 @@ pub fn corpus() -> Vec<CheckViolation> {
         CheckViolation::BranchDiscipline {
             repo_path: path("/ws/github/acme/repo"),
             sub_kind: BranchDisciplineKind::CanonicalDetached {
-                at_sha: sha(),
+                at_sha: commit(),
                 counterpart: Some("main".into()),
                 reattachable: true,
             },
@@ -692,7 +696,7 @@ pub fn corpus() -> Vec<CheckViolation> {
             sub_kind: BranchDisciplineKind::StaleEphemeralBranchLive {
                 branch: "proj--gone".into(),
                 project: "proj".into(),
-                tip_sha: sha(),
+                tip_sha: commit(),
             },
         },
         CheckViolation::BranchDiscipline {

@@ -110,6 +110,11 @@ Schema:
     }
   },
   "definitions": {
+    "CommitId": {
+      "description": "A full commit id: 40 lowercase hex digits, or 64 in a SHA-256 repository.",
+      "type": "string",
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+    },
     "LockRelation": {
       "description": "Relation between the current branch tip and the lock SHA.\n\nThe two clone-health variants (`Missing` / `Unreachable`) address distinct failure modes that `NoLock` previously masked:\n\n- `Missing` — the clone directory is absent from disk entirely (out-of-band `rm -rf`, never fetched, etc.). The lock entry may be fine; the repair verb is a re-clone / `rwv fetch`.\n\n- `Unreachable` — the clone directory exists but the SHA pinned in the lock is not present in the local object store (history rewritten, shallow clone, object pruned). The repair verb is a `git fetch` / `rwv fetch` to re-materialize the missing object.\n\nNeither state should be attributed to the lock file itself — surfacing them as `no-lock` misdirects operators at the wrong repair path.",
       "oneOf": [
@@ -278,9 +283,13 @@ Schema:
         },
         "tip": {
           "description": "This repo's HEAD in the parent's checkout, if resolvable.",
-          "type": [
-            "string",
-            "null"
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CommitId"
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       }

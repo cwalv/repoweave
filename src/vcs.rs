@@ -30,8 +30,7 @@ pub(crate) mod testing;
 /// by construction. Uppercase is rejected because no VCS emits it for a
 /// resolved object name, so its appearance means the string came from
 /// somewhere other than a resolution.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, JsonSchema)]
-#[schemars(transparent)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct CommitId(String);
 
 /// Why a string is not a [`CommitId`].
@@ -80,6 +79,31 @@ impl fmt::Display for CommitId {
 impl Serialize for CommitId {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&self.0)
+    }
+}
+
+impl JsonSchema for CommitId {
+    fn schema_name() -> String {
+        "CommitId".to_owned()
+    }
+
+    fn json_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+        schemars::schema::SchemaObject {
+            instance_type: Some(schemars::schema::InstanceType::String.into()),
+            string: Some(Box::new(schemars::schema::StringValidation {
+                pattern: Some("^([0-9a-f]{40}|[0-9a-f]{64})$".to_owned()),
+                ..Default::default()
+            })),
+            metadata: Some(Box::new(schemars::schema::Metadata {
+                description: Some(
+                    "A full commit id: 40 lowercase hex digits, or 64 in a SHA-256 repository."
+                        .to_owned(),
+                ),
+                ..Default::default()
+            })),
+            ..Default::default()
+        }
+        .into()
     }
 }
 
@@ -3898,6 +3922,25 @@ mod tests {
         assert!(CommitId::parse(&"A".repeat(40)).is_err());
         assert!(CommitId::parse(&"g".repeat(40)).is_err());
         assert!(CommitId::parse("").is_err());
+    }
+
+    #[test]
+    fn the_published_commit_id_pattern_admits_what_parse_admits() {
+        let schema = serde_json::to_value(schemars::schema_for!(CommitId)).unwrap();
+        let pattern = regex::Regex::new(schema["pattern"].as_str().expect("a pattern")).unwrap();
+        let mut candidates = vec!["0123456789abcdef".repeat(4), format!("{} ", "a".repeat(40))];
+        for width in [0, 7, 39, 40, 41, 63, 64, 65] {
+            for digit in ['0', 'a', 'f', 'A', 'F', 'g'] {
+                candidates.push(std::iter::repeat_n(digit, width).collect());
+            }
+        }
+        for candidate in candidates {
+            assert_eq!(
+                pattern.is_match(&candidate),
+                CommitId::parse(&candidate).is_ok(),
+                "{candidate:?}"
+            );
+        }
     }
 
     #[test]
