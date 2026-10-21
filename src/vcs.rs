@@ -7,6 +7,7 @@ use crate::cli::consent::{
     AdoptDetachedConsent, DetachConsent, DiscardUnmergedConsent, ReattachConsent,
 };
 use crate::manifest::{ProjectName, WorkweaveName};
+use crate::registry::CloneUrl;
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::fmt;
@@ -1997,7 +1998,7 @@ pub trait Vcs: Send + Sync {
     /// The name is not left to the VCS's own default: git's is settable
     /// per-operator via `clone.defaultRemoteName`, and a clone whose remote is
     /// named something else is one every later resolution here would miss.
-    fn clone_repo(&self, url: &str, dest: &Path) -> Result<(), VcsError>;
+    fn clone_repo(&self, url: &CloneUrl, dest: &Path) -> Result<(), VcsError>;
 
     /// What this backend calls the remote every method here acts on.
     ///
@@ -2192,7 +2193,7 @@ pub trait Vcs: Send + Sync {
     ///
     /// For git: runs
     /// `git remote add origin <url>`.
-    fn add_remote(&self, repo: &Path, url: &str) -> Result<(), VcsError>;
+    fn add_remote(&self, repo: &Path, url: &CloneUrl) -> Result<(), VcsError>;
 
     /// Return the tag name pointing at HEAD, if any.
     ///
@@ -3187,7 +3188,7 @@ pub trait Vcs: Send + Sync {
     /// the caller holds no witness for one.
     fn clone_attached_at(
         &self,
-        url: &str,
+        url: &CloneUrl,
         dest: &Path,
         name: &LocalRefName,
         at: &RawRevisionId,

@@ -464,7 +464,7 @@ fn refuse_foreign_clone_at_placement(
     dest: &Path,
     repo_path: &RepoPath,
 ) -> anyhow::Result<()> {
-    let clone_url = crate::registry::resolve_to_clone_info(url)?.url.to_string();
+    let clone_url = crate::registry::resolve_to_clone_info(url)?.url;
     let recorded = vcs.remote_url(dest).with_context(|| {
         format!(
             "could not determine the {} URL for '{}'",
@@ -474,7 +474,7 @@ fn refuse_foreign_clone_at_placement(
     })?;
     if recorded
         .as_deref()
-        .is_some_and(|r| crate::manifest::clone_urls_equivalent(r, &clone_url))
+        .is_some_and(|r| crate::manifest::clone_urls_equivalent(r, clone_url.as_str()))
     {
         return Ok(());
     }
@@ -784,14 +784,13 @@ fn clone_into(vcs: &dyn Vcs, url: &RepoUrl, dest: &Path) -> anyhow::Result<()> {
             .with_context(|| format!("failed to create directory {}", operator_path(parent)))?;
     }
     let clone_url = crate::registry::resolve_to_clone_info(url)?.url;
-    vcs.clone_repo(&clone_url.to_string(), dest)
-        .with_context(|| {
-            format!(
-                "failed to clone '{}' into {}",
-                clone_url,
-                operator_path(dest)
-            )
-        })?;
+    vcs.clone_repo(&clone_url, dest).with_context(|| {
+        format!(
+            "failed to clone '{}' into {}",
+            clone_url,
+            operator_path(dest)
+        )
+    })?;
     Ok(())
 }
 
@@ -1453,8 +1452,9 @@ pub fn run_add_new(
         }
     };
 
-    let repo_path = crate::registry::placement(&plan.url)
-        .expect("a CreationPlan's minted URL is always placeable");
+    let url = RepoUrl::from(&plan.url);
+    let repo_path =
+        crate::registry::placement(&url).expect("a CreationPlan's minted URL is always placeable");
 
     // Load and check existing manifest.
     let mut manifest = Manifest::from_path(&manifest_path).with_context(|| {
@@ -1469,7 +1469,7 @@ pub fn run_add_new(
     let dest = ctx.primary_path().join(repo_path.as_path());
 
     if let Some(existing) = manifest.get_entry(&repo_path) {
-        if existing.url == plan.url {
+        if existing.url == url {
             announce_already_registered(&repo_path);
             place_member(
                 vcs.as_ref(),
@@ -1557,14 +1557,13 @@ pub fn run_add_new(
                         left.make_dir_all(parent)?;
                     }
                     left.made.push(Made::Repo(dest.clone()));
-                    vcs.clone_repo(&plan.url.to_string(), &dest)
-                        .with_context(|| {
-                            format!(
-                                "failed to clone '{}' into {}",
-                                plan.url,
-                                operator_path(&dest)
-                            )
-                        })?;
+                    vcs.clone_repo(&plan.url, &dest).with_context(|| {
+                        format!(
+                            "failed to clone '{}' into {}",
+                            plan.url,
+                            operator_path(&dest)
+                        )
+                    })?;
                     cloned_from = Some(bare_path);
                 }
             }
@@ -1582,10 +1581,9 @@ pub fn run_add_new(
                     vcs.init_repo(&dest).with_context(|| {
                         format!("failed to init repo at {}", operator_path(&dest))
                     })?;
-                    vcs.add_remote(&dest, &plan.url.to_string())
-                        .with_context(|| {
-                            format!("failed to add the remote in {}", operator_path(&dest))
-                        })?;
+                    vcs.add_remote(&dest, &plan.url).with_context(|| {
+                        format!("failed to add the remote in {}", operator_path(&dest))
+                    })?;
                 }
             }
         }
@@ -1614,7 +1612,7 @@ pub fn run_add_new(
 
         let entry = RepoEntry {
             vcs_type,
-            url: plan.url.clone(),
+            url,
             version: default_branch,
             role,
             submodules: crate::manifest::Submodules::Local,
@@ -1740,7 +1738,7 @@ mod tests {
         fn matches(&self, _raw: &str) -> Option<RepoUrl> {
             None
         }
-        fn clone_url(&self, _id: &RepoId) -> Option<RepoUrl> {
+        fn clone_url(&self, _id: &RepoId) -> Option<crate::registry::CloneUrl> {
             None
         }
         fn creation_params(&self) -> &[ParamSpec] {

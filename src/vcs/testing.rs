@@ -317,7 +317,7 @@ impl Vcs for FakeVcs {
         unsupported("init_bare_repo")
     }
 
-    fn clone_repo(&self, _url: &str, _dest: &Path) -> Result<(), VcsError> {
+    fn clone_repo(&self, _url: &CloneUrl, _dest: &Path) -> Result<(), VcsError> {
         unsupported("clone_repo")
     }
 
@@ -412,7 +412,7 @@ impl Vcs for FakeVcs {
         unsupported("commit")
     }
 
-    fn add_remote(&self, _repo: &Path, _url: &str) -> Result<(), VcsError> {
+    fn add_remote(&self, _repo: &Path, _url: &CloneUrl) -> Result<(), VcsError> {
         unsupported("add_remote")
     }
 
@@ -671,7 +671,7 @@ impl Vcs for FakeVcs {
 
     fn clone_attached_at(
         &self,
-        _url: &str,
+        _url: &CloneUrl,
         _dest: &Path,
         _name: &LocalRefName,
         _at: &RawRevisionId,

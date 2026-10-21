@@ -1,5 +1,6 @@
 //! Git implementation of the [`Vcs`] trait.
 
+use crate::registry::CloneUrl;
 use crate::vcs::{
     CommitSummary, ConflictOp, ContentIdentity, DerivedContentPolicy, DerivedContentResolution,
     DiscardOutcome, ForeignTipPolicy, HeadAttachment, HeadObservation, LocalRefName, PreAbortRef,
@@ -1371,10 +1372,16 @@ impl Vcs for GitVcs {
         Ok(())
     }
 
-    fn clone_repo(&self, url: &str, dest: &Path) -> Result<(), VcsError> {
+    fn clone_repo(&self, url: &CloneUrl, dest: &Path) -> Result<(), VcsError> {
         let dest_str = path_as_git_arg(dest, "destination path")?;
         Self::run(
-            &["clone", "--origin", GIT_DEFAULT_REMOTE_NAME, url, dest_str],
+            &[
+                "clone",
+                "--origin",
+                GIT_DEFAULT_REMOTE_NAME,
+                url.as_str(),
+                dest_str,
+            ],
             Path::new("."),
         )?;
         Ok(())
@@ -1582,8 +1589,12 @@ impl Vcs for GitVcs {
     fn commit(&self, repo: &Path, message: &str) -> Result<(), VcsError> {
         Self::run(&["commit", "-m", message], repo).map(|_| ())
     }
-    fn add_remote(&self, repo: &Path, url: &str) -> Result<(), VcsError> {
-        Self::run(&["remote", "add", GIT_DEFAULT_REMOTE_NAME, url], repo).map(|_| ())
+    fn add_remote(&self, repo: &Path, url: &CloneUrl) -> Result<(), VcsError> {
+        Self::run(
+            &["remote", "add", GIT_DEFAULT_REMOTE_NAME, url.as_str()],
+            repo,
+        )
+        .map(|_| ())
     }
 
     fn is_tracked(&self, repo: &Path, path: &Path) -> Result<bool, VcsError> {
@@ -2689,7 +2700,7 @@ impl Vcs for GitVcs {
 
     fn clone_attached_at(
         &self,
-        url: &str,
+        url: &CloneUrl,
         dest: &Path,
         name: &LocalRefName,
         at: &RawRevisionId,
@@ -2707,7 +2718,7 @@ impl Vcs for GitVcs {
                 "--origin",
                 GIT_DEFAULT_REMOTE_NAME,
                 "--no-checkout",
-                url,
+                url.as_str(),
                 dest_str,
             ],
             Path::new("."),

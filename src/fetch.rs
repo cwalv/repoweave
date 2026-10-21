@@ -140,7 +140,7 @@ pub enum FetchMode {
 ///
 /// Accepts full URLs (returned as-is) or `owner/repo` / `registry/owner/repo`
 /// shorthand (resolved via the built-in registries to an HTTPS clone URL).
-fn resolve_source(source: &str) -> anyhow::Result<crate::manifest::RepoUrl> {
+fn resolve_source(source: &str) -> anyhow::Result<registry::CloneUrl> {
     let parsed: crate::manifest::RepoUrl = source.parse()?;
     if parsed.is_plain_path() {
         crate::refuse!(
@@ -229,8 +229,7 @@ pub fn run_fetch(
 
     // Resolve source to a clone URL (supports full URLs and owner/repo shorthand).
     let url = resolve_source(source)?;
-    let url_str = url.to_string();
-    let name = registry::repo_name_from_source(&url_str);
+    let name = registry::repo_name_from_source(url.as_str());
     let projects_dir = projects_dir(workspace_root);
     std::fs::create_dir_all(&projects_dir).context("failed to create projects/ directory")?;
     let project_dir = projects_dir.join(&name);
@@ -252,7 +251,7 @@ pub fn run_fetch(
             println!("rwv fetch: cloning project '{}'", name);
         }
         project_vcs
-            .clone_repo(&url_str, &project_dir)
+            .clone_repo(&url, &project_dir)
             .with_context(|| format!("failed to clone project source '{}'", url))?;
 
         // Unlike `init`/`init_adopt`, fetch never calls `set_replay_exclusion`
@@ -1169,6 +1168,15 @@ fn fetch_one(
         }
     }
 
+    let clone_url = match registry::resolve_to_clone_info(&entry.url) {
+        Ok(info) => info.url,
+        Err(e) => {
+            return FetchOutcome::Failed {
+                msg: format!("{}: {e:#}", repo_path.as_str()),
+            };
+        }
+    };
+
     // Create parent directories
     if let Some(parent) = dest.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
@@ -1185,7 +1193,7 @@ fn fetch_one(
     emit(&format!(
         "rwv fetch: cloning {} from {} (role: {})",
         repo_path.as_str(),
-        entry.url,
+        clone_url,
         entry.role.as_str()
     ));
 
@@ -1214,7 +1222,7 @@ fn fetch_one(
             lock_entry.version,
         ));
         if let Err(e) = vcs.clone_attached_at(
-            &entry.url.to_string(),
+            &clone_url,
             &dest,
             &declared.local_counterpart(),
             &lock_entry.version,
@@ -1223,7 +1231,7 @@ fn fetch_one(
                 msg: format!(
                     "{}: failed to materialize {} at {}: {e:#}",
                     repo_path.as_str(),
-                    entry.url,
+                    clone_url,
                     lock_entry.version,
                 ),
             };
@@ -1231,12 +1239,12 @@ fn fetch_one(
         return FetchOutcome::Ok { add_to_lock };
     }
 
-    if let Err(e) = vcs.clone_repo(&entry.url.to_string(), &dest) {
+    if let Err(e) = vcs.clone_repo(&clone_url, &dest) {
         return FetchOutcome::Failed {
             msg: format!(
                 "{}: failed to clone {} into {}: {e:#}",
                 repo_path.as_str(),
-                entry.url,
+                clone_url,
                 dest.display()
             ),
         };

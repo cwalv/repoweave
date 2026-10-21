@@ -55,7 +55,7 @@ Keyed by canonical local path (`<registry>/<owner>/<repo>`). Each entry:
 | Field | Required | Description |
 |---|---|---|
 | `type` | yes | VCS type. Currently `git`. |
-| `url` | yes | Clone URL. Used by `rwv fetch` on other machines. |
+| `url` | yes | Clone source: a URL (`https://…`, `git@…`, `file://` for a local remote) or registry shorthand (`github/owner/repo`), as `rwv add` was given it. Every clone resolves shorthand through the built-in registries, so `rwv fetch` on another machine clones the same remote. |
 | `version` | yes | Tracked branch name (manifest); 40-character commit SHA (lock). |
 | `role` | yes | One of `owned`, `fork`, `dependency`, `reference`. |
 | `submodules` | no | `"local"` (the default) or `"skip"`. See [Submodules](#submodules). |

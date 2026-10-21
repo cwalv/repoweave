@@ -10,7 +10,7 @@ rwv add https://github.com/example/some-lib.git --role dependency
 
 If you already added the entry to `rwv.toml` by hand, running `rwv add <url>` with the matching URL finishes the setup: it clones the repository if missing, creates the worktree when run inside a workweave, and regenerates integration files.
 
-The argument is a URL or a registry shorthand (`github/example/some-lib`). To clone from a repository on local disk, spell it as a `file://` URL (`rwv add file:///srv/repos/some-lib.git`); a plain path refuses with `unresolvable-repo-source`, and the message names both the `file://` spelling and `--adopt`.
+The argument is a URL or a registry shorthand (`github/example/some-lib`), and `rwv.toml` records it as you wrote it; every later clone, on any machine, resolves the shorthand through the same registry. To clone from a repository on local disk, spell it as a `file://` URL (`rwv add file:///srv/repos/some-lib.git`); a plain path refuses with `unresolvable-repo-source`, and the message names both the `file://` spelling and `--adopt`.
 
 ## Record the change
 

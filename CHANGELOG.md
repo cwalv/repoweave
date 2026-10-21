@@ -27,6 +27,23 @@ written. It now lists exactly the integrations that run for the project: those
 with `enabled = true`, and those that run by default and have no `enabled =
 false`.
 
+### A member added by registry shorthand clones on every machine
+
+`rwv add github/acme/x` records `url = "github/acme/x"` as typed and clones
+from the URL the registry resolves it to, but every later clone of that member
+handed git the shorthand and failed with `repository 'github/acme/x' does not
+exist`: `rwv fetch` on a collaborator's machine, or after the clone was
+removed, and `rwv sync` bringing the member into a weave without it. Every
+clone now resolves a member's `url` through the built-in registries the way
+`rwv add` does, and `rwv fetch` names the URL it clones from.
+
+A member `url` that is a plain path refuses with `unresolvable-repo-source`
+when a clone needs it, naming the `file://` spelling to write instead; git used
+to be handed the path. An SCP-style URL on a host with no built-in registry
+(`git@git.example.com:org/repo`) reads as a URL, not as `owner/repo`
+shorthand, so `rwv fetch` and `rwv init --adopt` clone it as written rather
+than a GitHub URL built from it.
+
 ### Breaking: relative path arguments are read from the directory rwv runs in
 
 A relative path on the command line names the place it names in your shell, or

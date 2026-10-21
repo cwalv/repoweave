@@ -1810,13 +1810,14 @@ fn materialize_missing_repo(
             .files);
         }
         Checkout::Primary { .. } => {
+            let clone_url = crate::registry::resolve_to_clone_info(&entry.url)?.url;
             let dest = ctx.active_path().join(repo_path.as_path());
             if let Some(parent) = dest.parent() {
                 std::fs::create_dir_all(parent)
                     .with_context(|| format!("failed to create {}", parent.display()))?;
             }
-            vcs.clone_repo(&entry.url.to_string(), &dest)
-                .with_context(|| format!("clone of {repo_path} from {} failed", entry.url))?;
+            vcs.clone_repo(&clone_url, &dest)
+                .with_context(|| format!("clone of {repo_path} from {clone_url} failed"))?;
             crate::settle::settle(vcs, &dest, entry.role)?;
         }
     }

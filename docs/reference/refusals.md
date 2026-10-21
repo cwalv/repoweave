@@ -1209,14 +1209,16 @@ characters and the rule each one protects.
 ### `unresolvable-repo-source`
 
 **Condition.** The source parses as neither a URL nor a known shorthand. For
-`rwv add` and `rwv fetch` this includes a plain path, relative or absolute.
+`rwv add` and `rwv fetch` this includes a plain path, relative or absolute, and
+so does a member's `url` in `rwv.toml` when `rwv fetch` or `rwv sync` clones
+it.
 
 **Why.** A plain path could name a remote to clone from or, for `rwv add`, a
 clone already on disk to register. Guessing between them clones from somewhere
 unintended or records the wrong URL, so each meaning has its own spelling.
 
 **Exits.** The message names them. To clone from a local remote, spell it as a
-URL: `file:///abs/path`. To register the clone already at that path under the
+URL: `file:///abs/path`, in `rwv.toml` as well. To register the clone already at that path under the
 weave root: `rwv add --adopt <path>`. To fetch the members of a project already
 in this weave, drop the source: `rwv fetch --project <name>`. Otherwise give a
 full URL, or `owner/repo` shorthand for a supported registry.

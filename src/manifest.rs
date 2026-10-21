@@ -204,6 +204,10 @@ impl FromStr for RepoUrl {
 }
 
 fn parse_two_part_shorthand(s: &str) -> Option<RepoUrl> {
+    // git reads `host:owner/repo` as an SCP-style URL, and `C:/a` is a path.
+    if s.contains(':') {
+        return None;
+    }
     let parts: Vec<&str> = s.split('/').collect();
     if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
         return None;

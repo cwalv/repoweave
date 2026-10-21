@@ -26,7 +26,7 @@
 
 use crate::manifest::{LockFile, Manifest, RepoUrl};
 use crate::refusal::{refusal, RefusalKind};
-use crate::registry::{builtin_registries, resolve_to_clone_info, RepoId};
+use crate::registry::{builtin_registries, resolve_to_clone_info, CloneUrl, RepoId};
 use crate::vcs::project_vcs;
 use crate::workspace::{
     create_identity_dir, enclosing_project, project_dir, projects_dir, require_workspace_or_empty,
@@ -158,7 +158,7 @@ pub fn init(name: &str, provider: Option<&str>, origin_dir: &Path) -> anyhow::Re
         .context("failed to plant merge.rwv-ours config")?;
 
     if let Some(url) = remote_url {
-        vcs.add_remote(&project_dir, &url.to_string())
+        vcs.add_remote(&project_dir, &url)
             .with_context(|| format!("failed to add the remote in {}", project_dir.display()))?;
     }
 
@@ -175,7 +175,7 @@ pub fn init(name: &str, provider: Option<&str>, origin_dir: &Path) -> anyhow::Re
 }
 
 /// The remote URL `--provider <registry>/<owner>` names for project `name`.
-fn provider_remote_url(provider: &str, name: &str) -> anyhow::Result<RepoUrl> {
+fn provider_remote_url(provider: &str, name: &str) -> anyhow::Result<CloneUrl> {
     let (registry_name, owner) = provider.split_once('/').ok_or_else(|| {
         refusal(
             RefusalKind::MalformedProvider,
@@ -264,7 +264,7 @@ pub fn init_adopt(
     // Clone the repo
     let vcs = project_vcs();
     eprintln!("Cloning {} into {}", clone_url, project_dir.display());
-    vcs.clone_repo(&clone_url.to_string(), &project_dir)
+    vcs.clone_repo(&clone_url, &project_dir)
         .with_context(|| format!("failed to clone {}", clone_url))?;
 
     let manifest_path = project_dir.join(Manifest::FILE_NAME);
@@ -300,7 +300,7 @@ pub fn init_adopt(
 /// For full URLs, the project name is derived from the last path segment.
 /// For shorthands, the registry is used to construct the clone URL and the
 /// repo name becomes the project name.
-fn resolve_adopt_source(source: &str) -> anyhow::Result<(RepoUrl, String)> {
+fn resolve_adopt_source(source: &str) -> anyhow::Result<(CloneUrl, String)> {
     let parsed: RepoUrl = source.parse()?;
     let info = resolve_to_clone_info(&parsed)?;
     let repo = info.id.repo().to_owned();

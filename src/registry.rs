@@ -7,7 +7,7 @@
 //! to have different URL parsing, authentication, and discovery behavior.
 
 use crate::manifest::{RepoPath, RepoUrl, VcsType};
-use crate::path_spelling::{is_absolute_spelling, mint_file_url};
+use crate::path_spelling::{file_url_suggestion, is_absolute_spelling, mint_file_url};
 use crate::refusal::RefusalKind;
 use std::path::PathBuf;
 
@@ -223,7 +223,7 @@ pub enum Upstream {
 /// anything — rwv must bring into existence upstream first.
 #[derive(Debug, Clone)]
 pub struct CreationPlan {
-    pub url: RepoUrl,
+    pub url: CloneUrl,
     pub vcs: VcsType,
     pub upstream: Upstream,
 }
@@ -270,11 +270,9 @@ pub trait Registry {
 
     /// Construct a clone URL from an owner/repo pair.
     ///
-    /// `None` is reserved for a registry that cannot generate URLs, a
-    /// directory-based one being the case in mind. No implementation returns it
-    /// and every caller asserts `Some`; introducing one means revisiting those
-    /// assertions, not adding a branch.
-    fn clone_url(&self, id: &RepoId) -> Option<RepoUrl>;
+    /// `None` from a registry that cannot name a repo by owner and repo
+    /// alone, as a directory-based one cannot.
+    fn clone_url(&self, id: &RepoId) -> Option<CloneUrl>;
 
     /// The parameters `plan_creation` needs to create a repo through this
     /// registry.
@@ -347,13 +345,16 @@ impl Registry for DomainRegistry {
         None
     }
 
-    fn clone_url(&self, id: &RepoId) -> Option<RepoUrl> {
-        Some(RepoUrl::Https {
-            registry: self.registry_name.clone(),
-            host: self.domain.clone(),
-            owner: id.owner().to_owned(),
-            repo: id.repo().to_owned(),
-        })
+    fn clone_url(&self, id: &RepoId) -> Option<CloneUrl> {
+        Some(CloneUrl(
+            RepoUrl::Https {
+                registry: self.registry_name.clone(),
+                host: self.domain.clone(),
+                owner: id.owner().to_owned(),
+                repo: id.repo().to_owned(),
+            }
+            .to_string(),
+        ))
     }
 
     fn creation_params(&self) -> &[ParamSpec] {
@@ -423,13 +424,35 @@ fn extract_owner_repo(path: &str) -> Option<(String, String)> {
 // Built-in registries and CloneInfo extraction
 // ---------------------------------------------------------------------------
 
+/// A URL git can clone from as written: never registry shorthand, never a
+/// plain path.
+#[derive(Debug, Clone)]
+pub struct CloneUrl(String);
+
+impl CloneUrl {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for CloneUrl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl From<&CloneUrl> for RepoUrl {
+    fn from(url: &CloneUrl) -> Self {
+        url.as_str()
+            .parse()
+            .expect("RepoUrl::from_str is infallible")
+    }
+}
+
 /// Result of resolving a source (URL or shorthand) to a real clone URL.
-///
-/// The `url` is always something `git clone` accepts — never a
-/// [`RepoUrl::Shorthand`].
 #[derive(Debug, Clone)]
 pub struct CloneInfo {
-    pub url: RepoUrl,
+    pub url: CloneUrl,
     pub registry: RegistryName,
     pub id: RepoId,
 }
@@ -441,9 +464,6 @@ pub struct CloneInfo {
 /// into a real clone URL via the named (or default) registry. Unknown variants
 /// that look like URLs are accepted with a synthetic `"unknown"` registry;
 /// non-URL Unknowns error.
-///
-/// This is the single shared resolution path used by both `fetch` and
-/// `init --adopt`.
 pub fn resolve_to_clone_info(source: &RepoUrl) -> anyhow::Result<CloneInfo> {
     match source {
         RepoUrl::Https {
@@ -458,7 +478,7 @@ pub fn resolve_to_clone_info(source: &RepoUrl) -> anyhow::Result<CloneInfo> {
             repo,
             ..
         } => Ok(CloneInfo {
-            url: source.clone(),
+            url: CloneUrl(source.to_string()),
             registry: registry.clone(),
             id: RepoId::new(owner.as_str(), repo.as_str()),
         }),
@@ -494,15 +514,16 @@ pub fn resolve_to_clone_info(source: &RepoUrl) -> anyhow::Result<CloneInfo> {
             if source.is_url() {
                 let project_name = repo_name_from_source(s);
                 Ok(CloneInfo {
-                    url: source.clone(),
+                    url: CloneUrl(s.clone()),
                     registry: RegistryName::new("unknown"),
                     id: RepoId::new("", project_name),
                 })
             } else {
                 crate::refuse!(
                     RefusalKind::UnresolvableRepoSource,
-                    "cannot resolve '{}': expected a URL (https://... or git@...) or shorthand (owner/repo)",
-                    s
+                    "cannot resolve '{s}': expected a URL (https://..., git@..., or {file_url} \
+                     for a local remote) or shorthand (owner/repo)",
+                    file_url = file_url_suggestion(s),
                 )
             }
         }
@@ -606,7 +627,7 @@ impl Registry for LocalRegistry {
         None
     }
 
-    fn clone_url(&self, _id: &RepoId) -> Option<RepoUrl> {
+    fn clone_url(&self, _id: &RepoId) -> Option<CloneUrl> {
         None
     }
 
@@ -625,9 +646,7 @@ impl Registry for LocalRegistry {
         if !is_absolute_spelling(root) {
             return Err(CreationParamError::NotAbsolute("root"));
         }
-        let url: RepoUrl = mint_file_url(&format!("{root}/{owner}/{repo}"))
-            .parse()
-            .expect("RepoUrl::from_str is infallible");
+        let url = CloneUrl(mint_file_url(&format!("{root}/{owner}/{repo}")));
         let bare_path = PathBuf::from(root).join(owner).join(repo);
         Ok(CreationPlan {
             url,
@@ -993,6 +1012,21 @@ mod tests {
     }
 
     #[test]
+    fn resolve_to_clone_info_passes_an_scp_url_on_an_unknown_host_through() {
+        let info = resolve_to_clone_info(&parse("git@git.example.com:org/repo")).unwrap();
+        assert_eq!(info.url.as_str(), "git@git.example.com:org/repo");
+    }
+
+    #[test]
+    fn resolve_to_clone_info_refuses_a_plain_path_naming_its_file_url() {
+        let err = resolve_to_clone_info(&parse("/srv/repos/x")).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("file:///srv/repos/x"),
+            "the refusal names the spelling to write instead: {err:#}"
+        );
+    }
+
+    #[test]
     fn resolve_to_clone_info_rejects_invalid() {
         assert!(resolve_to_clone_info(&parse("not-a-valid-source")).is_err());
     }
@@ -1164,7 +1198,7 @@ mod tests {
         fn matches(&self, _raw: &str) -> Option<RepoUrl> {
             None
         }
-        fn clone_url(&self, _id: &RepoId) -> Option<RepoUrl> {
+        fn clone_url(&self, _id: &RepoId) -> Option<CloneUrl> {
             None
         }
         fn creation_params(&self) -> &[ParamSpec] {
@@ -1173,7 +1207,7 @@ mod tests {
         fn plan_creation(&self, params: &ParamMap) -> Result<CreationPlan, CreationParamError> {
             check_creation_params(FIXTURE_PARAMS, params)?;
             Ok(CreationPlan {
-                url: parse("fixture/owner/widget"),
+                url: CloneUrl("https://fixture.example/owner/widget.git".to_owned()),
                 vcs: VcsType::Git,
                 upstream: Upstream::Named,
             })

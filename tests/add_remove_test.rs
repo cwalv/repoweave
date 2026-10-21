@@ -296,6 +296,83 @@ fn add_uncloned_three_segment_shorthand_clones_the_registry_resolved_url() {
     );
 }
 
+/// `rwv` with `https://github.com/` rewritten to the fake host under `tmp`,
+/// so a clone succeeds only when git is handed the registry-resolved URL.
+fn rwv_with_fake_github(tmp: &Path) -> Command {
+    let redirect_base = format!("file://{}/", common::url_path(tmp.join("fakegithub")));
+    let mut cmd = rwv();
+    cmd.env("GIT_CONFIG_COUNT", "2")
+        .env("GIT_CONFIG_KEY_1", format!("url.{redirect_base}.insteadOf"))
+        .env("GIT_CONFIG_VALUE_1", "https://github.com/");
+    cmd
+}
+
+/// A weave whose manifest lists `github/acme/x` as `rwv add github/acme/x`
+/// wrote it, and whose clone of it is gone: the state a collaborator's
+/// fresh machine starts from.
+fn shorthand_member_without_its_clone(tmp: &tempfile::TempDir) -> PathBuf {
+    let bare = tmp.path().join("fakegithub").join("acme").join("x.git");
+    std::fs::create_dir_all(bare.parent().unwrap()).unwrap();
+    init_bare_repo_with_commit(&bare);
+    let (workspace, project_dir) = setup_workspace_with_project(tmp, &[]);
+
+    rwv_with_fake_github(tmp.path())
+        .args(["add", "github/acme/x"])
+        .current_dir(&workspace)
+        .assert()
+        .success();
+    let manifest = std::fs::read_to_string(project_dir.join("rwv.toml")).unwrap();
+    assert!(
+        manifest.contains("url = \"github/acme/x\""),
+        "rwv.toml keeps the source as the operator spelled it:\n{manifest}"
+    );
+
+    std::fs::remove_dir_all(workspace.join("github/acme/x")).unwrap();
+    workspace
+}
+
+#[test]
+fn fetch_reclones_a_member_added_by_registry_shorthand() {
+    let tmp = common::tempdir().unwrap();
+    let workspace = shorthand_member_without_its_clone(&tmp);
+
+    rwv_with_fake_github(tmp.path())
+        .arg("fetch")
+        .current_dir(&workspace)
+        .assert()
+        .success();
+
+    assert_eq!(
+        std::fs::read_to_string(workspace.join("github/acme/x/README")).unwrap(),
+        "init",
+        "fetch must clone the URL the shorthand resolves to"
+    );
+}
+
+#[test]
+fn fetch_reclones_a_member_added_by_registry_shorthand_at_its_lock_pin() {
+    let tmp = common::tempdir().unwrap();
+    let workspace = shorthand_member_without_its_clone(&tmp);
+    let pin = common::git_in(
+        tmp.path().join("fakegithub/acme/x.git"),
+        &["rev-parse", "main"],
+    );
+    common::fixture_lock(
+        &workspace.join("projects/test-project"),
+        &[("github/acme/x", "github/acme/x", &pin)],
+    );
+
+    rwv_with_fake_github(tmp.path())
+        .arg("fetch")
+        .current_dir(&workspace)
+        .assert()
+        .success();
+
+    let clone = workspace.join("github/acme/x");
+    assert_eq!(common::git_in(&clone, &["rev-parse", "HEAD"]), pin);
+    common::assert_on_branch(&clone, "main");
+}
+
 /// Run `rwv <global_args> add local --new` for `local/acme/fresh` under
 /// `root`, from `cwd`, and assert its bare upstream landed at
 /// `<lab>/acme/fresh` and the manifest under `manifest_dir` records it as
