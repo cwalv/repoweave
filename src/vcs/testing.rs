@@ -416,7 +416,7 @@ impl Vcs for FakeVcs {
         unsupported("add_remote")
     }
 
-    fn tag_at_head(&self, _repo: &Path) -> Result<Option<RefName>, VcsError> {
+    fn tag_at_head(&self, _repo: &Path) -> Result<Option<RawRefName>, VcsError> {
         unsupported("tag_at_head")
     }
 
@@ -569,7 +569,7 @@ impl Vcs for FakeVcs {
     fn branch_has_remote_counterpart(
         &self,
         _repo: &Path,
-        _branch: &RefName,
+        _branch: &RawRefName,
     ) -> Result<bool, VcsError> {
         unsupported("branch_has_remote_counterpart")
     }
@@ -577,7 +577,7 @@ impl Vcs for FakeVcs {
     fn count_commits_ahead_of_remote(
         &self,
         _repo: &Path,
-        _branch: &RefName,
+        _branch: &RawRefName,
     ) -> Result<usize, VcsError> {
         unsupported("count_commits_ahead_of_remote")
     }

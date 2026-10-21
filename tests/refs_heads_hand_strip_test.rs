@@ -1,15 +1,11 @@
 //! Tripwire: no caller outside the git seam hand-strips a `refs/heads/`
 //! prefix to turn a qualified ref into a bare branch name.
 //!
-//! `list_local_branches` used to return `Vec<RefName>` fully qualified via
-//! `%(refname)`, and its one caller in `sync.rs` hand-stripped the prefix
-//! before it could pass a bare name to `branch_has_remote_counterpart`.
-//! It is gone now: `list_local_branch_names` (`Vec<RawRefName>`, bare via
-//! `%(refname:lstrip=2)`) is the only local-branch listing left, so a
-//! caller has nothing qualified to strip. This pins that a future
-//! qualified listing does not reintroduce the pattern — only `git.rs`,
-//! which owns git ref-name parsing, may convert `refs/heads/<name>` to
-//! `<name>` by hand.
+//! `list_local_branch_names` (`Vec<RawRefName>`, already bare) is the only
+//! local-branch listing, so a caller has nothing qualified to strip. This
+//! pins that a future qualified listing does not reintroduce the pattern —
+//! only `git.rs`, which owns git ref-name parsing, may convert
+//! `refs/heads/<name>` to `<name>` by hand.
 //!
 //! Scanned via `common::src_scan::production_lines`, whose own residue
 //! applies here too: comment lines are excluded — occurrence outside a

@@ -298,23 +298,24 @@ The surface carried **four unreconciled notions of "the member branch"**:
 Every **mutating** verb operated on (3) or (4). Every **checking** verb
 assumed (1) or (2).
 
-All four were the same Rust type. `pub struct RefName(String)` — still present
-at `vcs.rs:252-271`, still a bare newtype with a `pub fn new(impl
-Into<String>)` constructor and no validation `[V]` — was used for the
-manifest's `version:`, for minted ephemeral names, for whatever `current_ref`
-returned, for the deletion argument, and for the `default_branch` fallback.
+All four were the same Rust type. `pub struct RefName(String)`, a bare
+newtype with a `pub fn new(impl Into<String>)` constructor and no validation,
+was used for the manifest's `version:`, for minted ephemeral names, for
+whatever `current_ref` returned, for the deletion argument, and for the
+`default_branch` fallback.
 Nothing in the type system distinguished them, so mixing them was invisible.
 
 What changed: notions (1)–(4) are now `TrackingRef`, `EphemeralRefName` /
 `OwnedRef`, `AttachedRef`, and `HeadAttachment::Detached(DetachedHead)`
-respectively (§4.2), and **four of the five `RefName` sites listed above no
-longer exist** — `current_ref` and `delete_branch` were deleted, ephemeral
-names are minted by `EphemeralRefName::mint`, and `default_branch` — the
-method the fallback lived in — has been deleted from `GitVcs` and from the
-trait `[V]`. `RefName` itself survives, still unvalidated, but only on the
-surface this model did not reach: `tag_at_head` and the two prune predicates
-(`branch_has_remote_counterpart`, `count_commits_ahead_of_remote`). The
-manifest's `version:` field is a `TrackingRef` parsed at load (§1.3), and
+respectively (§4.2), and **`RefName` is deleted**, with every site listed
+above — `current_ref` and `delete_branch` were deleted, ephemeral names are
+minted by `EphemeralRefName::mint`, and `default_branch` — the method the
+fallback lived in — has been deleted from `GitVcs` and from the trait. A name
+read from the VCS that none of the four notions claims stays a `RawRefName`:
+the tag `tag_at_head` reports, and the listed local branch the two prune
+predicates (`branch_has_remote_counterpart`, `count_commits_ahead_of_remote`)
+are asked about. The manifest's `version:` field is a `TrackingRef` parsed at
+load (§1.3), and
 `rwv add` writes it through `TrackingRef::try_from` an observed
 `RemoteDefaultBranch` or `AttachedRef` (or `TrackingRef::parse` of an
 `UnbornRef`'s name), so a default branch that reads as a tag or a SHA is
@@ -2615,12 +2616,11 @@ nor the `.rwv-workweave` marker's `project:` (`workspace.rs:1081`, typed
 `ProjectName`) can smuggle a name past the constructor by being hand-edited
 on disk `[V]`.
 
-**What is *not* covered, stated rather than assumed:** `RefName::new`
-(`vcs.rs:257-259`) is still a bare unvalidated newtype `[V]`. That is
-consistent with the rest of this document rather than a residue of this
-question — `RefName` is the un-migrated legacy type (§2, §4.2), it names no
-project and no workweave, and migrating `manifest.rs`'s `version:` field off
-it is separately tracked as the one piece of §4.2's table left undone.
+**What is *not* covered, stated rather than assumed:** `RawRefName::new`
+mints a name with no validation. That is the parse boundary doing its job
+rather than a residue of this question — a `RawRefName` names no project and
+no workweave, and every name that must be validated has a refined type of its
+own (§4.2).
 Q12 asked for the grammar of *project and workweave* names; that grammar is
 now decided and enforced.
 
@@ -2758,11 +2758,11 @@ since" landed after it and are verified at the citation base above. The old
 surface — `current_ref`, `checkout`, `delete_branch`, `restore_savepoint`,
 `create_worktree`, `push_with_role`, `list_branches_with_prefix`,
 `parse_ephemeral_branch_name` — is deleted rather than deprecated, and
-`default_branch` has since joined it. Two things this document specified are
-**not** done, and are stated where they belong rather than only here:
-`manifest.rs`'s `version:` field is still `RefName` (§4.2), and three
-generated-reference locations still describe the pre-flat branch name (§6
-item 7); every joint location has since been brought over.
+`default_branch` and `RefName` itself have since joined it. One thing this
+document specified is **not** done, and is stated where it belongs rather
+than only here: three generated-reference locations still describe the
+pre-flat branch name (§6 item 7); every joint location has since been brought
+over.
 
 **The mechanism:** one rule with four kinds (MOVE / ATTACH / DESTROY /
 DESTROY-STORE), a decision procedure that answers for verbs not yet

@@ -4,7 +4,7 @@ use crate::registry::CloneUrl;
 use crate::vcs::{
     CommitSummary, ConflictOp, ContentIdentity, DerivedContentPolicy, DerivedContentResolution,
     DiscardOutcome, ForeignTipPolicy, HeadAttachment, HeadObservation, LocalRefName, PreAbortRef,
-    PublishRef, RawRefName, RawRevisionId, RecordedSubmodule, RefName, RemoteBranchCopies,
+    PublishRef, RawRefName, RawRevisionId, RecordedSubmodule, RemoteBranchCopies,
     RemoteDefaultBranch, RemoteRef, ReplayExclusionState, ResolvedRevisionId, SubmoduleBirth,
     TrackedFile, TrackedFileKind, UniqueDiff, Vcs, VcsError, VerifiedRestoreOutcome,
     WorkspacePopulation,
@@ -1656,7 +1656,7 @@ impl Vcs for GitVcs {
         })
     }
 
-    fn tag_at_head(&self, repo: &Path) -> Result<Option<RefName>, VcsError> {
+    fn tag_at_head(&self, repo: &Path) -> Result<Option<RawRefName>, VcsError> {
         // `git tag --points-at HEAD` lists tags that resolve to HEAD.
         //
         // Filter out transient/internal tags (savepoints and pre-op refs) so
@@ -1683,7 +1683,7 @@ impl Vcs for GitVcs {
             .find(|t| is_release_shape_tag(t))
             .copied()
             .unwrap_or(candidates[0]);
-        Ok(Some(RefName::new(chosen)))
+        Ok(Some(RawRefName::new(chosen)))
     }
 
     fn worktree_prune(&self, repo: &Path) -> Result<(), VcsError> {
@@ -2296,7 +2296,7 @@ impl Vcs for GitVcs {
     fn branch_has_remote_counterpart(
         &self,
         repo: &Path,
-        branch: &RefName,
+        branch: &RawRefName,
     ) -> Result<bool, VcsError> {
         let qualified = remote_tracking(branch.as_str());
         let status = git_command()
@@ -2319,7 +2319,7 @@ impl Vcs for GitVcs {
     fn count_commits_ahead_of_remote(
         &self,
         repo: &Path,
-        branch: &RefName,
+        branch: &RawRefName,
     ) -> Result<usize, VcsError> {
         let range = format!(
             "{}..{}",
@@ -4428,7 +4428,7 @@ mod branch_model_tests {
         git(&clone, &["tag", "main", "refs/remotes/origin/main"]);
 
         let ahead = GitVcs
-            .count_commits_ahead_of_remote(&clone, &RefName::new("main"))
+            .count_commits_ahead_of_remote(&clone, &RawRefName::new("main"))
             .unwrap();
 
         assert_eq!(

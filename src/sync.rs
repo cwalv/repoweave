@@ -19,7 +19,7 @@ use crate::share::FilePlacement;
 use crate::status::{compute_relation, LockRelation};
 use crate::vcs::{
     project_vcs, vcs_for, AttachedRef, ConflictOp, DerivedContentPolicy,
-    DiscardLocalCommitsConsent, DiscardWarrant, ForeignTipPolicy, HeadAttachment, RefName,
+    DiscardLocalCommitsConsent, DiscardWarrant, ForeignTipPolicy, HeadAttachment,
     ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput, VerifiedRestoreOutcome,
 };
 use crate::workspace::{
@@ -2116,9 +2116,8 @@ pub(crate) fn plan_checkout_removal(
                 Ok(names) => {
                     let mut any = false;
                     for branch in &names {
-                        let short = RefName::new(branch.as_str().to_owned());
                         let has_counterpart = vcs
-                            .branch_has_remote_counterpart(&dest, &short)
+                            .branch_has_remote_counterpart(&dest, branch)
                             .unwrap_or(false);
                         if !has_counterpart {
                             any = true;
@@ -2131,10 +2130,10 @@ pub(crate) fn plan_checkout_removal(
                         // Refuse on the same terms as an unreadable branch
                         // list below, and say which of the two happened.
                         let count = vcs
-                            .count_commits_ahead_of_remote(&dest, &short)
+                            .count_commits_ahead_of_remote(&dest, branch)
                             .with_context(|| {
                                 format!(
-                                    "{repo_path}: {dropped}, but counting {short}'s \
+                                    "{repo_path}: {dropped}, but counting {branch}'s \
                                      commits against its remote counterpart failed; refusing \
                                      to remove a clone whose unpushed work could not be \
                                      ruled out — {}",
@@ -8661,7 +8660,7 @@ mod tests {
         std::fs::write(&dangling, "1111111111111111111111111111111111111111\n").unwrap();
         assert!(
             git_vcs()
-                .branch_has_remote_counterpart(&store, &RefName::new("main".to_owned()))
+                .branch_has_remote_counterpart(&store, &crate::vcs::RawRefName::new("main"))
                 .unwrap(),
             "the fixture must still pass the counterpart probe, or the refusal \
              under test is never reached"

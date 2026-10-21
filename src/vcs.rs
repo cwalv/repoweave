@@ -277,27 +277,6 @@ impl std::fmt::Display for ConflictOp {
     }
 }
 
-/// A named ref (branch, tag, bookmark), independent of VCS.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(transparent)]
-pub struct RefName(String);
-
-impl RefName {
-    pub fn new(s: impl Into<String>) -> Self {
-        Self(s.into())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for RefName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
 /// Resolve a VCS implementation from a [`crate::manifest::VcsType`].
 pub(crate) fn vcs_for(vcs_type: crate::manifest::VcsType) -> Box<dyn Vcs> {
     match vcs_type {
@@ -715,21 +694,16 @@ pub enum VerifiedRestoreOutcome {
 // The branch model
 // ===========================================================================
 //
-// `RefName` above is one type standing in for four different notions: the
-// branch a manifest entry DECLARES it tracks, the ephemeral name a create
-// REQUESTS, the ref rwv holds a RECEIPT for, and the ref a checkout is
-// actually ON. Comparing any two of them is a legal line that is usually
-// wrong, and the tree contains such lines today.
+// A ref name means one of four notions: the branch a manifest entry DECLARES
+// it tracks, the ephemeral name a create REQUESTS, the ref rwv holds a RECEIPT
+// for, and the ref a checkout is actually ON. Comparing any two of them is a
+// legal line that is usually wrong, so each has its own type.
 //
-// The split below is the same move `ResolvedRevisionId` / `RawRevisionId`
-// already made in this file: one parse boundary, one refined value per
-// notion, no cross-type comparison, and a `compile_fail` doctest per
-// invariant so a later "make it easier" `PartialEq`/`From` impl fails CI
-// rather than passing review.
-//
-// `RefName` and the trait methods that take it are NOT removed here: the
-// old and new surfaces run side by side until every call site has been
-// restated in terms of the new one.
+// The split is the same move `ResolvedRevisionId` / `RawRevisionId` make in
+// this file: one parse boundary, one refined value per notion, no cross-type
+// comparison, and a `compile_fail` doctest per invariant so a later "make it
+// easier" `PartialEq`/`From` impl fails CI rather than passing review. A name
+// read from the VCS that none of the four claims stays a `RawRefName`.
 
 /// A ref name as observed or as written: the parse boundary of the branch
 /// model.
@@ -2229,7 +2203,7 @@ pub trait Vcs: Send + Sync {
     ///
     /// When multiple tags point at HEAD the implementation may return any one
     /// of them. Returns `None` when no tag points at the current HEAD commit.
-    fn tag_at_head(&self, repo: &Path) -> Result<Option<RefName>, VcsError>;
+    fn tag_at_head(&self, repo: &Path) -> Result<Option<RawRefName>, VcsError>;
 
     /// Prune stale worktree administrative files from a repo.
     fn worktree_prune(&self, repo: &Path) -> Result<(), VcsError>;
@@ -2676,7 +2650,7 @@ pub trait Vcs: Send + Sync {
     fn branch_has_remote_counterpart(
         &self,
         repo: &Path,
-        branch: &RefName,
+        branch: &RawRefName,
     ) -> Result<bool, VcsError>;
 
     /// Count commits reachable from `branch` but not from its
@@ -2689,13 +2663,13 @@ pub trait Vcs: Send + Sync {
     /// does not.
     ///
     /// For git: runs
-    /// `git rev-list --count refs/remotes/<remote>/<branch>..<branch>`.
+    /// `git rev-list --count refs/remotes/<remote>/<branch>..refs/heads/<branch>`.
     ///
     /// [`branch_has_remote_counterpart`]: Vcs::branch_has_remote_counterpart
     fn count_commits_ahead_of_remote(
         &self,
         repo: &Path,
-        branch: &RefName,
+        branch: &RawRefName,
     ) -> Result<usize, VcsError>;
 
     /// Fetch objects from `src_repo` into `dst_repo` so SHAs reachable in
