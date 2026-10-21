@@ -81,7 +81,7 @@ use crate::integration::{
 use crate::integrations::merge::{
     drift_issues, holds_owned_region, keypath, merge_activate, missing_issue,
     orphaned_region_issues, strip_deactivate, toml_array_strings, KeyPath, ManagedDoc, MergeResult,
-    OwnedValue, Ownership, StripOutcome, TomlDoc,
+    OwnedValue, Ownership, Remedy, StripOutcome, TomlDoc,
 };
 use anyhow::Context;
 use std::path::Path;
@@ -536,11 +536,6 @@ impl Integration for UvWorkspace {
             .parse()
             .with_context(|| format!("parsing {} for verify (toml_edit)", path.display()))?;
 
-        let owned_keys = Self::deactivate_owned_keys();
-        let marker_present = toml_doc.has_marker(&owned_keys);
-        let owned_key_present =
-            toml_doc.key_present(&keypath(["tool", "uv", "workspace", "members"]));
-
         // `members` is the only Ownership::Author key — the one checked for
         // drift. Compute expected vs on-disk and dispatch via the shared helper.
         let expected: Vec<String> = repo_paths;
@@ -548,15 +543,21 @@ impl Integration for UvWorkspace {
         // an absent key is always DRIFT — preserves the pre-lift Option compare.
         let on_disk = toml_array_strings(&edit_doc, &["tool", "uv", "workspace", "members"]);
 
+        let pen = toml_doc.pen(
+            &Self::deactivate_owned_keys(),
+            &keypath(["tool", "uv", "workspace", "members"]),
+            on_disk.as_deref(),
+        );
+
         Ok(drift_issues(
             self.name(),
             &path,
-            marker_present,
-            owned_key_present,
-            on_disk.as_deref(),
+            pen,
             &expected,
-            "Cut over manually or add the '# managed by rwv' marker",
-            "on-disk [tool.uv.workspace].members differs from rwv.toml config.",
+            Remedy {
+                user_held: "Cut over manually or add the '# managed by rwv' marker",
+                drift: "on-disk [tool.uv.workspace].members differs from rwv.toml config.",
+            },
         ))
     }
 

@@ -225,7 +225,7 @@ Key design details of that signature:
 - **`strip_deactivate` returns `StripOutcome` (`Absent`, `UserHeld`, `Stripped`):** callers that need to gate removing a co-requisite generated file (such as an ecosystem lockfile) learn whether the strip happened without re-reading the file. `StripOutcome::UserHeld` is the strip-side name for the unmarked state. `holds_owned_region` answers the same marker question read-only, for `owned_paths_on_disk`.
 - **Implementations:** `JsonDoc` (`serde_json` — npm and vscode), `TomlDoc` (`toml_edit` — cargo and uv), `YamlDoc` / line-editor (pnpm), and `GoWorkDoc` (`go.work` `use` block merger). Because `deactivate(root: &Path)` receives no `IntegrationContext`, owned keys are static per-integration constants.
 
-The verify side has shared helpers in the same file: `drift_issues` (the USER-HELD / DRIFT / CLEAN dispatch), `missing_issue`, `orphaned_region_issues` (a marked region no membership justifies), and `fully_owned_drift_issue`. Use them so every integration's findings carry the same kinds and message templates.
+The verify side has shared helpers in the same file: `drift_issues` (the USER-HELD / DRIFT / CLEAN dispatch, driven by a `Pen` that `ManagedDoc::pen` resolves from the marker and the owned key), `missing_issue`, `orphaned_region_issues` (a marked region no membership justifies), and `fully_owned_drift_issue`. Use them so every integration's findings carry the same kinds and message templates.
 
 For a new integration:
 

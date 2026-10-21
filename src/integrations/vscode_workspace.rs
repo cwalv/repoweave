@@ -18,7 +18,7 @@ use crate::integration::{
 };
 use crate::integrations::merge::{
     drift_issues, holds_owned_region, keypath, missing_issue, JsonDoc, JsonMarker, ManagedDoc,
-    RwvGeneratedMarker,
+    Remedy, RwvGeneratedMarker,
 };
 use crate::registry::split_canonical_local_path;
 use crate::workspace::{project_rel_path, ContainerKind};
@@ -342,8 +342,8 @@ fn merge_folders(
 /// Is rwv's owned region present in this document?
 ///
 /// `folders` is where rwv writes the primary entry, so its presence is what
-/// makes an unmarked file user-held — the probe `activate` defers on and
-/// `verify` reports USER-HELD on.
+/// makes an unmarked file user-held — the probe `activate` defers on, and the
+/// key `verify` resolves the pen from.
 fn owned_region_present(obj: &serde_json::Map<String, serde_json::Value>) -> bool {
     obj.contains_key("folders")
 }
@@ -602,8 +602,6 @@ impl Integration for VscodeWorkspace {
         let doc = JsonDoc::<RwvGeneratedMarker>::parse(&text)
             .with_context(|| format!("parsing {} for verify", filepath.display()))?;
 
-        let marker_present = doc.has_marker(&[]);
-
         // USER-HELD is `folders` present without the marker — the same pair
         // `activate` defers on, so doctor never calls a file user-held that the
         // next intent verb would take over.
@@ -656,13 +654,13 @@ impl Integration for VscodeWorkspace {
         Ok(drift_issues(
             self.name(),
             &filepath,
-            marker_present,
-            owned_region_present(doc.root()),
-            Some(&on_disk),
+            doc.pen(&[], &keypath(["folders"]), Some(&on_disk)),
             &expected,
-            "Cut over manually or add the rwv.generated marker",
-            "on-disk folders[0] (primary entry) or generated files.exclude keys \
-             differ from expected.",
+            Remedy {
+                user_held: "Cut over manually or add the rwv.generated marker",
+                drift: "on-disk folders[0] (primary entry) or generated files.exclude keys \
+                        differ from expected.",
+            },
         ))
     }
 

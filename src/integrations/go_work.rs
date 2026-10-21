@@ -62,7 +62,7 @@ use crate::integration::{
 use crate::integrations::merge::{
     drift_issues, holds_owned_region, keypath, merge_activate, missing_issue,
     orphaned_region_issues, strip_deactivate, GoWorkDoc, KeyPath, ManagedDoc, OwnedValue,
-    Ownership,
+    Ownership, Remedy,
 };
 use crate::manifest::GoWorkConfig;
 use anyhow::Context;
@@ -256,10 +256,6 @@ impl Integration for GoWork {
         let doc = GoWorkDoc::parse(&text)
             .with_context(|| format!("parsing {} for verify", path.display()))?;
 
-        let owned_keys = Self::owned_keys();
-        let marker_present = doc.has_marker(&owned_keys);
-        let owned_key_present = doc.key_present(&keypath(["use"]));
-
         // Only `use` (Ownership::Author) is checked for drift here. `go` is
         // Ownership::DefaultOnly: once present, any on-disk value is CLEAN by
         // contract — activate() never overwrites an existing go-line, so
@@ -279,12 +275,12 @@ impl Integration for GoWork {
         Ok(drift_issues(
             self.name(),
             &path,
-            marker_present,
-            owned_key_present,
-            Some(&on_disk),
+            doc.pen(&Self::owned_keys(), &keypath(["use"]), Some(&on_disk)),
             &expected,
-            "Cut over manually or add the '// managed by repoweave' marker",
-            "on-disk use entries differ from rwv.toml config.",
+            Remedy {
+                user_held: "Cut over manually or add the '// managed by repoweave' marker",
+                drift: "on-disk use entries differ from rwv.toml config.",
+            },
         ))
     }
 

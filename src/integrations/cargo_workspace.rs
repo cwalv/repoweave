@@ -160,7 +160,7 @@ use crate::integration::{
 use crate::integrations::merge::{
     drift_issues, fully_owned_drift_issue, holds_owned_region, keypath, merge_activate,
     missing_issue, orphaned_region_issues, strip_deactivate, toml_array_strings, write_parseable,
-    KeyPath, ManagedDoc, MergeResult, OwnedValue, Ownership, TomlDoc,
+    KeyPath, ManagedDoc, MergeResult, OwnedValue, Ownership, Pen, Remedy, TomlDoc,
 };
 use crate::manifest::{CargoWorkspaceConfig, MemberSpec, PatchMode, PatchSurface};
 use crate::owned_state::{
@@ -1220,12 +1220,12 @@ impl CargoWorkspace {
             return Ok(drift_issues(
                 self.name(),
                 &path,
-                marker_present,
-                owned_key_present,
-                None,
+                Pen::User,
                 &[],
-                user_held_remedy,
-                "",
+                Remedy {
+                    user_held: user_held_remedy,
+                    drift: "",
+                },
             ));
         }
 
@@ -1252,12 +1252,14 @@ impl CargoWorkspace {
         Ok(drift_issues(
             self.name(),
             &path,
-            marker_present,
-            owned_key_present,
-            on_disk.as_deref(),
+            Pen::Rwv {
+                on_disk: on_disk.as_deref(),
+            },
             &members,
-            user_held_remedy,
-            "on-disk [workspace] content differs from rwv.toml config.",
+            Remedy {
+                user_held: user_held_remedy,
+                drift: "on-disk [workspace] content differs from rwv.toml config.",
+            },
         ))
     }
 
@@ -1398,16 +1400,16 @@ impl CargoWorkspace {
                 return Ok(drift_issues(
                     self.name(),
                     &path,
-                    /* marker_present */ false,
-                    /* owned_key_present */ true,
-                    None,
+                    Pen::User,
                     &[],
-                    "An authoring verb leaves an unmarked key as it is. Add \
-                     `# managed by rwv` on its own line directly above the conflicting \
-                     `[patch.<registry>].<crate>` or `[build].rustc-wrapper` key and run \
-                     `rwv doctor --fix`, or delete the key and run an authoring verb, \
-                     such as `rwv add` or `rwv role`, which writes it under the marker",
-                    "",
+                    Remedy {
+                        user_held: "An authoring verb leaves an unmarked key as it is. Add \
+                                    `# managed by rwv` on its own line directly above the conflicting \
+                                    `[patch.<registry>].<crate>` or `[build].rustc-wrapper` key and run \
+                                    `rwv doctor --fix`, or delete the key and run an authoring verb, \
+                                    such as `rwv add` or `rwv role`, which writes it under the marker",
+                        drift: "",
+                    },
                 ));
             }
             // No marker, no shadowing. If nothing is expected either, CLEAN.
@@ -1436,21 +1438,29 @@ impl CargoWorkspace {
             // CLEAN — includes the case where BOTH sides are empty.
             return Ok(vec![]);
         }
-        // owned_key_present == any expected key OR any marked key exists on disk
-        let owned_key_present = marker_present || !expected_keys.is_empty();
+        // The sets differ, so with no marked key on disk the expected set is
+        // non-empty and the file holds none of the keys rwv writes: reported
+        // as unmarked, never overwritten.
+        let pen = if marker_present {
+            Pen::Rwv {
+                on_disk: Some(&on_disk_repr),
+            }
+        } else {
+            Pen::User
+        };
         Ok(drift_issues(
             self.name(),
             &path,
-            marker_present,
-            owned_key_present,
-            Some(&on_disk_repr),
+            pen,
             &expected_repr,
-            "The file holds none of the keys rwv writes there; the next authoring \
-             verb, such as `rwv add` or `rwv role`, writes them under the \
-             `# managed by rwv` marker",
-            "on-disk rwv-marked keys in .cargo/config.toml (`[patch.*]` \
-             entries, `[build].rustc-wrapper`) differ from the set derived \
-             from rwv.toml and this host's wrapper detection.",
+            Remedy {
+                user_held: "The file holds none of the keys rwv writes there; the next authoring \
+                            verb, such as `rwv add` or `rwv role`, writes them under the \
+                            `# managed by rwv` marker",
+                drift: "on-disk rwv-marked keys in .cargo/config.toml (`[patch.*]` \
+                        entries, `[build].rustc-wrapper`) differ from the set derived \
+                        from rwv.toml and this host's wrapper detection.",
+            },
         ))
     }
 

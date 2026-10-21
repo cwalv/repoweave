@@ -4,7 +4,7 @@ use crate::integration::{
 };
 use crate::integrations::merge::{
     drift_issues, holds_owned_region, merge_activate, missing_issue, orphaned_region_issues,
-    strip_deactivate, KeyPath, ManagedDoc, OwnedValue, Ownership, YamlDoc,
+    strip_deactivate, KeyPath, ManagedDoc, OwnedValue, Ownership, Remedy, YamlDoc,
 };
 use anyhow::Context;
 use saphyr::{LoadableYamlNode, YamlOwned};
@@ -171,10 +171,6 @@ impl Integration for PnpmWorkspaces {
         let doc = YamlDoc::parse(&text)
             .with_context(|| format!("parsing {} for verify", path.display()))?;
 
-        let owned_keys = [packages_key()];
-        let marker_present = doc.has_marker(&owned_keys);
-        let owned_key_present = doc.key_present(&packages_key());
-
         // Compute expected vs on-disk; the shared helper normalizes both
         // (sort + dedup) so overlapping/repeated globs never cause a false
         // DRIFT, then dispatches USER-HELD → DRIFT → CLEAN.
@@ -186,12 +182,12 @@ impl Integration for PnpmWorkspaces {
         Ok(drift_issues(
             self.name(),
             &path,
-            marker_present,
-            owned_key_present,
-            Some(&on_disk),
+            doc.pen(&[packages_key()], &packages_key(), Some(&on_disk)),
             &expected,
-            "Cut over manually or add the '# managed by repoweave' marker",
-            "on-disk packages: content differs from rwv.toml config.",
+            Remedy {
+                user_held: "Cut over manually or add the '# managed by repoweave' marker",
+                drift: "on-disk packages: content differs from rwv.toml config.",
+            },
         ))
     }
 

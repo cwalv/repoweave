@@ -233,6 +233,23 @@ pub trait ManagedDoc: Sized {
     /// user-holds-the-pen (key present but marker absent → defer).
     fn key_present(&self, key: &KeyPath) -> bool;
 
+    /// Who holds the pen over `key`: the operator's when it is on disk without
+    /// the marker, rwv's otherwise. `owned_keys` is the universe
+    /// [`Self::has_marker`] reads; `on_disk` is the owned content for
+    /// [`Pen::Rwv`].
+    fn pen<'a>(
+        &self,
+        owned_keys: &[KeyPath],
+        key: &KeyPath,
+        on_disk: Option<&'a [String]>,
+    ) -> Pen<'a> {
+        if !self.has_marker(owned_keys) && self.key_present(key) {
+            Pen::User
+        } else {
+            Pen::Rwv { on_disk }
+        }
+    }
+
     /// Set an owned key. Leaf [`OwnedValue`] variants replace the value at
     /// the path; [`OwnedValue::Object`] merges into the existing map (sub-key
     /// ownership). Parent maps are created as needed.
@@ -1081,6 +1098,14 @@ impl ManagedDoc for TomlDoc {
 // YamlDoc — line-oriented YAML editor (for pnpm-workspace.yaml)
 // ===========================================================================
 
+/// The marker edit a line-editing document applies when serialized.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MarkerEdit {
+    Keep,
+    Set,
+    Remove,
+}
+
 /// YAML-backed managed document.
 ///
 /// Wraps the raw text and edits it line-by-line. Does **not** round-trip
@@ -1100,10 +1125,7 @@ pub struct YamlDoc {
     /// The owned key and its array value, set via `set_owned`. Only one
     /// owned key is supported (pnpm's `packages`).
     pending: Option<(String, Vec<String>)>,
-    /// Whether the marker has been requested.
-    marker_set: bool,
-    /// Whether to remove the marker on serialize (for strip).
-    marker_remove: bool,
+    marker: MarkerEdit,
 }
 
 const YAML_MARKER_LINE: &str = "# managed by repoweave";
@@ -1187,8 +1209,7 @@ impl ManagedDoc for YamlDoc {
         Ok(YamlDoc {
             text: text.to_string(),
             pending: None,
-            marker_set: false,
-            marker_remove: false,
+            marker: MarkerEdit::Keep,
         })
     }
 
@@ -1196,8 +1217,7 @@ impl ManagedDoc for YamlDoc {
         YamlDoc {
             text: String::new(),
             pending: None,
-            marker_set: false,
-            marker_remove: false,
+            marker: MarkerEdit::Keep,
         }
     }
 
@@ -1217,11 +1237,11 @@ impl ManagedDoc for YamlDoc {
     }
 
     fn set_marker(&mut self, _owned_keys: &[KeyPath]) {
-        self.marker_set = true;
+        self.marker = MarkerEdit::Set;
     }
 
     fn remove_marker(&mut self, _owned_keys: &[KeyPath]) {
-        self.marker_remove = true;
+        self.marker = MarkerEdit::Remove;
     }
 
     fn key_present(&self, key: &KeyPath) -> bool {
@@ -1281,7 +1301,7 @@ impl ManagedDoc for YamlDoc {
             let mut new_text = self.text.clone();
             // Build the replacement block.
             let mut block = String::new();
-            if self.marker_set {
+            if self.marker == MarkerEdit::Set {
                 block.push_str(YAML_MARKER_LINE);
                 block.push('\n');
             }
@@ -1326,7 +1346,7 @@ impl ManagedDoc for YamlDoc {
         // Strip path: optionally remove a stray marker line not adjacent to a
         // managed block (defensive — `remove_owned` already removes it when
         // it knows the block range).
-        if self.marker_remove {
+        if self.marker == MarkerEdit::Remove {
             let kept: Vec<&str> = self
                 .text
                 .lines()
@@ -1367,8 +1387,7 @@ pub struct GoWorkDoc {
     pending_use: Option<Vec<String>>,
     /// Pending go-version set via `set_owned(["go"], String(...))`.
     pending_go: Option<String>,
-    marker_set: bool,
-    marker_remove: bool,
+    marker: MarkerEdit,
 }
 
 const GO_MARKER_LINE: &str = "// managed by repoweave";
@@ -1530,8 +1549,7 @@ impl ManagedDoc for GoWorkDoc {
             text: text.to_string(),
             pending_use: None,
             pending_go: None,
-            marker_set: false,
-            marker_remove: false,
+            marker: MarkerEdit::Keep,
         })
     }
 
@@ -1540,8 +1558,7 @@ impl ManagedDoc for GoWorkDoc {
             text: String::new(),
             pending_use: None,
             pending_go: None,
-            marker_set: false,
-            marker_remove: false,
+            marker: MarkerEdit::Keep,
         }
     }
 
@@ -1552,11 +1569,11 @@ impl ManagedDoc for GoWorkDoc {
     }
 
     fn set_marker(&mut self, _owned_keys: &[KeyPath]) {
-        self.marker_set = true;
+        self.marker = MarkerEdit::Set;
     }
 
     fn remove_marker(&mut self, _owned_keys: &[KeyPath]) {
-        self.marker_remove = true;
+        self.marker = MarkerEdit::Remove;
     }
 
     fn key_present(&self, key: &KeyPath) -> bool {
@@ -1686,7 +1703,7 @@ impl ManagedDoc for GoWorkDoc {
         // Apply pending use block.
         if let Some(items) = &self.pending_use {
             let mut block = String::new();
-            if self.marker_set {
+            if self.marker == MarkerEdit::Set {
                 block.push_str(GO_MARKER_LINE);
                 block.push('\n');
             }
@@ -1731,7 +1748,7 @@ impl ManagedDoc for GoWorkDoc {
 
         // Strip path: defensive marker-line cleanup if the use-block was
         // already removed but a stray marker survives.
-        if self.marker_remove && self.pending_use.is_none() {
+        if self.marker == MarkerEdit::Remove && self.pending_use.is_none() {
             let kept: Vec<&str> = text
                 .lines()
                 .filter(|line| line.trim() != GO_MARKER_LINE)
@@ -1784,140 +1801,107 @@ pub(crate) fn toml_array_strings(
 // Shared verify() state machine
 // ===========================================================================
 
-/// The states a hybrid integration's `verify()` resolves to once the managed
-/// file is known to exist.
+/// Who holds the pen over a hybrid file's owned region, as `verify()` finds it.
 ///
-/// Each hybrid integration's `verify()` reduces to: detect-repos, locate the
-/// managed file + owned key, compute the expected on-disk content, read the
-/// actual on-disk content, then map the result to one of these states. The
-/// state → [`Issue`] construction (severity, `safe_to_fix`, message template)
-/// is centralized in [`drift_issues`] so the dispatch and its byte-identical
-/// `Issue` values live in exactly one place.
-///
-/// MISSING is the fourth outcome `verify()` reports and is deliberately not a
-/// variant here: it is settled by a path-existence check before the file is
-/// read, and [`missing_issue`] carries its template. A variant for it would be
-/// a state this enum can name and nothing can reach.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum VerifyState {
-    /// The owned key/region is present on disk but the rwv ownership marker is
-    /// absent — the user holds the pen. `safe_to_fix=false` (auto-overwrite
-    /// would silently destroy user content).
-    UserHeld,
-    /// The marker is present but the on-disk owned content diverges from what
-    /// the current config would generate. `safe_to_fix=true`.
-    Drift,
-    /// Marker present and content matches. No issue.
-    Clean,
+/// Every hybrid integration's `verify()` reduces to: detect-repos, locate the
+/// managed file and owned key, compute the expected content, read the on-disk
+/// content, name the pen, then call [`drift_issues`]. The pen decides the
+/// finding, and the findings differ in whether `rwv doctor --fix` may act on
+/// them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pen<'a> {
+    /// The owned region is on disk without rwv's marker: the operator wrote it.
+    /// Reported `safe_to_fix=false`, because regenerating would silently
+    /// destroy their content.
+    User,
+    /// rwv's to compare and regenerate. `on_disk` is the owned content read
+    /// back; `None` means the owned key is **absent** (distinct from
+    /// present-but-empty), which is always drift, never clean, even when
+    /// nothing is expected. Callers whose reader never distinguishes absent
+    /// from empty pass `Some`.
+    Rwv { on_disk: Option<&'a [String]> },
 }
 
-/// Classify the verify outcome from the primitive inputs.
-///
-/// - `marker_present`: does the file carry the rwv ownership marker?
-/// - `owned_key_present`: is the owned key/region present on disk? (USER-HELD
-///   is `!marker_present && owned_key_present`.)
-/// - `on_disk` vs `expected`: the owned content read back vs what config would
-///   generate. **The caller is responsible for normalizing both sides
-///   identically** (sort + dedup) so an integration cannot regress to a false
-///   DRIFT — see [`drift_issues`].
-///
-/// This is the genuinely-common dispatch lifted out of all six `verify()`
-/// impls. It does NOT handle the MISSING case — that is a path-existence check
-/// the caller performs before reading the file (parse failures must bail with
-/// context first). Callers that have already confirmed the file exists pass the
-/// remaining three signals here.
-fn classify_verify(
-    marker_present: bool,
-    owned_key_present: bool,
-    on_disk_matches: bool,
-) -> VerifyState {
-    if !marker_present && owned_key_present {
-        VerifyState::UserHeld
-    } else if !on_disk_matches {
-        VerifyState::Drift
-    } else {
-        VerifyState::Clean
-    }
+/// The integration-specific sentences a finding carries.
+#[derive(Debug, Clone, Copy)]
+pub struct Remedy<'a> {
+    /// The cut-over instruction appended to the USER-HELD message (e.g. how to
+    /// add the marker for that format).
+    pub user_held: &'a str,
+    /// The sentence describing what drifted (e.g. "on-disk \[workspace\]
+    /// content differs from rwv.toml config."). Unread when the pen is the
+    /// operator's.
+    pub drift: &'a str,
 }
 
 /// Build the canonical `verify()` issues for a hybrid integration.
 ///
-/// This is the single home for the four-state dispatch and the byte-identical
-/// `Issue` templates that every hybrid `verify()` produced by hand. Each
-/// integration reduces to: detect-repos, locate file + key, compute `expected`,
-/// read `on_disk`, then call this helper.
+/// This is the single home for the USER-HELD / DRIFT / CLEAN dispatch and the
+/// byte-identical `Issue` templates that every hybrid `verify()` produced by
+/// hand.
 ///
 /// Parameters:
 /// - `name`: the integration name (goes into `Issue::integration`).
 /// - `path`: the managed file path (rendered into every message).
-/// - `marker_present`: whether the rwv ownership marker is on the file.
-/// - `owned_key_present`: whether the owned key/region is present on disk.
-/// - `on_disk` / `expected`: the owned content read back vs what config would
-///   generate. **Both sides are sorted+deduped here** before comparison, so no
-///   integration can regress to a false DRIFT from overlapping/repeated globs
-///   (the pnpm dedup fix is now enforced uniformly for every caller). Pass the
-///   raw on-disk and raw expected lists; the helper normalizes both.
-///   `on_disk` is an `Option`: `None` means the owned key/value is **absent**
-///   on disk (distinct from present-but-empty) — an absent owned key is always
-///   DRIFT, never CLEAN, even when `expected` is empty. (Callers whose reader
-///   never distinguishes absent from empty pass `Some(vec)`.)
-/// - `user_held_suffix`: the integration-specific cut-over instruction appended
-///   to the USER-HELD message (e.g. how to add the marker for that format).
-/// - `drift_detail`: the integration-specific sentence describing what drifted
-///   (e.g. "on-disk \[workspace\] content differs from rwv.toml config.").
+/// - `pen`: who holds the pen; [`ManagedDoc::pen`] resolves it for a document
+///   with one owned key.
+/// - `expected`: what config would generate. **Both sides are sorted and
+///   deduped here** against the on-disk content before comparison, so no
+///   integration can regress to a false DRIFT from overlapping or repeated
+///   globs (the pnpm dedup fix is enforced uniformly for every caller). Pass
+///   the raw lists; the helper normalizes both.
+/// - `remedy`: the integration's own sentences.
 ///
-/// Returns a single-issue `Vec` for MISSING/USER-HELD/DRIFT and an empty `Vec`
-/// for CLEAN — matching the pre-lift behavior exactly (each state produced one
-/// `Issue` or none).
+/// Returns a single-issue `Vec` for USER-HELD/DRIFT and an empty `Vec` for
+/// CLEAN.
 ///
 /// MISSING is detected by the caller (a path-existence check that runs before
 /// reading/parsing the file); this helper covers USER-HELD → DRIFT → CLEAN.
 /// Use [`missing_issue`] for the MISSING template so it stays consistent too.
-#[allow(clippy::too_many_arguments)]
 pub fn drift_issues(
     name: &str,
     path: &Path,
-    marker_present: bool,
-    owned_key_present: bool,
-    on_disk: Option<&[String]>,
+    pen: Pen<'_>,
     expected: &[String],
-    user_held_suffix: &str,
-    drift_detail: &str,
+    remedy: Remedy<'_>,
 ) -> Vec<Issue> {
-    // An absent owned key (`None`) never matches expected — always DRIFT.
-    // Otherwise normalize BOTH sides identically (sort + dedup) so overlapping
-    // or repeated globs never produce a false DRIFT. This makes the pnpm/npm
-    // sorted.dedup() fix structural — every integration inherits it.
-    let on_disk_matches = match on_disk {
-        None => false,
-        Some(on_disk) => sorted_deduped(on_disk) == sorted_deduped(expected),
+    let on_disk = match pen {
+        Pen::User => {
+            return vec![Issue {
+                integration: name.to_string(),
+                severity: Severity::Warning,
+                message: format!(
+                    "{name} managed file present but unmarked: {}; \
+                     rwv will NOT auto-take-over (would discard user content). {}",
+                    crate::path_spelling::operator_path(path),
+                    remedy.user_held
+                ),
+                kind: IssueKind::ManagedFileUserHeld,
+                safe_to_fix: false,
+            }];
+        }
+        Pen::Rwv { on_disk } => on_disk,
     };
 
-    match classify_verify(marker_present, owned_key_present, on_disk_matches) {
-        VerifyState::UserHeld => vec![Issue {
-            integration: name.to_string(),
-            severity: Severity::Warning,
-            message: format!(
-                "{name} managed file present but unmarked: {}; \
-                 rwv will NOT auto-take-over (would discard user content). {user_held_suffix}",
-                crate::path_spelling::operator_path(path)
-            ),
-            kind: IssueKind::ManagedFileUserHeld,
-            safe_to_fix: false,
-        }],
-        VerifyState::Drift => vec![Issue {
-            integration: name.to_string(),
-            severity: Severity::Warning,
-            message: format!(
-                "{name} managed file has drift: {}; {drift_detail} \
-                 Run rwv doctor --fix to regenerate",
-                crate::path_spelling::operator_path(path)
-            ),
-            kind: IssueKind::ManagedFileDrift,
-            safe_to_fix: true,
-        }],
-        VerifyState::Clean => vec![],
+    // An absent owned key (`None`) never matches expected: always DRIFT.
+    // Otherwise normalize BOTH sides identically so overlapping or repeated
+    // globs never produce a false DRIFT.
+    let on_disk_matches = on_disk.is_some_and(|d| sorted_deduped(d) == sorted_deduped(expected));
+    if on_disk_matches {
+        return vec![];
     }
+    vec![Issue {
+        integration: name.to_string(),
+        severity: Severity::Warning,
+        message: format!(
+            "{name} managed file has drift: {}; {} \
+             Run rwv doctor --fix to regenerate",
+            crate::path_spelling::operator_path(path),
+            remedy.drift
+        ),
+        kind: IssueKind::ManagedFileDrift,
+        safe_to_fix: true,
+    }]
 }
 
 /// The canonical MISSING-state issue for a hybrid integration's `verify()`.
@@ -3012,7 +2996,7 @@ replace example.com/legacy => ./vendor/legacy
     }
 
     // -----------------------------------------------------------------------
-    // Shared verify() state machine: classify_verify / drift_issues / missing_issue
+    // Shared verify() state machine: Pen / drift_issues / missing_issue
     // -----------------------------------------------------------------------
 
     mod verify_state_machine {
@@ -3026,44 +3010,61 @@ replace example.com/legacy => ./vendor/legacy
             items.iter().map(|x| x.to_string()).collect()
         }
 
+        fn remedy<'a>() -> Remedy<'a> {
+            Remedy {
+                user_held: "Cut over manually",
+                drift: "detail",
+            }
+        }
+
         #[test]
-        fn classify_user_held_when_unmarked_key_present() {
+        fn an_unmarked_owned_key_is_the_operators_pen() {
+            let doc = YamlDoc::parse("packages:\n  - a\n").unwrap();
+            let owned = [kp(&["packages"])];
             assert_eq!(
-                classify_verify(false, true, true),
-                VerifyState::UserHeld,
-                "unmarked + key present → USER-HELD regardless of on-disk match"
+                doc.pen(&owned, &kp(&["packages"]), Some(&[])),
+                Pen::User,
+                "unmarked + key present is USER-HELD whatever the on-disk content"
             );
         }
 
         #[test]
-        fn classify_drift_when_marked_but_mismatch() {
-            assert_eq!(classify_verify(true, true, false), VerifyState::Drift);
+        fn a_marked_owned_key_is_rwvs_pen_and_carries_the_content_read_back() {
+            let doc = YamlDoc::parse("# managed by repoweave\npackages:\n  - a\n").unwrap();
+            let owned = [kp(&["packages"])];
+            let on_disk = s(&["a"]);
+            assert_eq!(
+                doc.pen(&owned, &kp(&["packages"]), Some(&on_disk)),
+                Pen::Rwv {
+                    on_disk: Some(&on_disk)
+                }
+            );
         }
 
         #[test]
-        fn classify_clean_when_marked_and_match() {
-            assert_eq!(classify_verify(true, true, true), VerifyState::Clean);
+        fn an_absent_owned_key_is_rwvs_pen() {
+            // No marker AND no owned key (a fresh file the merge would author)
+            // is not USER-HELD.
+            let doc = YamlDoc::parse("catalog:\n  - x\n").unwrap();
+            let owned = [kp(&["packages"])];
+            assert_eq!(
+                doc.pen(&owned, &kp(&["packages"]), None),
+                Pen::Rwv { on_disk: None }
+            );
         }
 
         #[test]
-        fn classify_clean_when_no_owned_key_and_match() {
-            // No marker AND no owned key (e.g. a fresh marked-but-empty file
-            // the merge would author) → not USER-HELD; CLEAN if matched.
-            assert_eq!(classify_verify(false, false, true), VerifyState::Clean);
+        fn a_marker_over_an_absent_key_is_rwvs_pen_in_a_json_document() {
+            let doc = JsonDoc::<XRepoweaveMarker>::parse(r#"{"x-repoweave": true}"#).unwrap();
+            assert_eq!(
+                doc.pen(&[], &kp(&["workspaces"]), None),
+                Pen::Rwv { on_disk: None }
+            );
         }
 
         #[test]
         fn user_held_issue_shape() {
-            let issues = drift_issues(
-                "cargo-workspace",
-                &p(),
-                /* marker_present */ false,
-                /* owned_key_present */ true,
-                None,
-                &[],
-                "Cut over manually",
-                "ignored detail",
-            );
+            let issues = drift_issues("cargo-workspace", &p(), Pen::User, &[], remedy());
             assert_eq!(issues.len(), 1);
             let i = &issues[0];
             assert_eq!(i.integration, "cargo-workspace");
@@ -3079,12 +3080,14 @@ replace example.com/legacy => ./vendor/legacy
             let issues = drift_issues(
                 "npm-workspaces",
                 &p(),
-                true,
-                true,
-                Some(&s(&["a"])),
+                Pen::Rwv {
+                    on_disk: Some(&s(&["a"])),
+                },
                 &s(&["a", "b"]),
-                "suffix",
-                "on-disk workspaces content differs from rwv.toml config.",
+                Remedy {
+                    user_held: "suffix",
+                    drift: "on-disk workspaces content differs from rwv.toml config.",
+                },
             );
             assert_eq!(issues.len(), 1);
             let i = &issues[0];
@@ -3100,12 +3103,11 @@ replace example.com/legacy => ./vendor/legacy
             let issues = drift_issues(
                 "uv-workspace",
                 &p(),
-                true,
-                true,
-                Some(&s(&["a", "b"])),
+                Pen::Rwv {
+                    on_disk: Some(&s(&["a", "b"])),
+                },
                 &s(&["a", "b"]),
-                "suffix",
-                "detail",
+                remedy(),
             );
             assert!(issues.is_empty(), "CLEAN must return no issue");
         }
@@ -3117,12 +3119,9 @@ replace example.com/legacy => ./vendor/legacy
             let issues = drift_issues(
                 "cargo-workspace",
                 &p(),
-                true,
-                false,
-                None,
+                Pen::Rwv { on_disk: None },
                 &[],
-                "suffix",
-                "detail",
+                remedy(),
             );
             assert_eq!(issues.len(), 1, "absent owned key must be DRIFT");
             assert!(issues[0].message.contains("has drift"));
@@ -3135,12 +3134,11 @@ replace example.com/legacy => ./vendor/legacy
             let issues = drift_issues(
                 "pnpm-workspaces",
                 &p(),
-                true,
-                true,
-                Some(&s(&["b", "a", "a"])),
+                Pen::Rwv {
+                    on_disk: Some(&s(&["b", "a", "a"])),
+                },
                 &s(&["a", "b", "b"]),
-                "suffix",
-                "detail",
+                remedy(),
             );
             assert!(
                 issues.is_empty(),

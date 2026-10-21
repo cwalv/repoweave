@@ -4,7 +4,7 @@ use crate::integration::{
 };
 use crate::integrations::merge::{
     drift_issues, holds_owned_region, keypath, merge_activate, missing_issue,
-    orphaned_region_issues, strip_deactivate, JsonDoc, ManagedDoc, OwnedValue, Ownership,
+    orphaned_region_issues, strip_deactivate, JsonDoc, ManagedDoc, OwnedValue, Ownership, Remedy,
     StripOutcome, XRepoweaveMarker,
 };
 use anyhow::Context;
@@ -244,11 +244,8 @@ impl Integration for NpmWorkspaces {
         let pkg: serde_json::Value = serde_json::from_str(&text)
             .with_context(|| format!("parsing {} for verify (serde_json)", path.display()))?;
 
-        let marker_present = doc.has_marker(&[]);
-
-        // Locate owned key + compute expected vs on-disk, then defer the
-        // four-state dispatch (USER-HELD → DRIFT → CLEAN) to the shared helper.
-        let owned_key_present = pkg.get("workspaces").is_some();
+        // Compute expected vs on-disk, then defer the dispatch
+        // (USER-HELD → DRIFT → CLEAN) to the shared helper.
         let expected = expand_workspace_entries(ctx.workspace_root, repo_paths);
         // `None` (no `workspaces` key) is distinct from present-but-empty:
         // an absent key is always DRIFT — preserves the pre-lift Option compare.
@@ -257,12 +254,12 @@ impl Integration for NpmWorkspaces {
         Ok(drift_issues(
             self.name(),
             &path,
-            marker_present,
-            owned_key_present,
-            on_disk.as_deref(),
+            doc.pen(&[], &keypath(["workspaces"]), on_disk.as_deref()),
             &expected,
-            "Cut over manually or add the x-repoweave marker",
-            "on-disk workspaces content differs from rwv.toml config.",
+            Remedy {
+                user_held: "Cut over manually or add the x-repoweave marker",
+                drift: "on-disk workspaces content differs from rwv.toml config.",
+            },
         ))
     }
 

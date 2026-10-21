@@ -24,7 +24,7 @@ use common::src_scan::{production_lines, string_arguments_to, struct_literal_nee
 use repoweave::integration::{Integration, IntegrationContext, IssueKind, MemberIncompatibility};
 use repoweave::integration_runner::{detection_vocabulary, IntegrationContextBase};
 use repoweave::integrations::builtin_integrations;
-use repoweave::integrations::merge::{drift_issues, missing_issue};
+use repoweave::integrations::merge::{drift_issues, missing_issue, Pen, Remedy};
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -147,17 +147,13 @@ fn integration_names_are_not_respelled_outside_their_modules() {
 fn verify_states_reach_issue_kind_intact() {
     let path = Path::new("/w/projects/p/pnpm-workspace.yaml");
 
+    let remedy = Remedy {
+        user_held: "cut over",
+        drift: "detail",
+    };
+
     // USER-HELD: owned key on disk, no rwv marker.
-    let user_held = drift_issues(
-        "pnpm",
-        path,
-        false,
-        true,
-        Some(&[]),
-        &[],
-        "cut over",
-        "detail",
-    );
+    let user_held = drift_issues("pnpm", path, Pen::User, &[], remedy);
     assert_eq!(user_held.len(), 1);
     assert_eq!(user_held[0].kind, IssueKind::ManagedFileUserHeld);
     assert!(!user_held[0].safe_to_fix);
@@ -168,12 +164,11 @@ fn verify_states_reach_issue_kind_intact() {
     let drift = drift_issues(
         "pnpm",
         path,
-        true,
-        true,
-        Some(&on_disk),
+        Pen::Rwv {
+            on_disk: Some(&on_disk),
+        },
         &expected,
-        "cut over",
-        "detail",
+        remedy,
     );
     assert_eq!(drift.len(), 1);
     assert_eq!(drift[0].kind, IssueKind::ManagedFileDrift);
@@ -182,12 +177,11 @@ fn verify_states_reach_issue_kind_intact() {
     let clean = drift_issues(
         "pnpm",
         path,
-        true,
-        true,
-        Some(&on_disk),
+        Pen::Rwv {
+            on_disk: Some(&on_disk),
+        },
         &on_disk,
-        "cut over",
-        "detail",
+        remedy,
     );
     assert!(clean.is_empty());
 

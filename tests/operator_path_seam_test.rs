@@ -221,7 +221,7 @@ const ROUTED: &[Routed] = &[
     Routed {
         file: "integrations/merge.rs",
         scope: "",
-        needle: r#""{name} managed file has drift: {}; {drift_detail} \"#,
+        needle: r#""{name} managed file has drift: {}; {} \"#,
         renders: 1,
         prints: "doctor: a managed file in DRIFT state",
     },
