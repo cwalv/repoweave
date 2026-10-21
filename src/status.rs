@@ -258,7 +258,7 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool, filter: &RepoFilter) -> an
     let mut entries: Vec<RepoStatus> = Vec::new();
 
     for pname in project_names_for_ctx(ctx) {
-        let project_dir = project_dir(&workspace_dir, pname.as_str());
+        let project_dir = project_dir(&workspace_dir, &pname);
         let project = match Project::from_dir(&project_dir, pname.clone()) {
             Ok(p) => p,
             Err(e) => {

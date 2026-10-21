@@ -3366,7 +3366,7 @@ fn run_preconditions_after_acquire(
             source_class,
             Side::Source,
             source_workspace_name,
-            source_project_name.as_str(),
+            source_project_name,
         ) {
             crate::refuse!(RefusalKind::UnresolvableLockEntry, "{msg}");
         }
@@ -3374,7 +3374,7 @@ fn run_preconditions_after_acquire(
             &cwd_class,
             Side::Destination,
             &cwd_workspace_name_str,
-            cwd_project_name.as_str(),
+            cwd_project_name,
         ) {
             crate::refuse!(RefusalKind::UnresolvableLockEntry, "{msg}");
         }
@@ -3383,7 +3383,7 @@ fn run_preconditions_after_acquire(
             source_class,
             Side::Source,
             source_workspace_name,
-            source_project_name.as_str(),
+            source_project_name,
         ) {
             crate::refuse!(RefusalKind::StaleLock, "{msg}");
         }
@@ -3395,7 +3395,7 @@ fn run_preconditions_after_acquire(
             &cwd_class,
             Side::Destination,
             &cwd_workspace_name_str,
-            cwd_project_name.as_str(),
+            cwd_project_name,
         ) {
             crate::refuse!(RefusalKind::StaleLock, "{msg}");
         }
@@ -3426,7 +3426,7 @@ fn run_preconditions_after_acquire(
                     } else if let Some(msg) = lock_relation_refusal(
                         Side::Source,
                         source_workspace_name,
-                        source_project_name.as_str(),
+                        source_project_name,
                         &source_lock_behind,
                     ) {
                         crate::refuse!(RefusalKind::StaleLock, "{msg}");
@@ -3459,7 +3459,7 @@ fn run_preconditions_after_acquire(
                     .collect();
                 if let Some(msg) = target_lock_behind_refusal(
                     source_workspace_name,
-                    source_project_name.as_str(),
+                    source_project_name,
                     &target_lock_behind,
                 ) {
                     crate::refuse!(RefusalKind::TargetLockBehind, "{msg}");
@@ -3592,7 +3592,7 @@ fn guard_and_mark<'a>(
     // carried by value from here on. Every other workspace this op touches is
     // resolved under it.
     let cwd_project_name = cwd_ctx.require_bound_project()?.clone();
-    let cwd_project_dir = project_dir(&cwd_workspace_dir, cwd_project_name.as_str());
+    let cwd_project_dir = project_dir(&cwd_workspace_dir, &cwd_project_name);
 
     // source_workspace_dir is the operator's arg for both verbs (sync's <src>
     // and sync-to's <tgt> — replay pulls from there in either case).
@@ -3616,7 +3616,7 @@ fn guard_and_mark<'a>(
         // is found by joining onto the workspace ROOT, never onto whatever was
         // typed.
         let root = source_ctx.active_path().to_path_buf();
-        let dir = project_dir(&root, cwd_project_name.as_str());
+        let dir = project_dir(&root, &cwd_project_name);
         (
             dir,
             root,
@@ -3813,7 +3813,7 @@ fn guard_and_mark<'a>(
         let target_presents_the_project =
             WorkspaceContext::resolve_for_project(&dest_workspace_dir, &cwd_project_name).is_ok();
         if target_presents_the_project {
-            let target_project_dir = project_dir(&dest_workspace_dir, cwd_project_name.as_str());
+            let target_project_dir = project_dir(&dest_workspace_dir, &cwd_project_name);
             if create_savepoint(project_vcs.as_ref(), &target_project_dir, &tsp_id).is_ok() {
                 project_anchors.push((target_project_dir.clone(), tsp_id.clone()));
             }
@@ -4076,7 +4076,7 @@ fn load_continuing_context<'a>(
     // pointer: an operator may have activated another project while the op sat
     // parked, and the phases already run are bound to the recorded one.
     let cwd_project_name = record.project.clone();
-    let cwd_project_dir = project_dir(&owner_workspace_dir, cwd_project_name.as_str());
+    let cwd_project_dir = project_dir(&owner_workspace_dir, &cwd_project_name);
 
     let (source_workspace_dir, dest_workspace_dir, cli_path) = match recorded_verb {
         MachineVerb::Sync => (
@@ -4108,7 +4108,7 @@ fn load_continuing_context<'a>(
                     )
                 })?;
         let root = source_ctx.active_path().to_path_buf();
-        let dir = project_dir(&root, cwd_project_name.as_str());
+        let dir = project_dir(&root, &cwd_project_name);
         (
             dir,
             root,
@@ -4155,7 +4155,7 @@ fn load_continuing_context<'a>(
                 class,
                 Side::Source,
                 &source_workspace_name,
-                source_project_name.as_str(),
+                &source_project_name,
             )
             .map(|msg| crate::refusal::refusal(RefusalKind::UnresolvableLockEntry, msg))
             .or_else(|| {
@@ -4163,7 +4163,7 @@ fn load_continuing_context<'a>(
                     class,
                     Side::Source,
                     &source_workspace_name,
-                    source_project_name.as_str(),
+                    &source_project_name,
                 )
                 .map(|msg| crate::refusal::refusal(RefusalKind::StaleLock, msg))
             });
@@ -4840,7 +4840,7 @@ fn classify_lock_relations(
 /// survives every subsequent rebase and the destination is again exactly one
 /// bookkeeping commit ahead. The destination arm says so, matching
 /// `check_phase1_ancestor`'s own refusal for the same recurring shape.
-fn relock_recovery(side: Side, project_name: &str) -> String {
+fn relock_recovery(side: Side, project_name: &ProjectName) -> String {
     match side {
         Side::Source => format!(
             "Run `rwv lock --commit --project {project_name}` in the source workspace before \
@@ -4905,7 +4905,7 @@ fn unresolvable_entry_refusal(
     class: &LockClassification,
     side: Side,
     workspace_name: &str,
-    project_name: &str,
+    project_name: &ProjectName,
 ) -> Option<String> {
     unresolvable_lock_refusal(side, workspace_name, project_name, &class.unresolvable)
 }
@@ -4916,7 +4916,7 @@ fn anomalous_relation_refusal(
     class: &LockClassification,
     side: Side,
     workspace_name: &str,
-    project_name: &str,
+    project_name: &ProjectName,
 ) -> Option<String> {
     let anomalous: Vec<&RepoRelation> = class
         .relations
@@ -4934,7 +4934,7 @@ fn anomalous_relation_refusal(
 fn unresolvable_lock_refusal(
     side: Side,
     workspace_name: &str,
-    project_name: &str,
+    project_name: &ProjectName,
     entries: &[(RepoPath, crate::vcs::RawRevisionId)],
 ) -> Option<String> {
     if entries.is_empty() {
@@ -4976,7 +4976,7 @@ fn unresolvable_lock_refusal(
 fn lock_relation_refusal(
     side: Side,
     workspace_name: &str,
-    project_name: &str,
+    project_name: &ProjectName,
     offending: &[&RepoRelation],
 ) -> Option<String> {
     if offending.is_empty() {
@@ -5036,7 +5036,7 @@ fn lock_relation_refusal(
 /// skips this check without making the op converge.
 fn target_lock_behind_refusal(
     target_workspace_name: &str,
-    target_project_name: &str,
+    target_project_name: &ProjectName,
     offending: &[&RepoRelation],
 ) -> Option<String> {
     if offending.is_empty() {
@@ -6225,10 +6225,7 @@ fn delivered_materialized_input_hits(ctx: &OpContext<'_>) -> Vec<MaterializedInp
                 hits.push(MaterializedInputHit {
                     repo_key: project_repo_key().to_owned(),
                     file: file.to_owned(),
-                    workspace_path: format!(
-                        "{}/{file}",
-                        project_rel_path(ctx.cwd_project_name.as_str()),
-                    ),
+                    workspace_path: format!("{}/{file}", project_rel_path(&ctx.cwd_project_name),),
                 });
             }
         }
@@ -6298,7 +6295,7 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     // canonical path equals CWD, so this is also correct for the non-retire
     // case.
     let primary = ctx.cwd_ctx.primary_path();
-    let canonical_project_dir = project_dir(primary, ctx.cwd_project_name.as_str());
+    let canonical_project_dir = project_dir(primary, &ctx.cwd_project_name);
 
     // Drop savepoints. Exception: when --discard-local-commits rewound the
     // project repo, preserve the project savepoint as a tombstone — the only
@@ -6347,8 +6344,7 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             WorkspaceContext::resolve_for_project(&ctx.dest_workspace_dir, &ctx.cwd_project_name)
                 .is_ok();
         if target_presents_the_project {
-            let target_project_dir =
-                project_dir(&ctx.dest_workspace_dir, ctx.cwd_project_name.as_str());
+            let target_project_dir = project_dir(&ctx.dest_workspace_dir, &ctx.cwd_project_name);
             delete_savepoint(ctx.project_vcs.as_ref(), &target_project_dir, &tsp_id);
             if let Ok(tp) =
                 Project::from_dir_skip_lock(&target_project_dir, ctx.cwd_project_name.clone())
@@ -6813,7 +6809,7 @@ pub fn run_abort(
     // name a different project by the time an operator aborts, and that
     // project's repos are not the ones this op advanced.
     let op_project_name = owner_record.project.clone();
-    let cwd_project_dir = project_dir(&workspace_dir, op_project_name.as_str());
+    let cwd_project_dir = project_dir(&workspace_dir, &op_project_name);
     // Use the lockless loader: abort's contract is "the state is bad, get me
     // out". rwv.lock may contain git conflict markers from the half-completed
     // rebase, so we must not try to parse it. The abort path only needs the
@@ -6846,7 +6842,7 @@ pub fn run_abort(
         match WorkspaceContext::resolve_for_project(other_dir, &op_project_name) {
             Ok(other_ctx) => {
                 let other_ws_dir = other_ctx.active_path().to_path_buf();
-                let other_project_dir = project_dir(&other_ws_dir, op_project_name.as_str());
+                let other_project_dir = project_dir(&other_ws_dir, &op_project_name);
                 match Project::from_dir_skip_lock(&other_project_dir, op_project_name.clone()) {
                     Ok(other_project) => {
                         let side = AbortSide::of(&other_ws_dir, &owner_record);
@@ -9487,8 +9483,13 @@ mod tests {
             lock_pin: None,
         };
         for side in [Side::Source, Side::Destination] {
-            let msg = lock_relation_refusal(side, "ws", "app", &[&offending])
-                .expect("non-empty offending set yields a refusal");
+            let msg = lock_relation_refusal(
+                side,
+                "ws",
+                &crate::manifest::ProjectName::new("app").unwrap(),
+                &[&offending],
+            )
+            .expect("non-empty offending set yields a refusal");
             assert!(
                 msg.contains("rwv lock --commit"),
                 "stale-lock hint must name `rwv lock --commit` ({side:?}): {msg}"
@@ -9511,8 +9512,13 @@ mod tests {
             tip: None,
             lock_pin: None,
         };
-        let msg = lock_relation_refusal(Side::Source, "ws", "app", &[&diverged])
-            .expect("non-empty offending set yields a refusal");
+        let msg = lock_relation_refusal(
+            Side::Source,
+            "ws",
+            &crate::manifest::ProjectName::new("app").unwrap(),
+            &[&diverged],
+        )
+        .expect("non-empty offending set yields a refusal");
         assert!(
             msg.contains("bless the current HEAD with `rwv lock --commit`"),
             "diverged repo must earn the bless-HEAD `rwv lock --commit` hint: {msg}"
@@ -9525,7 +9531,7 @@ mod tests {
         let msg = unresolvable_lock_refusal(
             Side::Source,
             "ws",
-            "app",
+            &crate::manifest::ProjectName::new("app").unwrap(),
             &[(
                 crate::manifest::RepoPath::new("github/org/lib").unwrap(),
                 crate::vcs::RawRevisionId::new("v-does-not-exist"),
@@ -9556,8 +9562,13 @@ mod tests {
                 ),
             ],
         };
-        let msg = unresolvable_entry_refusal(&class, Side::Source, "ws", "app")
-            .expect("non-empty unresolvable set yields a refusal");
+        let msg = unresolvable_entry_refusal(
+            &class,
+            Side::Source,
+            "ws",
+            &crate::manifest::ProjectName::new("app").unwrap(),
+        )
+        .expect("non-empty unresolvable set yields a refusal");
         assert!(
             msg.contains("github/org/lib") && msg.contains("v-one-missing"),
             "refusal must name the first corrupt entry: {msg}"

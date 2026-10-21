@@ -219,7 +219,11 @@ fn activate_on_a_path_without(manifest: &str, body: &str) -> (bool, String) {
     std::fs::write(ws.join(".rwv-active"), "app\n").unwrap();
 
     let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
-    repoweave::activate::activate_intent("app", &ctx).ok();
+    repoweave::activate::activate_intent(
+        &repoweave::manifest::ProjectName::new("app").unwrap(),
+        &ctx,
+    )
+    .ok();
 
     let only_git = common::tool_only_bin("git");
     let output = common::rwv()
@@ -651,7 +655,11 @@ fn doctor_fix_for_an_unrelated_finding_leaves_a_pin_byte_identical() {
     std::fs::write(ws.join(".rwv-active"), "app\n").unwrap();
 
     let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
-    repoweave::activate::activate_intent("app", &ctx).expect("activation should succeed");
+    repoweave::activate::activate_intent(
+        &repoweave::manifest::ProjectName::new("app").unwrap(),
+        &ctx,
+    )
+    .expect("activation should succeed");
 
     let lock_path = project_dir.join("Cargo.lock");
     let pinned = std::fs::read_to_string(&lock_path)
@@ -735,7 +743,11 @@ fn materialize_leaves_a_pin_byte_identical() {
     std::fs::write(ws.join(".rwv-active"), "app\n").unwrap();
 
     let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
-    repoweave::activate::activate_intent("app", &ctx).expect("activation should succeed");
+    repoweave::activate::activate_intent(
+        &repoweave::manifest::ProjectName::new("app").unwrap(),
+        &ctx,
+    )
+    .expect("activation should succeed");
 
     let lock_path = project_dir.join("Cargo.lock");
     let pinned = std::fs::read_to_string(&lock_path)

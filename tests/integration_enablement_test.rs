@@ -79,7 +79,7 @@ fn weave_with_gita_newly_enabled(root: &Path) -> PathBuf {
 
     let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
     repoweave::activate::activate_intent_with_options(
-        "app",
+        &repoweave::manifest::ProjectName::new("app").unwrap(),
         &ctx,
         repoweave::activate::ActivateOptions {
             no_materialize: true,

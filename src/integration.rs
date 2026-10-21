@@ -64,7 +64,7 @@ pub struct IntegrationContext<'a> {
 
     /// All project paths (e.g., `["web-app", "mobile-app"]`).
     /// Computed once, shared across integrations.
-    pub all_project_paths: &'a [String],
+    pub all_project_paths: &'a [ProjectName],
 
     /// Pre-computed detection cache mapping manifest filenames to lists of
     /// repo paths that contain that manifest. Populated once per

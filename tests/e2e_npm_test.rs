@@ -127,7 +127,11 @@ role = "owned"
     // -------------------------------------------------------------------------
     {
         let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(ws, None).unwrap();
-        repoweave::activate::activate_intent("web-app", &ctx).expect("activate should succeed");
+        repoweave::activate::activate_intent(
+            &repoweave::manifest::ProjectName::new("web-app").unwrap(),
+            &ctx,
+        )
+        .expect("activate should succeed");
     }
 
     // -------------------------------------------------------------------------
@@ -293,7 +297,11 @@ role = "owned"
     // -------------------------------------------------------------------------
     {
         let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(ws, None).unwrap();
-        repoweave::activate::activate_intent("web-app", &ctx).expect("activate should succeed");
+        repoweave::activate::activate_intent(
+            &repoweave::manifest::ProjectName::new("web-app").unwrap(),
+            &ctx,
+        )
+        .expect("activate should succeed");
     }
 
     let root_pkg = ws.join("package.json");

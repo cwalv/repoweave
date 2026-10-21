@@ -93,7 +93,10 @@ fn make_project(
     // workflow's "rwv add wrote both the manifest entry and the ecosystem
     // file."
     let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(ws, None).unwrap();
-    let _ = repoweave::activate::activate_intent(project, &ctx);
+    let _ = repoweave::activate::activate_intent(
+        &repoweave::manifest::ProjectName::new(project).unwrap(),
+        &ctx,
+    );
 }
 
 // ============================================================================
@@ -646,7 +649,10 @@ fn deactivate_descends_into_nondir_registry_subtrees() {
     // Pre-author via intent path so context-mode activate has something
     // to surface (matches the new trigger-model contract).
     let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
-    let _ = repoweave::activate::activate_intent("web-app", &ctx);
+    let _ = repoweave::activate::activate_intent(
+        &repoweave::manifest::ProjectName::new("web-app").unwrap(),
+        &ctx,
+    );
 
     // Activate to refresh top-level + nested gita symlinks (context mode).
     rwv()
@@ -857,7 +863,7 @@ fn activate_intent_from_a_workweave_checkout_authors_at_primary() {
         repoweave::path_spelling::resolve(&workweave_dir).unwrap()
     );
     repoweave::activate::activate_intent_with_options(
-        "web-app",
+        &repoweave::manifest::ProjectName::new("web-app").unwrap(),
         &ctx,
         repoweave::activate::ActivateOptions {
             no_materialize: true,

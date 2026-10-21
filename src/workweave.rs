@@ -891,7 +891,7 @@ pub fn preflight_check_heads(
     let mut missing: Vec<String> = Vec::new();
 
     // Check project repo.
-    let project_dir = project_dir(source_root, project.as_str());
+    let project_dir = project_dir(source_root, project);
     if project_vcs.is_repo(&project_dir) && project_vcs.head_revision(&project_dir).is_err() {
         missing.push(format!(
             "project {name} has no commits yet — run \
@@ -1805,7 +1805,7 @@ pub fn create_workweave(
     // in those repos is not captured. The project dir is special because we
     // explicitly overlay its working-tree `rwv.toml`/`rwv.lock` below.
     if dirty_source == DirtySource::Refuse {
-        let project_dir = project_dir(source_root, project.as_str());
+        let project_dir = project_dir(source_root, project);
         if project_vcs.is_repo(&project_dir) {
             match project_vcs.dirty_file_names(&project_dir) {
                 Ok(dirty) if !dirty.is_empty() => {
@@ -2025,8 +2025,8 @@ pub fn create_workweave(
     // Create worktree for the project repo (if it is a git repo).
     // If the project directory exists but is not a git repo, copy it into the
     // workweave so that activate_workweave can find rwv.toml there.
-    let project_wt_dest = project_dir(&workweave_dir, project.as_str());
-    let project_dir = project_dir(source_root, project.as_str());
+    let project_wt_dest = project_dir(&workweave_dir, project);
+    let project_dir = project_dir(source_root, project);
     if project_vcs.is_repo(&project_dir) {
         // B8: project-worktree creation failure must NOT silently fall
         // through to a static directory copy. The copy fallback is for
@@ -2245,7 +2245,7 @@ pub fn create_workweave(
     // the hooks leaves a usable seat whose install state is incomplete, which
     // is kept, as `add` keeps a manifest change whose hooks failed.
     let hooks_failed =
-        match crate::activate::activate_workweave(project.as_str(), &workweave_dir, activation) {
+        match crate::activate::activate_workweave(project, &workweave_dir, activation) {
             Ok(_) => None,
             Err(crate::activate::ActivationFailure::BeforeHooks(e)) => return Err(e),
             Err(crate::activate::ActivationFailure::AtHooks(e)) => Some(e),
@@ -2509,9 +2509,9 @@ pub fn collect_dirty_paths(
     let mut dirty = Vec::new();
 
     // Project worktree.
-    let project_wt = project_dir(workweave_dir, project.as_str());
+    let project_wt = project_dir(workweave_dir, project);
     if project_vcs.is_repo(&project_wt) {
-        let rel = project_rel_path(project.as_str());
+        let rel = project_rel_path(project);
         match project_vcs.has_uncommitted_changes(&project_wt) {
             Ok(true) => dirty.push(rel),
             Ok(false) => {}
@@ -2689,14 +2689,14 @@ fn collect_diverged_paths(
         }
     };
 
-    let project_rel = project_rel_dir(project.as_str());
+    let project_rel = project_rel_dir(project);
     let project_wt = workweave_dir.join(&project_rel);
     if project_vcs.is_repo(&project_wt) {
         check(
             project_vcs,
             &project_wt,
             &project_rel,
-            project_rel_path(project.as_str()),
+            project_rel_path(project),
             false,
         );
     }
@@ -2862,8 +2862,8 @@ fn refuse_if_checkouts_host_foreign_worktrees(
     };
 
     // Project worktree.
-    let project_wt = project_dir(workweave_dir, project.as_str());
-    check(project_vcs, &project_wt, project_rel_path(project.as_str()));
+    let project_wt = project_dir(workweave_dir, project);
+    check(project_vcs, &project_wt, project_rel_path(project));
 
     for checkout in member_depth_checkouts(workweave_dir, manifest) {
         check(
@@ -3315,7 +3315,7 @@ fn delete_workweave_inner_at(
     // checkout is taken apart. The regions exist because this workweave
     // presented the project; that ends here.
     if workweave_dir.exists() {
-        let project_checkout = workweave_dir.join(project_rel_dir(project.as_str()));
+        let project_checkout = workweave_dir.join(project_rel_dir(project));
         for issue in crate::activate::strip_project_regions(&project_checkout, &manifest) {
             eprintln!(
                 "rwv workweave delete: warning: {}: {}",
@@ -3407,7 +3407,7 @@ fn delete_workweave_inner_at(
     // arms are the same operation over the same receipt set, so whether
     // `.git` was a file and whether `remove_worktree` returned `Ok` do not
     // change which receipts are owed a DESTROY.
-    let project_rel = project_rel_dir(project.as_str());
+    let project_rel = project_rel_dir(project);
     let project_dir_fallback = ws_root.join(&project_rel);
     let project_worktree = workweave_dir.join(&project_rel);
     // Resolve the project worktree's actual canonical store, same as for
@@ -3420,7 +3420,7 @@ fn delete_workweave_inner_at(
     );
     if project_worktree.exists() && crate::git::is_linked_worktree(&project_worktree) {
         if let Err(e) = project_vcs.remove_worktree(&project_store, &project_worktree) {
-            let msg = format!("{}: {e:#}", project_rel_path(project.as_str()));
+            let msg = format!("{}: {e:#}", project_rel_path(project));
             eprintln!("rwv workweave delete: error: {msg}");
             errors.push(msg);
         }
@@ -3437,7 +3437,7 @@ fn delete_workweave_inner_at(
         &mut registry,
         &project_store,
         &ephemeral,
-        &project_rel_path(project.as_str()),
+        &project_rel_path(project),
         &project_baseline_tips,
         discard_unmerged,
     );
@@ -3660,7 +3660,7 @@ pub fn doctor_scan_container(ws_root: &Path, container: &Path) -> Vec<(Workweave
 
 /// Load the project manifest from the workspace.
 fn load_manifest(ws_root: &Path, project: &ProjectName) -> anyhow::Result<Manifest> {
-    let manifest_path = project_dir(ws_root, project.as_str()).join(Manifest::FILE_NAME);
+    let manifest_path = project_dir(ws_root, project).join(Manifest::FILE_NAME);
     Manifest::from_path(&manifest_path)
 }
 
@@ -3887,8 +3887,8 @@ pub fn workweave_log(
     // Parent tip is read from the parent's project checkout, exactly as the
     // parent marker recorded it — no branch-name reconstruction.
     let project_repo = {
-        let ww_project = project_dir(&ww_dir, project.as_str());
-        let parent_project = project_dir(&parent_path, project.as_str());
+        let ww_project = project_dir(&ww_dir, &project);
+        let parent_project = project_dir(&parent_path, &project);
         let vcs = project_vcs();
 
         let mut note: Option<String> = None;

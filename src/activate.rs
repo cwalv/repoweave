@@ -132,7 +132,10 @@ fn report_and_check_activation_issues(issues: &[crate::integration::Issue]) -> a
 /// Surfaces the existing on-disk artifacts and verifies them, **never
 /// authoring**. Runs integration activate hooks (`npm install`, `uv sync`,
 /// etc.) by default. See [`activate_with_options`] to suppress them.
-pub fn activate(project: &str, ctx: &WorkspaceContext) -> anyhow::Result<Vec<SkippedEffect>> {
+pub fn activate(
+    project: &ProjectName,
+    ctx: &WorkspaceContext,
+) -> anyhow::Result<Vec<SkippedEffect>> {
     activate_with_options(project, ctx, ActivateOptions::default())
 }
 
@@ -145,7 +148,7 @@ pub fn activate(project: &str, ctx: &WorkspaceContext) -> anyhow::Result<Vec<Ski
 /// selected one. That is what makes `--project` a one-shot target rather
 /// than a project switch.
 pub fn activate_intent(
-    project: &str,
+    project: &ProjectName,
     ctx: &WorkspaceContext,
 ) -> anyhow::Result<Vec<SkippedEffect>> {
     activate_intent_with_options(project, ctx, ActivateOptions::default())
@@ -166,14 +169,17 @@ pub fn activate_intent(
 /// produce one, so a hook-suppressed `--fix` reports the lock as regenerable
 /// and then leaves it missing. Hooks only fire when doctor already found
 /// safe-to-fix drift, so a clean weave still pays nothing.
-pub fn activate_intent_at(project: &str, weave_dir: &Path) -> anyhow::Result<Vec<SkippedEffect>> {
+pub fn activate_intent_at(
+    project: &ProjectName,
+    weave_dir: &Path,
+) -> anyhow::Result<Vec<SkippedEffect>> {
     activate_at(weave_dir, project, None, ActivationMode::Intent)
 }
 
 /// Run intent-mode activation with explicit options: `opts` carries the
 /// intent verbs' `--no-materialize`.
 pub fn activate_intent_with_options(
-    project: &str,
+    project: &ProjectName,
     ctx: &WorkspaceContext,
     opts: ActivateOptions,
 ) -> anyhow::Result<Vec<SkippedEffect>> {
@@ -232,12 +238,7 @@ pub fn materialize(
         remove_undeclared_links(root, &project)?;
     }
 
-    activate_at(
-        root,
-        project.as_str(),
-        None,
-        ActivationMode::Materialize(consent),
-    )
+    activate_at(root, &project, None, ActivationMode::Materialize(consent))
 }
 
 /// Refuse materialize, before anything is touched, while an enabled
@@ -255,7 +256,7 @@ fn refuse_materialize_over_malformed_settings(
     root: &Path,
     project: &ProjectName,
 ) -> anyhow::Result<()> {
-    let manifest_path = project_dir(root, project.as_str()).join(Manifest::FILE_NAME);
+    let manifest_path = project_dir(root, project).join(Manifest::FILE_NAME);
     let manifest = Manifest::from_path(&manifest_path)?;
     let malformed = malformed_settings_at(root, project, &manifest);
     refuse_over_malformed_settings(
@@ -288,7 +289,7 @@ fn malformed_settings_at(
 /// link because an operator who reached this flag from `rwv doctor` should see
 /// the same list act that they were shown, and one who did not still gets one.
 fn remove_undeclared_links(root: &Path, project: &ProjectName) -> anyhow::Result<()> {
-    let manifest_path = project_dir(root, project.as_str()).join(Manifest::FILE_NAME);
+    let manifest_path = project_dir(root, project).join(Manifest::FILE_NAME);
     let manifest = Manifest::from_path(&manifest_path)?;
     let declared = owned_paths(root, project, &manifest);
     let links = undeclared_project_links(root, project, &manifest, &declared);
@@ -596,7 +597,7 @@ impl ActivateOptions {
 /// of a command run from an unrelated workweave. A workweave has no witness,
 /// so the two questions are one lookup.
 pub fn activate_with_options(
-    project: &str,
+    project: &ProjectName,
     ctx: &WorkspaceContext,
     opts: ActivateOptions,
 ) -> anyhow::Result<Vec<SkippedEffect>> {
@@ -630,7 +631,7 @@ pub fn activate_with_options(
     // Project SELECTION, after activation rather than inside it. An activate
     // hook that errored bails above, so a partially-activated workspace
     // still does not record success.
-    primary.select_project(&ProjectName::new(project)?)?;
+    primary.select_project(project)?;
     Ok(skipped)
 }
 
@@ -656,7 +657,7 @@ pub fn strip_project_regions(
 /// (surface + verify, never author).
 fn activate_at(
     root: &Path,
-    project: &str,
+    project: &ProjectName,
     skip: Option<SkipReason>,
     mode: ActivationMode,
 ) -> anyhow::Result<Vec<SkippedEffect>> {
@@ -690,7 +691,7 @@ impl ActivationFailure {
 /// primary — reporting how far it got when it fails. The files are authored
 /// as they stand once the `departing` checkouts are off disk.
 pub(crate) fn activate_intent_for(
-    project: &str,
+    project: &ProjectName,
     ctx: &WorkspaceContext,
     opts: ActivateOptions,
     departing: &[RepoPath],
@@ -712,13 +713,11 @@ pub(crate) fn activate_intent_for(
 /// to say so can drop the list; one with a `--json` envelope records it.
 fn activate_in_phases(
     root: &Path,
-    project: &str,
+    project: &ProjectName,
     skip: Option<SkipReason>,
     mode: ActivationMode,
     departing: &[RepoPath],
 ) -> Result<Vec<SkippedEffect>, ActivationFailure> {
-    let project_name =
-        ProjectName::new(project).map_err(|e| ActivationFailure::BeforeHooks(e.into()))?;
     let manifest_path = project_dir(root, project).join(Manifest::FILE_NAME);
     let manifest = Manifest::from_path(&manifest_path).map_err(ActivationFailure::BeforeHooks)?;
 
@@ -729,14 +728,13 @@ fn activate_in_phases(
     let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
 
     let detection_cache = build_detection_cache(&integrations, root, manifest.iter_entries());
-    let ctx_base =
-        session.context_base(&project_name, &detection_cache, manifest.workweave.as_ref());
+    let ctx_base = session.context_base(project, &detection_cache, manifest.workweave.as_ref());
     let project_vcs = crate::vcs::project_vcs();
 
     let Some(noticed) = author_and_surface(
         project_vcs.as_ref(),
         root,
-        &project_name,
+        project,
         &manifest,
         &integrations,
         &ctx_base,
@@ -1406,7 +1404,7 @@ fn remove_activation_symlinks_in(
 /// and `workweave_dir` is a workweave root, whose project the
 /// `.rwv-workweave` marker already names.
 pub(crate) fn activate_workweave(
-    project: &str,
+    project: &ProjectName,
     workweave_dir: &Path,
     opts: ActivateOptions,
 ) -> Result<Vec<SkippedEffect>, ActivationFailure> {
@@ -1431,14 +1429,14 @@ pub(crate) fn activate_workweave(
 /// it uses [`activate_intent_at`], which runs the hooks; see that function
 /// for why a repair verb cannot suppress them.
 pub fn activate_workweave_intent(
-    project: &str,
+    project: &ProjectName,
     workweave_dir: &Path,
 ) -> anyhow::Result<Vec<SkippedEffect>> {
     workweave_intent(project, workweave_dir, &[]).map_err(ActivationFailure::into_error)
 }
 
 fn workweave_intent(
-    project: &str,
+    project: &ProjectName,
     workweave_dir: &Path,
     departing: &[RepoPath],
 ) -> Result<Vec<SkippedEffect>, ActivationFailure> {
@@ -1587,7 +1585,7 @@ impl RestorePoint {
         project: &ProjectName,
         manifests: &[&Manifest],
     ) -> anyhow::Result<Self> {
-        let dir = project_dir(root, project.as_str());
+        let dir = project_dir(root, project);
         let mut paths: BTreeSet<std::path::PathBuf> =
             BTreeSet::from([dir.join(Manifest::FILE_NAME), ledger_path(&dir)]);
         for manifest in manifests {
@@ -1670,7 +1668,7 @@ fn compute_active_owned_set(root: &Path) -> anyhow::Result<BTreeSet<String>> {
         Some(name) => name.clone(),
         None => return Ok(BTreeSet::new()),
     };
-    let manifest_path = project_dir(root, active.as_str()).join(Manifest::FILE_NAME);
+    let manifest_path = project_dir(root, &active).join(Manifest::FILE_NAME);
     if !manifest_path.exists() {
         return Ok(BTreeSet::new());
     }
@@ -1932,7 +1930,7 @@ fn surface_with_notices(
 /// The names `project` declares as written through their link, from its own
 /// manifest.
 fn written_through_names(root: &Path, project: &ProjectName) -> anyhow::Result<BTreeSet<String>> {
-    let manifest_path = project_dir(root, project.as_str()).join(Manifest::FILE_NAME);
+    let manifest_path = project_dir(root, project).join(Manifest::FILE_NAME);
     if !manifest_path.exists() {
         return Ok(BTreeSet::new());
     }
@@ -2126,7 +2124,7 @@ impl SurfacingJournal {
 /// like `gita/repos.csv` we prepend `../` once per directory level so the link
 /// remains relative. Reached only through [`SurfacingSites::link`], which is
 /// what creation and the check both ask.
-fn relative_symlink_target(project: &str, file: &str) -> std::path::PathBuf {
+fn relative_symlink_target(project: &ProjectName, file: &str) -> std::path::PathBuf {
     let depth = Path::new(file)
         .parent()
         .map(|p| p.components().count())
@@ -2203,7 +2201,7 @@ impl SurfacingSites {
                 }
             }
         };
-        let manifest_path = project_dir(root, marker.project().as_str()).join(Manifest::FILE_NAME);
+        let manifest_path = project_dir(root, marker.project()).join(Manifest::FILE_NAME);
         let Ok(manifest) = Manifest::from_path(&manifest_path) else {
             return Self {
                 primary: PrimaryProjects::Unknown,
@@ -2239,8 +2237,8 @@ impl SurfacingSites {
         match (copy, &self.primary) {
             (SurfacedCopy::Weave, _) | (SurfacedCopy::Primary, PrimaryProjects::Here) => {
                 Some(PlannedLink {
-                    target: relative_symlink_target(project.as_str(), file),
-                    source: project_dir(root, project.as_str()).join(file),
+                    target: relative_symlink_target(project, file),
+                    source: project_dir(root, project).join(file),
                     own_copy: true,
                 })
             }
@@ -2915,7 +2913,12 @@ mod tests {
     }
 
     fn activate_context_with_hooks(root: &Path) -> anyhow::Result<Vec<SkippedEffect>> {
-        activate_at(root, "demo", None, ActivationMode::Context)
+        activate_at(
+            root,
+            &crate::manifest::ProjectName::new("demo").unwrap(),
+            None,
+            ActivationMode::Context,
+        )
     }
 
     #[test]
@@ -2964,14 +2967,20 @@ mod tests {
 
     #[test]
     fn relative_target_top_level_is_projects_project_file() {
-        let t = relative_symlink_target("web-app", ".claude");
+        let t = relative_symlink_target(
+            &crate::manifest::ProjectName::new("web-app").unwrap(),
+            ".claude",
+        );
         assert_eq!(t, Path::new("projects/web-app/.claude"));
     }
 
     #[test]
     fn relative_target_nested_prepends_parent_dirs() {
         // gita/repos.csv lives one dir deep, so the link must climb out once.
-        let t = relative_symlink_target("p", "gita/repos.csv");
+        let t = relative_symlink_target(
+            &crate::manifest::ProjectName::new("p").unwrap(),
+            "gita/repos.csv",
+        );
         assert_eq!(t, Path::new("../projects/p/gita/repos.csv"));
     }
 
@@ -3104,7 +3113,7 @@ mod tests {
             let link = root.join(file);
             std::fs::create_dir_all(link.parent().unwrap()).unwrap();
             crate::symlink::create(
-                &relative_symlink_target(project, file),
+                &relative_symlink_target(&ProjectName::new(project).unwrap(), file),
                 &link,
                 LinkTarget::File,
             )
@@ -3405,7 +3414,7 @@ mod tests {
     fn a_restore_point_puts_back_what_a_regeneration_changed() {
         let (tmp, project) = make_surfacing_workspace(&[".claude"]);
         let root = tmp.path();
-        let dir = project_dir(root, project.as_str());
+        let dir = project_dir(root, &project);
         let manifest = load_manifest(root, &project);
         let mut edited = manifest.clone();
         edited.integrations.insert(
@@ -3443,7 +3452,7 @@ mod tests {
         // link to a file.
         let (tmp, project) = make_surfacing_workspace_authoring(&[".claude"], &[]);
         let root = tmp.path();
-        let claude = project_dir(root, project.as_str()).join(".claude");
+        let claude = project_dir(root, &project).join(".claude");
         std::fs::create_dir_all(claude.join("agents")).unwrap();
         std::fs::write(claude.join("agents").join("a.md"), "x").unwrap();
         let manifest = load_manifest(root, &project);

@@ -210,9 +210,8 @@ fn expected_generated_set(
         keys.insert(path, true);
     }
 
-    let active_project = ctx.project.as_str();
     for project_path in ctx.all_project_paths {
-        if project_path != active_project {
+        if project_path != ctx.project {
             keys.insert(project_rel_path(project_path), true);
         }
     }
@@ -317,7 +316,7 @@ fn merge_files_exclude(
 /// Returns a `serde_json::Value::Array`.
 fn merge_folders(
     existing_obj: &serde_json::Map<String, serde_json::Value>,
-    project_name: &str,
+    project_name: &crate::manifest::ProjectName,
 ) -> serde_json::Value {
     let primary_name = format!("{} (primary)", project_name);
     let primary = serde_json::json!({ "path": ".", "name": primary_name });
@@ -472,7 +471,7 @@ impl Integration for VscodeWorkspace {
 
         // Merge the `folders` array (fix #2): primary at [0], user folders
         // preserved in their original order.
-        let folders_value = merge_folders(obj, ctx.project.as_str());
+        let folders_value = merge_folders(obj, ctx.project);
         obj.insert("folders".to_string(), folders_value);
 
         // The rwv-derived files.exclude keys, under this container's write

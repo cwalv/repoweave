@@ -50,7 +50,7 @@ fn deactivate_owned_keys() -> Vec<Vec<String>> {
 fn build_owned(
     existing_pkg: Option<&serde_json::Value>,
     workspaces: Vec<String>,
-    project_name: &str,
+    project_name: &crate::manifest::ProjectName,
 ) -> Vec<(Vec<String>, Ownership, OwnedValue)> {
     let ws_is_object = existing_pkg
         .and_then(|v| v.get("workspaces"))
@@ -171,7 +171,7 @@ impl Integration for NpmWorkspaces {
             .flatten()
             .and_then(|c| serde_json::from_str(&c).ok());
 
-        let owned = build_owned(existing.as_ref(), paths, ctx.project.as_str());
+        let owned = build_owned(existing.as_ref(), paths, ctx.project);
 
         // merge_activate handles: read-or-empty, marker-gated key ownership,
         // set_marker, write back, and preserves all foreign keys untouched.

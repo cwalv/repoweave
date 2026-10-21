@@ -8,6 +8,7 @@
 //! nothing prints nothing.
 
 use crate::integration::{Integration, IssueSource, MissingTool};
+use crate::manifest::ProjectName;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -51,11 +52,11 @@ pub enum SkipReason {
     /// The CLI the integration's hook drives is not on `PATH`.
     ToolMissing { tool: String },
     /// The verb acted on a project the weave root does not present.
-    NotPresented { project: String },
+    NotPresented { project: ProjectName },
     /// `rwv update` was narrowed by `--role` or `--repo`.
     Narrowed,
     /// A project was already active, so the fetch selected none.
-    ProjectAlreadyActive { project: String },
+    ProjectAlreadyActive { project: ProjectName },
 }
 
 impl SkippedEffect {
@@ -87,9 +88,9 @@ impl SkippedEffect {
 
     /// The links and the hooks of `project`, which the weave root does not
     /// present, so an authoring verb regenerated its files and stopped there.
-    pub fn not_presented(project: &str) -> [Self; 2] {
+    pub fn not_presented(project: &ProjectName) -> [Self; 2] {
         let reason = SkipReason::NotPresented {
-            project: project.to_string(),
+            project: project.clone(),
         };
         [
             Self {
@@ -117,12 +118,12 @@ impl SkippedEffect {
 
     /// A bootstrap fetch of `fetched` that activated nothing because `active`
     /// already was.
-    pub fn activation_while_active(active: &str, fetched: &str) -> Self {
+    pub fn activation_while_active(active: &ProjectName, fetched: &ProjectName) -> Self {
         Self {
             effect: Effect::Activation,
             integration: None,
             reason: SkipReason::ProjectAlreadyActive {
-                project: active.to_string(),
+                project: active.clone(),
             },
             remedy: format!("rwv activate {fetched}"),
         }
@@ -130,9 +131,9 @@ impl SkippedEffect {
 
     /// An in-place fetch that ran no hooks because `active` was already
     /// active and it selected nothing.
-    pub fn hooks_while_active(active: &str) -> Self {
+    pub fn hooks_while_active(active: &ProjectName) -> Self {
         Self::install_hooks(SkipReason::ProjectAlreadyActive {
-            project: active.to_string(),
+            project: active.clone(),
         })
     }
 

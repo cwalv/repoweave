@@ -1392,7 +1392,8 @@ mod generated_managed_split_and_trigger_model {
         // same Mode::Context code path that `rwv activate` and
         // `rwv fetch` take.
         let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
-        activate("p", &ctx).expect("context-mode activate should succeed");
+        activate(&repoweave::manifest::ProjectName::new("p").unwrap(), &ctx)
+            .expect("context-mode activate should succeed");
 
         // The hand-edited file's bytes must be unchanged — context verbs
         // never author.
@@ -1431,7 +1432,7 @@ mod generated_managed_split_and_trigger_model {
         // the removal candidate union.
         let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
         activate_intent_with_options(
-            "p",
+            &repoweave::manifest::ProjectName::new("p").unwrap(),
             &ctx,
             ActivateOptions {
                 no_materialize: true,
@@ -1454,7 +1455,8 @@ mod generated_managed_split_and_trigger_model {
         // integration's managed/generated set.
         // Rebuild the context after any workspace mutations above.
         let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
-        activate("p", &ctx).expect("re-activate should succeed");
+        activate(&repoweave::manifest::ProjectName::new("p").unwrap(), &ctx)
+            .expect("re-activate should succeed");
 
         assert!(
             user_link.symlink_metadata().is_ok(),

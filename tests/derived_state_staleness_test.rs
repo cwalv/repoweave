@@ -329,7 +329,7 @@ fn weave_with_a_producer(root: &Path) -> PathBuf {
 
     let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
     repoweave::activate::activate_intent_with_options(
-        "app",
+        &repoweave::manifest::ProjectName::new("app").unwrap(),
         &ctx,
         repoweave::activate::ActivateOptions {
             no_materialize: true,
@@ -389,7 +389,7 @@ fn weave_with_a_path_dep(root: &Path) -> (PathBuf, PathBuf) {
 
     let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
     repoweave::activate::activate_intent_with_options(
-        "app",
+        &repoweave::manifest::ProjectName::new("app").unwrap(),
         &ctx,
         repoweave::activate::ActivateOptions {
             no_materialize: true,
@@ -854,7 +854,7 @@ fn weave_with_a_build_script_producer(root: &Path) -> (PathBuf, PathBuf) {
 
     let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
     repoweave::activate::activate_intent_with_options(
-        "app",
+        &repoweave::manifest::ProjectName::new("app").unwrap(),
         &ctx,
         repoweave::activate::ActivateOptions {
             no_materialize: true,

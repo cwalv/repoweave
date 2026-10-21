@@ -111,7 +111,11 @@ fn fixable_findings(root: &Path) -> Vec<String> {
 /// Without this the negative assertions would all pass over an empty weave.
 fn author_and_assert_seeded(root: &Path) -> (String, String) {
     let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(root, None).unwrap();
-    repoweave::activate::activate_intent("demo", &ctx).expect("authoring pass should succeed");
+    repoweave::activate::activate_intent(
+        &repoweave::manifest::ProjectName::new("demo").unwrap(),
+        &ctx,
+    )
+    .expect("authoring pass should succeed");
 
     let cargo_toml = read(root, "Cargo.toml");
     let go_work = read(root, "go.work");

@@ -147,7 +147,7 @@ fn make_project_source(tmp: &Path, name: &str, repos: &[(&str, &str)]) -> String
         let ctx =
             repoweave::workspace::WorkspaceContext::resolve_invocation(&staging, None).unwrap();
         repoweave::activate::activate_intent_with_options(
-            name,
+            &repoweave::manifest::ProjectName::new(name).unwrap(),
             &ctx,
             repoweave::activate::ActivateOptions {
                 no_materialize: true,

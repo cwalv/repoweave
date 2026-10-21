@@ -382,7 +382,7 @@ pub(crate) fn write_project_lock(
         Checkout::Workweave { dir, project, .. } => (project.clone(), Some(dir.clone())),
     };
 
-    let project_dir = project_dir(ctx.active_path(), project_name.as_str());
+    let project_dir = project_dir(ctx.active_path(), &project_name);
     // Use the parse-free loader: `rwv.lock` is derived state and must be
     // regenerable *over* a corrupted or conflict-markered existing lock.
     // `from_dir` hard-parses `rwv.lock` and errors on conflict markers,

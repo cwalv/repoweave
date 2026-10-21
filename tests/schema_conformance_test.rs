@@ -402,10 +402,15 @@ fn every_skip() -> Vec<SkippedEffect> {
         SkippedEffect::install_hooks(SkipReason::NoMaterialize),
         SkippedEffect::install_hooks(SkipReason::InsideWorkweave),
         SkippedEffect::tool_missing(&NpmWorkspaces, MissingTool::of::<NpmWorkspaces>()),
-        SkippedEffect::activation_while_active("other", "app"),
-        SkippedEffect::hooks_while_active("app"),
+        SkippedEffect::activation_while_active(
+            &repoweave::manifest::ProjectName::new("other").unwrap(),
+            &repoweave::manifest::ProjectName::new("app").unwrap(),
+        ),
+        SkippedEffect::hooks_while_active(&repoweave::manifest::ProjectName::new("app").unwrap()),
     ];
-    skips.extend(SkippedEffect::not_presented("other"));
+    skips.extend(SkippedEffect::not_presented(
+        &repoweave::manifest::ProjectName::new("other").unwrap(),
+    ));
     skips.extend(SkippedEffect::narrowed());
     skips
 }

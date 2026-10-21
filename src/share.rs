@@ -785,7 +785,10 @@ mod tests {
             // same spelling (macOS temp dirs sit behind the /var symlink).
             let root = resolve(tmp.path()).unwrap();
             let primary = root.join("primary");
-            let project = crate::workspace::project_dir(&primary, "app");
+            let project = crate::workspace::project_dir(
+                &primary,
+                &crate::manifest::ProjectName::new("app").unwrap(),
+            );
             std::fs::create_dir_all(&project).unwrap();
             std::fs::write(
                 project.join(Manifest::FILE_NAME),

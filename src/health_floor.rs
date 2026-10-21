@@ -111,7 +111,7 @@ pub fn record_clean_run(ws_root: &Path, vcs: &dyn crate::vcs::Vcs) -> anyhow::Re
 
     let mut project_tips = BTreeMap::new();
     for project in crate::workspace::discover_projects(ws_root) {
-        let repo = crate::workspace::project_dir(ws_root, project.as_str());
+        let repo = crate::workspace::project_dir(ws_root, &project);
         if let Ok(tip) = vcs.head_revision(&repo) {
             project_tips.insert(project.as_str().to_string(), tip.id().clone());
         }

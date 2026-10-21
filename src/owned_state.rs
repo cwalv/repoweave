@@ -503,7 +503,7 @@ fn generation_inputs(
     project: &crate::manifest::ProjectName,
     workspace_root: &Path,
 ) -> BTreeMap<String, String> {
-    let project_rel = crate::workspace::project_rel_path(project.as_str());
+    let project_rel = crate::workspace::project_rel_path(project);
     let mut inputs: BTreeMap<String, String> = [
         crate::manifest::Manifest::FILE_NAME,
         crate::manifest::LockFile::FILE_NAME,
@@ -923,7 +923,7 @@ pub fn stale_generations(
     workspace_root: &Path,
 ) -> Vec<StaleGeneration> {
     let current = generation_inputs(project_dir, project, workspace_root);
-    let project_rel = crate::workspace::project_rel_path(project.as_str());
+    let project_rel = crate::workspace::project_rel_path(project);
     read_owned_digests(project_dir)
         .into_iter()
         .filter_map(|(name, entry)| {

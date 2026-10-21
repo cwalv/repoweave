@@ -249,7 +249,10 @@ fn files_exclude_hides_other_projects() {
 
     let all_repos_on_disk: Vec<RepoPath> =
         vec![RepoPath::new("github/acme/server").expect("known-safe literal")];
-    let all_project_paths = vec!["proj-a".to_string(), "proj-b".to_string()];
+    let all_project_paths = vec![
+        ProjectName::new("proj-a").unwrap(),
+        ProjectName::new("proj-b").unwrap(),
+    ];
 
     let ctx = IntegrationContext {
         output_dir: root,

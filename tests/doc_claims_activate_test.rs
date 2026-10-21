@@ -294,7 +294,7 @@ fn activate_symlinks_cargo_toml_and_lock() {
     // `cargo generate-lockfile` (the CLI step is gated by --no-materialize).
     let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws_root, None).unwrap();
     repoweave::activate::activate_intent_with_options(
-        "cargo-proj",
+        &repoweave::manifest::ProjectName::new("cargo-proj").unwrap(),
         &ctx,
         repoweave::activate::ActivateOptions {
             no_materialize: true,
@@ -567,7 +567,7 @@ fn make_npm_workspace(ws_root: &Path, repo: &str) {
 
     let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(ws_root, None).unwrap();
     repoweave::activate::activate_intent_with_options(
-        "npm-proj",
+        &repoweave::manifest::ProjectName::new("npm-proj").unwrap(),
         &ctx,
         repoweave::activate::ActivateOptions {
             no_materialize: true,

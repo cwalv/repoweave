@@ -116,7 +116,11 @@ func Message() string {
     // ------------------------------------------------------------------
     {
         let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
-        repoweave::activate::activate_intent("web-app", &ctx).expect("activate should succeed");
+        repoweave::activate::activate_intent(
+            &repoweave::manifest::ProjectName::new("web-app").unwrap(),
+            &ctx,
+        )
+        .expect("activate should succeed");
     }
 
     let go_work_path = ws.join("go.work");

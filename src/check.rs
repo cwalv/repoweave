@@ -3265,7 +3265,7 @@ fn scan_unreadable_owned_state(ws_root: &Path) -> Vec<CheckViolation> {
     crate::workspace::discover_projects(ws_root)
         .into_iter()
         .filter_map(|project| {
-            let project_dir = crate::workspace::project_dir(ws_root, project.as_str());
+            let project_dir = crate::workspace::project_dir(ws_root, &project);
             crate::owned_state::unreadable_ledger(&project_dir).map(|error| {
                 let active = presented.as_ref() == Some(&project);
                 CheckViolation::UnreadableOwnedState {
@@ -4238,7 +4238,7 @@ pub fn scan_phantom_merge_drivers(
     for project in projects {
         // The project repo carries `.gitattributes` too — it is where the
         // lock's own declaration lives — and is not a manifest entry.
-        let project_repo = RepoPath::new(project_rel_path(project.name.as_str())).ok();
+        let project_repo = RepoPath::new(project_rel_path(&project.name)).ok();
         for repo in project_repo
             .iter()
             .chain(project.manifest.iter_repo_paths())
@@ -4612,7 +4612,7 @@ fn receipt_names_a_pre_flat_ref(name: &crate::vcs::RawRefName) -> bool {
 fn workweave_checkouts(
     vcs: &dyn crate::vcs::Vcs,
     workweave_dir: &Path,
-    project_name: &str,
+    project_name: &ProjectName,
 ) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = crate::workspace::scan_repos_on_disk(workweave_dir, vcs)
         .into_iter()
@@ -4918,7 +4918,7 @@ fn scan_workweave_repo_branches(
     let flat = EphemeralRefName::mint(&workweave.project, &workweave.name);
     let expected_ref = flat.to_string();
 
-    for abs in workweave_checkouts(vcs, workweave_dir, workweave.project.as_str()) {
+    for abs in workweave_checkouts(vcs, workweave_dir, &workweave.project) {
         // The receipt, if any, lives in this checkout's canonical store —
         // resolved from the checkout itself rather than assembled from the
         // primary and a manifest path, so an inverted topology reports
@@ -5162,7 +5162,7 @@ fn canonical_stores(
     }
 
     for project in crate::workspace::discover_projects(ws_root) {
-        let path = project_dir(ws_root, project.as_str());
+        let path = project_dir(ws_root, &project);
         // "Not a repo" is a typed error, not a state, so the enumeration
         // can ask the question directly instead of guessing from a
         // collapsed `None`.
@@ -5476,14 +5476,14 @@ fn live_minted_ref_names(ws_root: &Path) -> Vec<crate::vcs::EphemeralRefName> {
 fn scan_dangling_receipts(
     vcs: &dyn crate::vcs::Vcs,
     ws_root: &Path,
-    active_project: Option<&str>,
+    active_project: Option<&ProjectName>,
     out: &mut Vec<CheckViolation>,
 ) {
     use crate::workweave_index::RefRegistry;
 
     for project in crate::workspace::discover_projects(ws_root) {
         if let Some(active) = active_project {
-            if project.as_str() != active {
+            if &project != active {
                 continue;
             }
         }
@@ -5554,7 +5554,7 @@ fn scan_dangling_receipts(
 /// [`EphemeralRefName::mint`]: crate::vcs::EphemeralRefName::mint
 fn scan_pre_flat_receipts(
     ws_root: &Path,
-    active_project: Option<&str>,
+    active_project: Option<&ProjectName>,
     out: &mut Vec<CheckViolation>,
 ) {
     use crate::workweave_index::RefRegistry;
@@ -5562,7 +5562,7 @@ fn scan_pre_flat_receipts(
     let mut candidates = Vec::new();
     for project in crate::workspace::discover_projects(ws_root) {
         if let Some(active) = active_project {
-            if project.as_str() != active {
+            if &project != active {
                 continue;
             }
         }
@@ -5671,7 +5671,7 @@ fn submodule_commit_is_local(vcs: &dyn crate::vcs::Vcs, worktree: &Path, path: &
 /// checked out stays, and the scan that follows reports it.
 fn repair_uninitialized_submodules(
     ctx: &crate::workspace::WorkspaceContext,
-    project_scope: Option<&str>,
+    project_scope: Option<&ProjectName>,
 ) {
     for (workweave, workweave_dir, loaded) in workweaves_in_scope(ctx, project_scope) {
         for (repo, entry) in loaded.manifest.iter_entries() {
@@ -5712,7 +5712,7 @@ fn repair_uninitialized_submodules(
 /// tree-integrity scan reports it.
 fn workweaves_in_scope(
     ctx: &crate::workspace::WorkspaceContext,
-    project_scope: Option<&str>,
+    project_scope: Option<&ProjectName>,
 ) -> Vec<(WorkweaveId, PathBuf, Project)> {
     use crate::workspace::Checkout;
 
@@ -5728,7 +5728,7 @@ fn workweaves_in_scope(
         .filter_map(|workweave_dir| {
             let marker = crate::workspace::WorkweaveMarker::read(&workweave_dir).ok()??;
             let project = marker.project().clone();
-            if project_scope.is_some_and(|scope| project.as_str() != scope) {
+            if project_scope.is_some_and(|scope| &project != scope) {
                 return None;
             }
             let name = crate::workweave::workweave_name_for_path(
@@ -5737,11 +5737,8 @@ fn workweaves_in_scope(
                 &workweave_dir,
             )
             .ok()??;
-            let loaded = Project::from_dir(
-                &project_dir(&workweave_dir, project.as_str()),
-                project.clone(),
-            )
-            .ok()?;
+            let loaded =
+                Project::from_dir(&project_dir(&workweave_dir, &project), project.clone()).ok()?;
             Some((WorkweaveId { project, name }, workweave_dir, loaded))
         })
         .collect()
@@ -5764,7 +5761,7 @@ struct MemberSlot {
 fn member_slots(
     ctx: &crate::workspace::WorkspaceContext,
     projects: &[Project],
-    project_scope: Option<&str>,
+    project_scope: Option<&ProjectName>,
 ) -> Vec<MemberSlot> {
     use crate::workspace::Checkout;
 
@@ -5865,7 +5862,7 @@ fn member_permissions_finding(slot: &MemberSlot) -> Option<CheckViolation> {
 fn repair_member_permissions(
     ctx: &crate::workspace::WorkspaceContext,
     projects: &[Project],
-    project_scope: Option<&str>,
+    project_scope: Option<&ProjectName>,
     violations: Vec<CheckViolation>,
     fix_errors: &mut Vec<String>,
 ) -> Vec<CheckViolation> {
@@ -5945,7 +5942,7 @@ impl MemberGap {
 /// stands, `rwv lock` included, so it cannot wait for a pin.
 fn scan_member_gaps(
     ctx: &crate::workspace::WorkspaceContext,
-    project_scope: Option<&str>,
+    project_scope: Option<&ProjectName>,
 ) -> Vec<MemberGap> {
     let mut gaps = Vec::new();
     for (workweave, workweave_dir, loaded) in workweaves_in_scope(ctx, project_scope) {
@@ -5996,7 +5993,7 @@ fn scan_member_gaps(
 /// file names is not this scan's: the orphan walk reports it under `--all`.
 fn scan_leftover_checkouts(
     ctx: &crate::workspace::WorkspaceContext,
-    project_scope: Option<&str>,
+    project_scope: Option<&ProjectName>,
     projects: &[Project],
 ) -> Vec<CheckViolation> {
     let mut found = Vec::new();
@@ -6023,7 +6020,7 @@ fn scan_leftover_checkouts(
             crate::workspace::discover_projects(ctx.primary_path())
                 .into_iter()
                 .filter_map(|name| {
-                    let dir = project_dir(ctx.primary_path(), name.as_str());
+                    let dir = project_dir(ctx.primary_path(), &name);
                     Manifest::from_path(&dir.join(Manifest::FILE_NAME))
                         .ok()
                         .map(|manifest| (name, manifest))
@@ -6053,7 +6050,7 @@ fn scan_leftover_checkouts(
 /// `rwv fetch`, which doctor does not run.
 fn repair_member_gaps(
     ctx: &crate::workspace::WorkspaceContext,
-    project_scope: Option<&str>,
+    project_scope: Option<&ProjectName>,
     fix_errors: &mut Vec<String>,
 ) {
     for gap in scan_member_gaps(ctx, project_scope) {
@@ -6097,7 +6094,7 @@ fn repair_member_gaps(
 /// with a worktree of the canonical clone, or report why it was left.
 fn repair_standalone_members(
     ctx: &crate::workspace::WorkspaceContext,
-    project_scope: Option<&str>,
+    project_scope: Option<&ProjectName>,
     fix_errors: &mut Vec<String>,
 ) {
     for (workweave, workweave_dir, loaded) in workweaves_in_scope(ctx, project_scope) {
@@ -6404,7 +6401,7 @@ pub fn scan_state_hygiene(
 fn branch_discipline_in_scope(
     violation: &CheckViolation,
     ws_root: &Path,
-    active_project: &str,
+    active_project: &ProjectName,
     known_repos: &BTreeSet<RepoPath>,
 ) -> bool {
     match violation {
@@ -6418,7 +6415,7 @@ fn branch_discipline_in_scope(
 fn branch_discipline_path_in_scope(
     repo_path: &Path,
     ws_root: &Path,
-    active_project: &str,
+    active_project: &ProjectName,
     known_repos: &BTreeSet<RepoPath>,
 ) -> bool {
     // Try every recorded container: a workweave repo path may live under
@@ -6435,7 +6432,7 @@ fn branch_discipline_path_in_scope(
             if let Some(dir_name) = ww_dir_name {
                 let ww_dir = ww_parent.join(&dir_name);
                 if let Ok(Some(marker)) = crate::workspace::WorkweaveMarker::read(&ww_dir) {
-                    return marker.project().as_str() == active_project;
+                    return marker.project() == active_project;
                 }
             }
             // No readable marker → conservative: exclude. The tree-integrity
@@ -6458,7 +6455,7 @@ fn branch_discipline_path_in_scope(
         // would be filtered out of the default (project-scoped) run, which
         // is the scope hole this arm closes.
         if let Some(name) = strip_projects_prefix(Path::new(&rel_str)) {
-            return name.to_string_lossy() == active_project;
+            return name.to_string_lossy() == active_project.as_str();
         }
         if let Ok(rp) = RepoPath::new(rel_str) {
             return known_repos.contains(&rp);
@@ -6507,7 +6504,7 @@ pub fn fix_stale_ephemeral_branches(
     ws_root: &Path,
     vcs: &dyn crate::vcs::Vcs,
     projects: &[Project],
-    active_project: Option<&str>,
+    active_project: Option<&ProjectName>,
     known_repos: &BTreeSet<RepoPath>,
 ) -> (Vec<(PathBuf, String)>, Vec<String>) {
     use crate::vcs::{DeletionWarrant, RawRefName};
@@ -6660,7 +6657,7 @@ pub fn fix_stale_ephemeral_branches(
 pub fn fix_branch_model_migration(
     ws_root: &Path,
     vcs: &dyn crate::vcs::Vcs,
-    active_project: Option<&str>,
+    active_project: Option<&ProjectName>,
     adopt_detached: Option<crate::cli::consent::AdoptDetachedConsent>,
 ) -> (Vec<String>, Vec<String>) {
     use crate::vcs::{EphemeralRefName, HeadAttachment};
@@ -6671,7 +6668,7 @@ pub fn fix_branch_model_migration(
 
     for (workweave, workweave_dir) in crate::workweave::list_workweave_dirs(ws_root) {
         if let Some(active) = active_project {
-            if workweave.project.as_str() != active {
+            if &workweave.project != active {
                 continue;
             }
         }
@@ -6690,7 +6687,7 @@ pub fn fix_branch_model_migration(
         let flat = EphemeralRefName::mint(&workweave.project, &workweave.name);
         let mut registry = RefRegistry::for_project(ws_root, &workweave.project);
 
-        for abs in workweave_checkouts(vcs, &workweave_dir, workweave.project.as_str()) {
+        for abs in workweave_checkouts(vcs, &workweave_dir, &workweave.project) {
             let store = crate::workweave::receipt_store_for(vcs, &abs);
             let (flat_present, legacy_refs) = refs_in_workweave_namespace(vcs, &store, &flat);
 
@@ -7017,7 +7014,7 @@ pub fn fix_detached_canonicals(
     ws_root: &Path,
     vcs: &dyn crate::vcs::Vcs,
     projects: &[Project],
-    active_project: Option<&str>,
+    active_project: Option<&ProjectName>,
     known_repos: &BTreeSet<RepoPath>,
     consent: crate::cli::consent::ReattachConsent,
 ) -> (Vec<(PathBuf, String)>, Vec<String>) {
@@ -7090,7 +7087,7 @@ pub fn fix_detached_canonicals(
 pub fn fix_dangling_receipts(
     ws_root: &Path,
     vcs: &dyn crate::vcs::Vcs,
-    active_project: Option<&str>,
+    active_project: Option<&ProjectName>,
 ) -> (Vec<(PathBuf, String)>, Vec<String>) {
     use crate::workweave_index::RefRegistry;
 
@@ -7160,7 +7157,7 @@ pub fn fix_dangling_receipts(
 /// [`crate::health_floor`]).
 pub fn fix_pre_flat_receipts(
     ws_root: &Path,
-    active_project: Option<&str>,
+    active_project: Option<&ProjectName>,
 ) -> (Vec<(PathBuf, String)>, Vec<String>) {
     use crate::workweave_index::RefRegistry;
 
@@ -9014,7 +9011,7 @@ pub fn run_check_locked(ctx: &crate::workspace::WorkspaceContext) -> anyhow::Res
     let mut any_drift = false;
 
     for pname in &project_names {
-        let project_dir = project_dir(&workspace_dir, pname.as_str());
+        let project_dir = project_dir(&workspace_dir, pname);
         let project = match Project::from_dir(&project_dir, pname.clone()) {
             Ok(p) => p,
             Err(e) => {
@@ -9159,7 +9156,7 @@ fn apply_workspace_repairs(
     let project_scope = world.project_scope();
 
     if let Some(active_name) = read_active_project(ctx.primary_path()) {
-        let project_dir = project_dir(ctx.primary_path(), active_name.as_str());
+        let project_dir = project_dir(ctx.primary_path(), &active_name);
         if !project_dir.is_dir() {
             match crate::workspace::clear_active_project(ctx.primary_path()) {
                 Ok(()) => println!(
@@ -9230,7 +9227,7 @@ fn apply_workspace_repairs(
     // unowned until an arm records it.
     for project in crate::workspace::discover_projects(ctx.primary_path()) {
         if let Some(active) = project_scope {
-            if project.as_str() != active {
+            if &project != active {
                 continue;
             }
         }
@@ -9276,7 +9273,7 @@ fn apply_workspace_repairs(
     fix_errors.extend(migration_errs);
 
     for project in &world.input.projects {
-        let project_repo = project_dir(&world.workspace_dir, project.name.as_str());
+        let project_repo = project_dir(&world.workspace_dir, &project.name);
         if !project_repo.is_dir() {
             continue;
         }
@@ -9342,7 +9339,7 @@ fn apply_workspace_repairs(
     }
 
     for project in &world.input.projects {
-        let project_repo = project_dir(&world.workspace_dir, project.name.as_str());
+        let project_repo = project_dir(&world.workspace_dir, &project.name);
         if !project_repo.is_dir() {
             continue;
         }
@@ -9656,8 +9653,7 @@ enum Repair {
 fn stale_generation_findings(world: &DoctorWorld) -> Vec<crate::owned_state::StaleGeneration> {
     let mut findings = Vec::new();
     for project in &world.input.projects {
-        let project_dir =
-            crate::workspace::project_dir(&world.workspace_dir, project.name.as_str());
+        let project_dir = crate::workspace::project_dir(&world.workspace_dir, &project.name);
         findings.extend(crate::owned_state::stale_generations(
             &project_dir,
             &project.name,
@@ -9844,7 +9840,7 @@ fn collect_doctor_issues(world: &DoctorWorld, repair: Repair) -> Vec<Issue> {
             // unconditionally, so from a workweave it would rewrite the
             // PRIMARY project's managed files — `activate_intent_at` takes the
             // weave dir, and `workspace_dir` is `ctx.active_path()`.
-            match crate::activate::activate_intent_at(project.name.as_str(), workspace_dir) {
+            match crate::activate::activate_intent_at(&project.name, workspace_dir) {
                 Ok(_) => println!(
                     "[fixed] core: regenerated integration content for project `{}` (drift detected)",
                     project.name
@@ -10149,7 +10145,7 @@ pub fn run_check(
         let project_scope = if scope_all {
             None
         } else {
-            ctx.active_project().map(|p| p.as_str())
+            ctx.active_project()
         };
         repair_member_gaps(ctx, project_scope, &mut fix_errors);
         repair_standalone_members(ctx, project_scope, &mut fix_errors);
@@ -10329,11 +10325,11 @@ impl DoctorWorld {
     /// `None` visits every project. A workspace with no active project takes
     /// the weave-wide path even without `--all`, because there is nothing to
     /// narrow to.
-    fn project_scope(&self) -> Option<&str> {
+    fn project_scope(&self) -> Option<&ProjectName> {
         if self.scope_all {
             None
         } else {
-            self.active_project.as_ref().map(|n| n.as_str())
+            self.active_project.as_ref()
         }
     }
 }
@@ -10384,7 +10380,7 @@ fn load_doctor_world(
     let project_scan = crate::workspace::scan_projects(&workspace_dir);
 
     for name in &project_scan.projects {
-        let dir = project_dir(&workspace_dir, name.as_str());
+        let dir = project_dir(&workspace_dir, name);
         let manifest_path = dir.join(Manifest::FILE_NAME);
 
         if !scope_all {
@@ -10538,7 +10534,7 @@ fn collect_doctor_violations(
     {
         use crate::workspace::read_active_project;
         if let Some(active_name) = read_active_project(ctx.primary_path()) {
-            let project_dir = project_dir(ctx.primary_path(), active_name.as_str());
+            let project_dir = project_dir(ctx.primary_path(), &active_name);
             if !project_dir.is_dir() {
                 violations.push(CheckViolation::DanglingActiveProject {
                     project: active_name,
@@ -10565,7 +10561,7 @@ fn collect_doctor_violations(
     // project whose only manifest is the legacy one never loads.
     for finding in scan_workspace_for_legacy_manifests(workspace_dir) {
         if let Some(active) = project_scope {
-            if finding.project.as_str() != active {
+            if &finding.project != active {
                 continue;
             }
         }
@@ -10584,7 +10580,7 @@ fn collect_doctor_violations(
 
     for project in crate::workspace::discover_projects(ctx.primary_path()) {
         if let Some(active) = project_scope {
-            if project.as_str() != active {
+            if &project != active {
                 continue;
             }
         }
@@ -10776,7 +10772,7 @@ fn collect_doctor_violations(
             .map(|(ww, abs, _)| (ww.clone(), abs.clone()))
             .collect();
     for project in &input.projects {
-        let project_rel = project_rel_path(project.name.as_str());
+        let project_rel = project_rel_path(&project.name);
         let project_repo_path = match RepoPath::new(project_rel.clone()) {
             Ok(rp) => rp,
             Err(_) => continue,
@@ -10826,7 +10822,7 @@ fn collect_doctor_violations(
     ));
 
     for project in &input.projects {
-        let project_repo = project_dir(workspace_dir, project.name.as_str());
+        let project_repo = project_dir(workspace_dir, &project.name);
         if !project_repo.is_dir() {
             continue;
         }

@@ -53,7 +53,7 @@ pub(crate) fn read(
         Err(e) => return Err(e),
     }
     let bytes = std::fs::read(&path)?;
-    let dir = project_dir(root, owner.as_str());
+    let dir = project_dir(root, owner);
     let project_copy = match std::fs::read(dir.join(name)) {
         Ok(copy) => Some(copy),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
@@ -77,10 +77,9 @@ impl RootWrite {
             None => true,
             Some(copy) if *copy == self.bytes => true,
             Some(copy) if self.recorded.as_deref() == Some(owned_digest(copy).as_str()) => true,
-            Some(_) => vcs.holds_committed_content(
-                &project_dir(root, self.owner.as_str()),
-                Path::new(&self.name),
-            )?,
+            Some(_) => {
+                vcs.holds_committed_content(&project_dir(root, &self.owner), Path::new(&self.name))?
+            }
         };
         Ok(if replaceable {
             Verdict::Adopt
@@ -93,7 +92,7 @@ impl RootWrite {
     /// project copy takes its bytes, and the root file goes so the link can
     /// stand there again.
     pub(crate) fn adoption(&self, root: &Path) -> Vec<Op> {
-        let dest = project_dir(root, self.owner.as_str()).join(&self.name);
+        let dest = project_dir(root, &self.owner).join(&self.name);
         let mut ops = Vec::new();
         if std::fs::read(&dest).ok().as_deref() != Some(self.bytes.as_slice()) {
             ops.push(Op::Write {
@@ -110,7 +109,7 @@ impl RootWrite {
     fn in_project(&self) -> String {
         format!(
             "{}/{}",
-            crate::workspace::project_rel_path(self.owner.as_str()),
+            crate::workspace::project_rel_path(&self.owner),
             self.name
         )
     }

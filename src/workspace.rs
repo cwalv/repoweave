@@ -298,20 +298,20 @@ pub(crate) fn projects_dir(root: &Path) -> PathBuf {
 }
 
 /// `<root>/projects/<project>` — where one project's files live.
-pub(crate) fn project_dir(root: &Path, project: &str) -> PathBuf {
-    projects_dir(root).join(native_relative(project))
+pub(crate) fn project_dir(root: &Path, project: &ProjectName) -> PathBuf {
+    projects_dir(root).join(native_relative(project.as_str()))
 }
 
 /// `projects/<project>` — the same directory, relative to a weave root.
-pub(crate) fn project_rel_dir(project: &str) -> PathBuf {
-    Path::new(PROJECTS_DIR).join(native_relative(project))
+pub(crate) fn project_rel_dir(project: &ProjectName) -> PathBuf {
+    Path::new(PROJECTS_DIR).join(native_relative(project.as_str()))
 }
 
 /// `projects/<project>` with forward slashes, whatever the platform.
 ///
 /// The spelling [`RepoPath`] and the wire formats require; [`project_rel_dir`]
 /// renders backslashes on Windows and cannot serve them.
-pub(crate) fn project_rel_path(project: &str) -> String {
+pub(crate) fn project_rel_path(project: &ProjectName) -> String {
     format!("{PROJECTS_DIR}/{project}")
 }
 
@@ -393,7 +393,7 @@ pub fn confusable_warning(pair: &ConfusableSiblings) -> String {
 /// Runs at mint on every host, including the case-sensitive ones where both
 /// names are perfectly legal — that is the point: the pair is created here and
 /// strands somewhere else, so here is where it is cheap to say so.
-pub fn warn_confusable_project_siblings(root: &Path, project: &str) {
+pub fn warn_confusable_project_siblings(root: &Path, project: &ProjectName) {
     let dir = project_dir(root, project);
     let (Some(parent), Some(leaf)) = (dir.parent(), dir.file_name().and_then(|n| n.to_str()))
     else {
@@ -734,7 +734,7 @@ fn registry_segments_and_unparseable(root: &Path) -> (std::collections::BTreeSet
         .collect();
 
     for project in discover_projects(root) {
-        let manifest_path = project_dir(root, project.as_str()).join(Manifest::FILE_NAME);
+        let manifest_path = project_dir(root, &project).join(Manifest::FILE_NAME);
         let Ok(manifest) = Manifest::from_path(&manifest_path) else {
             any_unparseable = true;
             continue;
@@ -994,10 +994,10 @@ pub fn discover_projects(root: &Path) -> Vec<ProjectName> {
 /// at the first manifest, so a directory below a project is that project's
 /// content and can never be a project of its own. Minting one there would
 /// write a manifest the enumeration is guaranteed never to reach.
-pub fn enclosing_project(root: &Path, name: &str) -> Option<String> {
+pub fn enclosing_project(root: &Path, name: &ProjectName) -> Option<String> {
     let mut dir = projects_dir(root);
     let mut ancestors = Vec::new();
-    for segment in name.split('/') {
+    for segment in name.as_str().split('/') {
         ancestors.push(dir.clone());
         dir.push(segment);
     }
@@ -1029,7 +1029,7 @@ pub struct WorkspaceSession {
     pub root: PathBuf,
     container_kind: ContainerKind,
     repos_on_disk: Vec<RepoPath>,
-    project_paths: Vec<String>,
+    project_paths: Vec<ProjectName>,
 }
 
 impl WorkspaceSession {
@@ -1038,10 +1038,7 @@ impl WorkspaceSession {
     pub fn new(root: &Path) -> Self {
         let vcs = crate::vcs::probe_vcs();
         let repos_on_disk = scan_repos_on_disk(root, vcs.as_ref());
-        let project_paths = discover_projects(root)
-            .into_iter()
-            .map(|p| p.as_str().to_owned())
-            .collect();
+        let project_paths = discover_projects(root);
         let container_kind =
             observe_root(root).map_or(ContainerKind::Primary, |observed| observed.container_kind());
         Self {
@@ -1088,7 +1085,7 @@ impl WorkspaceSession {
         workweave: Option<&'a crate::manifest::WorkweaveConfig>,
     ) -> IntegrationContextBase<'a> {
         IntegrationContextBase {
-            output_dir: project_dir(&self.root, project.as_str()),
+            output_dir: project_dir(&self.root, project),
             workspace_root: &self.root,
             container_kind: self.container_kind,
             project,
@@ -1111,7 +1108,7 @@ impl WorkspaceSession {
     }
 
     /// The discovered project path names (directory names under `projects/`).
-    pub fn project_paths(&self) -> &[String] {
+    pub fn project_paths(&self) -> &[ProjectName] {
         &self.project_paths
     }
 }
@@ -1480,7 +1477,7 @@ impl WorkspaceContext {
     /// sends the reader to `.rwv-active`, which is exactly what a bound
     /// resolution did not read.
     fn require_bound_project_on_disk(&self, project: &ProjectName) -> anyhow::Result<()> {
-        if project_dir(self.primary_path(), project.as_str()).is_dir() {
+        if project_dir(self.primary_path(), project).is_dir() {
             return Ok(());
         }
         let existing = spelled_project_names(self.primary_path());
@@ -1706,7 +1703,7 @@ impl WorkspaceContext {
     pub fn require_active_project_on_disk(&self) -> anyhow::Result<&ProjectName> {
         let name = self.require_active_project()?;
 
-        let project_dir = project_dir(self.primary_path(), name.as_str());
+        let project_dir = project_dir(self.primary_path(), name);
         if project_dir.is_dir() {
             return Ok(name);
         }
@@ -1784,7 +1781,7 @@ impl WorkspaceContext {
                 if let Some(p) = &active {
                     lines.push(format!("Project: {}", p.as_str()));
                     let manifest_path =
-                        project_dir(&self.primary_root, p.as_str()).join(Manifest::FILE_NAME);
+                        project_dir(&self.primary_root, p).join(Manifest::FILE_NAME);
                     if let Ok(manifest) = Manifest::from_path(&manifest_path) {
                         lines.push(format!("Repos: {}", manifest.len()));
                     }
@@ -1802,7 +1799,7 @@ impl WorkspaceContext {
                 if let Some(p) = &active {
                     lines.push(format!("Project: {}", p.as_str()));
                     let manifest_path =
-                        project_dir(&self.primary_root, p.as_str()).join(Manifest::FILE_NAME);
+                        project_dir(&self.primary_root, p).join(Manifest::FILE_NAME);
                     if let Ok(manifest) = Manifest::from_path(&manifest_path) {
                         lines.push(format!("Repos: {}", manifest.len()));
                     }
@@ -2686,7 +2683,7 @@ mod tests {
     /// a marker-bearing directory a name a resolution can find.
     fn register_workweave(primary: &Path, project: &str, name: &str, dir: &Path) {
         let project = ProjectName::new(project).unwrap();
-        std::fs::create_dir_all(project_dir(primary, project.as_str())).unwrap();
+        std::fs::create_dir_all(project_dir(primary, &project)).unwrap();
         crate::workweave_index::record_workweave(
             primary,
             &project,
@@ -2708,12 +2705,13 @@ mod tests {
         let root = Path::new(r"C:\w");
         let member = root.join(RepoPath::new("github/org/repo").unwrap().as_path());
         assert_eq!(member.as_os_str(), r"C:\w\github\org\repo");
+        let project = ProjectName::new("chatly/web-app").unwrap();
         assert_eq!(
-            project_dir(root, "chatly/web-app").as_os_str(),
+            project_dir(root, &project).as_os_str(),
             r"C:\w\projects\chatly\web-app"
         );
         assert_eq!(
-            root.join(project_rel_dir("chatly/web-app")).as_os_str(),
+            root.join(project_rel_dir(&project)).as_os_str(),
             r"C:\w\projects\chatly\web-app"
         );
     }

@@ -213,7 +213,7 @@ fn update_for_project(
 ) -> anyhow::Result<()> {
     let active_root = ctx.active_path();
     let primary_root = ctx.primary_path();
-    let project_dir = crate::workspace::project_dir(active_root, project_name.as_str());
+    let project_dir = crate::workspace::project_dir(active_root, project_name);
     let project = Project::from_dir(&project_dir, project_name.clone())
         .with_context(|| format!("failed to load project '{}'", project_name))?;
 
@@ -431,8 +431,8 @@ fn update_for_project(
     let mut authored = BTreeSet::new();
     let skipped = if filter.is_empty() {
         let skipped = match workweave_dir {
-            Some(dir) => crate::activate::activate_workweave_intent(project_name.as_str(), dir),
-            None => crate::activate::activate_intent_with_options(project_name.as_str(), ctx, opts),
+            Some(dir) => crate::activate::activate_workweave_intent(project_name, dir),
+            None => crate::activate::activate_intent_with_options(project_name, ctx, opts),
         }
         .context("failed to regenerate integration content after update")?;
         authored = crate::activate::owned_paths(active_root, project_name, &project.manifest);

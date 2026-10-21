@@ -42,7 +42,7 @@ impl Listing {
             else {
                 return Listing::Unplaced;
             };
-            let role_in = |project: &str| {
+            let role_in = |project: &crate::manifest::ProjectName| {
                 Manifest::from_path(
                     &crate::workspace::project_dir(root, project).join(Manifest::FILE_NAME),
                 )
@@ -50,13 +50,13 @@ impl Listing {
                 .and_then(|m| m.get_entry(&repo).map(|e| e.role))
             };
             if let Some(marker) = crate::workspace::WorkweaveMarker::read(root).ok().flatten() {
-                return Listing::Workweave(role_in(marker.project().as_str()));
+                return Listing::Workweave(role_in(marker.project()));
             }
             if crate::workspace::projects_dir(root).is_dir() {
                 return Listing::Primary(
                     crate::workspace::discover_projects(root)
                         .into_iter()
-                        .filter_map(|p| role_in(p.as_str()).map(|role| (p, role)))
+                        .filter_map(|p| role_in(&p).map(|role| (p, role)))
                         .collect(),
                 );
             }

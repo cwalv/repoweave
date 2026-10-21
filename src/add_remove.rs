@@ -45,7 +45,7 @@ use std::path::{Path, PathBuf};
 /// project's manifest.
 pub(crate) fn find_project(ctx: &WorkspaceContext) -> anyhow::Result<(ProjectName, PathBuf)> {
     let name = ctx.require_active_project_on_disk()?.clone();
-    let dir = project_dir(ctx.active_path(), name.as_str());
+    let dir = project_dir(ctx.active_path(), &name);
     Ok((name, dir))
 }
 
@@ -178,7 +178,7 @@ pub(crate) fn settle_manifest(
     opts: ActivateOptions,
 ) -> anyhow::Result<()> {
     let root = ctx.active_path();
-    let manifest_path = project_dir(root, project.as_str()).join(Manifest::FILE_NAME);
+    let manifest_path = project_dir(root, project).join(Manifest::FILE_NAME);
     let on_disk = Manifest::from_path(&manifest_path).with_context(|| {
         format!(
             "failed to load manifest at {}",
@@ -204,7 +204,7 @@ pub(crate) fn settle_manifest(
         return Ok(());
     }
 
-    match activate_intent_for(project.as_str(), ctx, opts, departing) {
+    match activate_intent_for(project, ctx, opts, departing) {
         Ok(_) => {
             // Report only: the manifest change has already landed.
             for issue in crate::activate::member_incompatibilities(root, project, manifest) {
@@ -1681,7 +1681,7 @@ fn find_other_projects_with_roles(
         if &project == active_project {
             continue;
         }
-        let manifest_path = project_dir(workspace_root, project.as_str()).join(Manifest::FILE_NAME);
+        let manifest_path = project_dir(workspace_root, &project).join(Manifest::FILE_NAME);
         if let Ok(manifest) = Manifest::from_path(&manifest_path) {
             if let Some(entry) = manifest.get_entry(repo_path) {
                 referencing.push((project, entry.role));

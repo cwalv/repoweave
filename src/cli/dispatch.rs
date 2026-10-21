@@ -686,7 +686,7 @@ pub fn run() -> anyhow::Result<()> {
         }) => {
             let ctx = WorkspaceContext::resolve_invocation(&origin_dir, None)?;
             activate::activate_with_options(
-                &project,
+                &ProjectName::new(project)?,
                 &ctx,
                 activate::ActivateOptions { no_materialize },
             )?;
@@ -854,7 +854,11 @@ pub fn run() -> anyhow::Result<()> {
                     activate::ActivateOptions { no_materialize },
                 )?;
             } else {
-                init::init(&project, provider.as_deref(), &origin_dir)?;
+                init::init(
+                    &ProjectName::new(project)?,
+                    provider.as_deref(),
+                    &origin_dir,
+                )?;
             }
         }
         Some(Commands::Role {

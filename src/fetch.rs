@@ -228,10 +228,10 @@ pub fn run_fetch(
 
     // Resolve source to a clone URL (supports full URLs and owner/repo shorthand).
     let url = resolve_source(source)?;
-    let name = registry::repo_name_from_source(url.as_str());
+    let name = crate::manifest::ProjectName::new(registry::repo_name_from_source(url.as_str()))?;
     let projects_dir = projects_dir(workspace_root);
     std::fs::create_dir_all(&projects_dir).context("failed to create projects/ directory")?;
-    let project_dir = projects_dir.join(&name);
+    let project_dir = crate::workspace::project_dir(workspace_root, &name);
     if project_dir.exists() {
         crate::refuse!(
             RefusalKind::ProjectDirOccupied,
@@ -352,7 +352,7 @@ pub fn run_fetch_in_place(
     // Per-workspace state (rwv.toml, rwv.lock) lives under active_path — the
     // workweave when in one, primary otherwise. Mirrors add_remove.rs's
     // find_project_dir.
-    let project_dir = project_dir(ctx.active_path(), name.as_str());
+    let project_dir = project_dir(ctx.active_path(), &name);
 
     // Clone destination (canonical store) is always primary's slot — clone-
     // topology I1. Passing primary_path() as workspace_root routes fetch_one
@@ -364,7 +364,7 @@ pub fn run_fetch_in_place(
         mut envelope,
         moved_or_created,
     } = fetch_project_repos(
-        name.as_str(),
+        &name,
         &project_dir,
         workspace_root,
         mode,
@@ -415,9 +415,7 @@ pub fn run_fetch_in_place(
         envelope
             .skipped
             .extend(crate::activate::activate_with_options(
-                project.as_str(),
-                invocation,
-                activation,
+                project, invocation, activation,
             )?);
     } else if checkout_changed {
         let presented = observe_root(ctx.active_path())
@@ -425,9 +423,9 @@ pub fn run_fetch_in_place(
             .and_then(RootObservation::presented_project)
             .cloned();
         let skip = match presented {
-            Some(active) if active == name => SkippedEffect::hooks_while_active(active.as_str()),
+            Some(active) if active == name => SkippedEffect::hooks_while_active(&active),
             _ => SkippedEffect::install_hooks(SkipReason::NotPresented {
-                project: name.to_string(),
+                project: name.clone(),
             }),
         };
         skip.report();
@@ -554,7 +552,7 @@ fn materialize_workweave_members(
 /// here, before refusing.
 #[allow(clippy::too_many_arguments)]
 fn fetch_project_repos(
-    name: &str,
+    name: &crate::manifest::ProjectName,
     project_dir: &Path,
     workspace_root: &Path,
     mode: FetchMode,
@@ -912,7 +910,7 @@ fn fetch_project_repos(
     if let Some(activation) = auto_activate {
         match crate::workspace::read_active_project(workspace_root) {
             Some(active) => {
-                let skip = SkippedEffect::activation_while_active(active.as_str(), name);
+                let skip = SkippedEffect::activation_while_active(&active, name);
                 // Route to stderr in JSON mode so stdout stays JSON-only.
                 if json {
                     eprintln!("{}", skip.line());

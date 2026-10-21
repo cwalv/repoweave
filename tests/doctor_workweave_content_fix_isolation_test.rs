@@ -315,8 +315,11 @@ fn doctor_fix_from_workweave_leaves_primary_project_dir_byte_identical() {
     //    and surfaces the top-level symlink at ws/go.work.
     // ------------------------------------------------------------------
     let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
-    repoweave::activate::activate_intent("web-app", &ctx)
-        .expect("primary activate_intent should succeed");
+    repoweave::activate::activate_intent(
+        &repoweave::manifest::ProjectName::new("web-app").unwrap(),
+        &ctx,
+    )
+    .expect("primary activate_intent should succeed");
     assert!(
         project_dir.join("go.work").exists(),
         "primary go.work should live at projects/web-app/go.work"

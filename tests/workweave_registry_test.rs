@@ -691,5 +691,7 @@ fn an_index_recording_an_illegal_workweave_name_is_refused_at_load() {
         .args(["doctor"])
         .current_dir(&ws)
         .assert()
-        .stdout(predicate::str::contains("'fe--at' is not a valid workweave name"));
+        .stdout(predicate::str::contains(
+            "'fe--at' is not a valid workweave name",
+        ));
 }

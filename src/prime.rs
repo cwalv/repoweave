@@ -89,7 +89,7 @@ pub fn render_context(ctx: &WorkspaceContext) -> String {
 
     // -- Repository table -------------------------------------------------------
     if let Some(p) = project {
-        let manifest_path = project_dir(ctx.primary_path(), p.as_str()).join(Manifest::FILE_NAME);
+        let manifest_path = project_dir(ctx.primary_path(), p).join(Manifest::FILE_NAME);
         if let Ok(manifest) = Manifest::from_path(&manifest_path) {
             out.push('\n');
             render_repo_table(&mut out, &manifest);

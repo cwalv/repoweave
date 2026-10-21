@@ -128,7 +128,7 @@ fn fixture() -> Fixture {
     // for cannot be left over from the fixture's own setup.
     let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
     repoweave::activate::activate_intent_with_options(
-        "app",
+        &repoweave::manifest::ProjectName::new("app").unwrap(),
         &ctx,
         repoweave::activate::ActivateOptions {
             no_materialize: true,

@@ -163,7 +163,7 @@ fn fixture() -> Fixture {
     // ---- author the managed Cargo.toml (no hooks: primary gets no lock) ----
     let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
     repoweave::activate::activate_intent_with_options(
-        "web-app",
+        &repoweave::manifest::ProjectName::new("web-app").unwrap(),
         &ctx,
         repoweave::activate::ActivateOptions {
             no_materialize: true,

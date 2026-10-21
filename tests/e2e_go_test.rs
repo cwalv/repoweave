@@ -116,7 +116,11 @@ func Message() string {
     // ------------------------------------------------------------------
     {
         let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(root, None).unwrap();
-        repoweave::activate::activate_intent("web-app", &ctx).expect("activate should succeed");
+        repoweave::activate::activate_intent(
+            &repoweave::manifest::ProjectName::new("web-app").unwrap(),
+            &ctx,
+        )
+        .expect("activate should succeed");
     }
 
     // ------------------------------------------------------------------
@@ -216,7 +220,11 @@ fn go_primary_path_preserves_existing_go_line_no_downgrade() {
     std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
     {
         let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(root, None).unwrap();
-        repoweave::activate::activate_intent("web-app", &ctx).expect("activate should succeed");
+        repoweave::activate::activate_intent(
+            &repoweave::manifest::ProjectName::new("web-app").unwrap(),
+            &ctx,
+        )
+        .expect("activate should succeed");
     }
 
     let go_work_content = std::fs::read_to_string(root.join("go.work")).unwrap();
@@ -327,7 +335,11 @@ func Message() string {
     std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
     {
         let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(root, None).unwrap();
-        repoweave::activate::activate_intent("web-app", &ctx).expect("activate should succeed");
+        repoweave::activate::activate_intent(
+            &repoweave::manifest::ProjectName::new("web-app").unwrap(),
+            &ctx,
+        )
+        .expect("activate should succeed");
     }
 
     let go_work_path = root.join("go.work");
@@ -466,7 +478,11 @@ fn go_mod_download_writes_through_the_declared_go_work_sum_link() {
     std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
     {
         let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(root, None).unwrap();
-        repoweave::activate::activate_intent("web-app", &ctx).expect("activate should succeed");
+        repoweave::activate::activate_intent(
+            &repoweave::manifest::ProjectName::new("web-app").unwrap(),
+            &ctx,
+        )
+        .expect("activate should succeed");
     }
 
     let root_link = root.join("go.work.sum");

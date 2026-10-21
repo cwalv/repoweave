@@ -39,7 +39,7 @@ pub struct IntegrationContextBase<'a> {
     /// All git repos found on disk under registry directories.
     pub all_repos_on_disk: &'a [RepoPath],
     /// All project paths.
-    pub all_project_paths: &'a [String],
+    pub all_project_paths: &'a [ProjectName],
     /// Pre-computed detection cache. Maps manifest filenames to the sorted list
     /// of active repo paths that contain that manifest.
     pub detection_cache: &'a HashMap<String, Vec<String>>,

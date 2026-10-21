@@ -1005,7 +1005,7 @@ role = "owned"
     // (rwv add) ran earlier and committed both rwv.toml and Cargo.toml.
     let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
     repoweave::activate::activate_intent_with_options(
-        project,
+        &repoweave::manifest::ProjectName::new(project).unwrap(),
         &ctx,
         repoweave::activate::ActivateOptions {
             no_materialize: true,

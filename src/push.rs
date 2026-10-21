@@ -179,7 +179,7 @@ pub fn run_push(
 
     let project_name = ctx.require_active_project_on_disk()?.clone();
     let primary_root = ctx.primary_path().to_path_buf();
-    let project_dir = project_dir(&primary_root, project_name.as_str());
+    let project_dir = project_dir(&primary_root, &project_name);
 
     let project = Project::from_dir(&project_dir, project_name.clone())
         .with_context(|| format!("failed to load project '{}'", project_name))?;
@@ -637,7 +637,7 @@ pub fn run_push(
     //    the manifest SHAs we just pushed — pushing it last preserves the
     //    invariant that the remote-side lock never references unpushed
     //    objects.
-    let project_path_str = project_rel_path(project_name.as_str());
+    let project_path_str = project_rel_path(&project_name);
     let project_abs_str = project_dir.to_string_lossy().into_owned();
 
     if !json {
@@ -822,7 +822,7 @@ fn push_one(
 /// can mirror primary's layout when staging fixtures.
 #[allow(dead_code)]
 pub(crate) fn project_repo_dir(primary_root: &Path, project: &ProjectName) -> PathBuf {
-    project_dir(primary_root, project.as_str())
+    project_dir(primary_root, project)
 }
 
 #[cfg(test)]

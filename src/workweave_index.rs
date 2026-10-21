@@ -191,7 +191,7 @@ struct RefReceipt {
 
 /// The absolute path of the index file for `(primary_root, project)`.
 pub fn index_path(primary_root: &Path, project: &ProjectName) -> PathBuf {
-    project_dir(primary_root, project.as_str()).join(INDEX_FILENAME)
+    project_dir(primary_root, project).join(INDEX_FILENAME)
 }
 
 /// The default container for a primary workspace: `<parent-of-root>/.workweaves`.
@@ -393,7 +393,7 @@ impl IndexClaim {
 
 /// Where `(primary_root, project)`'s index claim lives.
 fn claim_path(primary_root: &Path, project: &ProjectName) -> PathBuf {
-    project_dir(primary_root, project.as_str()).join(INDEX_CLAIM_FILE)
+    project_dir(primary_root, project).join(INDEX_CLAIM_FILE)
 }
 
 /// Resolve the effective container for new workweaves in `(primary_root, project)`.
@@ -979,7 +979,7 @@ fn same_store(recorded: &Path, query_key: &Path) -> bool {
 /// `tracked-index` finding is the correctness net if a committed copy
 /// slips through.
 pub fn ensure_ignore_entry(primary_root: &Path, project: &ProjectName) -> anyhow::Result<()> {
-    let project_dir = project_dir(primary_root, project.as_str());
+    let project_dir = project_dir(primary_root, project);
     ensure_ignored_in_dir(&project_dir, INDEX_FILENAME)?;
     ensure_ignored_in_dir(&project_dir, INDEX_CLAIM_FILE)
 }

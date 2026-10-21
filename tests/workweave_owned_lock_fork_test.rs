@@ -165,7 +165,7 @@ fn fixture(source_lock: Option<&str>) -> Fixture {
     // is this fixture's own, not whatever a resolver would produce here.
     let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
     repoweave::activate::activate_intent_with_options(
-        "web-app",
+        &repoweave::manifest::ProjectName::new("web-app").unwrap(),
         &ctx,
         repoweave::activate::ActivateOptions {
             no_materialize: true,

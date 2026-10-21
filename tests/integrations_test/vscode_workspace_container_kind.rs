@@ -27,7 +27,7 @@ fn ctx_with_view<'a>(
     config: &'a IntegrationConfig,
     cache: &'a HashMap<String, Vec<String>>,
     repos_on_disk: &'a [RepoPath],
-    project_paths: &'a [String],
+    project_paths: &'a [ProjectName],
     kind: ContainerKind,
 ) -> IntegrationContext<'a> {
     IntegrationContext {
@@ -117,7 +117,7 @@ fn workweave_regen_preserves_entries_it_cannot_observe() {
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
     let on_disk = vec![RepoPath::new("github/acme/server").expect("known-safe literal")];
-    let projects = vec!["test-project".to_string()];
+    let projects = vec![ProjectName::new("test-project").unwrap()];
     let ctx = ctx_with_view(
         root,
         &project,
@@ -183,7 +183,10 @@ fn workweave_regen_with_no_member_change_is_a_fixpoint() {
         RepoPath::new("github/acme/server").expect("known-safe literal"),
         RepoPath::new("github/other/thing").expect("known-safe literal"),
     ];
-    let wide_projects = vec!["test-project".to_string(), "sibling".to_string()];
+    let wide_projects = vec![
+        ProjectName::new("test-project").unwrap(),
+        ProjectName::new("sibling").unwrap(),
+    ];
     let primary_ctx = ctx_with_view(
         root,
         &project,
@@ -206,7 +209,7 @@ fn workweave_regen_with_no_member_change_is_a_fixpoint() {
     as_workweave_root(root);
     std::fs::remove_dir_all(root.join("github/other")).unwrap();
     let narrow_disk = vec![RepoPath::new("github/acme/server").expect("known-safe literal")];
-    let narrow_projects = vec!["test-project".to_string()];
+    let narrow_projects = vec![ProjectName::new("test-project").unwrap()];
     let workweave_ctx = ctx_with_view(
         root,
         &project,
@@ -252,7 +255,7 @@ fn workweave_regen_drops_an_entry_whose_path_it_can_see() {
         RepoPath::new("github/acme/server").expect("known-safe literal"),
         RepoPath::new("github/acme/legacy").expect("known-safe literal"),
     ];
-    let projects = vec!["test-project".to_string()];
+    let projects = vec![ProjectName::new("test-project").unwrap()];
     let ctx = ctx_with_view(
         root,
         &project,
@@ -300,7 +303,7 @@ fn primary_regen_drops_entries_for_genuinely_absent_paths() {
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
     let on_disk = vec![RepoPath::new("github/acme/server").expect("known-safe literal")];
-    let projects = vec!["test-project".to_string()];
+    let projects = vec![ProjectName::new("test-project").unwrap()];
     let ctx = ctx_with_view(
         root,
         &project,
@@ -346,7 +349,7 @@ fn verify_in_a_workweave_does_not_report_preserved_entries_as_drift() {
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
     let on_disk = vec![RepoPath::new("github/acme/server").expect("known-safe literal")];
-    let projects = vec!["test-project".to_string()];
+    let projects = vec![ProjectName::new("test-project").unwrap()];
     let ctx = ctx_with_view(
         root,
         &project,
@@ -395,7 +398,7 @@ fn verify_at_primary_reports_a_shrunk_generated_set_as_drift() {
         RepoPath::new("github/acme/server").expect("known-safe literal"),
         RepoPath::new("github/other/thing").expect("known-safe literal"),
     ];
-    let projects = vec!["test-project".to_string()];
+    let projects = vec![ProjectName::new("test-project").unwrap()];
     let ctx = ctx_with_view(
         root,
         &project,

@@ -89,15 +89,14 @@ fn bootstrap_workspace_if_empty(cwd: &Path) -> anyhow::Result<()> {
 /// - Writes an empty `rwv.toml` (`repositories: {}`).
 /// - If `provider` is given (e.g., `"github/owner"`), configures a git remote.
 /// - Activates the project (writes `.rwv-active` and generates ecosystem files).
-pub fn init(name: &str, provider: Option<&str>, origin_dir: &Path) -> anyhow::Result<()> {
-    // Validate before anything touches disk: `activate` re-validates this
-    // same name downstream, but by then `git init`, the manifest write and
-    // the `.gitattributes` write have already happened, and a refused name
-    // leaves that debris in place — including for a retry, which then trips
-    // the collision check against its own leftovers. The same holds for
-    // `--provider`, whose remote URL is minted from the name.
-    crate::manifest::ProjectName::new(name)?;
-    let remote_url = provider.map(|p| provider_remote_url(p, name)).transpose()?;
+pub fn init(
+    name: &crate::manifest::ProjectName,
+    provider: Option<&str>,
+    origin_dir: &Path,
+) -> anyhow::Result<()> {
+    let remote_url = provider
+        .map(|p| provider_remote_url(p, name.as_str()))
+        .transpose()?;
 
     // Bootstrap here rather than at dispatch — the origin dir may be empty
     // (no workspace to resolve yet), and `bootstrap_workspace_if_empty`
@@ -242,7 +241,7 @@ pub fn init_adopt(
     // string computation, so this is free; the clone below is not, and a
     // refused name must not leave a partial clone for a retry to trip over.
     let (clone_url, project_name) = resolve_adopt_source(source)?;
-    crate::manifest::ProjectName::new(&project_name)?;
+    let project_name = crate::manifest::ProjectName::new(project_name)?;
 
     // Same bootstrap-then-first-resolve pattern as `init` above.
     bootstrap_workspace_if_empty(origin_dir)?;

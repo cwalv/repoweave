@@ -89,7 +89,7 @@ fn weave(root: &Path) -> PathBuf {
 
     let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
     repoweave::activate::activate_intent_with_options(
-        "app",
+        &repoweave::manifest::ProjectName::new("app").unwrap(),
         &ctx,
         repoweave::activate::ActivateOptions {
             no_materialize: true,
@@ -597,7 +597,7 @@ fn weave_with_cargo_config(root: &Path) -> PathBuf {
 
     let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();
     repoweave::activate::activate_intent_with_options(
-        "app",
+        &repoweave::manifest::ProjectName::new("app").unwrap(),
         &ctx,
         repoweave::activate::ActivateOptions {
             no_materialize: true,
