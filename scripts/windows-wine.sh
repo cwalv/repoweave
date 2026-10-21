@@ -168,9 +168,12 @@ run_one() {
     shift
     # The host toolchain's variables would reach the Windows process as they
     # are: CARGO_HOME would point the in-Wine cargo at the host's registry,
-    # and a weave's rustc-wrapper names a program Wine cannot start.
-    env -u CARGO_HOME -u RUSTUP_HOME -u RUSTUP_TOOLCHAIN -u RUST_RECURSION_COUNT \
-        WINEPREFIX="$WINE_CACHE/prefix-$SLOT" WINEPATH="$WINE_WINDOWS_PATH" \
+    # and a weave's rustc-wrapper names a program Wine cannot start. Wine
+    # encodes a non-ASCII file name for the host with the host locale, which
+    # a Nix-built Wine does not find under the caller's LANG and falls back
+    # to ASCII, so creating "café.txt" fails with NotFound.
+    env -u CARGO_HOME -u RUSTUP_HOME -u RUSTUP_TOOLCHAIN -u RUST_RECURSION_COUNT -u LC_ALL \
+        LANG=C.UTF-8 WINEPREFIX="$WINE_CACHE/prefix-$SLOT" WINEPATH="$WINE_WINDOWS_PATH" \
         CARGO="$WINE_WINDOWS_CARGO" RUSTC_WRAPPER= CARGO_MANIFEST_DIR="$WINE_PACKAGE_DIR" \
         wine "$exe" "$@" > "$WINE_RUN_DIR/$(basename "$exe" .exe).log" 2>&1 \
         || printf '%s\n' "$exe" >> "$WINE_RUN_DIR/failed"
