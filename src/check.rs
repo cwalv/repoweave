@@ -5,7 +5,9 @@
 
 use crate::git::RWV_MERGE_DRIVER_PREFIX;
 use crate::integration::{Issue, IssueKind, IssueSource};
-use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoPath, Role, WorkweaveId};
+use crate::manifest::{
+    LockFile, Manifest, Project, ProjectName, RepoPath, Role, WorkweaveId, WorkweaveName,
+};
 use crate::op_state::SavepointKey;
 use crate::path_spelling::resolve;
 use crate::refusal::{refusal, RefusalKind};
@@ -1255,9 +1257,9 @@ pub enum WeaveRootIdentityConflictKind {
     /// pointer and leaves the marker.
     RegisteredWorkweave {
         /// Project the marker names (and under whose registry it is recorded).
-        project: String,
+        project: ProjectName,
         /// Name the registry records this directory under.
-        workweave_name: String,
+        workweave_name: WorkweaveName,
     },
     /// The marker itself cannot witness the identity it claims — unreadable,
     /// legacy (YAML, or missing `parent:`), or naming a `primary:` that
@@ -1350,15 +1352,11 @@ pub enum WorkweaveTreeIntegrityKind {
     /// registry left behind" and "index committed to VCS carries paths that
     /// are wrong on this machine" — the design's advisory-index doctrine
     /// depends on doctor catching both.
-    ///
-    /// `project` is a plain `String` on the wire because `ProjectName` does
-    /// not (yet) derive `JsonSchema`; every other sub-kind uses `String`
-    /// for names on the wire for the same reason.
     StaleRegistryEntry {
         /// Project the stale entry belongs to.
-        project: String,
+        project: ProjectName,
         /// The recorded name of the workweave.
-        workweave_name: String,
+        workweave_name: WorkweaveName,
         /// The recorded absolute path (which no longer round-trips).
         #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
         recorded_path: PathBuf,
@@ -1374,9 +1372,9 @@ pub enum WorkweaveTreeIntegrityKind {
     /// `delete`) deliberately do NOT auto-adopt on the fly.
     UnregisteredWorkweave {
         /// Project this orphan workweave records in its marker.
-        project: String,
+        project: ProjectName,
         /// Workweave name parsed from the directory basename.
-        workweave_name: String,
+        workweave_name: WorkweaveName,
     },
     /// The `.rwv-workweave-index` file at `projects/<project>/` is tracked
     /// by the project repo's VCS. The index is machine-local state and
@@ -1388,7 +1386,7 @@ pub enum WorkweaveTreeIntegrityKind {
     /// project repo's `.git/info/exclude`, never `.gitignore`.
     TrackedIndex {
         /// Project whose index is committed.
-        project: String,
+        project: ProjectName,
         /// Path to the tracked index file.
         #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
         index_path: PathBuf,
@@ -1422,9 +1420,9 @@ pub enum WorkweaveTreeIntegrityKind {
     /// migrate one in place.
     NestedWorkweaveDir {
         /// Project the entry belongs to.
-        project: String,
+        project: ProjectName,
         /// The recorded name of the workweave.
-        workweave_name: String,
+        workweave_name: WorkweaveName,
         /// The single-segment directory name the records spell today.
         expected_dir_name: String,
     },
@@ -1846,7 +1844,7 @@ pub enum BranchDisciplineKind {
         /// records `(store, name, created_at)`, and the workweave is
         /// recoverable only while one on disk would mint that name — which
         /// is exactly the case this variant is *not*.
-        project: String,
+        project: ProjectName,
     },
     /// (b) The canonical store — or the project repo — is in detached-HEAD
     /// state.
@@ -1890,7 +1888,7 @@ pub enum BranchDisciplineKind {
         /// rwv does not reconstruct which workweave a ref belonged to, and
         /// for this class no workweave on disk would
         /// mint the name — that is what makes it stale.
-        project: String,
+        project: ProjectName,
     },
     /// (c) A `<project>--<name>/...` branch in the canonical clone whose
     /// workweave `<name>` no longer exists on disk, which rwv holds a
@@ -1905,7 +1903,7 @@ pub enum BranchDisciplineKind {
         branch: String,
         /// The project whose registry holds the receipt. See
         /// [`StaleEphemeralBranchSafe`](Self::StaleEphemeralBranchSafe).
-        project: String,
+        project: ProjectName,
         /// The branch tip SHA, surfaced so the operator can recover the
         /// commits before deleting (e.g. `git log <tip_sha>`).
         tip_sha: CommitId,
@@ -1982,7 +1980,7 @@ pub enum ViolationOutput {
     DanglingReference {
         path: String,
         absolute_path: String,
-        project: String,
+        project: ProjectName,
     },
     MemberPermissions {
         path: String,
@@ -2003,14 +2001,14 @@ pub enum ViolationOutput {
     StaleLock {
         path: String,
         absolute_path: String,
-        project: String,
+        project: ProjectName,
         locked: String,
         actual: String,
     },
     IncompleteLock {
         path: String,
         absolute_path: String,
-        project: String,
+        project: ProjectName,
     },
     WorkweaveDrift {
         path: String,
@@ -2038,20 +2036,20 @@ pub enum ViolationOutput {
         sub_kind: WorkingTreeDriftKind,
     },
     MissingReplayExclusion {
-        project: String,
+        project: ProjectName,
         #[serde(rename = "sub_kind")]
         sub_kind: ReplayExclusionKind,
     },
     ReplayExclusionUnreadable {
-        project: String,
+        project: ProjectName,
         error: String,
     },
     MissingMergeDriverConfig {
-        project: String,
+        project: ProjectName,
         config_key: String,
     },
     MergeDriverConfigUnreadable {
-        project: String,
+        project: ProjectName,
         config_key: String,
         error: String,
     },
@@ -2075,21 +2073,21 @@ pub enum ViolationOutput {
     UnresolvableLockEntry {
         path: String,
         absolute_path: String,
-        project: String,
+        project: ProjectName,
     },
     LockPinnedByName {
         path: String,
         absolute_path: String,
-        project: String,
+        project: ProjectName,
         /// The tag or branch name the lock entry holds.
         version: String,
     },
     LegacyManifestFormat {
-        project: String,
+        project: ProjectName,
         legacy_path: String,
     },
     DanglingActiveProject {
-        project: String,
+        project: ProjectName,
         missing_dir: String,
     },
     WeaveRootIdentityConflict {
@@ -2106,22 +2104,22 @@ pub enum ViolationOutput {
         primary: String,
     },
     LegacyWorkweaveIndex {
-        project: String,
+        project: ProjectName,
         index_path: String,
     },
     UnreadableOwnedState {
-        project: String,
+        project: ProjectName,
         state_path: String,
         error: String,
         active: bool,
     },
     UnreadableWorkweaveIndex {
-        project: String,
+        project: ProjectName,
         index_path: String,
         error: String,
     },
     UnparseableProject {
-        project: String,
+        project: ProjectName,
         manifest_path: String,
         /// Free-form display string of the parse error. Named `message`
         /// (not `error`) to signal this is display text, not a typed discriminant.
@@ -2141,7 +2139,7 @@ pub enum ViolationOutput {
         /// Absolute path to the affected repo on disk.
         absolute_path: String,
         /// Project the affected repo belongs to.
-        project: String,
+        project: ProjectName,
         /// Discriminator for the specific provenance anomaly.
         #[serde(rename = "sub_kind")]
         sub_kind: ProvenanceKind,
@@ -2198,7 +2196,7 @@ pub enum ViolationOutput {
     },
     DanglingRefReceipt {
         /// The project whose registry holds the receipt.
-        project: String,
+        project: ProjectName,
         /// Absolute path of the canonical store the receipt is keyed to.
         store_path: String,
         /// The recorded ref name that does not exist in that store.
@@ -2207,7 +2205,7 @@ pub enum ViolationOutput {
     /// See [`CheckViolation::PreFlatRefReceipt`].
     PreFlatRefReceipt {
         /// The project whose registry holds the receipt.
-        project: String,
+        project: ProjectName,
         /// Absolute path of the canonical store the receipt is keyed to.
         store_path: String,
         /// The recorded ref name that carries a `/` segment.
@@ -2306,7 +2304,7 @@ pub enum ViolationOutput {
 /// One project's declared role for a member.
 #[derive(Debug, Serialize, JsonSchema, Clone)]
 pub struct ProjectRoleOutput {
-    pub project: String,
+    pub project: ProjectName,
     pub role: String,
 }
 
@@ -2370,7 +2368,7 @@ impl ViolationOutput {
             CheckViolation::DanglingReference { project, repo } => Self::DanglingReference {
                 absolute_path: abs(workspace_dir, &repo),
                 path: repo.to_string(),
-                project: project.to_string(),
+                project: project.clone(),
             },
             CheckViolation::MemberPermissions {
                 workweave,
@@ -2390,7 +2388,7 @@ impl ViolationOutput {
                 roles: roles
                     .into_iter()
                     .map(|(project, role)| ProjectRoleOutput {
-                        project: project.to_string(),
+                        project: project.clone(),
                         role: role.as_str().to_owned(),
                     })
                     .collect(),
@@ -2403,14 +2401,14 @@ impl ViolationOutput {
             } => Self::StaleLock {
                 absolute_path: abs(workspace_dir, &repo),
                 path: repo.to_string(),
-                project: project.to_string(),
+                project: project.clone(),
                 locked: locked.display_str().to_owned(),
                 actual: actual.display_str().to_owned(),
             },
             CheckViolation::IncompleteLock { project, repo } => Self::IncompleteLock {
                 absolute_path: abs(workspace_dir, &repo),
                 path: repo.to_string(),
-                project: project.to_string(),
+                project: project.clone(),
             },
             CheckViolation::WorkweaveDrift {
                 workweave,
@@ -2444,13 +2442,13 @@ impl ViolationOutput {
             },
             CheckViolation::MissingReplayExclusion { project, sub_kind } => {
                 Self::MissingReplayExclusion {
-                    project: project.to_string(),
+                    project: project.clone(),
                     sub_kind,
                 }
             }
             CheckViolation::ReplayExclusionUnreadable { project, error } => {
                 Self::ReplayExclusionUnreadable {
-                    project: project.to_string(),
+                    project: project.clone(),
                     error,
                 }
             }
@@ -2458,7 +2456,7 @@ impl ViolationOutput {
                 project,
                 config_key,
             } => Self::MissingMergeDriverConfig {
-                project: project.to_string(),
+                project: project.clone(),
                 config_key,
             },
             CheckViolation::MergeDriverConfigUnreadable {
@@ -2466,7 +2464,7 @@ impl ViolationOutput {
                 config_key,
                 error,
             } => Self::MergeDriverConfigUnreadable {
-                project: project.to_string(),
+                project: project.clone(),
                 config_key,
                 error,
             },
@@ -2495,7 +2493,7 @@ impl ViolationOutput {
                 Self::UnresolvableLockEntry {
                     absolute_path: abs(workspace_dir, &repo),
                     path: repo.to_string(),
-                    project: project.to_string(),
+                    project: project.clone(),
                 }
             }
             CheckViolation::LockPinnedByName {
@@ -2505,21 +2503,21 @@ impl ViolationOutput {
             } => Self::LockPinnedByName {
                 absolute_path: abs(workspace_dir, &repo),
                 path: repo.to_string(),
-                project: project.to_string(),
+                project: project.clone(),
                 version: version.as_str().to_owned(),
             },
             CheckViolation::LegacyManifestFormat {
                 project,
                 legacy_path,
             } => Self::LegacyManifestFormat {
-                project: project.to_string(),
+                project: project.clone(),
                 legacy_path: crate::path_spelling::wire_path(&legacy_path),
             },
             CheckViolation::DanglingActiveProject {
                 project,
                 missing_dir,
             } => Self::DanglingActiveProject {
-                project: project.to_string(),
+                project: project.clone(),
                 missing_dir: crate::path_spelling::wire_path(&missing_dir),
             },
             CheckViolation::WeaveRootIdentityConflict {
@@ -2542,7 +2540,7 @@ impl ViolationOutput {
                 project,
                 index_path,
             } => Self::LegacyWorkweaveIndex {
-                project: project.to_string(),
+                project: project.clone(),
                 index_path: crate::path_spelling::wire_path(&index_path),
             },
             CheckViolation::UnreadableOwnedState {
@@ -2551,7 +2549,7 @@ impl ViolationOutput {
                 error,
                 active,
             } => Self::UnreadableOwnedState {
-                project: project.to_string(),
+                project: project.clone(),
                 state_path: crate::path_spelling::wire_path(&state_path),
                 error,
                 active,
@@ -2561,7 +2559,7 @@ impl ViolationOutput {
                 index_path,
                 error,
             } => Self::UnreadableWorkweaveIndex {
-                project: project.to_string(),
+                project: project.clone(),
                 index_path: crate::path_spelling::wire_path(&index_path),
                 error,
             },
@@ -2570,7 +2568,7 @@ impl ViolationOutput {
                 manifest_path,
                 message,
             } => Self::UnparseableProject {
-                project: project.to_string(),
+                project: project.clone(),
                 manifest_path: crate::path_spelling::wire_path(&manifest_path),
                 message,
             },
@@ -2588,7 +2586,7 @@ impl ViolationOutput {
             } => Self::Provenance {
                 absolute_path: abs(workspace_dir, &repo),
                 path: repo.to_string(),
-                project: project.to_string(),
+                project: project.clone(),
                 sub_kind,
             },
             CheckViolation::CloneTopology {
@@ -2644,7 +2642,7 @@ impl ViolationOutput {
                 store_path,
                 ref_name,
             } => Self::DanglingRefReceipt {
-                project: project.to_string(),
+                project: project.clone(),
                 store_path: crate::path_spelling::wire_path(&store_path),
                 ref_name,
             },
@@ -2653,7 +2651,7 @@ impl ViolationOutput {
                 store_path,
                 ref_name,
             } => Self::PreFlatRefReceipt {
-                project: project.to_string(),
+                project: project.clone(),
                 store_path: crate::path_spelling::wire_path(&store_path),
                 ref_name,
             },
@@ -3047,8 +3045,8 @@ fn nested_workweave_findings(ws_root: &Path, dir: &Path) -> Vec<CheckViolation> 
         found.push(CheckViolation::WorkweaveTreeIntegrity {
             workweave_dir: child.clone(),
             sub_kind: WorkweaveTreeIntegrityKind::NestedWorkweaveDir {
-                project: marker.project().as_str().to_string(),
-                workweave_name: name.as_str().to_string(),
+                project: marker.project().clone(),
+                workweave_name: name.clone(),
                 expected_dir_name: crate::workspace::weave_dir_name(marker.project(), &name),
             },
         });
@@ -3339,7 +3337,7 @@ fn scan_registry_reconciliation(vcs: &dyn crate::vcs::Vcs, ws_root: &Path) -> Ve
                     violations.push(CheckViolation::WorkweaveTreeIntegrity {
                         workweave_dir: path.clone(),
                         sub_kind: WorkweaveTreeIntegrityKind::StaleRegistryEntry {
-                            project: project.as_str().to_string(),
+                            project: project.clone(),
                             workweave_name: name.clone(),
                             recorded_path: path.clone(),
                             reason,
@@ -3357,7 +3355,7 @@ fn scan_registry_reconciliation(vcs: &dyn crate::vcs::Vcs, ws_root: &Path) -> Ve
             violations.push(CheckViolation::WorkweaveTreeIntegrity {
                 workweave_dir: index_path.clone(),
                 sub_kind: WorkweaveTreeIntegrityKind::TrackedIndex {
-                    project: project.as_str().to_string(),
+                    project: project.clone(),
                     index_path,
                 },
             });
@@ -3387,8 +3385,8 @@ fn scan_registry_reconciliation(vcs: &dyn crate::vcs::Vcs, ws_root: &Path) -> Ve
             violations.push(CheckViolation::WorkweaveTreeIntegrity {
                 workweave_dir: dir,
                 sub_kind: WorkweaveTreeIntegrityKind::UnregisteredWorkweave {
-                    project: workweave.project.as_str().to_string(),
-                    workweave_name: workweave.name.as_str().to_string(),
+                    project: workweave.project.clone(),
+                    workweave_name: workweave.name.clone(),
                 },
             });
         }
@@ -3424,7 +3422,7 @@ fn is_tracked_in_parent_repo(vcs: &dyn crate::vcs::Vcs, path: &Path) -> bool {
 pub fn fix_unregistered_workweave(
     ws_root: &Path,
     project: &crate::manifest::ProjectName,
-    workweave_name: &str,
+    workweave_name: &WorkweaveName,
     workweave_dir: &Path,
 ) -> anyhow::Result<()> {
     let canonical = resolve(workweave_dir).unwrap_or_else(|_| workweave_dir.to_path_buf());
@@ -3438,7 +3436,7 @@ pub fn fix_unregistered_workweave(
 pub fn fix_stale_registry_entry(
     ws_root: &Path,
     project: &crate::manifest::ProjectName,
-    workweave_name: &str,
+    workweave_name: &WorkweaveName,
 ) -> anyhow::Result<()> {
     crate::workweave_index::forget_workweave(ws_root, project, workweave_name)
 }
@@ -3587,7 +3585,7 @@ fn classify_weave_root_identity(primary_root: &Path, root: &Path) -> Option<Chec
             root: root.to_path_buf(),
             pointer_project,
             sub_kind: WeaveRootIdentityConflictKind::RegisteredWorkweave {
-                project: marker.project().to_string(),
+                project: marker.project().clone(),
                 workweave_name,
             },
         }),
@@ -4744,16 +4742,14 @@ impl RecordedRefs {
                 .get_or_insert_with(|| crate::workweave::list_workweave_dirs(ws_root));
             let mut live_ref_names = std::collections::HashMap::new();
             for workweave in live_workweave_names(ws_root, &name, dirs) {
-                if let Ok(workweave_name) = crate::manifest::WorkweaveName::new(&workweave) {
-                    let minted = EphemeralRefName::mint(&name, &workweave_name);
-                    live_ref_names.insert(
-                        minted.to_raw(),
-                        WorkweaveId {
-                            project: name.clone(),
-                            name: workweave_name,
-                        },
-                    );
-                }
+                let minted = EphemeralRefName::mint(&name, &workweave);
+                live_ref_names.insert(
+                    minted.to_raw(),
+                    WorkweaveId {
+                        project: name.clone(),
+                        name: workweave,
+                    },
+                );
             }
             projects.push(RecordedProject {
                 name,
@@ -4840,11 +4836,11 @@ fn live_workweave_names(
     ws_root: &Path,
     project: &ProjectName,
     workweave_dirs: &[(WorkweaveId, PathBuf)],
-) -> Vec<String> {
-    let mut names: BTreeSet<String> = workweave_dirs
+) -> Vec<WorkweaveName> {
+    let mut names: BTreeSet<WorkweaveName> = workweave_dirs
         .iter()
         .filter(|(id, _)| &id.project == project)
-        .map(|(id, _)| id.name.as_str().to_owned())
+        .map(|(id, _)| id.name.clone())
         .collect();
 
     if let Ok(Some(index)) = crate::workweave_index::read(ws_root, project) {
@@ -5267,7 +5263,7 @@ fn scan_canonical_stores(
                         },
                         None => BranchDisciplineKind::CanonicalHoldsLeakedRef {
                             actual_branch: rec.owned.to_string(),
-                            project: rec.project.to_string(),
+                            project: rec.project.clone(),
                         },
                     };
                     out.push(CheckViolation::BranchDiscipline {
@@ -5374,12 +5370,12 @@ fn scan_canonical_stores(
             let sub_kind = if merged {
                 BranchDisciplineKind::StaleEphemeralBranchSafe {
                     branch: rec.owned.to_string(),
-                    project: rec.project.to_string(),
+                    project: rec.project.clone(),
                 }
             } else {
                 BranchDisciplineKind::StaleEphemeralBranchLive {
                     branch: rec.owned.to_string(),
-                    project: rec.project.to_string(),
+                    project: rec.project.clone(),
                     tip_sha: tip.id().clone(),
                 }
             };
@@ -5455,9 +5451,7 @@ fn live_minted_ref_names(ws_root: &Path) -> Vec<crate::vcs::EphemeralRefName> {
         if let Ok(Some(index)) = crate::workweave_index::read(ws_root, &project) {
             for (name, path) in &index.workweaves {
                 if path.is_dir() {
-                    if let Ok(workweave_name) = crate::manifest::WorkweaveName::new(name) {
-                        out.push(EphemeralRefName::mint(&project, &workweave_name));
-                    }
+                    out.push(EphemeralRefName::mint(&project, name));
                 }
             }
         }
@@ -9491,12 +9485,7 @@ fn apply_finding_repairs(
                     },
                 ..
             } => {
-                let outcome = match crate::manifest::ProjectName::new(project.clone()) {
-                    Ok(project_name) => {
-                        fix_stale_registry_entry(ctx.primary_path(), &project_name, workweave_name)
-                    }
-                    Err(e) => Err(e.into()),
-                };
+                let outcome = fix_stale_registry_entry(ctx.primary_path(), project, workweave_name);
                 match outcome {
                     Ok(()) => {
                         println!(
@@ -9527,15 +9516,12 @@ fn apply_finding_repairs(
                         workweave_name,
                     },
             } => {
-                let outcome = match crate::manifest::ProjectName::new(project.clone()) {
-                    Ok(project_name) => fix_unregistered_workweave(
-                        ctx.primary_path(),
-                        &project_name,
-                        workweave_name,
-                        workweave_dir,
-                    ),
-                    Err(e) => Err(e.into()),
-                };
+                let outcome = fix_unregistered_workweave(
+                    ctx.primary_path(),
+                    project,
+                    workweave_name,
+                    workweave_dir,
+                );
                 match outcome {
                     Ok(()) => {
                         println!(

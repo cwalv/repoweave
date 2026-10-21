@@ -653,3 +653,43 @@ fn set_container_verb_records_the_container() {
     let expected_ww_dir = alt.join("web-app--feat");
     assert!(expected_ww_dir.exists());
 }
+
+/// A recorded name that is not a workweave name is a corrupt index, refused
+/// where the index is read: doctor names the file and the name rather than
+/// treating the entry as recorded while every reader that needs the name
+/// passes over it.
+#[test]
+fn an_index_recording_an_illegal_workweave_name_is_refused_at_load() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+    std::fs::create_dir_all(tmp.path().join(".workweaves")).unwrap();
+    rwv()
+        .args(["workweave", "web-app", "create", "feat"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let control = doctor_kinds(&ws);
+    assert!(
+        !control.contains(&"unreadable-workweave-index".to_string()),
+        "the index create wrote reads: {control:?}"
+    );
+
+    let idx_p = index_path(&ws, "web-app");
+    let mut index: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&idx_p).unwrap()).unwrap();
+    let path = index["workweaves"]["feat"].clone();
+    index["workweaves"] = serde_json::json!({ "fe--at": path });
+    std::fs::write(&idx_p, serde_json::to_string_pretty(&index).unwrap()).unwrap();
+
+    let kinds = doctor_kinds(&ws);
+    assert!(
+        kinds.contains(&"unreadable-workweave-index".to_string()),
+        "an index recording an illegal name must not read as an index: {kinds:?}"
+    );
+    rwv()
+        .args(["doctor"])
+        .current_dir(&ws)
+        .assert()
+        .stdout(predicate::str::contains("'fe--at' is not a valid workweave name"));
+}

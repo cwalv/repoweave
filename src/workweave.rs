@@ -193,7 +193,7 @@ pub fn resolve_registered_workweave(
     project: &ProjectName,
     name: &WorkweaveName,
 ) -> anyhow::Result<Option<PathBuf>> {
-    let raw = match workweave_index::lookup_raw(primary_root, project, name.as_str())? {
+    let raw = match workweave_index::lookup_raw(primary_root, project, name)? {
         Some(p) => p,
         None => return Ok(None),
     };
@@ -224,7 +224,7 @@ pub fn workweave_name_for_path(
         .workweaves
         .into_iter()
         .find(|(_, recorded)| workweave_index::same_directory(recorded, path));
-    Ok(found.and_then(|(name, _)| WorkweaveName::new(name).ok()))
+    Ok(found.map(|(name, _)| name))
 }
 
 /// Every `(project, name)` pair any project's registry records, sorted.
@@ -235,11 +235,9 @@ pub fn workweave_name_for_path(
 /// per-project because the address does not say which project it names until
 /// it has matched one.
 ///
-/// Entries whose recorded name is not a legal [`WorkweaveName`] are dropped —
-/// nothing rwv writes produces one, and a hand-edited index that does could
-/// not be addressed anyway. Recorded, not validated: whether the matched
-/// entry still round-trips through its marker is
-/// [`resolve_registered_workweave`]'s question, asked once a pair is in hand.
+/// Recorded, not validated: whether the matched entry still round-trips
+/// through its marker is [`resolve_registered_workweave`]'s question, asked
+/// once a pair is in hand.
 pub fn registered_workweaves(primary_root: &Path) -> Vec<(ProjectName, WorkweaveName)> {
     let mut out = Vec::new();
     for project in crate::workspace::discover_projects(primary_root) {
@@ -247,14 +245,10 @@ pub fn registered_workweaves(primary_root: &Path) -> Vec<(ProjectName, Workweave
             continue;
         };
         for name in index.workweaves.into_keys() {
-            if let Ok(name) = WorkweaveName::new(name) {
-                out.push((project.clone(), name));
-            }
+            out.push((project.clone(), name));
         }
     }
-    out.sort_by(|a, b| {
-        (a.0.as_str().cmp(b.0.as_str())).then_with(|| a.1.as_str().cmp(b.1.as_str()))
-    });
+    out.sort();
     // A project reached twice by the walk would otherwise present one
     // workweave as two, and two matches is how a caller is told an address
     // names more than one workweave.
@@ -279,7 +273,7 @@ pub fn ensure_registered_workweave(
     project: &ProjectName,
     name: &WorkweaveName,
 ) -> anyhow::Result<PathBuf> {
-    let raw = match workweave_index::lookup_raw(primary_root, project, name.as_str())? {
+    let raw = match workweave_index::lookup_raw(primary_root, project, name)? {
         Some(p) => p,
         None => crate::refuse!(
             RefusalKind::NoSuchWorkweave,
@@ -1678,7 +1672,7 @@ pub fn create_workweave(
     // guards are complementary: this one refuses the duplicate name outright,
     // and `birth_ephemeral_worktree` refuses to destroy a ref it cannot prove
     // is a stale leftover.
-    if let Some(recorded) = workweave_index::lookup_raw(primary_root, project, name.as_str())? {
+    if let Some(recorded) = workweave_index::lookup_raw(primary_root, project, name)? {
         if workweave_index::canonical_recorded_path(&recorded)
             != workweave_index::canonical_recorded_path(&workweave_dir)
         {
@@ -2265,7 +2259,7 @@ pub fn create_workweave(
     // by name, and silent auto-adoption in read paths is deliberately not
     // provided (see module docs).
     let recorded_dir = resolve(&workweave_dir).unwrap_or_else(|_| workweave_dir.clone());
-    workweave_index::record_workweave(primary_root, project, name.as_str(), recorded_dir)
+    workweave_index::record_workweave(primary_root, project, name, recorded_dir)
         .context("failed to record workweave in the primary-side registry")?;
 
     // All steps complete — defuse the rollback guard so Drop is a no-op.
@@ -3483,7 +3477,7 @@ fn delete_workweave_inner_at(
     // silently succeeding on a locked / read-only registry but strictly
     // better than the disk-and-registry drifting silently. We warn but do
     // not bail because the primary destructive act already succeeded.
-    if let Err(e) = workweave_index::forget_workweave(ws_root, project, name.as_str()) {
+    if let Err(e) = workweave_index::forget_workweave(ws_root, project, name) {
         eprintln!(
             "rwv workweave delete: warning: workweave directory removed but registry \
              entry for `{}` could not be updated ({e:#}); run `rwv doctor --fix` to \
@@ -3513,8 +3507,11 @@ fn delete_workweave_inner_at(
 /// landed) has no `.rwv-workweave-index`. List returns an empty vector in
 /// that case; `rwv doctor --fix` scans the container and adopts on-disk
 /// workweaves into the registry with the operator's consent.
-pub fn list_workweaves(ws_root: &Path, project: &ProjectName) -> anyhow::Result<Vec<String>> {
-    let mut names: Vec<String> = list_workweave_dirs_for_project(ws_root, project)?
+pub fn list_workweaves(
+    ws_root: &Path,
+    project: &ProjectName,
+) -> anyhow::Result<Vec<WorkweaveName>> {
+    let mut names: Vec<WorkweaveName> = list_workweave_dirs_for_project(ws_root, project)?
         .into_iter()
         .map(|(n, _)| n)
         .collect();
@@ -3532,12 +3529,12 @@ pub fn list_workweaves(ws_root: &Path, project: &ProjectName) -> anyhow::Result<
 fn list_workweave_dirs_for_project(
     ws_root: &Path,
     project: &ProjectName,
-) -> anyhow::Result<Vec<(String, PathBuf)>> {
+) -> anyhow::Result<Vec<(WorkweaveName, PathBuf)>> {
     let index = match workweave_index::read(ws_root, project)? {
         Some(idx) => idx,
         None => return Ok(Vec::new()),
     };
-    let mut result: Vec<(String, PathBuf)> = index
+    let mut result: Vec<(WorkweaveName, PathBuf)> = index
         .workweaves
         .into_iter()
         .filter(|(_, path)| {

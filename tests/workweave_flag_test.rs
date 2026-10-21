@@ -90,7 +90,7 @@ fn register_workweave(ws: &Path, project: &str, name: &str) -> PathBuf {
     workweave_index::record_workweave(
         &ws_canon,
         &ProjectName::new(project).unwrap(),
-        name,
+        &repoweave::manifest::WorkweaveName::new(name).unwrap(),
         ww_dir.clone(),
     )
     .unwrap();

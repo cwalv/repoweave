@@ -1867,7 +1867,7 @@ impl WorkspaceContext {
             workspace,
             workweave,
             workweave_unregistered,
-            project: project.as_str().to_owned(),
+            project: project.clone(),
         })
     }
 }
@@ -1928,7 +1928,7 @@ pub struct Resolution {
     #[serde(default, skip_serializing_if = "is_false")]
     pub workweave_unregistered: bool,
     /// Resolved project name.
-    pub project: String,
+    pub project: ProjectName,
 }
 
 /// `skip_serializing_if` predicate for a flag that is only news when set.
@@ -2690,7 +2690,7 @@ mod tests {
         crate::workweave_index::record_workweave(
             primary,
             &project,
-            name,
+            &crate::manifest::WorkweaveName::new(name).unwrap(),
             crate::workweave_index::canonical_recorded_path(dir),
         )
         .unwrap();
@@ -4714,7 +4714,7 @@ mod tests {
             "an internal spelling reached a published field: {}",
             res.workspace
         );
-        assert_eq!(res.project, "myproject");
+        assert_eq!(res.project.as_str(), "myproject");
         assert!(
             res.workweave.is_none(),
             "workweave must be absent at primary; got {:?}",
@@ -4769,7 +4769,7 @@ mod tests {
             ww, "myproject--fo-abc",
             "workweave identity must be '<project>--<name>', got {ww:?}"
         );
-        assert_eq!(res.project, "myproject");
+        assert_eq!(res.project.as_str(), "myproject");
         assert_eq!(
             res.workspace,
             crate::path_spelling::wire_path(
@@ -4961,7 +4961,7 @@ mod tests {
             workspace: "/ws".to_owned(),
             workweave: None,
             workweave_unregistered: false,
-            project: "myproject".to_owned(),
+            project: ProjectName::new("myproject").unwrap(),
         };
         assert_eq!(
             serde_json::to_string(&primary).unwrap(),
@@ -4972,7 +4972,7 @@ mod tests {
             workspace: "/ws".to_owned(),
             workweave: Some("myproject--feat".to_owned()),
             workweave_unregistered: false,
-            project: "myproject".to_owned(),
+            project: ProjectName::new("myproject").unwrap(),
         };
         assert_eq!(
             serde_json::to_string(&registered).unwrap(),
@@ -4983,7 +4983,7 @@ mod tests {
             workspace: "/ws".to_owned(),
             workweave: None,
             workweave_unregistered: true,
-            project: "myproject".to_owned(),
+            project: ProjectName::new("myproject").unwrap(),
         };
         assert_eq!(
             serde_json::to_string(&unregistered).unwrap(),

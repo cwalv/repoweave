@@ -398,8 +398,8 @@ pub fn corpus() -> Vec<CheckViolation> {
             root: path("/ws"),
             pointer_project: Some(project()),
             sub_kind: WeaveRootIdentityConflictKind::RegisteredWorkweave {
-                project: "proj".into(),
-                workweave_name: "feat-a".into(),
+                project: project(),
+                workweave_name: WorkweaveName::new("feat-a").unwrap(),
             },
         },
         CheckViolation::WeaveRootIdentityConflict {
@@ -472,8 +472,8 @@ pub fn corpus() -> Vec<CheckViolation> {
         CheckViolation::WorkweaveTreeIntegrity {
             workweave_dir: path("/ws/.workweaves/proj--feat-a"),
             sub_kind: WorkweaveTreeIntegrityKind::StaleRegistryEntry {
-                project: "proj".into(),
-                workweave_name: "feat-a".into(),
+                project: project(),
+                workweave_name: WorkweaveName::new("feat-a").unwrap(),
                 recorded_path: path("/gone"),
                 reason: "absent".into(),
             },
@@ -481,14 +481,14 @@ pub fn corpus() -> Vec<CheckViolation> {
         CheckViolation::WorkweaveTreeIntegrity {
             workweave_dir: path("/ws/.workweaves/proj--feat-a"),
             sub_kind: WorkweaveTreeIntegrityKind::UnregisteredWorkweave {
-                project: "proj".into(),
-                workweave_name: "feat-a".into(),
+                project: project(),
+                workweave_name: WorkweaveName::new("feat-a").unwrap(),
             },
         },
         CheckViolation::WorkweaveTreeIntegrity {
             workweave_dir: path("/ws/.workweaves/proj--feat-a"),
             sub_kind: WorkweaveTreeIntegrityKind::TrackedIndex {
-                project: "proj".into(),
+                project: project(),
                 index_path: path("/ws/projects/proj/.rwv-workweave-index"),
             },
         },
@@ -515,8 +515,8 @@ pub fn corpus() -> Vec<CheckViolation> {
         CheckViolation::WorkweaveTreeIntegrity {
             workweave_dir: path("/ws/.workweaves/chatly/web-app--feat-a"),
             sub_kind: WorkweaveTreeIntegrityKind::NestedWorkweaveDir {
-                project: "chatly/web-app".into(),
-                workweave_name: "feat-a".into(),
+                project: ProjectName::new("chatly/web-app").unwrap(),
+                workweave_name: WorkweaveName::new("feat-a").unwrap(),
                 expected_dir_name: "chatly+web-app--feat-a".into(),
             },
         },
@@ -674,7 +674,7 @@ pub fn corpus() -> Vec<CheckViolation> {
             repo_path: path("/ws/github/acme/repo"),
             sub_kind: BranchDisciplineKind::CanonicalHoldsLeakedRef {
                 actual_branch: "proj--gone".into(),
-                project: "proj".into(),
+                project: project(),
             },
         },
         CheckViolation::BranchDiscipline {
@@ -689,14 +689,14 @@ pub fn corpus() -> Vec<CheckViolation> {
             repo_path: path("/ws/github/acme/repo"),
             sub_kind: BranchDisciplineKind::StaleEphemeralBranchSafe {
                 branch: "proj--gone".into(),
-                project: "proj".into(),
+                project: project(),
             },
         },
         CheckViolation::BranchDiscipline {
             repo_path: path("/ws/github/acme/repo"),
             sub_kind: BranchDisciplineKind::StaleEphemeralBranchLive {
                 branch: "proj--gone".into(),
-                project: "proj".into(),
+                project: project(),
                 tip_sha: commit(),
             },
         },

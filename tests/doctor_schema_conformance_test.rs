@@ -117,8 +117,8 @@ fn corpus() -> Vec<CheckViolation> {
             root: PathBuf::from("/ws"),
             pointer_project: Some(project()),
             sub_kind: WeaveRootIdentityConflictKind::RegisteredWorkweave {
-                project: "proj".into(),
-                workweave_name: "feat-a".into(),
+                project: ProjectName::new("proj").unwrap(),
+                workweave_name: WorkweaveName::new("feat-a").unwrap(),
             },
         },
         CheckViolation::UnparseableProject {
@@ -151,7 +151,7 @@ fn resolution() -> Resolution {
         workspace: "/ws".to_owned(),
         workweave: Some("proj--feat-a".into()),
         workweave_unregistered: false,
-        project: "proj".into(),
+        project: ProjectName::new("proj").unwrap(),
     }
 }
 

@@ -8803,7 +8803,7 @@ mod tests {
         crate::workweave_index::record_workweave(
             &primary_canon,
             &ProjectName::new("web-app").unwrap(),
-            "feat",
+            &crate::manifest::WorkweaveName::new("feat").unwrap(),
             crate::workweave_index::canonical_recorded_path(&ww),
         )
         .unwrap();
@@ -8956,7 +8956,7 @@ mod tests {
         crate::workweave_index::record_workweave(
             &primary_canon,
             &ProjectName::new("web-app").unwrap(),
-            "feat",
+            &crate::manifest::WorkweaveName::new("feat").unwrap(),
             crate::workweave_index::canonical_recorded_path(&ww),
         )
         .unwrap();

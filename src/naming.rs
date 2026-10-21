@@ -219,8 +219,9 @@ pub fn validate_ref_name(s: &str) -> Result<(), RefNameError> {
 ///     take(ProjectName::new(s)); // E0308: expected ProjectName, found Result<ProjectName, ProjectNameError>
 /// }
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, schemars::JsonSchema)]
 #[serde(transparent)]
+#[schemars(transparent)]
 pub struct ProjectName(String);
 
 /// Typed error returned by [`ProjectName::new`].
@@ -284,6 +285,14 @@ impl ProjectName {
     }
 }
 
+impl std::str::FromStr for ProjectName {
+    type Err = ProjectNameError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::new(s)
+    }
+}
+
 impl fmt::Display for ProjectName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
@@ -313,8 +322,9 @@ impl<'de> serde::Deserialize<'de> for ProjectName {
 ///     take(WorkweaveName::new(s)); // E0308: expected WorkweaveName, found Result<WorkweaveName, WorkweaveNameError>
 /// }
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, schemars::JsonSchema)]
 #[serde(transparent)]
+#[schemars(transparent)]
 pub struct WorkweaveName(String);
 
 /// Typed error returned by [`WorkweaveName::new`].
@@ -374,6 +384,14 @@ impl WorkweaveName {
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl std::str::FromStr for WorkweaveName {
+    type Err = WorkweaveNameError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::new(s)
     }
 }
 

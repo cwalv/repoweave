@@ -1756,7 +1756,7 @@ fn check_envelope_output_documented(protocol_md_content: &str) -> Vec<String> {
         workspace: "/sentinel/workspace".to_owned(),
         workweave: Some("sentinel-project--sentinel-ww".to_owned()),
         workweave_unregistered: true,
-        project: "sentinel-project".to_owned(),
+        project: repoweave::manifest::ProjectName::new("sentinel-project").unwrap(),
     };
 
     let vars = envelope_vars(Some(&full_resolution));

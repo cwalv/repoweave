@@ -116,7 +116,7 @@ pub fn envelope_vars(resolution: Option<&Resolution>) -> Vec<(&'static str, Stri
         if r.workweave_unregistered {
             vars.push(("RWV_WORKWEAVE_UNREGISTERED", "1".to_owned()));
         }
-        vars.push(("RWV_PROJECT", r.project.clone()));
+        vars.push(("RWV_PROJECT", r.project.to_string()));
     }
     vars
 }
@@ -545,7 +545,7 @@ mod tests {
             workspace: "/ws/primary".to_owned(),
             workweave: None,
             workweave_unregistered: false,
-            project: "myproj".to_owned(),
+            project: crate::manifest::ProjectName::new("myproj").unwrap(),
         };
         let vars = envelope_vars(Some(&r));
         let map: std::collections::HashMap<_, _> = vars.into_iter().collect();
@@ -567,7 +567,7 @@ mod tests {
             workspace: "/ws/primary".to_owned(),
             workweave: Some("myproj--fo-123".to_owned()),
             workweave_unregistered: false,
-            project: "myproj".to_owned(),
+            project: crate::manifest::ProjectName::new("myproj").unwrap(),
         };
         let vars = envelope_vars(Some(&r));
         let map: std::collections::HashMap<_, _> = vars.into_iter().collect();

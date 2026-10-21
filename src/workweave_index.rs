@@ -81,7 +81,7 @@
 //! Windows a reader holding the file open makes the replacing rename fail
 //! until it lets go, which the publish waits out.
 
-use crate::manifest::ProjectName;
+use crate::manifest::{ProjectName, WorkweaveName};
 use crate::path_spelling::resolve;
 use crate::refusal::RefusalKind;
 use crate::vcs::{
@@ -122,7 +122,7 @@ pub struct WorkweaveIndex {
     pub container: PathBuf,
     /// Recorded `name → absolute path` entries.
     #[serde(default)]
-    pub workweaves: BTreeMap<String, PathBuf>,
+    pub workweaves: BTreeMap<WorkweaveName, PathBuf>,
     /// Ownership receipts. Private: [`RefRegistry`] is the only thing that
     /// may add or remove one — a receipt written any other way would be an
     /// ownership claim nobody checked, which is what R2 exists to prevent.
@@ -478,12 +478,12 @@ pub fn set_container(
 pub fn record_workweave(
     primary_root: &Path,
     project: &ProjectName,
-    name: &str,
+    name: &WorkweaveName,
     path: PathBuf,
 ) -> anyhow::Result<()> {
     IndexClaim::hold(primary_root, project, |claim| {
         let mut index = read_or_seed(claim)?;
-        index.workweaves.insert(name.to_string(), path);
+        index.workweaves.insert(name.clone(), path);
         write(claim, &index)
     })
 }
@@ -517,7 +517,7 @@ fn read_or_seed(claim: &IndexClaim) -> anyhow::Result<WorkweaveIndex> {
 pub fn forget_workweave(
     primary_root: &Path,
     project: &ProjectName,
-    name: &str,
+    name: &WorkweaveName,
 ) -> anyhow::Result<()> {
     IndexClaim::hold(primary_root, project, |claim| {
         let mut index = match read_for_edit(claim)? {
@@ -540,7 +540,7 @@ pub fn forget_workweave(
 pub fn lookup_raw(
     primary_root: &Path,
     project: &ProjectName,
-    name: &str,
+    name: &WorkweaveName,
 ) -> anyhow::Result<Option<PathBuf>> {
     Ok(read(primary_root, project)?.and_then(|idx| idx.workweaves.get(name).cloned()))
 }
@@ -1130,7 +1130,7 @@ mod tests {
         record_workweave(
             &primary,
             &project,
-            "hotfix",
+            &crate::manifest::WorkweaveName::new("hotfix").unwrap(),
             PathBuf::from("/c/web-app--hotfix"),
         )
         .unwrap();
@@ -1139,7 +1139,12 @@ mod tests {
             "the claim must be released when the read-modify-write ends"
         );
         // The no-op arm takes the claim too, and must release it.
-        forget_workweave(&primary, &project, "never-recorded").unwrap();
+        forget_workweave(
+            &primary,
+            &project,
+            &crate::manifest::WorkweaveName::new("never-recorded").unwrap(),
+        )
+        .unwrap();
         assert!(
             !claim_path(&primary, &project).exists(),
             "an edit that changes nothing must still release its claim"
@@ -1198,7 +1203,7 @@ mod tests {
         let err = record_workweave(
             &primary,
             &project,
-            "hotfix",
+            &crate::manifest::WorkweaveName::new("hotfix").unwrap(),
             PathBuf::from("/c/web-app--hotfix"),
         )
         .expect_err("a held claim must refuse the write, not drop it silently");
@@ -1252,7 +1257,7 @@ mod tests {
 
         let mut index = WorkweaveIndex::new(PathBuf::from("/abs/container"));
         index.workweaves.insert(
-            "hotfix".to_string(),
+            crate::manifest::WorkweaveName::new("hotfix").unwrap(),
             PathBuf::from("/abs/container/web-app--hotfix"),
         );
         IndexClaim::hold(&primary, &project, |claim| write(claim, &index)).unwrap();
@@ -1260,7 +1265,9 @@ mod tests {
         let got = read(&primary, &project).unwrap().unwrap();
         assert_eq!(got.container, PathBuf::from("/abs/container"));
         assert_eq!(
-            got.workweaves.get("hotfix").unwrap(),
+            got.workweaves
+                .get(&crate::manifest::WorkweaveName::new("hotfix").unwrap())
+                .unwrap(),
             &PathBuf::from("/abs/container/web-app--hotfix")
         );
     }
@@ -1274,7 +1281,7 @@ mod tests {
         record_workweave(
             &primary,
             &project,
-            "feat-a",
+            &crate::manifest::WorkweaveName::new("feat-a").unwrap(),
             PathBuf::from("/abs/container/web-app--feat-a"),
         )
         .unwrap();
@@ -1295,13 +1302,34 @@ mod tests {
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
 
-        record_workweave(&primary, &project, "a", PathBuf::from("/x/web-app--a")).unwrap();
-        record_workweave(&primary, &project, "b", PathBuf::from("/x/web-app--b")).unwrap();
-        forget_workweave(&primary, &project, "a").unwrap();
+        record_workweave(
+            &primary,
+            &project,
+            &crate::manifest::WorkweaveName::new("a").unwrap(),
+            PathBuf::from("/x/web-app--a"),
+        )
+        .unwrap();
+        record_workweave(
+            &primary,
+            &project,
+            &crate::manifest::WorkweaveName::new("b").unwrap(),
+            PathBuf::from("/x/web-app--b"),
+        )
+        .unwrap();
+        forget_workweave(
+            &primary,
+            &project,
+            &crate::manifest::WorkweaveName::new("a").unwrap(),
+        )
+        .unwrap();
 
         let got = read(&primary, &project).unwrap().unwrap();
-        assert!(!got.workweaves.contains_key("a"));
-        assert!(got.workweaves.contains_key("b"));
+        assert!(!got
+            .workweaves
+            .contains_key(&crate::manifest::WorkweaveName::new("a").unwrap()));
+        assert!(got
+            .workweaves
+            .contains_key(&crate::manifest::WorkweaveName::new("b").unwrap()));
     }
 
     #[test]
@@ -1311,7 +1339,12 @@ mod tests {
         let project = make_project(&primary, "web-app");
 
         // No index file; must not error.
-        forget_workweave(&primary, &project, "nonexistent").unwrap();
+        forget_workweave(
+            &primary,
+            &project,
+            &crate::manifest::WorkweaveName::new("nonexistent").unwrap(),
+        )
+        .unwrap();
     }
 
     #[test]
@@ -1323,13 +1356,21 @@ mod tests {
         let container = tmp.path().join("new-container");
         std::fs::create_dir_all(&container).unwrap();
 
-        record_workweave(&primary, &project, "a", PathBuf::from("/orig/web-app--a")).unwrap();
+        record_workweave(
+            &primary,
+            &project,
+            &crate::manifest::WorkweaveName::new("a").unwrap(),
+            PathBuf::from("/orig/web-app--a"),
+        )
+        .unwrap();
         set_container(&primary, &project, container.clone()).unwrap();
 
         let got = read(&primary, &project).unwrap().unwrap();
         assert_eq!(got.container, canonical_recorded_path(&container));
         assert_eq!(
-            got.workweaves.get("a").unwrap(),
+            got.workweaves
+                .get(&crate::manifest::WorkweaveName::new("a").unwrap())
+                .unwrap(),
             &PathBuf::from("/orig/web-app--a")
         );
     }
@@ -1650,7 +1691,13 @@ mod tests {
         let workweave = tmp.path().join(".workweaves/web-app--hotfix");
         std::fs::create_dir_all(&workweave).unwrap();
         std::fs::write(workweave.join(".rwv-workweave"), "primary: /ws\n").unwrap();
-        record_workweave(&primary, &project, "hotfix", workweave.clone()).unwrap();
+        record_workweave(
+            &primary,
+            &project,
+            &crate::manifest::WorkweaveName::new("hotfix").unwrap(),
+            workweave.clone(),
+        )
+        .unwrap();
 
         let mut registry = RefRegistry::for_project(&primary, &project);
         registry
@@ -1738,12 +1785,17 @@ mod tests {
         record_workweave(
             &primary,
             &project,
-            "other",
+            &crate::manifest::WorkweaveName::new("other").unwrap(),
             PathBuf::from("/x/web-app--other"),
         )
         .unwrap();
         set_container(&primary, &project, PathBuf::from("/new-container")).unwrap();
-        forget_workweave(&primary, &project, "other").unwrap();
+        forget_workweave(
+            &primary,
+            &project,
+            &crate::manifest::WorkweaveName::new("other").unwrap(),
+        )
+        .unwrap();
 
         assert!(registry
             .lookup(&store, &RawRefName::new("web-app--hotfix"))
@@ -1831,7 +1883,9 @@ mod tests {
         let migrated = read(&primary, &project).unwrap().unwrap();
         assert!(migrated.has_receipt_registry());
         assert_eq!(migrated.container, PathBuf::from("/abs/container"));
-        assert!(migrated.workweaves.contains_key("hotfix"));
+        assert!(migrated
+            .workweaves
+            .contains_key(&crate::manifest::WorkweaveName::new("hotfix").unwrap()));
         assert!(
             registry.list_all().unwrap().is_empty(),
             "migration adds the field, never an ownership claim"
@@ -1854,7 +1908,13 @@ mod tests {
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
 
-        record_workweave(&primary, &project, "a", PathBuf::from("/x/web-app--a")).unwrap();
+        record_workweave(
+            &primary,
+            &project,
+            &crate::manifest::WorkweaveName::new("a").unwrap(),
+            PathBuf::from("/x/web-app--a"),
+        )
+        .unwrap();
         assert!(read(&primary, &project)
             .unwrap()
             .unwrap()

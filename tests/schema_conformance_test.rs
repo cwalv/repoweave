@@ -232,7 +232,7 @@ fn resolution() -> Resolution {
         workspace: "/ws".to_owned(),
         workweave: Some("proj--feat-a".into()),
         workweave_unregistered: false,
-        project: "proj".into(),
+        project: repoweave::manifest::ProjectName::new("proj").unwrap(),
     }
 }
 
@@ -241,7 +241,7 @@ fn primary_resolution() -> Resolution {
         workspace: "/ws".to_owned(),
         workweave: None,
         workweave_unregistered: false,
-        project: "proj".into(),
+        project: repoweave::manifest::ProjectName::new("proj").unwrap(),
     }
 }
 
@@ -253,7 +253,7 @@ fn unregistered_resolution() -> Resolution {
         workspace: "/ws".to_owned(),
         workweave: None,
         workweave_unregistered: true,
-        project: "proj".into(),
+        project: repoweave::manifest::ProjectName::new("proj").unwrap(),
     }
 }
 

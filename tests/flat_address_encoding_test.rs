@@ -554,8 +554,8 @@ fn the_nested_finding_is_declared_report_only() {
     let violation = CheckViolation::WorkweaveTreeIntegrity {
         workweave_dir: PathBuf::from("/ws/.workweaves/chatly/web-app--wtest"),
         sub_kind: WorkweaveTreeIntegrityKind::NestedWorkweaveDir {
-            project: "chatly/web-app".into(),
-            workweave_name: "wtest".into(),
+            project: ProjectName::new("chatly/web-app").unwrap(),
+            workweave_name: WorkweaveName::new("wtest").unwrap(),
             expected_dir_name: "chatly+web-app--wtest".into(),
         },
     };

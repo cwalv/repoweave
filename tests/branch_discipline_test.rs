@@ -1938,7 +1938,7 @@ fn record_placement(primary: &Path, project: &str, workweave: &str, dir: &Path) 
     repoweave::workweave_index::record_workweave(
         primary,
         &ProjectName::new(project).unwrap(),
-        workweave,
+        &repoweave::manifest::WorkweaveName::new(workweave).unwrap(),
         dir.to_path_buf(),
     )
     .expect("placement recorded");
@@ -3312,7 +3312,7 @@ fn unregistered_dirs_one_named_for_another_project(tmp: &Path) -> (PathBuf, Path
 fn recorded_workweave_names(ws: &Path, project: &str) -> Vec<String> {
     repoweave::workweave_index::read(ws, &ProjectName::new(project).unwrap())
         .expect("index is readable")
-        .map(|idx| idx.workweaves.into_keys().collect())
+        .map(|idx| idx.workweaves.into_keys().map(|n| n.to_string()).collect())
         .unwrap_or_default()
 }
 

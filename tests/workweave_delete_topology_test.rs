@@ -100,7 +100,7 @@ fn write_marker(ww_dir: &Path, primary: &Path, project: &str) {
         .file_name()
         .and_then(|n| n.to_str())
         .and_then(|n| n.rsplit_once("--"))
-        .map(|(_, n)| n.to_string())
+        .map(|(_, n)| repoweave::manifest::WorkweaveName::new(n).unwrap())
         .expect("workweave dir name must be `<project>--<name>`");
     repoweave::workweave_index::record_workweave(
         primary,
