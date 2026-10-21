@@ -2036,7 +2036,8 @@ landed — plus a seventh the implementation exposed.
 
 Not part of the blast radius, but worth recording as the payoff. Each of these
 was a live defect that the model retired without a targeted fix. All three are
-now gone; the first went further than predicted, the third only partly.
+now gone; the first went further than predicted, and the model retired only
+half of the third, a later fix the rest.
 
 - The `list_branches_with_prefix` porcelain parser stripped only `*`, so a
   branch checked out in *another* worktree (git marks it `+ `) yielded
@@ -2065,15 +2066,18 @@ now gone; the first went further than predicted, the third only partly.
 - The `WorktreeRemove` hook passed `force: true` unconditionally and
   `.unwrap_or(dir_name)` fabricated a workweave name from a basename with no
   `--` — the one path where dirty *and* diverged workweaves were destroyed
-  with no operator confirmation. **The destructive half is fixed**: the call
-  now passes `false, None` (`workweave.rs:3482`), and the unmerged case
-  is unconstructible because `DiscardUnmergedConsent` only mints at CLI
-  dispatch `[V]`. Test: `tests/branch_model_lifecycle_test.rs:493
-  claude_worktree_remove_hook_does_not_destroy_uncommitted_work`. **The
-  basename fabrication is still live** (`.unwrap_or(dir_name)` at
-  `workweave.rs:3460`) `[V]` — it is now a mis-naming rather than a
-  mis-destruction, which is why R3 retired the dangerous half and left this
-  one standing.
+  with no operator confirmation. **Both halves are fixed** (verified at
+  `9bc4553`, not the citation base). `handle_claude_hook` in
+  `src/workweave.rs` passes `None` for both `DiscardUncommittedConsent` and
+  `DiscardUnmergedConsent`, and its `WorktreeCreate` arm passes no
+  `ReplaceExistingConsent` and `DirtySource::Refuse`. It can pass nothing
+  else: a consent is minted only inside `cli::dispatch::run`, from argv,
+  which `tests/consent_minted_from_argv_test.rs` holds. Test:
+  `tests/branch_model_lifecycle_test.rs`
+  `claude_worktree_remove_hook_does_not_destroy_uncommitted_work`. The name
+  is the one the registry recorded for the path (`workweave_name_for_path`),
+  and a marker with no registry entry refuses with `unregistered-workweave`
+  instead of deleting under a guessed name.
 
 ### 6.2 Bugs this model does not touch
 

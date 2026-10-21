@@ -17,7 +17,10 @@
 //!     is `cli::dispatch`, which is where a parsed flag exists to mint from.
 //!     `vcs.rs` — which must only ever *receive* a token, never mint one —
 //!     cannot call it: `DetachConsent::from_flag(true)` there is E0624,
-//!     `associated function is private`.
+//!     `associated function is private`. Within dispatch every mint sits in
+//!     `run`, which reads argv and takes no arguments, so no caller of the
+//!     library picks the flag a token is minted from. No visibility rule can
+//!     say that; `tests/consent_minted_from_argv_test.rs` holds it.
 //!
 //! Seal 2 is why dispatch lives in `cli::dispatch` rather than in `main.rs`.
 //! A `[[bin]]` target is a *separate crate* from this `[lib]`, so a minting
@@ -114,10 +117,7 @@ impl DiscardUnmergedConsent {
 
     /// Mint from the parsed `--discard-unmerged-commits` value: `Some`
     /// iff the operator passed it. `pub(in crate::cli)`: see
-    /// [`DetachConsent::from_flag`]'s doc comment. Integration tests
-    /// that need the post-waiver behavior of `workweave delete` enter
-    /// through [`crate::cli::dispatch::workweave_delete`], which is this
-    /// mint's only caller.
+    /// [`DetachConsent::from_flag`]'s doc comment.
     pub(in crate::cli) fn from_flag(discard_unmerged_commits: bool) -> Option<Self> {
         discard_unmerged_commits.then_some(Self(()))
     }

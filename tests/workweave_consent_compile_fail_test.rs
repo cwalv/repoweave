@@ -1,13 +1,11 @@
 //! Destroying a workweave's uncommitted work, or a whole workweave to create
-//! one in its place, takes a consent token only CLI dispatch can mint.
+//! one in its place, takes a consent token only CLI dispatch can mint, from
+//! argv.
 //!
 //! `delete_workweave` and `create_workweave` are `pub`, and the Claude hook
 //! calls both with no operator behind it. With a bool, its "no" was one
 //! keystroke from "yes". Pinned by diagnostic code, from an external crate,
 //! where every visibility narrower than `pub` looks alike.
-//!
-//! Residue: `cli::dispatch::workweave_delete` takes the two delete flags as
-//! parsed and mints at its own door, so a caller of it can pass `true`.
 
 mod common;
 
@@ -139,6 +137,21 @@ fn a_replace_existing_consent_cannot_be_forged_by_tuple_literal() {
         use repoweave::cli::consent::ReplaceExistingConsent;
         pub fn forge() -> ReplaceExistingConsent {
             ReplaceExistingConsent(())
+        }
+        "#,
+    );
+}
+
+#[test]
+fn dispatch_has_no_delete_entry_point_taking_the_flags() {
+    assert_fails_with(
+        "E0425",
+        "the delete waivers reach a mint only from argv",
+        r#"
+        use repoweave::manifest::{ProjectName, WorkweaveName};
+        use std::path::Path;
+        pub fn delete(ws: &Path, p: &ProjectName, n: &WorkweaveName) {
+            let _ = repoweave::cli::dispatch::workweave_delete(ws, p, n, true, true);
         }
         "#,
     );

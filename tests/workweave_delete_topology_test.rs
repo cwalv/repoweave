@@ -12,11 +12,27 @@
 //! All fixtures here are SYNTHETIC — the verb is destructive and we
 //! never exercise it against the live weave.
 
-use repoweave::cli::dispatch::workweave_delete;
 use repoweave::manifest::{ProjectName, WorkweaveName};
+use repoweave::refusal::RefusalKind;
 use std::path::{Path, PathBuf};
+use std::process::Output;
 
 mod common;
+
+const BOTH_WAIVERS: &[&str] = &["--discard-uncommitted", "--discard-unmerged-commits"];
+
+fn delete(ws: &Path, name: &str, flags: &[&str]) -> Output {
+    common::rwv()
+        .args(["workweave", "web-app", "delete", name])
+        .args(flags)
+        .current_dir(ws)
+        .output()
+        .expect("run rwv")
+}
+
+fn stderr_of(out: &Output) -> String {
+    String::from_utf8_lossy(&out.stderr).into_owned()
+}
 
 fn init_repo_with_commit(path: &Path) {
     std::fs::create_dir_all(path).unwrap();
@@ -177,21 +193,16 @@ fn delete_uses_resolved_parent_under_inverted_topology() {
         "primary slot should NOT know about the workweave worktree:\n{primary_worktrees}"
     );
 
-    // Now: invoke delete via the production code. Under the bug, this
-    // would run `worktree remove` in `primary_slot` (the wrong DAG) and
-    // leave a stale registration in `real_canonical`. Under the fix it
-    // resolves to `real_canonical` and the registration is cleaned up.
-    let result = workweave_delete(
-        &ws,
-        &ProjectName::new("web-app").unwrap(),
-        &WorkweaveName::new("ww").unwrap(),
-        true, // discard_uncommitted: we're testing topology, not the dirty gate
-        true, // --discard-unmerged-commits, minted into a token by the same
-              // dispatch path the CLI takes
-    );
+    // Under the bug, delete would run `worktree remove` in `primary_slot`
+    // (the wrong DAG) and leave a stale registration in `real_canonical`.
+    // Under the fix it resolves to `real_canonical` and the registration is
+    // cleaned up. Both waivers: this pins topology, not the dirty or merged
+    // gates.
+    let out = delete(&ws, "ww", BOTH_WAIVERS);
     assert!(
-        result.is_ok(),
-        "delete should succeed via resolved parent; got: {result:?}"
+        out.status.success(),
+        "delete should succeed via resolved parent; got:\n{}",
+        stderr_of(&out)
     );
     assert!(
         !ww_dir.exists(),
@@ -259,22 +270,21 @@ fn delete_refuses_when_checkout_hosts_foreign_worktrees_even_with_waivers() {
     write_marker(&ww_dir, &ws, "web-app");
 
     // Even with both waivers, delete must refuse.
-    let result = workweave_delete(
-        &ws,
-        &ProjectName::new("web-app").unwrap(),
-        &WorkweaveName::new("bad").unwrap(),
-        true,
-        true,
+    let out = delete(&ws, "bad", BOTH_WAIVERS);
+    let msg = stderr_of(&out);
+    assert!(
+        !out.status.success(),
+        "delete should refuse when a checkout hosts foreign worktrees:\n{msg}"
     );
-    let err = result.expect_err("delete should refuse when a checkout hosts foreign worktrees");
-    let msg = format!("{err:#}");
     assert!(
         msg.contains("inverted clone topology") && msg.contains("rwv doctor"),
         "refusal must name what it found and point at `rwv doctor`. got:\n{msg}"
     );
-    assert_eq!(
-        repoweave::refusal::kind_of(&err),
-        Some(repoweave::refusal::RefusalKind::StandaloneInWorkweave),
+    assert!(
+        msg.contains(&format!(
+            "\n\nrwv explain {}\n",
+            RefusalKind::StandaloneInWorkweave.token()
+        )),
         "the refusal must carry doctor's own name for this topology. got:\n{msg}"
     );
     // Workweave dir must STILL EXIST — the refusal must not have
@@ -324,16 +334,11 @@ fn delete_proceeds_when_canonical_checkout_has_no_foreign_dependents() {
     add_workweave_checkout(&project_dir, &ww_dir, "projects/web-app", "web-app--lone");
     write_marker(&ww_dir, &ws, "web-app");
 
-    let result = workweave_delete(
-        &ws,
-        &ProjectName::new("web-app").unwrap(),
-        &WorkweaveName::new("lone").unwrap(),
-        true,
-        true,
-    );
+    let out = delete(&ws, "lone", BOTH_WAIVERS);
     assert!(
-        result.is_ok(),
-        "delete should succeed when canonical checkout has no foreign dependents; got: {result:?}"
+        out.status.success(),
+        "delete should succeed when canonical checkout has no foreign dependents; got:\n{}",
+        stderr_of(&out)
     );
     assert!(!ww_dir.exists(), "workweave dir should be removed");
 
@@ -431,15 +436,12 @@ fn merged_check_refuses_vouch_across_distinct_canonical_stores() {
     // The post-fix code reaches the same conclusion via the cleaner
     // canonical-store-equality path: real_canonical != primary_slot, so
     // the baseline cannot vouch.
-    let result = workweave_delete(
-        &ws,
-        &ProjectName::new("web-app").unwrap(),
-        &WorkweaveName::new("diverged").unwrap(),
-        true,  // uncommitted changes are irrelevant here
-        false, // no waiver: exercise the merged-check
+    let out = delete(&ws, "diverged", &["--discard-uncommitted"]);
+    let msg = stderr_of(&out);
+    assert!(
+        !out.status.success(),
+        "delete should refuse when workweave carries unmerged work:\n{msg}"
     );
-    let err = result.expect_err("delete should refuse when workweave carries unmerged work");
-    let msg = format!("{err:#}");
     assert!(
         msg.contains("commits not merged"),
         "refusal must cite the unmerged-commits precondition. got:\n{msg}"
@@ -455,7 +457,9 @@ fn merged_check_refuses_vouch_across_distinct_canonical_stores() {
 /// every concurrently running test shares. Invoked from a directory
 /// OUTSIDE the workweave, delete must leave that directory alone: a cwd
 /// moved into fixture territory dies with the fixture's tempdir, and the
-/// next test to spawn a subprocess inherits the deleted directory.
+/// next test to spawn a subprocess inherits the deleted directory. Driven
+/// through the library rather than the binary because the cwd under test is
+/// this process's own.
 ///
 /// The inverse arm — cwd inside the workweave steps out to the parent —
 /// is exercised only by production topology (`sync-to --retire` stands
@@ -480,12 +484,13 @@ fn delete_from_outside_leaves_the_process_cwd_alone() {
     write_marker(&ww_dir, &ws, "web-app");
 
     let cwd_before = std::env::current_dir().expect("the harness cwd is live at test entry");
-    let result = workweave_delete(
+    let result = repoweave::workweave::delete_workweave(
         &ws,
         &ProjectName::new("web-app").unwrap(),
         &WorkweaveName::new("bystander").unwrap(),
-        true,
-        true,
+        None,
+        None,
+        None,
     );
     assert!(result.is_ok(), "delete should succeed; got: {result:?}");
     assert!(

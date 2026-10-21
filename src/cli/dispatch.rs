@@ -366,33 +366,6 @@ fn levenshtein(a: &str, b: &str) -> usize {
     prev[n]
 }
 
-/// `rwv workweave <PROJECT> delete <NAME>` — the dispatch arm, named.
-///
-/// The other minting arms are written inline in [`run`]'s `match`; this one
-/// is a named function because it is the only one integration tests drive
-/// from *below* the process boundary. `workweave_delete_topology_test` and
-/// `e2e_workweave_isolation_test` build clone topologies that would be
-/// laborious to reach through argv, and then assert on the `Err` value
-/// rather than on stderr. They cannot mint the consent tokens themselves —
-/// that is the point of a token — so they pass the flags and come through the
-/// door dispatch uses.
-pub fn workweave_delete(
-    primary_root: &Path,
-    project: &ProjectName,
-    name: &WorkweaveName,
-    discard_uncommitted: bool,
-    discard_unmerged_commits: bool,
-) -> anyhow::Result<()> {
-    crate::workweave::delete_workweave(
-        primary_root,
-        project,
-        name,
-        None,
-        consent::DiscardUncommittedConsent::from_flag(discard_uncommitted),
-        consent::DiscardUnmergedConsent::from_flag(discard_unmerged_commits),
-    )
-}
-
 /// [`crate::workweave::refuse_symlinked_members`] for the workspace a verb was
 /// invoked in, under the project it acts for.
 fn refuse_symlinked_members_here(ctx: &WorkspaceContext) -> anyhow::Result<()> {
@@ -946,12 +919,13 @@ pub fn run() -> anyhow::Result<()> {
                         discard_uncommitted,
                         discard_unmerged_commits,
                     }) => {
-                        workweave_delete(
+                        crate::workweave::delete_workweave(
                             primary_root,
                             &project,
                             &WorkweaveName::new(name)?,
-                            discard_uncommitted,
-                            discard_unmerged_commits,
+                            None,
+                            consent::DiscardUncommittedConsent::from_flag(discard_uncommitted),
+                            consent::DiscardUnmergedConsent::from_flag(discard_unmerged_commits),
                         )?;
                     }
                     Some(WorkweaveAction::Create {
