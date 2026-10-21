@@ -87,8 +87,8 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`missing-canonical-clone`](#missing-canonical-clone) | Warning | Report-only |
 | [`uninitialized-submodule`](#uninitialized-submodule) / `fetched` | Warning | Auto-fixable |
 | [`uninitialized-submodule`](#uninitialized-submodule) / `unfetched` | Warning | Report-only |
-| [`provenance`](#provenance) / `origin-url-mismatch`, `placement-disagreement` | Warning | Report-only |
-| [`provenance`](#provenance) / `lock-sha-unreachable` | Error | Report-only |
+| [`provenance`](#provenance) / `origin-url-mismatch`, `relative-remote`, `placement-disagreement` | Warning | Report-only |
+| [`provenance`](#provenance) / `unresolvable-url`, `lock-sha-unreachable` | Error | Report-only |
 | [`branch-discipline`](#branch-discipline) / `unmigrated-ephemeral-branch`, `unrecorded-ephemeral-branch`, `stale-ephemeral-branch-safe` | Warning | Auto-fixable |
 | [`branch-discipline`](#branch-discipline) / `detached` | Warning | Report-only by default (`--adopt-detached-checkouts`) |
 | [`branch-discipline`](#branch-discipline) / `canonical-detached` | Warning | Report-only by default (`--reattach-checkouts`) |
@@ -1025,6 +1025,32 @@ push may publish to the wrong remote.
 here because that decision is yours: a `reference`-role repo may point at a
 different remote on purpose — a local mirror, say — and the message says so
 when the role is `reference`.
+
+#### `relative-remote`
+
+**Warning. Report-only.** The clone records its remote as a relative path, such
+as `../up.git`. git reads a relative path from the top of whichever checkout it
+runs in, and every workweave checkout of a member shares the canonical clone's
+remote, so the one path names a different remote from each checkout: a push
+from a workweave goes somewhere other than a push from the primary weave. The
+path is not compared with the manifest's `url`.
+
+**What to do:** give the remote an absolute URL. The message names the command,
+with the URL the manifest's `url` resolves to:
+`git -C <repo> remote set-url origin <url>`. `rwv add --adopt` refuses such a
+clone with `no-remote-url`.
+
+#### `unresolvable-url`
+
+**Error. Report-only.** The manifest's `url` is neither a URL nor registry
+shorthand, such as a plain path, so it names no remote. Every clone of the
+member refuses with `unresolvable-repo-source`: `rwv fetch` on another machine,
+and `rwv sync` into a weave without it. Doctor reports it whether or not a clone
+is on disk.
+
+**What to do:** write the `url` in `rwv.toml` as a URL. The message names the
+`file://` spelling of an absolute path, which is how a local remote is written.
+`--fix` has no arm here because `rwv.toml` is yours to edit.
 
 #### `lock-sha-unreachable`
 

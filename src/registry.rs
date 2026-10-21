@@ -425,8 +425,8 @@ fn extract_owner_repo(path: &str) -> Option<(String, String)> {
 // Built-in registries and CloneInfo extraction
 // ---------------------------------------------------------------------------
 
-/// A remote in the spelling git takes it: never registry shorthand, and an
-/// absolute path only as its `file://` URL.
+/// A remote in the spelling git takes it: never registry shorthand, never a
+/// plain path. An absolute path is held as its `file://` URL.
 #[derive(Debug, Clone)]
 pub struct CloneUrl(String);
 
@@ -463,14 +463,6 @@ impl CloneUrl {
             .trim_end_matches(".git")
             .to_ascii_lowercase()
     }
-
-    fn recorded(text: String) -> CloneUrl {
-        if is_absolute_spelling(&text) {
-            CloneUrl(mint_file_url(&text))
-        } else {
-            CloneUrl(text)
-        }
-    }
 }
 
 fn percent_decode(s: &str) -> String {
@@ -497,11 +489,55 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// The remote `repo` records under the conventional name, as configured
-/// rather than as an `insteadOf` rule rewrites it, or `None` when it records
-/// none.
-pub fn recorded_remote(vcs: &dyn Vcs, repo: &Path) -> Result<Option<CloneUrl>, VcsError> {
-    Ok(vcs.remote_url(repo)?.map(CloneUrl::recorded))
+/// What a clone records as its remote, as configured rather than as an
+/// `insteadOf` rule rewrites it.
+#[derive(Debug, Clone)]
+pub enum RecordedRemote {
+    Url(CloneUrl),
+    /// git reads a relative path from the top of whichever checkout it runs
+    /// in, and every checkout of a member shares the one record, so the path
+    /// names a different remote from each checkout.
+    RelativePath(String),
+}
+
+impl RecordedRemote {
+    fn read(text: String) -> RecordedRemote {
+        if is_absolute_spelling(&text) {
+            RecordedRemote::Url(CloneUrl(mint_file_url(&text)))
+        } else if names_a_local_path(&text) {
+            RecordedRemote::RelativePath(text)
+        } else {
+            RecordedRemote::Url(CloneUrl(text))
+        }
+    }
+}
+
+impl std::fmt::Display for RecordedRemote {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RecordedRemote::Url(url) => url.fmt(f),
+            RecordedRemote::RelativePath(path) => f.write_str(path),
+        }
+    }
+}
+
+/// git's reading of a remote with no `://`: a local path unless a `:` comes
+/// before any `/`, which makes it SCP-style `host:path`.
+fn names_a_local_path(text: &str) -> bool {
+    if text.contains("://") {
+        return false;
+    }
+    match (text.find(':'), text.find('/')) {
+        (None, _) => true,
+        (Some(colon), Some(slash)) => slash < colon,
+        (Some(_), None) => false,
+    }
+}
+
+/// The remote `repo` records under the conventional name, or `None` when it
+/// records none.
+pub fn recorded_remote(vcs: &dyn Vcs, repo: &Path) -> Result<Option<RecordedRemote>, VcsError> {
+    Ok(vcs.remote_url(repo)?.map(RecordedRemote::read))
 }
 
 impl std::fmt::Display for CloneUrl {
@@ -1100,7 +1136,38 @@ mod tests {
     // -----------------------------------------------------------------------
 
     fn recorded(s: &str) -> CloneUrl {
-        CloneUrl::recorded(s.to_owned())
+        match RecordedRemote::read(s.to_owned()) {
+            RecordedRemote::Url(url) => url,
+            RecordedRemote::RelativePath(path) => panic!("{path} read as a relative path"),
+        }
+    }
+
+    #[test]
+    fn a_recorded_relative_path_is_not_a_url() {
+        for path in ["../up.git", "up.git", "github/acme/x", "./x", "sub/dir:x"] {
+            assert!(
+                matches!(
+                    RecordedRemote::read(path.to_owned()),
+                    RecordedRemote::RelativePath(p) if p == path
+                ),
+                "{path}"
+            );
+        }
+        for url in [
+            "git@github.com:a/b.git",
+            "host:org/repo",
+            "https://h/a/b",
+            "ssh://h/a",
+            "file:///srv/x",
+            "/srv/x",
+            r"C:\x",
+            r"\\server\share\x",
+        ] {
+            assert!(
+                matches!(RecordedRemote::read(url.to_owned()), RecordedRemote::Url(_)),
+                "{url}"
+            );
+        }
     }
 
     fn same(a: &str, b: &str) -> bool {
@@ -1120,7 +1187,6 @@ mod tests {
                 "{spelling}"
             );
         }
-        assert!(!resolved.names_same_remote(&recorded("github/acme/x")));
     }
 
     #[test]

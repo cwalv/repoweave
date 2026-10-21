@@ -35,6 +35,21 @@ word that names no workweave refuses with `no-such-workweave`, saying to write
 `./<dir>` for a directory. A path with a separator, a leading `.`, or an
 absolute path still names a directory.
 
+### `rwv doctor` reports a `url` no clone can use, and a relative remote
+
+A member `url` that is neither a URL nor registry shorthand, such as a plain
+path, is reported as `provenance` / `unresolvable-url`, an error naming the
+`file://` spelling to write. Every clone of such a member refuses, and doctor
+used to say nothing about it.
+
+A clone whose remote is a relative path is reported as `provenance` /
+`relative-remote`, a warning naming the `git remote set-url` command that gives
+it the absolute URL the manifest names. git reads a relative remote from each
+checkout's own directory, and a member's workweave checkouts share the
+canonical clone's remote, so the path reached a different remote from each; it
+used to read as an `origin-url-mismatch`. `rwv add --adopt` refuses such a
+clone with `no-remote-url`, where it recorded the path as the member's `url`.
+
 ### Breaking: a malformed `hide-dotfiles` stops materialize and the install hooks
 
 A `hide-dotfiles` that is not a boolean in `[integrations.vscode-workspace]` was

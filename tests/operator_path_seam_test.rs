@@ -698,6 +698,13 @@ const ROUTED: &[Routed] = &[
     Routed {
         file: "add_remove.rs",
         scope: "fn run_add_from_local_path(",
+        needle: r#""'{dir}' records its {remote} remote as the relative path '{path}', which git \"#,
+        renders: 1,
+        prints: "the no-remote-URL refusal for a clone whose remote is a relative path",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "fn run_add_from_local_path(",
         needle: r#""failed to load manifest at {}","#,
         renders: 1,
         prints: "run_add_from_local_path's own manifest-load failure",

@@ -397,6 +397,27 @@ fn an_adopt_with_no_origin_remote_routes_to_no_remote_url() {
     assert_routes_to(&stderr, "no-remote-url");
 }
 
+/// `rwv add --adopt <path>` on a clone whose `origin` is a relative path:
+/// git reads it from each checkout's own directory, so it names no one URL
+/// the manifest could record.
+#[test]
+fn an_adopt_of_a_relative_remote_routes_to_no_remote_url() {
+    let tmp = common::tempdir().unwrap();
+    let ws = plain_weave(tmp.path());
+    let clone_dir = ws.join(SERVER_PATH);
+    std::fs::create_dir_all(&clone_dir).unwrap();
+    std::fs::write(clone_dir.join("README.md"), "init\n").unwrap();
+    git_init_with_commit(&clone_dir);
+    common::git_in(&clone_dir, &["remote", "add", "origin", "../../up.git"]);
+
+    let stderr = refusal_stderr(&["add", "--adopt", SERVER_PATH], &ws);
+    assert!(
+        stderr.contains("relative path '../../up.git'"),
+        "the refusal names the recorded path:\n{stderr}"
+    );
+    assert_routes_to(&stderr, "no-remote-url");
+}
+
 /// The selector errors, which are three conditions under one type. A single
 /// drive would pass on an arm that answered the same kind for all three.
 #[test]

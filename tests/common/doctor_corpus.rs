@@ -158,6 +158,8 @@ pub fn case_token(v: &CheckViolation) -> String {
         CheckViolation::Provenance { sub_kind, .. } => {
             let tail = match sub_kind {
                 ProvenanceKind::OriginUrlMismatch { .. } => "origin-url-mismatch",
+                ProvenanceKind::RelativeRemote { .. } => "relative-remote",
+                ProvenanceKind::UnresolvableUrl { .. } => "unresolvable-url",
                 ProvenanceKind::LockShaUnreachable { .. } => "lock-sha-unreachable",
                 ProvenanceKind::PlacementDisagreement { .. } => "placement-disagreement",
             };
@@ -524,6 +526,22 @@ pub fn corpus() -> Vec<CheckViolation> {
                 manifest_url: "https://example.invalid/a".into(),
                 actual_url: "https://example.invalid/b".into(),
                 is_reference_role: false,
+            },
+        },
+        CheckViolation::Provenance {
+            project: project(),
+            repo: repo(),
+            sub_kind: ProvenanceKind::RelativeRemote {
+                path: "../../up.git".into(),
+                remote: "origin".into(),
+                manifest_remote: Some("https://example.invalid/a".into()),
+            },
+        },
+        CheckViolation::Provenance {
+            project: project(),
+            repo: repo(),
+            sub_kind: ProvenanceKind::UnresolvableUrl {
+                manifest_url: "/srv/repos/a".into(),
             },
         },
         CheckViolation::Provenance {

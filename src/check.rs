@@ -777,6 +777,8 @@ impl CheckViolation {
             },
             CheckViolation::Provenance { sub_kind, .. } => match sub_kind {
                 ProvenanceKind::OriginUrlMismatch { .. }
+                | ProvenanceKind::RelativeRemote { .. }
+                | ProvenanceKind::UnresolvableUrl { .. }
                 | ProvenanceKind::LockShaUnreachable { .. }
                 | ProvenanceKind::PlacementDisagreement { .. } => ReportOnly,
             },
@@ -876,8 +878,10 @@ impl CheckViolation {
             },
             CheckViolation::Provenance { sub_kind, .. } => match sub_kind {
                 ProvenanceKind::OriginUrlMismatch { .. }
+                | ProvenanceKind::RelativeRemote { .. }
                 | ProvenanceKind::PlacementDisagreement { .. } => Warning,
-                ProvenanceKind::LockShaUnreachable { .. } => Error,
+                ProvenanceKind::UnresolvableUrl { .. }
+                | ProvenanceKind::LockShaUnreachable { .. } => Error,
             },
         }
     }
@@ -1347,6 +1351,25 @@ pub enum ProvenanceKind {
         /// (e.g. a local mirror), so the violation message notes this to
         /// help the operator decide whether to act.
         is_reference_role: bool,
+    },
+    /// The clone records its remote as a relative path. git reads one from
+    /// the top of whichever checkout it runs in, and every workweave checkout
+    /// of the member shares the canonical clone's record, so the path names a
+    /// different remote from each. Warning severity; report-only.
+    RelativeRemote {
+        /// The path as the clone records it.
+        path: String,
+        /// The name the backend gives the remote, for the repair command.
+        remote: String,
+        /// The URL the manifest's `url` resolves to, when it resolves.
+        manifest_remote: Option<String>,
+    },
+    /// The manifest's `url` is neither a URL nor registry shorthand, so it
+    /// names no remote and no clone of the member can be made. Error
+    /// severity; report-only.
+    UnresolvableUrl {
+        /// The `url` as `rwv.toml` spells it.
+        manifest_url: String,
     },
     /// The SHA pinned in `rwv.lock` is absent from the clone's object store.
     /// The canonical store is missing the pinned revision; refresh it from
@@ -3895,9 +3918,16 @@ pub fn scan_cargo_ecosystem(
 ///    role (see [`ProvenanceKind::PlacementDisagreement`]) and never reach
 ///    the comparison; an entry whose URL derives no path at all (`placement`
 ///    returns `None`) has nothing to compare against and is skipped too.
+///
+/// 4. **`unresolvable-url`** — the manifest's `url` resolves to no remote.
+///    Error severity; report-only. A pure manifest check.
+///
+/// 5. **`relative-remote`** — the clone records its remote as a relative
+///    path, which names no one remote. Warning severity; report-only. It
+///    takes the place of the `origin-url-mismatch` comparison for that clone.
 pub fn scan_provenance(workspace_dir: &Path, projects: &[Project]) -> Vec<CheckViolation> {
     use crate::manifest::Role;
-    use crate::registry::{recorded_remote, resolve_to_clone_info};
+    use crate::registry::{recorded_remote, resolve_to_clone_info, RecordedRemote};
     use crate::vcs::vcs_for;
 
     let mut violations = Vec::new();
@@ -3922,7 +3952,20 @@ pub fn scan_provenance(workspace_dir: &Path, projects: &[Project]) -> Vec<CheckV
             }
         }
 
-        // --- origin-url-mismatch ---
+        // --- unresolvable-url ---
+        for (repo_path, entry) in project.manifest.iter_entries() {
+            if resolve_to_clone_info(&entry.url).is_err() {
+                violations.push(CheckViolation::Provenance {
+                    project: project.name.clone(),
+                    repo: repo_path.clone(),
+                    sub_kind: ProvenanceKind::UnresolvableUrl {
+                        manifest_url: entry.url.to_string(),
+                    },
+                });
+            }
+        }
+
+        // --- origin-url-mismatch, relative-remote ---
         for (repo_path, entry) in project.manifest.iter_entries() {
             let vcs = vcs_for(entry.vcs_type);
             let repo_abs = workspace_dir.join(repo_path.as_path());
@@ -3930,27 +3973,35 @@ pub fn scan_provenance(workspace_dir: &Path, projects: &[Project]) -> Vec<CheckV
                 continue;
             }
 
-            let actual = match recorded_remote(vcs.as_ref(), &repo_abs) {
-                Ok(Some(u)) => u,
+            let recorded = match recorded_remote(vcs.as_ref(), &repo_abs) {
+                Ok(Some(r)) => r,
                 Ok(None) => continue, // no remote recorded — not this check's concern
                 Err(_) => continue,   // can't read remote — skip silently
             };
-            // A url that resolves to no remote has nothing to compare.
-            let Ok(declared) = resolve_to_clone_info(&entry.url) else {
-                continue;
-            };
+            let declared = resolve_to_clone_info(&entry.url).ok().map(|info| info.url);
 
-            if !declared.url.names_same_remote(&actual) {
-                violations.push(CheckViolation::Provenance {
-                    project: project.name.clone(),
-                    repo: repo_path.clone(),
-                    sub_kind: ProvenanceKind::OriginUrlMismatch {
+            let sub_kind = match recorded {
+                RecordedRemote::RelativePath(path) => ProvenanceKind::RelativeRemote {
+                    path,
+                    remote: vcs.conventional_remote_name().to_owned(),
+                    manifest_remote: declared.map(|url| url.to_string()),
+                },
+                RecordedRemote::Url(actual) => match declared {
+                    // A url that resolves to no remote has nothing to compare.
+                    None => continue,
+                    Some(declared) if declared.names_same_remote(&actual) => continue,
+                    Some(_) => ProvenanceKind::OriginUrlMismatch {
                         manifest_url: entry.url.to_string(),
                         actual_url: actual.to_string(),
-                        is_reference_role: entry.role == crate::manifest::Role::Reference,
+                        is_reference_role: entry.role == Role::Reference,
                     },
-                });
-            }
+                },
+            };
+            violations.push(CheckViolation::Provenance {
+                project: project.name.clone(),
+                repo: repo_path.clone(),
+                sub_kind,
+            });
         }
 
         // --- lock-sha-unreachable ---
@@ -7981,6 +8032,25 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                              re-point the remote to converge){suffix}",
                         )
                     }
+                    ProvenanceKind::RelativeRemote {
+                        path,
+                        remote,
+                        manifest_remote,
+                    } => format!(
+                        "{project}: {repo}: the clone records its `{remote}` remote as the \
+                         relative path `{path}`, which git reads from each checkout's own \
+                         directory, so the member's workweave checkouts reach other remotes \
+                         than this one (report-only; record an absolute URL: `git -C {repo} \
+                         remote set-url {remote} {url}`)",
+                        url = manifest_remote.as_deref().unwrap_or("<url>"),
+                    ),
+                    ProvenanceKind::UnresolvableUrl { manifest_url } => format!(
+                        "{project}: {repo}: url `{manifest_url}` is neither a URL nor registry \
+                         shorthand, so it names no remote and no clone of the member can be \
+                         made (report-only; write it in rwv.toml as a URL, `{file_url}` for a \
+                         local remote)",
+                        file_url = crate::path_spelling::file_url_suggestion(&manifest_url),
+                    ),
                     ProvenanceKind::LockShaUnreachable { sha } => format!(
                         "{project}: {repo}: lock pins SHA {sha} which is absent from \
                          the local object store; the canonical store is missing the pinned \

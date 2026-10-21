@@ -244,7 +244,10 @@ fn clones(clone: &Path, url: &str) -> bool {
         .url;
     repoweave::registry::recorded_remote(repoweave::git::git_vcs().as_ref(), clone)
         .unwrap()
-        .is_some_and(|recorded| recorded.names_same_remote(&wanted))
+        .is_some_and(|recorded| match recorded {
+            repoweave::registry::RecordedRemote::Url(url) => url.names_same_remote(&wanted),
+            repoweave::registry::RecordedRemote::RelativePath(_) => false,
+        })
 }
 
 /// An add over an entry the manifest maps to another URL, whose clone is on

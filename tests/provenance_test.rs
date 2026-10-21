@@ -838,3 +838,98 @@ fn re_keying_alone_clears_placement_disagreement_once_the_checkout_is_already_th
         "re-keying and relocking must leave nothing to report"
     );
 }
+
+// ===========================================================================
+// 4. unresolvable-url
+// ===========================================================================
+
+fn doctor_text_and_json(ws: &Path) -> (String, String) {
+    let text = rwv().args(["doctor"]).current_dir(ws).output().unwrap();
+    let json = rwv()
+        .args(["doctor", "--json"])
+        .current_dir(ws)
+        .output()
+        .unwrap();
+    (
+        String::from_utf8_lossy(&text.stdout).into_owned(),
+        String::from_utf8_lossy(&json.stdout).into_owned(),
+    )
+}
+
+/// A `url` that is neither a URL nor registry shorthand names no remote, so
+/// no clone of the member can be made; doctor reports it whether or not a
+/// clone is on disk, naming the `file://` spelling to write.
+#[test]
+fn a_plain_path_url_is_reported_with_its_file_url() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    write_manifest(
+        &ws,
+        "my-project",
+        &[("local/acme/x", "/srv/repos/acme/x", "owned")],
+    );
+
+    let (text, json) = doctor_text_and_json(&ws);
+    assert!(json.contains("unresolvable-url"), "{json}");
+    assert!(
+        text.contains("`file:///srv/repos/acme/x`"),
+        "the finding names the spelling to write: {text}"
+    );
+}
+
+#[test]
+fn a_url_or_shorthand_raises_no_unresolvable_url() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    write_manifest(
+        &ws,
+        "my-project",
+        &[
+            ("github/acme/x", "https://github.com/acme/x.git", "owned"),
+            ("github/acme/y", "github/acme/y", "owned"),
+            ("local/acme/z", "file:///srv/repos/acme/z", "owned"),
+        ],
+    );
+
+    let (_, json) = doctor_text_and_json(&ws);
+    assert!(!json.contains("unresolvable-url"), "{json}");
+}
+
+// ===========================================================================
+// 5. relative-remote
+// ===========================================================================
+
+/// git reads a relative remote from each checkout's own directory, and every
+/// workweave checkout of a member shares the canonical clone's remote
+/// config, so the path names a different remote in each. Doctor names it
+/// rather than resolving it, even where it would reach the manifest's remote
+/// from the canonical clone.
+#[test]
+fn a_relative_remote_is_reported_by_name() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_primary(tmp.path());
+    let repo_abs = ws.join("github/myorg/myrepo");
+    init_repo(&repo_abs);
+    add_remote(&repo_abs, "origin", "../../up.git");
+    write_manifest(
+        &ws,
+        "my-project",
+        &[(
+            "github/myorg/myrepo",
+            "https://github.com/myorg/myrepo.git",
+            "owned",
+        )],
+    );
+
+    let (text, json) = doctor_text_and_json(&ws);
+    assert!(json.contains("relative-remote"), "{json}");
+    assert!(
+        !json.contains("origin-url-mismatch"),
+        "a relative path is not compared as a remote: {json}"
+    );
+    assert!(
+        text.contains("`../../up.git`")
+            && text.contains("remote set-url origin https://github.com/myorg/myrepo.git"),
+        "the finding names the path and the command that replaces it: {text}"
+    );
+}

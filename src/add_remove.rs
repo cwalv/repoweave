@@ -9,7 +9,7 @@ use crate::path_spelling::{file_url_suggestion, is_absolute_spelling, operator_p
 use crate::refusal::{refusal, RefusalKind};
 use crate::registry::{
     builtin_registries, recorded_remote, resolve_to_clone_info, CloneUrl, CreationParamError,
-    ParamKind, ParamMap, ParamSpec, RegistryName, Upstream,
+    ParamKind, ParamMap, ParamSpec, RecordedRemote, RegistryName, Upstream,
 };
 use crate::vcs::{
     vcs_for, DeletionWarrant, EphemeralRefName, HeadAttachment, RemoteBranchCopies, TrackingRef,
@@ -474,11 +474,10 @@ fn refuse_foreign_clone_at_placement(
             operator_path(dest)
         )
     })?;
-    if recorded
-        .as_ref()
-        .is_some_and(|r| r.names_same_remote(clone_url))
-    {
-        return Ok(());
+    if let Some(RecordedRemote::Url(r)) = &recorded {
+        if r.names_same_remote(clone_url) {
+            return Ok(());
+        }
     }
     let found = match &recorded {
         Some(r) => format!("a clone of '{r}'"),
@@ -845,6 +844,18 @@ fn run_add_from_local_path(
                 ),
             )
         })?;
+    let recorded = match recorded {
+        RecordedRemote::Url(url) => url,
+        RecordedRemote::RelativePath(path) => crate::refuse!(
+            RefusalKind::NoRemoteUrl,
+            "'{dir}' records its {remote} remote as the relative path '{path}', which git \
+             reads from each checkout's own directory, so it names no one URL to record; \
+             give it an absolute URL (`git -C {dir} remote set-url {remote} <url>`) and \
+             re-run `rwv add --adopt {path_arg}`",
+            dir = operator_path(clone_dir),
+            remote = vcs.conventional_remote_name(),
+        ),
+    };
 
     // Load and check existing manifest.
     let mut manifest = Manifest::from_path(manifest_path).with_context(|| {
