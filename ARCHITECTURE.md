@@ -435,11 +435,11 @@ requires.** The proof is a value that cannot be forged:
   by a boolean argument. `DiscardWarrant` pairs a `SavepointRef`
   with an operator consent token: a destructive reset is
   representable only when a savepoint provably exists.
-- **Consent tokens.** Four of the five live in `pub mod consent`
-  (`src/cli/consent.rs`), not in `vcs`, with `from_flag` constructors that are
-  `pub(in crate::cli)`. That privacy is the reason `src/main.rs` must stay
-  empty (§2): the tokens are mintable only from a flag, inside the module that
-  parses flags.
+- **Consent tokens.** They live in `pub mod consent` (`src/cli/consent.rs`),
+  not in `vcs`, with constructors that are `pub(in crate::cli)` and called
+  only from `cli::dispatch::run`, from argv — or, for a `--continue`, from
+  the op record `run` resolved. That privacy is the reason `src/main.rs` must
+  stay empty (§2).
 
 Several witness types deliberately have **no `as_str()`** — `TrackingRef`,
 `OwnedRef`, `AttachedRef` — so a caller cannot launder a proof back into a

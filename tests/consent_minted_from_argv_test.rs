@@ -1,17 +1,19 @@
 //! Every consent token is minted inside `cli::dispatch::run`, which takes no
 //! arguments, so only argv reaches a mint.
 //!
-//! The compiler holds the mint to the `cli` module tree (`from_flag` is
+//! The compiler holds the mint to the `cli` module tree (each mint is
 //! `pub(in crate::cli)`), and every visibility narrower than `pub` looks alike
 //! from an external probe. A `pub` function in that tree taking a flag as a
 //! `bool` and minting from it compiles, and hands every caller the consent the
 //! token exists to withhold. That is a property of where the mint sits, so
-//! this reads the source.
+//! this reads the source. A `--continue` mint reads the op record `run`
+//! resolved from the workspace it runs in, which no caller hands it either.
 //!
-//! Scope: non-comment lines of `src/` outside `#[cfg(test)]` items. The token
-//! types are the ones `src/cli/consent.rs` gives a `from_flag`, and a mint is
-//! a line spelling `<Token>::from_flag(`. A mint through a `use … as` alias,
-//! or with the call split from the type across lines, is invisible here.
+//! Scope: non-comment lines of `src/` outside `#[cfg(test)]` items. The mints
+//! are the `pub(in crate::cli) fn`s of the `impl` blocks in
+//! `src/cli/consent.rs`, and a mint site is a line spelling
+//! `<Token>::<mint>(`. A mint through a `use … as` alias, or with the call
+//! split from the type across lines, is invisible here.
 
 mod common;
 
@@ -20,17 +22,26 @@ use common::src_scan::{self, SourceLine};
 const CONSENT_FILE: &str = "cli/consent.rs";
 const DISPATCH_FILE: &str = "cli/dispatch.rs";
 
-fn token_types(lines: &[SourceLine]) -> Vec<String> {
-    let mut types = Vec::new();
+const MINT_VISIBILITY: &str = "pub(in crate::cli) fn ";
+
+fn mints(lines: &[SourceLine]) -> Vec<(String, String)> {
+    let mut mints = Vec::new();
     let mut current_impl: Option<String> = None;
     for line in lines.iter().filter(|l| l.file == CONSENT_FILE) {
         if let Some(rest) = line.text.strip_prefix("impl ") {
             current_impl = rest.strip_suffix(" {").map(str::to_owned);
-        } else if line.text.contains("fn from_flag(") {
-            types.extend(current_impl.clone());
+        } else if let Some(at) = line.text.find(MINT_VISIBILITY) {
+            let name = line.text[at + MINT_VISIBILITY.len()..]
+                .split(['(', '<'])
+                .next()
+                .unwrap_or_default()
+                .to_owned();
+            if let Some(token) = &current_impl {
+                mints.push((token.clone(), name));
+            }
         }
     }
-    types
+    mints
 }
 
 fn site_key(line: &SourceLine) -> (String, usize) {
@@ -41,12 +52,18 @@ fn site_key(line: &SourceLine) -> (String, usize) {
 fn every_consent_mint_sits_in_the_argument_less_run() {
     let lines = src_scan::production_lines();
 
-    let types = token_types(&lines);
-    let probe = std::any::type_name::<repoweave::cli::consent::DiscardUncommittedConsent>();
-    assert!(
-        types.iter().any(|t| probe.ends_with(&format!("::{t}"))),
-        "the token scan must find the consent types; found {types:?}"
-    );
+    let mints = mints(&lines);
+    for probe in [
+        std::any::type_name::<repoweave::cli::consent::DiscardUncommittedConsent>(),
+        std::any::type_name::<repoweave::cli::consent::DiscardLocalCommitsConsent>(),
+    ] {
+        assert!(
+            mints
+                .iter()
+                .any(|(t, _)| probe.ends_with(&format!("::{t}"))),
+            "the mint scan must find {probe}; found {mints:?}"
+        );
+    }
 
     let run_signature = lines
         .iter()
@@ -63,22 +80,22 @@ fn every_consent_mint_sits_in_the_argument_less_run() {
         .map(site_key)
         .collect();
 
-    for token in &types {
-        let needle = format!("{token}::from_flag(");
-        let mints: Vec<&SourceLine> = lines
+    for (token, mint) in &mints {
+        let needle = format!("{token}::{mint}(");
+        let sites: Vec<&SourceLine> = lines
             .iter()
             .filter(|l| l.file != CONSENT_FILE && l.text.contains(&needle))
             .collect();
         assert!(
-            !mints.is_empty(),
-            "{token} has a from_flag but no mint was found; the scan is blind"
+            !sites.is_empty(),
+            "{token}::{mint} has no call site; the scan is blind"
         );
-        for mint in mints {
+        for site in sites {
             assert!(
-                run_body.contains(&site_key(mint)),
+                run_body.contains(&site_key(site)),
                 "{token} is minted outside cli::dispatch::run at {}: {}",
-                mint.site(),
-                mint.text.trim()
+                site.site(),
+                site.text.trim()
             );
         }
     }

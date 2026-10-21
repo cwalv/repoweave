@@ -351,7 +351,9 @@ impl PhaseTips {
 /// and `cleanup` reads it to decide whether the project savepoint survives as
 /// the only remaining pointer to discarded commits, so mint and read must be
 /// the same value rather than the same text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum Override {
     /// The lock-freshness precondition was waived on both sides.
@@ -359,6 +361,34 @@ pub enum Override {
     /// Phase 1' may hard-reset the project repo past commits the source does
     /// not carry.
     DiscardLocalCommits,
+}
+
+/// The overrides an op runs under, each at most once.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Overrides(std::collections::BTreeSet<Override>);
+
+impl Overrides {
+    pub fn contains(&self, o: Override) -> bool {
+        self.0.contains(&o)
+    }
+
+    pub fn insert(&mut self, o: Override) {
+        self.0.insert(o);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = Override> + '_ {
+        self.0.iter().copied()
+    }
+}
+
+impl FromIterator<Override> for Overrides {
+    fn from_iter<I: IntoIterator<Item = Override>>(iter: I) -> Self {
+        Self(iter.into_iter().collect())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -407,7 +437,7 @@ pub struct OwnerRecord {
     /// tips after the atomic [`PhaseTips::converge`] swap at relock completion.
     pub tips: PhaseTips,
     /// Named overrides supplied at invocation.
-    pub overrides: Vec<Override>,
+    pub overrides: Overrides,
     /// RFC3339 UTC timestamp when the op started.
     pub started_at: String,
 }
@@ -467,7 +497,7 @@ impl From<WireOwnerRecord> for OwnerRecord {
             retire: w.retire,
             phase: w.phase,
             tips,
-            overrides: w.overrides,
+            overrides: w.overrides.into_iter().collect(),
             started_at: w.started_at,
         }
     }
@@ -491,7 +521,7 @@ impl From<OwnerRecord> for WireOwnerRecord {
             phase: r.phase,
             advanced_tips,
             converged_tips,
-            overrides: r.overrides,
+            overrides: r.overrides.iter().collect(),
             started_at: r.started_at,
         }
     }
@@ -518,7 +548,7 @@ impl OwnerRecord {
             retire: false,
             phase: OpPhase::Replay,
             tips: PhaseTips::default(),
-            overrides: Vec::new(),
+            overrides: Overrides::default(),
             started_at: utc_now_rfc3339(),
         }
     }
@@ -544,7 +574,7 @@ impl OwnerRecord {
             retire,
             phase: OpPhase::Replay,
             tips: PhaseTips::default(),
-            overrides: Vec::new(),
+            overrides: Overrides::default(),
             started_at: utc_now_rfc3339(),
         }
     }
@@ -600,6 +630,7 @@ impl LeaseRecord {
 // ---------------------------------------------------------------------------
 
 /// The result of resolving a workspace's op-state to the canonical owner.
+#[derive(Debug, Clone)]
 pub struct ResolvedOwner {
     /// The full owner record.
     pub record: OwnerRecord,
@@ -1181,13 +1212,12 @@ pub fn fix_dead_lease(workspace_dir: &Path) {
 
 /// Resume a `--continue` attempt by resolving op-state at `workspace_dir`.
 ///
-/// Follows a lease pointer if the workspace holds a lease. Returns the
-/// resolved owner record and the owner workspace path.
+/// Follows a lease pointer if the workspace holds a lease.
 ///
 /// Returns an error if no op-state is present.
-pub fn resume(workspace_dir: &Path) -> anyhow::Result<(OwnerRecord, PathBuf)> {
+pub fn resume(workspace_dir: &Path) -> anyhow::Result<ResolvedOwner> {
     match resolve_to_owner(workspace_dir)? {
-        Some(resolved) => Ok((resolved.record, resolved.owner_workspace)),
+        Some(resolved) => Ok(resolved),
         None => {
             crate::refuse!(
                 RefusalKind::NoOpRecorded,
@@ -2238,7 +2268,10 @@ mod tests {
             PathBuf::from("/tgt"),
         );
         write_owner(dir, &record).unwrap();
-        let (resumed, owner_ws) = resume(dir).unwrap();
+        let ResolvedOwner {
+            record: resumed,
+            owner_workspace: owner_ws,
+        } = resume(dir).unwrap();
         assert_eq!(resumed.id, record.id);
         assert_eq!(owner_ws, dir);
     }
@@ -2268,7 +2301,10 @@ mod tests {
         };
         overwrite_lease_in_test(&lease_dir, &lease).unwrap();
 
-        let (resumed, owner_ws) = resume(&lease_dir).unwrap();
+        let ResolvedOwner {
+            record: resumed,
+            owner_workspace: owner_ws,
+        } = resume(&lease_dir).unwrap();
         assert_eq!(resumed.id, record.id);
         assert_eq!(owner_ws, owner_dir);
     }

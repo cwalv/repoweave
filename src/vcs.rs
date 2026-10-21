@@ -4,7 +4,8 @@
 //! the specific tool (git, jj, sl, hg) so core logic doesn't hardcode git.
 
 use crate::cli::consent::{
-    AdoptDetachedConsent, DetachConsent, DiscardUnmergedConsent, ReattachConsent,
+    AdoptDetachedConsent, DetachConsent, DiscardLocalCommitsConsent, DiscardUnmergedConsent,
+    ReattachConsent,
 };
 use crate::manifest::{ProjectName, WorkweaveName};
 use crate::registry::CloneUrl;
@@ -1660,62 +1661,23 @@ impl fmt::Display for HeadAttachment {
 // Consent and warrant tokens
 // ---------------------------------------------------------------------------
 //
-// `DetachConsent`, `ReattachConsent`, `DiscardUnmergedConsent` and
-// `AdoptDetachedConsent` live in `crate::cli::consent` — the CLI layer's
-// flag module, which is the only place that can construct them. This module
+// The consent tokens live in `crate::cli::consent` — the CLI layer's flag
+// module, which is the only place that can construct them. This module
 // takes each as an opaque parameter and never constructs one, and that is
 // not a promise a reviewer has to keep: both of their construction routes
 // are sealed against this module by the compiler (private field, and a mint
 // visible only within `crate::cli`), so a mint written here does not build.
 // See that module's doc comment.
 //
-// `DiscardLocalCommitsConsent` and the warrant types below stay in this
-// module: they are minted from checks this module runs
-// (`DeletionWarrant::unmoved`/`merged`) or paired with a savepoint this
-// module writes (`DiscardWarrant::new`), not from a bare flag.
+// The warrant types below stay in this module: they are minted from checks
+// this module runs (`DeletionWarrant::unmoved`/`merged`) or paired with a
+// savepoint this module writes (`DiscardWarrant::new`).
 //
 // House rule: escape hatches are named for the precondition they waive,
 // never a bare `--force`. `--detach-checkouts` and `--reattach-checkouts`
 // name two categorically different consequences — losing the name your
 // commits hang off, versus moving which name they hang off — so they are
 // two tokens, not one `ChangeAttachmentConsent`.
-
-/// Proof that the operator consented to discarding local commits during a
-/// rewinding MOVE. Minted from `--discard-local-commits`.
-///
-/// The one token whose home is this module rather than `cli::consent`, and
-/// the reason is that its flag has a *second* spelling: sync records
-/// `--discard-local-commits` in the owner record's overrides, and
-/// `rwv sync --continue` resumes a rewinding op from that record with no
-/// flags on the command line at all. A `from_flag` mint at dispatch would
-/// therefore cover only the fresh path and leave the resumed one — the
-/// path that actually crashes and gets re-run — unable to prove the same
-/// consent. So the layer that holds *both* spellings mints it, and that
-/// layer is `sync.rs`.
-///
-/// **What that costs, stated rather than assumed.** The other four tokens
-/// are sealed to their declaring module tree, so a mint elsewhere is a
-/// compile error. This one cannot be: `sync.rs` is a sibling of this
-/// module, not a descendant, and Rust has no visibility tier that names one
-/// sibling — `pub(in path)` requires an ancestor. `pub(crate)` is therefore
-/// the tightest seal available, and it admits every module of this crate.
-/// The single production call site is `sync::rewind_project_repo`, which
-/// documents where its knowledge of the operator's intent comes from; the
-/// rest are in-crate test fixtures. **If you need this consent somewhere else, take the token
-/// as a parameter and thread it down from there** — a second mint would be
-/// a second layer claiming to know what the operator asked for, which is
-/// the thing the one-mint rule exists to prevent.
-#[derive(Debug)]
-pub struct DiscardLocalCommitsConsent(());
-
-impl DiscardLocalCommitsConsent {
-    /// Mint from the operator's `--discard-local-commits`, in whichever of
-    /// its two spellings the caller is holding — the parsed flag, or the
-    /// override recorded from it that `--continue` reads back.
-    pub(crate) fn granted() -> Self {
-        Self(())
-    }
-}
 
 /// A savepoint that has actually been written.
 ///
@@ -1765,7 +1727,7 @@ pub struct DiscardWarrant {
 impl DiscardWarrant {
     /// Pair a written savepoint with the operator's consent.
     pub fn new(savepoint: SavepointRef, consent: DiscardLocalCommitsConsent) -> Self {
-        let DiscardLocalCommitsConsent(()) = consent;
+        let _ = consent;
         Self { savepoint }
     }
 

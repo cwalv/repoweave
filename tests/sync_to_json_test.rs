@@ -663,12 +663,12 @@ const RESUMED_OP_ID: &str = "envelope-identity-resume";
 
 /// Plant the owner record a `sync-to` leaves behind when it dies after relock:
 /// owned by `workspace`, landing into `target`, retiring nothing.
-fn write_sync_to_owner_record_at_advance_target(workspace: &Path, target: &Path) {
+fn write_sync_to_owner_record_at_advance_target(workspace: &Path, target: &Path, overrides: &str) {
     let body = format!(
         "{{\"id\": \"{RESUMED_OP_ID}\", \"verb\": \"sync-to\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
          \"phase\": \"advance-target\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
-         \"overrides\": [], \"started_at\": \"2026-06-10T00:00:00Z\"}}",
+         \"overrides\": [{overrides}], \"started_at\": \"2026-06-10T00:00:00Z\"}}",
         src = common::json_escaped(workspace),
         tgt = common::json_escaped(target),
     );
@@ -703,7 +703,7 @@ fn stranded_sync_to_op(parent: &Path, workweave_name: &str) -> (PathBuf, PathBuf
     let (primary, ww, _primary_server, ww_server, _primary_project, ww_project, _advance_sha) =
         make_workweave_ahead_fixture(parent, workweave_name);
 
-    write_sync_to_owner_record_at_advance_target(&ww, &primary);
+    write_sync_to_owner_record_at_advance_target(&ww, &primary, "");
     write_lease(&primary, &ww);
     create_savepoint(&ww_project);
     create_savepoint(&ww_server);
@@ -711,15 +711,17 @@ fn stranded_sync_to_op(parent: &Path, workweave_name: &str) -> (PathBuf, PathBuf
     (primary, ww)
 }
 
-/// The request a resume carries. `retire` disagrees with the record on purpose:
-/// the resume path takes `project_override` and `jobs` off the request and
-/// everything else off the op, so the retire phase does not run and this flag
-/// is only reachable by a `retired` that reads the invocation.
-fn resume_request() -> SyncRequest {
-    SyncRequest {
-        do_continue: true,
-        retire: true,
-        ..SyncRequest::default()
+/// The request a resume carries: the op recorded where `invocation` runs, and
+/// nothing else. A resume cannot ask for a retire, so a `retired` in the
+/// envelope can only come from the op.
+fn resume_request(invocation: &WorkspaceContext) -> SyncRequest {
+    SyncRequest::Continue {
+        op: Box::new(
+            repoweave::op_state::resume(invocation.active_path())
+                .expect("the stranded op is recorded"),
+        ),
+        discard_local_commits: None,
+        project_override: None,
     }
 }
 
@@ -742,7 +744,7 @@ fn resumed_sync_to_json_run_reports_the_op_not_the_invocation() {
     // From the target, which holds the lease and not the op: this checkout is
     // the primary weave and owns nothing, and the request names no target.
     let invocation = WorkspaceContext::resolve_invocation(&primary, None).unwrap();
-    let envelope = completed_envelope(sync_to_json_run(&invocation, resume_request()));
+    let envelope = completed_envelope(sync_to_json_run(&invocation, resume_request(&invocation)));
 
     assert_eq!(
         envelope.source_workweave.as_deref(),
@@ -776,11 +778,11 @@ fn resumed_sync_to_json_run_reports_the_retire_that_did_not_run() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww) = stranded_sync_to_op(tmp.path(), "sample-weave");
 
-    // From the owner workweave, so a `retired` read off the request has
+    // From the owner workweave, so a `retired` derived from the invocation has
     // everything it wants: a workweave to name and a run that succeeds. The op
     // still records no retire, and no delete happened.
     let invocation = WorkspaceContext::resolve_invocation(&ww, None).unwrap();
-    let envelope = completed_envelope(sync_to_json_run(&invocation, resume_request()));
+    let envelope = completed_envelope(sync_to_json_run(&invocation, resume_request(&invocation)));
 
     assert!(
         !envelope.retired,
@@ -908,4 +910,33 @@ fn sync_to_continue_json_emits_conforming_envelope_after_conflict() {
         primary.canonicalize().ok(),
     );
     assert_eq!(doc["retired"], false, "envelope:\n{doc:#}");
+}
+
+/// The consent to rewind past local commits is minted at dispatch, from the
+/// record `--continue` resolves. A library caller resuming such an op holds
+/// none, and resuming without it would run a different Phase 1' than the op
+/// recorded.
+#[test]
+fn a_resume_without_the_recorded_discard_consent_is_refused() {
+    let tmp = common::tempdir().unwrap();
+    let (primary, ww) = stranded_sync_to_op(tmp.path(), "sample-weave");
+    write_sync_to_owner_record_at_advance_target(&ww, &primary, "\"discard-local-commits\"");
+    let recorded = std::fs::read_to_string(ww.join(".rwv-op")).unwrap();
+
+    let invocation = WorkspaceContext::resolve_invocation(&ww, None).unwrap();
+    let run = sync_to_json_run(&invocation, resume_request(&invocation));
+
+    let err = run
+        .project_level_result
+        .expect_err("a resume holding no consent the record names must refuse");
+    assert_eq!(
+        repoweave::refusal::kind_of(&err),
+        Some(repoweave::refusal::RefusalKind::ResumeContradictsRecord),
+        "{err:#}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(ww.join(".rwv-op")).unwrap(),
+        recorded,
+        "a refused resume leaves the record as it found it"
+    );
 }

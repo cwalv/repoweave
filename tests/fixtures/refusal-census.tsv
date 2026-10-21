@@ -85,7 +85,7 @@ src/role.rs	dirty-checkout	tests/refusal_arrival_test.rs	1
 src/role.rs	repo-not-in-manifest	tests/role_verb_test.rs	1
 src/setup.rs	claude-settings-missing	-	1
 src/sync.rs	(untokened:environment-passthrough)	-	3
-src/sync.rs	(untokened:internal-invariant)	-	12
+src/sync.rs	(untokened:internal-invariant)	-	10
 src/sync.rs	(untokened:tally)	-	2
 src/sync.rs	clone-topology	-	1
 src/sync.rs	dangling-parent	-	1
@@ -98,7 +98,7 @@ src/sync.rs	missing-replay-exclusion	-	4
 src/sync.rs	no-op-recorded	tests/refusal_arrival_test.rs	1
 src/sync.rs	not-fast-forwardable	-	2
 src/sync.rs	op-parked	-	7
-src/sync.rs	resume-contradicts-record	-	2
+src/sync.rs	resume-contradicts-record	-	3
 src/sync.rs	retire-not-converged	-	1
 src/sync.rs	retire-unpruned-checkout	tests/sync_prune_direction_test.rs	1
 src/sync.rs	stale-lock	tests/refusal_arrival_test.rs	4

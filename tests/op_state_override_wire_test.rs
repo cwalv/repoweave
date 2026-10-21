@@ -110,7 +110,7 @@ fn an_owner_record_naming_every_consent_flag_parses() {
         .expect("a record naming the consent flags must parse")
         .expect("record present");
 
-    let mut got: Vec<String> = record.overrides.iter().map(wire_spelling).collect();
+    let mut got: Vec<String> = record.overrides.iter().map(|o| wire_spelling(&o)).collect();
     got.sort();
     assert_eq!(
         got,

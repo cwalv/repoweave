@@ -71,7 +71,7 @@ impl From<op_state::ResolvedOwner> for OpStatus {
             owner: resolved.owner_workspace,
             source: resolved.record.source,
             target: resolved.record.target,
-            overrides: resolved.record.overrides,
+            overrides: resolved.record.overrides.iter().collect(),
         }
     }
 }

@@ -1108,17 +1108,26 @@ pub fn run() -> anyhow::Result<()> {
                 Some(n) => crate::parallel::resolve_jobs(Some(n)),
                 None => 1,
             };
-            // When --continue is set, source is None (read from op-state).
-            // When --continue is absent, source is Some (required by clap).
-            let request = sync::SyncRequest {
-                source: source.map(|s| s.anchored_at(&origin_dir)),
-                strategy,
-                allow_stale_lock,
-                discard_local_commits,
-                retire: false,
-                project_override,
-                jobs,
-                do_continue,
+            let request = if do_continue {
+                let op = Box::new(crate::op_state::resume(ctx.active_path())?);
+                sync::SyncRequest::Continue {
+                    discard_local_commits: consent::DiscardLocalCommitsConsent::from_record(&op),
+                    op,
+                    project_override,
+                }
+            } else {
+                sync::SyncRequest::Fresh {
+                    source: source
+                        .expect("clap requires <SOURCE> unless --continue")
+                        .anchored_at(&origin_dir),
+                    strategy,
+                    allow_stale_lock,
+                    discard_local_commits: consent::DiscardLocalCommitsConsent::from_flag(
+                        discard_local_commits,
+                    ),
+                    retire: false,
+                    jobs,
+                }
             };
             if json {
                 sync::run_sync_json(&ctx, request)?;
@@ -1144,14 +1153,16 @@ pub fn run() -> anyhow::Result<()> {
                 Some(n) => crate::parallel::resolve_jobs(Some(n)),
                 None => 1,
             };
-            // Resolve target: if None and not --continue, read .rwv-workweave marker's
-            // parent field. If --continue, target is read from op-state inside
-            // run_sync_to (target is always None when --continue due to clap conflict).
-            let resolved_target = if do_continue {
-                // --continue: target comes from op-state; pass None sentinel.
-                None
+            let request = if do_continue {
+                let op = Box::new(crate::op_state::resume(ctx.active_path())?);
+                sync::SyncRequest::Continue {
+                    discard_local_commits: consent::DiscardLocalCommitsConsent::from_record(&op),
+                    op,
+                    project_override,
+                }
             } else {
-                Some(match target {
+                // A bare `rwv sync-to` targets the `.rwv-workweave` marker's parent.
+                let target = match target {
                     Some(t) => t.anchored_at(&origin_dir),
                     None => {
                         // Bare `rwv sync-to` — must be inside a workweave. Reuse
@@ -1176,17 +1187,17 @@ pub fn run() -> anyhow::Result<()> {
                             }
                         }
                     }
-                })
-            };
-            let request = sync::SyncRequest {
-                source: resolved_target,
-                strategy,
-                allow_stale_lock,
-                discard_local_commits,
-                retire,
-                project_override,
-                jobs,
-                do_continue,
+                };
+                sync::SyncRequest::Fresh {
+                    source: target,
+                    strategy,
+                    allow_stale_lock,
+                    discard_local_commits: consent::DiscardLocalCommitsConsent::from_flag(
+                        discard_local_commits,
+                    ),
+                    retire,
+                    jobs,
+                }
             };
             if json {
                 sync::run_sync_to_json(&ctx, request)?;

@@ -1218,9 +1218,9 @@ constructor is private); the four out-of-crate probes in
 from outside the crate the constructor is not in scope to be named at all.
 **The entire difference between the shipped design and a domain-level home is
 one compile error: `E0624` becomes a silent success.** That is the whole
-trade, and it is the trade `DiscardLocalCommitsConsent` took under duress —
-which is why the paragraph below records its `pub(crate)` as the tightest seal
-the language offers there rather than as a preference.
+trade, and it is the trade `DiscardLocalCommitsConsent` took under duress
+until dispatch began resolving a `--continue`'s op record itself, which let the
+token move into `cli::consent` (see the paragraph below).
 
 **The compile-fail suite cannot see that regression.**
 `tests/branch_model_compile_fail_test.rs` probes from an *external* crate,
@@ -1244,8 +1244,7 @@ day it becomes right is recognizable.
   the rest is import rewrites, but it lands together with the in-crate probe
   the paragraph above requires, because the mechanism can no longer tell a
   second frontend from a domain module inventing consent — both are "some
-  module in this crate". `DiscardLocalCommitsConsent` stops being an exception
-  on that day and becomes the general case.
+  module in this crate".
 - **Domain-declared marker traits, frontend-declared proofs.** The domain
   names a capability (`pub trait DetachProof`) and each frontend's token
   implements it, so the concrete type is never spoken downstream and A, B and
@@ -1280,17 +1279,15 @@ lost its `granted()` outright, because no fixture needed one `[V]`.
 Two consent types shipped beyond this list, both needed by §7: 
 `DiscardUnmergedConsent` (`src/cli/consent.rs:105`, the `workweave delete`
 override R3's `OperatorDiscarded` warrant is minted from) and
-`AdoptDetachedConsent` (`src/cli/consent.rs:140`, §7.1 arms 3/5). A third, `DiscardLocalCommitsConsent`
-(`vcs.rs:1568`), deliberately lives in `vcs.rs` rather than `cli::consent`,
-because `sync --continue` must re-mint it from the persisted owner record
-rather than from a flag on the resuming invocation `[V]`. That exception now
-states its cost rather than only its reason (`vcs.rs:1555-1566`): the layer
-holding both spellings of the flag is `sync.rs`, which is a *sibling* of
-`vcs.rs`, not a descendant — and `pub(in path)` requires an ancestor, so no
-visibility tier names it. `pub(crate)` is the tightest seal the language
-offers here, and it admits every module of the crate. The one production mint
-is `sync::rewind_project_repo` (`sync.rs:4495`), which is instructed to
-thread the token rather than let a second mint appear `[V]`.
+`AdoptDetachedConsent` (`src/cli/consent.rs:140`, §7.1 arms 3/5). A third,
+`DiscardLocalCommitsConsent`, lived in `vcs.rs` with a `pub(crate)` mint in
+`sync.rs`, because `sync --continue` must re-mint it from the persisted owner
+record rather than from a flag on the resuming invocation, and a public
+`SyncRequest` field let any library caller ask for it. It now lives in
+`cli::consent` with two `pub(in crate::cli)` mints, `from_flag` and
+`from_record`: dispatch resolves a `--continue`'s op record itself and mints
+from it, so the layer holding both spellings of the flag is `cli::dispatch::run`
+(as of the change that moved it, after the citation base).
 
 ```rust
 /// Proof that the operator consented to leaving a checkout on no branch.

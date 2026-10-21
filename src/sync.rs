@@ -3,6 +3,7 @@
 //! `rwv sync` aligns the CWD workspace with another workspace's committed
 //! `rwv.lock`. `rwv abort` rolls back to pre-sync state using savepoint refs.
 
+use crate::cli::consent::DiscardLocalCommitsConsent;
 use crate::integration::Integration;
 use crate::integration_runner::enabled_integrations;
 use crate::integrations::builtin_integrations;
@@ -11,16 +12,16 @@ use crate::manifest::{
     project_repo_key, IntegrationConfig, LockFile, Manifest, Project, ProjectName, RepoPath,
     ResolvedLockFile, WorkweaveName, WorkweaveNameError,
 };
-use crate::op_state::{self, OpId, OpVerb, OwnerRecord, SyncStrategy};
+use crate::op_state::{self, OpId, OpVerb, Override, Overrides, OwnerRecord, SyncStrategy};
 use crate::parallel::run_in_parallel;
 use crate::placement::PlacementOutput;
 use crate::refusal::RefusalKind;
 use crate::share::FilePlacement;
 use crate::status::{compute_relation, LockRelation};
 use crate::vcs::{
-    project_vcs, vcs_for, AttachedRef, ConflictOp, DerivedContentPolicy,
-    DiscardLocalCommitsConsent, DiscardWarrant, ForeignTipPolicy, HeadAttachment,
-    ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput, VerifiedRestoreOutcome,
+    project_vcs, vcs_for, AttachedRef, ConflictOp, DerivedContentPolicy, DiscardWarrant,
+    ForeignTipPolicy, HeadAttachment, ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput,
+    VerifiedRestoreOutcome,
 };
 use crate::workspace::{
     project_dir, project_rel_path, AdvisoryKindOutput, AdvisoryOutput, Checkout, Resolution,
@@ -2653,10 +2654,10 @@ struct OpContext<'a> {
     /// retained for hint messages that show the original target spelling.
     cli_path: PathBuf,
     strategy: SyncStrategy,
-    /// Consent: discard CWD's project commits that are not in source
-    /// (hard-reset Phase 1'; today's `--force` divergence semantics).
-    /// Recorded as `discard-local-commits` in `OwnerRecord.overrides`.
-    discard_local_commits: bool,
+    /// Held only when Phase 1' rewinds the project repo past commits the
+    /// source does not carry; the owner record carries `discard-local-commits`
+    /// exactly then.
+    discard_local_commits: Option<DiscardLocalCommitsConsent>,
     retire: bool,
     jobs: usize,
     handler: &'a dyn OutputHandler,
@@ -2691,6 +2692,25 @@ enum ClassifySource {
     /// Classify, and additionally pin the `Ahead` checkouts' committed tips as
     /// replay's targets.
     RelationsAndTips,
+}
+
+/// What kind of workspace the op pulls from. Tips-as-truth applies only to a
+/// workweave source: a `behind` primary-weave lock keeps the refusal, because
+/// a locked-snapshot pull from the primary must not silently take live tips
+/// over its committed lock.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SourceKind {
+    Primary,
+    Workweave,
+}
+
+impl SourceKind {
+    fn of(ctx: &WorkspaceContext) -> Self {
+        match ctx.checkout {
+            Checkout::Workweave { .. } => Self::Workweave,
+            Checkout::Primary { .. } => Self::Primary,
+        }
+    }
 }
 
 /// Atomic source snapshot pinned at T0 (start of replay).
@@ -2767,47 +2787,42 @@ impl MachineVerb {
 // Top-level entry points (public API surface unchanged)
 // ---------------------------------------------------------------------------
 
-/// Bundled arguments for a `sync` or `sync-to` invocation.
-///
-/// Replaces the positional argument lists that were duplicated across the
-/// `run_sync*` / `run_sync_to*` entry points and threaded into `run_machine`,
-/// `guard_and_mark`, and `load_continuing_context`. Callers build one
-/// `SyncRequest` and pass it by value to an entry point.
+/// What a `sync` or `sync-to` invocation asks the machine to do: start an op,
+/// or resume the one recorded where it runs.
 #[derive(Debug, Clone)]
-pub struct SyncRequest {
-    /// Source (sync) or target (sync-to) workspace, already resolved by the
-    /// caller. `None` only under `--continue`, which reads it from op-state.
-    pub source: Option<SyncSource>,
-    /// How to advance each repo to its lock target. Defaults to `ff`.
-    pub strategy: SyncStrategy,
-    /// Bypass the lock-freshness precondition (`--allow-stale-lock`).
-    pub allow_stale_lock: bool,
-    /// Hard-reset the project repo when CWD is not an ancestor of the source
-    /// tip (`--discard-local-commits`).
-    pub discard_local_commits: bool,
-    /// Delete the workweave after a successful `sync-to` (`--retire`).
-    pub retire: bool,
-    /// Override the active project (`--project`); `None` uses `.rwv-active`.
-    pub project_override: Option<ProjectName>,
-    /// Parallel per-repo worker count (resolved `-j N`); `1` runs serially.
-    pub jobs: usize,
-    /// Resume an in-flight op from op-state (`--continue`).
-    pub do_continue: bool,
+pub enum SyncRequest {
+    Fresh {
+        /// Source (sync) or target (sync-to) workspace, already resolved by
+        /// the caller.
+        source: SyncSource,
+        strategy: SyncStrategy,
+        /// Bypass the lock-freshness precondition (`--allow-stale-lock`).
+        allow_stale_lock: bool,
+        /// Hard-reset the project repo when CWD is not an ancestor of the
+        /// source tip (`--discard-local-commits`).
+        discard_local_commits: Option<DiscardLocalCommitsConsent>,
+        /// Delete the workweave after a successful `sync-to` (`--retire`).
+        retire: bool,
+        /// Parallel per-repo worker count (resolved `-j N`); `1` runs serially.
+        jobs: usize,
+    },
+    /// Every parameter comes off the op's record, and the resume runs
+    /// serially.
+    Continue {
+        op: Box<op_state::ResolvedOwner>,
+        /// Must agree with the record: held iff it carries
+        /// `discard-local-commits`.
+        discard_local_commits: Option<DiscardLocalCommitsConsent>,
+        /// Asserts the recorded project; a different one refuses.
+        project_override: Option<ProjectName>,
+    },
 }
 
-impl Default for SyncRequest {
-    fn default() -> Self {
-        Self {
-            source: None,
-            strategy: SyncStrategy::Ff,
-            allow_stale_lock: false,
-            discard_local_commits: false,
-            retire: false,
-            project_override: None,
-            // 0 is never a valid worker count; default to serial (1) so that
-            // SyncRequest::default() is immediately safe to pass to run_sync.
-            jobs: 1,
-            do_continue: false,
+impl SyncRequest {
+    fn jobs(&self) -> usize {
+        match self {
+            Self::Fresh { jobs, .. } => *jobs,
+            Self::Continue { .. } => 1,
         }
     }
 }
@@ -2822,7 +2837,7 @@ pub fn run_sync(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Result<
     let handler = TextHandler {
         stdout_lock: &stdout_lock,
     };
-    run_machine(MachineVerb::Sync, ctx, &request, &handler)
+    run_machine(MachineVerb::Sync, ctx, request, &handler)
 }
 
 // ---------------------------------------------------------------------------
@@ -2834,10 +2849,8 @@ pub fn run_sync(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Result<
 /// phases run (advance-target and retire are sync-to-only, and retire runs
 /// under `--retire` only).
 ///
-/// `source` is the explicit source/target the operator passed on the CLI, or
-/// `None` under `--continue` (read from op-state). `do_continue = true` means
-/// "resolve op-state from CWD (following a lease pointer if invoked from a
-/// non-owner workspace), enter the driver loop at the recorded phase".
+/// A [`SyncRequest::Continue`] enters the driver loop at the phase its op
+/// recorded.
 ///
 /// `cwd_ctx` is the already-resolved invocation context (with `--project`
 /// baked in when passed). The driver never re-resolves the invocation
@@ -2846,13 +2859,48 @@ pub fn run_sync(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Result<
 fn run_machine(
     verb: MachineVerb,
     cwd_ctx: &WorkspaceContext,
-    request: &SyncRequest,
+    request: SyncRequest,
     handler: &dyn OutputHandler,
 ) -> anyhow::Result<()> {
-    let ctx = if request.do_continue {
-        load_continuing_context(verb, cwd_ctx, request, handler)?
-    } else {
-        guard_and_mark(verb, cwd_ctx, request, handler)?
+    let ctx = match request {
+        SyncRequest::Fresh {
+            source,
+            strategy,
+            allow_stale_lock,
+            discard_local_commits,
+            retire,
+            jobs,
+        } => {
+            let mut overrides = Overrides::default();
+            if allow_stale_lock {
+                overrides.insert(Override::AllowStaleLock);
+            }
+            guard_and_mark(
+                verb,
+                cwd_ctx,
+                FreshOp {
+                    source,
+                    strategy,
+                    overrides,
+                    discard_local_commits,
+                    retire,
+                    jobs,
+                },
+                handler,
+            )?
+        }
+        SyncRequest::Continue {
+            op,
+            discard_local_commits,
+            project_override,
+        } => load_continuing_context(
+            verb,
+            cwd_ctx,
+            *op,
+            discard_local_commits,
+            project_override,
+            handler,
+        )?,
     };
 
     // Reported before the first phase, so a run that fails partway still
@@ -3071,10 +3119,9 @@ struct PreconditionOutcome {
     /// CWD repos whose committed lock is behind HEAD — auto-relocked at op
     /// start in the sync-to landing shape. Empty for plain `sync`.
     cwd_lock_behind: Vec<RepoRelation>,
-    /// Whether the Phase 1' ancestor precondition was bypassed via
-    /// `--discard-local-commits`. Recorded on the owner record so cleanup
-    /// preserves the project savepoint as a tombstone.
-    phase1_ancestor_bypassed: bool,
+    /// The operator's `--discard-local-commits`, kept only when CWD's project
+    /// tip is not an ancestor of the source's, so Phase 1' rewinds past it.
+    discard_local_commits: Option<DiscardLocalCommitsConsent>,
 }
 
 /// Run every precondition that gates the op AFTER the atomic acquire.
@@ -3093,9 +3140,9 @@ fn run_preconditions_after_acquire(
     project_vcs: &dyn Vcs,
     verb: MachineVerb,
     strategy: SyncStrategy,
-    allow_stale_lock: bool,
-    discard_local_commits: bool,
-    source_is_workweave: bool,
+    overrides: &Overrides,
+    discard_local_commits: Option<DiscardLocalCommitsConsent>,
+    source_kind: SourceKind,
     cwd_project_dir: &Path,
     cwd_workspace_dir: &Path,
     cwd_ctx: &WorkspaceContext,
@@ -3189,7 +3236,7 @@ fn run_preconditions_after_acquire(
     // at that revision; everything downstream is content-addressed. The one
     // exception is the tips-as-truth pull, whose member tips are per-repo ref
     // reads of the source checkouts, pinned here at the same T0.
-    let classify = classify_for(verb, allow_stale_lock, source_is_workweave);
+    let classify = classify_for(verb, overrides, source_kind);
     let snapshot = pin_source_snapshot(
         project_vcs,
         source_project_dir,
@@ -3234,7 +3281,7 @@ fn run_preconditions_after_acquire(
     // Unresolvable lock entries (a pinned tag/branch that no longer exists) are a
     // corrupt-lock error distinct from any relation and refuse first, naming the
     // unknown revision.
-    let cwd_class = if allow_stale_lock {
+    let cwd_class = if overrides.contains(Override::AllowStaleLock) {
         None
     } else {
         let (resolved, unresolvable) = match cwd_project.lock.as_ref() {
@@ -3301,7 +3348,7 @@ fn run_preconditions_after_acquire(
                     .filter(|r| r.relation == LockRelation::Ahead)
                     .collect();
                 if !source_lock_behind.is_empty() {
-                    if source_is_workweave {
+                    if source_kind == SourceKind::Workweave {
                         if emit_text {
                             for r in &source_lock_behind {
                                 let n = r
@@ -3386,7 +3433,7 @@ fn run_preconditions_after_acquire(
     let cwd_project_tip = project_vcs
         .head_revision(cwd_project_dir)
         .context("failed to read CWD project HEAD")?;
-    let phase1_ancestor_bypassed = if discard_local_commits {
+    let discard_local_commits = if let Some(consent) = discard_local_commits {
         if project_vcs
             .has_uncommitted_changes(cwd_project_dir)
             .unwrap_or(true)
@@ -3401,12 +3448,13 @@ fn run_preconditions_after_acquire(
                 savepoints = project_vcs.savepoint_namespace(),
             );
         }
-        !cwd_is_ancestor_or_equal(
+        (!cwd_is_ancestor_or_equal(
             project_vcs,
             cwd_project_dir,
             &cwd_project_tip,
             &snapshot.source_project_tip,
-        )
+        ))
+        .then_some(consent)
     } else if strategy == SyncStrategy::Ff && matches!(verb, MachineVerb::Sync) {
         // Plain sync + ff: CWD must be ancestor-or-equal of source.
         check_phase1_ancestor(
@@ -3417,9 +3465,9 @@ fn run_preconditions_after_acquire(
             &cwd_workspace_name_str,
             source_workspace_name,
         )?;
-        false
+        None
     } else {
-        false
+        None
     };
 
     Ok(PreconditionOutcome {
@@ -3427,8 +3475,20 @@ fn run_preconditions_after_acquire(
         cwd_project,
         cwd_workspace_name_str,
         cwd_lock_behind,
-        phase1_ancestor_bypassed,
+        discard_local_commits,
     })
+}
+
+/// A [`SyncRequest::Fresh`] as [`guard_and_mark`] consumes it. `overrides`
+/// holds the waivers the operator passed; `discard-local-commits` joins it
+/// only if the preconditions find the rewind it consents to.
+struct FreshOp {
+    source: SyncSource,
+    strategy: SyncStrategy,
+    overrides: Overrides,
+    discard_local_commits: Option<DiscardLocalCommitsConsent>,
+    retire: bool,
+    jobs: usize,
 }
 
 /// Guard (preconditions), mark (write owner record + leases), savepoint
@@ -3437,36 +3497,26 @@ fn run_preconditions_after_acquire(
 fn guard_and_mark<'a>(
     verb: MachineVerb,
     cwd_ctx: &WorkspaceContext,
-    request: &SyncRequest,
+    op: FreshOp,
     handler: &'a dyn OutputHandler,
 ) -> anyhow::Result<OpContext<'a>> {
-    let source = request.source.as_ref();
-    let strategy = request.strategy;
-    let allow_stale_lock = request.allow_stale_lock;
-    let discard_local_commits = request.discard_local_commits;
-    let retire = request.retire;
-    let jobs = request.jobs;
+    let FreshOp {
+        source,
+        strategy,
+        mut overrides,
+        discard_local_commits,
+        retire,
+        jobs,
+    } = op;
 
     let emit_text = handler.emit_text();
     let cwd_workspace_dir = cwd_ctx.active_path().to_path_buf();
 
-    // Resolve the SyncSource the operator passed. For sync, this is the
-    // source workspace; for sync-to, this is the target workspace. Both are
+    // For sync this is the source workspace; for sync-to, the target. Both are
     // resolved before the machine is entered — sync's by clap (`<SOURCE>` is
     // required), sync-to's by the dispatcher, which reads the marker's parent
-    // for the bare form. Neither verb defaults one here.
-    let resolved_arg = match source {
-        Some(s) => s.clone(),
-        None => match verb {
-            MachineVerb::Sync => anyhow::bail!(
-                "sync requires an explicit source (resolved by the caller); none provided"
-            ),
-            MachineVerb::SyncTo => anyhow::bail!(
-                "sync-to requires an explicit target (resolved by the caller); none provided"
-            ),
-        },
-    };
-    let cli_path = resolved_arg.resolve(cwd_ctx)?;
+    // for the bare form.
+    let cli_path = source.resolve(cwd_ctx)?;
 
     // For plain `sync <src>`: replay rebases CWD onto src, then relocks; no advance-target.
     //     source = src (replay pulls from here), dest = CWD (relock writes here).
@@ -3486,16 +3536,12 @@ fn guard_and_mark<'a>(
 
     // source_workspace_dir is the operator's arg for both verbs (sync's <src>
     // and sync-to's <tgt> — replay pulls from there in either case).
-    // `source_is_workweave` scopes tips-as-truth: a `behind` source lock is
-    // pulled-as-tips only when the source is workweave-typed; a primary-weave
-    // source keeps the refusal (a reproducibility-sensitive locked-snapshot pull
-    // from the primary must not silently take live tips over its committed lock).
     let (
         source_project_dir,
         source_workspace_root,
         source_workspace_name,
         source_project_name,
-        source_is_workweave,
+        source_kind,
     ) = {
         let source_ctx =
             WorkspaceContext::resolve_for_project(&source_workspace_dir, &cwd_project_name)
@@ -3511,13 +3557,12 @@ fn guard_and_mark<'a>(
         // typed.
         let root = source_ctx.active_path().to_path_buf();
         let dir = project_dir(&root, cwd_project_name.as_str());
-        let is_workweave = matches!(source_ctx.checkout, Checkout::Workweave { .. });
         (
             dir,
             root,
             workspace_name(&source_ctx)?,
             cwd_project_name.clone(),
-            is_workweave,
+            SourceKind::of(&source_ctx),
         )
     };
 
@@ -3602,9 +3647,9 @@ fn guard_and_mark<'a>(
         project_vcs.as_ref(),
         verb,
         strategy,
-        allow_stale_lock,
+        &overrides,
         discard_local_commits,
-        source_is_workweave,
+        source_kind,
         &cwd_project_dir,
         &cwd_workspace_dir,
         cwd_ctx,
@@ -3623,7 +3668,7 @@ fn guard_and_mark<'a>(
         cwd_project,
         cwd_workspace_name_str,
         cwd_lock_behind,
-        phase1_ancestor_bypassed,
+        discard_local_commits,
     } = match precondition_result {
         Ok(v) => v,
         Err(e) => {
@@ -3635,26 +3680,16 @@ fn guard_and_mark<'a>(
     // === Mark: overrides update ===
     //
     // `acquire_op` above already wrote the initial owner record at CWD and every
-    // touched-workspace lease. The final Mark write is the OVERRIDES update:
-    // `allow-stale-lock` and `discard-local-commits` are consent flags recorded
-    // in the audit-trail `overrides` field so cleanup preserves the appropriate
-    // savepoint (tombstone case) and `--continue` resumes with the same
-    // consent. Both are determined by precondition outcomes, so this write is
-    // sequenced after the acquire+precondition pair. Consumed by the release
-    // path on any downstream mid-op error since the record is already on disk.
+    // touched-workspace lease. The final Mark write is the OVERRIDES update, so
+    // `--continue` resumes under the same ones: `discard-local-commits` is
+    // recorded only when the preconditions kept the consent, which is the
+    // record `--continue` mints it back from. Consumed by the release path on
+    // any downstream mid-op error since the record is already on disk.
+    if discard_local_commits.is_some() {
+        overrides.insert(Override::DiscardLocalCommits);
+    }
     let mut record = initial_record;
-    if allow_stale_lock {
-        record.overrides.push(op_state::Override::AllowStaleLock);
-    }
-    if phase1_ancestor_bypassed {
-        // Named consent: --discard-local-commits will discard
-        // reachable project commits in Phase 1'. Recorded in the audit-trail
-        // `overrides` field so cleanup preserves the project savepoint as a
-        // tombstone and --continue resumes with the same consent.
-        record
-            .overrides
-            .push(op_state::Override::DiscardLocalCommits);
-    }
+    record.overrides = overrides;
     if !record.overrides.is_empty() {
         // Only rewrite when we actually have overrides — otherwise the
         // acquire-time record is already correct byte-for-byte.
@@ -3819,7 +3854,7 @@ fn guard_and_mark<'a>(
         cwd_project_name,
         cli_path,
         strategy,
-        discard_local_commits: phase1_ancestor_bypassed,
+        discard_local_commits,
         retire,
         jobs,
         handler,
@@ -3830,34 +3865,30 @@ fn guard_and_mark<'a>(
     })
 }
 
-/// Load context for `--continue`: read the owner record (following a lease
-/// pointer if invoked from a non-owner workspace), derive all op parameters
-/// from it, and rebuild the [`OpContext`].
+/// Load context for `--continue`: derive all op parameters from the owner
+/// record `op` resolved (following a lease pointer if invoked from a
+/// non-owner workspace), and rebuild the [`OpContext`].
 ///
 /// `invocation_ctx` is the already-resolved invocation context (the CWD the
 /// operator ran from — potentially the leased target, not the owner). This
 /// function may re-root at the owner workspace by resolving that separately,
-/// but never re-resolves the invocation context itself.
+/// but never re-resolves the invocation context itself. Everything the engine
+/// consumes is rooted at the OWNER: `--continue` invoked from a leased
+/// workspace operates identically to owner-side invocation.
 fn load_continuing_context<'a>(
     verb: MachineVerb,
     invocation_ctx: &'a WorkspaceContext,
-    request: &SyncRequest,
+    op: op_state::ResolvedOwner,
+    discard_local_commits: Option<DiscardLocalCommitsConsent>,
+    project_override: Option<ProjectName>,
     handler: &'a dyn OutputHandler,
 ) -> anyhow::Result<OpContext<'a>> {
-    let project_override = request.project_override.clone();
-    let jobs = request.jobs;
-
     let emit_text = handler.emit_text();
-
-    // The literal invocation context is only used to locate op-state; it lets
-    // `op_state::resume` follow a lease pointer (when `--continue` was invoked
-    // from the leased target). Everything the engine consumes is rooted at the
-    // OWNER below: `--continue` / `abort` invoked from a leased workspace
-    // follow the pointer to the owner record and operate identically to
-    // owner-side invocation.
     let invocation_workspace_dir = invocation_ctx.active_path().to_path_buf();
-
-    let (record, owner_workspace_dir) = op_state::resume(&invocation_workspace_dir)?;
+    let op_state::ResolvedOwner {
+        record,
+        owner_workspace: owner_workspace_dir,
+    } = op;
     let op_id = OpId::from_string(record.id.clone());
 
     // Everything below reads the recorded verb, and `verb` reaches no other
@@ -3898,6 +3929,25 @@ fn load_continuing_context<'a>(
                 resume = op_state::resume_command(record.verb),
             );
         }
+    }
+
+    if record.overrides.contains(Override::DiscardLocalCommits) != discard_local_commits.is_some() {
+        crate::refuse!(
+            RefusalKind::ResumeContradictsRecord,
+            "op {op_id} {recorded} `--discard-local-commits`, and this resume holds {held} \
+             consent to it. Run `{resume}`, which takes the consent from the record.",
+            recorded = if discard_local_commits.is_some() {
+                "was not started with"
+            } else {
+                "was started with"
+            },
+            held = if discard_local_commits.is_some() {
+                "a"
+            } else {
+                "no"
+            },
+            resume = op_state::resume_command(record.verb),
+        );
     }
 
     // The resumed-op disclosure, taken from the record BEFORE the entry-phase
@@ -3987,7 +4037,7 @@ fn load_continuing_context<'a>(
         source_workspace_root,
         source_workspace_name,
         source_project_name,
-        source_is_workweave,
+        source_kind,
     ) = {
         let source_ctx =
             WorkspaceContext::resolve_for_project(&source_workspace_dir, &cwd_project_name)
@@ -4000,13 +4050,12 @@ fn load_continuing_context<'a>(
                 })?;
         let root = source_ctx.active_path().to_path_buf();
         let dir = project_dir(&root, cwd_project_name.as_str());
-        let is_workweave = matches!(source_ctx.checkout, Checkout::Workweave { .. });
         (
             dir,
             root,
             workspace_name(&source_ctx)?,
             cwd_project_name.clone(),
-            is_workweave,
+            SourceKind::of(&source_ctx),
         )
     };
 
@@ -4014,19 +4063,6 @@ fn load_continuing_context<'a>(
         MachineVerb::Sync => cwd_project_dir.clone(),
         MachineVerb::SyncTo => source_project_dir.clone(),
     };
-
-    // --continue resumes with the same consents recorded at fresh-start
-    // time: read `overrides` and re-derive each named override from the
-    // persisted record so the resumed session behaves identically to the
-    // original without requiring the operator to re-supply flags.
-    // `discard-local-commits` gates Phase 1'; `allow-stale-lock` disables the
-    // tips-as-truth pull below (the lock stays replay's target).
-    let allow_stale_lock_resumed = record
-        .overrides
-        .contains(&op_state::Override::AllowStaleLock);
-    let discard_local_commits_resumed = record
-        .overrides
-        .contains(&op_state::Override::DiscardLocalCommits);
 
     // Re-pin the source snapshot for this --continue session. The source's
     // T0 is "the start of the (resumed) replay" — re-pinning here gives
@@ -4037,7 +4073,7 @@ fn load_continuing_context<'a>(
     // takes it: a re-pinned source the gate never reads is a source this op
     // consumes at a state its own first invocation would have refused.
     let project_vcs = project_vcs();
-    let classify = classify_for(recorded_verb, allow_stale_lock_resumed, source_is_workweave);
+    let classify = classify_for(recorded_verb, &record.overrides, source_kind);
     let snapshot = pin_source_snapshot(
         project_vcs.as_ref(),
         &source_project_dir,
@@ -4136,9 +4172,9 @@ fn load_continuing_context<'a>(
         cwd_project_name,
         cli_path,
         strategy,
-        discard_local_commits: discard_local_commits_resumed,
+        discard_local_commits,
         retire: record.retire,
-        jobs,
+        jobs: 1,
         handler,
         project_vcs,
         verb: record.verb,
@@ -4773,14 +4809,10 @@ fn relock_recovery(side: Side, project_name: &str) -> String {
 /// One decision, read by the fresh pin and the resume's re-pin. Two copies of
 /// it would let a resume classify a source its fresh invocation gated, or gate
 /// one its fresh invocation waived, from the same arguments.
-fn classify_for(
-    verb: MachineVerb,
-    allow_stale_lock: bool,
-    source_is_workweave: bool,
-) -> ClassifySource {
-    if allow_stale_lock {
+fn classify_for(verb: MachineVerb, overrides: &Overrides, source: SourceKind) -> ClassifySource {
+    if overrides.contains(Override::AllowStaleLock) {
         ClassifySource::Skip
-    } else if matches!(verb, MachineVerb::Sync) && source_is_workweave {
+    } else if matches!(verb, MachineVerb::Sync) && source == SourceKind::Workweave {
         ClassifySource::RelationsAndTips
     } else {
         ClassifySource::Relations
@@ -5091,7 +5123,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 
     // === Phase 1' (project repo) — strategy on the project repo ===
 
-    let phase1_outcome = if ctx.discard_local_commits {
+    let phase1_outcome = if let Some(consent) = ctx.discard_local_commits {
         // --discard-local-commits: rewind CWD's project repo to source's tip,
         // discarding any project commits not reachable from source. Guard
         // already refused on uncommitted changes.
@@ -5103,7 +5135,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         // *resolves* that savepoint rather than creating one: re-creating it
         // here would move the recovery point to the tip we are about to
         // discard from, on every `--continue`.
-        rewind_project_repo(ctx, &snapshot.source_project_tip)
+        rewind_project_repo(ctx, consent, &snapshot.source_project_tip)
     } else {
         apply_project_strategy(
             ctx.project_vcs.as_ref(),
@@ -6231,20 +6263,10 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let primary = ctx.cwd_ctx.primary_path();
     let canonical_project_dir = project_dir(primary, ctx.cwd_project_name.as_str());
 
-    // Drop savepoints. Exception: when --discard-local-commits bypassed the
-    // Phase 1' ancestor check (recorded as the `discard-local-commits`
-    // override), preserve the project savepoint as a tombstone — the only
+    // Drop savepoints. Exception: when --discard-local-commits rewound the
+    // project repo, preserve the project savepoint as a tombstone — the only
     // remaining reference to the discarded commits.
-    let owner = op_state::read_owner(&ctx.owner_workspace_dir)?;
-    let discard_tombstone = owner
-        .as_ref()
-        .map(|r| {
-            r.overrides
-                .contains(&op_state::Override::DiscardLocalCommits)
-        })
-        .unwrap_or(false);
-
-    if !discard_tombstone {
+    if ctx.discard_local_commits.is_none() {
         delete_savepoint(ctx.project_vcs.as_ref(), &canonical_project_dir, &ctx.op_id);
     } else if emit_text {
         eprintln!(
@@ -6436,19 +6458,11 @@ fn short_sha(sha: &str) -> &str {
 /// wrote with the operator's consent, and `reset_attached_ref` will not
 /// accept a savepoint taken in some other repo. Without both, there is no
 /// call to make.
-///
-/// **Where the consent comes from.** `--discard-local-commits` is parsed at
-/// dispatch, but it is also *persisted* into the owner record and read back
-/// on `--continue`, where the operator passes no flags at all. The record is
-/// the durable form of the consent, and this is the layer that holds both
-/// spellings of it — `ctx.discard_local_commits` is the flag on a fresh run
-/// and the recorded override on a resumed one. Minting here rather than
-/// threading a token from dispatch is what makes the resumed path carry the
-/// same proof as the fresh one instead of a weaker one. This is the *only*
-/// production mint of `DiscardLocalCommitsConsent`; see that type's doc
-/// comment for why the compiler cannot make that count-of-one a rule, and
-/// what to do instead of adding a second.
-fn rewind_project_repo(ctx: &OpContext<'_>, to: &ResolvedRevisionId) -> anyhow::Result<()> {
+fn rewind_project_repo(
+    ctx: &OpContext<'_>,
+    consent: DiscardLocalCommitsConsent,
+    to: &ResolvedRevisionId,
+) -> anyhow::Result<()> {
     let vcs = ctx.project_vcs.as_ref();
     let savepoint = vcs
         .resolve_savepoint_ref(&ctx.cwd_project_dir, ctx.op_id.as_str())
@@ -6460,7 +6474,7 @@ fn rewind_project_repo(ctx: &OpContext<'_>, to: &ResolvedRevisionId) -> anyhow::
                 ctx.cwd_project_dir.display(),
             )
         })?;
-    let warrant = DiscardWarrant::new(savepoint, DiscardLocalCommitsConsent::granted());
+    let warrant = DiscardWarrant::new(savepoint, consent);
 
     match vcs
         .head_attachment(&ctx.cwd_project_dir)
@@ -7272,14 +7286,14 @@ pub fn run_sync_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Re
     let stdout_lock: Mutex<()> = Mutex::new(());
     // This function is only reached when `--json` was passed, so `true` here
     // is that flag — the resolved mode's only remaining variable is `jobs`.
-    let ndjson = crate::parallel::OutputMode::resolve(true, request.jobs).is_ndjson();
+    let ndjson = crate::parallel::OutputMode::resolve(true, request.jobs()).is_ndjson();
     let project_level_result = if ndjson {
         let handler = JsonNdjsonHandler {
             stdout_lock: &stdout_lock,
             records: &records,
             schema_url: SYNC_RECORD_SCHEMA_URL,
         };
-        run_machine(MachineVerb::Sync, ctx, &request, &handler)
+        run_machine(MachineVerb::Sync, ctx, request, &handler)
     } else {
         let handler = JsonEnvelopeHandler {
             records: &records,
@@ -7288,7 +7302,7 @@ pub fn run_sync_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Re
             members: &members,
             complete: &complete,
         };
-        run_machine(MachineVerb::Sync, ctx, &request, &handler)
+        run_machine(MachineVerb::Sync, ctx, request, &handler)
     };
 
     let records = records.into_inner().unwrap_or_else(|e| e.into_inner());
@@ -7421,7 +7435,7 @@ pub fn run_sync_to(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Resu
     let handler = TextHandler {
         stdout_lock: &stdout_lock,
     };
-    run_machine(MachineVerb::SyncTo, ctx, &request, &handler)
+    run_machine(MachineVerb::SyncTo, ctx, request, &handler)
 }
 
 /// Execute `rwv sync-to <target> --json`.
@@ -7478,16 +7492,15 @@ pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJ
     let stdout_lock: Mutex<()> = Mutex::new(());
     // This function is only reached when `--json` was passed, so `true` here
     // is that flag — the resolved mode's only remaining variable is `jobs`.
-    // A resumed op cannot reach NDJSON: `-j` conflicts with `--continue` at
-    // the CLI, so a resume always resolves to serial envelope mode.
-    let ndjson = crate::parallel::OutputMode::resolve(true, request.jobs).is_ndjson();
+    // A resumed op runs serially, so it always resolves to envelope mode.
+    let ndjson = crate::parallel::OutputMode::resolve(true, request.jobs()).is_ndjson();
     let project_level_result = if ndjson {
         let handler = JsonNdjsonHandler {
             stdout_lock: &stdout_lock,
             records: &records,
             schema_url: SYNC_TO_RECORD_SCHEMA_URL,
         };
-        run_machine(MachineVerb::SyncTo, ctx, &request, &handler)
+        run_machine(MachineVerb::SyncTo, ctx, request, &handler)
     } else {
         let handler = JsonEnvelopeSyncToHandler {
             records: &records,
@@ -7499,7 +7512,7 @@ pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJ
             members: &members,
             complete: &complete,
         };
-        run_machine(MachineVerb::SyncTo, ctx, &request, &handler)
+        run_machine(MachineVerb::SyncTo, ctx, request, &handler)
     };
 
     let records = records.into_inner().unwrap_or_else(|e| e.into_inner());
