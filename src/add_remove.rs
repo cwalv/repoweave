@@ -1356,7 +1356,9 @@ fn resolve_path_params(
         if raw.is_empty() || is_absolute_spelling(raw) {
             continue;
         }
-        let resolved = operand_path(invocation_dir, raw);
+        // A canonicalized `-C`/`-w` dir carries the Windows verbatim prefix,
+        // under which a join folds `..` away and which no `file://` URL can spell.
+        let resolved = operand_path(dunce::simplified(invocation_dir), raw);
         let Some(spelled) = resolved.to_str().map(str::to_owned) else {
             crate::refuse!(
                 RefusalKind::UnusableCreationParam,

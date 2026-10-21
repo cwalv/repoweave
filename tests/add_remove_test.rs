@@ -352,7 +352,7 @@ fn add_new_relative_root_resolves_against_the_invocation_directory() {
     assert_relative_root_lands_in_lab(
         &project_dir,
         &[],
-        &project_dir.canonicalize().unwrap(),
+        &dunce::canonicalize(&project_dir).unwrap(),
         "../../../lab",
         &lab,
         &project_dir,
@@ -372,7 +372,7 @@ fn add_new_relative_root_resolves_against_the_cwd_override() {
     assert_relative_root_lands_in_lab(
         &elsewhere,
         &["-C", project_dir.to_str().unwrap()],
-        &project_dir.canonicalize().unwrap(),
+        &dunce::canonicalize(&project_dir).unwrap(),
         "../../../lab",
         &lab,
         &project_dir,
@@ -404,7 +404,7 @@ fn add_new_relative_root_resolves_against_the_addressed_workweave() {
     assert_relative_root_lands_in_lab(
         &workspace,
         &["-w", "test-project--ww"],
-        &seat.canonicalize().unwrap(),
+        &dunce::canonicalize(&seat).unwrap(),
         "../../lab",
         &lab,
         &seat.join("projects").join("test-project"),
