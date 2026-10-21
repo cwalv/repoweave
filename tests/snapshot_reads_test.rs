@@ -292,14 +292,20 @@ fn read_file_at_revision_returns_committed_content() {
     common::git_in(&repo, &["add", "file.txt"]);
     common::git_in(&repo, &["commit", "-m", "v1"]);
     let sha_v1 = common::git_in(&repo, &["rev-parse", "HEAD"]);
-    let rev_v1 = repoweave::vcs::ResolvedRevisionId::from_canonical(sha_v1.clone(), None);
+    let rev_v1 = repoweave::vcs::ResolvedRevisionId::from_canonical(
+        repoweave::vcs::CommitId::parse(&sha_v1.clone()).unwrap(),
+        None,
+    );
 
     // Commit v2.
     std::fs::write(repo.join("file.txt"), "version two\n").unwrap();
     common::git_in(&repo, &["add", "file.txt"]);
     common::git_in(&repo, &["commit", "-m", "v2"]);
     let sha_v2 = common::git_in(&repo, &["rev-parse", "HEAD"]);
-    let rev_v2 = repoweave::vcs::ResolvedRevisionId::from_canonical(sha_v2, None);
+    let rev_v2 = repoweave::vcs::ResolvedRevisionId::from_canonical(
+        repoweave::vcs::CommitId::parse(&sha_v2).unwrap(),
+        None,
+    );
 
     // Overwrite the working tree with "version three" (uncommitted).
     std::fs::write(repo.join("file.txt"), "version three\n").unwrap();
@@ -350,7 +356,10 @@ fn read_file_at_revision_returns_the_blob_byte_exact() {
     let read = repoweave::git::git_vcs()
         .read_file_at_revision(
             &repo,
-            &repoweave::vcs::ResolvedRevisionId::from_canonical(sha, None),
+            &repoweave::vcs::ResolvedRevisionId::from_canonical(
+                repoweave::vcs::CommitId::parse(&sha).unwrap(),
+                None,
+            ),
             std::path::Path::new("file.txt"),
         )
         .expect("read at HEAD");

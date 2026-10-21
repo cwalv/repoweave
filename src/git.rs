@@ -2,12 +2,12 @@
 
 use crate::registry::CloneUrl;
 use crate::vcs::{
-    CommitSummary, ConflictOp, ContentIdentity, DerivedContentPolicy, DerivedContentResolution,
-    DiscardOutcome, ForeignTipPolicy, HeadAttachment, HeadObservation, LocalRefName, MidOperation,
-    PreAbortRef, PublishRef, RawRefName, RawRevisionId, RecordedSubmodule, RefOrigin,
-    RemoteBranchCopies, RemoteDefaultBranch, RemoteRef, ReplayExclusionState, ResolvedRevisionId,
-    SubmoduleBirth, TrackedFile, TrackedFileKind, UniqueDiff, Vcs, VcsError,
-    VerifiedRestoreOutcome, WorkspacePopulation,
+    CommitId, CommitSummary, ConflictOp, ContentIdentity, DerivedContentPolicy,
+    DerivedContentResolution, DiscardOutcome, ForeignTipPolicy, HeadAttachment, HeadObservation,
+    LocalRefName, MidOperation, PreAbortRef, PublishRef, RawRefName, RawRevisionId,
+    RecordedSubmodule, RefOrigin, RemoteBranchCopies, RemoteDefaultBranch, RemoteRef,
+    ReplayExclusionState, ResolvedRevisionId, SubmoduleBirth, TrackedFile, TrackedFileKind,
+    UniqueDiff, Vcs, VcsError, VerifiedRestoreOutcome, WorkspacePopulation,
 };
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
@@ -156,6 +156,15 @@ fn path_as_git_arg<'a>(path: &'a Path, subject: &str) -> Result<&'a str, VcsErro
 /// outside is `error[E0603]`, which is the seam rule holding at compile
 /// time rather than by review.
 const GIT_DEFAULT_REMOTE_NAME: &str = "origin";
+
+/// `out`, which git printed for `args`, as the commit id it must be.
+fn commit_id_printed(out: &str, args: &[&str], repo: &Path) -> Result<CommitId, VcsError> {
+    CommitId::parse(out.trim()).map_err(|e| VcsError::CommandFailed {
+        args: args.iter().map(|a| (*a).to_owned()).collect(),
+        repo: repo.to_path_buf(),
+        stderr: format!("{e:#}"),
+    })
+}
 
 fn remote_tracking_namespace() -> String {
     format!("refs/remotes/{GIT_DEFAULT_REMOTE_NAME}/")
@@ -1013,8 +1022,8 @@ impl GitVcs {
                 "--diff-filter=A",
                 "--no-renames",
                 "-z",
-                head.as_str(),
-                to.as_str(),
+                head.id().as_str(),
+                to.id().as_str(),
             ],
             repo,
         )
@@ -1036,26 +1045,23 @@ impl GitVcs {
         (!paths.is_empty()).then_some(paths)
     }
 
-    /// Resolve `rev` to its canonical 40-hex SHA in `repo`.
-    ///
-    /// Thin wrapper over `git rev-parse --verify <rev>^{commit}`. Private
-    /// helper for the [`Vcs::unique_commits`] / [`Vcs::unique_diff`] impls,
-    /// which resolve the workweave's HEAD before computing the parent-relative
-    /// range.
-    fn rev_parse(repo: &Path, rev: &str) -> Result<String, VcsError> {
+    /// Resolve `rev` to the commit id it names in `repo`, through
+    /// `git rev-parse --verify <rev>^{commit}`.
+    fn rev_parse(repo: &Path, rev: &str) -> Result<CommitId, VcsError> {
         let deref = format!("{rev}^{{commit}}");
-        Self::run_trimmed(&["rev-parse", "--verify", &deref], repo)
+        let args = ["rev-parse", "--verify", &deref];
+        commit_id_printed(&Self::run_trimmed(&args, repo)?, &args, repo)
     }
 
     /// Compute the merge-base (common ancestor) of `a` and `b` in `repo`.
     ///
-    /// Returns the common-ancestor SHA. Private helper for [`Vcs::unique_diff`],
-    /// which anchors the diff range at `git merge-base <parent-tip> HEAD`
-    /// rather than the parent tip directly — diffing against a parent tip that
-    /// advanced after the fork shows phantom reversals of the work the parent
-    /// gained in the meantime.
-    fn merge_base(repo: &Path, a: &str, b: &str) -> Result<String, VcsError> {
-        Self::run_trimmed(&["merge-base", a, b], repo)
+    /// Private helper for [`Vcs::unique_diff`], which anchors the diff range
+    /// at `git merge-base <parent-tip> HEAD` rather than the parent tip
+    /// directly — diffing against a parent tip that advanced after the fork
+    /// shows phantom reversals of the work the parent gained in the meantime.
+    fn merge_base(repo: &Path, a: &CommitId, b: &CommitId) -> Result<CommitId, VcsError> {
+        let args = ["merge-base", a.as_str(), b.as_str()];
+        commit_id_printed(&Self::run_trimmed(&args, repo)?, &args, repo)
     }
 
     /// List the commits reachable from `to` but not from `from` in `repo`,
@@ -1066,24 +1072,30 @@ impl GitVcs {
     /// and it stays correct when the parent advanced since the fork (the
     /// range excludes commits the parent already has). An empty vec means no
     /// unique commits. Private helper for [`Vcs::unique_commits`].
-    fn commits_in_range(repo: &Path, from: &str, to: &str) -> Result<Vec<CommitSummary>, VcsError> {
-        // `%H` full SHA, `%h` short SHA, `%s` subject — NUL-delimited fields,
-        // newline-delimited records, so subjects with spaces/tabs survive.
+    fn log_range(
+        repo: &Path,
+        from: &CommitId,
+        to: &CommitId,
+        limit: Option<usize>,
+    ) -> Result<Vec<CommitSummary>, VcsError> {
+        // `%H` full id, `%s` subject — NUL-delimited fields, newline-delimited
+        // records, so subjects with spaces/tabs survive.
         let range = format!("{from}..{to}");
-        let fmt = "--pretty=format:%H%x00%h%x00%s";
-        let out = Self::run_trimmed(&["log", fmt, &range], repo)?;
-        let entries = out
-            .lines()
+        let limit = limit.map(|n| format!("-{n}"));
+        let mut args = vec!["log", "--pretty=format:%H%x00%s"];
+        args.extend(limit.as_deref());
+        args.push(&range);
+        let out = Self::run_trimmed(&args, repo)?;
+        out.lines()
             .filter(|l| !l.is_empty())
-            .filter_map(|line| {
-                let mut parts = line.splitn(3, '\0');
-                let id = parts.next()?.to_string();
-                let short = parts.next()?.to_string();
-                let subject = parts.next().unwrap_or("").to_string();
-                Some(CommitSummary { id, short, subject })
+            .map(|line| {
+                let (id, subject) = line.split_once('\0').unwrap_or((line, ""));
+                Ok(CommitSummary {
+                    id: commit_id_printed(id, &args, repo)?,
+                    subject: subject.to_owned(),
+                })
             })
-            .collect();
-        Ok(entries)
+            .collect()
     }
 
     /// Produce the unified diff of `from..to` in `repo`.
@@ -1091,7 +1103,7 @@ impl GitVcs {
     /// Private helper for [`Vcs::unique_diff`], which passes `from` = `git
     /// merge-base <parent-tip> HEAD` and `to` = HEAD so the output is the
     /// workweave's unique work with no phantom reversals.
-    fn diff_range(repo: &Path, from: &str, to: &str) -> Result<String, VcsError> {
+    fn diff_range(repo: &Path, from: &CommitId, to: &CommitId) -> Result<String, VcsError> {
         let range = format!("{from}..{to}");
         Self::run_trimmed(&["diff", &range], repo)
     }
@@ -1180,7 +1192,7 @@ impl GitVcs {
     ///
     /// The returned string is suitable as the `detail` arg to
     /// `per_conflict_bail_message` in sync, e.g.:
-    /// `"commit abc1234 (lock: refresh — post-OOB drift in gc-formulas)"`
+    /// `"commit 0123456789ab (lock: refresh — post-OOB drift in gc-formulas)"`
     fn rebase_stopped_commit_detail_impl(repo: &Path) -> String {
         let fallback = "see in-flight rebase state for conflicting paths".to_owned();
 
@@ -1197,22 +1209,20 @@ impl GitVcs {
             Err(_) => return fallback,
         };
 
-        // Read the full SHA of the stopped commit.
+        // git may write the stopped commit abbreviated; resolving it yields
+        // the id whatever width git chose.
         let stopped_sha_path = git_dir.join("rebase-merge").join("stopped-sha");
-        let full_sha = match std::fs::read_to_string(&stopped_sha_path) {
-            Ok(s) => s.trim().to_owned(),
-            Err(_) => return fallback,
+        let stopped = match std::fs::read_to_string(&stopped_sha_path)
+            .ok()
+            .and_then(|s| Self::rev_parse(repo, s.trim()).ok())
+        {
+            Some(id) => id,
+            None => return fallback,
         };
-        if full_sha.is_empty() {
-            return fallback;
-        }
+        let short_sha = stopped.short();
 
-        // Shorten the SHA for display.
-        let short_sha = Self::run_trimmed(&["rev-parse", "--short", &full_sha], repo)
-            .unwrap_or_else(|_| full_sha.chars().take(7).collect());
-
-        // Fetch the commit subject line.
-        let subject = match Self::run_trimmed(&["log", "-1", "--format=%s", &full_sha], repo) {
+        let subject = match Self::run_trimmed(&["log", "-1", "--format=%s", stopped.as_str()], repo)
+        {
             Ok(s) => s.trim().to_owned(),
             Err(_) => return format!("commit {short_sha}"),
         };
@@ -1223,48 +1233,36 @@ impl GitVcs {
         format!("commit {short_sha} ({subject})")
     }
 
-    /// Return up to `cap` one-line commit summaries for the range `from..to`
+    /// Return up to `cap` commits of the range `from..to`, newest first,
     /// plus the total commit count in that range.
     ///
-    /// Uses `git log --oneline -<cap+1> <from>..<to>` to fetch at most
-    /// `cap + 1` lines, then returns `(lines[..cap], total)` where `total`
-    /// is the actual `git rev-list --count` so the caller can display "and N
-    /// more" when `total > cap`.
+    /// Fetches at most `cap + 1` commits, so a separate `git rev-list
+    /// --count` runs only when the range is longer than `cap`.
     ///
     /// Returns `(vec![], 0)` on any error so callers can degrade gracefully
     /// when the range is unresolvable (e.g. the object is unreachable in a
-    /// shallow clone or the SHA is malformed).
-    fn log_oneline_range_impl(
+    /// shallow clone).
+    fn capped_log_range(
         repo: &Path,
-        from: &str,
-        to: &str,
+        from: &CommitId,
+        to: &CommitId,
         cap: usize,
-    ) -> (Vec<String>, usize) {
-        // Fetch up to cap+1 lines so we can detect truncation without a
-        // separate rev-list call in the common case where total <= cap.
-        let limit_arg = format!("-{}", cap + 1);
-        let range = format!("{from}..{to}");
-        let log_out = match Self::run_trimmed(&["log", "--oneline", &limit_arg, &range], repo) {
-            Ok(s) => s,
+    ) -> (Vec<CommitSummary>, usize) {
+        let mut commits = match Self::log_range(repo, from, to, Some(cap + 1)) {
+            Ok(c) => c,
             Err(_) => return (vec![], 0),
         };
-        let lines: Vec<String> = log_out
-            .lines()
-            .filter(|l| !l.is_empty())
-            .map(str::to_owned)
-            .collect();
-
-        if lines.len() <= cap {
-            // All commits fit — total equals what we received.
-            let total = lines.len();
-            (lines, total)
-        } else {
-            // More than cap commits exist; count the full range.
-            let count_out =
-                Self::run_trimmed(&["rev-list", "--count", &range], repo).unwrap_or_default();
-            let total = count_out.trim().parse::<usize>().unwrap_or(lines.len());
-            (lines[..cap].to_vec(), total)
+        if commits.len() <= cap {
+            let total = commits.len();
+            return (commits, total);
         }
+        let range = format!("{from}..{to}");
+        let total = Self::run_trimmed(&["rev-list", "--count", &range], repo)
+            .ok()
+            .and_then(|s| s.trim().parse::<usize>().ok())
+            .unwrap_or(commits.len());
+        commits.truncate(cap);
+        (commits, total)
     }
 
     /// Return `(ahead, behind)` commit counts for `savepoint..tip` and
@@ -1273,7 +1271,7 @@ impl GitVcs {
     /// (both > 0).
     ///
     /// Returns `(0, 0)` on any git error.
-    fn ahead_behind_impl(repo: &Path, savepoint: &str, tip: &str) -> (usize, usize) {
+    fn ahead_behind_impl(repo: &Path, savepoint: &CommitId, tip: &CommitId) -> (usize, usize) {
         let ahead = Self::run_trimmed(
             &["rev-list", "--count", &format!("{savepoint}..{tip}")],
             repo,
@@ -1418,7 +1416,7 @@ impl Vcs for GitVcs {
         let branch = branch.branch();
         let tip = self.resolve_revision(repo, &remote_tracking(branch))?;
         Ok(ResolvedRevisionId::from_canonical(
-            tip.as_str(),
+            tip.id().clone(),
             Some(format!("{GIT_DEFAULT_REMOTE_NAME}/{branch}")),
         ))
     }
@@ -1453,22 +1451,20 @@ impl Vcs for GitVcs {
                 // can name it (e.g. `v0.3.4`) without an extra resolve step. It is
                 // never what a lock records.
                 let display = self.tag_at_head(repo)?.map(|t| t.as_str().to_string());
-                Ok(ResolvedRevisionId::from_canonical(sha, display))
+                let id = commit_id_printed(&sha, &["rev-parse", "HEAD"], repo)?;
+                Ok(ResolvedRevisionId::from_canonical(id, display))
             }
         }
     }
 
     fn resolve_revision(&self, repo: &Path, rev: &str) -> Result<ResolvedRevisionId, VcsError> {
         let deref = format!("{rev}^{{commit}}");
-        match Self::run_trimmed(&["rev-parse", "--verify", &deref], repo) {
-            Ok(canonical) => {
-                let display = if rev == canonical {
-                    None
-                } else {
-                    Some(rev.to_string())
-                };
-                Ok(ResolvedRevisionId::from_canonical(canonical, display))
-            }
+        let args = ["rev-parse", "--verify", &deref];
+        match Self::run_trimmed(&args, repo) {
+            Ok(canonical) => Ok(ResolvedRevisionId::from_canonical(
+                commit_id_printed(&canonical, &args, repo)?,
+                Some(rev.to_string()),
+            )),
             Err(VcsError::CommandFailed { stderr, .. }) if is_revision_not_found(&stderr) => {
                 Err(VcsError::RevisionNotFound {
                     repo: repo.to_path_buf(),
@@ -1726,8 +1722,8 @@ impl Vcs for GitVcs {
             "--no-keep-empty",
             "--empty=drop",
             "--onto",
-            onto.as_str(),
-            upstream.as_str(),
+            onto.id().as_str(),
+            upstream.id().as_str(),
         ];
         let mut args = derived_content_git_args(derived);
         args.extend(rebase_args.iter().map(|a| (*a).to_owned()));
@@ -1739,8 +1735,8 @@ impl Vcs for GitVcs {
             .map_err(|e| VcsError::Io {
                 ctx: format!(
                     "failed to spawn git rebase --onto {} {}",
-                    onto.as_str(),
-                    upstream.as_str()
+                    onto.id().as_str(),
+                    upstream.id().as_str()
                 ),
                 source: e,
             })?;
@@ -1838,7 +1834,7 @@ impl Vcs for GitVcs {
         source: &ResolvedRevisionId,
         landed: &ResolvedRevisionId,
     ) -> Result<Vec<String>, VcsError> {
-        let fork_point_to_source = format!("{}...{}", base.as_str(), source.as_str());
+        let fork_point_to_source = format!("{}...{}", base.id().as_str(), source.id().as_str());
         let changed_by_range = nul_terminated_fields(&Self::run(
             &["diff", "--name-only", "-z", &fork_point_to_source],
             repo,
@@ -1851,8 +1847,8 @@ impl Vcs for GitVcs {
                 "diff",
                 "--name-only",
                 "-z",
-                landed.as_str(),
-                source.as_str(),
+                landed.id().as_str(),
+                source.id().as_str(),
             ],
             repo,
         )?)
@@ -1888,7 +1884,13 @@ impl Vcs for GitVcs {
         to: &ResolvedRevisionId,
     ) -> Result<Vec<String>, VcsError> {
         Ok(nul_terminated_fields(&Self::run(
-            &["diff", "--name-only", "-z", from.as_str(), to.as_str()],
+            &[
+                "diff",
+                "--name-only",
+                "-z",
+                from.id().as_str(),
+                to.id().as_str(),
+            ],
             repo,
         )?))
     }
@@ -2029,7 +2031,7 @@ impl Vcs for GitVcs {
         repo: &Path,
         to: &ResolvedRevisionId,
     ) -> Result<(), VcsError> {
-        let merge_args = ["merge", "--ff-only", to.as_str()];
+        let merge_args = ["merge", "--ff-only", to.id().as_str()];
         let output = git_command()
             .args(["-c", "advice.diverging=false"])
             .args(merge_args)
@@ -2057,7 +2059,7 @@ impl Vcs for GitVcs {
     }
 
     fn hard_reset(&self, repo: &Path, to: &ResolvedRevisionId) -> Result<(), VcsError> {
-        Self::run(&["reset", "--hard", to.as_str()], repo)?;
+        Self::run(&["reset", "--hard", to.id().as_str()], repo)?;
         Ok(())
     }
 
@@ -2071,8 +2073,8 @@ impl Vcs for GitVcs {
             .args([
                 "merge-base",
                 "--is-ancestor",
-                ancestor.as_str(),
-                descendant.as_str(),
+                ancestor.id().as_str(),
+                descendant.id().as_str(),
             ])
             .current_dir(repo)
             .stdout(std::process::Stdio::null())
@@ -2095,7 +2097,7 @@ impl Vcs for GitVcs {
         from: &ResolvedRevisionId,
         to: &ResolvedRevisionId,
     ) -> Result<usize, VcsError> {
-        let range = format!("{}..{}", from.as_str(), to.as_str());
+        let range = format!("{}..{}", from.id().as_str(), to.id().as_str());
         let out = Self::run_trimmed(&["rev-list", "--count", &range], repo)?;
         Ok(out.trim().parse::<usize>().unwrap_or(0))
     }
@@ -2103,7 +2105,7 @@ impl Vcs for GitVcs {
     fn create_savepoint(&self, repo: &Path, op_id: &str) -> Result<ResolvedRevisionId, VcsError> {
         let head = self.head_revision(repo)?;
         let ref_name = savepoint_ref(op_id);
-        Self::run(&["update-ref", &ref_name, head.as_str()], repo)?;
+        Self::run(&["update-ref", &ref_name, head.id().as_str()], repo)?;
         Ok(head)
     }
 
@@ -2145,13 +2147,13 @@ impl Vcs for GitVcs {
         let label = pre_abort_ref(op_id);
         if let Some(existing) = self.resolve_pre_abort_ref(repo, op_id) {
             let should_advance = foreign_tip_policy == ForeignTipPolicy::Abandon
-                && existing.revision.as_str() != head.as_str()
+                && existing.revision.id() != head.id()
                 && self.is_ancestor(repo, &existing.revision, &head)?;
             if !should_advance {
                 return Ok(existing);
             }
         }
-        Self::run(&["update-ref", &label, head.as_str()], repo)?;
+        Self::run(&["update-ref", &label, head.id().as_str()], repo)?;
         Ok(PreAbortRef {
             label,
             revision: head,
@@ -2171,8 +2173,8 @@ impl Vcs for GitVcs {
         &self,
         repo: &Path,
         op_id: &str,
-        recorded_intent_tip: Option<&str>,
-        recorded_converged_tip: Option<&str>,
+        recorded_intent_tip: Option<&CommitId>,
+        recorded_converged_tip: Option<&CommitId>,
         foreign_tip_policy: ForeignTipPolicy,
     ) -> Result<VerifiedRestoreOutcome, VcsError> {
         // Resolve the savepoint first: no savepoint → nothing to do.
@@ -2196,9 +2198,9 @@ impl Vcs for GitVcs {
 
         // Classify the current tip against the enumerable attributable set.
         let head = self.head_revision(repo)?;
-        let head_sha = head.as_str();
+        let head_id = head.id();
 
-        if head_sha == savepoint.as_str() {
+        if head_id == savepoint.id() {
             // Untouched — restore is a no-op. Still drop the savepoint so
             // abort's cleanup leaves no stale refs (matches restore_savepoint's
             // post-condition; the pre-abort ref preserves the tip regardless).
@@ -2210,7 +2212,7 @@ impl Vcs for GitVcs {
         // Exact-match only: a descendant check would accept a tip the op
         // never recorded advancing to.
         if let Some(intent) = recorded_intent_tip {
-            if head_sha == intent {
+            if head_id == intent {
                 return self.reset_and_drop_savepoint(
                     repo,
                     op_id,
@@ -2221,7 +2223,7 @@ impl Vcs for GitVcs {
         }
 
         if let Some(converged) = recorded_converged_tip {
-            if head_sha == converged {
+            if head_id == converged {
                 return self.reset_and_drop_savepoint(
                     repo,
                     op_id,
@@ -2253,24 +2255,24 @@ impl Vcs for GitVcs {
         // the commits between it and HEAD with nothing left pointing at them.
         let captured_by_pre_abort_ref = resolved_pre_abort
             .as_ref()
-            .is_some_and(|r| r.revision.as_str() == head_sha);
+            .is_some_and(|r| r.revision.id() == head_id);
         if foreign_tip_policy == ForeignTipPolicy::Abandon && captured_by_pre_abort_ref {
             return self.reset_and_drop_savepoint(
                 repo,
                 op_id,
                 &savepoint,
                 VerifiedRestoreOutcome::AbandonedForeignTip {
-                    abandoned_tip: head_sha.to_owned(),
-                    savepoint: savepoint.as_str().to_owned(),
+                    abandoned_tip: head_id.clone(),
+                    savepoint: savepoint.id().clone(),
                     pre_abort_ref: pre_abort,
                 },
             );
         }
 
         Ok(VerifiedRestoreOutcome::ForeignTip {
-            observed_tip: head_sha.to_owned(),
-            savepoint: savepoint.as_str().to_owned(),
-            recorded_converged_tip: recorded_converged_tip.map(str::to_owned),
+            observed_tip: head_id.clone(),
+            savepoint: savepoint.id().clone(),
+            recorded_converged_tip: recorded_converged_tip.cloned(),
             pre_abort_ref: pre_abort,
         })
     }
@@ -2388,8 +2390,8 @@ impl Vcs for GitVcs {
         Ok(Some(url))
     }
 
-    fn commit_object_exists(&self, repo: &Path, sha: &str) -> Result<bool, VcsError> {
-        let deref = format!("{sha}^{{commit}}");
+    fn commit_object_exists(&self, repo: &Path, id: &CommitId) -> Result<bool, VcsError> {
+        let deref = format!("{id}^{{commit}}");
         let status = git_command()
             .args(["cat-file", "-e", &deref])
             .current_dir(repo)
@@ -2397,7 +2399,7 @@ impl Vcs for GitVcs {
             .stderr(std::process::Stdio::null())
             .status()
             .map_err(|e| VcsError::Io {
-                ctx: format!("failed to spawn git cat-file -e {sha}^{{commit}}"),
+                ctx: format!("failed to spawn git cat-file -e {deref}"),
                 source: e,
             })?;
         Ok(status.success())
@@ -2411,7 +2413,7 @@ impl Vcs for GitVcs {
             .map(|(sha, name)| (name.to_owned(), sha.to_owned()))
             .collect();
         if let HeadObservation::Detached { at } = self.observe_head(repo)? {
-            tips.push(("HEAD".to_owned(), at.as_str().to_owned()));
+            tips.push(("HEAD".to_owned(), at.id().as_str().to_owned()));
         }
         let shas: BTreeSet<&str> = tips.iter().map(|(_, sha)| sha.as_str()).collect();
         let held = Self::objects_held(other, &shas)?;
@@ -2568,7 +2570,7 @@ impl Vcs for GitVcs {
         // Non-zero exit when the revision is missing or the file doesn't
         // exist at that revision; both surface as CommandFailed and the
         // caller can inspect stderr.
-        let rev_path = format!("{}:{}", revision.as_str(), path_str);
+        let rev_path = format!("{}:{}", revision.id().as_str(), path_str);
         match Self::run(&["show", &rev_path], repo) {
             Ok(content) => Ok(content),
             Err(VcsError::CommandFailed { stderr, .. })
@@ -2590,17 +2592,17 @@ impl Vcs for GitVcs {
         GitVcs::rebase_stopped_commit_detail_impl(repo)
     }
 
-    fn log_oneline_range(
+    fn commits_in_range(
         &self,
         repo: &Path,
-        from: &str,
-        to: &str,
+        from: &CommitId,
+        to: &CommitId,
         cap: usize,
-    ) -> (Vec<String>, usize) {
-        GitVcs::log_oneline_range_impl(repo, from, to, cap)
+    ) -> (Vec<CommitSummary>, usize) {
+        GitVcs::capped_log_range(repo, from, to, cap)
     }
 
-    fn ahead_behind(&self, repo: &Path, savepoint: &str, tip: &str) -> (usize, usize) {
+    fn ahead_behind(&self, repo: &Path, savepoint: &CommitId, tip: &CommitId) -> (usize, usize) {
         GitVcs::ahead_behind_impl(repo, savepoint, tip)
     }
 
@@ -2613,7 +2615,7 @@ impl Vcs for GitVcs {
         // range excludes anything the parent already has, so a parent that
         // advanced after the fork does not pollute the result.
         let tip = Self::rev_parse(repo, "HEAD")?;
-        Self::commits_in_range(repo, parent_tip.as_str(), &tip)
+        Self::log_range(repo, parent_tip.id(), &tip, None)
     }
 
     fn unique_diff(
@@ -2627,7 +2629,7 @@ impl Vcs for GitVcs {
         // phantom deletions; the merge-base is the fork point, so the diff is
         // exactly this workweave's unique changes.
         let tip = Self::rev_parse(repo, "HEAD")?;
-        let base = Self::merge_base(repo, parent_tip.as_str(), &tip)?;
+        let base = Self::merge_base(repo, parent_tip.id(), &tip)?;
         let text = Self::diff_range(repo, &base, &tip)?;
         Ok(UniqueDiff {
             base: Some(base),
@@ -2749,12 +2751,15 @@ impl Vcs for GitVcs {
         // point there is no `checkout.guess` and no tag lookup, and the `--`
         // terminator keeps a path-shaped `name` from being read as a
         // pathspec — the three misreads `attach_head_to` documents.
-        Self::run(&["checkout", "-B", name.as_str(), at.as_str(), "--"], dest)?;
+        Self::run(
+            &["checkout", "-B", name.as_str(), at.id().as_str(), "--"],
+            dest,
+        )?;
         Ok(at)
     }
 
     fn set_detached_head(&self, repo: &Path, to: &ResolvedRevisionId) -> Result<(), VcsError> {
-        Self::run(&["checkout", "--detach", to.as_str()], repo)?;
+        Self::run(&["checkout", "--detach", to.id().as_str()], repo)?;
         Ok(())
     }
 
@@ -3015,7 +3020,7 @@ impl GitVcs {
         savepoint: &ResolvedRevisionId,
         outcome: VerifiedRestoreOutcome,
     ) -> Result<VerifiedRestoreOutcome, VcsError> {
-        Self::run(&["reset", "--hard", savepoint.as_str()], repo)?;
+        Self::run(&["reset", "--hard", savepoint.id().as_str()], repo)?;
         self.drop_savepoint(repo, op_id);
         Ok(outcome)
     }
@@ -3324,7 +3329,7 @@ impl GitVcs {
     ) -> Result<RefOrigin, VcsError> {
         let store = Self::work_dir_for_store(store);
         let dest_str = path_as_git_arg(dest, "worktree path")?;
-        let start = start_point.as_str();
+        let start = start_point.id().as_str();
         let branch = name.as_str();
         // `--no-checkout` runs no `post-checkout` hook, so a failure after
         // registration is a hook rejection only when files are written.
@@ -3715,17 +3720,24 @@ impl WorkspacePopulation for GitVcs {
             return Ok(Vec::new());
         }
         let names = Self::submodule_names_by_path(workspace)?;
-        Ok(gitlinks
+        gitlinks
             .into_iter()
             .filter_map(|entry| {
                 let name = names.get(&entry.path)?;
-                is_confined_submodule_name(name).then(|| RecordedSubmodule {
-                    name: name.clone(),
+                is_confined_submodule_name(name).then(|| (name.clone(), entry))
+            })
+            .map(|(name, entry)| {
+                Ok(RecordedSubmodule {
+                    commit: commit_id_printed(
+                        &entry.blob,
+                        &["ls-files", "--stage", "-z"],
+                        workspace,
+                    )?,
+                    name,
                     path: entry.path,
-                    commit: entry.blob,
                 })
             })
-            .collect())
+            .collect()
     }
 
     fn module_data_holds(&self, module_data: &Path, submodule: &RecordedSubmodule) -> bool {
@@ -3786,7 +3798,12 @@ impl WorkspacePopulation for GitVcs {
         )?;
         Self::run(&["config", "core.worktree", dest_arg], &dest)?;
         Self::run(
-            &["update-ref", "--no-deref", "HEAD", &submodule.commit],
+            &[
+                "update-ref",
+                "--no-deref",
+                "HEAD",
+                submodule.commit.as_str(),
+            ],
             &dest,
         )?;
         Self::run(&["read-tree", "HEAD"], &dest)?;
@@ -4080,7 +4097,7 @@ mod branch_model_tests {
         git(store.path(), &["checkout", "p--ww"]);
         let unique = commit(store.path(), "unique-work");
         git(store.path(), &["checkout", "main"]);
-        git(store.path(), &["tag", "p--ww", start.as_str()]);
+        git(store.path(), &["tag", "p--ww", start.id().as_str()]);
 
         let (_dest_home, dest) = worktree_dest();
         GitVcs
@@ -4475,7 +4492,7 @@ mod branch_model_tests {
         let p = repo();
         let tip = GitVcs.head_revision(p.path()).unwrap();
         git(p.path(), &["branch", "target"]);
-        git(p.path(), &["checkout", "--detach", tip.as_str()]);
+        git(p.path(), &["checkout", "--detach", tip.id().as_str()]);
 
         let from = GitVcs.head_attachment(p.path()).unwrap();
         GitVcs
@@ -4493,7 +4510,7 @@ mod branch_model_tests {
         let p = repo();
         let tip = GitVcs.head_revision(p.path()).unwrap();
         git(p.path(), &["branch", "target"]);
-        git(p.path(), &["checkout", "--detach", tip.as_str()]);
+        git(p.path(), &["checkout", "--detach", tip.id().as_str()]);
 
         let from = GitVcs.head_attachment(p.path()).unwrap();
         // The operator reattaches by hand first.
@@ -4527,7 +4544,7 @@ mod branch_model_tests {
         git(&work, &["commit", "-m", "docs"]);
 
         let tip = GitVcs.head_revision(&work).unwrap();
-        git(&work, &["checkout", "--detach", tip.as_str()]);
+        git(&work, &["checkout", "--detach", tip.id().as_str()]);
         // An uncommitted edit to the colliding path. Pathspec mode reverts
         // it, which is the data loss, so it is asserted after every case.
         std::fs::write(work.join("docs/a.md"), "operator edit").unwrap();
@@ -4641,7 +4658,7 @@ mod branch_model_tests {
         git(&work, &["commit", "-m", "collide"]);
 
         let tip = GitVcs.head_revision(&work).unwrap();
-        git(&work, &["checkout", "--detach", tip.as_str()]);
+        git(&work, &["checkout", "--detach", tip.id().as_str()]);
         let from = GitVcs.head_attachment(&work).unwrap();
 
         GitVcs
@@ -4834,14 +4851,17 @@ mod branch_model_tests {
         assert_eq!(err.kind(), "command-failed");
         assert_eq!(
             git_bare(&bare, &["rev-parse", "main"]),
-            foreign.as_str(),
+            foreign.id().as_str(),
             "the refusal is a refusal: origin still holds the foreign tip"
         );
 
         GitVcs
             .push_ref(&clone, &publish_ref_of(&clone), true)
             .expect("force should overwrite the divergent remote tip");
-        assert_eq!(git_bare(&bare, &["rev-parse", "main"]), local_tip.as_str());
+        assert_eq!(
+            git_bare(&bare, &["rev-parse", "main"]),
+            local_tip.id().as_str()
+        );
     }
 
     #[test]
@@ -4856,7 +4876,7 @@ mod branch_model_tests {
 
         assert_eq!(
             git_bare(&bare, &["rev-parse", "refs/heads/main"]),
-            tip.as_str()
+            tip.id().as_str()
         );
     }
 
@@ -4879,7 +4899,7 @@ mod branch_model_tests {
 
         assert_eq!(
             git_bare(&bare, &["rev-parse", "main"]),
-            main_tip.as_str(),
+            main_tip.id().as_str(),
             "push_ref must publish the ref it was handed"
         );
         assert!(
@@ -5141,7 +5161,10 @@ mod population_tests {
     }
 
     fn head(repo: &Path) -> ResolvedRevisionId {
-        ResolvedRevisionId::from_canonical(git(repo, &["rev-parse", "HEAD"]), None)
+        ResolvedRevisionId::from_canonical(
+            crate::vcs::CommitId::parse(&git(repo, &["rev-parse", "HEAD"])).unwrap(),
+            None,
+        )
     }
 
     fn receipt(repo: &Path, name: &str) -> OwnedRef {
@@ -5249,7 +5272,7 @@ mod population_tests {
             .collect();
         assert_eq!(on_disk, vec![std::ffi::OsString::from(".git")]);
         assert_eq!(git(&dest, &["symbolic-ref", "HEAD"]), "refs/heads/p--w");
-        assert_eq!(git(&dest, &["rev-parse", "HEAD"]), head(repo).as_str());
+        assert_eq!(git(&dest, &["rev-parse", "HEAD"]), head(repo).id().as_str());
         assert_eq!(
             git(&dest, &["ls-files", "--stage"]),
             git(repo, &["ls-files", "--stage"]),
@@ -5644,7 +5667,7 @@ mod population_tests {
 
         assert!(GIT.tracked_dirty_file_names(&dest).unwrap().is_empty());
         assert_eq!(git(&dest, &["symbolic-ref", "HEAD"]), "refs/heads/w");
-        assert_eq!(git(&dest, &["rev-parse", "HEAD"]), head(repo).as_str());
+        assert_eq!(git(&dest, &["rev-parse", "HEAD"]), head(repo).id().as_str());
         for name in ["a.txt", "b.txt", "run.sh"] {
             assert_eq!(
                 std::fs::read(dest.join(name)).unwrap(),
@@ -5717,7 +5740,7 @@ mod population_tests {
             .map(str::to_owned)
             .collect();
         let head = head(repo);
-        let null = "0".repeat(head.as_str().len());
+        let null = "0".repeat(head.id().as_str().len());
         assert_eq!(
             runs,
             vec![

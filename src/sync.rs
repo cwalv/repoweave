@@ -19,7 +19,7 @@ use crate::refusal::RefusalKind;
 use crate::share::FilePlacement;
 use crate::status::{compute_relation, LockRelation};
 use crate::vcs::{
-    project_vcs, vcs_for, AttachedRef, ConflictOp, DerivedContentPolicy, DiscardWarrant,
+    project_vcs, vcs_for, AttachedRef, CommitId, ConflictOp, DerivedContentPolicy, DiscardWarrant,
     ForeignTipPolicy, HeadAttachment, ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput,
     VerifiedRestoreOutcome,
 };
@@ -1272,14 +1272,13 @@ fn blocking_commits_block(
     from: &ResolvedRevisionId,
     to: &ResolvedRevisionId,
 ) -> String {
-    let (commits, total) =
-        vcs.log_oneline_range(repo, from.as_str(), to.as_str(), BLOCKING_COMMITS_CAP);
+    let (commits, total) = vcs.commits_in_range(repo, from.id(), to.id(), BLOCKING_COMMITS_CAP);
     if commits.is_empty() {
         return "  (commit range unresolvable)".to_owned();
     }
     let mut block = commits
         .iter()
-        .map(|c| format!("  {c}"))
+        .map(|c| format!("  {} {}", c.id.short(), c.subject))
         .collect::<Vec<_>>()
         .join("\n");
     if total > BLOCKING_COMMITS_CAP {
@@ -1762,14 +1761,14 @@ fn pre_op_manifest(ctx: &OpContext<'_>) -> anyhow::Result<Manifest> {
             format!(
                 "failed to read {} at the op's savepoint {}",
                 Manifest::FILE_NAME,
-                short_sha(savepoint.as_str())
+                savepoint.id().short()
             )
         })?;
     Manifest::from_toml_str(&content).with_context(|| {
         format!(
             "the {} at the op's savepoint {} does not parse",
             Manifest::FILE_NAME,
-            short_sha(savepoint.as_str())
+            savepoint.id().short()
         )
     })
 }
@@ -4157,7 +4156,7 @@ fn load_continuing_context<'a>(
     if emit_text {
         eprintln!(
             "  source re-read at resume: {source_workspace_name} at {tip}",
-            tip = short_sha(snapshot.source_project_tip.as_str()),
+            tip = snapshot.source_project_tip.id().short(),
         );
     }
 
@@ -5060,7 +5059,7 @@ fn op_start_relock_lines(
                 "{workspace_name}/{}: lock behind HEAD by {n} commits — auto-relocked to {pin}",
                 r.repo_path,
                 n = display_count(relocked_over),
-                pin = short_sha(pinned.as_str()),
+                pin = pinned.id().short(),
             )
         })
         .collect()
@@ -5188,10 +5187,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             .ok_or_else(|| {
                 anyhow::anyhow!("internal: advanced_tips write after convergence post Phase 1'")
             })?
-            .insert(
-                project_repo_key().to_owned(),
-                project_tip.as_str().to_owned(),
-            );
+            .insert(project_repo_key().to_owned(), project_tip.id().clone());
         op_state::write_owner(&ctx.owner_workspace_dir, &owner)
             .context("failed to write advanced_tips after Phase 1'")?;
     }
@@ -5224,7 +5220,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                     .get_entry(repo_path)
                     .map(|e| &e.version)
             })
-            .map(|rev| rev.as_str())
+            .map(|rev| rev.id().as_str())
             .unwrap_or_else(|| declared.as_str());
         match materialize_missing_repo(
             vcs_for(entry.vcs_type).as_ref(),
@@ -5364,15 +5360,10 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     // already-ahead repo is forgeable.  `Diverged` repos are skipped here; their
     // fresh rebased tip is captured post-join (write 3).
     {
-        let entry_tips: std::collections::BTreeMap<String, String> = sync_tasks
+        let entry_tips: std::collections::BTreeMap<String, CommitId> = sync_tasks
             .iter()
             .filter(|task| matches!(task.verdicts.containment, Some(Containment::Behind(_))))
-            .map(|task| {
-                (
-                    task.repo_path.as_str().to_owned(),
-                    task.target.as_str().to_owned(),
-                )
-            })
+            .map(|task| (task.repo_path.as_str().to_owned(), task.target.id().clone()))
             .collect();
         if !entry_tips.is_empty() {
             let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?.ok_or_else(|| {
@@ -5397,7 +5388,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     // The actual HEAD is read inside the closure (single-repo reads, no shared
     // state) and returned for the post-join batch write.  No write to the owner
     // record happens inside this closure — that would be a race.
-    let task_results: Vec<(bool, Option<String>)> =
+    let task_results: Vec<(bool, Option<CommitId>)> =
         run_in_parallel(&sync_tasks, ctx.jobs, |_idx, task| {
             let outcome = sync_one_repo(
                 task.vcs.as_ref(),
@@ -5415,7 +5406,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 task.vcs
                     .head_revision(&task.abs)
                     .ok()
-                    .map(|h| h.as_str().to_owned())
+                    .map(|h| h.id().clone())
             } else {
                 None
             };
@@ -5440,7 +5431,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     // Must precede the any_failure bail so partially-advanced repos are captured
     // even when the overall fan-out fails.
     {
-        let post_join_tips: Vec<(String, String)> = sync_tasks
+        let post_join_tips: Vec<(String, CommitId)> = sync_tasks
             .iter()
             .zip(task_results.iter())
             .filter_map(|(task, (_, head_opt))| {
@@ -5805,7 +5796,7 @@ fn record_converged_tips(ctx: &OpContext<'_>, cwd_project: &Project) -> anyhow::
     let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?
         .ok_or_else(|| anyhow::anyhow!("internal: owner record missing during relock"))?;
     // Build the converged table from post-replay HEADs...
-    let mut converged: std::collections::BTreeMap<String, String> =
+    let mut converged: std::collections::BTreeMap<String, CommitId> =
         std::collections::BTreeMap::new();
     for (repo_path, entry) in cwd_project.manifest.iter_entries() {
         let abs = ctx.cwd_workspace_dir.join(repo_path.as_path());
@@ -5813,11 +5804,11 @@ fn record_converged_tips(ctx: &OpContext<'_>, cwd_project: &Project) -> anyhow::
             continue;
         }
         if let Ok(rev) = vcs_for(entry.vcs_type).head_revision(&abs) {
-            converged.insert(repo_path.as_str().to_owned(), rev.as_str().to_owned());
+            converged.insert(repo_path.as_str().to_owned(), rev.id().clone());
         }
     }
     if let Ok(rev) = ctx.project_vcs.head_revision(&ctx.cwd_project_dir) {
-        converged.insert(project_repo_key().to_owned(), rev.as_str().to_owned());
+        converged.insert(project_repo_key().to_owned(), rev.id().clone());
     }
     // ...then swap atomically: `PhaseTips::converge` discards the replay-phase
     // advanced_tips and installs converged_tips in one move, so they land in the
@@ -5886,7 +5877,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                         repo_path,
                         entry.role,
                         entry.submodules,
-                        cwd_tip.as_str(),
+                        cwd_tip.id().as_str(),
                     )
                 }) {
                     Ok(born) => {
@@ -5900,7 +5891,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                         if emit_text {
                             println!(
                                 "  {repo_path}: materialized in target at {}{}",
-                                short_sha(cwd_tip.as_str()),
+                                cwd_tip.id().short(),
                                 crate::share::files_note(born.files)
                             );
                         }
@@ -5929,8 +5920,8 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 if advance.onto.is_some() {
                     ctx.handler.record_step3_advance(
                         repo_path.as_str(),
-                        advance.from.as_str(),
-                        cwd_tip.as_str(),
+                        advance.from.id().as_str(),
+                        cwd_tip.id().as_str(),
                     );
                 }
             }
@@ -5986,8 +5977,8 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             if advance.onto.is_some() {
                 ctx.handler.record_step3_advance(
                     project_repo_key(),
-                    advance.from.as_str(),
-                    cwd_project_tip.as_str(),
+                    advance.from.id().as_str(),
+                    cwd_project_tip.id().as_str(),
                 );
             }
         }
@@ -6397,8 +6388,8 @@ fn retire_workweave_after_sync_to(
             diverged.push(format!(
                 "{}: CWD={} target={}{verdict}",
                 repo_path.as_str(),
-                short_sha(cwd_head.as_str()),
-                short_sha(target_head.as_str())
+                cwd_head.id().short(),
+                target_head.id().short()
             ));
         }
     }
@@ -6443,11 +6434,6 @@ fn retire_workweave_after_sync_to(
     Ok(RetiredWorkweave {
         name: workweave_name.clone(),
     })
-}
-
-/// Truncate a SHA to 12 chars for display (matches workweave.rs convention).
-fn short_sha(sha: &str) -> &str {
-    &sha[..sha.len().min(12)]
 }
 
 /// Phase 1' under `--discard-local-commits`: rewind the CWD project repo to
@@ -6940,8 +6926,8 @@ fn restore_abort_workspace(
             vcs.as_ref(),
             &abs,
             &restore_id,
-            advanced_tips.get(repo_key).map(String::as_str),
-            converged_tips.get(repo_key).map(String::as_str),
+            advanced_tips.get(repo_key),
+            converged_tips.get(repo_key),
             consented,
         ) {
             Ok(outcome) => report_abort_outcome(
@@ -6998,8 +6984,8 @@ fn abort_one_repo(
     vcs: &dyn Vcs,
     repo: &Path,
     op_id: &OpId,
-    recorded_intent_tip: Option<&str>,
-    recorded_converged_tip: Option<&str>,
+    recorded_intent_tip: Option<&CommitId>,
+    recorded_converged_tip: Option<&CommitId>,
     abandon_foreign_tip: bool,
 ) -> anyhow::Result<VerifiedRestoreOutcome> {
     let policy = if abandon_foreign_tip {
@@ -7117,13 +7103,13 @@ fn report_abort_outcome(
                     "tip equals savepoint (unexpected ForeignTip state)".to_string()
                 };
                 let (commits, total) =
-                    vcs.log_oneline_range(repo, savepoint, observed_tip, BLOCKING_COMMITS_CAP);
+                    vcs.commits_in_range(repo, savepoint, observed_tip, BLOCKING_COMMITS_CAP);
                 let commit_block = if commits.is_empty() {
                     "\t  (no commits in range or range unresolvable)".to_string()
                 } else {
                     let mut block = commits
                         .iter()
-                        .map(|c| format!("\t  {c}"))
+                        .map(|c| format!("\t  {} {}", c.id.short(), c.subject))
                         .collect::<Vec<_>>()
                         .join("\n");
                     if total > BLOCKING_COMMITS_CAP {
@@ -7147,12 +7133,11 @@ fn report_abort_outcome(
             // seat-runnable remedy — abandoning a tip nothing else names is
             // destruction, which the flag deliberately does not authorize.
             let consent_note = if consented {
-                let captured = pre_abort_ref.revision.as_str();
+                let captured = pre_abort_ref.revision.id();
                 let diverged_note = repo_abs
                     .map(|repo| {
-                        let captured_id = ResolvedRevisionId::from_canonical(captured, None);
-                        let observed_id = ResolvedRevisionId::from_canonical(observed_tip, None);
-                        vcs.is_ancestor(repo, &captured_id, &observed_id)
+                        let observed = ResolvedRevisionId::from(observed_tip.clone());
+                        vcs.is_ancestor(repo, &pre_abort_ref.revision, &observed)
                             .map(|is_anc| {
                                 if is_anc {
                                     "unexpected: capture is an ancestor of the observed tip \
@@ -7599,7 +7584,7 @@ struct FfAdvance {
 
 /// Per-repo advance-target line, naming the branch that received the landing.
 fn ff_advance_line(advance: &FfAdvance, tip: &ResolvedRevisionId) -> String {
-    let short = &tip.as_str()[..8.min(tip.as_str().len())];
+    let short = &tip.id().as_str()[..8.min(tip.id().as_str().len())];
     match &advance.onto {
         Some(branch) => format!("ff-advanced {branch} to {short}"),
         None => format!("already at {short}"),
@@ -7955,8 +7940,10 @@ mod tests {
         let repo = tmp.path().join("r");
         init_repo(&repo);
         let head = git_vcs().head_revision(&repo).unwrap();
-        let absent =
-            ResolvedRevisionId::from_canonical("0000000000000000000000000000000000000001", None);
+        let absent = ResolvedRevisionId::from_canonical(
+            crate::vcs::CommitId::parse("0000000000000000000000000000000000000001").unwrap(),
+            None,
+        );
 
         assert_eq!(
             Containment::observe(git_vcs().as_ref(), &repo, &head, &absent),
@@ -8220,7 +8207,7 @@ mod tests {
         );
         assert_eq!(
             git(&target, &["rev-parse", "refs/heads/main"]),
-            cwd_tip.as_str(),
+            cwd_tip.id().as_str(),
             "target `main` must hold the landed commit"
         );
     }
@@ -8295,7 +8282,7 @@ mod tests {
         let (cwd, target, cwd_tip) = landing_pair(tmp.path());
 
         git(&target, &["fetch", cwd.to_str().unwrap(), "HEAD"]);
-        git(&target, &["checkout", "--detach", cwd_tip.as_str()]);
+        git(&target, &["checkout", "--detach", cwd_tip.id().as_str()]);
 
         let landed = ff_advance_repo(git_vcs().as_ref(), &target, &cwd, &cwd_tip)
             .expect("an already-converged target is a no-op, detached or not");
@@ -8630,7 +8617,7 @@ mod tests {
         );
         assert_eq!(
             git(&live, &["rev-parse", "HEAD"]),
-            unique.as_str(),
+            unique.id().as_str(),
             "the unique commit must survive the refused prune"
         );
     }
@@ -8651,7 +8638,7 @@ mod tests {
         );
         assert_eq!(
             git(&store, &["rev-parse", "refs/heads/main"]),
-            unpushed.as_str(),
+            unpushed.id().as_str(),
             "the unpushed commit must survive the refused prune"
         );
     }

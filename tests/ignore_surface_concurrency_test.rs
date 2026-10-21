@@ -78,7 +78,10 @@ fn hygiene_appends_extend_the_surface_in_place_and_keep_a_peers_line() {
         .record_created(
             &store,
             EphemeralRefName::mint(&project, &WorkweaveName::new("seat").expect("name")),
-            ResolvedRevisionId::from_canonical("a".repeat(40), None),
+            ResolvedRevisionId::from_canonical(
+                repoweave::vcs::CommitId::parse(&"a".repeat(40)).unwrap(),
+                None,
+            ),
         )
         .expect("the index write succeeds");
     stamp_owned_digest(&project_dir, "Cargo.lock", b"version = 4\n")

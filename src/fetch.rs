@@ -502,7 +502,7 @@ fn materialize_workweave_members(
                 created = true;
                 let line = format!(
                     "rwv fetch: created the worktree for {repo_path} in this workweave at {}{}",
-                    &born.at.as_str()[..born.at.as_str().len().min(12)],
+                    born.at.id().short(),
                     crate::share::files_note(born.files),
                 );
                 if output == OutputMode::Text {

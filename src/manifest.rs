@@ -1618,7 +1618,7 @@ impl ResolvedLockEntry {
         LockEntry {
             vcs_type: self.vcs_type,
             url: self.url.clone(),
-            version: crate::vcs::RawRevisionId::new(self.version.as_str()),
+            version: crate::vcs::RawRevisionId::new(self.version.id().as_str()),
         }
     }
 }

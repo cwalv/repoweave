@@ -536,7 +536,7 @@ fn populate_level(
                     shown,
                     format!(
                         "commit {} is not in the canonical clone's copy of it",
-                        &submodule.commit[..submodule.commit.len().min(12)]
+                        submodule.commit.short()
                     ),
                 ));
                 continue;
@@ -598,7 +598,7 @@ fn submodule_sources(
         .map(|source| {
             let elsewhere = vcs
                 .head_revision(&source.path)
-                .map_or(true, |head| head.as_str() != submodule.commit);
+                .map_or(true, |head| *head.id() != submodule.commit);
             (elsewhere, source)
         })
         .collect();
@@ -830,7 +830,7 @@ mod tests {
                     "-b",
                     name,
                     dest.to_str().unwrap(),
-                    at.as_str(),
+                    at.id().as_str(),
                 ],
             );
             dest
@@ -1174,7 +1174,7 @@ mod tests {
         let executable = w.head();
         git(
             &w.store,
-            &["checkout", "-q", "-f", "--detach", plain.as_str()],
+            &["checkout", "-q", "-f", "--detach", plain.id().as_str()],
         );
         let fs = FakePrimitives::default();
 
@@ -1247,7 +1247,10 @@ mod tests {
         let owned = OwnedRef::from_receipt(
             PathBuf::from("/store"),
             RawRefName::new("p--w"),
-            ResolvedRevisionId::from_canonical("a".repeat(40), None),
+            ResolvedRevisionId::from_canonical(
+                crate::vcs::CommitId::parse(&"a".repeat(40)).unwrap(),
+                None,
+            ),
         );
 
         let populated = create_worktree_populated(
@@ -1279,7 +1282,10 @@ mod tests {
         let before = w.head();
         let after = w.commit(&[("a.bin", "a2\n"), ("c.bin", "c2\n"), ("d.txt", "d2\n")]);
         let member = w.seat("member", &before);
-        git(&member, &["checkout", "-q", "--detach", after.as_str()]);
+        git(
+            &member,
+            &["checkout", "-q", "--detach", after.id().as_str()],
+        );
         std::fs::write(member.join("c.bin"), "edited here\n").unwrap();
         let changed = git_vcs()
             .changed_paths_between(&member, &before, &after)
@@ -1326,7 +1332,10 @@ mod tests {
         let before = w.head();
         let after = w.commit(&[("a.bin", "a2\n")]);
         let member = w.seat("member", &before);
-        git(&member, &["checkout", "-q", "--detach", after.as_str()]);
+        git(
+            &member,
+            &["checkout", "-q", "--detach", after.id().as_str()],
+        );
         let identity_before = file_identity(&member.join("a.bin"));
         let fs = FakePrimitives::default();
         fs.fail_from(&w.store, io::ErrorKind::Unsupported);
@@ -1350,7 +1359,10 @@ mod tests {
         let before = w.head();
         let after = w.commit(&[("a.bin", "a2\n"), ("b.bin", "b2\n")]);
         let member = w.seat("member", &before);
-        git(&member, &["checkout", "-q", "--detach", after.as_str()]);
+        git(
+            &member,
+            &["checkout", "-q", "--detach", after.id().as_str()],
+        );
         let b_before = file_identity(&member.join("b.bin"));
         let fs = FakePrimitives::default();
         fs.fail_from(&w.store.join("b.bin"), io::ErrorKind::PermissionDenied);
@@ -1611,7 +1623,10 @@ mod tests {
         let after = w.commit(&[("a.bin", "a2\n")]);
         crate::settle::settle(git_vcs().as_ref(), &w.store, Role::Reference).unwrap();
         let member = w.seat("member", &before);
-        git(&member, &["checkout", "-q", "--detach", after.as_str()]);
+        git(
+            &member,
+            &["checkout", "-q", "--detach", after.id().as_str()],
+        );
         let fs = FakePrimitives::default();
         fs.fail_from(&w.store, io::ErrorKind::Unsupported);
 

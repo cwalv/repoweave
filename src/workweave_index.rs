@@ -84,7 +84,7 @@
 use crate::manifest::ProjectName;
 use crate::refusal::RefusalKind;
 use crate::vcs::{
-    EphemeralRefName, LegacyEphemeralRefName, OwnedRef, RawRefName, ResolvedRevisionId,
+    CommitId, EphemeralRefName, LegacyEphemeralRefName, OwnedRef, RawRefName, ResolvedRevisionId,
 };
 use crate::workspace::project_dir;
 use anyhow::Context;
@@ -169,13 +169,10 @@ impl WorkweaveIndex {
 /// receipts must never be able to answer for each other — that is the whole
 /// content of R2.
 ///
-/// `created_at` is the **canonical** SHA as a string, because
-/// [`ResolvedRevisionId`] deliberately has no `Deserialize` impl (`vcs.rs`:
-/// resolution is the only way to obtain one) and its `Serialize` writes the
-/// *display* form, which for a tag-resolved revision is not a commit id at
-/// all. Reading a receipt therefore re-parses through
-/// [`ResolvedRevisionId::from_rev_parse_output`], which validates the
-/// canonical shape rather than trusting the file.
+/// `created_at` is held as written and parsed into a [`CommitId`] when the
+/// receipt is used, not when the index loads: one corrupt receipt is refused
+/// by the verb that needs it, rather than making every other workweave's
+/// placement and receipts in the same file unreadable.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct RefReceipt {
     /// Absolute path of the canonical store the ref lives in.
@@ -595,13 +592,13 @@ pub fn lookup_raw(
 ///
 /// ```no_run
 /// use repoweave::manifest::{ProjectName, WorkweaveName};
-/// use repoweave::vcs::{EphemeralRefName, ResolvedRevisionId};
+/// use repoweave::vcs::{CommitId, EphemeralRefName, ResolvedRevisionId};
 /// use repoweave::workweave_index::RefRegistry;
 /// use std::path::Path;
 /// let project = ProjectName::new("p").unwrap();
 /// let mut registry = RefRegistry::for_project(Path::new("/ws"), &project);
 /// let name = EphemeralRefName::mint(&project, &WorkweaveName::new("ww").unwrap());
-/// let at = ResolvedRevisionId::from_canonical("a".repeat(40), None);
+/// let at = ResolvedRevisionId::from(CommitId::parse(&"a".repeat(40)).unwrap());
 /// let _ = registry.record_created(Path::new("/ws/store"), name, at);
 /// ```
 ///
@@ -611,12 +608,12 @@ pub fn lookup_raw(
 ///
 /// ```compile_fail
 /// use repoweave::manifest::ProjectName;
-/// use repoweave::vcs::{RawRefName, ResolvedRevisionId};
+/// use repoweave::vcs::{CommitId, RawRefName, ResolvedRevisionId};
 /// use repoweave::workweave_index::RefRegistry;
 /// use std::path::Path;
 /// let project = ProjectName::new("p").unwrap();
 /// let mut registry = RefRegistry::for_project(Path::new("/ws"), &project);
-/// let at = ResolvedRevisionId::from_canonical("a".repeat(40), None);
+/// let at = ResolvedRevisionId::from(CommitId::parse(&"a".repeat(40)).unwrap());
 /// let _ = registry.record_created(Path::new("/ws/store"), RawRefName::new("p--ww"), at);
 /// ```
 ///
@@ -763,7 +760,7 @@ impl RefRegistry {
             receipts.push(RefReceipt {
                 store: key_store.clone(),
                 name: raw_name.clone(),
-                created_at: created_at.as_str().to_owned(),
+                created_at: created_at.id().as_str().to_owned(),
             });
             write(claim, &index)?;
 
@@ -928,8 +925,9 @@ impl RefReceipt {
     /// [`OwnedRef`] whose recorded tip is not a commit id — which every
     /// warrant check would then compare against and silently never match.
     fn to_owned_ref(&self, path: &Path) -> anyhow::Result<OwnedRef> {
-        let created_at =
-            ResolvedRevisionId::from_rev_parse_output(&self.created_at).ok_or_else(|| {
+        let created_at = CommitId::parse(&self.created_at)
+            .map(ResolvedRevisionId::from)
+            .map_err(|_| {
                 crate::refusal::refusal(
                     RefusalKind::ReceiptRevisionUncanonical,
                     format!(
@@ -1111,7 +1109,10 @@ mod tests {
 
     /// A distinct canonical revision per `hex` character.
     fn rev(hex: char) -> ResolvedRevisionId {
-        ResolvedRevisionId::from_canonical(hex.to_string().repeat(40), None)
+        ResolvedRevisionId::from_canonical(
+            crate::vcs::CommitId::parse(&hex.to_string().repeat(40)).unwrap(),
+            None,
+        )
     }
 
     fn ephemeral(project: &ProjectName, workweave: &str) -> EphemeralRefName {

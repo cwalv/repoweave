@@ -610,7 +610,7 @@ fn lock_records_the_commit_id_when_head_is_tagged() {
         "the lock must still resolve once the tag is gone: {failures:?}"
     );
     assert_eq!(
-        resolved.get_entry(&repo).unwrap().version.as_str(),
+        resolved.get_entry(&repo).unwrap().version.id().as_str(),
         sha.as_str()
     );
 }
@@ -1111,6 +1111,12 @@ fn lock_commit_message_summarizes_repos() {
     );
     assert!(log.contains(repo_a), "message should list repo A: {log}");
     assert!(log.contains(repo_b), "message should list repo B: {log}");
+    let head_a = common::git_in(root.join(repo_a), &["rev-parse", "HEAD"]);
+    let listed = format!("  - {repo_a}: {}", &head_a[..12]);
+    assert!(
+        log.lines().any(|l| l == listed),
+        "a pinned repo is listed by its 12-character id: {log}"
+    );
 }
 
 // ---------------------------------------------------------------------------

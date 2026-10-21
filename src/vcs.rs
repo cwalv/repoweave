@@ -19,39 +19,105 @@ use std::path::{Path, PathBuf};
 #[cfg(test)]
 pub(crate) mod testing;
 
-/// A resolved commit identifier — `canonical` is always a 40-hex SHA.
+/// A full commit id: a lowercase-hex object name of the width the
+/// repository's hash function produces (40 for SHA-1, 64 for SHA-256 repos —
+/// `extensions.objectFormat = sha256`).
+///
+/// [`CommitId::parse`] is the only way to obtain one, and deserializing goes
+/// through it, so a tag or branch name read from a state file is refused
+/// where the file is read. Abbreviated ids are rejected: they are ambiguous
+/// by construction. Uppercase is rejected because no VCS emits it for a
+/// resolved object name, so its appearance means the string came from
+/// somewhere other than a resolution.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, JsonSchema)]
+#[schemars(transparent)]
+pub struct CommitId(String);
+
+/// Why a string is not a [`CommitId`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitIdError(String);
+
+impl fmt::Display for CommitIdError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "'{}' is not a commit id: expected 40 or 64 lowercase hex digits",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for CommitIdError {}
+
+impl CommitId {
+    pub const SHORT_WIDTH: usize = 12;
+
+    pub fn parse(s: &str) -> Result<Self, CommitIdError> {
+        if is_canonical_commit_id(s) {
+            Ok(Self(s.to_owned()))
+        } else {
+            Err(CommitIdError(s.to_owned()))
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// The abbreviation every operator surface prints.
+    pub fn short(&self) -> &str {
+        &self.0[..Self::SHORT_WIDTH]
+    }
+}
+
+impl fmt::Display for CommitId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl Serialize for CommitId {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for CommitId {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Self::parse(&s).map_err(serde::de::Error::custom)
+    }
+}
+
+/// A resolved commit identifier: a [`CommitId`], and the name it was
+/// reached by when there was one.
 ///
 /// `display` optionally preserves a tag/branch name when the value was
 /// constructed from a tag-form input (e.g., `v0.3.4`). Equality compares
 /// only the canonical SHA so two `ResolvedRevisionId`s referring to the
 /// same commit — one tag-form, one SHA-form — compare equal.
 ///
-/// Construction is path-rooted: the only public constructors are
-/// [`Vcs::resolve_revision`] / [`Vcs::head_revision`] (which resolve
-/// against a real repo), [`ResolvedRevisionId::from_canonical`] (mint with
-/// a known SHA, e.g. directly from `head_revision` output), and
-/// [`ResolvedRevisionId::from_rev_parse_output`] (mint from raw
-/// ref-resolution output, verifying the canonical form). There is no
-/// public way to mint a `ResolvedRevisionId` from a free string — the
-/// parse boundary lives in [`RawRevisionId`].
+/// Every constructor takes a [`CommitId`] or parses into one
+/// ([`ResolvedRevisionId::from_rev_parse_output`]), so there is no way to
+/// mint a `ResolvedRevisionId` from a free string; a recorded scalar that
+/// may be a name is a [`RawRevisionId`] until it is resolved.
 ///
-/// Serde: only `Serialize`, and it writes the canonical SHA, never the
+/// Serde: only `Serialize`, and it writes the commit id, never the
 /// display form. What is serialized is read back as a pin, and a tag or
 /// branch name can move or vanish after it is written. Deserialization
 /// deliberately is not implemented; lock-file parsing yields
 /// [`RawRevisionId`] which must then be resolved against the on-disk repo.
 #[derive(Debug, Clone)]
 pub struct ResolvedRevisionId {
-    canonical: String,
+    canonical: CommitId,
     display: Option<String>,
 }
 
 impl ResolvedRevisionId {
-    /// Construct with a known canonical commit SHA and optional display
-    /// form. When `display` equals `canonical` it is suppressed.
-    pub fn from_canonical(canonical: impl Into<String>, display: Option<String>) -> Self {
-        let canonical = canonical.into();
-        let display = display.filter(|d| d != &canonical);
+    /// Construct from a commit id and optional display form. When `display`
+    /// spells the id itself it is suppressed.
+    pub fn from_canonical(canonical: CommitId, display: Option<String>) -> Self {
+        let display = display.filter(|d| d != canonical.as_str());
         Self { canonical, display }
     }
 
@@ -71,33 +137,35 @@ impl ResolvedRevisionId {
     /// (`refs/rwv/pre-op/<op-id>` is meaningless outside the repo that
     /// holds it), so serializing it would produce an unresolvable scalar.
     pub fn from_rev_parse_output(s: &str) -> Option<Self> {
-        let s = s.trim();
-        is_canonical_commit_id(s).then(|| Self {
-            canonical: s.to_owned(),
-            display: None,
-        })
+        CommitId::parse(s.trim()).ok().map(Self::from)
     }
 
-    /// The canonical SHA (after resolution) or the raw input (before).
-    pub fn as_str(&self) -> &str {
+    pub fn id(&self) -> &CommitId {
         &self.canonical
     }
 
-    /// The display form (tag-form when present), falling back to canonical.
+    /// The display form (tag-form when present), falling back to the id.
     pub fn display_str(&self) -> &str {
-        self.display.as_deref().unwrap_or(&self.canonical)
+        self.display.as_deref().unwrap_or(self.canonical.as_str())
+    }
+
+    /// The display form when present, falling back to the abbreviated id.
+    pub fn short_display(&self) -> &str {
+        self.display
+            .as_deref()
+            .unwrap_or_else(|| self.canonical.short())
     }
 }
 
-/// True for a canonical commit id: a lowercase-hex object name of the
-/// full width the repository's hash function produces (40 for SHA-1, 64
-/// for SHA-256 repos — `extensions.objectFormat = sha256`).
-///
-/// Abbreviated ids are deliberately rejected: they are ambiguous by
-/// construction, and the whole point of the canonical form is that two
-/// values naming the same commit compare equal. Uppercase is rejected
-/// because no VCS emits it for a resolved object name, so its appearance
-/// means the string came from somewhere other than a resolution.
+impl From<CommitId> for ResolvedRevisionId {
+    fn from(canonical: CommitId) -> Self {
+        Self {
+            canonical,
+            display: None,
+        }
+    }
+}
+
 fn is_canonical_commit_id(s: &str) -> bool {
     matches!(s.len(), 40 | 64)
         && s.bytes()
@@ -120,7 +188,7 @@ impl fmt::Display for ResolvedRevisionId {
 
 impl serde::Serialize for ResolvedRevisionId {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(self.as_str())
+        self.canonical.serialize(serializer)
     }
 }
 
@@ -153,10 +221,10 @@ impl serde::Serialize for ResolvedRevisionId {
 /// enforcing the contract that motivated the split.
 ///
 /// ```compile_fail
-/// use repoweave::vcs::{RawRevisionId, ResolvedRevisionId};
+/// use repoweave::vcs::{CommitId, RawRevisionId, ResolvedRevisionId};
 /// let raw = RawRevisionId::new("v1.0.0");
 /// let resolved = ResolvedRevisionId::from_canonical(
-///     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+///     CommitId::parse("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
 ///     Some("v1.0.0".to_string()),
 /// );
 /// let _ = raw == resolved; // E0308: expected RawRevisionId, found ResolvedRevisionId
@@ -180,7 +248,12 @@ impl RawRevisionId {
     /// (a tag, a branch, an abbreviated id) that resolves to wherever it
     /// points when read.
     pub fn is_commit_id(&self) -> bool {
-        is_canonical_commit_id(&self.0)
+        self.as_commit_id().is_some()
+    }
+
+    /// The recorded string as a [`CommitId`], when it is one.
+    pub fn as_commit_id(&self) -> Option<CommitId> {
+        CommitId::parse(&self.0).ok()
     }
 }
 
@@ -205,18 +278,12 @@ impl<'de> serde::Deserialize<'de> for RawRevisionId {
 /// One commit in a [`Vcs::unique_commits`] listing — a VCS-agnostic
 /// one-line summary.
 ///
-/// `id` is the full, stable commit identifier (for git, the 40-hex SHA);
-/// `short` is the abbreviated form a human reads; `subject` is the first
-/// line of the commit message. The type carries no git-specific spelling so
-/// callers (e.g. `rwv workweave log`) render the same shape regardless of
-/// the underlying VCS.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+/// `subject` is the first line of the commit message. The type carries no
+/// git-specific spelling so callers (e.g. `rwv workweave log`) render the
+/// same shape regardless of the underlying VCS.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitSummary {
-    /// Full, stable commit identifier (for git, the 40-hex SHA).
-    pub id: String,
-    /// Abbreviated commit identifier for display.
-    pub short: String,
-    /// First line of the commit message.
+    pub id: CommitId,
     pub subject: String,
 }
 
@@ -229,10 +296,10 @@ pub struct CommitSummary {
 /// unified-diff body. Anchoring at the common ancestor — not the parent tip
 /// directly — is what keeps a parent that advanced after the fork from
 /// showing phantom reversals of work the parent gained.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UniqueDiff {
     /// The common-ancestor revision the diff is anchored at, if computable.
-    pub base: Option<String>,
+    pub base: Option<CommitId>,
     /// The unified-diff text of the workweave's unique work vs `base`.
     pub text: String,
 }
@@ -741,16 +808,14 @@ pub enum VerifiedRestoreOutcome {
     /// Restore was REFUSED. The caller is expected to report the
     /// violation and continue with other repos; do not silently reset.
     ForeignTip {
-        /// The repo's current tip at the moment of classification (as a
-        /// canonical SHA string).
-        observed_tip: String,
-        /// The savepoint the op recorded at start (as a canonical SHA
-        /// string).
-        savepoint: String,
+        /// The repo's current tip at the moment of classification.
+        observed_tip: CommitId,
+        /// The savepoint the op recorded at start.
+        savepoint: CommitId,
         /// The converged tip recorded for this repo by the owner record,
         /// if any. `None` when the op crashed before relock recorded any
         /// converged tips, or when no entry exists for this repo.
-        recorded_converged_tip: Option<String>,
+        recorded_converged_tip: Option<CommitId>,
         /// The pre-abort reference that already captured `observed_tip`
         /// (written by [`Vcs::create_pre_abort_ref`] before this call).
         /// Surfaced in the refusal so operators can locate the tip if it
@@ -769,9 +834,9 @@ pub enum VerifiedRestoreOutcome {
     AbandonedForeignTip {
         /// The foreign tip the branch was moved off, now named only by
         /// `pre_abort_ref`.
-        abandoned_tip: String,
+        abandoned_tip: CommitId,
         /// The savepoint the repo was reset to.
-        savepoint: String,
+        savepoint: CommitId,
         /// The reference the abandoned tip stays reachable through.
         pre_abort_ref: PreAbortRef,
     },
@@ -2688,8 +2753,8 @@ pub trait Vcs: Send + Sync {
         &self,
         repo: &Path,
         op_id: &str,
-        recorded_intent_tip: Option<&str>,
-        recorded_converged_tip: Option<&str>,
+        recorded_intent_tip: Option<&CommitId>,
+        recorded_converged_tip: Option<&CommitId>,
         foreign_tip_policy: ForeignTipPolicy,
     ) -> Result<VerifiedRestoreOutcome, VcsError>;
 
@@ -2808,19 +2873,19 @@ pub trait Vcs: Send + Sync {
     /// local `insteadOf` rule happens to resolve it to.
     fn remote_url(&self, repo: &Path) -> Result<Option<String>, VcsError>;
 
-    /// Return `true` when `sha` names a commit object that exists in
+    /// Return `true` when `id` names a commit object that exists in
     /// `repo`'s object store.
     ///
     /// For git: runs
-    /// `git cat-file -e <sha>^{commit}`. Exit 0 means the object exists
-    /// and is a commit; any other exit (including the case where `sha`
-    /// resolves to a non-commit object type) returns `false`.
+    /// `git cat-file -e <id>^{commit}`. Exit 0 means the object exists
+    /// and is a commit; any other exit (including the case where `id`
+    /// names a non-commit object) returns `false`.
     ///
     /// Used by `rwv doctor`'s provenance checks to detect lock SHAs that
     /// are absent from the local clone — e.g. after an upstream
     /// force-push removed the commit from reachable history, or after a
     /// fresh clone that has never fetched a now-detached SHA.
-    fn commit_object_exists(&self, repo: &Path, sha: &str) -> Result<bool, VcsError>;
+    fn commit_object_exists(&self, repo: &Path, id: &CommitId) -> Result<bool, VcsError>;
 
     /// Every ref of the repository at `repo`, and its HEAD when detached,
     /// whose tip no ref of the repository at `other` reaches: history `other`
@@ -2964,22 +3029,22 @@ pub trait Vcs: Send + Sync {
     ///
     /// The returned string is suitable as the `detail` arg to
     /// `per_conflict_bail_message` in sync, e.g.:
-    /// `"commit abc1234 (lock: refresh — post-OOB drift in gc-formulas)"`
+    /// `"commit 0123456789ab (lock: refresh — post-OOB drift in gc-formulas)"`
     fn rebase_stopped_commit_detail(&self, repo: &Path) -> String;
 
-    /// Return up to `cap` one-line commit summaries for the range `from..to`
+    /// Return up to `cap` commits of the range `from..to`, newest first,
     /// plus the total commit count in that range.
     ///
     /// Returns `(vec![], 0)` on any error so callers can degrade gracefully
     /// when the range is unresolvable (e.g. the object is unreachable in a
-    /// shallow clone or the SHA is malformed).
-    fn log_oneline_range(
+    /// shallow clone).
+    fn commits_in_range(
         &self,
         repo: &Path,
-        from: &str,
-        to: &str,
+        from: &CommitId,
+        to: &CommitId,
         cap: usize,
-    ) -> (Vec<String>, usize);
+    ) -> (Vec<CommitSummary>, usize);
 
     /// Return `(ahead, behind)` commit counts for `savepoint..tip` and
     /// `tip..savepoint` respectively. Used to determine whether `tip` is
@@ -2987,7 +3052,7 @@ pub trait Vcs: Send + Sync {
     /// (both > 0).
     ///
     /// Returns `(0, 0)` on any VCS error.
-    fn ahead_behind(&self, repo: &Path, savepoint: &str, tip: &str) -> (usize, usize);
+    fn ahead_behind(&self, repo: &Path, savepoint: &CommitId, tip: &CommitId) -> (usize, usize);
 
     /// List the commits reachable from `repo`'s current tip but NOT from
     /// `parent_tip`, newest first.
@@ -3735,7 +3800,7 @@ pub trait WorkspacePopulation: Send + Sync {
 pub struct RecordedSubmodule {
     pub name: String,
     pub path: String,
-    pub commit: String,
+    pub commit: CommitId,
 }
 
 /// What [`WorkspacePopulation::create_unpopulated_submodule`] came to.
@@ -3755,6 +3820,14 @@ pub enum SubmoduleBirth {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_commit_id_deserializes_only_through_parse() {
+        let tag: Result<CommitId, _> = serde_json::from_str("\"v2.0\"");
+        assert!(tag.is_err());
+        let id: CommitId = serde_json::from_str(&format!("\"{}\"", "c".repeat(40))).unwrap();
+        assert_eq!(id.short(), "c".repeat(CommitId::SHORT_WIDTH));
+    }
+
     // -----------------------------------------------------------------------
     // The rules that live in the types rather than in a VCS impl. Each is
     // exercised here because "malformed means absent" and "canonical means
@@ -3762,17 +3835,17 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn canonical_commit_ids_are_full_width_lowercase_hex() {
-        assert!(is_canonical_commit_id(&"a".repeat(40)));
-        assert!(is_canonical_commit_id(&"0123456789abcdef".repeat(4)[..64]));
+    fn a_commit_id_is_a_full_width_lowercase_hex_object_name() {
+        assert!(CommitId::parse(&"a".repeat(40)).is_ok());
+        assert!(CommitId::parse(&"0123456789abcdef".repeat(4)[..64]).is_ok());
         // Abbreviated ids are ambiguous by construction; uppercase means the
         // string did not come from a resolution.
-        assert!(!is_canonical_commit_id(&"a".repeat(7)));
-        assert!(!is_canonical_commit_id(&"a".repeat(39)));
-        assert!(!is_canonical_commit_id(&"a".repeat(41)));
-        assert!(!is_canonical_commit_id(&"A".repeat(40)));
-        assert!(!is_canonical_commit_id(&"g".repeat(40)));
-        assert!(!is_canonical_commit_id(""));
+        assert!(CommitId::parse(&"a".repeat(7)).is_err());
+        assert!(CommitId::parse(&"a".repeat(39)).is_err());
+        assert!(CommitId::parse(&"a".repeat(41)).is_err());
+        assert!(CommitId::parse(&"A".repeat(40)).is_err());
+        assert!(CommitId::parse(&"g".repeat(40)).is_err());
+        assert!(CommitId::parse("").is_err());
     }
 
     #[test]
@@ -3820,7 +3893,7 @@ mod tests {
         let owned = OwnedRef::from_receipt(
             PathBuf::from("/tmp/store/.git"),
             RawRefName::new("p--ww"),
-            ResolvedRevisionId::from_canonical("a".repeat(40), None),
+            ResolvedRevisionId::from(CommitId::parse(&"a".repeat(40)).unwrap()),
         );
         let same = AttachedRef {
             repo: PathBuf::from("/tmp/checkout"),

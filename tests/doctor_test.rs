@@ -1495,8 +1495,14 @@ mod doctor_json {
             CheckViolation::StaleLock {
                 project: ProjectName::new("p").unwrap(),
                 repo: RepoPath::new("github/c/d").expect("known-safe literal"),
-                locked: ResolvedRevisionId::from_canonical("dead", None),
-                actual: ResolvedRevisionId::from_canonical("beef", None),
+                locked: ResolvedRevisionId::from_canonical(
+                    repoweave::vcs::CommitId::parse(&"d".repeat(40)).unwrap(),
+                    None,
+                ),
+                actual: ResolvedRevisionId::from_canonical(
+                    repoweave::vcs::CommitId::parse(&"b".repeat(40)).unwrap(),
+                    None,
+                ),
             },
             CheckViolation::MissingReplayExclusion {
                 project: ProjectName::new("p").unwrap(),

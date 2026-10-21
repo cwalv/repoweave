@@ -6,6 +6,25 @@ claim that nothing changed in them.
 
 ## Unreleased
 
+### Abbreviated commit ids are 12 characters everywhere
+
+A commit id abbreviated for reading was 7 characters in `rwv push`'s
+lock-mismatch lines and `rwv lock --commit`'s message, 12 in `rwv status` and
+most refusals, and whatever width git chose in the blocking commits `rwv sync`
+and `rwv abort` list, the stopped commit a rebase conflict names, and `short`
+in `rwv workweave log --json`. Every one is now the first 12 characters.
+`rwv status` prints a lock entry pinned by name in full instead of cutting it
+at 12 characters.
+
+### A recorded tip that is not a commit id is refused where it is read
+
+A tag or branch name in an in-flight op's recorded tips (`.rwv-op`) was read
+as a tip, never matched the repo's HEAD, and made `rwv abort` report a
+foreign-tip violation for a repo the op had moved. The record now fails to
+load, naming the value, before any repo is classified. The health floor
+record reads a malformed tip the way it reads any unparseable floor: as
+absent.
+
 ### Breaking: a malformed `hide-dotfiles` stops materialize and the install hooks
 
 A `hide-dotfiles` that is not a boolean in `[integrations.vscode-workspace]` was

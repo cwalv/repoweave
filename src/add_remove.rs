@@ -98,7 +98,7 @@ fn create_worktree_in_workweave(
         repo_path,
         role,
         submodules,
-        start.as_str(),
+        start.id().as_str(),
     )
     .with_context(|| {
         format!(

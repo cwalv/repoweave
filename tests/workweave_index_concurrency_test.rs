@@ -77,7 +77,10 @@ fn receipt_child() {
     let project = ProjectName::new(PROJECT).expect("project name");
     let mut registry = RefRegistry::for_project(Path::new(&root), &project);
     let minted = EphemeralRefName::mint(&project, &WorkweaveName::new(&name).expect("ww name"));
-    let at = ResolvedRevisionId::from_canonical("a".repeat(40), None);
+    let at = ResolvedRevisionId::from_canonical(
+        repoweave::vcs::CommitId::parse(&"a".repeat(40)).unwrap(),
+        None,
+    );
 
     let outcome = match registry.record_created(Path::new(&store), minted, at) {
         Ok(_) => "ok".to_string(),

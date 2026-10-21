@@ -143,7 +143,7 @@ fn a_dangling_receipt_authorizes_nothing_but_a_live_one_does() {
     let warrant = DeletionWarrant::unmoved(git_vcs().as_ref(), &born)
         .expect("a ref at its recorded tip is unmoved");
     assert!(
-        warrant.describe().contains(tip.as_str()),
+        warrant.describe().contains(tip.id().as_str()),
         "the warrant names the tip it certifies: {}",
         warrant.describe()
     );
@@ -210,7 +210,10 @@ fn strace_probe_child_records_one_receipt() {
         .record_created(
             &store,
             ephemeral(&project, "hotfix"),
-            ResolvedRevisionId::from_canonical("a".repeat(40), None),
+            ResolvedRevisionId::from_canonical(
+                repoweave::vcs::CommitId::parse(&"a".repeat(40)).unwrap(),
+                None,
+            ),
         )
         .unwrap();
 }

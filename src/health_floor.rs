@@ -45,6 +45,7 @@
 //! No requirement is active while every migratory arm still ships. The
 //! window parameterization is deliberately absent until v1.
 
+use crate::vcs::CommitId;
 use anyhow::Context;
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -64,7 +65,7 @@ pub struct HealthFloor {
     /// HEAD of each project repo at the time, keyed by project name — the
     /// structural anchor for what the attestation was about.
     #[serde(default)]
-    pub project_tips: BTreeMap<String, String>,
+    pub project_tips: BTreeMap<String, CommitId>,
     /// RFC3339, for the operator's eyes only. Never consumed as policy —
     /// every decision here is version lineage against a recorded floor.
     #[serde(default)]
@@ -112,7 +113,7 @@ pub fn record_clean_run(ws_root: &Path, vcs: &dyn crate::vcs::Vcs) -> anyhow::Re
     for project in crate::workspace::discover_projects(ws_root) {
         let repo = crate::workspace::project_dir(ws_root, project.as_str());
         if let Ok(tip) = vcs.head_revision(&repo) {
-            project_tips.insert(project.as_str().to_string(), tip.as_str().to_string());
+            project_tips.insert(project.as_str().to_string(), tip.id().clone());
         }
     }
 

@@ -3,7 +3,7 @@
 use crate::manifest::{Project, ProjectName};
 use crate::op_state;
 use crate::selector::RepoFilter;
-use crate::vcs::{vcs_for, MidOperation, ResolvedRevisionId, Vcs};
+use crate::vcs::{vcs_for, CommitId, MidOperation, ResolvedRevisionId, Vcs};
 use crate::workspace::{project_dir, Checkout, Resolution, WorkspaceContext};
 use anyhow::Context;
 use schemars::JsonSchema;
@@ -134,7 +134,7 @@ pub struct ParentInfo {
     /// Recorded parent workspace path (from the `.rwv-workweave` marker).
     pub path: String,
     /// This repo's HEAD in the parent's checkout, if resolvable.
-    pub tip: Option<String>,
+    pub tip: Option<CommitId>,
 }
 
 /// Per-repo status entry.
@@ -360,7 +360,7 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool, filter: &RepoFilter) -> an
                     let parent_tip = vcs
                         .head_revision(&parent_repo_abs)
                         .ok()
-                        .map(|r| r.as_str().to_owned());
+                        .map(|r| r.id().clone());
                     ParentInfo {
                         path: parent_path.to_string_lossy().to_string(),
                         tip: parent_tip,
@@ -405,7 +405,7 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool, filter: &RepoFilter) -> an
                 let parent_tip = vcs
                     .head_revision(&parent_repo_abs)
                     .ok()
-                    .map(|r| r.as_str().to_owned());
+                    .map(|r| r.id().clone());
                 ParentInfo {
                     path: parent_path.to_string_lossy().to_string(),
                     tip: parent_tip,
@@ -478,6 +478,14 @@ fn print_op_header(op: &OpStatus) {
     );
 }
 
+/// A revision column's cell: a commit id abbreviated, a name in full.
+fn shown_revision(revision: &Option<String>) -> String {
+    match revision {
+        None => "-".to_owned(),
+        Some(s) => CommitId::parse(s).map_or_else(|_| s.clone(), |id| id.short().to_owned()),
+    }
+}
+
 fn print_table(entries: &[RepoStatus]) {
     // Measure column widths.
     let path_w = entries
@@ -494,29 +502,21 @@ fn print_table(entries: &[RepoStatus]) {
         .max(6);
     let tip_w = entries
         .iter()
-        .map(|e| e.tip.as_deref().unwrap_or("-").len().min(12))
+        .map(|e| shown_revision(&e.tip).len())
         .max()
         .unwrap_or(0)
         .max(3);
     let lock_w = entries
         .iter()
-        .map(|e| e.lock_sha.as_deref().unwrap_or("-").len().min(12))
+        .map(|e| shown_revision(&e.lock_sha).len())
         .max()
         .unwrap_or(0)
         .max(4);
 
     for entry in entries {
         let branch = entry.branch.as_deref().unwrap_or("-");
-        let tip = entry
-            .tip
-            .as_deref()
-            .map(|s| &s[..s.len().min(12)])
-            .unwrap_or("-");
-        let lock = entry
-            .lock_sha
-            .as_deref()
-            .map(|s| &s[..s.len().min(12)])
-            .unwrap_or("-");
+        let tip = shown_revision(&entry.tip);
+        let lock = shown_revision(&entry.lock_sha);
         let mid = entry
             .mid_op
             .map(|op| format!("  [{op}]"))
@@ -669,7 +669,7 @@ mod tests {
                     // workweave, NOT primary. basename(parent)/main would be
                     // wrong here — the field pins the real path instead.
                     path: "/abs/.workweaves/demo--wwa".into(),
-                    tip: Some("cafef00d".into()),
+                    tip: Some(CommitId::parse("cafef00d00000000000000000000000000000000").unwrap()),
                 }),
             }],
             resolution: None,
@@ -682,7 +682,10 @@ mod tests {
             v["repos"][0]["parent"]["path"],
             "/abs/.workweaves/demo--wwa"
         );
-        assert_eq!(v["repos"][0]["parent"]["tip"], "cafef00d");
+        assert_eq!(
+            v["repos"][0]["parent"]["tip"],
+            "cafef00d00000000000000000000000000000000"
+        );
 
         let decoded: StatusJsonOutput = serde_json::from_str(&json).expect("deserializes");
         let parent = decoded.repos[0]
@@ -690,6 +693,9 @@ mod tests {
             .as_ref()
             .expect("parent present after round-trip");
         assert_eq!(parent.path, "/abs/.workweaves/demo--wwa");
-        assert_eq!(parent.tip.as_deref(), Some("cafef00d"));
+        assert_eq!(
+            parent.tip.as_ref().map(CommitId::as_str),
+            Some("cafef00d00000000000000000000000000000000")
+        );
     }
 }

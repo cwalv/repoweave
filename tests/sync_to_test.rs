@@ -1466,11 +1466,11 @@ fn a_rebase_landing_leaves_the_target_lock_pinning_the_tips_it_holds() {
         let branch = common::checkout_ref(&member)
             .unwrap_or_else(|| panic!("{} is detached after the landing", member.display()));
         assert_eq!(
-            entry.version.as_str(),
+            entry.version.id().as_str(),
             common::git_in(&member, &["rev-parse", &branch]),
             "the landed lock pins {rev} for {repo_path}, which is not what {branch} in the \
              target now holds — the landing published a lock it had already outgrown",
-            rev = entry.version.as_str(),
+            rev = entry.version.id().as_str(),
         );
     }
 }

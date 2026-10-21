@@ -26,7 +26,8 @@ use common::src_scan::{production_lines, SourceLine};
 
 const OWNER: &str = "sync.rs";
 const NEEDLE: &str = "head_revision(";
-const BLOCK_START: &str = "let entry_tips: std::collections::BTreeMap<String, String> = sync_tasks";
+const BLOCK_START: &str =
+    "let entry_tips: std::collections::BTreeMap<String, CommitId> = sync_tasks";
 const BLOCK_END: &str = ".context(\"failed to write advanced_tips at replay entry\")?;";
 
 /// The entry-tips filter's production lines, in file order: the slice of

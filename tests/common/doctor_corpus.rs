@@ -57,7 +57,7 @@ pub fn sha() -> String {
 }
 
 pub fn rev() -> ResolvedRevisionId {
-    ResolvedRevisionId::from_canonical(sha(), None)
+    ResolvedRevisionId::from_canonical(repoweave::vcs::CommitId::parse(&sha()).unwrap(), None)
 }
 
 pub fn path(p: &str) -> PathBuf {
@@ -260,7 +260,10 @@ pub fn corpus() -> Vec<CheckViolation> {
             project: project(),
             repo: repo(),
             locked: rev(),
-            actual: ResolvedRevisionId::from_canonical("b".repeat(40), None),
+            actual: ResolvedRevisionId::from_canonical(
+                repoweave::vcs::CommitId::parse(&"b".repeat(40)).unwrap(),
+                None,
+            ),
         },
         CheckViolation::IncompleteLock {
             project: project(),

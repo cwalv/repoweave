@@ -207,7 +207,7 @@ fn head_revision_skips_savepoint_tag_display() {
     let vcs = git_vcs();
     let head = vcs.head_revision(p).unwrap();
     // canonical is the SHA, display falls back to canonical (no tag chosen).
-    assert_eq!(head.display_str(), head.as_str());
+    assert_eq!(head.display_str(), head.id().as_str());
     assert_eq!(head.display_str().len(), 40);
 }
 
@@ -445,43 +445,51 @@ fn a_bare_directory_inside_an_enclosing_repo_is_not_a_repo() {
 
 #[test]
 fn revision_id_from_canonical_no_display_uses_canonical_for_both() {
-    // Without an explicit display form, `as_str` and `display_str` both
-    // echo the canonical value. (The pre-split `ResolvedRevisionId::raw`
-    // helper has been removed; the public mint is `from_canonical`.)
-    let r = ResolvedRevisionId::from_canonical("abc123", None);
-    assert_eq!(r.as_str(), "abc123");
-    assert_eq!(r.display_str(), "abc123");
+    // Without an explicit display form, the id and `display_str` agree.
+    let r = ResolvedRevisionId::from_canonical(
+        repoweave::vcs::CommitId::parse("0123456789abcdef0123456789abcdef01234567").unwrap(),
+        None,
+    );
+    assert_eq!(r.id().as_str(), "0123456789abcdef0123456789abcdef01234567");
+    assert_eq!(r.display_str(), "0123456789abcdef0123456789abcdef01234567");
 }
 
 #[test]
 fn revision_id_from_canonical_with_display_form() {
     let r = ResolvedRevisionId::from_canonical(
-        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        repoweave::vcs::CommitId::parse("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
         Some("v1.0.0".to_string()),
     );
-    assert_eq!(r.as_str(), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    assert_eq!(r.id().as_str(), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     assert_eq!(r.display_str(), "v1.0.0");
 }
 
 #[test]
 fn revision_id_from_canonical_suppresses_redundant_display() {
     // When `display` equals canonical, suppress it so serialization is clean.
-    let r = ResolvedRevisionId::from_canonical("abc123", Some("abc123".to_string()));
-    assert_eq!(r.as_str(), "abc123");
-    assert_eq!(r.display_str(), "abc123");
+    let r = ResolvedRevisionId::from_canonical(
+        repoweave::vcs::CommitId::parse("0123456789abcdef0123456789abcdef01234567").unwrap(),
+        Some("0123456789abcdef0123456789abcdef01234567".to_string()),
+    );
+    assert_eq!(r.id().as_str(), "0123456789abcdef0123456789abcdef01234567");
+    assert_eq!(r.display_str(), "0123456789abcdef0123456789abcdef01234567");
 }
 
 #[test]
 fn revision_id_equality_compares_canonical() {
     // Tag-form and SHA-form referring to the same canonical commit compare equal.
     let sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string();
-    let tag_form = ResolvedRevisionId::from_canonical(sha.clone(), Some("v1.0.0".to_string()));
-    let sha_form = ResolvedRevisionId::from_canonical(sha.clone(), None);
+    let tag_form = ResolvedRevisionId::from_canonical(
+        repoweave::vcs::CommitId::parse(&sha).unwrap(),
+        Some("v1.0.0".to_string()),
+    );
+    let sha_form =
+        ResolvedRevisionId::from_canonical(repoweave::vcs::CommitId::parse(&sha).unwrap(), None);
     assert_eq!(tag_form, sha_form);
 
     // Different canonical SHAs are never equal, even with matching display.
     let other = ResolvedRevisionId::from_canonical(
-        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        repoweave::vcs::CommitId::parse("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap(),
         Some("v1.0.0".to_string()),
     );
     assert_ne!(tag_form, other);
@@ -492,7 +500,7 @@ fn revision_id_equality_compares_canonical() {
 #[test]
 fn revision_id_serializes_the_commit_id_not_the_display_form() {
     let r = ResolvedRevisionId::from_canonical(
-        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        repoweave::vcs::CommitId::parse("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
         Some("v1.0.0".to_string()),
     );
     let json = serde_json::to_string(&r).unwrap();
@@ -502,9 +510,12 @@ fn revision_id_serializes_the_commit_id_not_the_display_form() {
 
 #[test]
 fn revision_id_serialize_canonical_when_no_display() {
-    let r = ResolvedRevisionId::from_canonical("abc123", None);
+    let r = ResolvedRevisionId::from_canonical(
+        repoweave::vcs::CommitId::parse("0123456789abcdef0123456789abcdef01234567").unwrap(),
+        None,
+    );
     let json = serde_json::to_string(&r).unwrap();
-    assert_eq!(json, "\"abc123\"");
+    assert_eq!(json, "\"0123456789abcdef0123456789abcdef01234567\"");
 }
 
 #[test]
@@ -520,7 +531,7 @@ fn raw_revision_id_deserializes_scalar_verbatim() {
 #[test]
 fn revision_id_round_trip_scalar() {
     let original = ResolvedRevisionId::from_canonical(
-        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        repoweave::vcs::CommitId::parse("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
         Some("v1.0.0".to_string()),
     );
     let json = serde_json::to_string(&original).unwrap();
@@ -548,7 +559,11 @@ fn resolve_revision_tag_to_canonical_sha() {
 
     let vcs = git_vcs();
     let resolved = vcs.resolve_revision(p, "v1.0.0").unwrap();
-    assert_eq!(resolved.as_str(), &head_sha, "canonical should be the SHA");
+    assert_eq!(
+        resolved.id().as_str(),
+        &head_sha,
+        "canonical should be the SHA"
+    );
     assert_eq!(
         resolved.display_str(),
         "v1.0.0",
@@ -564,7 +579,7 @@ fn resolve_revision_sha_passes_through() {
 
     let vcs = git_vcs();
     let resolved = vcs.resolve_revision(p, &head_sha).unwrap();
-    assert_eq!(resolved.as_str(), &head_sha);
+    assert_eq!(resolved.id().as_str(), &head_sha);
     // SHA input — no separate display form.
     assert_eq!(resolved.display_str(), &head_sha);
 }
@@ -603,7 +618,7 @@ fn head_revision_preserves_tag_at_head_as_display() {
     let vcs = git_vcs();
     let head = vcs.head_revision(p).unwrap();
     let head_sha = common::git_in(p, &["rev-parse", "HEAD"]);
-    assert_eq!(head.as_str(), &head_sha);
+    assert_eq!(head.id().as_str(), &head_sha);
     assert_eq!(head.display_str(), "v0.3.4");
 }
 
@@ -705,7 +720,7 @@ fn resolve_branch_on_remote_resolves_against_origin() {
         .resolve_branch_on_remote(&local, &on_remote("main"))
         .unwrap();
 
-    assert_eq!(resolved.as_str(), &expected_sha);
+    assert_eq!(resolved.id().as_str(), &expected_sha);
     assert_eq!(resolved.display_str(), "origin/main");
 }
 
@@ -1196,7 +1211,8 @@ fn diverged_repo() -> (TempDir, ResolvedRevisionId) {
     common::git_in(p, &["add", "feat.txt"]);
     common::git_in(p, &["commit", "-m", "feat: advance"]);
 
-    let c1 = ResolvedRevisionId::from_canonical(c1, None);
+    let c1 =
+        ResolvedRevisionId::from_canonical(repoweave::vcs::CommitId::parse(&c1).unwrap(), None);
     (dir, c1)
 }
 
@@ -1204,8 +1220,10 @@ fn diverged_repo() -> (TempDir, ResolvedRevisionId) {
 fn rebase_clean_advances_head_onto_target() {
     let (dir, _c1) = diverged_repo();
     let p = dir.path();
-    let main_tip =
-        ResolvedRevisionId::from_canonical(common::git_in(p, &["rev-parse", "main"]), None);
+    let main_tip = ResolvedRevisionId::from_canonical(
+        repoweave::vcs::CommitId::parse(&common::git_in(p, &["rev-parse", "main"])).unwrap(),
+        None,
+    );
 
     // feat is checked out — rebase it onto main.
     git_vcs()
@@ -1221,7 +1239,12 @@ fn rebase_clean_advances_head_onto_target() {
     assert!(p.join("main.txt").exists());
     assert!(p.join("feat.txt").exists());
     let is_descendant = common::git()
-        .args(["merge-base", "--is-ancestor", main_tip.as_str(), "HEAD"])
+        .args([
+            "merge-base",
+            "--is-ancestor",
+            main_tip.id().as_str(),
+            "HEAD",
+        ])
         .current_dir(p)
         .status()
         .unwrap()
@@ -1251,8 +1274,10 @@ fn rebase_conflict_on_non_lock_file_returns_rebase_conflict_and_leaves_mid_op() 
     common::git_in(p, &["add", "shared"]);
     common::git_in(p, &["commit", "-m", "feat: change shared"]);
 
-    let main_tip =
-        ResolvedRevisionId::from_canonical(common::git_in(p, &["rev-parse", "main"]), None);
+    let main_tip = ResolvedRevisionId::from_canonical(
+        repoweave::vcs::CommitId::parse(&common::git_in(p, &["rev-parse", "main"])).unwrap(),
+        None,
+    );
 
     let result = git_vcs().rebase(
         p,
@@ -1314,8 +1339,10 @@ fn rebase_auto_resolves_lock_collision_when_replay_exclusion_set() {
     common::git_in(p, &["add", "rwv.lock"]);
     common::git_in(p, &["commit", "-m", "feat: change lock"]);
 
-    let main_tip =
-        ResolvedRevisionId::from_canonical(common::git_in(p, &["rev-parse", "main"]), None);
+    let main_tip = ResolvedRevisionId::from_canonical(
+        repoweave::vcs::CommitId::parse(&common::git_in(p, &["rev-parse", "main"])).unwrap(),
+        None,
+    );
 
     git_vcs()
         .rebase(
@@ -1361,8 +1388,10 @@ fn rebase_stopped_commit_detail_returns_sha_and_subject() {
     fs::write(p.join("shared.txt"), "main side\n").unwrap();
     common::git_in(p, &["add", "shared.txt"]);
     common::git_in(p, &["commit", "-m", "main: conflicting change"]);
-    let main_tip =
-        ResolvedRevisionId::from_canonical(common::git_in(p, &["rev-parse", "main"]), None);
+    let main_tip = ResolvedRevisionId::from_canonical(
+        repoweave::vcs::CommitId::parse(&common::git_in(p, &["rev-parse", "main"])).unwrap(),
+        None,
+    );
 
     // feature branches off c1 and commits with a known subject.
     common::git_in(p, &["checkout", "-b", "feature", &c1]);
@@ -1502,8 +1531,10 @@ fn rebase_continue_with_unstaged_conflicts_bails_and_leaves_mid_rebase() {
     common::git_in(p, &["add", "shared"]);
     common::git_in(p, &["commit", "-m", "feat: change shared"]);
 
-    let main_tip =
-        ResolvedRevisionId::from_canonical(common::git_in(p, &["rev-parse", "main"]), None);
+    let main_tip = ResolvedRevisionId::from_canonical(
+        repoweave::vcs::CommitId::parse(&common::git_in(p, &["rev-parse", "main"])).unwrap(),
+        None,
+    );
 
     // First rebase stops on the conflict.
     let first = git_vcs().rebase(
@@ -1583,8 +1614,10 @@ fn rebase_continue_after_staging_completes_and_resolves_lock_pick_via_inline_fla
     common::git_in(p, &["add", "rwv.lock"]);
     common::git_in(p, &["commit", "-m", "F2: bump lock only"]);
 
-    let main_tip =
-        ResolvedRevisionId::from_canonical(common::git_in(p, &["rev-parse", "main"]), None);
+    let main_tip = ResolvedRevisionId::from_canonical(
+        repoweave::vcs::CommitId::parse(&common::git_in(p, &["rev-parse", "main"])).unwrap(),
+        None,
+    );
 
     // Sanity: the durable merge-driver config MUST be unset, so the test
     // proves `rebase_continue` re-supplies the flag inline: the resume rung

@@ -82,6 +82,7 @@
 use crate::durable_file::CreateNewError;
 use crate::manifest::ProjectName;
 use crate::refusal::RefusalKind;
+use crate::vcs::CommitId;
 use crate::wire_token::{parse_wire_token, wire_token};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
@@ -283,10 +284,10 @@ impl std::fmt::Display for OpPhase {
 pub enum PhaseTips {
     /// Replay-phase intent table (`advanced_tips`). Empty before replay entry;
     /// extended/overwritten as repos advance; consumed by `abort`.
-    Replay(BTreeMap<String, String>),
+    Replay(BTreeMap<String, CommitId>),
     /// Converged table (`converged_tips`) written at relock completion.
     /// Consumed by advance-target and abort's HEAD check.
-    Converged(BTreeMap<String, String>),
+    Converged(BTreeMap<String, CommitId>),
 }
 
 impl Default for PhaseTips {
@@ -302,7 +303,7 @@ impl PhaseTips {
     /// Readers that want the journal entry for a repo during replay use this;
     /// it yields `None` after [`PhaseTips::converge`], by which point the
     /// replay table no longer exists.
-    pub fn advanced(&self) -> Option<&BTreeMap<String, String>> {
+    pub fn advanced(&self) -> Option<&BTreeMap<String, CommitId>> {
         match self {
             Self::Replay(m) => Some(m),
             Self::Converged(_) => None,
@@ -310,7 +311,7 @@ impl PhaseTips {
     }
 
     /// The converged table, or `None` while still in the replay half.
-    pub fn converged(&self) -> Option<&BTreeMap<String, String>> {
+    pub fn converged(&self) -> Option<&BTreeMap<String, CommitId>> {
         match self {
             Self::Converged(m) => Some(m),
             Self::Replay(_) => None,
@@ -321,7 +322,7 @@ impl PhaseTips {
     ///
     /// Returns `None` if the record has already converged — replay-phase
     /// writes after convergence are a logic error and the type refuses them.
-    pub fn advanced_mut(&mut self) -> Option<&mut BTreeMap<String, String>> {
+    pub fn advanced_mut(&mut self) -> Option<&mut BTreeMap<String, CommitId>> {
         match self {
             Self::Replay(m) => Some(m),
             Self::Converged(_) => None,
@@ -334,7 +335,7 @@ impl PhaseTips {
     /// converging discards the replay table and installs `converged` in one
     /// move, so a record can never hold both. Idempotent re-convergence (a
     /// `--continue` re-running relock) simply replaces the converged table.
-    pub fn converge(&mut self, converged: BTreeMap<String, String>) {
+    pub fn converge(&mut self, converged: BTreeMap<String, CommitId>) {
         *self = Self::Converged(converged);
     }
 }
@@ -470,8 +471,8 @@ struct WireOwnerRecord {
     target: PathBuf,
     retire: bool,
     phase: OpPhase,
-    advanced_tips: BTreeMap<String, String>,
-    converged_tips: BTreeMap<String, String>,
+    advanced_tips: BTreeMap<String, CommitId>,
+    converged_tips: BTreeMap<String, CommitId>,
     overrides: Vec<Override>,
     started_at: String,
 }
@@ -1328,6 +1329,10 @@ fn parse_rfc3339_to_unix(s: &str) -> Option<u64> {
 mod tests {
     use super::*;
 
+    fn tip(hex: char) -> CommitId {
+        CommitId::parse(&hex.to_string().repeat(40)).unwrap()
+    }
+
     fn test_project() -> ProjectName {
         ProjectName::new("web-app").expect("valid project name")
     }
@@ -1440,20 +1445,14 @@ mod tests {
             PathBuf::from("/cwd/ws"),
         );
         let advanced = record.tips.advanced_mut().unwrap();
-        advanced.insert("github/foo/bar".to_owned(), "aabbccdd".to_owned());
-        advanced.insert("(project)".to_owned(), "deadbeef".to_owned());
+        advanced.insert("github/foo/bar".to_owned(), tip('a'));
+        advanced.insert("(project)".to_owned(), tip('d'));
         write_owner(dir, &record).unwrap();
         let read_back = read_owner(dir).unwrap().unwrap();
         let advanced = read_back.tips.advanced().expect("still in replay half");
         assert_eq!(advanced.len(), 2);
-        assert_eq!(
-            advanced.get("github/foo/bar").map(String::as_str),
-            Some("aabbccdd"),
-        );
-        assert_eq!(
-            advanced.get("(project)").map(String::as_str),
-            Some("deadbeef"),
-        );
+        assert_eq!(advanced.get("github/foo/bar").cloned(), Some(tip('a')),);
+        assert_eq!(advanced.get("(project)").cloned(), Some(tip('d')),);
         // No converged table while in the replay half.
         assert!(read_back.tips.converged().is_none());
     }
@@ -1612,12 +1611,12 @@ mod tests {
         let mut tips = PhaseTips::default();
         tips.advanced_mut()
             .unwrap()
-            .insert("github/foo/bar".to_owned(), "aabb".to_owned());
+            .insert("github/foo/bar".to_owned(), tip('a'));
         assert!(tips.advanced().is_some());
         assert!(tips.converged().is_none());
 
         let mut converged = BTreeMap::new();
-        converged.insert("github/foo/bar".to_owned(), "ccdd".to_owned());
+        converged.insert("github/foo/bar".to_owned(), tip('c'));
         tips.converge(converged);
 
         // After the swap the replay table is gone — replay-phase reads/writes
@@ -1627,13 +1626,13 @@ mod tests {
         assert_eq!(
             tips.converged()
                 .and_then(|m| m.get("github/foo/bar"))
-                .map(String::as_str),
-            Some("ccdd"),
+                .cloned(),
+            Some(tip('c')),
         );
 
         // Re-convergence (idempotent --continue replay) just replaces the table.
         let mut again = BTreeMap::new();
-        again.insert("(project)".to_owned(), "eeff".to_owned());
+        again.insert("(project)".to_owned(), tip('e'));
         tips.converge(again);
         assert!(tips.advanced().is_none());
         assert_eq!(tips.converged().map(BTreeMap::len), Some(1));
@@ -1659,10 +1658,10 @@ mod tests {
             .tips
             .advanced_mut()
             .unwrap()
-            .insert("github/foo/bar".to_owned(), "aabb".to_owned());
+            .insert("github/foo/bar".to_owned(), tip('a'));
         let mut converged = BTreeMap::new();
-        converged.insert("github/foo/bar".to_owned(), "ccdd".to_owned());
-        converged.insert("(project)".to_owned(), "deadbeef".to_owned());
+        converged.insert("github/foo/bar".to_owned(), tip('c'));
+        converged.insert("(project)".to_owned(), tip('d'));
         record.tips.converge(converged);
         record.phase = OpPhase::Relock;
 
@@ -1683,10 +1682,7 @@ mod tests {
         assert!(read_back.tips.advanced().is_none());
         let converged = read_back.tips.converged().expect("converged half");
         assert_eq!(converged.len(), 2);
-        assert_eq!(
-            converged.get("github/foo/bar").map(String::as_str),
-            Some("ccdd"),
-        );
+        assert_eq!(converged.get("github/foo/bar").cloned(), Some(tip('c')),);
     }
 
     #[test]
@@ -1717,6 +1713,27 @@ mod tests {
         std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
         let record = read_owner(dir).unwrap().unwrap();
         assert_eq!(record.tips, PhaseTips::Replay(BTreeMap::new()));
+    }
+
+    #[test]
+    fn a_tag_name_in_either_tip_slot_is_refused_at_load() {
+        let tagged = r#"{"github/a/b": "v2.0"}"#;
+        for (advanced, converged) in [(tagged, "{}"), ("{}", tagged)] {
+            let tmp = tempfile::tempdir().unwrap();
+            let dir = tmp.path();
+            let json = format!(
+                r#"{{"id": "1", "verb": "sync", "strategy": "rebase", "project": "web-app",
+                "source": "/src/ws", "target": "/cwd/ws", "retire": false, "phase": "replay",
+                "advanced_tips": {advanced}, "converged_tips": {converged},
+                "overrides": [], "started_at": "2026-06-01T00:00:00Z"}}"#
+            );
+            std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
+            let err = read_owner(dir).expect_err("a tag name is not a commit id");
+            assert!(
+                format!("{err:#}").contains("'v2.0' is not a commit id"),
+                "advanced {advanced}, converged {converged}: {err:#}"
+            );
+        }
     }
 
     #[test]

@@ -524,7 +524,7 @@ fn status_repos() -> Vec<RepoStatus> {
                 absolute_path: ABS.to_owned(),
                 parent: (!sparse).then(|| ParentInfo {
                     path: "/ws".to_owned(),
-                    tip: Some(sha('c')),
+                    tip: Some(repoweave::vcs::CommitId::parse(&sha('c')).unwrap()),
                 }),
             }
         })

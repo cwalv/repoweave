@@ -79,7 +79,7 @@ impl Weave {
                 "-b",
                 name,
                 dest.to_str().unwrap(),
-                at.as_str(),
+                at.id().as_str(),
             ],
         );
         dest
@@ -206,7 +206,7 @@ impl Update {
         match self {
             Update::DetachedCheckout => vcs.set_detached_head(updater, &w.after).unwrap(),
             Update::BranchCheckout => {
-                common::git_in(&w.store, &["branch", "at-after", w.after.as_str()]);
+                common::git_in(&w.store, &["branch", "at-after", w.after.id().as_str()]);
                 let at_after = TrackingRef::parse(RawRefName::new("at-after"))
                     .unwrap()
                     .local_counterpart();

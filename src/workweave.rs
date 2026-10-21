@@ -39,8 +39,8 @@ use crate::refusal::RefusalKind;
 use crate::share::{FilePlacement, FilePrimitives, Filesystem};
 use crate::symlink::LinkTarget;
 use crate::vcs::{
-    project_vcs, vcs_for, BornRef, DeletionWarrant, EphemeralRefName, OwnedRef, RawRefName,
-    ResolvedRevisionId, Vcs, VcsError,
+    project_vcs, vcs_for, BornRef, CommitId, DeletionWarrant, EphemeralRefName, OwnedRef,
+    RawRefName, ResolvedRevisionId, Vcs, VcsError,
 };
 use crate::workspace::{
     project_dir, project_rel_dir, project_rel_path, weave_dir_name, workweave_name_in,
@@ -1203,7 +1203,7 @@ pub(crate) fn replace_standalone_member(
                 repo_path,
                 role,
                 submodules,
-                at.as_str(),
+                at.id().as_str(),
             )
         });
     match born {
@@ -2485,8 +2485,8 @@ fn reuse_existing_workweave(
             modified.push(format!(
                 "{}: worktree has diverged from source ({} vs {})",
                 repo_path.as_str(),
-                short_sha(wt_head.as_str()),
-                short_sha(source_head.as_str()),
+                wt_head.id().short(),
+                source_head.id().short(),
             ));
         }
     }
@@ -2502,10 +2502,6 @@ fn reuse_existing_workweave(
     }
 
     Ok(workweave_dir.to_path_buf())
-}
-
-fn short_sha(sha: &str) -> &str {
-    &sha[..sha.len().min(12)]
 }
 
 /// Return the relative paths within `workweave_dir` whose worktrees have
@@ -3686,8 +3682,8 @@ fn load_manifest(ws_root: &Path, project: &ProjectName) -> anyhow::Result<Manife
 /// A single commit in a `workweave log` listing, for `--json`.
 #[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub struct WorkweaveLogCommit {
-    /// Full 40-hex commit SHA.
-    pub sha: String,
+    /// Full commit id.
+    pub sha: CommitId,
     /// Abbreviated commit SHA.
     pub short: String,
     /// First line of the commit message.
@@ -3700,10 +3696,10 @@ pub struct WorkweaveLogRepo {
     /// Manifest-relative repo path (e.g. `github/org/lib`).
     pub path: String,
     /// This workweave checkout's HEAD, if readable.
-    pub head: Option<String>,
+    pub head: Option<CommitId>,
     /// The recorded parent's tip for THIS repo — the HEAD of the parent's
     /// checkout of the same path — if resolvable.
-    pub parent_tip: Option<String>,
+    pub parent_tip: Option<CommitId>,
     /// The workweave's UNIQUE commits vs the parent tip — the commits in the
     /// workweave's history but not the parent's, newest first. Populated for
     /// `log`; empty in `--diff` mode.
@@ -3713,7 +3709,7 @@ pub struct WorkweaveLogRepo {
     /// ancestor (not the parent tip) avoids phantom reversals when the parent
     /// advanced after the fork.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub diff_base: Option<String>,
+    pub diff_base: Option<CommitId>,
     /// The unified diff text of the workweave's unique work vs `diff_base`,
     /// in `--diff` mode.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3854,7 +3850,7 @@ pub fn workweave_log(
         };
 
         let mut unique_commits: Vec<WorkweaveLogCommit> = Vec::new();
-        let mut diff_base: Option<String> = None;
+        let mut diff_base: Option<CommitId> = None;
         let mut diff_text: Option<String> = None;
 
         if let Some(parent_rev) = &parent_tip {
@@ -3876,8 +3872,8 @@ pub fn workweave_log(
                             unique_commits = entries
                                 .into_iter()
                                 .map(|c| WorkweaveLogCommit {
+                                    short: c.id.short().to_owned(),
                                     sha: c.id,
-                                    short: c.short,
                                     subject: c.subject,
                                 })
                                 .collect();
@@ -3890,8 +3886,8 @@ pub fn workweave_log(
 
         repos.push(WorkweaveLogRepo {
             path: repo_path.to_string(),
-            head: head.map(|r| r.as_str().to_string()),
-            parent_tip: parent_tip.map(|r| r.as_str().to_string()),
+            head: head.map(|r| r.id().clone()),
+            parent_tip: parent_tip.map(|r| r.id().clone()),
             unique_commits,
             diff_base,
             diff: diff_text,
@@ -3927,7 +3923,7 @@ pub fn workweave_log(
         };
 
         let mut unique_commits: Vec<WorkweaveLogCommit> = Vec::new();
-        let mut diff_base: Option<String> = None;
+        let mut diff_base: Option<CommitId> = None;
         let mut diff_text: Option<String> = None;
 
         if let Some(parent_rev) = &parent_tip {
@@ -3946,8 +3942,8 @@ pub fn workweave_log(
                             unique_commits = entries
                                 .into_iter()
                                 .map(|c| WorkweaveLogCommit {
+                                    short: c.id.short().to_owned(),
                                     sha: c.id,
-                                    short: c.short,
                                     subject: c.subject,
                                 })
                                 .collect();
@@ -3960,8 +3956,8 @@ pub fn workweave_log(
 
         Some(WorkweaveLogRepo {
             path: project_repo_key().to_string(),
-            head: head.map(|r| r.as_str().to_string()),
-            parent_tip: parent_tip.map(|r| r.as_str().to_string()),
+            head: head.map(|r| r.id().clone()),
+            parent_tip: parent_tip.map(|r| r.id().clone()),
             unique_commits,
             diff_base,
             diff: diff_text,
@@ -4011,7 +4007,7 @@ fn print_workweave_log_text(output: &WorkweaveLogOutput) {
             match &repo.diff {
                 Some(d) if !d.is_empty() => {
                     if let Some(base) = &repo.diff_base {
-                        println!("  (diff range: {}..HEAD)", short12(base));
+                        println!("  (diff range: {}..HEAD)", base.short());
                     }
                     println!("{d}");
                 }
@@ -4025,11 +4021,6 @@ fn print_workweave_log_text(output: &WorkweaveLogOutput) {
             }
         }
     }
-}
-
-/// Truncate a SHA to 12 chars for display.
-fn short12(sha: &str) -> &str {
-    &sha[..sha.len().min(12)]
 }
 
 // ---------------------------------------------------------------------------
@@ -4545,7 +4536,10 @@ mod tests {
 
     /// A distinct canonical revision per `hex` character.
     fn fake_rev(hex: char) -> ResolvedRevisionId {
-        ResolvedRevisionId::from_canonical(hex.to_string().repeat(40), None)
+        ResolvedRevisionId::from_canonical(
+            crate::vcs::CommitId::parse(&hex.to_string().repeat(40)).unwrap(),
+            None,
+        )
     }
 
     /// A weave whose store is a plain directory, canonicalized: [`FakeVcs`]

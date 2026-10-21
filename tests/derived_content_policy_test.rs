@@ -93,7 +93,10 @@ fn diverge_on(p: &Path, path: &str) -> ResolvedRevisionId {
     common::git_in(p, &["add", "."]);
     common::git_in(p, &["commit", "-m", "feat: regenerate"]);
 
-    ResolvedRevisionId::from_canonical(common::git_in(p, &["rev-parse", "main"]), None)
+    ResolvedRevisionId::from_canonical(
+        repoweave::vcs::CommitId::parse(&common::git_in(p, &["rev-parse", "main"])).unwrap(),
+        None,
+    )
 }
 
 // ============================================================================
@@ -204,7 +207,10 @@ fn diverge_with_a_conflict_ahead_of_the_declared_one(p: &Path) -> ResolvedRevisi
     common::git_in(p, &["add", "."]);
     common::git_in(p, &["commit", "-m", "feat: regenerate"]);
 
-    ResolvedRevisionId::from_canonical(common::git_in(p, &["rev-parse", "main"]), None)
+    ResolvedRevisionId::from_canonical(
+        repoweave::vcs::CommitId::parse(&common::git_in(p, &["rev-parse", "main"])).unwrap(),
+        None,
+    )
 }
 
 /// Stop the replay on the authored conflict and resolve it the way an

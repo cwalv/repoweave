@@ -312,8 +312,8 @@ pub fn run_push(
             lock_mismatches.push(format!(
                 "{}: HEAD {} differs from lock {}",
                 repo_path.as_str(),
-                short_sha(head.as_str()),
-                short_sha(lock_resolved.as_str()),
+                head.id().short(),
+                lock_resolved.id().short(),
             ));
         }
     }
@@ -807,16 +807,6 @@ fn push_one(
     }
 }
 
-/// Abbreviate a SHA to 7 chars (matches lock-commit-message convention).
-/// Pass-through for non-SHA strings (already abbreviated, tag-form, etc.).
-fn short_sha(s: &str) -> String {
-    if s.len() == 40 && s.chars().all(|c| c.is_ascii_hexdigit()) {
-        s[..7].to_string()
-    } else {
-        s.to_string()
-    }
-}
-
 /// Resolve the project repo's path for tests that need the on-disk dir.
 /// Kept `pub(crate)` so the integration tests in `tests/push_test.rs`
 /// can mirror primary's layout when staging fixtures.
@@ -836,62 +826,6 @@ mod tests {
     use crate::manifest::RepoPath;
     use crate::vcs::{RawRefName, RawRevisionId, TrackingRef};
     use std::collections::BTreeMap;
-
-    // --- short_sha ---------------------------------------------------------
-
-    /// A canonical 40-char hex SHA abbreviates to its 7-char prefix —
-    /// the same convention the lock-mismatch error message uses, and
-    /// the same default `git log --oneline` uses.
-    #[test]
-    fn short_sha_truncates_40_hex_to_7() {
-        let sha = "abcdef0123456789abcdef0123456789abcdef01";
-        assert_eq!(sha.len(), 40);
-        assert_eq!(short_sha(sha), "abcdef0");
-    }
-
-    #[test]
-    fn short_sha_uppercase_hex_truncates_too() {
-        // is_ascii_hexdigit accepts both cases; we exercise that path.
-        let sha = "ABCDEF0123456789ABCDEF0123456789ABCDEF01";
-        assert_eq!(short_sha(sha), "ABCDEF0");
-    }
-
-    /// Non-40-char strings are passed through untouched — already
-    /// abbreviated SHAs (e.g. 12 chars), tag-form lock entries
-    /// (`v1.2.3`), and human-friendly labels alike.
-    #[test]
-    fn short_sha_passes_through_short_input() {
-        assert_eq!(short_sha("abc"), "abc");
-        assert_eq!(short_sha("abc1234"), "abc1234");
-        assert_eq!(short_sha(""), "");
-    }
-
-    #[test]
-    fn short_sha_passes_through_tag_form() {
-        // `v1.2.3` is a legitimate lock-entry value when HEAD is tagged.
-        // It is not 40 hex chars; short_sha must not mangle it.
-        assert_eq!(short_sha("v1.2.3"), "v1.2.3");
-    }
-
-    /// A 40-char string that is *not* hex (one non-hex character) must
-    /// be passed through — short_sha must never silently truncate a
-    /// non-SHA blob to "look like" a SHA.
-    #[test]
-    fn short_sha_passes_through_40_char_non_hex() {
-        // 40 chars, one is `z` (non-hex).
-        let s = "zbcdef0123456789abcdef0123456789abcdef01";
-        assert_eq!(s.len(), 40);
-        assert_eq!(short_sha(s), s);
-    }
-
-    /// A 41-char hex string is *not* a git SHA (the upstream length is
-    /// always 40 for SHA-1); pass through.
-    #[test]
-    fn short_sha_passes_through_41_char_hex() {
-        let s = "abcdef0123456789abcdef0123456789abcdef011";
-        assert_eq!(s.len(), 41);
-        assert_eq!(short_sha(s), s);
-    }
 
     // --- PushPlanItem round-trip ------------------------------------------
 

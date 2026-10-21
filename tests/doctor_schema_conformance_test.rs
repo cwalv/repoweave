@@ -88,8 +88,14 @@ fn corpus() -> Vec<CheckViolation> {
         CheckViolation::StaleLock {
             project: project(),
             repo: repo(),
-            locked: ResolvedRevisionId::from_canonical("a".repeat(40), None),
-            actual: ResolvedRevisionId::from_canonical("b".repeat(40), None),
+            locked: ResolvedRevisionId::from_canonical(
+                repoweave::vcs::CommitId::parse(&"a".repeat(40)).unwrap(),
+                None,
+            ),
+            actual: ResolvedRevisionId::from_canonical(
+                repoweave::vcs::CommitId::parse(&"b".repeat(40)).unwrap(),
+                None,
+            ),
         },
         CheckViolation::WorkweaveDrift {
             workweave: Some(workweave()),

@@ -854,7 +854,7 @@ fn abort_foreign_tip_shows_blocking_commits() {
         "a\n",
         "chore: upstream-main-advance-1",
     );
-    make_commit(
+    let newest = make_commit(
         &ws.server_dir,
         "b.txt",
         "b\n",
@@ -886,6 +886,58 @@ fn abort_foreign_tip_shows_blocking_commits() {
     assert!(
         stderr.contains("ahead"),
         "shape description must appear in stderr.\nstderr:\n{stderr}"
+    );
+
+    let listed = format!("\t  {} chore: upstream-main-advance-2", &newest[..12]);
+    assert!(
+        stderr.lines().any(|l| l == listed),
+        "a blocking commit is listed by its 12-character id.\nstderr:\n{stderr}"
+    );
+}
+
+/// A tip slot holding a name rather than a commit id is a corrupt record.
+/// It is refused where the record is read: before any repo is classified,
+/// and so before abort writes a pre-abort ref anywhere.
+#[test]
+fn abort_refuses_an_owner_record_whose_tip_slot_holds_a_tag_name() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_fixture(tmp.path(), "primary");
+
+    let op_id = "20991231T000020Z";
+
+    let server_savepoint = common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]);
+    let server_converged = make_commit(
+        &ws.server_dir,
+        "converged.txt",
+        "converged\n",
+        "server: converged",
+    );
+    common::git_in(&ws.server_dir, &["tag", "v2.0", &server_converged]);
+    let project_savepoint = common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]);
+    plant_savepoint(&ws.server_dir, op_id, &server_savepoint);
+    plant_savepoint(&ws.project_dir, op_id, &project_savepoint);
+    plant_owner_record(&ws.root, op_id, "relock", &[(SERVER_PATH, "v2.0")]);
+
+    let output = rwv()
+        .arg("abort")
+        .current_dir(&ws.root)
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        stderr.contains("'v2.0' is not a commit id"),
+        "the refusal names the value in the slot.\nstderr:\n{stderr}"
+    );
+    assert!(
+        pre_abort_ref_sha(&ws.server_dir, op_id).is_none(),
+        "a record refused at load classifies no repo, so no pre-abort ref is written"
+    );
+    assert_eq!(
+        common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]),
+        server_converged
     );
 }
 

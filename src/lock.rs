@@ -60,13 +60,11 @@ fn build_commit_message(
     let mut msg = format!("lock: {}", summary.join(", "));
     msg.push_str("\n\n");
     for (path, entry) in &changed {
-        let ver = entry.version.display_str();
-        let abbrev = if ver.len() == 40 && ver.chars().all(|c| c.is_ascii_hexdigit()) {
-            &ver[..7]
-        } else {
-            ver
-        };
-        msg.push_str(&format!("  - {}: {}\n", path, abbrev));
+        msg.push_str(&format!(
+            "  - {}: {}\n",
+            path,
+            entry.version.short_display()
+        ));
     }
     for path in &dropped {
         msg.push_str(&format!("  - {path}: dropped\n"));
@@ -146,8 +144,7 @@ pub fn generate_lock(
         // witness, which is the value that established the state, rather than
         // from `version` — which may carry a tag as its display form.
         if let Some(d) = detached {
-            let at = d.at().as_str();
-            let short = &at[..at.len().min(7)];
+            let short = d.at().id().short();
             eprintln!(
                 "warning: pinning detached HEAD {short} in {repo_path}: \
                  no branch names this commit; a later fetch materializes it attached to \

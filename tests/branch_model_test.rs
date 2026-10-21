@@ -130,7 +130,7 @@ fn head_attachment_reports_unborn_separately_from_attached() {
 fn head_attachment_reports_detached_separately_from_unborn() {
     let repo = repo_with_commit();
     let tip = git_vcs().head_revision(repo.path()).unwrap();
-    common::git_in(repo.path(), &["checkout", "--detach", tip.as_str()]);
+    common::git_in(repo.path(), &["checkout", "--detach", tip.id().as_str()]);
 
     match git_vcs().head_attachment(repo.path()).unwrap() {
         HeadAttachment::Detached(d) => {
@@ -299,7 +299,7 @@ fn advance_attached_ref_refuses_a_witness_for_a_repo_that_became_detached() {
     let HeadAttachment::Attached(witness) = git_vcs().head_attachment(repo.path()).unwrap() else {
         panic!("fixture should be attached");
     };
-    common::git_in(repo.path(), &["checkout", "--detach", base.as_str()]);
+    common::git_in(repo.path(), &["checkout", "--detach", base.id().as_str()]);
 
     // This is the shape that landed commits on nothing: a phase detaches a
     // repo while a later phase still holds a witness for it.
@@ -351,7 +351,7 @@ fn advance_attached_ref_refuses_a_non_fast_forward() {
     let repo = repo_with_commit();
     let base = git_vcs().head_revision(repo.path()).unwrap();
     common::git_in(repo.path(), &["checkout", "-b", "side"]);
-    common::git_in(repo.path(), &["reset", "--hard", base.as_str()]);
+    common::git_in(repo.path(), &["reset", "--hard", base.id().as_str()]);
     let divergent = commit(repo.path(), "side-only", "s");
     common::git_in(repo.path(), &["checkout", "main"]);
     let _ = commit(repo.path(), "main-only", "m");
@@ -375,7 +375,7 @@ fn advance_detached_head_moves_a_detached_head() {
     let repo = repo_with_commit();
     let base = git_vcs().head_revision(repo.path()).unwrap();
     let target = commit(repo.path(), "two", "2");
-    common::git_in(repo.path(), &["checkout", "--detach", base.as_str()]);
+    common::git_in(repo.path(), &["checkout", "--detach", base.id().as_str()]);
 
     let HeadAttachment::Detached(witness) = git_vcs().head_attachment(repo.path()).unwrap() else {
         panic!("fixture should be detached");
@@ -400,8 +400,8 @@ fn advance_detached_head_refuses_a_repo_stopped_mid_bisect() {
     let tip = commit(repo.path(), "three", "3");
 
     common::git_in(repo.path(), &["bisect", "start"]);
-    common::git_in(repo.path(), &["bisect", "bad", tip.as_str()]);
-    common::git_in(repo.path(), &["bisect", "good", base.as_str()]);
+    common::git_in(repo.path(), &["bisect", "bad", tip.id().as_str()]);
+    common::git_in(repo.path(), &["bisect", "good", base.id().as_str()]);
 
     let bisect_position = git_vcs().head_revision(repo.path()).unwrap();
     let HeadAttachment::Detached(witness) = git_vcs().head_attachment(repo.path()).unwrap() else {
@@ -433,8 +433,8 @@ fn mid_operation_sees_a_bisect_that_mid_op_cannot() {
     let _ = commit(repo.path(), "two", "2");
     let tip = commit(repo.path(), "three", "3");
     common::git_in(repo.path(), &["bisect", "start"]);
-    common::git_in(repo.path(), &["bisect", "bad", tip.as_str()]);
-    common::git_in(repo.path(), &["bisect", "good", base.as_str()]);
+    common::git_in(repo.path(), &["bisect", "bad", tip.id().as_str()]);
+    common::git_in(repo.path(), &["bisect", "good", base.id().as_str()]);
 
     assert_eq!(
         git_vcs().mid_operation(repo.path()),
@@ -458,7 +458,7 @@ fn advance_detached_head_refuses_a_stale_witness() {
     let repo = repo_with_commit();
     let base = git_vcs().head_revision(repo.path()).unwrap();
     let target = commit(repo.path(), "two", "2");
-    common::git_in(repo.path(), &["checkout", "--detach", base.as_str()]);
+    common::git_in(repo.path(), &["checkout", "--detach", base.id().as_str()]);
 
     let HeadAttachment::Detached(witness) = git_vcs().head_attachment(repo.path()).unwrap() else {
         panic!("fixture should be detached");
@@ -770,7 +770,7 @@ fn resolved_revisions_from_ref_resolution_are_canonical_by_construction() {
     let sha1 = "a".repeat(40);
     let sha256 = "b".repeat(64);
     assert_eq!(
-        ResolvedRevisionId::from_rev_parse_output(&sha1).map(|r| r.as_str().to_owned()),
+        ResolvedRevisionId::from_rev_parse_output(&sha1).map(|r| r.id().as_str().to_owned()),
         Some(sha1.clone())
     );
     assert!(ResolvedRevisionId::from_rev_parse_output(&sha256).is_some());

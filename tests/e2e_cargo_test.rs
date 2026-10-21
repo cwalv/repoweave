@@ -273,7 +273,7 @@ fn cargo_release_version_pin_workflow() {
     );
     // Canonical SHA must still be a hex commit — the tag dereferences to a real commit.
     assert_eq!(
-        protocol_entry.version.as_str().len(),
+        protocol_entry.version.id().as_str().len(),
         40,
         "protocol canonical SHA should be a full 40-char hex string"
     );
@@ -291,7 +291,7 @@ fn cargo_release_version_pin_workflow() {
         "server should have a SHA, not the protocol tag"
     );
     assert!(
-        !server_entry.version.as_str().is_empty(),
+        !server_entry.version.id().as_str().is_empty(),
         "server version should be a non-empty SHA"
     );
 }

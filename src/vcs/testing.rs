@@ -101,10 +101,10 @@ impl FakeVcs {
         ancestor: &ResolvedRevisionId,
         descendant: &ResolvedRevisionId,
     ) {
-        self.ancestries
-            .lock()
-            .unwrap()
-            .insert((ancestor.as_str().to_owned(), descendant.as_str().to_owned()));
+        self.ancestries.lock().unwrap().insert((
+            ancestor.id().as_str().to_owned(),
+            descendant.id().as_str().to_owned(),
+        ));
     }
 
     /// Make the next `call` return `err` instead of consulting the store.
@@ -239,11 +239,10 @@ impl Vcs for FakeVcs {
         if ancestor == descendant {
             return Ok(true);
         }
-        Ok(self
-            .ancestries
-            .lock()
-            .unwrap()
-            .contains(&(ancestor.as_str().to_owned(), descendant.as_str().to_owned())))
+        Ok(self.ancestries.lock().unwrap().contains(&(
+            ancestor.id().as_str().to_owned(),
+            descendant.id().as_str().to_owned(),
+        )))
     }
 
     /// The canonical store `workspace` resolves to: always `None`.
@@ -556,8 +555,8 @@ impl Vcs for FakeVcs {
         &self,
         _repo: &Path,
         _op_id: &str,
-        _recorded_intent_tip: Option<&str>,
-        _recorded_converged_tip: Option<&str>,
+        _recorded_intent_tip: Option<&CommitId>,
+        _recorded_converged_tip: Option<&CommitId>,
         _foreign_tip_policy: ForeignTipPolicy,
     ) -> Result<VerifiedRestoreOutcome, VcsError> {
         unsupported("verified_restore_savepoint")
@@ -599,7 +598,7 @@ impl Vcs for FakeVcs {
         unsupported("remote_url")
     }
 
-    fn commit_object_exists(&self, _repo: &Path, _sha: &str) -> Result<bool, VcsError> {
+    fn commit_object_exists(&self, _repo: &Path, _id: &CommitId) -> Result<bool, VcsError> {
         unsupported("commit_object_exists")
     }
 
@@ -632,17 +631,17 @@ impl Vcs for FakeVcs {
         unsupported("rebase_stopped_commit_detail")
     }
 
-    fn log_oneline_range(
+    fn commits_in_range(
         &self,
         _repo: &Path,
-        _from: &str,
-        _to: &str,
+        _from: &CommitId,
+        _to: &CommitId,
         _cap: usize,
-    ) -> (Vec<String>, usize) {
-        unsupported("log_oneline_range")
+    ) -> (Vec<CommitSummary>, usize) {
+        unsupported("commits_in_range")
     }
 
-    fn ahead_behind(&self, _repo: &Path, _savepoint: &str, _tip: &str) -> (usize, usize) {
+    fn ahead_behind(&self, _repo: &Path, _savepoint: &CommitId, _tip: &CommitId) -> (usize, usize) {
         unsupported("ahead_behind")
     }
 
@@ -790,7 +789,10 @@ mod tests {
     use super::*;
 
     fn rev(hex: char) -> ResolvedRevisionId {
-        ResolvedRevisionId::from_canonical(hex.to_string().repeat(40), None)
+        ResolvedRevisionId::from_canonical(
+            crate::vcs::CommitId::parse(&hex.to_string().repeat(40)).unwrap(),
+            None,
+        )
     }
 
     #[test]

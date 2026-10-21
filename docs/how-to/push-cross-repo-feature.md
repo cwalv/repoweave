@@ -44,7 +44,7 @@ If a member repository's `HEAD` differs from `rwv.lock`, `rwv push` refuses befo
 
 ```text
 rwv push: 1 repo(s) disagree with /home/user/work/projects/web-app/rwv.lock:
-  - github/chatly/server: HEAD abc1234 differs from lock e1f2a3b
+  - github/chatly/server: HEAD abc1234def56 differs from lock e1f2a3b4c5d6
 Hint: run `rwv lock --commit` to record each listed repo's HEAD in the lock, or move the repo's branch to its lock commit without detaching it: `git reset --keep <lock commit>` in the repo (after `git branch <name>` to keep the commits it moves off).
 Error: lock-state mismatch — refusing to push before clone state and lock agree
 

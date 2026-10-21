@@ -3966,25 +3966,28 @@ pub fn scan_provenance(workspace_dir: &Path, projects: &[Project]) -> Vec<CheckV
                 continue;
             }
 
-            // Try to resolve the raw version string to a canonical SHA.
-            // If resolution succeeds, use the canonical SHA for the
-            // reachability probe (handles tag/branch names correctly).
-            // If resolution fails, the version string itself is likely
-            // a SHA that git cannot find at all — test it directly so
-            // we don't silently skip the reachability check in the
-            // disconnected-clone / force-push scenario.
-            let sha_to_test = match vcs.resolve_revision(&repo_abs, lock_entry.version.as_str()) {
-                Ok(resolved) => resolved.as_str().to_owned(),
-                Err(_) => lock_entry.version.as_str().to_owned(),
+            // A version that resolves is probed as the commit it names. One
+            // that does not is either a commit id git cannot find at all — the
+            // disconnected-clone / force-push case, probed directly so it is
+            // not skipped — or a name that no longer resolves.
+            let probe = match vcs.resolve_revision(&repo_abs, lock_entry.version.as_str()) {
+                Ok(resolved) => Some(resolved.id().clone()),
+                Err(_) => lock_entry.version.as_commit_id(),
+            };
+            let present = match &probe {
+                Some(id) => vcs.commit_object_exists(&repo_abs, id),
+                None => Ok(false),
             };
 
-            match vcs.commit_object_exists(&repo_abs, &sha_to_test) {
+            match present {
                 Ok(true) => {} // present — all good
                 Ok(false) => {
+                    let sha =
+                        probe.map_or_else(|| lock_entry.version.to_string(), |id| id.to_string());
                     violations.push(CheckViolation::Provenance {
                         project: project.name.clone(),
                         repo: repo_path.clone(),
-                        sub_kind: ProvenanceKind::LockShaUnreachable { sha: sha_to_test },
+                        sub_kind: ProvenanceKind::LockShaUnreachable { sha },
                     });
                 }
                 Err(_) => {} // can't probe — skip silently
@@ -4806,7 +4809,7 @@ fn scan_workweave_repo_branches(
                 if legacy_refs.len() > 1 {
                     BranchDisciplineKind::BlockedDetachedNamespace {
                         expected_ref: expected_ref.clone(),
-                        at_sha: d.at().as_str().to_string(),
+                        at_sha: d.at().id().as_str().to_string(),
                         blocking_refs: legacy_refs.iter().map(|r| r.to_string()).collect(),
                     }
                 } else if let Some(tip) = flat_present
@@ -4819,14 +4822,14 @@ fn scan_workweave_repo_branches(
                 {
                     BranchDisciplineKind::DetachedOffEphemeralBranch {
                         expected_ref: expected_ref.clone(),
-                        at_sha: d.at().as_str().to_string(),
-                        branch_tip: tip.as_str().to_string(),
+                        at_sha: d.at().id().as_str().to_string(),
+                        branch_tip: tip.id().as_str().to_string(),
                     }
                 } else {
                     BranchDisciplineKind::Detached {
                         expected_ref: expected_ref.clone(),
                         recorded_ref: recorded_ref.clone(),
-                        at_sha: d.at().as_str().to_string(),
+                        at_sha: d.at().id().as_str().to_string(),
                         legacy_branch: legacy_refs
                             .first()
                             .map(|legacy| legacy_ref_at_tip(vcs, &store, legacy, d.at())),
@@ -4871,7 +4874,7 @@ fn legacy_ref_at_tip(
     };
     LegacyRefAtTip {
         branch: legacy.to_string(),
-        tip_sha: tip.map(|t| t.as_str().to_string()).unwrap_or_default(),
+        tip_sha: tip.map(|t| t.id().as_str().to_string()).unwrap_or_default(),
         strands_commits,
     }
 }
@@ -5103,7 +5106,7 @@ fn scan_canonical_stores(
                 out.push(CheckViolation::BranchDiscipline {
                     repo_path: abs.clone(),
                     sub_kind: BranchDisciplineKind::CanonicalDetached {
-                        at_sha: d.at().as_str().to_string(),
+                        at_sha: d.at().id().as_str().to_string(),
                         counterpart: counterpart.map(|c| c.to_string()),
                         reattachable,
                     },
@@ -5191,7 +5194,7 @@ fn scan_canonical_stores(
                     .resolve_local_branch_tip(abs, rec.owned.name())
                     .ok()
                     .flatten()
-                    .map(|t| t.as_str().to_string())
+                    .map(|t| t.id().as_str().to_string())
                     .unwrap_or_default();
                 BranchDisciplineKind::StaleEphemeralBranchLive {
                     branch: rec.owned.to_string(),
@@ -5790,7 +5793,7 @@ fn scan_member_gaps(
                 None if symlinked => canonical_is_repo
                     .then(|| vcs.head_revision(&canonical).ok())
                     .flatten()
-                    .map(|rev| rev.as_str().to_owned()),
+                    .map(|rev| rev.id().as_str().to_owned()),
                 None => continue,
             };
             let local_revision = revision
@@ -5892,13 +5895,13 @@ fn repair_member_gaps(
             &gap.repo,
             gap.role,
             gap.submodules,
-            revision.as_str(),
+            revision.id().as_str(),
         ) {
             Ok(born) => println!(
                 "[fixed] core: created the worktree for {repo} in workweave {ww} at {at}{was}{files}",
                 repo = gap.repo,
                 ww = gap.workweave,
-                at = &born.at.as_str()[..born.at.as_str().len().min(12)],
+                at = born.at.id().short(),
                 was = if gap.symlinked {
                     ", replacing its symlink"
                 } else {
@@ -5948,7 +5951,7 @@ fn repair_standalone_members(
                 Ok(born) => println!(
                     "[fixed] core: replaced the full clone of {repo} in workweave {workweave} \
                      with a worktree of the canonical clone at {at}{files}",
-                    at = &born.at.as_str()[..born.at.as_str().len().min(12)],
+                    at = born.at.id().short(),
                     files = crate::share::files_note(born.files),
                 ),
                 Err(e) => fix_errors.push(format!(
