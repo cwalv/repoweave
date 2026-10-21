@@ -34,8 +34,9 @@ use repoweave::check::{
     build_doctor_json, CheckViolation, DriftKind, IndexDriftKind, WeaveRootIdentityConflictKind,
     WorkingTreeDriftKind, DOCTOR_SCHEMA_URL,
 };
-use repoweave::integration::MemberIncompatibility;
 use repoweave::integration::{Issue, IssueKind, IssueSource, Severity};
+use repoweave::integration::{MemberIncompatibility, Observed};
+use repoweave::integrations::GoWork;
 use repoweave::manifest::{ProjectName, RepoPath, WorkweaveId, WorkweaveName};
 use repoweave::plugins::PluginRecord;
 use repoweave::vcs::ResolvedRevisionId;
@@ -173,12 +174,14 @@ fn issues() -> Vec<Issue> {
             severity: Severity::Error,
             message: "member-incompatibility: go.work sets `go` to `1.21`".into(),
             kind: IssueKind::MemberIncompatibility(Box::new(MemberIncompatibility::new(
-                "go-work",
+                &GoWork,
                 Path::new("/ws/projects/proj/go.work"),
-                "go",
-                "1.21",
-                "1.23",
-                "github/acme/repo/go.mod",
+                Observed {
+                    key: "go",
+                    on_disk: "1.21",
+                    required: "1.23",
+                    required_by: "github/acme/repo/go.mod",
+                },
             ))),
             safe_to_fix: false,
         },

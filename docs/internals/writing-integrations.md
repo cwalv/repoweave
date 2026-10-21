@@ -22,6 +22,7 @@ For *enabling* an existing integration in a project, see
 pub trait Integration {
     fn name(&self) -> &str;
     fn default_enabled(&self) -> bool;
+    fn tool(&self) -> Option<Tool> { None }
     fn detection_manifests(&self) -> &[&str] { &[] }
     fn settings_keys(&self) -> &'static [&'static str] { &[] }
 
@@ -65,7 +66,8 @@ pub trait Integration {
   only for the region strip, because `deactivate` deletes the files it knows
   about without asking whether rwv wrote them. Takes a bare `&Path`, not a
   context, so owned keys must be static per-integration constants.
-- **`check`** — read-only inspection of preconditions: tool availability,
+- **`check`** — read-only inspection of preconditions: tool availability
+  (`tool_missing_issue(self, ..)`, which reads the declared tool),
   settings, member topology. Called during `rwv doctor`. The install hooks are
   refused while any enabled integration's `check` returns a
   `MalformedSettings` issue, so an integration whose hook reads settings must
@@ -100,9 +102,11 @@ defense, never the only report.
 - **`activate_hook`** — run install commands (`npm install`, `uv sync`,
   `cargo fetch`) after the config files are in place. Run the tool through
   `run_install_tool` (`src/integrations/mod.rs`), which returns `None` when
-  the program is not on `PATH`; return `HookOutcome::ToolMissing(<tool>)` for
-  that, and the runner reports it as a `tool-missing` warning while the other
-  integrations' hooks still run. A tool that runs and fails is a bail, which
+  the program is not on `PATH`; return
+  `HookOutcome::ToolMissing(MissingTool::of::<Self>())` for that, and the
+  runner reports it as a `tool-missing` warning while the other
+  integrations' hooks still run. Only an integration that implements
+  `DrivesTool` can build a `MissingTool`. A tool that runs and fails is a bail, which
   reaches the operator as `integration-failed` and fails the verb.
   `--no-materialize` suppresses the hook on every verb that takes the flag. The
   hook materializes what membership and the recorded pins imply and never moves
@@ -149,6 +153,11 @@ defense, never the only report.
   the declared path. **The default is empty**, which is safe and inert: a
   disabled integration that does not override it is never reported and its
   files are never cleaned up.
+- **`tool`** — the CLI the integration shells out to, spelled once. An
+  integration that drives one implements `DrivesTool` (`const TOOL: Tool =
+  Tool::new("npm")`) and returns `Some(Self::TOOL)` here; `check`'s `PATH`
+  probe, the hook's spawn and the `MissingTool` a hook reports all read that
+  constant, so a tool is never typed twice.
 - **`member_incompatibility`** — report a member the integration's own tooling
   cannot build with. Results are collected in one place and shared by
   `rwv doctor` and `rwv update`.

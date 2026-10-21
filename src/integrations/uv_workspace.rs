@@ -75,8 +75,8 @@
 //! gitignore-eligible.
 
 use crate::integration::{
-    HookOutcome, Integration, IntegrationContext, Issue, IssueKind, IssueSource, OwnedPath,
-    Severity, SurfacedFile,
+    DrivesTool, HookOutcome, Integration, IntegrationContext, Issue, MissingTool, OwnedPath,
+    SurfacedFile, Tool,
 };
 use crate::integrations::merge::{
     drift_issues, holds_owned_region, keypath, merge_activate, missing_issue,
@@ -424,9 +424,17 @@ fn prune_if_empty(doc: &mut toml_edit::DocumentMut, path: &[&str]) {
     t.remove(path[path.len() - 1]);
 }
 
+impl DrivesTool for UvWorkspace {
+    const TOOL: Tool = Tool::new("uv");
+}
+
 impl Integration for UvWorkspace {
     fn name(&self) -> &str {
         "uv-workspace"
+    }
+
+    fn tool(&self) -> Option<Tool> {
+        Some(Self::TOOL)
     }
 
     fn default_enabled(&self) -> bool {
@@ -486,15 +494,7 @@ impl Integration for UvWorkspace {
         }
 
         let mut issues = Vec::new();
-        if which::which("uv").is_err() {
-            issues.push(Issue {
-                source: IssueSource::integration(self.name()),
-                severity: Severity::Warning,
-                message: "uv is not on PATH".to_string(),
-                kind: IssueKind::ToolMissing,
-                safe_to_fix: true,
-            });
-        }
+        issues.extend(super::tool_missing_issue(self, ""));
         Ok(issues)
     }
 
@@ -571,8 +571,10 @@ impl Integration for UvWorkspace {
         // Runs from workspace_root for the same reason as the other ecosystem
         // hooks (activation symlinks are in place there so uv sees the
         // workspace the user sees).
-        let Some(status) = super::run_install_tool("uv", &["sync"], ctx.workspace_root)? else {
-            return Ok(HookOutcome::ToolMissing("uv"));
+        let Some(status) =
+            super::run_install_tool(Self::TOOL.name(), &["sync"], ctx.workspace_root)?
+        else {
+            return Ok(HookOutcome::ToolMissing(MissingTool::of::<Self>()));
         };
 
         if !status.success() {

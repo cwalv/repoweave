@@ -1,6 +1,6 @@
 use crate::integration::{
-    HookOutcome, Integration, IntegrationContext, Issue, IssueKind, IssueSource, OwnedPath,
-    Severity, SurfacedFile,
+    DrivesTool, HookOutcome, Integration, IntegrationContext, Issue, MissingTool, OwnedPath,
+    SurfacedFile, Tool,
 };
 use crate::integrations::merge::{
     drift_issues, holds_owned_region, keypath, merge_activate, missing_issue,
@@ -128,9 +128,17 @@ fn member_globs(ws: Option<&serde_json::Value>) -> Option<Vec<String>> {
     )
 }
 
+impl DrivesTool for NpmWorkspaces {
+    const TOOL: Tool = Tool::new("npm");
+}
+
 impl Integration for NpmWorkspaces {
     fn name(&self) -> &str {
         "npm-workspaces"
+    }
+
+    fn tool(&self) -> Option<Tool> {
+        Some(Self::TOOL)
     }
 
     fn default_enabled(&self) -> bool {
@@ -194,15 +202,7 @@ impl Integration for NpmWorkspaces {
         }
 
         let mut issues = Vec::new();
-        if which::which("npm").is_err() {
-            issues.push(Issue {
-                source: IssueSource::integration(self.name()),
-                severity: Severity::Warning,
-                message: "npm is not on PATH".to_string(),
-                kind: IssueKind::ToolMissing,
-                safe_to_fix: true,
-            });
-        }
+        issues.extend(super::tool_missing_issue(self, ""));
         Ok(issues)
     }
 
@@ -276,10 +276,13 @@ impl Integration for NpmWorkspaces {
         // Run from workspace_root: the symlink at the root points at the
         // canonical package.json in output_dir, and workspace member
         // paths are resolved relative to the symlink location.
-        let Some(status) =
-            super::run_install_tool(&super::node_tool("npm"), &["install"], ctx.workspace_root)?
+        let Some(status) = super::run_install_tool(
+            &super::node_tool(Self::TOOL.name()),
+            &["install"],
+            ctx.workspace_root,
+        )?
         else {
-            return Ok(HookOutcome::ToolMissing("npm"));
+            return Ok(HookOutcome::ToolMissing(MissingTool::of::<Self>()));
         };
 
         if !status.success() {
@@ -348,6 +351,7 @@ impl NpmWorkspaces {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::integration::IssueKind;
     use crate::manifest::{IntegrationConfig, Manifest, ProjectName, Role};
     use crate::workspace::ContainerKind;
     use std::collections::HashMap;

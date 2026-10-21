@@ -433,13 +433,57 @@ pub struct Issue {
     pub safe_to_fix: bool,
 }
 
+/// A CLI an integration shells out to, spelled once, where the integration
+/// declares it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Tool(&'static str);
+
+impl Tool {
+    pub(crate) const fn new(name: &'static str) -> Self {
+        Self(name)
+    }
+
+    pub fn name(self) -> &'static str {
+        self.0
+    }
+}
+
+impl fmt::Display for Tool {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.0)
+    }
+}
+
+/// An integration that shells out to one CLI. Its `PATH` probe, its install
+/// hook and the [`HookOutcome::ToolMissing`] it reports all read [`Self::TOOL`],
+/// and [`Integration::tool`] returns it for a caller holding only the trait
+/// object.
+pub trait DrivesTool: Integration {
+    const TOOL: Tool;
+}
+
+/// A tool a hook looked for and did not find. Only an integration that
+/// [`DrivesTool`] has one to report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MissingTool(Tool);
+
+impl MissingTool {
+    pub fn of<I: DrivesTool>() -> Self {
+        Self(I::TOOL)
+    }
+
+    pub fn tool(self) -> Tool {
+        self.0
+    }
+}
+
 /// What an [`Integration::activate_hook`] did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HookOutcome {
     /// Ran to completion, or had nothing to run.
     Done,
-    /// The named CLI the hook drives is not on `PATH`, so nothing ran.
-    ToolMissing(&'static str),
+    /// The CLI the hook drives is not on `PATH`, so nothing ran.
+    ToolMissing(MissingTool),
 }
 
 // ---------------------------------------------------------------------------
@@ -501,6 +545,21 @@ pub struct MemberIncompatibility {
     required_by: String,
 }
 
+/// The four strings an incompatibility is observed as, named so none stands
+/// where another goes.
+#[derive(Debug, Clone, Copy)]
+pub struct Observed<'a> {
+    /// Display form of the `DefaultOnly` key (e.g. `go`).
+    pub key: &'a str,
+    /// The value currently on disk.
+    pub on_disk: &'a str,
+    /// The strongest value the members require.
+    pub required: &'a str,
+    /// The member file carrying that requirement (e.g.
+    /// `github/org/module-a/go.mod`).
+    pub required_by: &'a str,
+}
+
 impl MemberIncompatibility {
     /// Record an incompatibility between a managed `DefaultOnly` value and the
     /// members' requirement.
@@ -508,21 +567,14 @@ impl MemberIncompatibility {
     /// Every argument is an observation the predicate made from member files
     /// and the managed file. No wall-clock, no environment, no tooling probe —
     /// the category only carries statements that are true of the files on disk.
-    pub fn new(
-        integration: &str,
-        path: &Path,
-        key: &str,
-        on_disk: &str,
-        required: &str,
-        required_by: &str,
-    ) -> Self {
+    pub fn new(integration: &dyn Integration, path: &Path, observed: Observed<'_>) -> Self {
         Self {
-            integration: integration.to_string(),
+            integration: integration.name().to_string(),
             path: path.to_path_buf(),
-            key: key.to_string(),
-            on_disk: on_disk.to_string(),
-            required: required.to_string(),
-            required_by: required_by.to_string(),
+            key: observed.key.to_string(),
+            on_disk: observed.on_disk.to_string(),
+            required: observed.required.to_string(),
+            required_by: observed.required_by.to_string(),
         }
     }
 
@@ -602,6 +654,12 @@ impl MemberIncompatibility {
 pub trait Integration {
     /// Unique identifier (e.g., `"npm-workspaces"`).
     fn name(&self) -> &str;
+
+    /// The CLI this integration shells out to, if it does. An integration that
+    /// does implements [`DrivesTool`] and returns `Some(Self::TOOL)`.
+    fn tool(&self) -> Option<Tool> {
+        None
+    }
 
     /// Whether this integration runs without explicit opt-in.
     fn default_enabled(&self) -> bool;

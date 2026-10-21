@@ -364,8 +364,8 @@ pub fn run_activate_hooks(
         let outcome = integration
             .activate_hook(&ctx)
             .map_err(|e| anyhow::anyhow!("activate hook failed: {e:#}"))?;
-        if let HookOutcome::ToolMissing(tool) = outcome {
-            skipped.push(SkippedEffect::tool_missing(integration, tool));
+        if let HookOutcome::ToolMissing(missing) = outcome {
+            skipped.push(SkippedEffect::tool_missing(integration, missing));
         }
         Ok(Vec::new())
     });
@@ -421,6 +421,8 @@ pub fn run_deactivations(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::integration::MissingTool;
+    use crate::integrations::PnpmWorkspaces;
     use crate::manifest::{RepoEntry, RepoPath};
     use crate::vcs::{RawRefName, TrackingRef};
     use std::collections::BTreeMap;
@@ -881,7 +883,7 @@ mod tests {
     #[test]
     fn activate_hooks_tool_missing_is_a_skip_and_others_still_run() {
         let toolless = MockIntegration::new("pnpm-workspaces", true)
-            .with_hook_outcome(HookOutcome::ToolMissing("pnpm"));
+            .with_hook_outcome(HookOutcome::ToolMissing(MissingTool::of::<PnpmWorkspaces>()));
         let succeeding = MockIntegration::new("npm", true);
         let integrations: Vec<&dyn Integration> = vec![&toolless, &succeeding];
 
@@ -894,7 +896,10 @@ mod tests {
         assert!(run.issues.is_empty(), "a missing tool is no failure");
         assert_eq!(
             run.skipped,
-            vec![SkippedEffect::tool_missing(&toolless, "pnpm")],
+            vec![SkippedEffect::tool_missing(
+                &toolless,
+                MissingTool::of::<PnpmWorkspaces>()
+            )],
             "the skipped hook is recorded, naming its tool"
         );
 

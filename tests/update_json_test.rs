@@ -198,7 +198,7 @@ fn update_json_envelope_round_trips() {
         resolution: None,
         skipped: vec![repoweave::skipped::SkippedEffect::tool_missing(
             &repoweave::integrations::NpmWorkspaces,
-            "npm",
+            repoweave::integration::MissingTool::of::<repoweave::integrations::NpmWorkspaces>(),
         )],
     };
 

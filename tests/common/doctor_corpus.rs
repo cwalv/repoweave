@@ -28,9 +28,10 @@ use repoweave::check::{
     ReplayExclusionKind, SubmoduleCommitKind, WeaveRootIdentityConflictKind, WorkingTreeDriftKind,
     WorkweaveTreeIntegrityKind,
 };
-use repoweave::integration::MemberIncompatibility;
 use repoweave::integration::{Issue, IssueKind, IssueSource, Severity};
+use repoweave::integration::{MemberIncompatibility, Observed};
 use repoweave::integrations::cargo_workspace::CargoSkewOccurrence;
+use repoweave::integrations::GoWork;
 use repoweave::manifest::{ProjectName, RepoPath, Role, WorkweaveId, WorkweaveName};
 use repoweave::op_state::{OpVerb, SavepointKey};
 use repoweave::vcs::{RawRevisionId, ResolvedRevisionId};
@@ -815,12 +816,14 @@ pub fn issue_corpus() -> Vec<Issue> {
         IssueKind::ConfigRejected,
         IssueKind::MalformedSettings,
         IssueKind::MemberIncompatibility(Box::new(MemberIncompatibility::new(
-            "go-work",
+            &GoWork,
             &path("/ws/projects/proj/go.work"),
-            "go",
-            "1.21",
-            "1.23",
-            "github/acme/repo/go.mod",
+            Observed {
+                key: "go",
+                on_disk: "1.21",
+                required: "1.23",
+                required_by: "github/acme/repo/go.mod",
+            },
         ))),
         IssueKind::DerivedStateStale,
         IssueKind::DisabledIntegrationArtifact,

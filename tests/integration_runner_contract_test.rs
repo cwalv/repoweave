@@ -22,10 +22,13 @@ mod common;
 
 use common::src_scan::{production_lines, string_arguments_to, struct_literal_needle};
 use repoweave::check::IssueOutput;
-use repoweave::integration::{Integration, IntegrationContext, IssueKind, MemberIncompatibility};
+use repoweave::integration::{
+    Integration, IntegrationContext, IssueKind, MemberIncompatibility, Observed,
+};
 use repoweave::integration_runner::{detection_vocabulary, IntegrationContextBase};
 use repoweave::integrations::builtin_integrations;
 use repoweave::integrations::merge::{drift_issues, missing_issue, Pen, Remedy};
+use repoweave::integrations::GoWork;
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -199,12 +202,14 @@ fn verify_states_reach_issue_kind_intact() {
 fn member_incompatibility_observations_survive_into_the_kind() {
     let path = Path::new("/w/projects/p/go.work");
     let issue = MemberIncompatibility::new(
-        "go-work",
+        &GoWork,
         path,
-        "go",
-        "1.21",
-        "1.26",
-        "github/org/member-a/go.mod",
+        Observed {
+            key: "go",
+            on_disk: "1.21",
+            required: "1.26",
+            required_by: "github/org/member-a/go.mod",
+        },
     )
     .into_issue();
 
@@ -224,12 +229,14 @@ fn member_incompatibility_observations_survive_into_the_kind() {
 #[test]
 fn member_incompatibility_message_opens_with_the_tag_the_wire_carries() {
     let issue = MemberIncompatibility::new(
-        "go-work",
+        &GoWork,
         Path::new("/w/projects/p/go.work"),
-        "go",
-        "1.21",
-        "1.26",
-        "github/org/member-a/go.mod",
+        Observed {
+            key: "go",
+            on_disk: "1.21",
+            required: "1.26",
+            required_by: "github/org/member-a/go.mod",
+        },
     )
     .into_issue();
     let message = issue.message.clone();

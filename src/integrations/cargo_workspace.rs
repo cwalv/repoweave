@@ -154,8 +154,8 @@
 //! (so leaving a stale entry behind after removing a repo is not an error).
 
 use crate::integration::{
-    HookOutcome, Integration, IntegrationContext, Issue, IssueKind, IssueSource, OwnedPath,
-    Severity, SurfacedFile,
+    DrivesTool, HookOutcome, Integration, IntegrationContext, Issue, IssueKind, IssueSource,
+    MissingTool, OwnedPath, Severity, SurfacedFile, Tool,
 };
 use crate::integrations::merge::{
     drift_issues, fully_owned_drift_issue, holds_owned_region, keypath, merge_activate,
@@ -665,9 +665,17 @@ impl CargoWorkspace {
     }
 }
 
+impl DrivesTool for CargoWorkspace {
+    const TOOL: Tool = Tool::new("cargo");
+}
+
 impl Integration for CargoWorkspace {
     fn name(&self) -> &str {
         "cargo-workspace"
+    }
+
+    fn tool(&self) -> Option<Tool> {
+        Some(Self::TOOL)
     }
 
     fn settings_keys(&self) -> &'static [&'static str] {
@@ -806,15 +814,7 @@ impl Integration for CargoWorkspace {
         }
 
         let mut issues = Vec::new();
-        if which::which("cargo").is_err() {
-            issues.push(Issue {
-                source: IssueSource::integration(self.name()),
-                severity: Severity::Warning,
-                message: "cargo is not on PATH".to_string(),
-                kind: IssueKind::ToolMissing,
-                safe_to_fix: true,
-            });
-        }
+        issues.extend(super::tool_missing_issue(self, ""));
 
         // Surface nested-workspace conflicts as errors during `rwv doctor`
         // so operators see the same diagnostic without having to run lock.
@@ -918,9 +918,10 @@ impl Integration for CargoWorkspace {
         // Before the generator runs, not after it returns: an input that moves
         // while cargo is resolving is exactly what the record must not absorb.
         let inputs = ObservedInputs::observe(ctx.output_dir, ctx.project, ctx.workspace_root);
-        let Some(status) = super::run_install_tool("cargo", &[subcommand], ctx.workspace_root)?
+        let Some(status) =
+            super::run_install_tool(Self::TOOL.name(), &[subcommand], ctx.workspace_root)?
         else {
-            return Ok(HookOutcome::ToolMissing("cargo"));
+            return Ok(HookOutcome::ToolMissing(MissingTool::of::<Self>()));
         };
 
         if !status.success() {

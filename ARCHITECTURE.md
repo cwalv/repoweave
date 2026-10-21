@@ -469,10 +469,13 @@ well. The published contract for this seam, and that residue in full, is
 `deactivate`, `check`) and nine defaulted (`detection_manifests`,
 `settings_keys`, `activate_hook`, `fit_to_host`, `generated_files`,
 `managed_files`, `verify`, `owned_paths_on_disk`, `member_incompatibility`).
+A tenth defaulted method, `tool`, has since been added: the one CLI an
+integration shells out to, declared by `DrivesTool`.
 
 Two of them are the materialization path, not authoring. `activate_hook`
 runs the ecosystem's install tool and returns a `HookOutcome`: `Done`, or
-`ToolMissing(tool)` when that tool is not on `PATH`, which the runner reports
+`ToolMissing(MissingTool)` when that tool, declared once by the integration's
+`DrivesTool`, is not on `PATH`, which the runner reports
 as a `tool-missing` warning while the other integrations' hooks still run; a
 hook that fails while running is an error. Every hook is refused while any
 enabled integration's `[integrations.<name>]` block fails to deserialize,

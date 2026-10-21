@@ -22,7 +22,7 @@ use common::compile_probe::{assert_fails_with, compile};
 fn the_harness_can_compile_a_finding_and_a_skip_that_name_their_sources() {
     let (compiled, stderr) = compile(
         r#"
-        use repoweave::integration::{Issue, IssueKind, IssueSource, Severity};
+        use repoweave::integration::{Issue, IssueKind, IssueSource, MissingTool, Severity};
         use repoweave::integrations::NpmWorkspaces;
         use repoweave::skipped::SkippedEffect;
 
@@ -41,7 +41,7 @@ fn the_harness_can_compile_a_finding_and_a_skip_that_name_their_sources() {
                 kind: IssueKind::ToolMissing,
                 safe_to_fix: false,
             };
-            (core, integration, SkippedEffect::tool_missing(&NpmWorkspaces, "npm"))
+            (core, integration, SkippedEffect::tool_missing(&NpmWorkspaces, MissingTool::of::<NpmWorkspaces>()))
         }
         "#,
     );

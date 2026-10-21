@@ -33,6 +33,25 @@ pub fn builtin_integrations() -> Vec<Box<dyn Integration>> {
     ]
 }
 
+/// The `tool-missing` finding for the tool `integration` declares, when it is
+/// not on `PATH`. `consequence` follows the sentence, for an integration that
+/// carries on without the tool.
+pub(crate) fn tool_missing_issue<I: crate::integration::DrivesTool>(
+    integration: &I,
+    consequence: &str,
+) -> Option<crate::integration::Issue> {
+    if which::which(I::TOOL.name()).is_ok() {
+        return None;
+    }
+    Some(crate::integration::Issue {
+        source: crate::integration::IssueSource::integration(integration.name()),
+        severity: crate::integration::Severity::Warning,
+        message: format!("{} is not on PATH{consequence}", I::TOOL),
+        kind: crate::integration::IssueKind::ToolMissing,
+        safe_to_fix: true,
+    })
+}
+
 /// The spelling `CreateProcess` can execute: the npm-family tools install
 /// `.cmd` shims on Windows, and `std::process::Command` routes a script
 /// through the interpreter only when the program name spells its extension.

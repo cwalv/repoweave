@@ -7,7 +7,7 @@
 //! the same fact in its `--json` envelope as a record. A run that skipped
 //! nothing prints nothing.
 
-use crate::integration::{Integration, IssueSource};
+use crate::integration::{Integration, IssueSource, MissingTool};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -73,13 +73,13 @@ impl SkippedEffect {
         }
     }
 
-    /// `integration`'s hook, skipped because `tool` is not on `PATH`.
-    pub fn tool_missing(integration: &dyn Integration, tool: &str) -> Self {
+    /// `integration`'s hook, skipped because `missing` is not on `PATH`.
+    pub fn tool_missing(integration: &dyn Integration, missing: MissingTool) -> Self {
         Self {
             effect: Effect::InstallHooks,
             integration: Some(integration.name().to_string()),
             reason: SkipReason::ToolMissing {
-                tool: tool.to_string(),
+                tool: missing.tool().name().to_string(),
             },
             remedy: "rwv materialize".to_string(),
         }
@@ -200,7 +200,7 @@ mod tests {
 
     #[test]
     fn a_missing_tool_names_the_integration_and_the_tool_apart() {
-        let skip = SkippedEffect::tool_missing(&NpmWorkspaces, "npm");
+        let skip = SkippedEffect::tool_missing(&NpmWorkspaces, MissingTool::of::<NpmWorkspaces>());
 
         assert_eq!(skip.integration.as_deref(), Some("npm-workspaces"));
         assert_eq!(

@@ -1,6 +1,5 @@
 use crate::integration::{
-    Integration, IntegrationContext, Issue, IssueKind, IssueSource, OwnedPath, Severity,
-    SurfacedFile,
+    DrivesTool, Integration, IntegrationContext, Issue, OwnedPath, SurfacedFile, Tool,
 };
 use crate::integrations::merge::{fully_owned_drift_issue, missing_issue};
 use std::collections::BTreeMap;
@@ -81,9 +80,17 @@ impl Gita {
     }
 }
 
+impl DrivesTool for Gita {
+    const TOOL: Tool = Tool::new("gita");
+}
+
 impl Integration for Gita {
     fn name(&self) -> &str {
         "gita"
+    }
+
+    fn tool(&self) -> Option<Tool> {
+        Some(Self::TOOL)
     }
 
     fn default_enabled(&self) -> bool {
@@ -139,15 +146,7 @@ impl Integration for Gita {
 
     fn check(&self, _ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
         let mut issues = Vec::new();
-        if which::which("gita").is_err() {
-            issues.push(Issue {
-                source: IssueSource::integration(self.name()),
-                severity: Severity::Warning,
-                message: "gita is not on PATH".to_string(),
-                kind: IssueKind::ToolMissing,
-                safe_to_fix: true,
-            });
-        }
+        issues.extend(super::tool_missing_issue(self, ""));
         Ok(issues)
     }
 

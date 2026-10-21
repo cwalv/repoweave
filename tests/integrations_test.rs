@@ -309,13 +309,21 @@ fn activate_with_tool_shim(
 /// one returns `false` for every input, which reads as "the tool was found".
 #[cfg(unix)]
 fn reports_tool_missing(report: &str, integration: &str) -> bool {
+    tool_missing_message(report, integration).is_some()
+}
+
+/// The message of the `tool-missing` finding `doctor --json` raised against
+/// `integration`, when it raised one.
+#[cfg(unix)]
+fn tool_missing_message(report: &str, integration: &str) -> Option<String> {
     let parsed: serde_json::Value =
         serde_json::from_str(report).expect("doctor --json emits a JSON report");
     parsed["issues"]
         .as_array()
         .expect("a doctor report carries an issues array")
         .iter()
-        .any(|v| v["kind"] == "tool-missing" && v["integration"] == integration)
+        .find(|v| v["kind"] == "tool-missing" && v["integration"] == integration)
+        .map(|v| v["message"].as_str().unwrap_or_default().to_string())
 }
 
 /// Assert `integration`'s `tool-missing` finding fires with its tool off the
@@ -339,6 +347,11 @@ fn tool_missing_fires_then_clears(absent: &str, present: &str, integration: &str
         reports_tool_missing(absent, integration),
         "with {tool} off the child's PATH, doctor must raise tool-missing for \
          {integration}; got:\n{absent}"
+    );
+    let message = tool_missing_message(absent, integration).unwrap_or_default();
+    assert!(
+        message.starts_with(&format!("{tool} is not on PATH")),
+        "the finding must name the tool the integration drives, `{tool}`; got: {message}"
     );
     assert!(
         !reports_tool_missing(present, integration),

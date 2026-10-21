@@ -1,6 +1,6 @@
 use crate::integration::{
-    HookOutcome, Integration, IntegrationContext, Issue, IssueKind, IssueSource, OwnedPath,
-    Severity, SurfacedFile,
+    DrivesTool, HookOutcome, Integration, IntegrationContext, Issue, MissingTool, OwnedPath,
+    SurfacedFile, Tool,
 };
 use crate::integrations::merge::{
     drift_issues, holds_owned_region, merge_activate, missing_issue, orphaned_region_issues,
@@ -69,9 +69,17 @@ fn read_pnpm_packages_globs(path: &Path) -> Option<Vec<String>> {
     )
 }
 
+impl DrivesTool for PnpmWorkspaces {
+    const TOOL: Tool = Tool::new("pnpm");
+}
+
 impl Integration for PnpmWorkspaces {
     fn name(&self) -> &str {
         "pnpm-workspaces"
+    }
+
+    fn tool(&self) -> Option<Tool> {
+        Some(Self::TOOL)
     }
 
     fn default_enabled(&self) -> bool {
@@ -125,15 +133,7 @@ impl Integration for PnpmWorkspaces {
         }
 
         let mut issues = Vec::new();
-        if which::which("pnpm").is_err() {
-            issues.push(Issue {
-                source: IssueSource::integration(self.name()),
-                severity: Severity::Warning,
-                message: "pnpm is not on PATH".to_string(),
-                kind: IssueKind::ToolMissing,
-                safe_to_fix: true,
-            });
-        }
+        issues.extend(super::tool_missing_issue(self, ""));
         Ok(issues)
     }
 
@@ -202,10 +202,13 @@ impl Integration for PnpmWorkspaces {
         // `rwv lock` previously and used `--lockfile-only` for that
         // reason. Run from workspace_root for the same reason npm does —
         // that's where the symlinks make member paths resolve correctly.
-        let Some(status) =
-            super::run_install_tool(&super::node_tool("pnpm"), &["install"], ctx.workspace_root)?
+        let Some(status) = super::run_install_tool(
+            &super::node_tool(Self::TOOL.name()),
+            &["install"],
+            ctx.workspace_root,
+        )?
         else {
-            return Ok(HookOutcome::ToolMissing("pnpm"));
+            return Ok(HookOutcome::ToolMissing(MissingTool::of::<Self>()));
         };
 
         if !status.success() {

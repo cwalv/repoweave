@@ -56,8 +56,8 @@
 //! taken regardless of whether `go` happens to be on PATH in the test runner.
 
 use crate::integration::{
-    Integration, IntegrationContext, Issue, IssueKind, IssueSource, MemberIncompatibility,
-    OwnedPath, Severity, SurfacedFile,
+    DrivesTool, Integration, IntegrationContext, Issue, MemberIncompatibility, Observed, OwnedPath,
+    SurfacedFile, Tool,
 };
 use crate::integrations::merge::{
     drift_issues, holds_owned_region, keypath, merge_activate, missing_issue,
@@ -91,16 +91,24 @@ fn go_on_path() -> bool {
             return false;
         }
     }
-    which::which("go").is_ok()
+    which::which(GoWork::TOOL.name()).is_ok()
 }
 
 // ---------------------------------------------------------------------------
 // Integration impl
 // ---------------------------------------------------------------------------
 
+impl DrivesTool for GoWork {
+    const TOOL: Tool = Tool::new("go");
+}
+
 impl Integration for GoWork {
     fn name(&self) -> &str {
         "go-work"
+    }
+
+    fn tool(&self) -> Option<Tool> {
+        Some(Self::TOOL)
     }
 
     fn settings_keys(&self) -> &'static [&'static str] {
@@ -202,15 +210,10 @@ impl Integration for GoWork {
         }
 
         let mut issues = Vec::new();
-        if which::which("go").is_err() {
-            issues.push(Issue {
-                source: IssueSource::integration(self.name()),
-                severity: Severity::Warning,
-                message: "go is not on PATH; using hand-edit fallback for go.work".to_string(),
-                kind: IssueKind::ToolMissing,
-                safe_to_fix: true,
-            });
-        }
+        issues.extend(super::tool_missing_issue(
+            self,
+            "; using hand-edit fallback for go.work",
+        ));
         Ok(issues)
     }
 
@@ -348,12 +351,14 @@ impl Integration for GoWork {
         }
 
         Ok(Some(MemberIncompatibility::new(
-            self.name(),
+            self,
             &path,
-            "go",
-            &on_disk_raw,
-            &required_raw,
-            &format!("{required_member}/go.mod"),
+            Observed {
+                key: "go",
+                on_disk: &on_disk_raw,
+                required: &required_raw,
+                required_by: &format!("{required_member}/go.mod"),
+            },
         )))
     }
 
@@ -454,7 +459,7 @@ fn activate_via_go_tool(
 
     // Initialize go.work at workspace_root if needed.
     if !work_tmp.exists() {
-        let status = Command::new("go")
+        let status = Command::new(GoWork::TOOL.name())
             .args(["work", "init"])
             .current_dir(super::subprocess_cwd(workspace_root))
             .status()?;
@@ -464,7 +469,7 @@ fn activate_via_go_tool(
     }
 
     if let (Some(ver), true) = (go_version, go_line_absent) {
-        let status = Command::new("go")
+        let status = Command::new(GoWork::TOOL.name())
             .args(["work", "edit", &format!("-go={ver}")])
             .current_dir(super::subprocess_cwd(workspace_root))
             .status()?;
@@ -496,7 +501,7 @@ fn activate_via_go_tool(
     // Add all new paths (relative to workspace_root).
     for p in new_paths {
         let use_path = format!("./{}", p.as_ref());
-        let status = Command::new("go")
+        let status = Command::new(GoWork::TOOL.name())
             .args(["work", "use", &use_path])
             .current_dir(super::subprocess_cwd(workspace_root))
             .status()?;
@@ -514,7 +519,7 @@ fn activate_via_go_tool(
         .collect();
     for old in current_uses {
         if !new_set.contains(&old) {
-            let status = Command::new("go")
+            let status = Command::new(GoWork::TOOL.name())
                 .args(["work", "edit", &format!("-dropuse={old}")])
                 .current_dir(super::subprocess_cwd(workspace_root))
                 .status()?;
@@ -857,6 +862,7 @@ fn max_go_version(paths: &[impl AsRef<str>], workspace_root: &Path) -> Option<St
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::integration::{IssueKind, IssueSource};
     use crate::manifest::{Manifest, ProjectName, Role};
     use crate::workspace::ContainerKind;
     use std::collections::HashMap;
@@ -1961,6 +1967,10 @@ mod tests {
     #[test]
     fn member_incompatibility_reports_pin_below_max_member() {
         let found = probe(Some("1.21"), "1.26").expect("go 1.21 under a member's 1.26 is a breach");
+        assert_eq!(found.key(), "go");
+        assert_eq!(found.on_disk(), "1.21", "the value go.work holds");
+        assert_eq!(found.required(), "1.26", "the value the member requires");
+        assert_eq!(found.required_by(), "github/test/repoweave/go.mod");
         let issue = found.into_issue();
 
         assert_eq!(issue.source, IssueSource::integration("go-work"));
