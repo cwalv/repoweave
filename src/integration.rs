@@ -882,7 +882,5 @@ pub fn settings_struct_keys<T: serde::de::DeserializeOwned>() -> &'static [&'sta
 
 /// Whether an integration should run, considering its default and any override.
 pub fn is_enabled(integration: &dyn Integration, config: &IntegrationConfig) -> bool {
-    config
-        .enabled()
-        .unwrap_or_else(|| integration.default_enabled())
+    config.enablement().resolve(integration)
 }

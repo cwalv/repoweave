@@ -1,3 +1,5 @@
+use repoweave::integration::is_enabled;
+use repoweave::integrations::{CargoWorkspace, Gita};
 use repoweave::manifest::{
     CargoWorkspaceConfig, LockFile, Manifest, PatchMode, Project, ProjectName, RepoPath, Role,
     VcsType,
@@ -163,15 +165,20 @@ fn manifest_without_integrations() {
 }
 
 #[test]
-fn integration_config_enabled_none() {
-    // An empty integration block should default enabled to None.
+fn an_empty_integration_block_leaves_enablement_to_the_integration() {
     let manifest_toml = r#"
 [repositories]
 
 [integrations.cargo-workspace]
+
+[integrations.gita]
 "#;
     let m: Manifest = toml::from_str(manifest_toml).unwrap();
-    assert!(m.integrations["cargo-workspace"].enabled().is_none());
+    assert!(is_enabled(
+        &CargoWorkspace,
+        &m.integrations["cargo-workspace"]
+    ));
+    assert!(!is_enabled(&Gita, &m.integrations["gita"]));
 }
 
 // ---------------------------------------------------------------------------

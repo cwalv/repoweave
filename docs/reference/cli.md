@@ -493,7 +493,7 @@ Three verbs designed for shell-script and agent-harness consumption. Side-by-sid
 
 ### `rwv prime [--no-suppress]`
 
-Emit structured workspace context for agent system prompts: active project, repos, roles, lock state. Suppressed when CWD is not inside a weave or workweave (use `--no-suppress` to always emit).
+Emit structured workspace context for agent system prompts: active project, repos, roles, the integrations that run, lock state. Suppressed when CWD is not inside a weave or workweave (use `--no-suppress` to always emit).
 
 Use case: agent harness reads this on session start to bootstrap context.
 

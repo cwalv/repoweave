@@ -3,6 +3,7 @@
 //! These types model the on-disk format and the resolved in-memory
 //! representation. Parsing produces a `Manifest`; locking produces a `LockFile`.
 
+use crate::integration::Integration;
 use crate::registry::RegistryName;
 use crate::vcs::{RawRevisionId, RefName, ResolvedRevisionId};
 use anyhow::Context;
@@ -548,6 +549,25 @@ impl Submodules {
 // Integration config — per-integration overrides in `rwv.toml`
 // ---------------------------------------------------------------------------
 
+/// Whether an `[integrations.<name>]` table turns its integration on, off, or
+/// leaves the choice to the integration. `resolve` is the only way to a bool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Enablement {
+    Default,
+    On,
+    Off,
+}
+
+impl Enablement {
+    pub(crate) fn resolve(self, integration: &dyn Integration) -> bool {
+        match self {
+            Enablement::Default => integration.default_enabled(),
+            Enablement::On => true,
+            Enablement::Off => false,
+        }
+    }
+}
+
 /// Per-integration configuration from the `[integrations]` table.
 ///
 /// Stored as a raw TOML table so each integration can define its own typed
@@ -561,12 +581,14 @@ impl IntegrationConfig {
     /// The one key every `[integrations.<name>]` table accepts.
     pub(crate) const ENABLED_KEY: &'static str = "enabled";
 
-    /// Whether the integration should run.
-    ///
-    /// Returns `Some(true)` / `Some(false)` when `enabled` is present in the
-    /// table, `None` when absent (fall back to `default_enabled()`).
-    pub fn enabled(&self) -> Option<bool> {
-        self.0.get(Self::ENABLED_KEY).and_then(|v| v.as_bool())
+    /// What the table says about whether the integration runs. A value that
+    /// is not a boolean reads as absent.
+    pub(crate) fn enablement(&self) -> Enablement {
+        match self.0.get(Self::ENABLED_KEY).and_then(toml::Value::as_bool) {
+            None => Enablement::Default,
+            Some(true) => Enablement::On,
+            Some(false) => Enablement::Off,
+        }
     }
 
     /// Parse integration-specific settings into a typed struct.
@@ -1915,25 +1937,47 @@ mod tests {
     #[test]
     fn integration_config_default_is_empty_table() {
         let config = IntegrationConfig::default();
-        assert!(config.enabled().is_none());
+        assert_eq!(config.enablement(), Enablement::Default);
     }
 
     #[test]
-    fn integration_config_enabled_some_true() {
+    fn integration_config_enabled_true_is_on() {
         let config = IntegrationConfig::from_toml("enabled = true");
-        assert_eq!(config.enabled(), Some(true));
+        assert_eq!(config.enablement(), Enablement::On);
     }
 
     #[test]
-    fn integration_config_enabled_some_false() {
+    fn integration_config_enabled_false_is_off() {
         let config = IntegrationConfig::from_toml("enabled = false");
-        assert_eq!(config.enabled(), Some(false));
+        assert_eq!(config.enablement(), Enablement::Off);
     }
 
     #[test]
-    fn integration_config_enabled_absent_returns_none() {
+    fn integration_config_enabled_absent_is_default() {
         let config = IntegrationConfig::from_toml("files = [\"foo.txt\"]");
-        assert_eq!(config.enabled(), None);
+        assert_eq!(config.enablement(), Enablement::Default);
+    }
+
+    #[test]
+    fn integration_config_enabled_not_a_boolean_is_default() {
+        let config = IntegrationConfig::from_toml("enabled = \"false\"");
+        assert_eq!(config.enablement(), Enablement::Default);
+    }
+
+    #[test]
+    fn enablement_resolves_against_the_integrations_default() {
+        use crate::integrations::{CargoWorkspace, Gita};
+
+        let on_by_default = CargoWorkspace;
+        let off_by_default = Gita;
+        assert!(on_by_default.default_enabled() && !off_by_default.default_enabled());
+
+        assert!(Enablement::Default.resolve(&on_by_default));
+        assert!(!Enablement::Default.resolve(&off_by_default));
+        assert!(Enablement::On.resolve(&on_by_default));
+        assert!(Enablement::On.resolve(&off_by_default));
+        assert!(!Enablement::Off.resolve(&on_by_default));
+        assert!(!Enablement::Off.resolve(&off_by_default));
     }
 
     #[test]
@@ -1964,7 +2008,7 @@ mod tests {
         let config: IntegrationConfig = toml::from_str(text).unwrap();
         let restored = toml::to_string(&config).unwrap();
         let config2: IntegrationConfig = toml::from_str(&restored).unwrap();
-        assert_eq!(config2.enabled(), Some(true));
+        assert_eq!(config2.enablement(), Enablement::On);
         let settings: TestSettings = config2.settings().unwrap();
         assert_eq!(settings.files, vec!["x.json"]);
         assert_eq!(settings.count, 42);
@@ -1976,7 +2020,7 @@ mod tests {
         let text = toml::to_string(&config).unwrap();
         // Deserializing back should still give us an empty table
         let restored: IntegrationConfig = toml::from_str(&text).unwrap();
-        assert!(restored.enabled().is_none());
+        assert_eq!(restored.enablement(), Enablement::Default);
     }
 
     // -- Manifest test fixtures ----------------------------------------------

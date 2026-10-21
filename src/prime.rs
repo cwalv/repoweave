@@ -6,7 +6,10 @@
 //!
 //! Silent (exit 0, no output) when not inside a repoweave workspace.
 
-use crate::manifest::{Manifest, ProjectName, RepoPath};
+use crate::integration::Integration;
+use crate::integration_runner::enabled_integrations;
+use crate::integrations::builtin_integrations;
+use crate::manifest::{IntegrationConfig, Manifest, ProjectName, RepoPath};
 use crate::workspace::{discover_projects, project_dir, projects_dir, Checkout, WorkspaceContext};
 
 /// Run `rwv prime` against an already-resolved workspace context.
@@ -149,17 +152,13 @@ fn render_repo_table(out: &mut String, manifest: &Manifest) {
     }
 }
 
-/// Render enabled integrations.
+/// Render the integrations the runner runs.
 fn render_integrations(out: &mut String, manifest: &Manifest) {
-    if manifest.integrations.is_empty() {
-        return;
-    }
-
-    let enabled: Vec<&String> = manifest
-        .integrations
-        .iter()
-        .filter(|(_, cfg)| cfg.enabled().unwrap_or(true))
-        .map(|(name, _)| name)
+    let builtin = builtin_integrations();
+    let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
+    let default_config = IntegrationConfig::default();
+    let enabled: Vec<&str> = enabled_integrations(&integrations, manifest, &default_config)
+        .map(|(integration, _)| integration.name())
         .collect();
 
     if enabled.is_empty() {

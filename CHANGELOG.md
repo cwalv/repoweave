@@ -6,6 +6,16 @@ claim that nothing changed in them.
 
 ## Unreleased
 
+### `rwv prime` lists the integrations that run
+
+The Integrations section of `rwv prime` named every `[integrations.<name>]`
+table whose `enabled` key was not `false`, so a table without the key listed
+`gita`, `pnpm-workspaces` or `static-files`, which stay off until `enabled =
+true`, and an integration that runs by default was missing unless its table was
+written. It now lists exactly the integrations that run for the project: those
+with `enabled = true`, and those that run by default and have no `enabled =
+false`.
+
 ### Breaking: relative path arguments are read from the directory rwv runs in
 
 A relative path on the command line names the place it names in your shell, or
