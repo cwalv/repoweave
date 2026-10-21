@@ -19,7 +19,7 @@ Enabled by default. The table takes `enabled` and an optional `go-version`:
 go-version = "1.26"
 ```
 
-`go-version` is the value seeded into a `go.work` that has no `go` directive yet; see [Managed and generated files](#managed-and-generated-files). A `go-version` that is not a string is ignored without a finding, and the seed falls back to the members' highest `go` directive.
+`go-version` is the value seeded into a `go.work` that has no `go` directive yet; see [Managed and generated files](#managed-and-generated-files). A `go-version` that is not a string is reported by `rwv doctor` as [`malformed-settings`](../doctor-findings.md#malformed-settings), and `go.work` is not authored until it is corrected.
 
 ## Managed and generated files
 

@@ -16,6 +16,16 @@ value. `rwv add` refuses with `version-is-a-pin` when the branch it would
 record is so named — the remote's default branch, or with `--new` the branch
 the new repo is on — where it used to write it.
 
+### Breaking: a `go-version` that is not a string is reported, not ignored
+
+A `go-version` of the wrong type in `[integrations.go-work]`, such as
+`go-version = 1.22` (a number), was read as if the key were absent, so `go.work`
+was seeded from the members' `go` directives with no finding. It is now a
+`malformed-settings` finding from `rwv doctor`, as a wrong-typed setting of
+`cargo-workspace`, `static-files` and `vscode-workspace` already was, and
+`go.work` is not authored while it stands: `rwv materialize` and `rwv activate`
+refuse, naming the key. Write `go-version = "1.22"`.
+
 ### Breaking: `rwv status --json` spells the relation `no-lock`
 
 A repo with no `rwv.lock` entry has `relation` `no-lock` in `rwv status --json`,

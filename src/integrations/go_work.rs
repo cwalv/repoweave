@@ -115,6 +115,11 @@ impl Integration for GoWork {
     }
 
     fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
+        let cfg: GoWorkConfig = match ctx.settings_or_issue(self.name()) {
+            Ok(cfg) => cfg,
+            Err(issue) => return Ok(vec![issue]),
+        };
+
         let paths = ctx.detect_repos_with_manifest("go.mod");
         // The authored `use` block is a function of the manifest alone.
         // Returning early instead would make it a function of history too: the
@@ -158,9 +163,6 @@ impl Integration for GoWork {
             }
         }
 
-        // Parse per-integration config (tolerates absent block).
-        let cfg: GoWorkConfig = ctx.config.settings().unwrap_or_default();
-
         // Determine the go-version default, if any: explicit config wins,
         // else the max across member go.mod files. Both paths apply this as
         // Ownership::DefaultOnly — only when the target file's go-line is
@@ -189,6 +191,10 @@ impl Integration for GoWork {
     }
 
     fn check(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
+        if let Err(issue) = ctx.settings_or_issue::<GoWorkConfig>(self.name()) {
+            return Ok(vec![issue]);
+        }
+
         let paths = ctx.detect_repos_with_manifest("go.mod");
         if paths.is_empty() {
             return Ok(vec![]);
@@ -222,6 +228,10 @@ impl Integration for GoWork {
     /// is deterministic regardless of whether `go` is on PATH.
     fn verify(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
         use crate::integrations::merge::ManagedDoc;
+
+        if let Err(issue) = ctx.settings_or_issue::<GoWorkConfig>(self.name()) {
+            return Ok(vec![issue]);
+        }
 
         let repo_paths = ctx.detect_repos_with_manifest("go.mod");
         if repo_paths.is_empty() {
@@ -1261,6 +1271,62 @@ mod tests {
             text.contains("go 1.23"),
             "config go-version must be written: {text}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // A go-version that is not a string is a malformed-settings finding from
+    // every hook that could act on it, and activate authors nothing.
+    // -----------------------------------------------------------------------
+
+    fn go_version_that_is_not_a_string(
+        hook: impl FnOnce(&IntegrationContext) -> anyhow::Result<Vec<Issue>>,
+    ) -> (Vec<Issue>, bool) {
+        force_fallback();
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        touch(root, "github/test/repoweave/go.mod");
+
+        let manifest = make_manifest_local(vec![("github/test/repoweave", Role::Owned)]);
+        let project = ProjectName::new("test-project").unwrap();
+        let config = IntegrationConfig::from_toml("go-version = 122");
+        let cache = HashMap::new();
+        let ctx = make_ctx_local(root, &project, &manifest, &config, &cache);
+
+        let issues = hook(&ctx).unwrap();
+        (issues, root.join("go.work").exists())
+    }
+
+    fn assert_one_malformed_go_version(issues: &[Issue]) {
+        let [issue] = issues else {
+            panic!("expected one finding, got {issues:?}");
+        };
+        assert_eq!(issue.kind, IssueKind::MalformedSettings);
+        assert_eq!(issue.integration, "go-work");
+        assert!(
+            issue.message.contains("go-version"),
+            "the finding names the key: {}",
+            issue.message
+        );
+    }
+
+    #[test]
+    fn activate_reports_a_go_version_that_is_not_a_string_and_authors_nothing() {
+        let (issues, authored) = go_version_that_is_not_a_string(|ctx| GoWork.activate(ctx));
+        assert_one_malformed_go_version(&issues);
+        assert!(!authored, "go.work must not be authored");
+    }
+
+    #[test]
+    fn check_reports_a_go_version_that_is_not_a_string() {
+        let (issues, _) = go_version_that_is_not_a_string(|ctx| GoWork.check(ctx));
+        assert_one_malformed_go_version(&issues);
+    }
+
+    #[test]
+    fn verify_reports_a_go_version_that_is_not_a_string_rather_than_a_missing_file() {
+        let (issues, _) = go_version_that_is_not_a_string(|ctx| GoWork.verify(ctx));
+        assert_one_malformed_go_version(&issues);
     }
 
     // -----------------------------------------------------------------------
