@@ -31,7 +31,7 @@ use repoweave::check::{
 use repoweave::integration::MemberIncompatibility;
 use repoweave::integration::{Issue, IssueKind, Severity};
 use repoweave::integrations::cargo_workspace::CargoSkewOccurrence;
-use repoweave::manifest::{ProjectName, RepoPath, Role, WorkweaveName};
+use repoweave::manifest::{ProjectName, RepoPath, Role, WorkweaveId, WorkweaveName};
 use repoweave::op_state::OpVerb;
 use repoweave::vcs::{RawRevisionId, ResolvedRevisionId};
 use repoweave::workspace::MarkerDefect;
@@ -45,8 +45,11 @@ pub fn repo() -> RepoPath {
     RepoPath::new("github/acme/repo").unwrap()
 }
 
-pub fn workweave() -> WorkweaveName {
-    WorkweaveName::new("feat-a").unwrap()
+pub fn workweave() -> WorkweaveId {
+    WorkweaveId {
+        project: project(),
+        name: WorkweaveName::new("feat-a").unwrap(),
+    }
 }
 
 pub fn sha() -> String {

@@ -6,6 +6,17 @@ claim that nothing changed in them.
 
 ## Unreleased
 
+### Breaking: `rwv doctor` names a workweave by its project and name
+
+A workweave name is unique only within its project. Every `rwv doctor --json`
+finding that carries a `workweave` field now writes it as `<project>--<name>`,
+the spelling `resolution.workweave` uses, where it wrote the bare name. Each
+such finding's `absolute_path` lies in that workweave: with same-named
+workweaves in two projects, a finding in one was placed in the other's
+directory, at a path that need not exist. The text report and `--fix` name the
+workweave the same way, and so do `rwv workweave delete` and `rwv sync-to
+--retire` when they re-point a child workweave.
+
 ### `rwv prime` lists the integrations that run
 
 The Integrations section of `rwv prime` named every `[integrations.<name>]`

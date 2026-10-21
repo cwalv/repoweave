@@ -233,7 +233,7 @@ fn doctor_fix_replaces_the_clone_with_a_worktree_at_the_commit_it_had_checked_ou
     );
     assert!(
         out.contains(&format!(
-            "[fixed] core: replaced the full clone of {MEMBER} in workweave {SEAT} with a \
+            "[fixed] core: replaced the full clone of {MEMBER} in workweave {PROJECT}--{SEAT} with a \
              worktree of the canonical clone at {}",
             &checked_out[..12]
         )),
@@ -302,7 +302,7 @@ fn assert_refused_and_untouched(weave: &Weave, reason: &str, item: &str) -> Stri
 
     let (code, out) = doctor_fix(weave);
     assert_eq!(code, Some(1), "a refused repair is an error:\n{out}");
-    let refusal = format!("clone-topology fix left {SEAT}/{MEMBER} standing");
+    let refusal = format!("clone-topology fix left {PROJECT}--{SEAT}/{MEMBER} standing");
     let line = out
         .lines()
         .position(|l| l.contains(&refusal))
@@ -449,7 +449,7 @@ fn refuses_while_the_clone_holds_ignored_files_until_the_named_clean_removes_the
     let (_, out) = doctor_fix(&weave);
     assert!(
         out.contains(&format!(
-            "[fixed] core: replaced the full clone of {MEMBER} in workweave {SEAT}"
+            "[fixed] core: replaced the full clone of {MEMBER} in workweave {PROJECT}--{SEAT}"
         )),
         "once `{removal}` has run, the repair it was named for must go through:\n{out}"
     );
@@ -547,7 +547,9 @@ fn refuses_while_something_stands_where_the_clone_would_be_moved() {
     let (code, out) = doctor_fix(&weave);
     assert_eq!(code, Some(1), "{out}");
     assert!(
-        out.contains(&format!("clone-topology fix left {SEAT}/{MEMBER} standing")),
+        out.contains(&format!(
+            "clone-topology fix left {PROJECT}--{SEAT}/{MEMBER} standing"
+        )),
         "{out}"
     );
     assert!(out.contains(".widget.rwv-replaced already exists"), "{out}");
@@ -597,7 +599,9 @@ fn a_birth_that_refuses_moves_the_clone_back() {
     let (code, out) = doctor_fix(&weave);
     assert_eq!(code, Some(1), "{out}");
     assert!(
-        out.contains(&format!("clone-topology fix left {SEAT}/{MEMBER} standing")),
+        out.contains(&format!(
+            "clone-topology fix left {PROJECT}--{SEAT}/{MEMBER} standing"
+        )),
         "{out}"
     );
     assert!(out.contains("has moved since rwv created it"), "{out}");
@@ -631,7 +635,9 @@ fn refuses_while_there_is_no_canonical_clone_to_link_into() {
     let (code, out) = doctor_fix(&weave);
     assert_eq!(code, Some(1), "{out}");
     assert!(
-        out.contains(&format!("clone-topology fix left {SEAT}/{MEMBER} standing")),
+        out.contains(&format!(
+            "clone-topology fix left {PROJECT}--{SEAT}/{MEMBER} standing"
+        )),
         "{out}"
     );
     assert!(out.contains("there is no canonical clone at"), "{out}");
@@ -659,7 +665,9 @@ fn refuses_while_the_clone_has_no_commit_checked_out() {
     let (code, out) = doctor_fix(&weave);
     assert_eq!(code, Some(1), "{out}");
     assert!(
-        out.contains(&format!("clone-topology fix left {SEAT}/{MEMBER} standing")),
+        out.contains(&format!(
+            "clone-topology fix left {PROJECT}--{SEAT}/{MEMBER} standing"
+        )),
         "{out}"
     );
     assert!(out.contains("its HEAD names no commit"), "{out}");

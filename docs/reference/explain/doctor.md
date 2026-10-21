@@ -1534,7 +1534,7 @@ Schema:
               "$ref": "#/definitions/PermissionsKind"
             },
             "workweave": {
-              "description": "`None` for the primary weave.",
+              "description": "The workweave's identity, `<project>--<name>`; `None` for the primary weave.",
               "type": [
                 "string",
                 "null"
@@ -1657,7 +1657,7 @@ Schema:
               "$ref": "#/definitions/DriftKind"
             },
             "workweave": {
-              "description": "`None` for the canonical clone in the primary weave.",
+              "description": "The workweave's identity, `<project>--<name>`; `None` for the canonical clone in the primary weave.",
               "type": [
                 "string",
                 "null"
@@ -1690,7 +1690,7 @@ Schema:
               "$ref": "#/definitions/IndexDriftKind"
             },
             "workweave": {
-              "description": "`None` for the primary weave.",
+              "description": "The workweave's identity, `<project>--<name>`; `None` for the primary weave.",
               "type": [
                 "string",
                 "null"
@@ -1723,7 +1723,7 @@ Schema:
               "$ref": "#/definitions/WorkingTreeDriftKind"
             },
             "workweave": {
-              "description": "`None` for the primary weave.",
+              "description": "The workweave's identity, `<project>--<name>`; `None` for the primary weave.",
               "type": [
                 "string",
                 "null"
@@ -2326,7 +2326,7 @@ Schema:
               "type": "string"
             },
             "workweave": {
-              "description": "`None` for the primary weave.",
+              "description": "The workweave's identity, `<project>--<name>`; `None` for the primary weave.",
               "type": [
                 "string",
                 "null"
@@ -2506,7 +2506,7 @@ Schema:
               ]
             },
             "workweave": {
-              "description": "`None` for the primary weave.",
+              "description": "The workweave's identity, `<project>--<name>`; `None` for the primary weave.",
               "type": [
                 "string",
                 "null"
@@ -2636,7 +2636,7 @@ Schema:
               "type": "string"
             },
             "workweave": {
-              "description": "Workweave name.",
+              "description": "The workweave's identity, `<project>--<name>`.",
               "type": "string"
             }
           }
@@ -2678,7 +2678,7 @@ Schema:
               "$ref": "#/definitions/SubmoduleCommitKind"
             },
             "workweave": {
-              "description": "Workweave name.",
+              "description": "The workweave's identity, `<project>--<name>`.",
               "type": "string"
             }
           }

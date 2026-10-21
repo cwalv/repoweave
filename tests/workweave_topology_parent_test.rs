@@ -305,7 +305,9 @@ fn delete_with_one_child_adopts_to_grandparent_primary() {
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("adopted child workweave wwb: parent now"),
+        stderr.contains(&format!(
+            "adopted child workweave {PROJECT}--wwb: parent now"
+        )),
         "expected loud adoption line for wwb; got:\n{stderr}"
     );
 
@@ -346,7 +348,9 @@ fn delete_middle_adopts_to_grandparent_workweave() {
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("adopted child workweave wwc: parent now"),
+        stderr.contains(&format!(
+            "adopted child workweave {PROJECT}--wwc: parent now"
+        )),
         "expected adoption line for wwc; got:\n{stderr}"
     );
 
@@ -382,7 +386,9 @@ fn delete_with_n_children_adopts_all() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     for c in ["child1", "child2", "child3"] {
         assert!(
-            stderr.contains(&format!("adopted child workweave {c}: parent now")),
+            stderr.contains(&format!(
+                "adopted child workweave {PROJECT}--{c}: parent now"
+            )),
             "expected adoption line for {c}; got:\n{stderr}"
         );
     }
@@ -422,7 +428,9 @@ fn retire_adopts_children() {
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("adopted child workweave wwb: parent now"),
+        stderr.contains(&format!(
+            "adopted child workweave {PROJECT}--wwb: parent now"
+        )),
         "retire should adopt wwb; got:\n{stderr}"
     );
     assert_eq!(

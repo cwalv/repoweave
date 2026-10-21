@@ -900,7 +900,7 @@ from the primary, every registered workweave of the projects in scope. It
 prints:
 
 ```
-[fixed] core: replaced the full clone of <repo> in workweave <name> with a worktree of the canonical clone at <sha>
+[fixed] core: replaced the full clone of <repo> in workweave <project>--<name> with a worktree of the canonical clone at <sha>
 ```
 
 The repair removes the full clone, so it refuses, changing nothing, while the
@@ -914,7 +914,7 @@ repair stands beside the clone. The refusal is one error line, so `--fix` exits
 1, followed by every reason that applies, each with what it holds:
 
 ```
-[error] core: clone-topology fix left <workweave>/<repo> standing: not replacing the full clone at <path> with a worktree of the canonical clone:
+[error] core: clone-topology fix left <project>--<name>/<repo> standing: not replacing the full clone at <path> with a worktree of the canonical clone:
   - it holds ignored files, which no commit records either. Move out any you need; if the rest are regenerable, such as build output or installed dependencies, `git -C <path> clean -X -d -n` lists what would go, and `git -C <path> clean -X -d -f` deletes it:
       node_modules/
 

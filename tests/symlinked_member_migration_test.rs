@@ -302,7 +302,7 @@ fn doctor_fix_replaces_each_symlink_with_a_worktree_at_the_pinned_revision() {
     );
     assert!(
         stdout.contains(&format!(
-            "[fixed] core: created the worktree for {LINKED_PATH} in workweave {SEAT}"
+            "[fixed] core: created the worktree for {LINKED_PATH} in workweave {PROJECT}--{SEAT}"
         )),
         "stdout:\n{stdout}"
     );
@@ -604,7 +604,7 @@ fn doctor_fix_migrates_a_member_under_a_parked_op_and_abort_then_restores() {
     );
     assert!(
         String::from_utf8_lossy(&fixed.stdout).contains(&format!(
-            "[fixed] core: created the worktree for {LINKED_PATH} in workweave {SEAT}"
+            "[fixed] core: created the worktree for {LINKED_PATH} in workweave {PROJECT}--{SEAT}"
         )),
         "doctor --fix must migrate the member under a parked op; stdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&fixed.stdout),

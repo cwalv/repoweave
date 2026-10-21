@@ -548,10 +548,10 @@ fn patch_shadowing_names_ancestor_config_between_member_and_weave() {
 #[test]
 fn version_skew_wire_shape_has_stable_kind_tag_and_fields() {
     use repoweave::check::{CheckViolation, ViolationOutput};
-    use repoweave::manifest::WorkweaveName;
+    use repoweave::manifest::WorkweaveId;
 
     let ws = std::path::PathBuf::from("/ws");
-    let ww: HashMap<WorkweaveName, std::path::PathBuf> = HashMap::new();
+    let ww: HashMap<WorkweaveId, std::path::PathBuf> = HashMap::new();
     let v = CheckViolation::CargoVersionSkew {
         crate_name: "serde".to_string(),
         occurrences: vec![
@@ -593,10 +593,10 @@ fn version_skew_wire_shape_has_stable_kind_tag_and_fields() {
 #[test]
 fn patch_shadowing_wire_shape_has_stable_kind_tag_and_fields() {
     use repoweave::check::{CheckViolation, ViolationOutput};
-    use repoweave::manifest::WorkweaveName;
+    use repoweave::manifest::WorkweaveId;
 
     let ws = std::path::PathBuf::from("/ws");
-    let ww: HashMap<WorkweaveName, std::path::PathBuf> = HashMap::new();
+    let ww: HashMap<WorkweaveId, std::path::PathBuf> = HashMap::new();
     let v = CheckViolation::CargoPatchShadowing {
         weave_config: std::path::PathBuf::from("/ws/Cargo.toml"),
         member_config: std::path::PathBuf::from("/ws/github/acme/foo/.cargo/config.toml"),

@@ -138,7 +138,9 @@ pub(crate) fn project_repo_key() -> &'static str {
     PROJECT_REPO_KEY
 }
 
-pub use crate::naming::{ProjectName, ProjectNameError, WorkweaveName, WorkweaveNameError};
+pub use crate::naming::{
+    ProjectName, ProjectNameError, WorkweaveId, WorkweaveName, WorkweaveNameError,
+};
 
 // ---------------------------------------------------------------------------
 // RepoUrl — a clone source parsed into structured data

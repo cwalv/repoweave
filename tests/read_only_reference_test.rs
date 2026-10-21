@@ -574,7 +574,7 @@ fn doctor_fix_settles_a_reference_member_made_writable_by_hand() {
     let fixed = run(&["doctor", "--fix"], &seat);
     assert!(
         String::from_utf8_lossy(&fixed.stdout).contains(&format!(
-            "[fixed] core: settled 1 tracked file(s) of seat/{REF_PATH} for its role (reference)"
+            "[fixed] core: settled 1 tracked file(s) of {PROJECT}--seat/{REF_PATH} for its role (reference)"
         )),
         "{}",
         describe(&fixed)

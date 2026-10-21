@@ -210,6 +210,6 @@ fn a_workweave_reports_its_own_leftover_worktree() {
     let found = drift_for(&doc, GONE);
     assert_eq!(found.len(), 1, "{doc}");
     assert_eq!(found[0]["sub_kind"], "extra");
-    assert_eq!(found[0]["workweave"], "s1");
+    assert_eq!(found[0]["workweave"], format!("{PROJECT}--s1"));
     assert_eq!(drift_for(&doc, KEPT), Vec::<Value>::new());
 }

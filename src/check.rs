@@ -5,7 +5,7 @@
 
 use crate::git::RWV_MERGE_DRIVER_PREFIX;
 use crate::integration::{Issue, IssueKind};
-use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoPath, Role, WorkweaveName};
+use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoPath, Role, WorkweaveId};
 use crate::refusal::{refusal, RefusalKind};
 use crate::vcs::{RawRevisionId, ReplayExclusionState, ResolvedRevisionId};
 use crate::workspace::{
@@ -45,8 +45,8 @@ pub enum CheckViolation {
     /// permissions its role asks for: writable in a `reference` member, or
     /// read-only in any other. `files` counts them.
     MemberPermissions {
-        /// Workweave name; `None` for the primary weave.
-        workweave: Option<WorkweaveName>,
+        /// `None` for the primary weave.
+        workweave: Option<WorkweaveId>,
         repo: RepoPath,
         kind: PermissionsKind,
         files: usize,
@@ -89,9 +89,9 @@ pub enum CheckViolation {
     /// nothing at the slot, or a symlink there — or, for [`DriftKind::Extra`],
     /// a checkout the lock still names and the manifest no longer does.
     WorkweaveDrift {
-        /// Workweave name; `None` for the canonical clone in the primary
-        /// weave, which only [`DriftKind::Extra`] reports.
-        workweave: Option<WorkweaveName>,
+        /// `None` for the canonical clone in the primary weave, which only
+        /// [`DriftKind::Extra`] reports.
+        workweave: Option<WorkweaveId>,
         kind: DriftKind,
         repo: RepoPath,
     },
@@ -99,8 +99,8 @@ pub enum CheckViolation {
     /// A git repo's index does not match its HEAD tree (silent stale-index from
     /// shared-ref advance in a sibling worktree).
     IndexDrift {
-        /// Workweave name; `None` for repos in the primary weave.
-        workweave: Option<WorkweaveName>,
+        /// `None` for repos in the primary weave.
+        workweave: Option<WorkweaveId>,
         repo: RepoPath,
         kind: IndexDriftKind,
     },
@@ -108,7 +108,7 @@ pub enum CheckViolation {
     /// A git repo's working-tree files do not match its HEAD tree (stale on-disk
     /// content after shared-ref advance in a sibling worktree).
     WorkingTreeDrift {
-        workweave: Option<WorkweaveName>,
+        workweave: Option<WorkweaveId>,
         repo: RepoPath,
         kind: WorkingTreeDriftKind,
     },
@@ -423,10 +423,10 @@ pub enum CheckViolation {
     /// construction (the only state being dropped is a pointer to a
     /// directory that already is not there).
     StaleWorktreeRegistration {
-        /// Workweave name when the *registering* repo (the one that holds
-        /// the stale `.git/worktrees/` entry) lives inside a workweave;
-        /// `None` when the registering repo is in the primary weave.
-        workweave: Option<WorkweaveName>,
+        /// The workweave the *registering* repo (the one that holds the
+        /// stale `.git/worktrees/` entry) lives in; `None` when it is in the
+        /// primary weave.
+        workweave: Option<WorkweaveId>,
         /// The registering repo's manifest-relative path.
         repo: RepoPath,
         /// Absolute path of the missing worktree directory, as recorded
@@ -571,8 +571,8 @@ pub enum CheckViolation {
     /// (redundant, safely droppable) vs unreachable (the savepoint is
     /// the last pointer to discarded work; keep).
     OrphanedSavepoint {
-        /// Workweave name when the holding repo is inside a workweave.
-        workweave: Option<WorkweaveName>,
+        /// The workweave the holding repo lives in; `None` for the primary.
+        workweave: Option<WorkweaveId>,
         /// The holding repo's manifest-relative path.
         repo: RepoPath,
         /// Opaque op-id captured from the savepoint ref's trailing path
@@ -627,9 +627,9 @@ pub enum CheckViolation {
     /// (same as [`CheckViolation::DanglingReference`]), then re-run `rwv doctor` to verify.
     /// No auto-fix — doctor never clones (network stays behind explicit verbs).
     MissingCanonicalClone {
-        /// Workweave name (always `Some`; this finding only fires for
-        /// workweave worktrees, never for primary-weave repos).
-        workweave: WorkweaveName,
+        /// This finding only fires for workweave worktrees, never for
+        /// primary-weave repos.
+        workweave: WorkweaveId,
         /// Manifest-relative path to the affected repo.
         repo: RepoPath,
         /// Absolute path of the canonical clone directory that is missing.
@@ -643,8 +643,7 @@ pub enum CheckViolation {
     /// Warning severity. Detection reads only local data. The paths are
     /// split by [`SubmoduleCommitKind`] into one finding per sub-kind.
     UninitializedSubmodule {
-        /// Workweave name.
-        workweave: WorkweaveName,
+        workweave: WorkweaveId,
         /// Manifest-relative path to the repo that has uninitialized submodules.
         repo: RepoPath,
         sub_kind: SubmoduleCommitKind,
@@ -1844,7 +1843,7 @@ pub enum ViolationOutput {
     MemberPermissions {
         path: String,
         absolute_path: String,
-        /// `None` for the primary weave.
+        /// The workweave's identity, `<project>--<name>`; `None` for the primary weave.
         workweave: Option<String>,
         #[serde(rename = "sub_kind")]
         sub_kind: PermissionsKind,
@@ -1872,7 +1871,8 @@ pub enum ViolationOutput {
     WorkweaveDrift {
         path: String,
         absolute_path: String,
-        /// `None` for the canonical clone in the primary weave.
+        /// The workweave's identity, `<project>--<name>`; `None` for the canonical clone in the
+        /// primary weave.
         workweave: Option<String>,
         #[serde(rename = "sub_kind")]
         sub_kind: DriftKind,
@@ -1880,7 +1880,7 @@ pub enum ViolationOutput {
     IndexDrift {
         path: String,
         absolute_path: String,
-        /// `None` for the primary weave.
+        /// The workweave's identity, `<project>--<name>`; `None` for the primary weave.
         workweave: Option<String>,
         #[serde(rename = "sub_kind")]
         sub_kind: IndexDriftKind,
@@ -1888,7 +1888,7 @@ pub enum ViolationOutput {
     WorkingTreeDrift {
         path: String,
         absolute_path: String,
-        /// `None` for the primary weave.
+        /// The workweave's identity, `<project>--<name>`; `None` for the primary weave.
         workweave: Option<String>,
         #[serde(rename = "sub_kind")]
         sub_kind: WorkingTreeDriftKind,
@@ -2023,7 +2023,7 @@ pub enum ViolationOutput {
     StaleWorktreeRegistration {
         path: String,
         absolute_path: String,
-        /// `None` for the primary weave.
+        /// The workweave's identity, `<project>--<name>`; `None` for the primary weave.
         workweave: Option<String>,
         /// Absolute path of the missing worktree directory.
         missing_path: String,
@@ -2072,7 +2072,7 @@ pub enum ViolationOutput {
     OrphanedSavepoint {
         path: String,
         absolute_path: String,
-        /// `None` for the primary weave.
+        /// The workweave's identity, `<project>--<name>`; `None` for the primary weave.
         workweave: Option<String>,
         /// Opaque op-id from the savepoint ref's trailing path component.
         op_id: String,
@@ -2116,7 +2116,7 @@ pub enum ViolationOutput {
         path: String,
         /// Absolute path of the worktree checkout in the workweave.
         absolute_path: String,
-        /// Workweave name.
+        /// The workweave's identity, `<project>--<name>`.
         workweave: String,
         /// Absolute path of the canonical clone directory that is absent.
         canonical_path: String,
@@ -2128,7 +2128,7 @@ pub enum ViolationOutput {
         absolute_path: String,
         /// Manifest-relative path to the repo.
         path: String,
-        /// Workweave name.
+        /// The workweave's identity, `<project>--<name>`.
         workweave: String,
         #[serde(rename = "sub_kind")]
         sub_kind: SubmoduleCommitKind,
@@ -2176,15 +2176,15 @@ impl ViolationOutput {
     pub fn from_violation(
         violation: CheckViolation,
         workspace_dir: &Path,
-        workweave_dirs: &std::collections::HashMap<WorkweaveName, std::path::PathBuf>,
+        workweave_dirs: &std::collections::HashMap<WorkweaveId, std::path::PathBuf>,
     ) -> Self {
         fn abs(workspace_dir: &Path, repo: &RepoPath) -> String {
             crate::path_spelling::wire_path(&workspace_dir.join(repo.as_path()))
         }
         fn abs_in(
-            workweave: &Option<WorkweaveName>,
+            workweave: &Option<WorkweaveId>,
             workspace_dir: &Path,
-            workweave_dirs: &std::collections::HashMap<WorkweaveName, std::path::PathBuf>,
+            workweave_dirs: &std::collections::HashMap<WorkweaveId, std::path::PathBuf>,
             repo: &RepoPath,
         ) -> String {
             let root = workweave
@@ -2570,7 +2570,7 @@ impl ViolationOutput {
                 Self::UninitializedSubmodule {
                     absolute_path,
                     path: repo.to_string(),
-                    workweave: workweave.as_str().to_string(),
+                    workweave: workweave.to_string(),
                     sub_kind,
                     empty_paths,
                 }
@@ -3202,12 +3202,12 @@ fn scan_registry_reconciliation(vcs: &dyn crate::vcs::Vcs, ws_root: &Path) -> Ve
     // not a fact about it — `unreadable-workweave-index` above is.
     let mut seen_orphans: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
     for container in workweave_containers_for_scan(ws_root) {
-        for (project, name, dir) in crate::workweave::doctor_scan_container(ws_root, &container) {
-            if unreadable_index_projects.contains(project.as_str()) {
+        for (workweave, dir) in crate::workweave::doctor_scan_container(ws_root, &container) {
+            if unreadable_index_projects.contains(workweave.project.as_str()) {
                 continue;
             }
             let canonical = dir.canonicalize().unwrap_or_else(|_| dir.clone());
-            let key = (project.as_str().to_string(), canonical.clone());
+            let key = (workweave.project.as_str().to_string(), canonical.clone());
             if recorded_valid_paths.contains(&key) {
                 continue;
             }
@@ -3217,8 +3217,8 @@ fn scan_registry_reconciliation(vcs: &dyn crate::vcs::Vcs, ws_root: &Path) -> Ve
             violations.push(CheckViolation::WorkweaveTreeIntegrity {
                 workweave_dir: dir,
                 sub_kind: WorkweaveTreeIntegrityKind::UnregisteredWorkweave {
-                    project: project.as_str().to_string(),
-                    workweave_name: name,
+                    project: workweave.project.as_str().to_string(),
+                    workweave_name: workweave.name.as_str().to_string(),
                 },
             });
         }
@@ -4536,7 +4536,7 @@ impl RecordedRefs {
         // The container walk is hoisted: it is the expensive part, and it
         // does not vary by project. It is also skipped entirely on a weave
         // with no receipts, which is every weave until the migration runs.
-        let mut workweave_dirs: Option<Vec<(String, PathBuf)>> = None;
+        let mut workweave_dirs: Option<Vec<(WorkweaveId, PathBuf)>> = None;
         for name in crate::workspace::discover_projects(ws_root) {
             let registry = RefRegistry::for_project(ws_root, &name);
             // A legacy index reads as "no receipts", which is the
@@ -4640,17 +4640,13 @@ impl RecordedRefs {
 fn live_workweave_names(
     ws_root: &Path,
     project: &ProjectName,
-    workweave_dirs: &[(String, PathBuf)],
+    workweave_dirs: &[(WorkweaveId, PathBuf)],
 ) -> Vec<String> {
-    let mut names: BTreeSet<String> = BTreeSet::new();
-
-    for (name, dir) in workweave_dirs {
-        if let Ok(Some(marker)) = crate::workspace::WorkweaveMarker::read(dir) {
-            if marker.project().as_str() == project.as_str() {
-                names.insert(name.clone());
-            }
-        }
-    }
+    let mut names: BTreeSet<String> = workweave_dirs
+        .iter()
+        .filter(|(id, _)| &id.project == project)
+        .map(|(id, _)| id.name.as_str().to_owned())
+        .collect();
 
     if let Ok(Some(index)) = crate::workweave_index::read(ws_root, project) {
         for (name, path) in &index.workweaves {
@@ -4719,22 +4715,15 @@ fn scan_workweave_repo_branches(
     _ws_root: &Path,
     recorded: &RecordedRefs,
     workweave_dir: &Path,
-    project_name: &str,
-    workweave_name: &str,
+    workweave: &WorkweaveId,
     out: &mut Vec<CheckViolation>,
 ) {
     use crate::vcs::{EphemeralRefName, HeadAttachment};
 
-    let Ok(project) = ProjectName::new(project_name) else {
-        return;
-    };
-    let Ok(workweave) = crate::manifest::WorkweaveName::new(workweave_name) else {
-        return;
-    };
-    let flat = EphemeralRefName::mint(&project, &workweave);
+    let flat = EphemeralRefName::mint(&workweave.project, &workweave.name);
     let expected_ref = flat.to_string();
 
-    for abs in workweave_checkouts(vcs, workweave_dir, project_name) {
+    for abs in workweave_checkouts(vcs, workweave_dir, workweave.project.as_str()) {
         // The receipt, if any, lives in this checkout's canonical store —
         // resolved from the checkout itself rather than assembled from the
         // primary and a manifest path, so an inverted topology reports
@@ -5274,12 +5263,8 @@ fn live_minted_ref_names(ws_root: &Path) -> Vec<crate::vcs::EphemeralRefName> {
     // a workweave whose `projects/<project>/` slot is missing is still a
     // workweave, and treating its live ref as an orphan is the direction
     // that turns a real branch into a "leftover".
-    for (name, dir) in crate::workweave::list_workweave_dirs(ws_root) {
-        if let Ok(Some(marker)) = crate::workspace::WorkweaveMarker::read(&dir) {
-            if let Ok(workweave_name) = crate::manifest::WorkweaveName::new(&name) {
-                out.push(EphemeralRefName::mint(marker.project(), &workweave_name));
-            }
-        }
+    for (id, _) in crate::workweave::list_workweave_dirs(ws_root) {
+        out.push(EphemeralRefName::mint(&id.project, &id.name));
     }
     // The indexes, which are the only record of a `--dir` placement outside
     // every container. Consulted only for entries whose directory
@@ -5448,10 +5433,7 @@ pub fn scan_uninitialized_submodules_in_workweaves(
 ) -> Vec<CheckViolation> {
     let mut violations = Vec::new();
 
-    for (workweave_name_str, workweave_dir) in crate::workweave::list_workweave_dirs(ws_root) {
-        let Ok(workweave_name) = WorkweaveName::new(workweave_name_str) else {
-            continue;
-        };
+    for (workweave, workweave_dir) in crate::workweave::list_workweave_dirs(ws_root) {
         for project in projects {
             for (repo_path, entry) in project.manifest.iter_entries() {
                 if entry.submodules == crate::manifest::Submodules::Skip {
@@ -5475,7 +5457,7 @@ pub fn scan_uninitialized_submodules_in_workweaves(
                 ] {
                     if !empty_paths.is_empty() {
                         violations.push(CheckViolation::UninitializedSubmodule {
-                            workweave: workweave_name.clone(),
+                            workweave: workweave.clone(),
                             repo: repo_path.clone(),
                             sub_kind,
                             empty_paths,
@@ -5555,7 +5537,7 @@ fn repair_uninitialized_submodules(
 fn workweaves_in_scope(
     ctx: &crate::workspace::WorkspaceContext,
     project_scope: Option<&str>,
-) -> Vec<(WorkweaveName, PathBuf, Project)> {
+) -> Vec<(WorkweaveId, PathBuf, Project)> {
     use crate::workspace::Checkout;
 
     let workweave_dirs: Vec<PathBuf> = match &ctx.checkout {
@@ -5573,15 +5555,18 @@ fn workweaves_in_scope(
             if project_scope.is_some_and(|scope| project.as_str() != scope) {
                 return None;
             }
-            let workweave = crate::workweave::workweave_name_for_path(
+            let name = crate::workweave::workweave_name_for_path(
                 ctx.primary_path(),
                 &project,
                 &workweave_dir,
             )
             .ok()??;
-            let loaded =
-                Project::from_dir(&project_dir(&workweave_dir, project.as_str()), project).ok()?;
-            Some((workweave, workweave_dir, loaded))
+            let loaded = Project::from_dir(
+                &project_dir(&workweave_dir, project.as_str()),
+                project.clone(),
+            )
+            .ok()?;
+            Some((WorkweaveId { project, name }, workweave_dir, loaded))
         })
         .collect()
 }
@@ -5589,7 +5574,7 @@ fn workweaves_in_scope(
 /// A member checkout doctor answers for, with the role its files hold
 /// ([`crate::settle::role_held`]).
 struct MemberSlot {
-    workweave: Option<WorkweaveName>,
+    workweave: Option<WorkweaveId>,
     checkout: PathBuf,
     repo: RepoPath,
     vcs_type: crate::manifest::VcsType,
@@ -5609,7 +5594,7 @@ fn member_slots(
 
     let mut slots: Vec<MemberSlot> = Vec::new();
     let mut seen: BTreeSet<PathBuf> = BTreeSet::new();
-    let mut push = |workweave: Option<WorkweaveName>, dir: &Path, project: &Project| {
+    let mut push = |workweave: Option<WorkweaveId>, dir: &Path, project: &Project| {
         for (repo, entry) in project.manifest.iter_entries() {
             let checkout = dir.join(repo.as_path());
             if checkout.is_symlink() || !checkout.is_dir() || !seen.insert(checkout.clone()) {
@@ -5708,7 +5693,7 @@ fn repair_member_permissions(
     violations: Vec<CheckViolation>,
     fix_errors: &mut Vec<String>,
 ) -> Vec<CheckViolation> {
-    let mut settled: std::collections::HashSet<(Option<WorkweaveName>, RepoPath)> =
+    let mut settled: std::collections::HashSet<(Option<WorkweaveId>, RepoPath)> =
         std::collections::HashSet::new();
     for slot in member_slots(ctx, projects, project_scope) {
         let location = match &slot.workweave {
@@ -5746,9 +5731,8 @@ fn repair_member_permissions(
 /// A member of a workweave with no worktree there: nothing at its slot while
 /// the workweave's `rwv.lock` pins it, or a symlink.
 struct MemberGap {
-    workweave: WorkweaveName,
+    workweave: WorkweaveId,
     workweave_dir: PathBuf,
-    project: ProjectName,
     repo: RepoPath,
     vcs_type: crate::manifest::VcsType,
     role: Role,
@@ -5789,7 +5773,6 @@ fn scan_member_gaps(
 ) -> Vec<MemberGap> {
     let mut gaps = Vec::new();
     for (workweave, workweave_dir, loaded) in workweaves_in_scope(ctx, project_scope) {
-        let project = loaded.name.clone();
         for (repo, entry) in loaded.manifest.iter_entries() {
             let slot = workweave_dir.join(repo.as_path());
             let symlinked = crate::workweave::is_symlinked_member(&slot);
@@ -5818,7 +5801,6 @@ fn scan_member_gaps(
             gaps.push(MemberGap {
                 workweave: workweave.clone(),
                 workweave_dir: workweave_dir.clone(),
-                project: project.clone(),
                 repo: repo.clone(),
                 vcs_type: entry.vcs_type,
                 role: entry.role,
@@ -5854,7 +5836,7 @@ fn scan_leftover_checkouts(
             .map(|(repo, _)| repo.clone())
             .collect()
     };
-    let drift = |workweave: Option<WorkweaveName>, repo: RepoPath| CheckViolation::WorkweaveDrift {
+    let drift = |workweave: Option<WorkweaveId>, repo: RepoPath| CheckViolation::WorkweaveDrift {
         workweave,
         kind: DriftKind::Extra,
         repo,
@@ -5907,8 +5889,8 @@ fn repair_member_gaps(
             vcs.as_ref(),
             ctx.primary_path(),
             &gap.workweave_dir,
-            &gap.project,
-            &gap.workweave,
+            &gap.workweave.project,
+            &gap.workweave.name,
             &gap.repo,
             gap.role,
             gap.submodules,
@@ -5959,8 +5941,8 @@ fn repair_standalone_members(
                 vcs.as_ref(),
                 ctx.primary_path(),
                 &workweave_dir,
-                &loaded.name,
-                &workweave,
+                &workweave.project,
+                &workweave.name,
                 repo,
                 entry.role,
                 entry.submodules,
@@ -6007,24 +5989,13 @@ pub fn scan_branch_discipline(
 
     // (a) workweave-branch: per workweave under .workweaves/, per repo
     // checkout, validate the HEAD symbolic-ref prefix.
-    for (workweave_name, workweave_dir) in crate::workweave::list_workweave_dirs(ws_root) {
-        // Resolve the project name from the workweave marker — the marker
-        // is authoritative (`workspace::WorkweaveMarker::read`) and is
-        // already required to exist by the tree-integrity scanner.
-        let marker = match crate::workspace::WorkweaveMarker::read(&workweave_dir) {
-            Ok(Some(m)) => m,
-            // Missing or unparseable marker → tree-integrity scan owns the
-            // reporting; do not pile on a noisy branch-discipline finding
-            // for the same directory.
-            _ => continue,
-        };
+    for (workweave, workweave_dir) in crate::workweave::list_workweave_dirs(ws_root) {
         scan_workweave_repo_branches(
             vcs,
             ws_root,
             &recorded,
             &workweave_dir,
-            marker.project().as_str(),
-            &workweave_name,
+            &workweave,
             &mut violations,
         );
     }
@@ -6048,9 +6019,9 @@ pub fn scan_branch_discipline(
 /// same `(workweave, abs, repo_path)` shape here keeps the input contract
 /// uniform across check kinds.
 pub struct StateHygieneScanTarget {
-    /// Workweave name when the repo lives inside a workweave; `None` for
-    /// repos in the primary weave.
-    pub workweave: Option<WorkweaveName>,
+    /// The workweave the repo lives in; `None` for repos in the primary
+    /// weave.
+    pub workweave: Option<WorkweaveId>,
     /// Absolute path to the repo on disk.
     pub abs: PathBuf,
     /// Manifest-relative repo path (used to build the violation's `path`).
@@ -6503,12 +6474,9 @@ pub fn fix_branch_model_migration(
     let mut applied = Vec::new();
     let mut errors = Vec::new();
 
-    for (workweave_name, workweave_dir) in crate::workweave::list_workweave_dirs(ws_root) {
-        let Ok(Some(marker)) = crate::workspace::WorkweaveMarker::read(&workweave_dir) else {
-            continue;
-        };
+    for (workweave, workweave_dir) in crate::workweave::list_workweave_dirs(ws_root) {
         if let Some(active) = active_project {
-            if marker.project().as_str() != active {
+            if workweave.project.as_str() != active {
                 continue;
             }
         }
@@ -6524,20 +6492,10 @@ pub fn fix_branch_model_migration(
             continue;
         }
 
-        let workweave_name_typed = match crate::manifest::WorkweaveName::new(&workweave_name) {
-            Ok(n) => n,
-            Err(e) => {
-                errors.push(format!(
-                    "{}: skipped the branch-model migration — {e:#}",
-                    workweave_dir.display()
-                ));
-                continue;
-            }
-        };
-        let flat = EphemeralRefName::mint(marker.project(), &workweave_name_typed);
-        let mut registry = RefRegistry::for_project(ws_root, marker.project());
+        let flat = EphemeralRefName::mint(&workweave.project, &workweave.name);
+        let mut registry = RefRegistry::for_project(ws_root, &workweave.project);
 
-        for abs in workweave_checkouts(vcs, &workweave_dir, marker.project().as_str()) {
+        for abs in workweave_checkouts(vcs, &workweave_dir, workweave.project.as_str()) {
             let store = crate::workweave::receipt_store_for(vcs, &abs);
             let (flat_present, legacy_refs) = refs_in_workweave_namespace(vcs, &store, &flat);
 
@@ -7649,7 +7607,9 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                     };
                     format!(
                         "workweave drift in {}: {kind_str} {repo}{hint}",
-                        workweave.as_ref().map_or("the primary", |w| w.as_str())
+                        workweave
+                            .as_ref()
+                            .map_or_else(|| "the primary".to_owned(), WorkweaveId::to_string)
                     )
                 }
                 CheckViolation::IndexDrift {
@@ -9191,15 +9151,12 @@ fn apply_finding_repairs(
     ctx: &crate::workspace::WorkspaceContext,
     world: &DoctorWorld,
     violations: Vec<CheckViolation>,
-    repo_locations: &std::collections::HashMap<
-        (Option<WorkweaveName>, RepoPath),
-        std::path::PathBuf,
-    >,
+    repo_locations: &std::collections::HashMap<(Option<WorkweaveId>, RepoPath), std::path::PathBuf>,
     fix_errors: &mut Vec<String>,
 ) -> Vec<CheckViolation> {
     let vcs = world.vcs.as_ref();
 
-    let location_of = |workweave: &Option<WorkweaveName>, repo: &RepoPath| match workweave {
+    let location_of = |workweave: &Option<WorkweaveId>, repo: &RepoPath| match workweave {
         Some(ww) => format!("{ww}/{repo}"),
         None => format!("{repo}"),
     };
@@ -10103,7 +10060,7 @@ pub fn build_doctor_json(
     violations: Vec<CheckViolation>,
     issues: Vec<Issue>,
     workspace_dir: &Path,
-    workweave_dirs: &std::collections::HashMap<WorkweaveName, std::path::PathBuf>,
+    workweave_dirs: &std::collections::HashMap<WorkweaveId, std::path::PathBuf>,
     resolution: Option<Resolution>,
     plugins: Vec<crate::plugins::PluginRecord>,
     advisories: Vec<crate::workspace::AdvisoryOutput>,
@@ -10309,9 +10266,8 @@ enum ScanProgress {
 /// `--fix` arms need to act on a finding they did not scan for themselves.
 struct DoctorFindings {
     violations: Vec<CheckViolation>,
-    workweave_dirs: std::collections::HashMap<WorkweaveName, std::path::PathBuf>,
-    repo_locations:
-        std::collections::HashMap<(Option<WorkweaveName>, RepoPath), std::path::PathBuf>,
+    workweave_dirs: std::collections::HashMap<WorkweaveId, std::path::PathBuf>,
+    repo_locations: std::collections::HashMap<(Option<WorkweaveId>, RepoPath), std::path::PathBuf>,
 }
 
 /// The one place `rwv doctor` decides which scans run.
@@ -10506,10 +10462,10 @@ fn collect_doctor_violations(
     // manifest names, plus — from primary — each workweave's copy. Deduped by
     // `(workweave, abs)` so repos shared between projects cost one round of
     // git subprocesses, and classified in a single pass by `classify_drift`.
-    let mut workweave_dirs: std::collections::HashMap<WorkweaveName, std::path::PathBuf> =
+    let mut workweave_dirs: std::collections::HashMap<WorkweaveId, std::path::PathBuf> =
         std::collections::HashMap::new();
-    let mut index_scan: Vec<(Option<WorkweaveName>, std::path::PathBuf, RepoPath)> = Vec::new();
-    let mut scan_seen: std::collections::HashSet<(Option<WorkweaveName>, std::path::PathBuf)> =
+    let mut index_scan: Vec<(Option<WorkweaveId>, std::path::PathBuf, RepoPath)> = Vec::new();
+    let mut scan_seen: std::collections::HashSet<(Option<WorkweaveId>, std::path::PathBuf)> =
         std::collections::HashSet::new();
 
     let in_workweave = matches!(ctx.checkout, Checkout::Workweave { .. });
@@ -10526,19 +10482,16 @@ fn collect_doctor_violations(
     }
 
     if matches!(ctx.checkout, Checkout::Primary { .. }) {
-        for (ww_name_str, ww_dir) in crate::workweave::list_workweave_dirs(ctx.primary_path()) {
-            let Ok(ww_name) = WorkweaveName::new(ww_name_str) else {
-                continue;
-            };
-            workweave_dirs.insert(ww_name.clone(), ww_dir.clone());
+        for (ww, ww_dir) in crate::workweave::list_workweave_dirs(ctx.primary_path()) {
+            workweave_dirs.insert(ww.clone(), ww_dir.clone());
             for project in &input.projects {
                 for repo_path in project.manifest.iter_repo_paths() {
                     let abs = ww_dir.join(repo_path.as_path());
                     if crate::workweave::is_symlinked_member(&abs) {
                         continue;
                     }
-                    if abs.exists() && scan_seen.insert((Some(ww_name.clone()), abs.clone())) {
-                        index_scan.push((Some(ww_name.clone()), abs, repo_path.clone()));
+                    if abs.exists() && scan_seen.insert((Some(ww.clone()), abs.clone())) {
+                        index_scan.push((Some(ww.clone()), abs, repo_path.clone()));
                     }
                 }
             }
@@ -10561,10 +10514,10 @@ fn collect_doctor_violations(
         // fails every git command in it; classifying first would misreport
         // that as live edits. Only workweave entries can have one — a primary
         // entry IS the canonical store.
-        if let Some(ww_name) = ww_label {
+        if let Some(ww) = ww_label {
             if let Some(canonical_path) = worktree_canonical_clone_missing(repo_abs) {
                 violations.push(CheckViolation::MissingCanonicalClone {
-                    workweave: ww_name.clone(),
+                    workweave: ww.clone(),
                     repo: repo_path.clone(),
                     canonical_path,
                 });
@@ -10600,7 +10553,7 @@ fn collect_doctor_violations(
             repo: repo.clone(),
         })
         .collect();
-    let mut hygiene_seen: std::collections::HashSet<(Option<WorkweaveName>, std::path::PathBuf)> =
+    let mut hygiene_seen: std::collections::HashSet<(Option<WorkweaveId>, std::path::PathBuf)> =
         index_scan
             .iter()
             .map(|(ww, abs, _)| (ww.clone(), abs.clone()))
@@ -10619,13 +10572,13 @@ fn collect_doctor_violations(
                 repo: project_repo_path.clone(),
             });
         }
-        for (ww_name, ww_dir) in workweave_dirs.iter() {
+        for (ww, ww_dir) in workweave_dirs.iter() {
             let ww_project_abs = ww_dir.join(&project_rel);
             if ww_project_abs.is_dir()
-                && hygiene_seen.insert((Some(ww_name.clone()), ww_project_abs.clone()))
+                && hygiene_seen.insert((Some(ww.clone()), ww_project_abs.clone()))
             {
                 hygiene_targets.push(StateHygieneScanTarget {
-                    workweave: Some(ww_name.clone()),
+                    workweave: Some(ww.clone()),
                     abs: ww_project_abs,
                     repo: project_repo_path.clone(),
                 });

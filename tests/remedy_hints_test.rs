@@ -527,7 +527,9 @@ fn standalone_repair_names_the_fetch_of_the_workweaves_own_project() {
     rwv_ok(&ws, &fetch);
     let (_, fixed) = rwv(&seat, &["doctor", "--fix"]);
     assert!(
-        fixed.contains("[fixed] core: replaced the full clone of local/origins/x in workweave w"),
+        fixed.contains(
+            "[fixed] core: replaced the full clone of local/origins/x in workweave pb--w"
+        ),
         "{fixed}"
     );
     assert!(slot.join(".git").is_file(), "now a linked worktree");

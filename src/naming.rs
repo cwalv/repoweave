@@ -219,7 +219,7 @@ pub fn validate_ref_name(s: &str) -> Result<(), RefNameError> {
 ///     take(ProjectName::new(s)); // E0308: expected ProjectName, found Result<ProjectName, ProjectNameError>
 /// }
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(transparent)]
 pub struct ProjectName(String);
 
@@ -313,7 +313,7 @@ impl<'de> serde::Deserialize<'de> for ProjectName {
 ///     take(WorkweaveName::new(s)); // E0308: expected WorkweaveName, found Result<WorkweaveName, WorkweaveNameError>
 /// }
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(transparent)]
 pub struct WorkweaveName(String);
 
@@ -388,6 +388,26 @@ impl<'de> serde::Deserialize<'de> for WorkweaveName {
         let s = String::deserialize(deserializer)?;
         validate_workweave_name(&s).map_err(serde::de::Error::custom)?;
         Ok(WorkweaveName(s))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WorkweaveId
+// ---------------------------------------------------------------------------
+
+/// A workweave's identity: the project it belongs to and its name there.
+///
+/// A [`WorkweaveName`] alone identifies nothing, since two projects may each
+/// have a workweave of that name. Displays as the flat `<project>--<name>`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct WorkweaveId {
+    pub project: ProjectName,
+    pub name: WorkweaveName,
+}
+
+impl fmt::Display for WorkweaveId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&weave_dir_name(&self.project, &self.name))
     }
 }
 

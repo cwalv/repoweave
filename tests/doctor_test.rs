@@ -1047,7 +1047,7 @@ mod doctor_json {
         build_doctor_json, CheckViolation, DriftKind, IndexDriftKind, ReplayExclusionKind,
         ViolationOutput, WorkingTreeDriftKind, DOCTOR_SCHEMA_URL,
     };
-    use repoweave::manifest::{ProjectName, RepoPath, WorkweaveName};
+    use repoweave::manifest::{ProjectName, RepoPath, WorkweaveId, WorkweaveName};
     use repoweave::vcs::ResolvedRevisionId;
     use serde_json::Value;
     use std::collections::HashMap;
@@ -1328,22 +1328,26 @@ mod doctor_json {
         std::path::PathBuf::from("/ws")
     }
 
-    fn empty_workweave_dirs() -> HashMap<WorkweaveName, std::path::PathBuf> {
+    fn empty_workweave_dirs() -> HashMap<WorkweaveId, std::path::PathBuf> {
         HashMap::new()
+    }
+
+    fn ww1() -> WorkweaveId {
+        WorkweaveId {
+            project: ProjectName::new("proj").unwrap(),
+            name: WorkweaveName::new("ww1").unwrap(),
+        }
     }
 
     #[test]
     fn wire_workweave_drift_missing_sub_kind() {
         let v = CheckViolation::WorkweaveDrift {
-            workweave: Some(WorkweaveName::new("ww1").unwrap()),
+            workweave: Some(ww1()),
             kind: DriftKind::Missing,
             repo: RepoPath::new("github/a/b").expect("known-safe literal"),
         };
         let mut ww_dirs = empty_workweave_dirs();
-        ww_dirs.insert(
-            WorkweaveName::new("ww1").unwrap(),
-            std::path::PathBuf::from("/ws/.workweaves/proj--ww1"),
-        );
+        ww_dirs.insert(ww1(), std::path::PathBuf::from("/ws/.workweaves/proj--ww1"));
         let json = serde_json::to_value(ViolationOutput::from_violation(
             v,
             &workspace_dir(),
@@ -1354,7 +1358,10 @@ mod doctor_json {
             json.get("kind").and_then(|k| k.as_str()),
             Some("workweave-drift")
         );
-        assert_eq!(json.get("workweave").and_then(|s| s.as_str()), Some("ww1"));
+        assert_eq!(
+            json.get("workweave").and_then(|s| s.as_str()),
+            Some("proj--ww1")
+        );
         assert_eq!(
             json.get("sub_kind").and_then(|s| s.as_str()),
             Some("missing")
@@ -1373,7 +1380,7 @@ mod doctor_json {
     #[test]
     fn wire_workweave_drift_extra_sub_kind() {
         let v = CheckViolation::WorkweaveDrift {
-            workweave: Some(WorkweaveName::new("ww1").unwrap()),
+            workweave: Some(ww1()),
             kind: DriftKind::Extra,
             repo: RepoPath::new("github/a/b").expect("known-safe literal"),
         };
@@ -1423,7 +1430,7 @@ mod doctor_json {
             (WorkingTreeDriftKind::LiveEdits, "live-edits"),
         ] {
             let v = CheckViolation::WorkingTreeDrift {
-                workweave: Some(WorkweaveName::new("ww1").unwrap()),
+                workweave: Some(ww1()),
                 repo: RepoPath::new("github/a/b").expect("known-safe literal"),
                 kind,
             };
@@ -1441,7 +1448,10 @@ mod doctor_json {
                 json.get("sub_kind").and_then(|s| s.as_str()),
                 Some(expected_tag)
             );
-            assert_eq!(json.get("workweave").and_then(|s| s.as_str()), Some("ww1"));
+            assert_eq!(
+                json.get("workweave").and_then(|s| s.as_str()),
+                Some("proj--ww1")
+            );
         }
     }
 

@@ -30,7 +30,8 @@
 
 use crate::cli::consent::DiscardUnmergedConsent;
 use crate::manifest::{
-    project_repo_key, LockFile, Manifest, ProjectName, RepoPath, Role, Submodules, WorkweaveName,
+    project_repo_key, LockFile, Manifest, ProjectName, RepoPath, Role, Submodules, WorkweaveId,
+    WorkweaveName,
 };
 use crate::refusal::RefusalKind;
 use crate::share::{FilePlacement, FilePrimitives, Filesystem};
@@ -2969,7 +2970,7 @@ fn adopt_children_of(retiree_dir: &Path, primary_root: &Path) {
     // against it defensively.
     let new_parent_canonical = CanonicalPath::of(&new_parent);
 
-    for (child_name, child_dir) in list_workweave_dirs(primary_root) {
+    for (child, child_dir) in list_workweave_dirs(primary_root) {
         let child_canonical = CanonicalPath::of(&child_dir);
         // Never re-point the retiree's own marker.
         if child_canonical == retiree_canonical {
@@ -2985,7 +2986,7 @@ fn adopt_children_of(retiree_dir: &Path, primary_root: &Path) {
         // Defensive: don't create a self-parent marker.
         if new_parent_canonical == child_canonical {
             eprintln!(
-                "warning: not adopting child workweave {child_name}: adoptive parent \
+                "warning: not adopting child workweave {child}: adoptive parent \
                  {} is the child itself; run `rwv doctor --fix` to re-point to primary",
                 new_parent.display()
             );
@@ -2994,13 +2995,13 @@ fn adopt_children_of(retiree_dir: &Path, primary_root: &Path) {
         marker.repoint_parent(&new_parent);
         if let Err(e) = marker.write(&child_dir) {
             eprintln!(
-                "warning: failed to adopt child workweave {child_name}: could not rewrite \
+                "warning: failed to adopt child workweave {child}: could not rewrite \
                  marker ({e:#}); run `rwv doctor --fix` to re-point its parent"
             );
             continue;
         }
         eprintln!(
-            "adopted child workweave {child_name}: parent now {}",
+            "adopted child workweave {child}: parent now {}",
             new_parent.display()
         );
     }
@@ -3617,8 +3618,8 @@ fn list_workweave_dirs_for_project(
     Ok(result)
 }
 
-/// Return `(name, path)` pairs for every marker-bearing workweave directory
-/// under `ws_root`'s primary, across every workweave container.
+/// Every marker-bearing workweave directory under `ws_root`'s primary, across
+/// every workweave container, with its identity.
 ///
 /// **Scanning-based, not registry-backed.** Consumers that need to see every
 /// workweave regardless of registry state — doctor's per-workweave drift
@@ -3631,7 +3632,7 @@ fn list_workweave_dirs_for_project(
 /// Enumerates every unique container (default `<parent-of-primary>/.workweaves`
 /// plus every recorded per-project container) and returns marker-bearing
 /// directories whose `.rwv-workweave` `primary` canonicalizes to `ws_root`.
-pub fn list_workweave_dirs(ws_root: &Path) -> Vec<(String, PathBuf)> {
+pub fn list_workweave_dirs(ws_root: &Path) -> Vec<(WorkweaveId, PathBuf)> {
     let mut containers: Vec<PathBuf> = Vec::new();
     let push_unique = |p: PathBuf, containers: &mut Vec<PathBuf>| {
         let canonical = p.canonicalize().unwrap_or(p);
@@ -3647,12 +3648,12 @@ pub fn list_workweave_dirs(ws_root: &Path) -> Vec<(String, PathBuf)> {
     }
 
     let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
-    let mut result: Vec<(String, PathBuf)> = Vec::new();
+    let mut result: Vec<(WorkweaveId, PathBuf)> = Vec::new();
     for container in &containers {
-        for (_project, name, dir) in doctor_scan_container(ws_root, container) {
+        for (id, dir) in doctor_scan_container(ws_root, container) {
             let canonical = dir.canonicalize().unwrap_or_else(|_| dir.clone());
             if seen.insert(canonical) {
-                result.push((name, dir));
+                result.push((id, dir));
             }
         }
     }
@@ -3663,9 +3664,8 @@ pub fn list_workweave_dirs(ws_root: &Path) -> Vec<(String, PathBuf)> {
 /// Container-scoped scan used ONLY by doctor for reconciliation.
 ///
 /// Enumerates directories on disk under `container` that carry a valid
-/// `.rwv-workweave` marker whose `primary` resolves to `ws_root`. Returns
-/// `(project, name, path)` triples so doctor can tell which project a
-/// discovered workweave belongs to (for orphan / stale reporting).
+/// `.rwv-workweave` marker whose `primary` resolves to `ws_root`, each with
+/// its identity.
 ///
 /// **Identity is by record, never by name shape.** The PROJECT comes from
 /// the marker — the record the directory itself carries — and the NAME
@@ -3683,10 +3683,7 @@ pub fn list_workweave_dirs(ws_root: &Path) -> Vec<(String, PathBuf)> {
 ///
 /// This is the ONLY surviving on-disk scan (the pre-registry list/delete
 /// scan was deleted). Every other code path resolves via the registry.
-pub fn doctor_scan_container(
-    ws_root: &Path,
-    container: &Path,
-) -> Vec<(ProjectName, String, PathBuf)> {
+pub fn doctor_scan_container(ws_root: &Path, container: &Path) -> Vec<(WorkweaveId, PathBuf)> {
     let mut result = Vec::new();
     let entries = match std::fs::read_dir(container) {
         Ok(e) => e,
@@ -3710,18 +3707,24 @@ pub fn doctor_scan_container(
             .ok()
             .flatten();
         let name = match recorded {
-            Some(n) => n.as_str().to_string(),
+            Some(n) => n,
             None => match workweave_name_in(&project_name, &dir_name) {
-                Some(from_basename) => from_basename.as_str().to_string(),
+                Some(from_basename) => from_basename,
                 // No record, and a basename this project could not have
                 // rendered: identity is not recoverable. The misnamed-dir
                 // finding owns this state.
                 None => continue,
             },
         };
-        result.push((project_name, name, dir));
+        result.push((
+            WorkweaveId {
+                project: project_name,
+                name,
+            },
+            dir,
+        ));
     }
-    result.sort_by(|a, b| (a.0.as_str().cmp(b.0.as_str())).then(a.1.cmp(&b.1)));
+    result.sort_by(|a, b| a.0.cmp(&b.0));
     result
 }
 

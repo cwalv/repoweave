@@ -36,7 +36,7 @@ use repoweave::check::{
 };
 use repoweave::integration::MemberIncompatibility;
 use repoweave::integration::{Issue, IssueKind, Severity};
-use repoweave::manifest::{ProjectName, RepoPath, WorkweaveName};
+use repoweave::manifest::{ProjectName, RepoPath, WorkweaveId, WorkweaveName};
 use repoweave::plugins::PluginRecord;
 use repoweave::vcs::ResolvedRevisionId;
 use repoweave::workspace::Resolution;
@@ -72,8 +72,11 @@ fn repo() -> RepoPath {
     RepoPath::new("github/acme/repo").unwrap()
 }
 
-fn workweave() -> WorkweaveName {
-    WorkweaveName::new("feat-a").unwrap()
+fn workweave() -> WorkweaveId {
+    WorkweaveId {
+        project: project(),
+        name: WorkweaveName::new("feat-a").unwrap(),
+    }
 }
 
 /// Samples chosen for the schema constructs they exercise, not for variant
