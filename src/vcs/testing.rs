@@ -518,11 +518,15 @@ impl Vcs for FakeVcs {
         unsupported("count_commits_in_range")
     }
 
-    fn create_savepoint(&self, _repo: &Path, _op_id: &str) -> Result<ResolvedRevisionId, VcsError> {
+    fn create_savepoint(
+        &self,
+        _repo: &Path,
+        _key: &SavepointKey,
+    ) -> Result<ResolvedRevisionId, VcsError> {
         unsupported("create_savepoint")
     }
 
-    fn savepoint_label(&self, _op_id: &str) -> String {
+    fn savepoint_label(&self, _key: &SavepointKey) -> String {
         unsupported("savepoint_label")
     }
 
@@ -530,31 +534,31 @@ impl Vcs for FakeVcs {
         unsupported("savepoint_namespace")
     }
 
-    fn resolve_savepoint(&self, _repo: &Path, _op_id: &str) -> Option<ResolvedRevisionId> {
+    fn resolve_savepoint(&self, _repo: &Path, _key: &SavepointKey) -> Option<ResolvedRevisionId> {
         unsupported("resolve_savepoint")
     }
 
-    fn drop_savepoint(&self, _repo: &Path, _op_id: &str) {
+    fn drop_savepoint(&self, _repo: &Path, _key: &SavepointKey) {
         unsupported("drop_savepoint")
     }
 
     fn create_pre_abort_ref(
         &self,
         _repo: &Path,
-        _op_id: &str,
+        _key: &SavepointKey,
         _foreign_tip_policy: ForeignTipPolicy,
     ) -> Result<PreAbortRef, VcsError> {
         unsupported("create_pre_abort_ref")
     }
 
-    fn resolve_pre_abort_ref(&self, _repo: &Path, _op_id: &str) -> Option<PreAbortRef> {
+    fn resolve_pre_abort_ref(&self, _repo: &Path, _key: &SavepointKey) -> Option<PreAbortRef> {
         unsupported("resolve_pre_abort_ref")
     }
 
     fn verified_restore_savepoint(
         &self,
         _repo: &Path,
-        _op_id: &str,
+        _key: &SavepointKey,
         _recorded_intent_tip: Option<&CommitId>,
         _recorded_converged_tip: Option<&CommitId>,
         _foreign_tip_policy: ForeignTipPolicy,
@@ -614,8 +618,8 @@ impl Vcs for FakeVcs {
         unsupported("live_worktree_branches")
     }
 
-    fn list_savepoint_op_ids(&self, _repo: &Path) -> Result<Vec<String>, VcsError> {
-        unsupported("list_savepoint_op_ids")
+    fn list_savepoints(&self, _repo: &Path) -> Result<Vec<SavepointKey>, VcsError> {
+        unsupported("list_savepoints")
     }
 
     fn read_file_at_revision(

@@ -97,7 +97,7 @@ fn a_mid_operation_token_without_its_prefix_or_name_does_not_parse() {
 }
 
 #[test]
-fn sync_strategy_displays_parses_and_is_offered_as_the_token_it_serializes_to() {
+fn sync_strategy_displays_reads_and_is_offered_as_the_token_it_serializes_to() {
     let variants = SyncStrategy::value_variants();
     assert!(variants.len() > 1, "{variants:?}");
     for variant in variants {
@@ -109,9 +109,9 @@ fn sync_strategy_displays_parses_and_is_offered_as_the_token_it_serializes_to() 
             "{variant:?}: the name `--strategy` accepts"
         );
         assert_eq!(
-            token.parse::<SyncStrategy>().unwrap(),
+            serde_json::from_value::<SyncStrategy>(Value::String(token)).unwrap(),
             *variant,
-            "{variant:?}: parsed back from its own token"
+            "{variant:?}: read back from its own token"
         );
     }
 }

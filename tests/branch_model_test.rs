@@ -24,6 +24,7 @@
 
 use repoweave::git::git_vcs;
 use repoweave::manifest::{ProjectName, WorkweaveName};
+use repoweave::op_state::SavepointKey;
 use repoweave::vcs::{
     EphemeralRefName, HeadAttachment, MidOperation, RawRefName, RefNameError, ResolvedRevisionId,
     TrackingRef, VcsError,
@@ -795,15 +796,27 @@ fn resolved_revisions_from_ref_resolution_are_canonical_by_construction() {
     }
 }
 
+fn key(op: &str) -> SavepointKey {
+    SavepointKey::Op(op.parse().unwrap())
+}
+
 #[test]
 fn savepoint_resolution_still_round_trips_through_the_checked_constructor() {
     let repo = repo_with_commit();
     let head = git_vcs().head_revision(repo.path()).unwrap();
 
-    let captured = git_vcs().create_savepoint(repo.path(), "op-1").unwrap();
+    let captured = git_vcs()
+        .create_savepoint(repo.path(), &key("op-1"))
+        .unwrap();
     assert_eq!(captured, head);
-    assert_eq!(git_vcs().resolve_savepoint(repo.path(), "op-1"), Some(head));
-    assert_eq!(git_vcs().resolve_savepoint(repo.path(), "absent"), None);
+    assert_eq!(
+        git_vcs().resolve_savepoint(repo.path(), &key("op-1")),
+        Some(head)
+    );
+    assert_eq!(
+        git_vcs().resolve_savepoint(repo.path(), &key("absent")),
+        None
+    );
 }
 
 #[test]
@@ -811,9 +824,11 @@ fn a_savepoint_ref_is_proof_the_savepoint_exists() {
     let repo = repo_with_commit();
     let head = git_vcs().head_revision(repo.path()).unwrap();
 
-    let savepoint = git_vcs().create_savepoint_ref(repo.path(), "op-2").unwrap();
+    let savepoint = git_vcs()
+        .create_savepoint_ref(repo.path(), &key("op-2"))
+        .unwrap();
     assert_eq!(savepoint.repo(), repo.path());
-    assert_eq!(savepoint.op_id(), "op-2");
+    assert_eq!(savepoint.key(), &key("op-2"));
     assert_eq!(savepoint.at(), &head);
     assert!(
         git_ok(

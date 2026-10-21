@@ -1,5 +1,6 @@
 //! Git implementation of the [`Vcs`] trait.
 
+use crate::op_state::SavepointKey;
 use crate::registry::CloneUrl;
 use crate::vcs::{
     CommitId, CommitSummary, ConflictOp, ContentIdentity, DerivedContentPolicy,
@@ -2102,36 +2103,40 @@ impl Vcs for GitVcs {
         Ok(out.trim().parse::<usize>().unwrap_or(0))
     }
 
-    fn create_savepoint(&self, repo: &Path, op_id: &str) -> Result<ResolvedRevisionId, VcsError> {
+    fn create_savepoint(
+        &self,
+        repo: &Path,
+        key: &SavepointKey,
+    ) -> Result<ResolvedRevisionId, VcsError> {
         let head = self.head_revision(repo)?;
-        let ref_name = savepoint_ref(op_id);
+        let ref_name = savepoint_ref(key);
         Self::run(&["update-ref", &ref_name, head.id().as_str()], repo)?;
         Ok(head)
     }
 
-    fn savepoint_label(&self, op_id: &str) -> String {
-        savepoint_ref(op_id)
+    fn savepoint_label(&self, key: &SavepointKey) -> String {
+        savepoint_ref(key)
     }
 
     fn savepoint_namespace(&self) -> String {
         SAVEPOINT_NAMESPACE.to_owned()
     }
 
-    fn resolve_savepoint(&self, repo: &Path, op_id: &str) -> Option<ResolvedRevisionId> {
-        let ref_name = savepoint_ref(op_id);
+    fn resolve_savepoint(&self, repo: &Path, key: &SavepointKey) -> Option<ResolvedRevisionId> {
+        let ref_name = savepoint_ref(key);
         let out = Self::run_trimmed(&["rev-parse", &ref_name], repo).ok()?;
         ResolvedRevisionId::from_rev_parse_output(&out)
     }
 
-    fn drop_savepoint(&self, repo: &Path, op_id: &str) {
-        let ref_name = savepoint_ref(op_id);
+    fn drop_savepoint(&self, repo: &Path, key: &SavepointKey) {
+        let ref_name = savepoint_ref(key);
         let _ = Self::run(&["update-ref", "-d", &ref_name], repo);
     }
 
     fn create_pre_abort_ref(
         &self,
         repo: &Path,
-        op_id: &str,
+        key: &SavepointKey,
         foreign_tip_policy: ForeignTipPolicy,
     ) -> Result<PreAbortRef, VcsError> {
         // First write wins, narrowed to first-write-wins-along-divergence:
@@ -2144,8 +2149,8 @@ impl Vcs for GitVcs {
         // capture (foreign rebase/reset) is returned unchanged; the shipped
         // guard in `verified_restore_savepoint` then refuses the abandon.
         let head = self.head_revision(repo)?;
-        let label = pre_abort_ref(op_id);
-        if let Some(existing) = self.resolve_pre_abort_ref(repo, op_id) {
+        let label = pre_abort_ref(key);
+        if let Some(existing) = self.resolve_pre_abort_ref(repo, key) {
             let should_advance = foreign_tip_policy == ForeignTipPolicy::Abandon
                 && existing.revision.id() != head.id()
                 && self.is_ancestor(repo, &existing.revision, &head)?;
@@ -2160,8 +2165,8 @@ impl Vcs for GitVcs {
         })
     }
 
-    fn resolve_pre_abort_ref(&self, repo: &Path, op_id: &str) -> Option<PreAbortRef> {
-        let label = pre_abort_ref(op_id);
+    fn resolve_pre_abort_ref(&self, repo: &Path, key: &SavepointKey) -> Option<PreAbortRef> {
+        let label = pre_abort_ref(key);
         let canonical = Self::run_trimmed(&["rev-parse", &label], repo).ok()?;
         Some(PreAbortRef {
             revision: ResolvedRevisionId::from_rev_parse_output(&canonical)?,
@@ -2172,13 +2177,13 @@ impl Vcs for GitVcs {
     fn verified_restore_savepoint(
         &self,
         repo: &Path,
-        op_id: &str,
+        key: &SavepointKey,
         recorded_intent_tip: Option<&CommitId>,
         recorded_converged_tip: Option<&CommitId>,
         foreign_tip_policy: ForeignTipPolicy,
     ) -> Result<VerifiedRestoreOutcome, VcsError> {
         // Resolve the savepoint first: no savepoint → nothing to do.
-        let savepoint = match self.resolve_savepoint(repo, op_id) {
+        let savepoint = match self.resolve_savepoint(repo, key) {
             Some(sp) => sp,
             None => return Ok(VerifiedRestoreOutcome::NoSavepoint),
         };
@@ -2190,7 +2195,7 @@ impl Vcs for GitVcs {
             self.cancel_in_flight_op(repo);
             return self.reset_and_drop_savepoint(
                 repo,
-                op_id,
+                key,
                 &savepoint,
                 VerifiedRestoreOutcome::RestoredFromMidOp,
             );
@@ -2204,7 +2209,7 @@ impl Vcs for GitVcs {
             // Untouched — restore is a no-op. Still drop the savepoint so
             // abort's cleanup leaves no stale refs (matches restore_savepoint's
             // post-condition; the pre-abort ref preserves the tip regardless).
-            self.drop_savepoint(repo, op_id);
+            self.drop_savepoint(repo, key);
             return Ok(VerifiedRestoreOutcome::Untouched);
         }
 
@@ -2215,7 +2220,7 @@ impl Vcs for GitVcs {
             if head_id == intent {
                 return self.reset_and_drop_savepoint(
                     repo,
-                    op_id,
+                    key,
                     &savepoint,
                     VerifiedRestoreOutcome::RestoredFromIntent,
                 );
@@ -2226,7 +2231,7 @@ impl Vcs for GitVcs {
             if head_id == converged {
                 return self.reset_and_drop_savepoint(
                     repo,
-                    op_id,
+                    key,
                     &savepoint,
                     VerifiedRestoreOutcome::RestoredFromConverged,
                 );
@@ -2237,13 +2242,13 @@ impl Vcs for GitVcs {
         // every repo before calling this, so a reference exists — but which
         // tip it holds is a separate question, answered below. The label is
         // surfaced either way so the refusal message can name it.
-        let resolved_pre_abort = self.resolve_pre_abort_ref(repo, op_id);
+        let resolved_pre_abort = self.resolve_pre_abort_ref(repo, key);
         let pre_abort = resolved_pre_abort.clone().unwrap_or_else(|| {
             // Should not happen: run_abort writes the pre-abort ref before
             // every verified_restore_savepoint call. Synthesize a label so
             // the refusal still names a recovery anchor.
             PreAbortRef {
-                label: pre_abort_ref(op_id),
+                label: pre_abort_ref(key),
                 revision: head.clone(),
             }
         });
@@ -2259,7 +2264,7 @@ impl Vcs for GitVcs {
         if foreign_tip_policy == ForeignTipPolicy::Abandon && captured_by_pre_abort_ref {
             return self.reset_and_drop_savepoint(
                 repo,
-                op_id,
+                key,
                 &savepoint,
                 VerifiedRestoreOutcome::AbandonedForeignTip {
                     abandoned_tip: head_id.clone(),
@@ -2544,19 +2549,14 @@ impl Vcs for GitVcs {
         Ok(held)
     }
 
-    fn list_savepoint_op_ids(&self, repo: &Path) -> Result<Vec<String>, VcsError> {
-        // `git for-each-ref` over the savepoint namespace returns every
-        // savepoint ref this repo holds. Strip the prefix to recover the
-        // opaque op-id the caller originally supplied to `create_savepoint`.
+    fn list_savepoints(&self, repo: &Path) -> Result<Vec<SavepointKey>, VcsError> {
         let prefix = format!("{SAVEPOINT_NAMESPACE}/");
         let output = Self::run_trimmed(&["for-each-ref", "--format=%(refname)", &prefix], repo)?;
-        let op_ids = output
+        Ok(output
             .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .filter_map(|l| l.strip_prefix(&prefix).map(str::to_owned))
-            .collect();
-        Ok(op_ids)
+            .filter_map(|l| l.trim().strip_prefix(&prefix))
+            .filter_map(|leaf| leaf.parse().ok())
+            .collect())
     }
 
     fn read_file_at_revision(
@@ -2987,25 +2987,25 @@ impl Vcs for GitVcs {
 /// The ref namespace savepoints live under.
 const SAVEPOINT_NAMESPACE: &str = "refs/rwv/pre-op";
 
-/// Build the savepoint ref path for `op_id`.
+/// Build the savepoint ref path for `key`.
 ///
 /// The namespacing is a git impl detail — callers of the [`Vcs`] trait pass
-/// an opaque `op_id` string and reach the name, when they must show it to an
+/// a [`SavepointKey`] and reach the name, when they must show it to an
 /// operator, through [`Vcs::savepoint_label`] or [`Vcs::savepoint_namespace`].
 /// Centralizing the format here means create / resolve / drop / restore all
 /// agree on the layout.
-fn savepoint_ref(op_id: &str) -> String {
-    format!("{SAVEPOINT_NAMESPACE}/{op_id}")
+fn savepoint_ref(key: &SavepointKey) -> String {
+    format!("{SAVEPOINT_NAMESPACE}/{key}")
 }
 
-/// Build the pre-abort ref path for `op_id` under the rwv pre-abort namespace.
+/// Build the pre-abort ref path for `key` under the rwv pre-abort namespace.
 ///
-/// The namespacing (`refs/rwv/pre-abort/<id>`) is a git impl detail —
+/// The namespacing (`refs/rwv/pre-abort/<key>`) is a git impl detail —
 /// callers of the [`Vcs`] trait receive a [`PreAbortRef`] whose `label`
 /// carries this string for recovery hints, but never spell the ref
 /// directly. Centralizing the format here keeps create / resolve in sync.
-fn pre_abort_ref(op_id: &str) -> String {
-    format!("refs/rwv/pre-abort/{op_id}")
+fn pre_abort_ref(key: &SavepointKey) -> String {
+    format!("refs/rwv/pre-abort/{key}")
 }
 
 impl GitVcs {
@@ -3016,12 +3016,12 @@ impl GitVcs {
     fn reset_and_drop_savepoint(
         &self,
         repo: &Path,
-        op_id: &str,
+        key: &SavepointKey,
         savepoint: &ResolvedRevisionId,
         outcome: VerifiedRestoreOutcome,
     ) -> Result<VerifiedRestoreOutcome, VcsError> {
         Self::run(&["reset", "--hard", savepoint.id().as_str()], repo)?;
-        self.drop_savepoint(repo, op_id);
+        self.drop_savepoint(repo, key);
         Ok(outcome)
     }
 }
@@ -3949,6 +3949,7 @@ mod branch_model_tests {
     use crate::cli::consent::{
         DetachConsent, DiscardLocalCommitsConsent, DiscardUnmergedConsent, ReattachConsent,
     };
+    use crate::op_state::OpId;
     use crate::vcs::{DeletionWarrant, DiscardWarrant, OwnedRef, RawRefName, TrackingRef};
 
     /// A local branch name, obtained the only way one can be: through the
@@ -3980,6 +3981,10 @@ mod branch_model_tests {
             String::from_utf8_lossy(&out.stderr)
         );
         String::from_utf8(out.stdout).unwrap().trim().to_owned()
+    }
+
+    fn op_key(op: &str) -> SavepointKey {
+        SavepointKey::Op(op.parse().unwrap())
     }
 
     /// A repo on `main` with one commit.
@@ -4673,6 +4678,95 @@ mod branch_model_tests {
     }
 
     // -----------------------------------------------------------------------
+    // Savepoint keys: the ref names an op's savepoints have always had
+    // -----------------------------------------------------------------------
+
+    fn both_sides(op: &str) -> [(SavepointKey, String); 2] {
+        let op: OpId = op.parse().unwrap();
+        [
+            (SavepointKey::Op(op.clone()), op.to_string()),
+            (
+                SavepointKey::SyncToTarget(op.clone()),
+                format!("{op}-target"),
+            ),
+        ]
+    }
+
+    #[test]
+    fn savepoint_and_pre_abort_refs_keep_their_names_on_both_sides() {
+        let p = repo();
+        let head = GitVcs.head_revision(p.path()).unwrap();
+        for (key, leaf) in both_sides("1779769917405921588") {
+            GitVcs.create_savepoint(p.path(), &key).unwrap();
+            GitVcs
+                .create_pre_abort_ref(p.path(), &key, ForeignTipPolicy::Refuse)
+                .unwrap();
+
+            assert_eq!(
+                git(p.path(), &["rev-parse", &format!("refs/rwv/pre-op/{leaf}")]),
+                head.id().as_str()
+            );
+            assert_eq!(
+                GitVcs.savepoint_label(&key),
+                format!("refs/rwv/pre-op/{leaf}")
+            );
+            assert_eq!(
+                git(
+                    p.path(),
+                    &["rev-parse", &format!("refs/rwv/pre-abort/{leaf}")]
+                ),
+                head.id().as_str()
+            );
+            assert_eq!(
+                GitVcs.resolve_pre_abort_ref(p.path(), &key).unwrap().label,
+                format!("refs/rwv/pre-abort/{leaf}")
+            );
+        }
+    }
+
+    #[test]
+    fn the_two_sides_of_an_op_do_not_share_a_savepoint() {
+        let p = repo();
+        let [(owner, _), (target, _)] = both_sides("1779769917405921588");
+        GitVcs.create_savepoint(p.path(), &owner).unwrap();
+
+        assert!(GitVcs.resolve_savepoint(p.path(), &owner).is_some());
+        assert_eq!(GitVcs.resolve_savepoint(p.path(), &target), None);
+
+        GitVcs.drop_savepoint(p.path(), &owner);
+        assert_eq!(GitVcs.resolve_savepoint(p.path(), &owner), None);
+    }
+
+    #[test]
+    fn savepoints_listed_read_back_as_the_keys_that_filed_them() {
+        let p = repo();
+        let [(owner, _), (target, _)] = both_sides("1779769917405921588");
+        GitVcs.create_savepoint(p.path(), &owner).unwrap();
+        GitVcs.create_savepoint(p.path(), &target).unwrap();
+        git(
+            p.path(),
+            &["update-ref", "refs/rwv/pre-op/not.a.key", "HEAD"],
+        );
+
+        let mut listed: Vec<String> = GitVcs
+            .list_savepoints(p.path())
+            .unwrap()
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        listed.sort();
+
+        assert_eq!(
+            listed,
+            vec![
+                "1779769917405921588".to_owned(),
+                "1779769917405921588-target".to_owned()
+            ],
+            "a ref under the namespace that is no key is not a savepoint rwv filed"
+        );
+    }
+
+    // -----------------------------------------------------------------------
     // Rewinding MOVE: the warrant must belong to the repo being rewound
     // -----------------------------------------------------------------------
 
@@ -4682,7 +4776,9 @@ mod branch_model_tests {
         let base = GitVcs.head_revision(p.path()).unwrap();
         let _ = commit(p.path(), "to-discard");
 
-        let savepoint = GitVcs.create_savepoint_ref(p.path(), "op-1").unwrap();
+        let savepoint = GitVcs
+            .create_savepoint_ref(p.path(), &op_key("op-1"))
+            .unwrap();
         let warrant = DiscardWarrant::new(savepoint, DiscardLocalCommitsConsent::granted());
         let HeadAttachment::Attached(w) = GitVcs.head_attachment(p.path()).unwrap() else {
             panic!("fixture should be attached");
@@ -4707,7 +4803,9 @@ mod branch_model_tests {
 
         // A savepoint for B cannot license rewinding A: it captured a tip
         // that has nothing to do with A's history.
-        let elsewhere = GitVcs.create_savepoint_ref(b.path(), "op-1").unwrap();
+        let elsewhere = GitVcs
+            .create_savepoint_ref(b.path(), &op_key("op-1"))
+            .unwrap();
         let warrant = DiscardWarrant::new(elsewhere, DiscardLocalCommitsConsent::granted());
         let HeadAttachment::Attached(w) = GitVcs.head_attachment(a.path()).unwrap() else {
             panic!("fixture should be attached");

@@ -83,7 +83,7 @@ use crate::durable_file::CreateNewError;
 use crate::manifest::ProjectName;
 use crate::refusal::RefusalKind;
 use crate::vcs::CommitId;
-use crate::wire_token::{parse_wire_token, wire_token};
+use crate::wire_token::wire_token;
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -105,8 +105,39 @@ pub(crate) const OP_LEASE_FILE: &str = ".rwv-op-lease";
 ///
 /// Used to namespace pre-op savepoint refs so concurrent or interleaved
 /// sync attempts don't collide.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Minted by [`OpId::new_now`] or parsed from text by [`FromStr`], which
+/// refuses what no op id can be: empty text, a character a ref name cannot
+/// carry, and anything ending in `-target`. The last is what keeps a
+/// [`SavepointKey`] injective: the target side of an op `x` is spelled
+/// `x-target`, so an op id `x-target` would file its own savepoints where
+/// another op's target side lives.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct OpId(String);
+
+/// What a [`SavepointKey`] appends to an op id to name the target side of a
+/// `sync-to`. No [`OpId`] ends with it.
+const TARGET_SUFFIX: &str = "-target";
+
+/// Text that is not an op id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpIdError {
+    text: String,
+}
+
+impl fmt::Display for OpIdError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{:?} is not an op id: an op id is one or more ASCII letters, digits, `-` or `_`, \
+             and does not end in `{TARGET_SUFFIX}`, which names the target side of a savepoint",
+            self.text
+        )
+    }
+}
+
+impl std::error::Error for OpIdError {}
 
 impl OpId {
     /// Generate a fresh `OpId` from the current wall-clock time.
@@ -125,22 +156,94 @@ impl OpId {
         Self(s)
     }
 
-    /// Reconstruct an `OpId` from its string form (e.g. when reading the sync
-    /// op marker file). `pub(crate)` to keep the constructor inside the
-    /// crate — `OpId::new_now` is the only externally legitimate way to mint
-    /// a fresh id.
-    pub(crate) fn from_string(s: impl Into<String>) -> Self {
-        Self(s.into())
-    }
-
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl FromStr for OpId {
+    type Err = OpIdError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let spellable = !s.is_empty()
+            && s.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+        if spellable && !s.ends_with(TARGET_SUFFIX) {
+            Ok(Self(s.to_owned()))
+        } else {
+            Err(OpIdError { text: s.to_owned() })
+        }
+    }
+}
+
+impl TryFrom<String> for OpId {
+    type Error = OpIdError;
+
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        s.parse()
+    }
+}
+
+impl From<OpId> for String {
+    fn from(id: OpId) -> Self {
+        id.0
     }
 }
 
 impl fmt::Display for OpId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
+    }
+}
+
+/// The name an op's savepoint, and its pre-abort reference, is filed under.
+///
+/// A `sync-to` savepoints two workspaces, and the target's repos may share a
+/// ref store with the owner's when both are worktrees of one clone. Filed
+/// under the same name, the first restore of `rwv abort` would drop the ref
+/// the second needs, so the target side has a namespace of its own. Each
+/// variant carries the op, and nothing else can name a namespace.
+///
+/// Its text form is the ref's leaf: `<op id>` and `<op id>-target`. Parsing
+/// reads back exactly what [`fmt::Display`] wrote, which holds because no
+/// [`OpId`] ends in the target suffix.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum SavepointKey {
+    /// The workspace the op replayed in.
+    Op(OpId),
+    /// The workspace a `sync-to` advances.
+    SyncToTarget(OpId),
+}
+
+impl SavepointKey {
+    /// The op this savepoint belongs to, on either side.
+    pub fn op(&self) -> &OpId {
+        match self {
+            Self::Op(op) | Self::SyncToTarget(op) => op,
+        }
+    }
+}
+
+impl fmt::Display for SavepointKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Op(op) => write!(f, "{op}"),
+            Self::SyncToTarget(op) => write!(f, "{op}{TARGET_SUFFIX}"),
+        }
+    }
+}
+
+impl FromStr for SavepointKey {
+    type Err = OpIdError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.strip_suffix(TARGET_SUFFIX) {
+            Some(op) => op
+                .parse()
+                .map(Self::SyncToTarget)
+                .map_err(|_| OpIdError { text: s.to_owned() }),
+            None => s.parse().map(Self::Op),
+        }
     }
 }
 
@@ -179,27 +282,6 @@ pub enum SyncStrategy {
 impl fmt::Display for SyncStrategy {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&wire_token(self))
-    }
-}
-
-impl FromStr for SyncStrategy {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // `merge` was removed (state-space shrink). A pre-removal in-flight
-        // op recorded with strategy=merge resolves here as an invalid
-        // op-state strategy. No migration path.
-        parse_wire_token(s).ok_or_else(|| {
-            let accepted: Vec<String> = <Self as clap::ValueEnum>::value_variants()
-                .iter()
-                .map(ToString::to_string)
-                .collect();
-            anyhow::anyhow!(
-                "unknown sync strategy `{s}` in op-state; expected {} — \
-                 run `rwv abort` and re-invoke",
-                accepted.join(" or ")
-            )
-        })
     }
 }
 
@@ -413,11 +495,11 @@ impl FromIterator<Override> for Overrides {
 pub struct OwnerRecord {
     /// Unique operation identifier (nanosecond wall-clock string). Shared
     /// with savepoint refs and lease files.
-    pub id: String,
+    pub id: OpId,
     /// Which verb started this op.
     pub verb: OpVerb,
     /// Strategy supplied to the op.
-    pub strategy: String,
+    pub strategy: SyncStrategy,
     /// The project this op operates on. Both [`Self::source`] and
     /// [`Self::target`] resolve under it and neither one's `.rwv-active` is
     /// consulted: the pointer is ambient state an operator may retarget while
@@ -463,9 +545,9 @@ pub struct OwnerRecord {
 /// it in.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct WireOwnerRecord {
-    id: String,
+    id: OpId,
     verb: OpVerb,
-    strategy: String,
+    strategy: SyncStrategy,
     project: ProjectName,
     source: PathBuf,
     target: PathBuf,
@@ -540,9 +622,9 @@ impl OwnerRecord {
         cwd_workspace: PathBuf,
     ) -> Self {
         Self {
-            id: op_id.as_str().to_owned(),
+            id: op_id.clone(),
             verb: OpVerb::Sync,
-            strategy: strategy.to_string(),
+            strategy,
             project,
             source: source_workspace,
             target: cwd_workspace,
@@ -566,9 +648,9 @@ impl OwnerRecord {
         retire: bool,
     ) -> Self {
         Self {
-            id: op_id.as_str().to_owned(),
+            id: op_id.clone(),
             verb: OpVerb::SyncTo,
-            strategy: strategy.to_string(),
+            strategy,
             project,
             source: cwd_workspace,
             target: target_workspace,
@@ -599,7 +681,7 @@ impl OwnerRecord {
 pub struct LeaseRecord {
     /// Unique operation identifier (nanosecond wall-clock string). Same as
     /// the owner record's `id`.
-    pub id: String,
+    pub id: OpId,
     /// Absolute path to the owner workspace (the workspace holding the full
     /// owner record). Follow this pointer to load op state.
     pub owner: PathBuf,
@@ -726,8 +808,14 @@ pub fn read_owner(workspace_dir: &Path) -> anyhow::Result<Option<OwnerRecord>> {
     }
     let json = std::fs::read_to_string(&path)
         .with_context(|| format!("failed to read owner record from {}", path.display()))?;
-    let record: OwnerRecord = serde_json::from_str(&json)
-        .with_context(|| format!("failed to parse owner record at {}", path.display()))?;
+    let record: OwnerRecord = serde_json::from_str(&json).map_err(|e| {
+        anyhow::anyhow!(
+            "failed to parse owner record at {}: {e:#}. Resuming an op and aborting it both \
+             read this record, so one this rwv cannot parse blocks both; remove the file to \
+             discard the op, and `rwv doctor` will list the savepoints it left",
+            path.display()
+        )
+    })?;
     Ok(Some(record))
 }
 
@@ -1135,7 +1223,7 @@ pub struct DeadLease {
     /// Absolute path to the workspace directory holding the dangling lease.
     pub workspace_dir: PathBuf,
     /// Op id recorded in the lease.
-    pub op_id: String,
+    pub op_id: OpId,
     /// Owner workspace the lease pointed at.
     pub recorded_owner: PathBuf,
     /// Why the lease is dead (owner missing vs owner op id mismatch), for the
@@ -1156,7 +1244,7 @@ pub enum DeadLeaseReason {
     /// The recorded owner workspace has an `.rwv-op` but with a *different*
     /// op id — the lease references an op the owner has since moved past
     /// (owner cleared and a new op started, but this stale lease survived).
-    OwnerOpIdMismatch { owner_op_id: String },
+    OwnerOpIdMismatch { owner_op_id: OpId },
 }
 
 /// Inspect the lease at `workspace_dir` and classify it as dead if its owner
@@ -1347,29 +1435,90 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // SyncStrategy — FromStr
+    // OpId and SavepointKey
     // -----------------------------------------------------------------------
 
     #[test]
-    fn sync_strategy_from_str_roundtrips_known_values() {
-        assert_eq!("ff".parse::<SyncStrategy>().unwrap(), SyncStrategy::Ff);
+    fn an_op_id_refuses_what_no_op_id_can_be() {
+        for text in [
+            "",
+            "a b",
+            "a/b",
+            "a.b",
+            "1779769917405921588-target",
+            "-target",
+        ] {
+            assert!(text.parse::<OpId>().is_err(), "{text:?} is not an op id");
+        }
+    }
+
+    #[test]
+    fn an_op_id_accepts_the_clock_and_the_planted_spellings() {
+        let minted = OpId::new_now();
+        assert_eq!(minted.as_str().parse::<OpId>().unwrap(), minted);
+        for text in [
+            "1779769917405921588",
+            "20991231T000001Z",
+            "crash-matrix-e_1",
+            "target",
+        ] {
+            assert_eq!(text.parse::<OpId>().unwrap().as_str(), text);
+        }
+    }
+
+    #[test]
+    fn a_savepoint_key_reads_back_as_the_key_it_spells() {
+        let op: OpId = "1779769917405921588".parse().unwrap();
+        for key in [
+            SavepointKey::Op(op.clone()),
+            SavepointKey::SyncToTarget(op.clone()),
+        ] {
+            assert_eq!(key.to_string().parse::<SavepointKey>().unwrap(), key);
+            assert_eq!(key.op(), &op);
+        }
         assert_eq!(
-            "rebase".parse::<SyncStrategy>().unwrap(),
-            SyncStrategy::Rebase
+            SavepointKey::Op(op.clone()).to_string(),
+            "1779769917405921588"
+        );
+        assert_eq!(
+            SavepointKey::SyncToTarget(op).to_string(),
+            "1779769917405921588-target"
         );
     }
 
-    /// A pre-removal in-flight op with strategy=merge fails here on resume;
-    /// this message is the only surface the operator reads, so it must name
-    /// the exit rather than leaving it in a comment nothing surfaces.
     #[test]
-    fn sync_strategy_from_str_names_the_remedy_for_removed_merge() {
-        let err = "merge".parse::<SyncStrategy>().unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "unknown sync strategy `merge` in op-state; expected ff or rebase — \
-             run `rwv abort` and re-invoke"
-        );
+    fn a_savepoint_key_refuses_text_that_names_no_op() {
+        for text in ["", "-target", "a-target-target", "a b-target"] {
+            assert!(
+                text.parse::<SavepointKey>().is_err(),
+                "{text:?} names no key"
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // SyncStrategy on the wire
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn the_strategy_is_written_as_the_token_it_has_always_been() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        for (strategy, token) in [(SyncStrategy::Ff, "ff"), (SyncStrategy::Rebase, "rebase")] {
+            let record = OwnerRecord::new_sync(
+                &OpId::new_now(),
+                strategy,
+                test_project(),
+                PathBuf::from("/src/ws"),
+                PathBuf::from("/cwd/ws"),
+            );
+            write_owner(dir, &record).unwrap();
+            let json = std::fs::read_to_string(dir.join(OP_STATE_FILE)).unwrap();
+            assert!(
+                json.contains(&format!("\"strategy\": \"{token}\"")),
+                "the strategy must be written as `{token}`; got:\n{json}"
+            );
+        }
     }
 
     #[test]
@@ -1415,7 +1564,7 @@ mod tests {
         let read_back = read_owner(dir).unwrap().unwrap();
         assert_eq!(read_back.id, record.id);
         assert_eq!(read_back.verb, OpVerb::Sync);
-        assert_eq!(read_back.strategy, "rebase");
+        assert_eq!(read_back.strategy, SyncStrategy::Rebase);
         assert_eq!(read_back.project, test_project());
         assert_eq!(read_back.phase, OpPhase::Replay);
         assert!(!read_back.retire);
@@ -1544,6 +1693,60 @@ mod tests {
         assert!(
             err.to_string().contains("failed to parse owner record"),
             "a record whose project name fails validation must fail to parse; got: {err}"
+        );
+    }
+
+    fn record_json(id: &str, strategy: &str) -> String {
+        format!(
+            r#"{{
+  "id": "{id}",
+  "verb": "sync",
+  "strategy": "{strategy}",
+  "project": "web-app",
+  "source": "/src/ws",
+  "target": "/cwd/ws",
+  "retire": false,
+  "phase": "replay",
+  "advanced_tips": {{}},
+  "converged_tips": {{}},
+  "overrides": [],
+  "started_at": "2026-06-01T00:00:00Z"
+}}
+"#
+        )
+    }
+
+    #[test]
+    fn wire_record_rejects_an_id_in_the_target_namespace() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        std::fs::write(
+            dir.join(OP_STATE_FILE),
+            record_json("1779769917405921588-target", "ff"),
+        )
+        .unwrap();
+        let err = read_owner(dir).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("1779769917405921588-target"),
+            "an op id carrying the target-side suffix must fail to parse, naming it; got: {err:#}"
+        );
+    }
+
+    #[test]
+    fn wire_record_rejects_a_strategy_no_variant_names() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        std::fs::write(
+            dir.join(OP_STATE_FILE),
+            record_json("1779769917405921588", "merge"),
+        )
+        .unwrap();
+        let err = read_owner(dir).unwrap_err();
+        let shown = format!("{err:#}");
+        assert!(
+            shown.contains("merge") && shown.contains("ff") && shown.contains("rebase"),
+            "a strategy the enum no longer has must fail at read, naming what is accepted; \
+             got: {shown}"
         );
     }
 
@@ -1752,7 +1955,7 @@ mod tests {
         write_owner(dir, &record).unwrap();
         let read_back = read_owner(dir).unwrap().unwrap();
         assert_eq!(read_back.verb, OpVerb::SyncTo);
-        assert_eq!(read_back.strategy, "ff");
+        assert_eq!(read_back.strategy, SyncStrategy::Ff);
         assert_eq!(read_back.phase, OpPhase::Replay);
         assert!(read_back.retire);
     }
@@ -1967,13 +2170,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
         let lease = LeaseRecord {
-            id: "1234567890".to_owned(),
+            id: "1234567890".parse().unwrap(),
             owner: PathBuf::from("/owner/ws"),
             created_at: None,
         };
         overwrite_lease_in_test(dir, &lease).unwrap();
         let read_back = read_lease(dir).unwrap().unwrap();
-        assert_eq!(read_back.id, "1234567890");
+        assert_eq!(read_back.id.as_str(), "1234567890");
         assert_eq!(read_back.owner, PathBuf::from("/owner/ws"));
     }
 
@@ -2003,7 +2206,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
         let lease = LeaseRecord {
-            id: "abc".to_owned(),
+            id: "abc".parse().unwrap(),
             owner: PathBuf::from("/owner"),
             created_at: None,
         };
@@ -2057,7 +2260,7 @@ mod tests {
         write_owner(&owner_dir, &record).unwrap();
 
         let lease = LeaseRecord {
-            id: op_id.as_str().to_owned(),
+            id: op_id.clone(),
             owner: owner_dir.clone(),
             created_at: None,
         };
@@ -2114,7 +2317,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
         let lease = LeaseRecord {
-            id: "some-op-id".to_owned(),
+            id: "some-op-id".parse().unwrap(),
             owner: PathBuf::from("/owner/ws"),
             created_at: None,
         };
@@ -2190,7 +2393,7 @@ mod tests {
         record.started_at = stale_started_at();
         write_owner(&owner_dir, &record).unwrap();
         let lease = LeaseRecord {
-            id: op_id.as_str().to_owned(),
+            id: op_id.clone(),
             owner: owner_dir.clone(),
             created_at: None,
         };
@@ -2223,7 +2426,7 @@ mod tests {
         let dir = tmp.path();
         let owner = tmp.path().join("nonexistent-owner");
         let lease = LeaseRecord {
-            id: "dangling-op".to_owned(),
+            id: "dangling-op".parse().unwrap(),
             owner: owner.clone(),
             created_at: None,
         };
@@ -2312,7 +2515,7 @@ mod tests {
         );
         write_owner(&owner_dir, &record).unwrap();
         let lease = LeaseRecord {
-            id: op_id.as_str().to_owned(),
+            id: op_id.clone(),
             owner: owner_dir.clone(),
             created_at: None,
         };
@@ -2354,7 +2557,7 @@ mod tests {
         );
         write_owner(dir, &record).unwrap();
         let lease = LeaseRecord {
-            id: op_id.as_str().to_owned(),
+            id: op_id.clone(),
             owner: PathBuf::from("/owner"),
             created_at: None,
         };
@@ -2453,7 +2656,7 @@ mod tests {
         assert!(LeaseRecord::path_in(&target_dir).exists());
         // Lease points back at the owner.
         let lease = read_lease(&target_dir).unwrap().unwrap();
-        assert_eq!(lease.id, op_id.as_str());
+        assert_eq!(lease.id, op_id);
         assert_eq!(lease.owner, owner_dir);
         assert_eq!(acquired.owner_workspace(), owner_dir);
     }
@@ -2517,7 +2720,7 @@ mod tests {
         );
         // The prior op's record must survive (no clobbering).
         let after = read_owner(owner_dir).unwrap().unwrap();
-        assert_eq!(after.id, prior_id.as_str());
+        assert_eq!(after.id, prior_id);
     }
 
     #[test]
@@ -2532,7 +2735,7 @@ mod tests {
         std::fs::create_dir_all(&target_dir).unwrap();
         // Plant a lease at the target (as if a prior sync-to already claimed it).
         let prior_lease = LeaseRecord {
-            id: "prior-op".to_owned(),
+            id: "prior-op".parse().unwrap(),
             owner: PathBuf::from("/some/prior/owner"),
             created_at: None,
         };
@@ -2556,7 +2759,7 @@ mod tests {
         );
         // The prior lease must survive untouched.
         let after = read_lease(&target_dir).unwrap().unwrap();
-        assert_eq!(after.id, "prior-op");
+        assert_eq!(after.id.as_str(), "prior-op");
     }
 
     #[test]
@@ -2664,7 +2867,7 @@ mod tests {
         overwrite_lease_in_test(
             &lease_dir,
             &LeaseRecord {
-                id: op_id.as_str().to_owned(),
+                id: op_id.clone(),
                 owner: owner_dir.clone(),
                 created_at: None,
             },
@@ -2687,7 +2890,7 @@ mod tests {
         overwrite_lease_in_test(
             &lease_dir,
             &LeaseRecord {
-                id: "dangling-op".to_owned(),
+                id: "dangling-op".parse().unwrap(),
                 owner: owner_dir.clone(),
                 created_at: None,
             },
@@ -2696,7 +2899,7 @@ mod tests {
 
         let dead = detect_dead_lease(&lease_dir).unwrap().unwrap();
         assert_eq!(dead.workspace_dir, lease_dir);
-        assert_eq!(dead.op_id, "dangling-op");
+        assert_eq!(dead.op_id.as_str(), "dangling-op");
         assert_eq!(dead.recorded_owner, owner_dir);
         assert_eq!(dead.reason, DeadLeaseReason::OwnerRecordAbsent);
     }
@@ -2718,7 +2921,7 @@ mod tests {
         overwrite_lease_in_test(
             &lease_dir,
             &LeaseRecord {
-                id: "old-op-id".to_owned(),
+                id: "old-op-id".parse().unwrap(),
                 owner: owner_dir.clone(),
                 created_at: None,
             },
@@ -2726,13 +2929,13 @@ mod tests {
         .unwrap();
 
         let dead = detect_dead_lease(&lease_dir).unwrap().unwrap();
-        assert_eq!(dead.op_id, "old-op-id");
+        assert_eq!(dead.op_id.as_str(), "old-op-id");
         assert!(matches!(
             dead.reason,
             DeadLeaseReason::OwnerOpIdMismatch { .. }
         ));
         if let DeadLeaseReason::OwnerOpIdMismatch { owner_op_id } = dead.reason {
-            assert_eq!(owner_op_id, fresh_op_id.as_str());
+            assert_eq!(owner_op_id, fresh_op_id);
         }
     }
 
@@ -2743,7 +2946,7 @@ mod tests {
         overwrite_lease_in_test(
             lease_dir,
             &LeaseRecord {
-                id: "dangling-op".to_owned(),
+                id: "dangling-op".parse().unwrap(),
                 owner: PathBuf::from("/gone"),
                 created_at: None,
             },

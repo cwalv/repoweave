@@ -64,7 +64,7 @@ pub struct OpStatus {
 impl From<op_state::ResolvedOwner> for OpStatus {
     fn from(resolved: op_state::ResolvedOwner) -> Self {
         Self {
-            id: resolved.record.id,
+            id: resolved.record.id.to_string(),
             verb: resolved.record.verb,
             phase: resolved.record.phase,
             started_at: resolved.record.started_at,

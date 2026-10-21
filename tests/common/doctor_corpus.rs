@@ -32,7 +32,7 @@ use repoweave::integration::MemberIncompatibility;
 use repoweave::integration::{Issue, IssueKind, Severity};
 use repoweave::integrations::cargo_workspace::CargoSkewOccurrence;
 use repoweave::manifest::{ProjectName, RepoPath, Role, WorkweaveId, WorkweaveName};
-use repoweave::op_state::OpVerb;
+use repoweave::op_state::{OpVerb, SavepointKey};
 use repoweave::vcs::{RawRevisionId, ResolvedRevisionId};
 use repoweave::workspace::MarkerDefect;
 use std::path::PathBuf;
@@ -739,13 +739,13 @@ pub fn corpus() -> Vec<CheckViolation> {
         CheckViolation::OrphanedSavepoint {
             workweave: Some(workweave()),
             repo: repo(),
-            op_id: "op-1".into(),
+            key: SavepointKey::Op("op-1".parse().unwrap()),
             sub_kind: OrphanedSavepointKind::Redundant,
         },
         CheckViolation::OrphanedSavepoint {
             workweave: None,
             repo: repo(),
-            op_id: "op-1".into(),
+            key: SavepointKey::Op("op-1".parse().unwrap()),
             sub_kind: OrphanedSavepointKind::Live,
         },
         CheckViolation::CargoVersionSkew {

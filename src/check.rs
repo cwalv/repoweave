@@ -6,6 +6,7 @@
 use crate::git::RWV_MERGE_DRIVER_PREFIX;
 use crate::integration::{Issue, IssueKind};
 use crate::manifest::{LockFile, Manifest, Project, ProjectName, RepoPath, Role, WorkweaveId};
+use crate::op_state::SavepointKey;
 use crate::refusal::{refusal, RefusalKind};
 use crate::vcs::{RawRevisionId, ReplayExclusionState, ResolvedRevisionId};
 use crate::workspace::{
@@ -575,9 +576,8 @@ pub enum CheckViolation {
         workweave: Option<WorkweaveId>,
         /// The holding repo's manifest-relative path.
         repo: RepoPath,
-        /// Opaque op-id captured from the savepoint ref's trailing path
-        /// component (`refs/rwv/pre-op/<op_id>`).
-        op_id: String,
+        /// The key read from the savepoint ref's trailing path component.
+        key: SavepointKey,
         /// Safe-vs-live classification.
         sub_kind: OrphanedSavepointKind,
     },
@@ -2529,13 +2529,13 @@ impl ViolationOutput {
             CheckViolation::OrphanedSavepoint {
                 workweave,
                 repo,
-                op_id,
+                key,
                 sub_kind,
             } => Self::OrphanedSavepoint {
                 absolute_path: abs_in(&workweave, workspace_dir, workweave_dirs, &repo),
                 path: repo.to_string(),
                 workweave: workweave.map(|w| w.to_string()),
-                op_id,
+                op_id: key.to_string(),
                 sub_kind,
             },
             CheckViolation::CargoVersionSkew {
@@ -6134,7 +6134,8 @@ pub fn scan_state_hygiene(
     // workspace tree. We need this set before classifying savepoints below;
     // any savepoint whose op-id is in this set is in-use (the matching sync
     // is in flight) and must not be reported as orphaned.
-    let mut live_op_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut live_savepoints: std::collections::HashSet<SavepointKey> =
+        std::collections::HashSet::new();
     for target in op_state_targets {
         // Absent or unparseable file → nothing to do here. An unparseable
         // file is surfaced by `op_state::read_owner`'s caller in sync paths;
@@ -6146,7 +6147,7 @@ pub fn scan_state_hygiene(
                 verb: state.verb,
                 started_at: state.started_at.clone(),
             });
-            live_op_ids.insert(state.id);
+            live_savepoints.insert(SavepointKey::Op(state.id));
         }
         // Dead-lease check: a workspace holding an `.rwv-op-lease` whose
         // recorded owner has no matching `.rwv-op` (or has one with a
@@ -6161,12 +6162,14 @@ pub fn scan_state_hygiene(
                     DeadOpLeaseKind::OwnerRecordAbsent
                 }
                 crate::op_state::DeadLeaseReason::OwnerOpIdMismatch { owner_op_id } => {
-                    DeadOpLeaseKind::OwnerOpIdMismatch { owner_op_id }
+                    DeadOpLeaseKind::OwnerOpIdMismatch {
+                        owner_op_id: owner_op_id.to_string(),
+                    }
                 }
             };
             violations.push(CheckViolation::DeadOpLease {
                 workspace_dir: dead.workspace_dir,
-                op_id: dead.op_id,
+                op_id: dead.op_id.to_string(),
                 recorded_owner: dead.recorded_owner,
                 sub_kind,
                 created_at: dead.created_at,
@@ -6199,17 +6202,17 @@ pub fn scan_state_hygiene(
         // every savepoint as Live (conservative — we cannot prove
         // reachability, so we keep the ref).
         let head = vcs.head_revision(&repo.abs).ok();
-        let op_ids = match vcs.list_savepoint_op_ids(&repo.abs) {
-            Ok(ids) => ids,
+        let keys = match vcs.list_savepoints(&repo.abs) {
+            Ok(keys) => keys,
             Err(_) => continue, // can't enumerate → leave repo alone
         };
-        for op_id in op_ids {
+        for key in keys {
             // Skip savepoints whose op-id matches an in-flight `.rwv-op`.
             // The owning sync may still need to roll back.
-            if live_op_ids.contains(&op_id) {
+            if live_savepoints.contains(&key) {
                 continue;
             }
-            let sub_kind = match (&head, vcs.resolve_savepoint(&repo.abs, &op_id)) {
+            let sub_kind = match (&head, vcs.resolve_savepoint(&repo.abs, &key)) {
                 (Some(head_rev), Some(sp_rev)) => {
                     // `is_ancestor(sp, head)` is non-strict: equal revisions
                     // return true, which is what we want — a savepoint
@@ -6230,7 +6233,7 @@ pub fn scan_state_hygiene(
             violations.push(CheckViolation::OrphanedSavepoint {
                 workweave: repo.workweave.clone(),
                 repo: repo.repo.clone(),
-                op_id,
+                key,
                 sub_kind,
             });
         }
@@ -7101,13 +7104,13 @@ pub fn fix_state_hygiene(
             Ok(true)
         }
         CheckViolation::OrphanedSavepoint {
-            op_id,
+            key,
             sub_kind: OrphanedSavepointKind::Redundant,
             ..
         } => {
             // drop_savepoint swallows ref-update errors by design — the
             // savepoint is purely a recovery aid.
-            vcs.drop_savepoint(repo_abs, op_id);
+            vcs.drop_savepoint(repo_abs, key);
             Ok(true)
         }
         CheckViolation::DeadOpLease { workspace_dir, .. } => {
@@ -8543,7 +8546,7 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                 CheckViolation::OrphanedSavepoint {
                     workweave,
                     repo,
-                    op_id,
+                    key,
                     sub_kind,
                 } => {
                     let location = match workweave {
@@ -8560,7 +8563,7 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                              keep — recover or delete by hand with `git branch <name> <sha>`)"
                         }
                     };
-                    format!("{location}: {detail} op_id={op_id}")
+                    format!("{location}: {detail} op_id={key}")
                 }
                 CheckViolation::CargoVersionSkew {
                     crate_name,
@@ -9445,13 +9448,13 @@ fn apply_finding_repairs(
             CheckViolation::OrphanedSavepoint {
                 workweave,
                 repo,
-                op_id,
+                key,
                 sub_kind: OrphanedSavepointKind::Redundant,
             } => match repo_locations.get(&(workweave.clone(), repo.clone())) {
                 Some(repo_abs) => match fix_state_hygiene(vcs, &v, repo_abs) {
                     Ok(true) => {
                         println!(
-                            "[fixed] core: orphaned-savepoint for {}: dropped op_id={op_id}",
+                            "[fixed] core: orphaned-savepoint for {}: dropped op_id={key}",
                             location_of(workweave, repo)
                         );
                         true

@@ -12,7 +12,9 @@ use crate::manifest::{
     project_repo_key, IntegrationConfig, LockFile, Manifest, Project, ProjectName, RepoPath,
     ResolvedLockFile, WorkweaveName, WorkweaveNameError,
 };
-use crate::op_state::{self, OpId, OpVerb, Override, Overrides, OwnerRecord, SyncStrategy};
+use crate::op_state::{
+    self, OpId, OpVerb, Override, Overrides, OwnerRecord, SavepointKey, SyncStrategy,
+};
 use crate::parallel::run_in_parallel;
 use crate::placement::PlacementOutput;
 use crate::refusal::RefusalKind;
@@ -1189,28 +1191,13 @@ fn apply_strategy(
 fn create_savepoint(
     vcs: &dyn Vcs,
     repo: &Path,
-    op_id: &OpId,
+    key: &SavepointKey,
 ) -> anyhow::Result<ResolvedRevisionId> {
-    Ok(vcs.create_savepoint(repo, op_id.as_str())?)
+    Ok(vcs.create_savepoint(repo, key)?)
 }
 
-fn delete_savepoint(vcs: &dyn Vcs, repo: &Path, op_id: &OpId) {
-    vcs.drop_savepoint(repo, op_id.as_str());
-}
-
-/// Derive the savepoint op-id string used for target-workspace repos.
-///
-/// Target repos in a sync-to op may share a git object store with CWD repos
-/// when both are worktrees of the same canonical clone. In that case, using
-/// the same `op_id` for both sides would give them the same ref name
-/// (`refs/rwv/pre-op/<op_id>`) — the first restore during `rwv abort` would
-/// drop the ref, leaving the second restore unable to find it.
-///
-/// We use `<op_id>-target` to give target repos their own savepoint ref
-/// namespace, guaranteeing abort can restore both sides independently even in
-/// a shared-object-store topology.
-fn target_savepoint_id(op_id: &OpId) -> String {
-    format!("{}-target", op_id.as_str())
+fn delete_savepoint(vcs: &dyn Vcs, repo: &Path, key: &SavepointKey) {
+    vcs.drop_savepoint(repo, key);
 }
 
 // NOTE: the old `check_lock_freshness` / `lock_recovery`
@@ -1771,7 +1758,7 @@ fn reload_replayed_project(ctx: &OpContext<'_>) -> anyhow::Result<Project> {
 fn pre_op_manifest(ctx: &OpContext<'_>) -> anyhow::Result<Manifest> {
     let vcs = ctx.project_vcs.as_ref();
     let savepoint = vcs
-        .resolve_savepoint(&ctx.cwd_project_dir, ctx.op_id.as_str())
+        .resolve_savepoint(&ctx.cwd_project_dir, &ctx.savepoint_key())
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "internal: no savepoint under op {} in {}",
@@ -2779,6 +2766,16 @@ struct SourceSnapshot {
 }
 
 impl OpContext<'_> {
+    /// The key the op's replay-side savepoints are filed under.
+    fn savepoint_key(&self) -> SavepointKey {
+        SavepointKey::Op(self.op_id.clone())
+    }
+
+    /// The key a `sync-to` target's savepoints are filed under.
+    fn target_savepoint_key(&self) -> SavepointKey {
+        SavepointKey::SyncToTarget(self.op_id.clone())
+    }
+
     /// Convenience: the active phase recorded on the owner record.
     fn current_phase(&self) -> anyhow::Result<op_state::OpPhase> {
         let record = op_state::read_owner(&self.owner_workspace_dir)?.ok_or_else(|| {
@@ -3750,15 +3747,17 @@ fn guard_and_mark<'a>(
     // way to do that symmetrically is via the same savepoint mechanism used
     // on the CWD side. Sibling .4 (abort hardening) verifies these refs
     // against HEAD; we create them here so the anchor exists.
-    create_savepoint(project_vcs.as_ref(), &cwd_project_dir, &op_id)?;
-    let mut project_anchors: Vec<(PathBuf, OpId)> = vec![(cwd_project_dir.clone(), op_id.clone())];
-    let mut member_anchors: Vec<(Box<dyn Vcs>, PathBuf, OpId)> = Vec::new();
+    let savepoint_key = SavepointKey::Op(op_id.clone());
+    create_savepoint(project_vcs.as_ref(), &cwd_project_dir, &savepoint_key)?;
+    let mut project_anchors: Vec<(PathBuf, SavepointKey)> =
+        vec![(cwd_project_dir.clone(), savepoint_key.clone())];
+    let mut member_anchors: Vec<(Box<dyn Vcs>, PathBuf, SavepointKey)> = Vec::new();
     for (repo_path, entry) in cwd_project.manifest.iter_entries() {
         let abs = cwd_workspace_dir.join(repo_path.as_path());
         if abs.exists() {
             let vcs = vcs_for(entry.vcs_type);
-            if create_savepoint(vcs.as_ref(), &abs, &op_id).is_ok() {
-                member_anchors.push((vcs, abs, op_id.clone()));
+            if create_savepoint(vcs.as_ref(), &abs, &savepoint_key).is_ok() {
+                member_anchors.push((vcs, abs, savepoint_key.clone()));
             }
         }
     }
@@ -3766,12 +3765,12 @@ fn guard_and_mark<'a>(
     // Sync-to: also savepoint the target's repos so abort can restore them.
     //
     // Target repos may share a git object store with CWD repos (worktree
-    // topology). Using the same op_id would create the same ref on both sides;
-    // the CWD restore would drop it, leaving the target restore unable to find
-    // it. `target_savepoint_id` appends "-target" to the op_id to give target
-    // repos their own ref namespace.
+    // topology). Filing both sides under one key would create the same ref on
+    // both; the CWD restore would drop it, leaving the target restore unable
+    // to find it. `SavepointKey::SyncToTarget` gives target repos their own
+    // namespace.
     if matches!(verb, MachineVerb::SyncTo) {
-        let tsp_id = OpId::from_string(target_savepoint_id(&op_id));
+        let tsp_id = SavepointKey::SyncToTarget(op_id.clone());
         // Load the target's project to enumerate its repos. Best-effort:
         // if we cannot load it (e.g. project not yet materialized) skip
         // — abort will just leave those repos unchanged.
@@ -3916,7 +3915,7 @@ fn load_continuing_context<'a>(
         record,
         owner_workspace: owner_workspace_dir,
     } = op;
-    let op_id = OpId::from_string(record.id.clone());
+    let op_id = record.id.clone();
 
     // Everything below reads the recorded verb, and `verb` reaches no other
     // consumer — so without this refusal `rwv sync --continue` on a `rwv
@@ -4011,10 +4010,7 @@ fn load_continuing_context<'a>(
         }
     }
 
-    let strategy = record
-        .strategy
-        .parse::<SyncStrategy>()
-        .context("op-state has invalid strategy")?;
+    let strategy = record.strategy;
 
     // Re-root the engine context at the OWNER workspace. When `--continue` is
     // invoked from the leased target, `invocation_workspace_dir` points at the
@@ -5365,7 +5361,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         });
         sync_tasks.push(SyncTask {
             repo_path: repo_path.clone(),
-            pre_replay_tip: vcs.resolve_savepoint(&abs, ctx.op_id.as_str()),
+            pre_replay_tip: vcs.resolve_savepoint(&abs, &ctx.savepoint_key()),
             abs,
             vcs,
             target,
@@ -5550,7 +5546,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         &ctx.cwd_workspace_dir,
         &ctx.cwd_project_dir,
         emit_text,
-        &|vcs, member| vcs.resolve_savepoint(member, ctx.op_id.as_str()),
+        &|vcs, member| vcs.resolve_savepoint(member, &ctx.savepoint_key()),
         Some(ctx.handler),
     );
 
@@ -6026,7 +6022,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         }
     }
 
-    let target_savepoint = target_savepoint_id(&ctx.op_id);
+    let target_savepoint = ctx.target_savepoint_key();
     settle_members(
         &ctx.dest_workspace_dir,
         &ctx.dest_project_dir,
@@ -6133,8 +6129,8 @@ fn refuse_retiring_unpruned_checkouts(stranded: &[RepoPath]) -> anyhow::Result<(
 /// what the op left changed in this checkout. `None` when the repo has no
 /// savepoint (it was born during the op; the membership change that birthed
 /// it is the project manifest's to report) or when nothing moved.
-fn delivered_changes(vcs: &dyn Vcs, repo: &Path, op_id: &OpId) -> Option<Vec<String>> {
-    let pre = vcs.resolve_savepoint(repo, op_id.as_str())?;
+fn delivered_changes(vcs: &dyn Vcs, repo: &Path, key: &SavepointKey) -> Option<Vec<String>> {
+    let pre = vcs.resolve_savepoint(repo, key)?;
     let head = vcs.head_revision(repo).ok()?;
     if pre == head {
         return None;
@@ -6199,9 +6195,11 @@ fn delivered_materialized_input_hits(ctx: &OpContext<'_>) -> Vec<MaterializedInp
             .collect();
 
     let mut hits = Vec::new();
-    if let Some(changed) =
-        delivered_changes(ctx.project_vcs.as_ref(), &ctx.cwd_project_dir, &ctx.op_id)
-    {
+    if let Some(changed) = delivered_changes(
+        ctx.project_vcs.as_ref(),
+        &ctx.cwd_project_dir,
+        &ctx.savepoint_key(),
+    ) {
         for file in [Manifest::FILE_NAME, crate::manifest::LockFile::FILE_NAME] {
             if changed.iter().any(|p| p == file) {
                 hits.push(MaterializedInputHit {
@@ -6221,7 +6219,7 @@ fn delivered_materialized_input_hits(ctx: &OpContext<'_>) -> Vec<MaterializedInp
             continue;
         }
         let vcs = vcs_for(entry.vcs_type);
-        let Some(changed) = delivered_changes(vcs.as_ref(), &abs, &ctx.op_id) else {
+        let Some(changed) = delivered_changes(vcs.as_ref(), &abs, &ctx.savepoint_key()) else {
             continue;
         };
         for file in changed
@@ -6286,12 +6284,16 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     // project repo, preserve the project savepoint as a tombstone — the only
     // remaining reference to the discarded commits.
     if ctx.discard_local_commits.is_none() {
-        delete_savepoint(ctx.project_vcs.as_ref(), &canonical_project_dir, &ctx.op_id);
+        delete_savepoint(
+            ctx.project_vcs.as_ref(),
+            &canonical_project_dir,
+            &ctx.savepoint_key(),
+        );
     } else if emit_text {
         eprintln!(
             "note: --discard-local-commits discarded project commits; pre-sync state preserved at \
              {savepoint} (recover with `git reset --hard {savepoint}` in {dir})",
-            savepoint = ctx.project_vcs.savepoint_label(ctx.op_id.as_str()),
+            savepoint = ctx.project_vcs.savepoint_label(&ctx.savepoint_key()),
             dir = ctx.cwd_project_dir.display(),
         );
     }
@@ -6306,12 +6308,12 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     {
         for (repo_path, entry) in project.manifest.iter_entries() {
             let abs = primary.join(repo_path.as_path());
-            delete_savepoint(vcs_for(entry.vcs_type).as_ref(), &abs, &ctx.op_id);
+            delete_savepoint(vcs_for(entry.vcs_type).as_ref(), &abs, &ctx.savepoint_key());
         }
     }
 
-    // Sync-to: drop target savepoints. These use the "<op_id>-target"
-    // namespace (see target_savepoint_id). Best-effort: if the target's
+    // Sync-to: drop target savepoints, filed under their own key
+    // (`SavepointKey::SyncToTarget`). Best-effort: if the target's
     // project dir or repos are gone (e.g. after a retire that deleted the
     // workweave and the target structure changed), silently skip.
     //
@@ -6320,7 +6322,7 @@ fn cleanup(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     // project, and resolving by that pointer drops refs in the wrong
     // project's repos while the real ones survive every successful sync-to.
     if matches!(ctx.verb, op_state::OpVerb::SyncTo) {
-        let tsp_id = OpId::from_string(target_savepoint_id(&ctx.op_id));
+        let tsp_id = ctx.target_savepoint_key();
         let target_presents_the_project =
             WorkspaceContext::resolve_for_project(&ctx.dest_workspace_dir, &ctx.cwd_project_name)
                 .is_ok();
@@ -6479,7 +6481,7 @@ fn rewind_project_repo(
 ) -> anyhow::Result<()> {
     let vcs = ctx.project_vcs.as_ref();
     let savepoint = vcs
-        .resolve_savepoint_ref(&ctx.cwd_project_dir, ctx.op_id.as_str())
+        .resolve_savepoint_ref(&ctx.cwd_project_dir, &ctx.savepoint_key())
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "internal: --discard-local-commits reached Phase 1' with no savepoint under \
@@ -6695,8 +6697,8 @@ enum AbortSide {
     /// op id, whose replay journals `advanced_tips`.
     Replay,
     /// The workspace a `sync-to` advanced, savepointed under
-    /// [`target_savepoint_id`] so that worktree pairs sharing one refdb don't
-    /// collide on savepoint or pre-abort ref names. Nothing journals intent
+    /// [`SavepointKey::SyncToTarget`] so that worktree pairs sharing one refdb
+    /// don't collide on savepoint or pre-abort ref names. Nothing journals intent
     /// for it; its tips land in `converged_tips` at relock.
     SyncToTarget,
 }
@@ -6710,10 +6712,10 @@ impl AbortSide {
         }
     }
 
-    fn restore_id(self, op_id: &OpId) -> OpId {
+    fn savepoint_key(self, op_id: &OpId) -> SavepointKey {
         match self {
-            Self::Replay => op_id.clone(),
-            Self::SyncToTarget => OpId::from_string(target_savepoint_id(op_id)),
+            Self::Replay => SavepointKey::Op(op_id.clone()),
+            Self::SyncToTarget => SavepointKey::SyncToTarget(op_id.clone()),
         }
     }
 
@@ -6784,7 +6786,7 @@ pub fn run_abort(
         }
     });
     let owner_record = resolved.record;
-    let op_id = OpId::from_string(owner_record.id.clone());
+    let op_id = owner_record.id.clone();
 
     // Both of the op's workspaces are enumerated under the op's own project,
     // whichever side abort was invoked from. A workspace's `.rwv-active` may
@@ -6928,7 +6930,7 @@ fn restore_abort_workspace(
         AbortSide::Replay => owner_record.tips.advanced().unwrap_or(&empty_tips),
         AbortSide::SyncToTarget => &empty_tips,
     };
-    let restore_id = side.restore_id(op_id);
+    let restore_key = side.savepoint_key(op_id);
 
     let project_vcs = project_vcs();
     let project_key = project_repo_key();
@@ -6953,7 +6955,7 @@ fn restore_abort_workspace(
         match abort_one_repo(
             vcs.as_ref(),
             &abs,
-            &restore_id,
+            &restore_key,
             advanced_tips.get(repo_key),
             converged_tips.get(repo_key),
             consented,
@@ -6978,7 +6980,7 @@ fn restore_abort_workspace(
         project_dir,
         true,
         &|vcs, member| {
-            vcs.resolve_pre_abort_ref(member, restore_id.as_str())
+            vcs.resolve_pre_abort_ref(member, &restore_key)
                 .map(|captured| captured.revision)
         },
         None,
@@ -7011,7 +7013,7 @@ fn restore_abort_workspace(
 fn abort_one_repo(
     vcs: &dyn Vcs,
     repo: &Path,
-    op_id: &OpId,
+    key: &SavepointKey,
     recorded_intent_tip: Option<&CommitId>,
     recorded_converged_tip: Option<&CommitId>,
     abandon_foreign_tip: bool,
@@ -7030,7 +7032,7 @@ fn abort_one_repo(
     // and continue with the verified restore — but only if we can determine
     // the failure is benign. Today we propagate the error: failing to
     // preserve information is itself a violation of the doctrine.
-    vcs.create_pre_abort_ref(repo, op_id.as_str(), policy)
+    vcs.create_pre_abort_ref(repo, key, policy)
         .context("create pre-abort ref failed")?;
 
     // Rail 2: HEAD-verified restore. `verified_restore_savepoint` performs
@@ -7038,7 +7040,7 @@ fn abort_one_repo(
     // are returned as `ForeignTip` for the caller to report.
     vcs.verified_restore_savepoint(
         repo,
-        op_id.as_str(),
+        key,
         recorded_intent_tip,
         recorded_converged_tip,
         policy,

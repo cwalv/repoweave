@@ -93,7 +93,7 @@ empty is what lets the consent tokens in `src/cli/consent.rs` stay
 | `lock` (`src/lock.rs`, 392) | Snapshotting member HEADs into `rwv.lock`. |
 | `workweave` (`src/workweave.rs`, 4294) | Workweave create / delete / list / log, and member birth (`birth_ephemeral_worktree`, `materialize_member`). |
 | `workweave_index` (`src/workweave_index.rs`, 1779) | The primary-side `.rwv-workweave-index` and `RefRegistry` — the ref-ownership receipt store. |
-| `op_state` (`src/op_state.rs`) | The in-flight-operation record: `OpVerb`, `OpPhase`, `OwnerRecord`, `PhaseTips`, `TouchedWorkspaces`, `acquire_op`; and `OpId` / `SyncStrategy`, the two record fields the engine also reads. |
+| `op_state` (`src/op_state.rs`) | The in-flight-operation record: `OpVerb`, `OpPhase`, `OwnerRecord`, `PhaseTips`, `TouchedWorkspaces`, `acquire_op`; and `OpId`, `SavepointKey` and `SyncStrategy`: the two record fields the engine also reads, and the key a savepoint is filed under. |
 | `owned_state` (`src/owned_state.rs`, 1025) | The attested-generation ledger `.rwv-owned-digests` (`OWNED_DIGESTS_FILE`,): what rwv last accepted for each fully-owned generated file, and the inputs a generation read. Consumed by `activate`, `check`, `workweave` and the cargo integration. |
 | `durable_file` (`src/durable_file.rs`) | The one whole-file publish path: `replace` (overwrite) and `create_new` (refuse an occupied target), both temp-then-fsync-then-publish. Used by `workweave_index` and `op_state`. |
 
@@ -393,11 +393,14 @@ observed tip is attributable to the operation. `VerifiedRestoreOutcome`
 reported rather than reset and blocks the record from being cleared
 (`src/sync.rs`).
 
-Savepoints are git refs under `refs/rwv/pre-op/<op-id>`; pre-abort refs under
-`refs/rwv/pre-abort/<op-id>`. A `sync-to` target's repos get the same refs
-with a `-target` suffix, because a worktree pair shares one ref store and the
-first restore would otherwise drop the ref the second needs. `OpId`
-(`src/op_state.rs`) is nanoseconds since epoch, minted by `OpId::new_now()`.
+Savepoints are git refs under `refs/rwv/pre-op/<key>`; pre-abort refs under
+`refs/rwv/pre-abort/<key>`. Every `Vcs` savepoint method takes a `SavepointKey`
+(`src/op_state.rs`): `Op(OpId)` for the workspace the op replayed in,
+`SyncToTarget(OpId)` for a `sync-to` target's repos, whose ref leaf carries a
+`-target` suffix because a worktree pair shares one ref store and the first
+restore would otherwise drop the ref the second needs. `OpId` is nanoseconds
+since epoch, minted by `OpId::new_now()` and read back only through its
+validated parse, which refuses an id ending in that suffix.
 
 ## 6. The seams
 

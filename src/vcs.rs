@@ -8,6 +8,7 @@ use crate::cli::consent::{
     ReattachConsent,
 };
 use crate::manifest::{ProjectName, WorkweaveName};
+use crate::op_state::SavepointKey;
 use crate::registry::CloneUrl;
 use crate::wire_token::{parse_wire_token, wire_token};
 use schemars::JsonSchema;
@@ -785,7 +786,7 @@ pub enum ForeignTipPolicy {
 /// caller can decline the destructive action and surface recovery hints.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VerifiedRestoreOutcome {
-    /// No savepoint exists for `op_id` in this repo. Nothing to do.
+    /// No savepoint exists for the key in this repo. Nothing to do.
     NoSavepoint,
     /// The current tip equals the savepoint — the op never moved this
     /// repo. Restore is a no-op; HEAD was not touched.
@@ -1754,7 +1755,7 @@ impl fmt::Display for HeadAttachment {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SavepointRef {
     repo: PathBuf,
-    op_id: String,
+    key: SavepointKey,
     at: ResolvedRevisionId,
 }
 
@@ -1764,9 +1765,9 @@ impl SavepointRef {
         &self.repo
     }
 
-    /// The opaque op id the savepoint is filed under.
-    pub fn op_id(&self) -> &str {
-        &self.op_id
+    /// The key the savepoint is filed under.
+    pub fn key(&self) -> &SavepointKey {
+        &self.key
     }
 
     /// The captured tip — the revision `rwv abort` restores to.
@@ -2622,25 +2623,29 @@ pub trait Vcs: Send + Sync {
     ) -> Result<usize, VcsError>;
 
     /// Create a savepoint capturing the current `HEAD` of `repo` under an
-    /// op-id-namespaced ref.
+    /// op-namespaced ref.
     ///
     /// For git: writes
-    /// `refs/rwv/pre-op/<op_id>` pointing at `HEAD`. The ref namespace is an
-    /// impl detail — callers pass the opaque `op_id` and never spell the
-    /// ref directly; those that must show an operator where the state went
-    /// take the name from [`Vcs::savepoint_label`] or
-    /// [`Vcs::savepoint_namespace`].
+    /// `refs/rwv/pre-op/<key>` pointing at `HEAD`, where `<key>` is the
+    /// key's text form. The ref namespace is an impl detail — callers pass
+    /// the [`SavepointKey`] and never spell the ref directly; those that must
+    /// show an operator where the state went take the name from
+    /// [`Vcs::savepoint_label`] or [`Vcs::savepoint_namespace`].
     ///
     /// Returns the captured `HEAD` revision so the caller can record it
     /// in op-state.
-    fn create_savepoint(&self, repo: &Path, op_id: &str) -> Result<ResolvedRevisionId, VcsError>;
+    fn create_savepoint(
+        &self,
+        repo: &Path,
+        key: &SavepointKey,
+    ) -> Result<ResolvedRevisionId, VcsError>;
 
     /// The operator-spellable, VCS-native name of the savepoint reference
-    /// keyed by `op_id`, for recovery hints that must name a resolvable
+    /// filed under `key`, for recovery hints that must name a resolvable
     /// reference. The [`PreAbortRef::label`] of the savepoint side.
     ///
-    /// For git: `refs/rwv/pre-op/<op_id>`.
-    fn savepoint_label(&self, op_id: &str) -> String;
+    /// For git: `refs/rwv/pre-op/<key>`.
+    fn savepoint_label(&self, key: &SavepointKey) -> String;
 
     /// The reference namespace savepoints live under, for operator text
     /// written where no op exists yet to key a [`Vcs::savepoint_label`].
@@ -2648,23 +2653,23 @@ pub trait Vcs: Send + Sync {
     /// For git: `refs/rwv/pre-op`.
     fn savepoint_namespace(&self) -> String;
 
-    /// Look up the savepoint captured under `op_id` in `repo`, returning
+    /// Look up the savepoint captured under `key` in `repo`, returning
     /// the SHA it points at, or `None` when no such savepoint exists.
     ///
-    /// For git: reads `refs/rwv/pre-op/<op_id>`.
-    fn resolve_savepoint(&self, repo: &Path, op_id: &str) -> Option<ResolvedRevisionId>;
+    /// For git: reads `refs/rwv/pre-op/<key>`.
+    fn resolve_savepoint(&self, repo: &Path, key: &SavepointKey) -> Option<ResolvedRevisionId>;
 
-    /// Drop the savepoint captured under `op_id` in `repo`. No-op when
+    /// Drop the savepoint captured under `key` in `repo`. No-op when
     /// no such savepoint exists; ignores ref-update failures (the
     /// savepoint is purely a recovery aid — its absence is benign).
-    fn drop_savepoint(&self, repo: &Path, op_id: &str);
+    fn drop_savepoint(&self, repo: &Path, key: &SavepointKey);
 
     /// Capture `repo`'s current tip in a durable pre-abort reference
-    /// keyed by `op_id`, returning the captured tip and the operator-
+    /// keyed by `key`, returning the captured tip and the operator-
     /// spellable label of the reference.
     ///
     /// For git: writes
-    /// `refs/rwv/pre-abort/<op_id>` pointing at `HEAD`. The ref namespace
+    /// `refs/rwv/pre-abort/<key>` pointing at `HEAD`. The ref namespace
     /// is a VCS impl detail — callers receive the [`PreAbortRef`] back
     /// with `label` containing the spellable name for refusal messages.
     ///
@@ -2676,7 +2681,7 @@ pub trait Vcs: Send + Sync {
     /// is provably no longer referenced; abort itself does not.)
     ///
     /// **First write wins, narrowed to first-write-wins-along-divergence.**
-    /// If a pre-abort reference already exists for this `op_id`, it is
+    /// If a pre-abort reference already exists for this `key`, it is
     /// returned unchanged in all cases EXCEPT one: under
     /// [`ForeignTipPolicy::Abandon`], if the existing capture is an
     /// ancestor of `HEAD`, it is ADVANCED to `HEAD`. Ancestry guarantees
@@ -2689,25 +2694,25 @@ pub trait Vcs: Send + Sync {
     fn create_pre_abort_ref(
         &self,
         repo: &Path,
-        op_id: &str,
+        key: &SavepointKey,
         foreign_tip_policy: ForeignTipPolicy,
     ) -> Result<PreAbortRef, VcsError>;
 
-    /// Resolve the pre-abort reference captured under `op_id` in `repo`,
+    /// Resolve the pre-abort reference captured under `key` in `repo`,
     /// returning `None` when no such reference exists.
     ///
     /// For git: reads
-    /// `refs/rwv/pre-abort/<op_id>`.
+    /// `refs/rwv/pre-abort/<key>`.
     ///
     /// Used by tests and recovery tooling to verify that abort wrote the
     /// pre-abort ref and to locate the captured tip.
-    fn resolve_pre_abort_ref(&self, repo: &Path, op_id: &str) -> Option<PreAbortRef>;
+    fn resolve_pre_abort_ref(&self, repo: &Path, key: &SavepointKey) -> Option<PreAbortRef>;
 
     /// HEAD-verified restore: classify the repo's current tip and restore
     /// to the savepoint ONLY when the tip is attributable to the op.
     ///
     /// Classification (evaluated in order):
-    /// - no savepoint exists for `op_id` → [`VerifiedRestoreOutcome::NoSavepoint`].
+    /// - no savepoint exists for `key` → [`VerifiedRestoreOutcome::NoSavepoint`].
     /// - repo is in a VCS-native mid-op state (rebase/merge/cherry-pick)
     ///   → mid-op is canceled and restore proceeds, returning
     ///   [`VerifiedRestoreOutcome::RestoredFromMidOp`].
@@ -2744,7 +2749,7 @@ pub trait Vcs: Send + Sync {
     /// workspace root, or `"(project)"` for the project repo).
     ///
     /// For git: when restoring, runs
-    /// `git reset --hard refs/rwv/pre-op/<op_id>` and drops the savepoint,
+    /// `git reset --hard refs/rwv/pre-op/<key>` and drops the savepoint,
     /// gated by the classification above. This is the only remaining way
     /// to reach that reset: the unverified `restore_savepoint` it
     /// superseded was deleted with the rest of the old surface, so the
@@ -2752,7 +2757,7 @@ pub trait Vcs: Send + Sync {
     fn verified_restore_savepoint(
         &self,
         repo: &Path,
-        op_id: &str,
+        key: &SavepointKey,
         recorded_intent_tip: Option<&CommitId>,
         recorded_converged_tip: Option<&CommitId>,
         foreign_tip_policy: ForeignTipPolicy,
@@ -2977,22 +2982,21 @@ pub trait Vcs: Send + Sync {
     /// [`list_stale_worktree_registrations`]: Vcs::list_stale_worktree_registrations
     fn live_worktree_branches(&self, repo: &Path) -> Result<Vec<RawRefName>, VcsError>;
 
-    /// List the opaque `op_id` strings of every savepoint currently
-    /// recorded in `repo`.
+    /// The key of every savepoint currently recorded in `repo`.
     ///
-    /// For git: enumerates
-    /// `refs/rwv/pre-op/*` via `git for-each-ref` and returns the
-    /// trailing path component (the `op_id`) of each ref. The ref
-    /// namespace (`refs/rwv/pre-op/<id>`) is an impl detail — callers
-    /// receive opaque op-id strings and feed them back through
-    /// [`resolve_savepoint`] / [`drop_savepoint`].
+    /// For git: enumerates `refs/rwv/pre-op/*` via `git for-each-ref` and
+    /// reads the trailing path component of each ref as a [`SavepointKey`].
+    /// The ref namespace is an impl detail — callers feed the keys back
+    /// through [`resolve_savepoint`] / [`drop_savepoint`]. A ref under the
+    /// namespace that is not a key is not a savepoint rwv filed, and is not
+    /// listed.
     ///
     /// Used by `rwv doctor`'s orphaned-savepoint check to find
     /// savepoints that no longer correspond to a live `.rwv-op` file.
     ///
     /// [`resolve_savepoint`]: Vcs::resolve_savepoint
     /// [`drop_savepoint`]: Vcs::drop_savepoint
-    fn list_savepoint_op_ids(&self, repo: &Path) -> Result<Vec<String>, VcsError>;
+    fn list_savepoints(&self, repo: &Path) -> Result<Vec<SavepointKey>, VcsError>;
 
     /// Read the content of `file_path` at `revision` in `repo`.
     ///
@@ -3614,17 +3618,21 @@ pub trait Vcs: Send + Sync {
     /// constructed, so the type cannot be minted for a savepoint that was
     /// only planned. [`DiscardWarrant::new`] takes one, which is what makes
     /// a rewind without a savepoint unrepresentable.
-    fn create_savepoint_ref(&self, repo: &Path, op_id: &str) -> Result<SavepointRef, VcsError> {
-        let at = self.create_savepoint(repo, op_id)?;
+    fn create_savepoint_ref(
+        &self,
+        repo: &Path,
+        key: &SavepointKey,
+    ) -> Result<SavepointRef, VcsError> {
+        let at = self.create_savepoint(repo, key)?;
         Ok(SavepointRef {
             repo: repo.to_path_buf(),
-            op_id: op_id.to_owned(),
+            key: key.clone(),
             at,
         })
     }
 
     /// Proof for a savepoint an *earlier* call wrote. `None` when there is
-    /// none under `op_id`.
+    /// none under `key`.
     ///
     /// The same proposition as [`create_savepoint_ref`] — "this savepoint
     /// exists on disk, at this revision, in this repo" — reached by reading
@@ -3636,10 +3644,10 @@ pub trait Vcs: Send + Sync {
     /// is the one thing the savepoint is for.
     ///
     /// [`create_savepoint_ref`]: Vcs::create_savepoint_ref
-    fn resolve_savepoint_ref(&self, repo: &Path, op_id: &str) -> Option<SavepointRef> {
-        self.resolve_savepoint(repo, op_id).map(|at| SavepointRef {
+    fn resolve_savepoint_ref(&self, repo: &Path, key: &SavepointKey) -> Option<SavepointRef> {
+        self.resolve_savepoint(repo, key).map(|at| SavepointRef {
             repo: repo.to_path_buf(),
-            op_id: op_id.to_owned(),
+            key: key.clone(),
             at,
         })
     }
