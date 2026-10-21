@@ -48,8 +48,9 @@ pub enum CommandSpec {
 
 #[derive(Debug, Clone)]
 pub enum Program {
-    /// Found on `PATH` once, before any repo runs.
-    Resolved(PathBuf),
+    /// Found on `PATH` once, before any repo runs; `spelled` is what the
+    /// operator typed.
+    Resolved { spelled: String, path: PathBuf },
     /// Spelled with a directory, so relative to each repo's checkout.
     InRepo(PathBuf),
 }
@@ -66,10 +67,11 @@ impl CommandSpec {
         let program = if path.components().count() > 1 || path.is_absolute() {
             Program::InRepo(path.to_path_buf())
         } else {
-            Program::Resolved(
-                which::which(program)
+            Program::Resolved {
+                spelled: program.clone(),
+                path: which::which(program)
                     .with_context(|| format!("`{program}` was not found on PATH"))?,
-            )
+            }
         };
         Ok(Self::Argv {
             program,
@@ -82,10 +84,7 @@ impl CommandSpec {
             Self::Shell(line) => line.clone(),
             Self::Argv { program, args } => {
                 let program = match program {
-                    Program::Resolved(p) => p.file_name().map_or_else(
-                        || p.to_string_lossy().into_owned(),
-                        |n| n.to_string_lossy().into_owned(),
-                    ),
+                    Program::Resolved { spelled, .. } => spelled.clone(),
                     Program::InRepo(p) => p.to_string_lossy().into_owned(),
                 };
                 std::iter::once(program.as_str())
@@ -101,7 +100,7 @@ impl CommandSpec {
         let mut command = match self {
             Self::Argv { program, args } => {
                 let program = match program {
-                    Program::Resolved(p) => p.clone(),
+                    Program::Resolved { path, .. } => path.clone(),
                     Program::InRepo(p) => repo.dir.join(p),
                 };
                 let mut command = Command::new(program);
@@ -447,6 +446,18 @@ mod tests {
             spec.display(),
             r#"./build.sh --out=dir 'two words' 'it'\''s' '$HOME'"#
         );
+    }
+
+    #[test]
+    fn display_keeps_the_program_as_the_operator_spelled_it() {
+        let spec = CommandSpec::Argv {
+            program: Program::Resolved {
+                spelled: "git".into(),
+                path: PathBuf::from("/opt/bin/git.exe"),
+            },
+            args: vec!["status".into()],
+        };
+        assert_eq!(spec.display(), "git status");
     }
 
     #[test]
