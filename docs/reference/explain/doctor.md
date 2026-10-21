@@ -411,7 +411,11 @@ Schema:
               "properties": {
                 "at_sha": {
                   "description": "The commit HEAD names directly.",
-                  "type": "string"
+                  "allOf": [
+                    {
+                      "$ref": "#/definitions/CommitId"
+                    }
+                  ]
                 },
                 "expected_ref": {
                   "description": "The ephemeral ref this workweave mints (`<project>--<workweave>`).",
@@ -514,7 +518,11 @@ Schema:
               "properties": {
                 "at_sha": {
                   "description": "The commit HEAD names directly.",
-                  "type": "string"
+                  "allOf": [
+                    {
+                      "$ref": "#/definitions/CommitId"
+                    }
+                  ]
                 },
                 "blocking_refs": {
                   "description": "Every pre-flat ref found under that namespace, in listing order.",
@@ -549,11 +557,19 @@ Schema:
               "properties": {
                 "at_sha": {
                   "description": "The commit HEAD names directly.",
-                  "type": "string"
+                  "allOf": [
+                    {
+                      "$ref": "#/definitions/CommitId"
+                    }
+                  ]
                 },
                 "branch_tip": {
                   "description": "The commit the flat ref names.",
-                  "type": "string"
+                  "allOf": [
+                    {
+                      "$ref": "#/definitions/CommitId"
+                    }
+                  ]
                 },
                 "expected_ref": {
                   "description": "The flat ref (`<project>--<workweave>`).",
@@ -678,7 +694,11 @@ Schema:
               "properties": {
                 "at_sha": {
                   "description": "The commit HEAD names directly.",
-                  "type": "string"
+                  "allOf": [
+                    {
+                      "$ref": "#/definitions/CommitId"
+                    }
+                  ]
                 },
                 "counterpart": {
                   "description": "The local counterpart of the ref this repo tracks — the manifest's `version:` for a member, the remote's declared default branch for the project repo. `None` when no tracking declaration resolves, in which case there is nothing to name as a reattach target.",
@@ -748,7 +768,11 @@ Schema:
                 },
                 "tip_sha": {
                   "description": "The branch tip SHA, surfaced so the operator can recover the commits before deleting (e.g. `git log <tip_sha>`).",
-                  "type": "string"
+                  "allOf": [
+                    {
+                      "$ref": "#/definitions/CommitId"
+                    }
+                  ]
                 }
               }
             }
@@ -899,6 +923,11 @@ Schema:
           "additionalProperties": false
         }
       ]
+    },
+    "CommitId": {
+      "description": "A full commit id: 40 lowercase hex digits, or 64 in a SHA-256 repository.",
+      "type": "string",
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
     },
     "DeadOpLeaseKind": {
       "description": "Discriminator for `CheckViolation::DeadOpLease` findings. Both shapes share the same `--fix` disposition (safe to remove the lease file) but name distinct root causes so the human-facing message can be specific.",
@@ -1061,8 +1090,7 @@ Schema:
       "type": "object",
       "required": [
         "branch",
-        "strands_commits",
-        "tip_sha"
+        "strands_commits"
       ],
       "properties": {
         "branch": {
@@ -1074,8 +1102,15 @@ Schema:
           "type": "boolean"
         },
         "tip_sha": {
-          "description": "Its tip.",
-          "type": "string"
+          "description": "Its tip, or `null` where the branch names no commit.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CommitId"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },
