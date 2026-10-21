@@ -1810,6 +1810,16 @@ impl SavepointRef {
     }
 }
 
+/// What a repo's savepoint namespace holds.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SavepointListing {
+    /// The savepoints rwv filed.
+    pub keys: Vec<SavepointKey>,
+    /// Refs under the namespace that no key names, spelled as the backend
+    /// spells a reference. rwv filed none of them.
+    pub unrecognized: Vec<String>,
+}
+
 /// Proof that a rewinding MOVE (a non-fast-forward) may proceed.
 ///
 /// Two things must both hold, and the type is constructed from both: a
@@ -3016,21 +3026,21 @@ pub trait Vcs: Send + Sync {
     /// [`list_stale_worktree_registrations`]: Vcs::list_stale_worktree_registrations
     fn live_worktree_branches(&self, repo: &Path) -> Result<Vec<RawRefName>, VcsError>;
 
-    /// The key of every savepoint currently recorded in `repo`.
+    /// Everything the savepoint namespace of `repo` holds: the key of every
+    /// savepoint rwv filed, and the refs under the namespace that no key
+    /// names.
     ///
     /// For git: enumerates `refs/rwv/pre-op/*` via `git for-each-ref` and
     /// reads the trailing path component of each ref as a [`SavepointKey`].
     /// The ref namespace is an impl detail — callers feed the keys back
-    /// through [`resolve_savepoint`] / [`drop_savepoint`]. A ref under the
-    /// namespace that is not a key is not a savepoint rwv filed, and is not
-    /// listed.
+    /// through [`resolve_savepoint`] / [`drop_savepoint`].
     ///
-    /// Used by `rwv doctor`'s orphaned-savepoint check to find
-    /// savepoints that no longer correspond to a live `.rwv-op` file.
+    /// Used by `rwv doctor`'s savepoint checks: savepoints that no longer
+    /// correspond to a live `.rwv-op` file, and refs that are no savepoint.
     ///
     /// [`resolve_savepoint`]: Vcs::resolve_savepoint
     /// [`drop_savepoint`]: Vcs::drop_savepoint
-    fn list_savepoints(&self, repo: &Path) -> Result<Vec<SavepointKey>, VcsError>;
+    fn list_savepoints(&self, repo: &Path) -> Result<SavepointListing, VcsError>;
 
     /// Read the content of `file_path` at `revision` in `repo`.
     ///

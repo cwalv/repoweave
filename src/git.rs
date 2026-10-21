@@ -8,8 +8,8 @@ use crate::vcs::{
     DerivedContentResolution, DiscardOutcome, ForeignTipPolicy, HeadAttachment, HeadObservation,
     LocalRefName, MidOperation, PreAbortRef, PublishRef, RawRefName, RawRevisionId,
     RecordedSubmodule, RefOrigin, RemoteBranchCopies, RemoteDefaultBranch, RemoteRef,
-    ReplayExclusionState, ResolvedRevisionId, SubmoduleBirth, TrackedFile, TrackedFileKind,
-    UniqueDiff, Vcs, VcsError, VerifiedRestoreOutcome, WorkspacePopulation,
+    ReplayExclusionState, ResolvedRevisionId, SavepointListing, SubmoduleBirth, TrackedFile,
+    TrackedFileKind, UniqueDiff, Vcs, VcsError, VerifiedRestoreOutcome, WorkspacePopulation,
 };
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
@@ -2548,14 +2548,20 @@ impl Vcs for GitVcs {
         Ok(held)
     }
 
-    fn list_savepoints(&self, repo: &Path) -> Result<Vec<SavepointKey>, VcsError> {
+    fn list_savepoints(&self, repo: &Path) -> Result<SavepointListing, VcsError> {
         let prefix = format!("{SAVEPOINT_NAMESPACE}/");
         let output = Self::run_trimmed(&["for-each-ref", "--format=%(refname)", &prefix], repo)?;
-        Ok(output
-            .lines()
-            .filter_map(|l| l.trim().strip_prefix(&prefix))
-            .filter_map(|leaf| leaf.parse().ok())
-            .collect())
+        let mut listing = SavepointListing::default();
+        for refname in output.lines().map(str::trim).filter(|l| !l.is_empty()) {
+            match refname
+                .strip_prefix(&prefix)
+                .and_then(|leaf| leaf.parse().ok())
+            {
+                Some(key) => listing.keys.push(key),
+                None => listing.unrecognized.push(refname.to_owned()),
+            }
+        }
+        Ok(listing)
     }
 
     fn read_file_at_revision(
@@ -4753,21 +4759,21 @@ mod branch_model_tests {
             &["update-ref", "refs/rwv/pre-op/not.a.key", "HEAD"],
         );
 
-        let mut listed: Vec<String> = GitVcs
-            .list_savepoints(p.path())
-            .unwrap()
-            .iter()
-            .map(ToString::to_string)
-            .collect();
-        listed.sort();
+        let listing = GitVcs.list_savepoints(p.path()).unwrap();
+        let mut keys: Vec<String> = listing.keys.iter().map(ToString::to_string).collect();
+        keys.sort();
 
         assert_eq!(
-            listed,
+            keys,
             vec![
                 "1779769917405921588".to_owned(),
                 "1779769917405921588-target".to_owned()
             ],
-            "a ref under the namespace that is no key is not a savepoint rwv filed"
+        );
+        assert_eq!(
+            listing.unrecognized,
+            vec!["refs/rwv/pre-op/not.a.key".to_owned()],
+            "a ref no key names is not a savepoint rwv filed, and is listed apart"
         );
     }
 

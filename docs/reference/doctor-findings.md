@@ -101,6 +101,7 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`working-tree-drift`](#working-tree-drift) / `live-edits` | Warning | Report-only |
 | [`orphaned-savepoint`](#orphaned-savepoint) / `redundant` | Warning | Auto-fixable |
 | [`orphaned-savepoint`](#orphaned-savepoint) / `live` | Warning | Report-only |
+| [`unrecognized-savepoint-ref`](#unrecognized-savepoint-ref) | Warning | Report-only |
 | [`stale-op-state`](#stale-op-state) | Warning | Report-only |
 | [`dead-op-lease`](#dead-op-lease) (`owner-record-absent`, `owner-op-id-mismatch`) | Warning | Auto-fixable |
 | [`cargo-version-skew`](#cargo-version-skew) | Warning | Report-only |
@@ -1414,6 +1415,21 @@ last pointer to commits that would otherwise become unreachable — the same
 reason the reflog is never cut.
 
 **What to do:** recover what you want from it, then delete it by hand.
+
+A savepoint that belongs to an operation still in flight is never reported as
+orphaned: that covers both of a `sync-to`'s savepoints, the one in the
+workspace it replays in and the one in the workspace it advances, for as long
+as the operation's record exists.
+
+### `unrecognized-savepoint-ref`
+
+**Warning. Report-only.** A ref under `refs/rwv/pre-op/` that no op id names.
+rwv did not file it: it is a hand-made ref, a damaged name, or one written by
+a different rwv. What it points at is unknown, so `--fix` never drops it. The
+finding carries the `ref_name`.
+
+**What to do:** inspect it, and delete it by hand with
+`git update-ref -d <ref_name>` once nothing needs it.
 
 ### `stale-op-state`
 

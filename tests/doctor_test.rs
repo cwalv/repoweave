@@ -1748,6 +1748,12 @@ mod doctor_json {
             workweave: Option<String>,
             op_id: String,
         },
+        UnrecognizedSavepointRef {
+            path: String,
+            absolute_path: String,
+            workweave: Option<String>,
+            ref_name: String,
+        },
         ConfusableSiblings {
             parent: String,
             first: String,

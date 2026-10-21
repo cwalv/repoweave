@@ -662,6 +662,19 @@ impl OwnerRecord {
         }
     }
 
+    /// The keys this op files savepoints under: its own, and for a `sync-to`
+    /// the target side's. A savepoint under any of them belongs to the op for
+    /// as long as its record exists.
+    pub fn savepoint_keys(&self) -> Vec<SavepointKey> {
+        match self.verb {
+            OpVerb::Sync => vec![SavepointKey::Op(self.id.clone())],
+            OpVerb::SyncTo => vec![
+                SavepointKey::Op(self.id.clone()),
+                SavepointKey::SyncToTarget(self.id.clone()),
+            ],
+        }
+    }
+
     /// Path to the owner op-state file within `workspace_dir`.
     pub fn path_in(workspace_dir: &Path) -> PathBuf {
         workspace_dir.join(OP_STATE_FILE)
@@ -1483,6 +1496,19 @@ mod tests {
         assert_eq!(
             SavepointKey::SyncToTarget(op).to_string(),
             "1779769917405921588-target"
+        );
+    }
+
+    #[test]
+    fn a_sync_to_files_savepoints_on_both_sides_and_a_sync_on_one() {
+        let op = OpId::new_now();
+        let sync = make_sync_record(&op, Path::new("/own"), Path::new("/src"));
+        let sync_to = make_sync_to_record(&op, Path::new("/own"), Path::new("/tgt"));
+
+        assert_eq!(sync.savepoint_keys(), vec![SavepointKey::Op(op.clone())]);
+        assert_eq!(
+            sync_to.savepoint_keys(),
+            vec![SavepointKey::Op(op.clone()), SavepointKey::SyncToTarget(op)]
         );
     }
 

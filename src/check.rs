@@ -583,6 +583,19 @@ pub enum CheckViolation {
         sub_kind: OrphanedSavepointKind,
     },
 
+    /// A ref under the savepoint namespace that no op id names. rwv filed
+    /// none of it: a hand-made ref, a damaged name, or one written by a
+    /// different rwv. What it points at is unknown, so it is reported and
+    /// never dropped.
+    UnrecognizedSavepointRef {
+        /// The workweave the holding repo lives in; `None` for the primary.
+        workweave: Option<WorkweaveId>,
+        /// The holding repo's manifest-relative path.
+        repo: RepoPath,
+        /// The reference, spelled as the VCS spells it.
+        ref_name: String,
+    },
+
     /// Version skew across cargo workspace members: the same crate name is
     /// required at different version-req strings by two or more members
     /// (post `workspace = true` indirection). Always **warning** severity
@@ -810,6 +823,7 @@ impl CheckViolation {
                 OrphanedSavepointKind::Redundant => Auto,
                 OrphanedSavepointKind::Live => ReportOnly,
             },
+            CheckViolation::UnrecognizedSavepointRef { .. } => ReportOnly,
             CheckViolation::ConfusableSiblings { .. } => ReportOnly,
         }
     }
@@ -863,6 +877,7 @@ impl CheckViolation {
             | CheckViolation::DanglingRefReceipt { .. }
             | CheckViolation::PreFlatRefReceipt { .. }
             | CheckViolation::OrphanedSavepoint { .. }
+            | CheckViolation::UnrecognizedSavepointRef { .. }
             | CheckViolation::ConfusableSiblings { .. }
             | CheckViolation::CargoVersionSkew { .. }
             | CheckViolation::CargoPatchShadowing { .. }
@@ -936,6 +951,7 @@ impl CheckViolation {
             CheckViolation::DanglingRefReceipt { .. } => "dangling-ref-receipt",
             CheckViolation::PreFlatRefReceipt { .. } => "pre-flat-ref-receipt",
             CheckViolation::OrphanedSavepoint { .. } => "orphaned-savepoint",
+            CheckViolation::UnrecognizedSavepointRef { .. } => "unrecognized-savepoint-ref",
             CheckViolation::ConfusableSiblings { .. } => "confusable-siblings",
             CheckViolation::CargoVersionSkew { .. } => "cargo-version-skew",
             CheckViolation::CargoPatchShadowing { .. } => "cargo-patch-shadowing",
@@ -2104,6 +2120,16 @@ pub enum ViolationOutput {
         #[serde(rename = "sub_kind")]
         sub_kind: OrphanedSavepointKind,
     },
+    /// A ref under the savepoint namespace that no op id names. rwv did not
+    /// file it, so `--fix` never drops it.
+    UnrecognizedSavepointRef {
+        path: String,
+        absolute_path: String,
+        /// The workweave's identity, `<project>--<name>`; `None` for the primary weave.
+        workweave: Option<String>,
+        /// The reference, spelled as the VCS spells it.
+        ref_name: String,
+    },
     /// See [`CheckViolation::ConfusableSiblings`].
     ConfusableSiblings {
         /// The namespace the two names share.
@@ -2538,6 +2564,16 @@ impl ViolationOutput {
                 workweave: workweave.map(|w| w.to_string()),
                 op_id: key.to_string(),
                 sub_kind,
+            },
+            CheckViolation::UnrecognizedSavepointRef {
+                workweave,
+                repo,
+                ref_name,
+            } => Self::UnrecognizedSavepointRef {
+                absolute_path: abs_in(&workweave, workspace_dir, workweave_dirs, &repo),
+                path: repo.to_string(),
+                workweave: workweave.map(|w| w.to_string()),
+                ref_name,
             },
             CheckViolation::CargoVersionSkew {
                 crate_name,
@@ -6136,7 +6172,7 @@ pub fn scan_state_hygiene(
                 verb: state.verb,
                 started_at: state.started_at.clone(),
             });
-            live_savepoints.insert(SavepointKey::Op(state.id));
+            live_savepoints.extend(state.savepoint_keys());
         }
         // Dead-lease check: a workspace holding an `.rwv-op-lease` whose
         // recorded owner has no matching `.rwv-op` (or has one with a
@@ -6191,11 +6227,18 @@ pub fn scan_state_hygiene(
         // every savepoint as Live (conservative — we cannot prove
         // reachability, so we keep the ref).
         let head = vcs.head_revision(&repo.abs).ok();
-        let keys = match vcs.list_savepoints(&repo.abs) {
-            Ok(keys) => keys,
+        let listing = match vcs.list_savepoints(&repo.abs) {
+            Ok(listing) => listing,
             Err(_) => continue, // can't enumerate → leave repo alone
         };
-        for key in keys {
+        for ref_name in listing.unrecognized {
+            violations.push(CheckViolation::UnrecognizedSavepointRef {
+                workweave: repo.workweave.clone(),
+                repo: repo.repo.clone(),
+                ref_name,
+            });
+        }
+        for key in listing.keys {
             // Skip savepoints whose op-id matches an in-flight `.rwv-op`.
             // The owning sync may still need to roll back.
             if live_savepoints.contains(&key) {
@@ -8553,6 +8596,23 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                         }
                     };
                     format!("{location}: {detail} op_id={key}")
+                }
+                CheckViolation::UnrecognizedSavepointRef {
+                    workweave,
+                    repo,
+                    ref_name,
+                } => {
+                    let location = match workweave {
+                        Some(ww) => format!("{ww}/{repo}"),
+                        None => format!("{repo}"),
+                    };
+                    format!(
+                        "{location}: unrecognized-savepoint-ref {ref_name} — it sits in the \
+                         savepoint namespace but no op id names it, so rwv did not file it. \
+                         Never auto-fixed: what it points at is unknown. Inspect it, and \
+                         delete it by hand with `git update-ref -d {ref_name}` once nothing \
+                         needs it."
+                    )
                 }
                 CheckViolation::CargoVersionSkew {
                     crate_name,

@@ -2338,6 +2338,41 @@
           }
         },
         {
+          "description": "A ref under the savepoint namespace that no op id names. rwv did not file it, so `--fix` never drops it.",
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "kind",
+            "path",
+            "ref_name"
+          ],
+          "properties": {
+            "absolute_path": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "unrecognized-savepoint-ref"
+              ]
+            },
+            "path": {
+              "type": "string"
+            },
+            "ref_name": {
+              "description": "The reference, spelled as the VCS spells it.",
+              "type": "string"
+            },
+            "workweave": {
+              "description": "The workweave's identity, `<project>--<name>`; `None` for the primary weave.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        {
           "description": "See [`CheckViolation::ConfusableSiblings`].",
           "type": "object",
           "required": [

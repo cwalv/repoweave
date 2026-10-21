@@ -651,6 +651,149 @@ fn live_op_state_protects_matching_savepoint() {
     );
 }
 
+/// A parked `sync-to`: its owner record, and the savepoints it filed per repo
+/// on both sides (`<op-id>`, and `<op-id>-target` for the target's).
+fn parked_sync_to(root: &Path) -> (PathBuf, String, String) {
+    let repo_rel = "github/acme/server";
+    let repo_abs = root.join(repo_rel);
+    let head_sha = init_git_repo(&repo_abs);
+    write_manifest(
+        &root.join("projects").join("my-app"),
+        &[(repo_rel, "https://github.com/acme/server.git")],
+    );
+
+    let op_id = "555555555555555556".to_owned();
+    let target_side = format!("{op_id}-target");
+    write_op_state_for_verb(root, &op_id, "sync-to");
+    add_savepoint(&repo_abs, &op_id, &head_sha);
+    add_savepoint(&repo_abs, &target_side, &head_sha);
+    (repo_abs, op_id, target_side)
+}
+
+/// The op in flight owns both of its savepoints, so neither is an orphan.
+#[test]
+fn a_parked_sync_to_does_not_have_its_target_side_savepoint_reported_orphaned() {
+    let tmp = common::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+    parked_sync_to(&root);
+
+    let out = rwv_cmd().arg("doctor").current_dir(&root).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("orphaned-savepoint"),
+        "a sync-to's target-side savepoint belongs to the op in flight; got:\n{stdout}"
+    );
+}
+
+/// `--fix` must not drop the target side's savepoint: it is the only way
+/// `rwv abort` can put the target back.
+#[test]
+fn doctor_fix_keeps_the_target_side_savepoint_of_a_parked_sync_to() {
+    let tmp = common::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+    let (repo_abs, op_id, target_side) = parked_sync_to(&root);
+
+    rwv_cmd()
+        .args(["doctor", "--fix"])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+
+    assert!(savepoint_exists(&repo_abs, &op_id));
+    assert!(
+        savepoint_exists(&repo_abs, &target_side),
+        "--fix dropped the target-side savepoint of an op in flight"
+    );
+}
+
+/// The control for the test above: only a `sync-to` files a target side, so
+/// the target-side name beside a plain `sync` is no op's savepoint.
+#[test]
+fn a_plain_sync_op_does_not_own_a_target_side_savepoint() {
+    let tmp = common::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_rel = "github/acme/server";
+    let repo_abs = root.join(repo_rel);
+    let head_sha = init_git_repo(&repo_abs);
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_rel, "https://github.com/acme/server.git")],
+    );
+
+    let op_id = "555555555555555557";
+    write_op_state_for_verb(&root, op_id, "sync");
+    add_savepoint(&repo_abs, op_id, &head_sha);
+    add_savepoint(&repo_abs, &format!("{op_id}-target"), &head_sha);
+
+    let out = rwv_cmd()
+        .args(["doctor", "--json"])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let orphans: Vec<&str> = json["violations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|v| v["kind"] == "orphaned-savepoint")
+        .map(|v| v["op_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(orphans, vec![format!("{op_id}-target")]);
+}
+
+/// A ref under the savepoint namespace that no op id names is not a savepoint
+/// rwv filed: a hand-made ref, a damaged name, or one a different rwv wrote.
+/// It is reported, never dropped (what it points at is unknown), and it is
+/// not mistaken for an orphaned savepoint.
+#[test]
+fn a_ref_in_the_savepoint_namespace_that_names_no_op_is_reported_and_kept() {
+    let tmp = common::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_rel = "github/acme/server";
+    let repo_abs = root.join(repo_rel);
+    let head_sha = init_git_repo(&repo_abs);
+    write_manifest(
+        &root.join("projects").join("my-app"),
+        &[(repo_rel, "https://github.com/acme/server.git")],
+    );
+    add_savepoint(&repo_abs, "not.a.key", &head_sha);
+    add_savepoint(&repo_abs, "nested/leaf", &head_sha);
+
+    let findings = |args: &[&str]| -> Vec<serde_json::Value> {
+        let out = rwv_cmd().args(args).current_dir(&root).output().unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        json["violations"].as_array().unwrap().clone()
+    };
+
+    let violations = findings(&["doctor", "--json"]);
+    let mut unrecognized: Vec<&str> = violations
+        .iter()
+        .filter(|v| v["kind"] == "unrecognized-savepoint-ref")
+        .map(|v| v["ref_name"].as_str().unwrap())
+        .collect();
+    unrecognized.sort_unstable();
+    assert_eq!(
+        unrecognized,
+        vec!["refs/rwv/pre-op/nested/leaf", "refs/rwv/pre-op/not.a.key"],
+        "every ref no key names is a finding; got: {violations:#?}"
+    );
+    assert!(
+        violations.iter().all(|v| v["kind"] != "orphaned-savepoint"),
+        "a ref that is no savepoint is not an orphaned one; got: {violations:#?}"
+    );
+
+    rwv_cmd()
+        .args(["doctor", "--fix"])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    assert!(savepoint_exists(&repo_abs, "not.a.key"));
+    assert!(savepoint_exists(&repo_abs, "nested/leaf"));
+}
+
 // ===========================================================================
 // 7. JSON channel surfaces the new variants
 // ===========================================================================

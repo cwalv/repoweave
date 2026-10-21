@@ -197,7 +197,7 @@ severity. Under `--json`, output is the envelope:
 ```
 
 The `$schema` URL points to the committed schema artifact. Variants are
-discriminated by the `kind` tag — `branch-discipline`, `cargo-patch-shadowing`, `cargo-version-skew`, `clone-topology`, `confusable-siblings`, `dangling-active-project`, `dangling-ref-receipt`, `dangling-reference`, `dead-op-lease`, `head-unreadable`, `incomplete-lock`, `index-drift`, `legacy-manifest-format`, `legacy-workweave-index`, `legacy-workweave-marker`, `lock-pinned-by-name`, `member-permissions`, `merge-driver-config-unreadable`, `missing-canonical-clone`, `missing-merge-driver-config`, `missing-replay-exclusion`, `orphaned-clone`, `orphaned-savepoint`, `phantom-merge-driver`, `pre-flat-ref-receipt`, `projectless-dir`, `projects-dir-unreadable`, `provenance`, `replay-exclusion-unreadable`, `role-disagreement`, `stale-lock`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unknown-segment-clone`, `unnameable-project`, `unparseable-project`, `unreadable-owned-state`, `unreadable-workweave-index`, `unresolvable-lock-entry`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
+discriminated by the `kind` tag — `branch-discipline`, `cargo-patch-shadowing`, `cargo-version-skew`, `clone-topology`, `confusable-siblings`, `dangling-active-project`, `dangling-ref-receipt`, `dangling-reference`, `dead-op-lease`, `head-unreadable`, `incomplete-lock`, `index-drift`, `legacy-manifest-format`, `legacy-workweave-index`, `legacy-workweave-marker`, `lock-pinned-by-name`, `member-permissions`, `merge-driver-config-unreadable`, `missing-canonical-clone`, `missing-merge-driver-config`, `missing-replay-exclusion`, `orphaned-clone`, `orphaned-savepoint`, `phantom-merge-driver`, `pre-flat-ref-receipt`, `projectless-dir`, `projects-dir-unreadable`, `provenance`, `replay-exclusion-unreadable`, `role-disagreement`, `stale-lock`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unknown-segment-clone`, `unnameable-project`, `unparseable-project`, `unreadable-owned-state`, `unreadable-workweave-index`, `unrecognized-savepoint-ref`, `unresolvable-lock-entry`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
 Every per-repo variant carries `path` (manifest-relative) and
 `absolute_path` (fully resolved). Variants with subkinds
 (`branch-discipline`, `clone-topology`, `dead-op-lease`, `index-drift`, `member-permissions`, `missing-replay-exclusion`, `orphaned-savepoint`, `provenance`, `uninitialized-submodule`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
@@ -2560,6 +2560,41 @@ Schema:
                   "$ref": "#/definitions/OrphanedSavepointKind"
                 }
               ]
+            },
+            "workweave": {
+              "description": "The workweave's identity, `<project>--<name>`; `None` for the primary weave.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        {
+          "description": "A ref under the savepoint namespace that no op id names. rwv did not file it, so `--fix` never drops it.",
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "kind",
+            "path",
+            "ref_name"
+          ],
+          "properties": {
+            "absolute_path": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "unrecognized-savepoint-ref"
+              ]
+            },
+            "path": {
+              "type": "string"
+            },
+            "ref_name": {
+              "description": "The reference, spelled as the VCS spells it.",
+              "type": "string"
             },
             "workweave": {
               "description": "The workweave's identity, `<project>--<name>`; `None` for the primary weave.",

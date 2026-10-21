@@ -228,6 +228,7 @@ pub fn case_token(v: &CheckViolation) -> String {
             OrphanedSavepointKind::Redundant => "orphaned-savepoint/redundant".into(),
             OrphanedSavepointKind::Live => "orphaned-savepoint/live".into(),
         },
+        CheckViolation::UnrecognizedSavepointRef { .. } => "unrecognized-savepoint-ref".into(),
         CheckViolation::CargoVersionSkew { .. } => "cargo-version-skew".into(),
         CheckViolation::CargoPatchShadowing { .. } => "cargo-patch-shadowing".into(),
         CheckViolation::MissingCanonicalClone { .. } => "missing-canonical-clone".into(),
@@ -747,6 +748,11 @@ pub fn corpus() -> Vec<CheckViolation> {
             repo: repo(),
             key: SavepointKey::Op("op-1".parse().unwrap()),
             sub_kind: OrphanedSavepointKind::Live,
+        },
+        CheckViolation::UnrecognizedSavepointRef {
+            workweave: Some(workweave()),
+            repo: repo(),
+            ref_name: "refs/rwv/pre-op/not.a.key".into(),
         },
         CheckViolation::CargoVersionSkew {
             crate_name: "serde".into(),

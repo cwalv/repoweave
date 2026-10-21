@@ -618,7 +618,7 @@ impl Vcs for FakeVcs {
         unsupported("live_worktree_branches")
     }
 
-    fn list_savepoints(&self, _repo: &Path) -> Result<Vec<SavepointKey>, VcsError> {
+    fn list_savepoints(&self, _repo: &Path) -> Result<SavepointListing, VcsError> {
         unsupported("list_savepoints")
     }
 
