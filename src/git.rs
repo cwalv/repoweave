@@ -4,7 +4,7 @@ use crate::registry::CloneUrl;
 use crate::vcs::{
     CommitSummary, ConflictOp, ContentIdentity, DerivedContentPolicy, DerivedContentResolution,
     DiscardOutcome, ForeignTipPolicy, HeadAttachment, HeadObservation, LocalRefName, PreAbortRef,
-    PublishRef, RawRefName, RawRevisionId, RecordedSubmodule, RemoteBranchCopies,
+    PublishRef, RawRefName, RawRevisionId, RecordedSubmodule, RefOrigin, RemoteBranchCopies,
     RemoteDefaultBranch, RemoteRef, ReplayExclusionState, ResolvedRevisionId, SubmoduleBirth,
     TrackedFile, TrackedFileKind, UniqueDiff, Vcs, VcsError, VerifiedRestoreOutcome,
     WorkspacePopulation,
@@ -2720,7 +2720,7 @@ impl Vcs for GitVcs {
         dest: &Path,
         name: &RawRefName,
         start_point: &ResolvedRevisionId,
-    ) -> Result<bool, VcsError> {
+    ) -> Result<RefOrigin, VcsError> {
         self.add_worktree(store, dest, name, start_point, WorktreeFiles::Written)
     }
 
@@ -3329,7 +3329,7 @@ impl GitVcs {
         name: &RawRefName,
         start_point: &ResolvedRevisionId,
         files: WorktreeFiles,
-    ) -> Result<bool, VcsError> {
+    ) -> Result<RefOrigin, VcsError> {
         let store = Self::work_dir_for_store(store);
         let dest_str = path_as_git_arg(dest, "worktree path")?;
         let start = start_point.as_str();
@@ -3359,7 +3359,7 @@ impl GitVcs {
             // — a DESTROY needs a receipt and a warrant (R2, R3), and this
             // call holds neither, so it cannot be reached from here.
             Self::run(&[add, &[dest_str, branch]].concat(), &store).map_err(classify)?;
-            return Ok(false);
+            return Ok(RefOrigin::Adopted);
         }
         // AUTHOR. If this fails after git has already written the ref (a
         // taken destination is the usual way), the ref is left in place
@@ -3368,7 +3368,7 @@ impl GitVcs {
         // doctor can reconcile. Deleting it here would be an unwarranted
         // DESTROY, which is the failure mode this path exists to remove.
         Self::run(&[add, &["-b", branch, dest_str, start]].concat(), &store).map_err(classify)?;
-        Ok(true)
+        Ok(RefOrigin::Authored)
     }
 
     /// [`GitVcs::run`] with `input` on stdin.
@@ -3626,13 +3626,13 @@ impl WorkspacePopulation for GitVcs {
         dest: &Path,
         name: &RawRefName,
         start_point: &ResolvedRevisionId,
-    ) -> Result<bool, VcsError> {
-        let authored =
+    ) -> Result<RefOrigin, VcsError> {
+        let ref_origin =
             self.add_worktree(store, dest, name, start_point, WorktreeFiles::Unwritten)?;
         // `--no-checkout` leaves no index; reading the tree into one is what
         // makes the workspace record its revision before any file exists.
         Self::run(&["read-tree", "HEAD"], dest)?;
-        Ok(authored)
+        Ok(ref_origin)
     }
 
     fn tracked_files(&self, workspace: &Path) -> Result<Vec<TrackedFile>, VcsError> {

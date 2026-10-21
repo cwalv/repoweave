@@ -1342,6 +1342,33 @@ impl fmt::Display for BornRef {
     }
 }
 
+/// Whether a worktree birth wrote its branch or took one that was already
+/// there.
+///
+/// Rollback deletes a branch only when the birth authored it, so the two
+/// outcomes are named rather than left to a bool whose `true` an
+/// implementation could read the other way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefOrigin {
+    /// This call created the branch.
+    Authored,
+    /// A branch of that name already existed, and the worktree was put on it.
+    Adopted,
+}
+
+impl RefOrigin {
+    fn born(self, owned: &OwnedRef) -> Option<BornRef> {
+        match self {
+            Self::Authored => Some(BornRef {
+                store: owned.store().to_path_buf(),
+                name: owned.name().clone(),
+                at: owned.created_at().clone(),
+            }),
+            Self::Adopted => None,
+        }
+    }
+}
+
 /// The remote's own declaration of its primary branch.
 ///
 /// This is none of the four notions and it is not a fifth kind: rwv never
@@ -3138,27 +3165,23 @@ pub trait Vcs: Send + Sync {
         owned: &OwnedRef,
         dest: &Path,
     ) -> Result<Option<BornRef>, VcsError> {
-        let authored = self.materialize_worktree_on_ref(
+        let ref_origin = self.materialize_worktree_on_ref(
             owned.store(),
             dest,
             owned.name(),
             owned.created_at(),
         )?;
-        Ok(authored.then(|| BornRef {
-            store: owned.store().to_path_buf(),
-            name: owned.name().clone(),
-            at: owned.created_at().clone(),
-        }))
+        Ok(ref_origin.born(owned))
     }
 
     /// VCS-specific half of [`create_worktree_on`]: create a worktree at
     /// `dest` on branch `name`, starting at `start_point`.
     ///
-    /// Returns `true` when the branch was created by this call and `false`
-    /// when a branch of that name already existed and was adopted.
-    /// Implementations must **not** delete a pre-existing branch to force
-    /// the authoring path: destroying a ref needs a receipt and a warrant,
-    /// and this call has neither.
+    /// Returns [`RefOrigin::Authored`] when the branch was created by this
+    /// call and [`RefOrigin::Adopted`] when a branch of that name already
+    /// existed. Implementations must **not** delete a pre-existing branch to
+    /// force the authoring path: destroying a ref needs a receipt and a
+    /// warrant, and this call has neither.
     ///
     /// [`create_worktree_on`]: Vcs::create_worktree_on
     fn materialize_worktree_on_ref(
@@ -3167,7 +3190,7 @@ pub trait Vcs: Send + Sync {
         dest: &Path,
         name: &RawRefName,
         start_point: &ResolvedRevisionId,
-    ) -> Result<bool, VcsError>;
+    ) -> Result<RefOrigin, VcsError>;
 
     /// Materialize `url` at `dest` with the checkout attached to `name` and
     /// positioned at the lock scalar `at`, which is resolved *inside* the
@@ -3530,17 +3553,13 @@ pub trait WorkspacePopulation: Send + Sync {
         owned: &OwnedRef,
         dest: &Path,
     ) -> Result<Option<BornRef>, VcsError> {
-        let authored = self.materialize_unpopulated_worktree_on_ref(
+        let ref_origin = self.materialize_unpopulated_worktree_on_ref(
             owned.store(),
             dest,
             owned.name(),
             owned.created_at(),
         )?;
-        Ok(authored.then(|| BornRef {
-            store: owned.store().to_path_buf(),
-            name: owned.name().clone(),
-            at: owned.created_at().clone(),
-        }))
+        Ok(ref_origin.born(owned))
     }
 
     /// VCS-specific half of
@@ -3552,7 +3571,7 @@ pub trait WorkspacePopulation: Send + Sync {
         dest: &Path,
         name: &RawRefName,
         start_point: &ResolvedRevisionId,
-    ) -> Result<bool, VcsError>;
+    ) -> Result<RefOrigin, VcsError>;
 
     /// Every tracked file `workspace` records, with what a checkout writes
     /// for it. A path mid-merge records no single content and is omitted.

@@ -151,14 +151,19 @@ impl FakeVcs {
         (store.to_path_buf(), name.as_str().to_owned())
     }
 
-    fn author_or_adopt(&self, store: &Path, name: &RawRefName, at: &ResolvedRevisionId) -> bool {
+    fn author_or_adopt(
+        &self,
+        store: &Path,
+        name: &RawRefName,
+        at: &ResolvedRevisionId,
+    ) -> RefOrigin {
         let key = Self::key(store, name);
         let mut branches = self.branches.lock().unwrap();
         if branches.contains_key(&key) {
-            return false;
+            return RefOrigin::Adopted;
         }
         branches.insert(key, at.clone());
-        true
+        RefOrigin::Authored
     }
 
     fn enter(&self, call: VcsCall) -> Result<(), VcsError> {
@@ -272,7 +277,7 @@ impl Vcs for FakeVcs {
         _dest: &Path,
         name: &RawRefName,
         start_point: &ResolvedRevisionId,
-    ) -> Result<bool, VcsError> {
+    ) -> Result<RefOrigin, VcsError> {
         self.enter(VcsCall::MaterializeWorktreeOnRef)?;
         Ok(self.author_or_adopt(store, name, start_point))
     }
@@ -720,7 +725,7 @@ impl WorkspacePopulation for FakeVcs {
         _dest: &Path,
         name: &RawRefName,
         start_point: &ResolvedRevisionId,
-    ) -> Result<bool, VcsError> {
+    ) -> Result<RefOrigin, VcsError> {
         self.enter(VcsCall::MaterializeUnpopulatedWorktreeOnRef)?;
         Ok(self.author_or_adopt(store, name, start_point))
     }
@@ -804,9 +809,11 @@ mod tests {
         });
 
         assert_eq!(fake.resolve_local_branch_tip(store, &name).unwrap(), None);
-        assert!(!fake
-            .materialize_worktree_on_ref(store, Path::new("/dest"), &name, &rev('b'))
-            .unwrap());
+        assert_eq!(
+            fake.materialize_worktree_on_ref(store, Path::new("/dest"), &name, &rev('b'))
+                .unwrap(),
+            RefOrigin::Adopted
+        );
         assert_eq!(fake.branch_tip(store, &name).unwrap(), rev('a'));
     }
 
@@ -816,9 +823,11 @@ mod tests {
         let store = Path::new("/store");
         let name = RawRefName::new("p--w");
 
-        assert!(fake
-            .materialize_worktree_on_ref(store, Path::new("/dest"), &name, &rev('b'))
-            .unwrap());
+        assert_eq!(
+            fake.materialize_worktree_on_ref(store, Path::new("/dest"), &name, &rev('b'))
+                .unwrap(),
+            RefOrigin::Authored
+        );
         assert_eq!(fake.branch_tip(store, &name).unwrap(), rev('b'));
         assert_eq!(fake.calls(), vec![VcsCall::MaterializeWorktreeOnRef]);
     }
@@ -885,9 +894,11 @@ mod tests {
             }
         });
 
-        assert!(!fake
-            .materialize_worktree_on_ref(store, Path::new("/dest"), &name, &rev('b'))
-            .unwrap());
+        assert_eq!(
+            fake.materialize_worktree_on_ref(store, Path::new("/dest"), &name, &rev('b'))
+                .unwrap(),
+            RefOrigin::Adopted
+        );
         assert_eq!(
             fake.calls(),
             vec![
