@@ -198,6 +198,38 @@ fn the_floor_never_moves_backward() {
     );
 }
 
+/// A floor whose version is a `git describe` string is illegible: it licenses
+/// nothing, and the next clean run replaces it. A parser that dropped the tag
+/// prefix and the tail would read this plant as 99.0.0, newer than the running
+/// binary, and leave it standing.
+///
+/// **Mutation evidence**: letting the floor's version deserialize through a
+/// `v`-prefix and `-` tail strip leaves the plant in place and reddens this.
+#[test]
+fn a_floor_recorded_as_a_describe_string_is_replaced() {
+    let tmp = common::tempdir().unwrap();
+    let root = healable_workspace(tmp.path());
+    heal_and_clear(&root);
+
+    std::fs::write(
+        floor_path(&root),
+        "{\"version\":\"v99.0.0-3-gabc1234\",\"project_tips\":{}}",
+    )
+    .unwrap();
+
+    let out = rwv()
+        .args(["doctor", "--all"])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert_eq!(
+        read_floor(&root)["version"].as_str(),
+        Some(env!("CARGO_PKG_VERSION")),
+        "a clean run replaces a floor that is not a semver record"
+    );
+}
+
 /// Pin 2b: a report-only warning does not block the floor. A live orphaned
 /// savepoint is the plant: rwv will not drop it (`--fix` leaves it for the
 /// reviewed operator sweep), so a weave carrying one can never reach
