@@ -305,16 +305,8 @@ pub enum RefusalKind {
 
 impl RefusalKind {
     /// The token an operator reads and `rwv explain` resolves.
-    ///
-    /// Derived through `Serialize` so the `rename_all` above is the only place
-    /// a variant becomes a string. A second spelling — a `match` arm, a table,
-    /// a doc heading typed by hand — is a thing to keep in sync rather than a
-    /// convenience.
     pub fn token(self) -> String {
-        match serde_json::to_value(self) {
-            Ok(serde_json::Value::String(token)) => token,
-            other => panic!("a fieldless enum must serialize to a string, got {other:?}"),
-        }
+        crate::wire_token::wire_token(&self)
     }
 }
 

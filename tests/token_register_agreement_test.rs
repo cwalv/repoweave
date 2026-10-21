@@ -725,8 +725,8 @@ fn every_published_token_is_servable_or_a_recorded_exception() {
 /// unfiltered when every one of its members happens to be one word (`ok`,
 /// `failed`) — snake_case and kebab-case coincide until a name needs a
 /// separator. What this excludes is a literal underscore surviving into a
-/// token (`LockRelation`'s `no_lock`), the same character class `arm_tokens`
-/// already holds every hand-parsed register to.
+/// token (`AdvisoryKindOutput`'s `derived_state_stale`), the same character
+/// class `arm_tokens` already holds every hand-parsed register to.
 fn is_kebab_token(s: &str) -> bool {
     !s.is_empty()
         && s.chars()
@@ -872,7 +872,7 @@ const ALREADY_WALKED: &[&str] = &[
 /// sub-kinds and missed four vocabularies outright; this file's own walk is
 /// the source of truth for the number below, and a mismatch here means the
 /// walk moved, not that the constant needs editing to match.
-const UNWALKED_KEBAB_CENSUS: (usize, usize) = (29, 115);
+const UNWALKED_KEBAB_CENSUS: (usize, usize) = (29, 116);
 
 /// A residue sub-kind token deliberately mirrored from `RefusalKind`, and the
 /// vocabulary that mirrors it — the D1 sentence again, one level deeper than

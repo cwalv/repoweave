@@ -54,8 +54,8 @@ Under `--json`, output is the envelope:
 The `$schema` URL points to the committed schema artifact. Each element of
 `repos` is a `RepoStatus` record: `path` (manifest-relative), `absolute_path`
 (fully resolved), `branch`, `tip`, `lock_sha`, `relation`
-(`ok`/`ahead`/`behind`/`diverged`/`no_lock`/`unknown`), `mid_op`, `role`,
-`url`, `project`.
+(`ok`/`ahead`/`behind`/`diverged`/`no-lock`/`unknown`/`missing`/`unreachable`),
+`mid_op`, `role`, `url`, `project`.
 
 `op` is present only when this workspace owns or leases an in-flight op: an
 `OpStatus` record carrying `id`, `verb` (`sync`/`sync-to`), `phase`
@@ -85,7 +85,7 @@ rwv status --json | jq -r '.repos[] | "\(.path)\t\(.relation)"'
 Find every repo that has drifted from its lock:
 
 ```
-rwv status --json | jq '.repos[] | select(.relation != "ok" and .relation != "no_lock")'
+rwv status --json | jq '.repos[] | select(.relation != "ok" and .relation != "no-lock")'
 ```
 
 Get absolute paths for all forks (e.g. to run a command across each repo):

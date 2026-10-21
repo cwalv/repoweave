@@ -51,7 +51,7 @@
             "ahead",
             "behind",
             "diverged",
-            "no_lock",
+            "no-lock",
             "unknown"
           ]
         },

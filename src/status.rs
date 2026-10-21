@@ -93,7 +93,7 @@ impl From<op_state::ResolvedOwner> for OpStatus {
 /// Neither state should be attributed to the lock file itself — surfacing them
 /// as `no-lock` misdirects operators at the wrong repair path.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "kebab-case")]
 pub enum LockRelation {
     Ok,
     Ahead,
@@ -112,17 +112,7 @@ pub enum LockRelation {
 
 impl std::fmt::Display for LockRelation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = match self {
-            LockRelation::Ok => "ok",
-            LockRelation::Ahead => "ahead",
-            LockRelation::Behind => "behind",
-            LockRelation::Diverged => "diverged",
-            LockRelation::NoLock => "no-lock",
-            LockRelation::Unknown => "unknown",
-            LockRelation::Missing => "missing",
-            LockRelation::Unreachable => "unreachable",
-        };
-        f.write_str(s)
+        f.write_str(&crate::wire_token::wire_token(self))
     }
 }
 

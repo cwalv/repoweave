@@ -86,6 +86,7 @@ pub mod symlink;
 pub mod sync;
 pub mod update;
 pub mod vcs;
+mod wire_token;
 pub mod workspace;
 pub mod workweave;
 pub mod workweave_index;

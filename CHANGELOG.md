@@ -6,6 +6,11 @@ claim that nothing changed in them.
 
 ## Unreleased
 
+### Breaking: `rwv status --json` spells the relation `no-lock`
+
+A repo with no `rwv.lock` entry has `relation` `no-lock` in `rwv status --json`,
+the spelling the table and the docs already used; it was `no_lock`.
+
 ### Breaking: `rwv doctor` names a workweave by its project and name
 
 A workweave name is unique only within its project. Every `rwv doctor --json`

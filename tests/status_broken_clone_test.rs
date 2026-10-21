@@ -4,12 +4,12 @@
 //! Doc claims anchored here:
 //!
 //!   - When a member clone directory is absent from disk, `rwv status` emits
-//!     `relation: "missing"` (not `"no_lock"`), both in human-readable and
+//!     `relation: "missing"` (not `"no-lock"`), both in human-readable and
 //!     `--json` output.
 //!
 //!   - When the clone directory exists but the locked SHA is not reachable in
 //!     the local object store (history rewritten, object pruned), `rwv status`
-//!     emits `relation: "unreachable"` (not `"no_lock"`).
+//!     emits `relation: "unreachable"` (not `"no-lock"`).
 //!
 //!   - Both states preserve the `lock_sha` field (the raw lock version string)
 //!     in `--json` output, so operators can see what SHA / tag was locked.
@@ -160,8 +160,8 @@ fn status_json_relation_is_missing_when_clone_dir_absent() {
         "relation must be 'missing' when clone dir is absent; got:\n{stdout}"
     );
     assert_ne!(
-        record["relation"], "no_lock",
-        "relation must NOT be 'no_lock' for a missing clone (lock is fine); got:\n{stdout}"
+        record["relation"], "no-lock",
+        "relation must NOT be 'no-lock' for a missing clone (lock is fine); got:\n{stdout}"
     );
     // The lock_sha field should carry the pinned SHA so operators can see
     // what the lock was pointing at before the clone was removed.
@@ -296,8 +296,8 @@ fn status_json_relation_is_unreachable_for_fabricated_bad_sha() {
         "relation must be 'unreachable' when locked SHA is not in object store; got:\n{stdout}"
     );
     assert_ne!(
-        record["relation"], "no_lock",
-        "relation must NOT be 'no_lock' when the lock exists but SHA is unreachable; got:\n{stdout}"
+        record["relation"], "no-lock",
+        "relation must NOT be 'no-lock' when the lock exists but SHA is unreachable; got:\n{stdout}"
     );
     // lock_sha must carry the pinned SHA (the one that can't be resolved).
     let lock_sha = record["lock_sha"].as_str().unwrap_or("");
