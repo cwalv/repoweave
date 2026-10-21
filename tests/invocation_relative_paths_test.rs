@@ -261,14 +261,8 @@ fn adopt_of_a_location_under_neither_weave_root_refuses_naming_both() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(!out.status.success());
     assert_routes_to(&stderr, "adopt-path-outside-weave");
-    assert!(
-        stderr.contains(&canonical(&w.primary)),
-        "stderr was:\n{stderr}"
-    );
-    assert!(
-        stderr.contains(&canonical(&w.workweave)),
-        "stderr was:\n{stderr}"
-    );
+    common::assert_names_operator_path(&stderr, w.primary.canonicalize().unwrap());
+    common::assert_names_operator_path(&stderr, w.workweave.canonicalize().unwrap());
     assert!(manifest_keys(&w.workweave.join("projects/test-project")).is_empty());
 }
 
@@ -287,13 +281,10 @@ fn adopt_of_a_workweave_clone_that_is_not_the_primarys_refuses_naming_both() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(!out.status.success());
     assert_routes_to(&stderr, "foreign-clone-in-workweave");
-    assert!(
-        stderr.contains(&canonical(&w.primary.join("bar/dup"))),
-        "stderr was:\n{stderr}"
-    );
-    assert!(
-        stderr.contains(&canonical(&w.workweave.join("bar/dup"))),
-        "stderr was:\n{stderr}"
+    common::assert_names_operator_path(&stderr, w.primary.join("bar/dup").canonicalize().unwrap());
+    common::assert_names_operator_path(
+        &stderr,
+        w.workweave.join("bar/dup").canonicalize().unwrap(),
     );
     assert!(manifest_keys(&w.workweave.join("projects/test-project")).is_empty());
 }
@@ -315,10 +306,7 @@ fn adopt_into_a_workweave_whose_placement_holds_a_plain_directory_refuses_naming
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(1), "stderr was:\n{stderr}");
     assert_routes_to(&stderr, "non-clone-at-placement");
-    assert!(
-        stderr.contains(&canonical(&occupied)),
-        "stderr was:\n{stderr}"
-    );
+    common::assert_names_operator_path(&stderr, occupied.canonicalize().unwrap());
     assert!(manifest_keys(&w.workweave.join("projects/test-project")).is_empty());
     assert!(occupied.join("notes.txt").is_file());
 }
@@ -342,10 +330,7 @@ fn add_from_a_workweave_whose_placement_holds_a_plain_directory_refuses_naming_i
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(1), "stderr was:\n{stderr}");
     assert_routes_to(&stderr, "non-clone-at-placement");
-    assert!(
-        stderr.contains(&canonical(&occupied)),
-        "stderr was:\n{stderr}"
-    );
+    common::assert_names_operator_path(&stderr, occupied.canonicalize().unwrap());
     assert!(manifest_keys(&w.workweave.join("projects/test-project")).is_empty());
     assert!(occupied.join("notes.txt").is_file());
 }
