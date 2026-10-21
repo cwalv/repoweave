@@ -21,6 +21,7 @@
 mod common;
 
 use common::src_scan::{production_lines, string_arguments_to, struct_literal_needle};
+use repoweave::check::IssueOutput;
 use repoweave::integration::{Integration, IntegrationContext, IssueKind, MemberIncompatibility};
 use repoweave::integration_runner::{detection_vocabulary, IntegrationContextBase};
 use repoweave::integrations::builtin_integrations;
@@ -215,31 +216,35 @@ fn member_incompatibility_observations_survive_into_the_kind() {
     assert_eq!(observed.on_disk(), "1.21");
     assert_eq!(observed.required(), "1.26");
     assert_eq!(observed.required_by(), "github/org/member-a/go.mod");
-    assert_eq!(issue.kind.tag(), IssueKind::MEMBER_INCOMPATIBILITY);
+    assert_eq!(issue.kind.tag(), "member-incompatibility");
 }
 
-/// The one kind tag that is also published prose has one mint. The needle is
-/// the const itself, so it cannot point at a word the const no longer uses.
+/// The one kind tag that is also published prose is the tag the wire carries:
+/// the finding's message opens with it and the findings page is keyed by it.
 #[test]
-fn published_kind_tag_is_minted_once() {
-    let literal = format!("\"{}\"", IssueKind::MEMBER_INCOMPATIBILITY);
-    let sites: Vec<String> = production_lines()
-        .iter()
-        .filter(|l| l.text.contains(&literal))
-        .map(|l| l.site())
-        .collect();
+fn member_incompatibility_message_opens_with_the_tag_the_wire_carries() {
+    let issue = MemberIncompatibility::new(
+        "go-work",
+        Path::new("/w/projects/p/go.work"),
+        "go",
+        "1.21",
+        "1.26",
+        "github/org/member-a/go.mod",
+    )
+    .into_issue();
+    let message = issue.message.clone();
 
-    assert_eq!(
-        sites.len(),
-        1,
-        "{literal} is operator-facing prose (doctor keys the category by it) \
-         *and* a discriminant, so it has one mint: \
-         `IssueKind::MEMBER_INCOMPATIBILITY`. Found: {sites:?}"
-    );
+    let wire = serde_json::to_value(IssueOutput::from_issue(issue)).unwrap();
+    let tag = wire["kind"]
+        .as_object()
+        .and_then(|kind| kind.keys().next())
+        .expect("a kind carrying fields is a one-key object")
+        .clone();
+
+    assert_eq!(tag, "member-incompatibility");
     assert!(
-        sites[0].starts_with("integration.rs"),
-        "the mint must be the const in integration.rs; found {}",
-        sites[0]
+        message.starts_with(&format!("{tag}: ")),
+        "the message must open with the wire tag: {message}"
     );
 }
 

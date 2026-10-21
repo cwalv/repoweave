@@ -223,33 +223,6 @@ pub enum IssueKind {
     CoreFinding,
 }
 
-impl IssueKind {
-    /// The tag `member-incompatibility` findings carry on operator surfaces.
-    ///
-    /// The one kind whose tag is published prose as well as a discriminant —
-    /// `docs/reference/doctor-findings.md` keys the category by this word and
-    /// the message opens with it — so it is minted here and read from here.
-    pub const MEMBER_INCOMPATIBILITY: &'static str = "member-incompatibility";
-
-    /// The stable kebab-case tag this kind travels under.
-    pub fn tag(&self) -> &'static str {
-        match self {
-            Self::ToolMissing => "tool-missing",
-            Self::ManagedFileMissing => "managed-file-missing",
-            Self::ManagedFileDrift => "managed-file-drift",
-            Self::ManagedFileUserHeld => "managed-file-user-held",
-            Self::Surfacing => "surfacing",
-            Self::ConfigRejected => "config-rejected",
-            Self::MalformedSettings => "malformed-settings",
-            Self::MemberIncompatibility(_) => Self::MEMBER_INCOMPATIBILITY,
-            Self::DerivedStateStale => "derived-state-stale",
-            Self::DisabledIntegrationArtifact => "disabled-integration-artifact",
-            Self::IntegrationFailed => "integration-failed",
-            Self::CoreFinding => "core-finding",
-        }
-    }
-}
-
 /// Whether `rwv doctor --fix` may repair any finding of an [`IssueKind`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IssueFixScope {
@@ -557,6 +530,7 @@ impl MemberIncompatibility {
     /// itself rides on [`Issue::kind`], so a surface that wants the four facts
     /// reads them rather than parsing them back out of the sentence.
     pub fn into_issue(self) -> Issue {
+        let kind = IssueKind::MemberIncompatibility(Box::new(self.clone()));
         let message = format!(
             "{tag}: {} sets `{}` to `{}`, but the members \
              require `{}` (from {}) — the toolchain rejects this configuration. \
@@ -572,13 +546,13 @@ impl MemberIncompatibility {
             self.required,
             self.path.display(),
             self.required_by,
-            tag = IssueKind::MEMBER_INCOMPATIBILITY,
+            tag = kind.tag(),
         );
         Issue {
-            integration: self.integration.clone(),
+            integration: self.integration,
             severity: Severity::Warning,
             message,
-            kind: IssueKind::MemberIncompatibility(Box::new(self)),
+            kind,
             safe_to_fix: false,
         }
     }

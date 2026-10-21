@@ -59,7 +59,7 @@ impl FetchOutcomeOutput {
 
 /// Status discriminant for [`FetchOutcomeOutput`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "kebab-case")]
 pub enum FetchOutcomeStatus {
     Ok,
     Skipped,

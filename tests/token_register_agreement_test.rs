@@ -20,10 +20,12 @@
 //! never listed here; the one thing this file states is *intent*, which is the
 //! one thing source cannot tell you (see [`INTENDED_REUSE`]).
 //!
-//! **Scope.** The five registers above, parsed from `src/refusal.rs`,
-//! `src/check.rs`, `src/integration.rs`, `src/vcs.rs` and `src/sync.rs` — the
-//! four match-minted ones read from the body of the one function that mints
-//! each, so every arm is in range whatever it is spelled like. A token built by
+//! **Scope.** The five registers above. `RefusalKind` is parsed from its
+//! declaration in `src/refusal.rs`; `IssueKind`'s tags are what
+//! `IssueKindOutput` serializes, read from its committed schema; the three
+//! match-minted ones are parsed from `src/check.rs`, `src/vcs.rs` and
+//! `src/sync.rs`, each from the body of the one function that mints it, so
+//! every arm is in range whatever it is spelled like. A token built by
 //! concatenation is still invisible; one written as a constant is resolved.
 //!
 //! **A field value is not a condition.** `ConflictOp` serializes `rebase` /
@@ -313,6 +315,15 @@ fn refusal_tokens() -> BTreeSet<String> {
     serde_enum_tokens(&source("refusal.rs"), "pub enum RefusalKind {")
 }
 
+/// The tags an integration finding's kind carries, read from the committed
+/// schema of the type that serializes them. `IssueKind::tag` is that
+/// serialization, so there is no second spelling to read.
+fn issue_tokens() -> BTreeSet<String> {
+    kebab_vocabularies()
+        .remove("IssueKindOutput")
+        .expect("the doctor schema declares IssueKindOutput")
+}
+
 /// The op names `ConflictOp` puts on the wire, read from the declaration that
 /// serializes them.
 fn conflict_op_tokens() -> BTreeSet<String> {
@@ -361,17 +372,12 @@ const MINTED_REGISTERS: &[(&str, &str, &str)] = &[
         "check.rs",
         "pub fn wire_kind(&self) -> &'static str {",
     ),
-    (
-        "issue",
-        "integration.rs",
-        "pub fn tag(&self) -> &'static str {",
-    ),
     ("vcs", "vcs.rs", "pub fn kind(&self) -> &'static str {"),
     ("sync", "sync.rs", "pub fn kind(&self) -> &'static str {"),
 ];
 
 fn registers() -> BTreeMap<&'static str, BTreeSet<String>> {
-    let mut out = BTreeMap::from([("refusal", refusal_tokens())]);
+    let mut out = BTreeMap::from([("refusal", refusal_tokens()), ("issue", issue_tokens())]);
     for (name, file, signature) in MINTED_REGISTERS {
         out.insert(name, arm_tokens(&source(file), signature));
     }

@@ -760,7 +760,7 @@
       ]
     },
     "IssueKindOutput": {
-      "description": "[`IssueKind`] on the wire.\n\nExternally tagged, which is the shape the findings page already documents for `sub_kind`: a kind with no fields of its own is a plain string, and one that carries fields is a single-key object whose key is the tag. The tags are [`IssueKind::tag`]'s, and a divergence between the two is what `IssueKindOutput::from_kind` is exhaustive to prevent.",
+      "description": "[`IssueKind`] on the wire.\n\nExternally tagged, which is the shape the findings page already documents for `sub_kind`: a kind with no fields of its own is a plain string, and one that carries fields is a single-key object whose key is the tag.",
       "oneOf": [
         {
           "type": "string",

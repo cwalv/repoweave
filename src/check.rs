@@ -2610,9 +2610,7 @@ pub enum SeverityOutput {
 ///
 /// Externally tagged, which is the shape the findings page already documents
 /// for `sub_kind`: a kind with no fields of its own is a plain string, and one
-/// that carries fields is a single-key object whose key is the tag. The tags
-/// are [`IssueKind::tag`]'s, and a divergence between the two is what
-/// `IssueKindOutput::from_kind` is exhaustive to prevent.
+/// that carries fields is a single-key object whose key is the tag.
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum IssueKindOutput {
@@ -2647,7 +2645,7 @@ pub struct MemberIncompatibilityOutput {
 }
 
 impl IssueKindOutput {
-    fn from_kind(kind: IssueKind) -> Self {
+    fn from_kind(kind: &IssueKind) -> Self {
         match kind {
             IssueKind::ToolMissing => Self::ToolMissing,
             IssueKind::ManagedFileMissing => Self::ManagedFileMissing,
@@ -2673,6 +2671,14 @@ impl IssueKindOutput {
     }
 }
 
+impl IssueKind {
+    /// The kebab-case tag this kind travels under: what [`IssueKindOutput`]
+    /// serializes it as, and what `--kind` names.
+    pub fn tag(&self) -> String {
+        crate::wire_token::wire_token(&IssueKindOutput::from_kind(self))
+    }
+}
+
 /// One integration-reported finding as it appears in `rwv doctor --json`.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct IssueOutput {
@@ -2695,7 +2701,7 @@ impl IssueOutput {
     pub fn from_issue(issue: Issue) -> Self {
         let safe_to_fix = issue.fix_permitted();
         Self {
-            kind: IssueKindOutput::from_kind(issue.kind),
+            kind: IssueKindOutput::from_kind(&issue.kind),
             integration: issue.integration,
             severity: match issue.severity {
                 crate::integration::Severity::Warning => SeverityOutput::Warning,
@@ -9856,7 +9862,7 @@ impl KindFilter {
 
     /// Whether `issue` belongs to one of the named kinds.
     fn admits_issue(&self, issue: &Issue) -> bool {
-        self.kinds.contains(issue.kind.tag())
+        self.kinds.contains(issue.kind.tag().as_str())
     }
 }
 

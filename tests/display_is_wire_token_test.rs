@@ -3,6 +3,7 @@
 //! naming a verb or a phase reads the same as the field a script matches on.
 
 use clap::ValueEnum;
+use repoweave::check::KindFilter;
 use repoweave::integration::IssueKind;
 use repoweave::op_state::{OpPhase, OpVerb, SyncStrategy};
 use repoweave::vcs::{ConflictOp, MidOperation};
@@ -130,4 +131,18 @@ fn advisory_kind_is_kebab_case_and_the_finding_it_reports() {
         IssueKind::DerivedStateStale.tag(),
         "an advisory names the doctor finding it repeats by that finding's own kind"
     );
+}
+
+#[test]
+fn every_issue_kind_tag_is_a_name_doctor_kind_accepts() {
+    let accepted: BTreeSet<String> = KindFilter::valid_kinds().into_iter().collect();
+    let issues = common::doctor_corpus::issue_corpus();
+    assert!(issues.len() > 1, "the corpus samples the issue kinds");
+    for issue in issues {
+        let tag = issue.kind.tag();
+        assert!(
+            accepted.contains(&tag),
+            "`{tag}` is the tag a finding is filtered by but no `--kind` accepts it"
+        );
+    }
 }
