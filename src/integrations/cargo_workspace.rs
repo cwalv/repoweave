@@ -548,7 +548,10 @@ impl CargoWorkspace {
             // Lazy: only when the root Cargo.toml actually declares
             // [workspace]. Repos without a [workspace] section emit their
             // root as before, unchanged.
-            let root_toml = ctx.workspace_root.join(repo.as_str()).join("Cargo.toml");
+            let root_toml = ctx
+                .workspace_root
+                .join(crate::path_spelling::native_relative(repo))
+                .join("Cargo.toml");
             let has_workspace = std::fs::read_to_string(&root_toml)
                 .map(|t| declares_workspace(&t))
                 .unwrap_or(false);

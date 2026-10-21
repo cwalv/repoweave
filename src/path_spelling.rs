@@ -175,6 +175,16 @@ pub fn link_target(path: &Path) -> Cow<'_, Path> {
     plain_path(path)
 }
 
+/// `fragment`, a `/`-separated relative name rwv keeps, as a native relative
+/// path: one component per segment, so a join onto a native root is spelled
+/// natively throughout rather than `C:\w\github/org/repo`.
+///
+/// Only `/` separates. A `\` is filename content on Unix, and the names rwv
+/// keeps refuse one wherever it would be a separator.
+pub fn native_relative(fragment: &str) -> PathBuf {
+    fragment.split('/').collect()
+}
+
 /// The spelling a location inside a weave takes: `/`-separated everywhere.
 ///
 /// Such a path is a name rwv already keeps, and rwv keeps it with slashes —

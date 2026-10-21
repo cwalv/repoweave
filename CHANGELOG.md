@@ -121,7 +121,9 @@ message could spell one `\\?\C:\…`, and a weave on a share showed
 a `file://` URL git could not clone, and handed git a path it refused. A clone
 whose `origin` is recorded as a `\\?\` path now compares equal to the same path
 spelled plain. A path with no plain spelling — longer than 260 characters, or
-naming a reserved device such as `CON` — keeps the prefix.
+naming a reserved device such as `CON` — keeps the prefix. A member or project
+under the root is spelled with `\` throughout, `C:\w\github\org\repo`, never
+`C:\w\github/org/repo`.
 
 ### `rwv --version` leads with the release version on every build
 

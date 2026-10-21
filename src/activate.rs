@@ -2245,7 +2245,9 @@ impl SurfacingSites {
                 })
             }
             (SurfacedCopy::Primary, PrimaryProjects::At(projects)) => {
-                let source = projects.join(project.as_str()).join(file);
+                let source = projects
+                    .join(crate::path_spelling::native_relative(project.as_str()))
+                    .join(file);
                 Some(PlannedLink {
                     target: source.clone(),
                     source,

@@ -150,7 +150,7 @@ pub fn detect_repos_with_manifest_impl(
     let mut paths: Vec<String> = repos
         .iter()
         .filter(|(_, e)| e.role.is_active())
-        .filter(|(rp, _)| workspace_root.join(rp.as_str()).join(filename).exists())
+        .filter(|(rp, _)| workspace_root.join(rp.as_path()).join(filename).exists())
         .map(|(rp, _)| rp.as_str().to_string())
         .collect();
     paths.sort();

@@ -2714,7 +2714,7 @@ fn collect_diverged_paths(
         check(
             checkout.vcs.as_ref(),
             &workweave_dir.join(checkout.repo_path.as_path()),
-            checkout.repo_path.as_path(),
+            &checkout.repo_path.as_path(),
             checkout.label(),
             !checkout.in_manifest,
         );
@@ -3390,7 +3390,7 @@ fn delete_workweave_inner_at(
         // leaves the actual canonical store's stale entries in place.
         let _ = vcs.worktree_prune(&repo_abs);
         let baseline_tips =
-            baseline_tips_in_store(vcs.as_ref(), &repo_abs, &baselines, repo_path.as_path());
+            baseline_tips_in_store(vcs.as_ref(), &repo_abs, &baselines, &repo_path.as_path());
         retire_recorded_refs(
             vcs.as_ref(),
             &mut registry,
@@ -3800,8 +3800,8 @@ pub fn workweave_log(
     let mut repos: Vec<WorkweaveLogRepo> = Vec::new();
     for (repo_path, entry) in manifest.iter_entries() {
         let repo_rel = repo_path.as_path();
-        let ww_repo = ww_dir.join(repo_rel);
-        let parent_repo = parent_path.join(repo_rel);
+        let ww_repo = ww_dir.join(&repo_rel);
+        let parent_repo = parent_path.join(&repo_rel);
         let vcs = vcs_for(entry.vcs_type);
 
         let mut note: Option<String> = None;

@@ -100,13 +100,10 @@ impl RepoPath {
         &self.0
     }
 
-    /// Joining the result onto a native root (`root.join(repo_path.as_path())`)
-    /// leaves the forward slashes in place, so on Windows the joined path
-    /// mixes native and `/` separators. Win32 has accepted that mixed form on
-    /// every filesystem call this crate's test suite has driven; other Win32
-    /// API classes are untested against it.
-    pub fn as_path(&self) -> &Path {
-        Path::new(&self.0)
+    /// The key as a native relative path, one component per segment, so a
+    /// join onto a native root is spelled natively throughout.
+    pub fn as_path(&self) -> PathBuf {
+        crate::path_spelling::native_relative(&self.0)
     }
 }
 

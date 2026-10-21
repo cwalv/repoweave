@@ -114,7 +114,7 @@ pub fn missing_active_members<'a>(
     let mut missing: Vec<String> = repos
         .into_iter()
         .filter(|(_, e)| e.role.is_active())
-        .filter(|(rp, _)| !workspace_root.join(rp.as_str()).exists())
+        .filter(|(rp, _)| !workspace_root.join(rp.as_path()).exists())
         .map(|(rp, _)| rp.as_str().to_string())
         .collect();
     missing.sort();

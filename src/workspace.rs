@@ -27,7 +27,7 @@
 
 use crate::integration_runner::IntegrationContextBase;
 use crate::manifest::{Manifest, ProjectName, RepoPath, WorkweaveName};
-use crate::path_spelling::resolve;
+use crate::path_spelling::{native_relative, resolve};
 use crate::refusal::RefusalKind;
 use crate::registry::builtin_registry_names;
 use crate::vcs::Vcs;
@@ -299,12 +299,12 @@ pub(crate) fn projects_dir(root: &Path) -> PathBuf {
 
 /// `<root>/projects/<project>` — where one project's files live.
 pub(crate) fn project_dir(root: &Path, project: &str) -> PathBuf {
-    projects_dir(root).join(project)
+    projects_dir(root).join(native_relative(project))
 }
 
 /// `projects/<project>` — the same directory, relative to a weave root.
 pub(crate) fn project_rel_dir(project: &str) -> PathBuf {
-    Path::new(PROJECTS_DIR).join(project)
+    Path::new(PROJECTS_DIR).join(native_relative(project))
 }
 
 /// `projects/<project>` with forward slashes, whatever the platform.
@@ -2694,6 +2694,28 @@ mod tests {
             crate::workweave_index::canonical_recorded_path(dir),
         )
         .unwrap();
+    }
+
+    // ========================================================================
+    // a `/`-spelled name joined onto a native root
+    // ========================================================================
+
+    /// Windows reads `/` as a separator but `Path::join` keeps one it is
+    /// handed, so a key pushed whole spells `C:\w\github/org/repo`.
+    #[cfg(windows)]
+    #[test]
+    fn a_member_or_project_joined_onto_a_native_root_holds_no_slash() {
+        let root = Path::new(r"C:\w");
+        let member = root.join(RepoPath::new("github/org/repo").unwrap().as_path());
+        assert_eq!(member.as_os_str(), r"C:\w\github\org\repo");
+        assert_eq!(
+            project_dir(root, "chatly/web-app").as_os_str(),
+            r"C:\w\projects\chatly\web-app"
+        );
+        assert_eq!(
+            root.join(project_rel_dir("chatly/web-app")).as_os_str(),
+            r"C:\w\projects\chatly\web-app"
+        );
     }
 
     // ========================================================================
