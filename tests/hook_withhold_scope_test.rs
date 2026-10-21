@@ -19,9 +19,11 @@
 //! repair.
 //!
 //! The claim is an arity, so the pin is one: the question is asked once, and
-//! the hooks are run once, and the ask guards the run. Narrowing the scope
-//! means calling the predicate from inside the runner, which moves or
-//! multiplies one of the two sites and fails here.
+//! the hooks are run once. Narrowing the scope means calling the predicate from
+//! inside the runner, which moves or multiplies one of the two sites and fails
+//! here. That the ask guards the run is the types' job: `run_activate_hooks`
+//! takes a `HooksPermit`, and the gate that asks is the permit's one mint,
+//! which the last test here holds to one construction site.
 //!
 //! Residue: this reads the call graph's shape, not its behavior. A gate that
 //! kept both arities and computed the wrong answer is not a shape this sees —
@@ -37,12 +39,16 @@
 
 mod common;
 
-use common::src_scan::{production_lines, SourceLine};
+use common::src_scan::{body_of, production_lines, SourceLine};
 
 /// The file that must own both sites, and the predicate that must guard the
 /// run.
 const OWNER_FILE: &str = "activate.rs";
 const GATE_FN: &str = "withhold_hooks_over_unsettled_drift";
+
+/// The permit's mint, and the literal only it may write.
+const MINT_FN: &str = "permit_hooks";
+const PERMIT_LITERAL: &str = "HooksPermit(())";
 
 /// The call form, not the declaration: `run_activate_hooks` is declared in
 /// `integration_runner.rs` and that line must not count as a use. Matched
@@ -108,10 +114,10 @@ fn the_hooks_are_run_from_exactly_one_site() {
     );
 }
 
-/// The question is asked once, on the line that guards the run — not per
-/// integration inside it.
+/// The question is asked once, inside the permit's mint — not per integration
+/// inside the runner.
 #[test]
-fn the_drift_question_guards_the_run_and_is_asked_once() {
+fn the_drift_question_is_asked_once_by_the_permit_mint() {
     let calls: Vec<SourceLine> = production_lines_containing(GATE_FN)
         .into_iter()
         .filter(|l| !l.text.contains(&format!("fn {GATE_FN}")))
@@ -129,30 +135,37 @@ fn the_drift_question_guards_the_run_and_is_asked_once() {
          rather than letting the call graph decide. Found: {sites:#?}"
     );
 
-    let asked = &calls[0];
+    let mint = body_of(&production_lines(), OWNER_FILE, MINT_FN);
     assert!(
-        asked.text.trim_start().starts_with("if "),
-        "and it must BE the hook run's condition rather than merely precede \
-         it, so a withheld answer cannot be computed and then ignored. \
-         Found: {} {}",
-        asked.site(),
-        asked.text.trim()
+        mint.iter()
+            .any(|l| l.file == calls[0].file && l.line == calls[0].line),
+        "the question must be asked by `{MINT_FN}`, so its answer is what decides \
+         whether a permit exists. Found it at {sites:#?}"
     );
+}
 
-    let hook_site = hook_calls()
-        .into_iter()
-        .next()
-        .expect("guarded by the vacuity test above");
-    assert_eq!(
-        asked.file, hook_site.file,
-        "the guard and the run must sit in one file; split across two, \
-         neither reads as a decision"
-    );
+/// The permit is written in one place, the mint that asks the gate's
+/// questions; a second construction is a run nobody gated.
+#[test]
+fn the_permit_is_constructed_only_by_its_mint() {
+    let lines = production_lines();
+    let constructions: Vec<&SourceLine> = lines
+        .iter()
+        .filter(|l| l.text.contains(PERMIT_LITERAL) && !l.text.contains("struct HooksPermit"))
+        .collect();
+    let mint = body_of(&lines, OWNER_FILE, MINT_FN);
     assert!(
-        hook_site.line > asked.line && hook_site.line - asked.line <= 2,
-        "the guard must be the hook run's own condition — found the ask at \
-         {} and the run at {}",
-        asked.site(),
-        hook_site.site()
+        !mint.is_empty(),
+        "`{MINT_FN}` has no body in src/{OWNER_FILE}; the mint was renamed or moved"
+    );
+    let sites: Vec<String> = constructions
+        .iter()
+        .map(|l| format!("{} {}", l.site(), l.text.trim()))
+        .collect();
+    assert_eq!(sites.len(), 1, "one construction of the permit: {sites:#?}");
+    assert!(
+        mint.iter()
+            .any(|l| l.file == constructions[0].file && l.line == constructions[0].line),
+        "the permit must be constructed inside `{MINT_FN}`: {sites:#?}"
     );
 }

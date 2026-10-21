@@ -912,9 +912,12 @@ fn run_hooks(
     noticed: &[String],
 ) -> anyhow::Result<Vec<SkippedEffect>> {
     let mut skipped = Vec::new();
-    if skip.is_none() && !withhold_hooks_over_unsettled_drift(&ctx_base.output_dir) {
-        refuse_hooks_over_malformed_settings(integrations, manifest, ctx_base)?;
-        let hooks = run_activate_hooks(integrations, manifest, ctx_base);
+    let permit = match skip {
+        None => permit_hooks(integrations, manifest, ctx_base)?,
+        Some(_) => None,
+    };
+    if let Some(permit) = permit {
+        let hooks = run_activate_hooks(permit, integrations, manifest, ctx_base);
         hooks.skipped.iter().for_each(SkippedEffect::report);
         skipped.extend(hooks.skipped);
         report_and_check_activate_hook_issues(&hooks.issues)?;
@@ -977,6 +980,36 @@ fn reset_ledger_no_generator_rebuilt(output_dir: &Path) -> anyhow::Result<()> {
         crate::path_spelling::operator_path(&ledger_path(output_dir))
     );
     Ok(())
+}
+
+/// Proof that the install hooks may run: no arrived drift is unsettled, and
+/// every integration's settings deserialize. `permit_hooks` is the only mint
+/// and [`run_activate_hooks`] consumes one, so the hooks run only behind both
+/// answers.
+#[derive(Debug)]
+pub struct HooksPermit(());
+
+impl HooksPermit {
+    /// Mint unconditionally, for the runner's in-crate fixtures. `#[cfg(test)]`:
+    /// absent from the library the binary and the integration tests link.
+    #[cfg(test)]
+    pub(crate) fn granted() -> Self {
+        Self(())
+    }
+}
+
+/// The install hooks' gate: `Ok(None)` withholds them over unsettled drift,
+/// and malformed settings refuse.
+fn permit_hooks(
+    integrations: &[&dyn Integration],
+    manifest: &Manifest,
+    ctx_base: &IntegrationContextBase,
+) -> anyhow::Result<Option<HooksPermit>> {
+    if withhold_hooks_over_unsettled_drift(&ctx_base.output_dir) {
+        return Ok(None);
+    }
+    refuse_hooks_over_malformed_settings(integrations, manifest, ctx_base)?;
+    Ok(Some(HooksPermit(())))
 }
 
 /// Whether the hooks must not run, because arrived drift is still unsettled.

@@ -10,6 +10,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 
+use crate::activate::HooksPermit;
 use crate::integration::{
     is_enabled, HookOutcome, Integration, IntegrationContext, Issue, IssueKind, IssueSource,
     Severity,
@@ -345,20 +346,18 @@ pub fn run_member_incompatibilities(
 /// Run activate hooks for each enabled integration, collecting issues.
 ///
 /// Called from `rwv activate` after `run_activations` writes the
-/// generated config files. Each integration's `activate_hook()` runs
-/// ecosystem install commands (e.g., `npm install`, `uv sync`). If a hook
-/// returns an error, it is captured as an `Issue` and execution
-/// continues. A hook whose tool is not on `PATH` contributes a warning,
-/// never an error: nothing ran, so nothing failed.
-///
-/// This was previously named `run_lock_hooks` and fired from `rwv lock`,
-/// which is the wrong trigger — ecosystem-lockfile refresh follows
-/// workspace membership changes, not cross-repo SHA snapshots.
+/// generated config files, with the [`HooksPermit`] its gate minted. Each
+/// integration's `activate_hook()` runs ecosystem install commands (e.g.,
+/// `npm install`, `uv sync`). If a hook returns an error, it is captured as an
+/// `Issue` and execution continues. A hook whose tool is not on `PATH`
+/// contributes a warning, never an error: nothing ran, so nothing failed.
 pub fn run_activate_hooks(
+    permit: HooksPermit,
     integrations: &[&dyn Integration],
     manifest: &Manifest,
     ctx_base: &IntegrationContextBase,
 ) -> HookRun {
+    let _ = permit;
     let mut skipped = Vec::new();
     let issues = for_each_enabled(integrations, manifest, |integration, config| {
         let ctx = ctx_base.build_context(config, manifest);
@@ -839,7 +838,8 @@ mod tests {
         let cache = HashMap::new();
         let ctx_base = make_ctx_base(&project, &cache);
 
-        let issues = run_activate_hooks(&integrations, &manifest, &ctx_base).issues;
+        let issues =
+            run_activate_hooks(HooksPermit::granted(), &integrations, &manifest, &ctx_base).issues;
         assert!(issues.is_empty());
 
         let enabled_calls: Vec<_> = enabled
@@ -862,7 +862,8 @@ mod tests {
         let cache = HashMap::new();
         let ctx_base = make_ctx_base(&project, &cache);
 
-        let issues = run_activate_hooks(&integrations, &manifest, &ctx_base).issues;
+        let issues =
+            run_activate_hooks(HooksPermit::granted(), &integrations, &manifest, &ctx_base).issues;
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].source, IssueSource::integration("cargo"));
         assert_eq!(issues[0].severity, Severity::Error);
@@ -889,7 +890,7 @@ mod tests {
         let cache = HashMap::new();
         let ctx_base = make_ctx_base(&project, &cache);
 
-        let run = run_activate_hooks(&integrations, &manifest, &ctx_base);
+        let run = run_activate_hooks(HooksPermit::granted(), &integrations, &manifest, &ctx_base);
         assert!(run.issues.is_empty(), "a missing tool is no failure");
         assert_eq!(
             run.skipped,
@@ -920,7 +921,8 @@ mod tests {
         let cache = HashMap::new();
         let ctx_base = make_ctx_base(&project, &cache);
 
-        let issues = run_activate_hooks(&integrations, &manifest, &ctx_base).issues;
+        let issues =
+            run_activate_hooks(HooksPermit::granted(), &integrations, &manifest, &ctx_base).issues;
         assert!(issues.is_empty());
 
         let hook_calls: Vec<_> = integration
@@ -941,7 +943,8 @@ mod tests {
         let cache = HashMap::new();
         let ctx_base = make_ctx_base(&project, &cache);
 
-        let issues = run_activate_hooks(&integrations, &manifest, &ctx_base).issues;
+        let issues =
+            run_activate_hooks(HooksPermit::granted(), &integrations, &manifest, &ctx_base).issues;
         assert!(issues.is_empty());
 
         let hook_calls: Vec<_> = integration
