@@ -105,7 +105,13 @@ The block is as strict as the rest of the file. An `[integrations.<name>]` table
 unknown key `hide-dotfile` in `[integrations.vscode-workspace]`, expected one of `enabled`, `hide-dotfiles`; did you mean `hide-dotfiles`?
 ```
 
-Like any manifest parse error, it stops every verb that loads the manifest: `rwv doctor` reports the project as [`unparseable-project`](./doctor-findings.md#unparseable-project), and `rwv status` skips it with a warning. A value of the wrong type for a `cargo-workspace`, `static-files` or `vscode-workspace` key the integration does read, and an unknown key nested deeper (inside `[integrations.cargo-workspace.members."<repo>"]`), are reported by `rwv doctor` as [`malformed-settings`](./doctor-findings.md#malformed-settings) instead. `enabled` in any table, and go-work's `go-version`, are read as their default instead, with no finding.
+So does an `enabled` that is not `true` or `false`, such as `enabled = "false"`, which names the table and the line of the value:
+
+```
+`enabled` in `[integrations.cargo-workspace]`: invalid type: string "false", expected `true` or `false`
+```
+
+Like any manifest parse error, it stops every verb that loads the manifest: `rwv doctor` reports the project as [`unparseable-project`](./doctor-findings.md#unparseable-project), and `rwv status` skips it with a warning. A value of the wrong type for a `cargo-workspace`, `static-files` or `vscode-workspace` key the integration does read, and an unknown key nested deeper (inside `[integrations.cargo-workspace.members."<repo>"]`), are reported by `rwv doctor` as [`malformed-settings`](./doctor-findings.md#malformed-settings) instead. go-work's `go-version` is read as its default instead, with no finding.
 
 ### `workweave` block
 

@@ -557,11 +557,32 @@ impl Submodules {
 
 /// Whether an `[integrations.<name>]` table turns its integration on, off, or
 /// leaves the choice to the integration. `resolve` is the only way to a bool.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) enum Enablement {
+    #[default]
     Default,
     On,
     Off,
+}
+
+impl<'de> Deserialize<'de> for Enablement {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct OnOrOff;
+
+        impl serde::de::Visitor<'_> for OnOrOff {
+            type Value = Enablement;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("`true` or `false`")
+            }
+
+            fn visit_bool<E: serde::de::Error>(self, on: bool) -> Result<Enablement, E> {
+                Ok(if on { Enablement::On } else { Enablement::Off })
+            }
+        }
+
+        deserializer.deserialize_bool(OnOrOff)
+    }
 }
 
 impl Enablement {
@@ -576,25 +597,50 @@ impl Enablement {
 
 /// Per-integration configuration from the `[integrations]` table.
 ///
-/// Stored as a raw TOML table so each integration can define its own typed
-/// settings struct without polluting a shared flat struct. The framework only
-/// inspects the `enabled` key; all other keys are integration-specific.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct IntegrationConfig(toml::Table);
+/// The framework reads one key, `enabled`, into an `Enablement`. Every other
+/// key stays a raw TOML table so each integration can define its own typed
+/// settings struct without polluting a shared flat struct.
+#[derive(Debug, Clone, Default)]
+pub struct IntegrationConfig {
+    enablement: Enablement,
+    settings: toml::Table,
+}
+
+impl Serialize for IntegrationConfig {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut table = self.settings.clone();
+        let stated = match self.enablement {
+            Enablement::Default => None,
+            Enablement::On => Some(true),
+            Enablement::Off => Some(false),
+        };
+        if let Some(on) = stated {
+            table.insert(Self::ENABLED_KEY.to_string(), toml::Value::Boolean(on));
+        }
+        table.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for IntegrationConfig {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let mut settings = toml::Table::deserialize(deserializer)?;
+        let enablement = match settings.remove(Self::ENABLED_KEY) {
+            None => Enablement::Default,
+            Some(value) => Enablement::deserialize(value).map_err(serde::de::Error::custom)?,
+        };
+        Ok(Self {
+            enablement,
+            settings,
+        })
+    }
+}
 
 impl IntegrationConfig {
     /// The one key every `[integrations.<name>]` table accepts.
     pub(crate) const ENABLED_KEY: &'static str = "enabled";
 
-    /// What the table says about whether the integration runs. A value that
-    /// is not a boolean reads as absent.
     pub(crate) fn enablement(&self) -> Enablement {
-        match self.0.get(Self::ENABLED_KEY).and_then(toml::Value::as_bool) {
-            None => Enablement::Default,
-            Some(true) => Enablement::On,
-            Some(false) => Enablement::Off,
-        }
+        self.enablement
     }
 
     /// Parse integration-specific settings into a typed struct.
@@ -603,7 +649,7 @@ impl IntegrationConfig {
     /// callers can surface the parse error rather than silently falling back
     /// to a default.
     pub fn settings<T: serde::de::DeserializeOwned>(&self) -> Result<T, toml::de::Error> {
-        toml::Value::Table(self.0.clone()).try_into()
+        toml::Value::Table(self.settings.clone()).try_into()
     }
 
     /// Convenience constructor: parse an `IntegrationConfig` from a TOML string.
@@ -1226,8 +1272,8 @@ impl<'de, 'a> serde::de::Visitor<'de> for IntegrationsVisitor<'a> {
     fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
         let mut integrations = BTreeMap::new();
         while let Some(integration) = map.next_key_seed(IntegrationNameSeed(self.0))? {
-            let table = map.next_value_seed(IntegrationTableSeed(integration))?;
-            integrations.insert(integration.name.clone(), IntegrationConfig(table));
+            let config = map.next_value_seed(IntegrationTableSeed(integration))?;
+            integrations.insert(integration.name.clone(), config);
         }
         Ok(integrations)
     }
@@ -1258,7 +1304,7 @@ impl<'de, 'a> serde::de::DeserializeSeed<'de> for IntegrationNameSeed<'a> {
 struct IntegrationTableSeed<'a>(&'a IntegrationKeys);
 
 impl<'de, 'a> serde::de::DeserializeSeed<'de> for IntegrationTableSeed<'a> {
-    type Value = toml::Table;
+    type Value = IntegrationConfig;
 
     fn deserialize<D: serde::Deserializer<'de>>(
         self,
@@ -1269,19 +1315,44 @@ impl<'de, 'a> serde::de::DeserializeSeed<'de> for IntegrationTableSeed<'a> {
 }
 
 impl<'de, 'a> serde::de::Visitor<'de> for IntegrationTableSeed<'a> {
-    type Value = toml::Table;
+    type Value = IntegrationConfig;
 
     fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "the `[integrations.{}]` table", self.0.name)
     }
 
     fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
-        let mut table = toml::Table::new();
+        let mut config = IntegrationConfig::default();
         while let Some(key) = map.next_key_seed(SettingsKeySeed(self.0))? {
-            let value: toml::Value = map.next_value()?;
-            table.insert(key, value);
+            if key == IntegrationConfig::ENABLED_KEY {
+                config.enablement = map.next_value_seed(EnablementSeed(&self.0.name))?;
+            } else {
+                let value: toml::Value = map.next_value()?;
+                config.settings.insert(key, value);
+            }
         }
-        Ok(table)
+        Ok(config)
+    }
+}
+
+/// Reads an `enabled` value so a refusal is raised while the value is read,
+/// which is what locates it at that value, and names the table it sits in.
+struct EnablementSeed<'a>(&'a str);
+
+impl<'de, 'a> serde::de::DeserializeSeed<'de> for EnablementSeed<'a> {
+    type Value = Enablement;
+
+    fn deserialize<D: serde::Deserializer<'de>>(
+        self,
+        deserializer: D,
+    ) -> Result<Self::Value, D::Error> {
+        Enablement::deserialize(deserializer).map_err(|e| {
+            serde::de::Error::custom(format!(
+                "`{}` in `[integrations.{}]`: {e:#}",
+                IntegrationConfig::ENABLED_KEY,
+                self.0
+            ))
+        })
     }
 }
 
@@ -1965,9 +2036,12 @@ mod tests {
     }
 
     #[test]
-    fn integration_config_enabled_not_a_boolean_is_default() {
-        let config = IntegrationConfig::from_toml("enabled = \"false\"");
-        assert_eq!(config.enablement(), Enablement::Default);
+    fn a_table_read_outside_a_manifest_refuses_an_enabled_that_is_not_a_boolean() {
+        let err = toml::from_str::<IntegrationConfig>("enabled = \"false\"").unwrap_err();
+        assert!(
+            err.to_string().contains("expected `true` or `false`"),
+            "got: {err}"
+        );
     }
 
     #[test]
@@ -3498,6 +3572,48 @@ link = ["target/"]
         assert!(
             !msg.contains("top-level"),
             "the key is not a top-level one, got: {msg}"
+        );
+    }
+
+    /// `enabled` takes `true` or `false` and nothing else: `"false"` read as
+    /// absent left the integration running that the operator had switched
+    /// off. The refusal names the key, the integration's table, the two values
+    /// it takes and the line of the value, and carries the remedy every parse
+    /// failure carries.
+    #[test]
+    fn an_enabled_that_is_not_true_or_false_is_refused_at_load() {
+        for value in ["\"false\"", "\"no\"", "0", "1", "[true]", "{ on = true }"] {
+            let text =
+                format!("[repositories]\n\n[integrations.cargo-workspace]\nenabled = {value}\n");
+            let err = Manifest::from_toml_str(&text).unwrap_err();
+            let msg = format!("{err:#}");
+            assert!(
+                msg.contains("`enabled` in `[integrations.cargo-workspace]`"),
+                "refusal of `enabled = {value}` must name the key and its table, got: {msg}"
+            );
+            assert!(
+                msg.contains("expected `true` or `false`"),
+                "refusal of `enabled = {value}` must say what the key takes, got: {msg}"
+            );
+            assert!(
+                msg.contains("line 4"),
+                "refusal of `enabled = {value}` must locate the value, got: {msg}"
+            );
+            assert!(
+                msg.contains(&Manifest::unparseable_hint()),
+                "refusal of `enabled = {value}` must carry the remedy of any parse failure, got: {msg}"
+            );
+        }
+    }
+
+    /// The refusal names the table the value sits in, not one integration's.
+    #[test]
+    fn the_enabled_refusal_names_the_integration_it_was_written_under() {
+        let text = "[repositories]\n\n[integrations.gita]\nenabled = \"true\"\n";
+        let msg = format!("{:#}", Manifest::from_toml_str(text).unwrap_err());
+        assert!(
+            msg.contains("`enabled` in `[integrations.gita]`"),
+            "got: {msg}"
         );
     }
 

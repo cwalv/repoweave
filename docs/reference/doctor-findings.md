@@ -239,8 +239,9 @@ clean project with zero findings.
 that file's remedy — the manifest is yours to edit, at the line the parser
 names; the lock is generated, so `rwv lock` rewrites it. A repository entry
 with no `role`, an unknown top-level key, an unknown `[integrations.<name>]`
-table, and an unknown key in one are all parse failures of this kind, each
-naming the line and what was expected. Note that the
+table, an unknown key in one, and an `enabled` that is not `true` or `false`
+are all parse failures of this kind, each naming the line and what was
+expected. Note that the
 `manifest_path` field always names the manifest, because it locates the
 project rather than the failure.
 

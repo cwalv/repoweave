@@ -11,6 +11,15 @@ claim that nothing changed in them.
 A repo with no `rwv.lock` entry has `relation` `no-lock` in `rwv status --json`,
 the spelling the table and the docs already used; it was `no_lock`.
 
+### Breaking: `enabled` must be `true` or `false`
+
+An `enabled` in an `[integrations.<name>]` table that is not a boolean, such as
+`enabled = "false"`, used to be read as if the key were absent, so an
+integration written off that way kept running at its default. It now fails the
+manifest load like any other malformed key: every verb that reads the manifest
+refuses it, naming the key, the table and the line, and `rwv doctor` reports the
+project as `unparseable-project`. Write `enabled = true` or `enabled = false`.
+
 ### Breaking: `rwv doctor` names a workweave by its project and name
 
 A workweave name is unique only within its project. Every `rwv doctor --json`
