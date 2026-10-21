@@ -197,7 +197,7 @@ fn matching_origin_url_is_clean() {
     let stdout = String::from_utf8_lossy(&out.stdout);
 
     assert!(
-        !stdout.contains("origin-url-mismatch"),
+        !stdout.contains("origin URL mismatch"),
         "matching origin URL should not produce origin-url-mismatch; got:\n{stdout}"
     );
 }
