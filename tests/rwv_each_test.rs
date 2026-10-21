@@ -719,7 +719,8 @@ fn an_interrupt_reaches_every_running_tree_starts_no_more_and_exits_130() {
         .collect();
     common::job::interrupt_foreground_job(&child);
     let interrupted_at = Instant::now();
-    let out = child.wait_with_output().unwrap();
+    let out = common::job::wait_job_with_output(child, common::job::JOB_BOUND)
+        .unwrap_or_else(|e| panic!("the interrupted job never ended: {e}"));
     assert_eq!(out.status.code(), Some(130), "{}", stderr(&out));
     assert!(
         interrupted_at.elapsed() < Duration::from_secs(20),

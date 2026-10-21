@@ -283,6 +283,24 @@ fn job_helper() {
     common::job::serve();
 }
 
+/// `rwv hold` as a foreground job, its plugin a [`common::job::hold`] that
+/// records its pid in the returned file.
+fn hold_job(plugin_dir: &Path) -> (std::process::Child, PathBuf) {
+    let ready = plugin_dir.join("ready");
+    let plugin = plugin_dir.join(format!("rwv-hold{}", std::env::consts::EXE_SUFFIX));
+    fs::hard_link(common::job::helper_exe(), &plugin)
+        .expect("the plugin is this test binary under a plugin's name");
+    let mut cmd = common::rwv_std();
+    cmd.arg("hold")
+        .args(common::job::helper_args())
+        .current_dir(tmp_cwd())
+        .env("PATH", prepend_path(plugin_dir))
+        .stdout(std::process::Stdio::null());
+    common::job::hold(&mut cmd, &ready);
+    let child = common::job::as_foreground_job(&mut cmd).spawn().unwrap();
+    (child, ready)
+}
+
 /// A terminal Ctrl-C reaches the whole foreground job — rwv and its plugin at
 /// once. rwv must outlive it and hand back the status the plugin then exits
 /// with, rather than die first and return the prompt over a plugin still
@@ -292,35 +310,39 @@ fn an_interrupt_to_the_whole_job_leaves_rwv_waiting_for_the_plugin_status() {
     // Beside the test binary, so the hard link stays on one filesystem; a
     // copy would hold a written file open while sibling tests fork.
     let plugin_dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
-    let ready = plugin_dir.path().join("ready");
-    let plugin = plugin_dir
-        .path()
-        .join(format!("rwv-hold{}", std::env::consts::EXE_SUFFIX));
-    fs::hard_link(common::job::helper_exe(), &plugin)
-        .expect("the plugin is this test binary under a plugin's name");
-    let mut cmd = common::rwv_std();
-    cmd.arg("hold")
-        .args(common::job::helper_args())
-        .current_dir(tmp_cwd())
-        .env("PATH", prepend_path(plugin_dir.path()))
-        .stdout(std::process::Stdio::null());
-    common::job::hold(&mut cmd, &ready);
-    let mut child = common::job::as_foreground_job(&mut cmd).spawn().unwrap();
-    let start = std::time::Instant::now();
-    while !ready.exists() {
-        assert!(
-            start.elapsed() < std::time::Duration::from_secs(20),
-            "plugin never started"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
+    let (mut child, ready) = hold_job(plugin_dir.path());
+    common::job::recorded_pid(&ready, std::time::Duration::from_secs(20));
     common::job::interrupt_foreground_job(&child);
-    let status = child.wait().unwrap();
+    let status = common::job::wait_job(&mut child, common::job::JOB_BOUND)
+        .unwrap_or_else(|e| panic!("the interrupted job never ended: {e}"));
     assert_eq!(
         status.code(),
         Some(common::job::HOLD_EXIT),
         "rwv exited with {status:?}"
     );
+}
+
+/// A job that never ends fails its test once its bound passes, with rwv and
+/// the plugin both gone, instead of holding the suite until CI cancels it.
+#[test]
+fn a_job_that_outlives_its_bound_is_killed_whole() {
+    use std::time::Duration;
+    let plugin_dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let (mut child, ready) = hold_job(plugin_dir.path());
+    let plugin = common::job::recorded_pid(&ready, Duration::from_secs(20));
+    let rwv = child.id();
+    let bound = Duration::from_secs(2);
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(common::job::wait_job(&mut child, bound));
+    });
+    let Ok(outcome) = rx.recv_timeout(bound + Duration::from_secs(30)) else {
+        let _ = common::job::kill_job(rwv);
+        panic!("a wait bounded at {bound:?} was still waiting 30s past it");
+    };
+    let error = outcome.expect_err("a hold nobody interrupts never exits");
+    assert!(error.contains("every process of it was killed"), "{error}");
+    common::job::wait_dead(plugin);
 }
 
 // ---------------------------------------------------------------------------
