@@ -328,7 +328,7 @@ impl Vcs for FakeVcs {
     fn resolve_branch_on_remote(
         &self,
         _repo: &Path,
-        _branch: &RefName,
+        _branch: &RemoteRef,
     ) -> Result<ResolvedRevisionId, VcsError> {
         unsupported("resolve_branch_on_remote")
     }

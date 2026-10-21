@@ -602,6 +602,21 @@ const ROUTED: &[Routed] = &[
     },
     Routed {
         file: "add_remove.rs",
+        scope: "",
+        needle: r#""rwv add: '{}' at {}: the remote's default branch cannot be its `version`","#,
+        renders: 1,
+        prints: "add's and add --adopt's refusal of a remote default branch that reads as a \
+                 revision, naming the clone it was read from",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "",
+        needle: r#""rwv add: '{}' at {}: the branch the repo was created on cannot be its `version`","#,
+        renders: 1,
+        prints: "add --new's refusal of a branch that reads as a revision, naming the new repo",
+    },
+    Routed {
+        file: "add_remove.rs",
         scope: "fn refuse_foreign_clone_at_placement(",
         needle: r#""could not determine the {} URL for '{}'","#,
         renders: 1,

@@ -64,7 +64,8 @@ Any other key in an entry is rejected, naming it.
 
 `version` in `rwv.toml` is branch-only by design: the manifest declares which branch to *track*, while `rwv.lock` records the exact commit SHA you *are* on. Specifically:
 
-- **`rwv add <url>`** populates `version` from the remote's default branch (`origin/HEAD`, or `main` when creating a repo with `--new`).
+- **`rwv add <url>`** populates `version` from the remote's default branch (`origin/HEAD`), and `rwv add --new` from the branch the new repo is on.
+- A `version` that reads as a commit id (seven or more hex digits) or a release tag (`v2.0`, `v0.3.4-rc1`) fails to parse, naming the value and its line, and `rwv add` refuses with [`version-is-a-pin`](./refusals.md#version-is-a-pin) rather than record such a branch.
 - **`rwv update`** reads `version` to know which remote branch tip to advance each repo to before re-snapshotting `rwv.lock`.
 - **`rwv fetch`** checks a new clone out on the local counterpart of the branch `version` names, and refuses to move a present checkout attached to any other branch. **`rwv doctor --fix --reattach-checkouts`** reattaches a detached canonical clone to that same branch.
 - **`rwv fetch`** and **`rwv sync`** align checkouts to the 40-character commit SHA in `rwv.lock` (falling back to `version` only on `rwv fetch` without `--frozen` when a newly added repo has no lock entry yet).

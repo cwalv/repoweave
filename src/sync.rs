@@ -5183,6 +5183,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             continue;
         };
         // Born where replay will aim it, so the new checkout needs no move.
+        let declared = entry.version.local_counterpart();
         let start = snapshot
             .pull_tips
             .get(repo_path)
@@ -5193,7 +5194,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                     .map(|e| &e.version)
             })
             .map(|rev| rev.as_str())
-            .unwrap_or_else(|| entry.version.as_str());
+            .unwrap_or_else(|| declared.as_str());
         match materialize_missing_repo(
             vcs_for(entry.vcs_type).as_ref(),
             &ctx.cwd_ctx,
@@ -8875,7 +8876,7 @@ mod tests {
         let entry = crate::manifest::RepoEntry {
             vcs_type: crate::manifest::VcsType::Git,
             url: "https://example.com/server.git".parse().unwrap(),
-            version: crate::vcs::RefName::new("main"),
+            version: crate::vcs::TrackingRef::parse(crate::vcs::RawRefName::new("main")).unwrap(),
             role: crate::manifest::Role::Owned,
             submodules: crate::manifest::Submodules::Local,
         };

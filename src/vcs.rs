@@ -852,16 +852,16 @@ pub(crate) fn is_release_shape_name(s: &str) -> bool {
 ///     declared.as_str().to_owned() // E0599: no such method
 /// }
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Deserialize)]
+#[serde(try_from = "RawRefName")]
 pub struct TrackingRef(String);
 
 impl TrackingRef {
     /// Parse a manifest-declared `version:` scalar.
     ///
     /// Rejects commit-id-shaped and release-tag-shaped values, and anything
-    /// that is not a usable ref name. This is the *only* way to obtain a
-    /// `TrackingRef`; there is no `Deserialize` impl, mirroring
-    /// [`ResolvedRevisionId`]'s refusal to deserialize.
+    /// that is not a usable ref name. Deserializing and every `TryFrom` impl
+    /// go through here.
     pub fn parse(raw: RawRefName) -> Result<Self, RefNameError> {
         let s = raw.as_str();
         crate::naming::validate_ref_name(s)?;
@@ -895,6 +895,36 @@ impl TrackingRef {
     /// been created from anywhere.
     pub fn local_counterpart(&self) -> LocalRefName {
         LocalRefName(self.0.clone())
+    }
+}
+
+impl TryFrom<RawRefName> for TrackingRef {
+    type Error = RefNameError;
+
+    fn try_from(raw: RawRefName) -> Result<Self, Self::Error> {
+        Self::parse(raw)
+    }
+}
+
+impl TryFrom<&AttachedRef> for TrackingRef {
+    type Error = RefNameError;
+
+    fn try_from(attached: &AttachedRef) -> Result<Self, Self::Error> {
+        Self::parse(attached.name.clone())
+    }
+}
+
+impl TryFrom<&RemoteDefaultBranch> for TrackingRef {
+    type Error = RefNameError;
+
+    fn try_from(remote_default: &RemoteDefaultBranch) -> Result<Self, Self::Error> {
+        Self::parse(RawRefName(remote_default.0.clone()))
+    }
+}
+
+impl Serialize for TrackingRef {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0)
     }
 }
 
@@ -2021,7 +2051,7 @@ pub trait Vcs: Send + Sync {
     fn resolve_branch_on_remote(
         &self,
         repo: &Path,
-        branch: &RefName,
+        branch: &RemoteRef,
     ) -> Result<ResolvedRevisionId, VcsError>;
 
     /// Resolve the current HEAD to a revision ID.

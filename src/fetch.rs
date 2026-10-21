@@ -15,8 +15,7 @@ use crate::registry;
 use crate::selector::RepoFilter;
 use crate::skipped::{SkipReason, SkippedEffect};
 use crate::vcs::{
-    project_vcs, vcs_for, HeadAttachment, RawRefName, ReplayExclusionState, ResolvedRevisionId,
-    TrackingRef, Vcs, VcsError,
+    project_vcs, vcs_for, HeadAttachment, ReplayExclusionState, ResolvedRevisionId, Vcs, VcsError,
 };
 use crate::workspace::{
     observe_root, project_dir, projects_dir, Checkout, Resolution, RootObservation,
@@ -1014,19 +1013,7 @@ fn realign_present_clone(
         HeadAttachment::Attached(a) => a,
     };
 
-    // `entry.version` is the manifest's declared tracking branch, still typed
-    // `RefName` (manifest.rs's migration to `TrackingRef` is separate work).
-    // Route it through `TrackingRef::parse` so the comparison below goes
-    // through `local_counterpart()` — the same named projection `rwv push`'s
-    // gates use — instead of a raw string compare.
-    let declared = TrackingRef::parse(RawRefName::new(entry.version.as_str())).map_err(|e| {
-        format!(
-            "{}: manifest declares an invalid tracking branch '{}': {e:#}",
-            repo_path.as_str(),
-            entry.version,
-        )
-    })?;
-    let counterpart = declared.local_counterpart();
+    let counterpart = entry.version.local_counterpart();
 
     if !attached.is_named(&counterpart) {
         let Some(consent) = detach_checkouts else {
@@ -1203,30 +1190,14 @@ fn fetch_one(
     // to the pin would leave the member detached, which is not a state a
     // fetch is entitled to put an operator's checkout in.
     if let Some(lock_entry) = lock_entry {
-        let declared = match TrackingRef::parse(RawRefName::new(entry.version.as_str())) {
-            Ok(t) => t,
-            Err(e) => {
-                return FetchOutcome::Failed {
-                    msg: format!(
-                        "{}: manifest declares an invalid tracking branch '{}': {e:#}",
-                        repo_path.as_str(),
-                        entry.version,
-                    ),
-                };
-            }
-        };
+        let counterpart = entry.version.local_counterpart();
         emit(&format!(
-            "rwv fetch: cloning {} onto {} at {}",
+            "rwv fetch: cloning {} onto {counterpart} at {}",
             repo_path.as_str(),
-            declared.local_counterpart(),
             lock_entry.version,
         ));
-        if let Err(e) = vcs.clone_attached_at(
-            &clone_url,
-            &dest,
-            &declared.local_counterpart(),
-            &lock_entry.version,
-        ) {
+        if let Err(e) = vcs.clone_attached_at(&clone_url, &dest, &counterpart, &lock_entry.version)
+        {
             return FetchOutcome::Failed {
                 msg: format!(
                     "{}: failed to materialize {} at {}: {e:#}",
@@ -1317,7 +1288,7 @@ mod tests {
         crate::manifest::RepoEntry {
             vcs_type: crate::manifest::VcsType::Git,
             url: "https://example.com/repo.git".parse().unwrap(),
-            version: crate::vcs::RefName::new("main"),
+            version: crate::vcs::TrackingRef::parse(crate::vcs::RawRefName::new("main")).unwrap(),
             role,
             submodules: crate::manifest::Submodules::Local,
         }

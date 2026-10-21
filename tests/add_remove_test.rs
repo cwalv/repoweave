@@ -744,7 +744,7 @@ fn add_url_resolves_a_non_main_remote_default_branch() {
         .get_entry(&RepoPath::new("local/acme/masterrepo").unwrap())
         .expect("expected local/acme/masterrepo in the manifest");
     assert_eq!(
-        entry.version.as_str(),
+        entry.version.to_string(),
         "master",
         "the remote's real default branch is `master`; the manifest must record \
          that (read from origin/HEAD), not a fabricated `main`"
@@ -881,7 +881,7 @@ fn add_adopt_of_a_clone_whose_remote_has_no_branch_names_the_first_push() {
     let entry = manifest
         .get_entry(&RepoPath::new(repo_path).unwrap())
         .expect("the re-run adopt lists the repo");
-    assert_eq!(entry.version.as_str(), branch);
+    assert_eq!(entry.version.to_string(), branch);
 }
 
 /// `rwv add <url>` refused for the default its fresh clone lacks, run in
@@ -915,7 +915,7 @@ fn assert_added_tracking(workspace: &Path, url: &str, repo_path: &str, clone: &P
     let entry = manifest
         .get_entry(&RepoPath::new(repo_path).unwrap())
         .expect("the re-run add lists the repo");
-    assert_eq!(entry.version.as_str(), branch);
+    assert_eq!(entry.version.to_string(), branch);
     common::assert_on_branch(clone, branch);
 }
 
@@ -974,6 +974,111 @@ fn add_url_of_a_remote_whose_head_names_no_branch_names_the_ones_it_has() {
     common::git_in(&clone, &["remote", "set-head", "origin", "main"]);
 
     assert_added_tracking(&workspace, &url, repo_path, &clone, "main");
+}
+
+/// A bare upstream at `bare` whose HEAD names `v2.0`, a branch name that
+/// reads as a release tag. With `born`, the branch has a commit.
+fn upstream_on_a_tag_shaped_branch(bare: &Path, born: bool) -> String {
+    std::fs::create_dir_all(bare).unwrap();
+    common::git_in(bare, &["init", "-q", "--bare", "--initial-branch=v2.0"]);
+    let url = common::file_url(bare);
+    if born {
+        let tmp = common::tempdir().unwrap();
+        common::git_in(tmp.path(), &["clone", "-q", &url, "work"]);
+        let work = tmp.path().join("work");
+        std::fs::write(work.join("README"), "first\n").unwrap();
+        common::git_in(&work, &["add", "README"]);
+        common::git_in(&work, &["commit", "-qm", "first"]);
+        common::git_in(&work, &["push", "-q", "origin", "v2.0"]);
+    }
+    url
+}
+
+fn assert_refused_as_tag_shaped(out: &std::process::Output, workspace: &Path, repo_path: &str) {
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success()
+            && stderr.contains("'v2.0' is tag shaped")
+            && stderr.contains("rwv explain version-is-a-pin"),
+        "the add refuses the branch it would track:\n{stderr}"
+    );
+    let manifest = Manifest::from_path(&workspace.join("projects/test-project/rwv.toml"))
+        .expect("a refused add leaves a manifest that loads");
+    assert!(
+        manifest
+            .get_entry(&RepoPath::new(repo_path).unwrap())
+            .is_none(),
+        "a refused add does not list the repo"
+    );
+}
+
+#[test]
+fn add_url_refuses_a_remote_whose_default_branch_reads_as_a_tag() {
+    let tmp = common::tempdir().unwrap();
+    let url = upstream_on_a_tag_shaped_branch(&tmp.path().join("acme/vrepo.git"), true);
+    let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
+
+    let out = rwv()
+        .args(["add", &url])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+
+    assert_refused_as_tag_shaped(&out, &workspace, "local/acme/vrepo");
+}
+
+#[test]
+fn add_adopt_refuses_a_clone_whose_remote_default_branch_reads_as_a_tag() {
+    let tmp = common::tempdir().unwrap();
+    let url = upstream_on_a_tag_shaped_branch(&tmp.path().join("acme/vrepo.git"), true);
+    let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
+    let repo_path = "local/acme/vrepo";
+    let clone = common::under(&workspace, repo_path);
+    std::fs::create_dir_all(clone.parent().unwrap()).unwrap();
+    common::git_in(clone.parent().unwrap(), &["clone", "-q", &url, "vrepo"]);
+
+    let out = rwv()
+        .args(["add", "--adopt", repo_path])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+
+    assert_refused_as_tag_shaped(&out, &workspace, repo_path);
+}
+
+fn add_new_from_an_existing_local_upstream(born: bool) {
+    let tmp = common::tempdir().unwrap();
+    let lab = tmp.path().join("lab");
+    upstream_on_a_tag_shaped_branch(&lab.join("acme/fresh"), born);
+    let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
+
+    let out = rwv()
+        .args([
+            "add",
+            "local",
+            "--new",
+            "--param",
+            &format!("root={}", lab.display()),
+            "--param",
+            "owner=acme",
+            "--param",
+            "repo=fresh",
+        ])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+
+    assert_refused_as_tag_shaped(&out, &workspace, "local/acme/fresh");
+}
+
+#[test]
+fn add_new_refuses_a_clone_attached_to_a_branch_that_reads_as_a_tag() {
+    add_new_from_an_existing_local_upstream(true);
+}
+
+#[test]
+fn add_new_refuses_a_clone_unborn_on_a_branch_that_reads_as_a_tag() {
+    add_new_from_an_existing_local_upstream(false);
 }
 
 /// `--adopt` reads `origin` back from a pre-existing clone and
@@ -1149,7 +1254,7 @@ fn add_new_records_the_branch_git_init_actually_created() {
     let actual_branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
     assert_eq!(
-        entry.version.as_str(),
+        entry.version.to_string(),
         actual_branch,
         "the manifest's version: must match the repo's real HEAD branch, not a guess"
     );

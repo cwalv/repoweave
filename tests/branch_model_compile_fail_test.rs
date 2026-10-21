@@ -151,6 +151,46 @@ fn a_remote_default_branch_has_no_as_str() {
 }
 
 // ---------------------------------------------------------------------------
+// A manifest entry holds its version parsed
+// ---------------------------------------------------------------------------
+
+fn repo_entry_with_version(version_expr: &str) -> String {
+    format!(
+        r#"
+        use repoweave::manifest::{{RepoEntry, RepoUrl, Role, Submodules, VcsType}};
+        use repoweave::vcs::{{RawRefName, RefName, TrackingRef}};
+        pub fn entry(url: RepoUrl) -> RepoEntry {{
+            RepoEntry {{
+                vcs_type: VcsType::Git,
+                url,
+                version: {version_expr},
+                role: Role::Owned,
+                submodules: Submodules::Local,
+            }}
+        }}
+        "#
+    )
+}
+
+#[test]
+fn a_repo_entry_is_built_from_a_parsed_version() {
+    // Control for the probe below: the same entry, its version parsed.
+    let (compiled, stderr) = compile(&repo_entry_with_version(
+        r#"TrackingRef::parse(RawRefName::new("main")).unwrap()"#,
+    ));
+    assert!(compiled, "control snippet must compile; got:\n{stderr}");
+}
+
+#[test]
+fn an_unchecked_ref_name_cannot_be_a_repo_entry_version() {
+    assert_fails_with(
+        "E0308",
+        "a manifest entry's version is parsed before it is held",
+        &repo_entry_with_version(r#"RefName::new("v2.0")"#),
+    );
+}
+
+// ---------------------------------------------------------------------------
 // §4.2 — a witness cannot be forged
 // ---------------------------------------------------------------------------
 

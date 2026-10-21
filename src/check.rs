@@ -4935,19 +4935,18 @@ fn canonical_stores(
     ws_root: &Path,
     projects: &[Project],
 ) -> Vec<CanonicalStore> {
-    use crate::vcs::{RawRefName, TrackingRef};
-
     // One repo may be declared by several projects. Collect the distinct
     // declarations and only project a counterpart when they agree —
     // disagreement is a manifest question, not something to pick a winner
     // for inside a scan that may then MOVE the ref.
-    let mut declared: BTreeMap<RepoPath, BTreeSet<String>> = BTreeMap::new();
+    let mut declared: BTreeMap<RepoPath, std::collections::HashSet<&crate::vcs::TrackingRef>> =
+        BTreeMap::new();
     for project in projects {
         for (repo_path, entry) in project.manifest.iter_entries() {
             declared
                 .entry(repo_path.clone())
                 .or_default()
-                .insert(entry.version.as_str().to_owned());
+                .insert(&entry.version);
         }
     }
 
@@ -4956,13 +4955,8 @@ fn canonical_stores(
     for repo in crate::workspace::scan_repos_on_disk(ws_root, vcs) {
         let tracking = match declared.get(&repo) {
             Some(versions) if versions.len() == 1 => {
-                let raw = RawRefName::new(versions.iter().next().expect("len == 1").clone());
-                match TrackingRef::parse(raw) {
-                    Ok(t) => TrackingSource::Declared(t),
-                    // A `version:` that is not a usable tracking declaration
-                    // (sha-shaped, tag-shaped) names no local counterpart.
-                    Err(_) => TrackingSource::Unresolvable,
-                }
+                let only = versions.iter().next().expect("len == 1");
+                TrackingSource::Declared((*only).clone())
             }
             _ => TrackingSource::Unresolvable,
         };

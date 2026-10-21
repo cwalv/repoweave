@@ -5,8 +5,9 @@ use crate::vcs::{
     CommitSummary, ConflictOp, ContentIdentity, DerivedContentPolicy, DerivedContentResolution,
     DiscardOutcome, ForeignTipPolicy, HeadAttachment, HeadObservation, LocalRefName, PreAbortRef,
     PublishRef, RawRefName, RawRevisionId, RecordedSubmodule, RefName, RemoteBranchCopies,
-    RemoteDefaultBranch, ReplayExclusionState, ResolvedRevisionId, SubmoduleBirth, TrackedFile,
-    TrackedFileKind, UniqueDiff, Vcs, VcsError, VerifiedRestoreOutcome, WorkspacePopulation,
+    RemoteDefaultBranch, RemoteRef, ReplayExclusionState, ResolvedRevisionId, SubmoduleBirth,
+    TrackedFile, TrackedFileKind, UniqueDiff, Vcs, VcsError, VerifiedRestoreOutcome,
+    WorkspacePopulation,
 };
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
@@ -163,7 +164,7 @@ fn remote_tracking_namespace() -> String {
 /// The only spelling of a remote-tracking ref handed to git. The short
 /// `origin/<branch>` is never one: git resolves it to a local branch or tag of
 /// that name before `refs/remotes/origin/<branch>`.
-fn remote_tracking(branch: &RefName) -> String {
+fn remote_tracking(branch: &str) -> String {
     format!("{}{branch}", remote_tracking_namespace())
 }
 
@@ -1412,8 +1413,9 @@ impl Vcs for GitVcs {
     fn resolve_branch_on_remote(
         &self,
         repo: &Path,
-        branch: &RefName,
+        branch: &RemoteRef,
     ) -> Result<ResolvedRevisionId, VcsError> {
+        let branch = branch.branch();
         let tip = self.resolve_revision(repo, &remote_tracking(branch))?;
         Ok(ResolvedRevisionId::from_canonical(
             tip.as_str(),
@@ -2296,7 +2298,7 @@ impl Vcs for GitVcs {
         repo: &Path,
         branch: &RefName,
     ) -> Result<bool, VcsError> {
-        let qualified = remote_tracking(branch);
+        let qualified = remote_tracking(branch.as_str());
         let status = git_command()
             .args(["rev-parse", "--verify", "--quiet", &qualified])
             .current_dir(repo)
@@ -2321,7 +2323,7 @@ impl Vcs for GitVcs {
     ) -> Result<usize, VcsError> {
         let range = format!(
             "{}..{}",
-            remote_tracking(branch),
+            remote_tracking(branch.as_str()),
             local_branch(branch.as_str())
         );
         let out = Self::run_trimmed(&["rev-list", "--count", &range], repo)?;
@@ -2881,10 +2883,7 @@ impl Vcs for GitVcs {
         if !self.is_repo(repo) {
             return Err(VcsError::NotARepo(repo.to_path_buf()));
         }
-        match Self::run_trimmed(
-            &["symbolic-ref", &remote_tracking(&RefName::new("HEAD"))],
-            repo,
-        ) {
+        match Self::run_trimmed(&["symbolic-ref", &remote_tracking("HEAD")], repo) {
             // No fallback: an unset or malformed symref is an absence, not
             // a guess. A caller that invents a name here trades an honest
             // refusal for a comparison against a fabrication.
@@ -3952,6 +3951,12 @@ mod branch_model_tests {
             .local_counterpart()
     }
 
+    fn on_remote(name: &str) -> RemoteRef {
+        TrackingRef::parse(RawRefName::new(name))
+            .expect("test fixture names are valid tracking refs")
+            .on_remote()
+    }
+
     /// Run git in `dir`, panicking on failure.
     fn git(dir: &Path, args: &[&str]) -> String {
         let out = git_command()
@@ -4384,7 +4389,7 @@ mod branch_model_tests {
         git(&clone, &["branch", "origin/main"]);
 
         let resolved = GitVcs
-            .resolve_branch_on_remote(&clone, &RefName::new("main"))
+            .resolve_branch_on_remote(&clone, &on_remote("main"))
             .unwrap();
 
         assert_eq!(resolved, remote_tip);
@@ -4396,7 +4401,7 @@ mod branch_model_tests {
         git(&clone, &["tag", "origin/main"]);
 
         let resolved = GitVcs
-            .resolve_branch_on_remote(&clone, &RefName::new("main"))
+            .resolve_branch_on_remote(&clone, &on_remote("main"))
             .unwrap();
 
         assert_eq!(resolved, remote_tip);
@@ -4408,7 +4413,7 @@ mod branch_model_tests {
         git(&clone, &["branch", "origin/feature"]);
 
         let err = GitVcs
-            .resolve_branch_on_remote(&clone, &RefName::new("feature"))
+            .resolve_branch_on_remote(&clone, &on_remote("feature"))
             .expect_err("a local branch named origin/feature is not a remote-tracking ref");
 
         assert!(

@@ -1,7 +1,7 @@
 use repoweave::git::git_vcs;
 use repoweave::vcs::{
-    ConflictOp, DerivedContentPolicy, DiscardOutcome, RefName, ReplayExclusionState,
-    ResolvedRevisionId, VcsError,
+    ConflictOp, DerivedContentPolicy, DiscardOutcome, RawRefName, RemoteRef, ReplayExclusionState,
+    ResolvedRevisionId, TrackingRef, VcsError,
 };
 use std::fs;
 use std::path::Path;
@@ -689,6 +689,12 @@ fn repo_with_remote(remote_name: &str) -> (TempDir, std::path::PathBuf) {
     (workspace, local_path)
 }
 
+fn on_remote(branch: &str) -> RemoteRef {
+    TrackingRef::parse(RawRefName::new(branch))
+        .unwrap()
+        .on_remote()
+}
+
 #[test]
 fn resolve_branch_on_remote_resolves_against_origin() {
     let (_ws, local) = repo_with_remote("origin");
@@ -696,7 +702,7 @@ fn resolve_branch_on_remote_resolves_against_origin() {
 
     let vcs = git_vcs();
     let resolved = vcs
-        .resolve_branch_on_remote(&local, &RefName::new("main"))
+        .resolve_branch_on_remote(&local, &on_remote("main"))
         .unwrap();
 
     assert_eq!(resolved.as_str(), &expected_sha);
@@ -710,7 +716,7 @@ fn resolve_branch_on_remote_missing_remote_errors() {
     let (_ws, local) = repo_with_remote("other");
 
     let vcs = git_vcs();
-    let result = vcs.resolve_branch_on_remote(&local, &RefName::new("main"));
+    let result = vcs.resolve_branch_on_remote(&local, &on_remote("main"));
 
     let err = result.expect_err("missing origin remote must error");
     assert!(
@@ -736,7 +742,7 @@ fn resolve_branch_on_remote_missing_branch_errors() {
     let (_ws, local) = repo_with_remote("origin");
 
     let vcs = git_vcs();
-    let result = vcs.resolve_branch_on_remote(&local, &RefName::new("nonexistent-branch"));
+    let result = vcs.resolve_branch_on_remote(&local, &on_remote("nonexistent-branch"));
 
     let err = result.expect_err("nonexistent branch on remote must error");
     assert!(

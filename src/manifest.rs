@@ -5,7 +5,7 @@
 
 use crate::integration::Integration;
 use crate::registry::RegistryName;
-use crate::vcs::{RawRevisionId, RefName, ResolvedRevisionId};
+use crate::vcs::{RawRevisionId, ResolvedRevisionId, TrackingRef};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -526,7 +526,7 @@ pub struct RepoEntry {
     #[serde(rename = "type")]
     pub vcs_type: VcsType,
     pub url: RepoUrl,
-    pub version: RefName,
+    pub version: TrackingRef,
     pub role: Role,
     #[serde(default, skip_serializing_if = "Submodules::is_local")]
     pub submodules: Submodules,
@@ -1980,7 +1980,7 @@ impl Project {
 mod tests {
     use super::*;
     #[allow(unused_imports)]
-    use crate::vcs::{RefName, ResolvedRevisionId};
+    use crate::vcs::ResolvedRevisionId;
 
     // ========================================================================
     // IntegrationConfig — new transparent mapping API
@@ -3351,7 +3351,10 @@ copy = [".env"]
         assert!(entry.is_some());
         let entry = entry.unwrap();
         assert_eq!(entry.role, Role::Owned);
-        assert_eq!(entry.version, RefName::new("main"));
+        assert_eq!(
+            entry.version,
+            TrackingRef::parse(crate::vcs::RawRefName::new("main")).unwrap()
+        );
     }
 
     #[test]

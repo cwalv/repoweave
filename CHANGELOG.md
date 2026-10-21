@@ -6,6 +6,16 @@ claim that nothing changed in them.
 
 ## Unreleased
 
+### Breaking: `rwv.toml` refuses a `version` that reads as a tag or commit id
+
+`version` declares the branch a member tracks. A value that reads as a release
+tag (`v2.0`, `v0.3.4-rc1`) or a commit id (seven or more hex digits) used to
+load, and `rwv fetch`, `rwv update` and `rwv push` each refused that member
+when they reached it. The manifest now fails to parse at that line, naming the
+value. `rwv add` refuses with `version-is-a-pin` when the branch it would
+record is so named — the remote's default branch, or with `--new` the branch
+the new repo is on — where it used to write it.
+
 ### Breaking: `rwv status --json` spells the relation `no-lock`
 
 A repo with no `rwv.lock` entry has `relation` `no-lock` in `rwv status --json`,

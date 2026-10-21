@@ -422,7 +422,7 @@ pub fn run_deactivations(
 mod tests {
     use super::*;
     use crate::manifest::{RepoEntry, RepoPath};
-    use crate::vcs::RefName;
+    use crate::vcs::{RawRefName, TrackingRef};
     use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
 
@@ -554,7 +554,7 @@ mod tests {
             RepoEntry {
                 vcs_type: crate::manifest::VcsType::Git,
                 url: "https://github.com/acme/server.git".parse().unwrap(),
-                version: RefName::new("main"),
+                version: TrackingRef::parse(RawRefName::new("main")).unwrap(),
                 role: crate::manifest::Role::Owned,
                 submodules: crate::manifest::Submodules::Local,
             },

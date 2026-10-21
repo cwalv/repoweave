@@ -1259,14 +1259,23 @@ it; for a name given twice, supply it in only one spelling.
 
 ### `version-is-a-pin`
 
-**Condition.** `version` names a revision where it must name a branch.
+**Condition.** `version` names a revision where it must name a branch: a name
+that reads as a commit id (seven or more hex digits) or a release tag (`v2.0`,
+`v0.3.4-rc1`). `rwv add` refuses when the branch it would record is so named —
+the remote's default branch, or with `--new` the branch the new repo is on.
 
 **Why.** `version` declares what to *track*; the lock records where you *are*.
 A SHA or tag there collapses the two, leaving nothing to track and a lock that
 can never move.
 
-**Exits.** Put a branch name in `version`. To hold a repo at a fixed revision,
-commit the lock rather than overloading the tracking field.
+**Exits.** For `rwv add`, rename that branch on the remote, or make another
+of its branches the default, then re-run. `rwv add <url>` and `rwv add
+--adopt` read the default from the clone the message names, so record the new
+one there as well (`git fetch origin && git remote set-head origin -a`, for
+git). To hold a repo at a fixed revision, commit the lock rather than
+overloading the tracking field. A `version` written this way in `rwv.toml` does
+not get this far: the manifest fails to parse at that line, naming the value;
+put a branch name there.
 
 **Where this sits.** [Lock as derived](../explanation/joints/lock-as-derived.md).
 

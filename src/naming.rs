@@ -128,12 +128,12 @@ impl fmt::Display for RefNameError {
             Self::Empty => f.write_str("ref name is empty"),
             Self::ShaShaped(s) => write!(
                 f,
-                "'{s}' is commit-id shaped; `version:` declares a branch to \
+                "'{s}' is commit-id shaped; `version` declares a branch to \
                  track, not a revision to pin"
             ),
             Self::TagShaped(s) => write!(
                 f,
-                "'{s}' is tag shaped; `version:` declares a branch to track, \
+                "'{s}' is tag shaped; `version` declares a branch to track, \
                  not a revision to pin"
             ),
             Self::Malformed { name, reason } => {

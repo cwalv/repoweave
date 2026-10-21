@@ -12,9 +12,7 @@ use crate::manifest::{Project, ProjectName, RepoEntry, RepoPath};
 use crate::parallel::{run_in_parallel, run_subprocess_with_reporter, Reporter};
 use crate::placement::PlacementOutput;
 use crate::selector::RepoFilter;
-use crate::vcs::{
-    vcs_for, HeadAttachment, RawRefName, RefName, ResolvedRevisionId, TrackingRef, Vcs, VcsError,
-};
+use crate::vcs::{vcs_for, HeadAttachment, ResolvedRevisionId, Vcs, VcsError};
 use crate::workspace::{
     member_checkout_dir, Checkout, MemberCheckout, Resolution, WorkspaceContext,
 };
@@ -294,7 +292,7 @@ fn update_for_project(
     let mut placements: Vec<PlacementOutput> = Vec::new();
 
     for (item, outcome) in work_items.iter().zip(outcomes) {
-        let branch = item.entry.version.as_str().to_owned();
+        let branch = item.entry.version.to_string();
         let abs_str = crate::path_spelling::wire_path(item.checkout.path());
 
         let old_sha = item.old.as_ref().map(|r| r.display_str().to_owned());
@@ -530,7 +528,7 @@ fn advance_one(
         ));
     }
 
-    let branch = entry.version.as_str();
+    let branch = entry.version.on_remote();
 
     // git fetch the remote(s). Run from the repo dir so default remote
     // selection applies.
@@ -581,8 +579,7 @@ fn advance_one(
     // `branch`, this resolution will now correctly fail rather than
     // resolving against a ghost ref. The error below names the state and
     // the two actionable exits so the operator knows what to do.
-    let branch_ref = RefName::new(branch);
-    let resolved = match vcs.resolve_branch_on_remote(repo_dir, &branch_ref) {
+    let resolved = match vcs.resolve_branch_on_remote(repo_dir, &branch) {
         Ok(r) => r,
         Err(_) => {
             return Err(format!(
@@ -592,6 +589,7 @@ fn advance_one(
                  SHA). To fix: update rwv.toml's `version:` field to the \
                  current branch name.",
                 repo = repo_path.as_str(),
+                branch = branch.branch(),
             ));
         }
     };
@@ -698,19 +696,7 @@ fn advance_checkout(
         ));
     }
 
-    // `entry.version` is the manifest's declared tracking branch, still typed
-    // `RefName` (manifest.rs's migration to `TrackingRef` is separate work).
-    // Route it through `TrackingRef::parse` so the comparison below goes
-    // through `local_counterpart()` — the same named projection `rwv push`'s
-    // gates use — instead of a raw string compare.
-    let declared = TrackingRef::parse(RawRefName::new(entry.version.as_str())).map_err(|e| {
-        format!(
-            "{}: manifest declares an invalid tracking branch '{}': {e:#}",
-            repo_path.as_str(),
-            entry.version,
-        )
-    })?;
-    let counterpart = declared.local_counterpart();
+    let counterpart = entry.version.local_counterpart();
 
     if !attached.is_named(&counterpart) {
         let Some(consent) = detach_checkouts else {
@@ -750,6 +736,7 @@ fn advance_checkout(
             repo_path.as_str(),
             target.display_str(),
             target.display_str(),
+            declared = entry.version,
         ));
     };
     vcs.detach_head(&attached, target, consent)

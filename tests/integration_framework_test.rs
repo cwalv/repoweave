@@ -11,7 +11,7 @@ use repoweave::integration::{
     SurfacedFile,
 };
 use repoweave::manifest::{IntegrationConfig, ProjectName, RepoEntry, RepoPath, Role, VcsType};
-use repoweave::vcs::RefName;
+use repoweave::vcs::{RawRefName, TrackingRef};
 use repoweave::workspace::ContainerKind;
 
 mod common;
@@ -24,7 +24,7 @@ fn make_repo_entry(role: Role) -> RepoEntry {
     RepoEntry {
         vcs_type: VcsType::Git,
         url: "https://example.com/repo.git".parse().unwrap(),
-        version: RefName::new("main"),
+        version: TrackingRef::parse(RawRefName::new("main")).unwrap(),
         role,
         submodules: repoweave::manifest::Submodules::Local,
     }

@@ -4,7 +4,7 @@ use repoweave::manifest::{
     CargoWorkspaceConfig, LockFile, Manifest, PatchMode, Project, ProjectName, RepoPath, Role,
     VcsType,
 };
-use repoweave::vcs::{RawRevisionId, RefName};
+use repoweave::vcs::{RawRefName, RawRevisionId, TrackingRef};
 
 mod common;
 
@@ -28,7 +28,7 @@ role = "fork"
 [repositories."github/lib/openssl"]
 type = "git"
 url = "https://github.com/lib/openssl.git"
-version = "v3.1.0"
+version = "openssl-3.1"
 role = "dependency"
 
 [repositories."github/docs/rfc"]
@@ -110,8 +110,41 @@ fn manifest_repo_entry_fields() {
         .unwrap();
     assert_eq!(server.vcs_type, VcsType::Git);
     assert_eq!(server.url.to_string(), "https://github.com/acme/server.git");
-    assert_eq!(server.version, RefName::new("main"));
+    assert_eq!(
+        server.version,
+        TrackingRef::parse(RawRefName::new("main")).unwrap()
+    );
     assert_eq!(server.role, Role::Owned);
+}
+
+fn one_entry_tracking(version: &str) -> String {
+    format!(
+        "[repositories.\"github/acme/server\"]\n\
+         type = \"git\"\n\
+         url = \"https://github.com/acme/server.git\"\n\
+         version = \"{version}\"\n\
+         role = \"owned\"\n"
+    )
+}
+
+#[test]
+fn a_version_that_reads_as_a_revision_is_refused_at_load() {
+    for (version, shape) in [
+        ("v2.0", "tag shaped"),
+        ("0123456789abcdef", "commit-id shaped"),
+    ] {
+        let err = Manifest::from_toml_str(&one_entry_tracking(version))
+            .expect_err("a version that reads as a revision must not load");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains(&format!("'{version}' is {shape}")) && msg.contains("line 4"),
+            "the refusal names the value, its shape and its line:\n{msg}"
+        );
+    }
+    for branch in ["main", "v2"] {
+        Manifest::from_toml_str(&one_entry_tracking(branch))
+            .unwrap_or_else(|e| panic!("control: '{branch}' names a branch: {e:#}"));
+    }
 }
 
 // ---------------------------------------------------------------------------

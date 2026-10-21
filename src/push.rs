@@ -11,9 +11,7 @@ use crate::manifest::{
 use crate::parallel::{run_in_parallel, Reporter};
 use crate::refusal::RefusalKind;
 use crate::selector::RepoFilter;
-use crate::vcs::{
-    project_vcs, vcs_for, HeadAttachment, PublishRef, RawRefName, RawRevisionId, TrackingRef, Vcs,
-};
+use crate::vcs::{project_vcs, vcs_for, HeadAttachment, PublishRef, RawRevisionId, Vcs};
 use crate::workspace::{project_dir, project_rel_path, Checkout, Resolution, WorkspaceContext};
 use anyhow::Context;
 use schemars::JsonSchema;
@@ -408,29 +406,12 @@ pub fn run_push(
                 continue;
             }
         };
-        // `entry.version` is the manifest's declared tracking branch, still
-        // typed `RefName` (manifest.rs's migration to `TrackingRef` is
-        // separate work — out of scope here). Route it through
-        // `TrackingRef::parse` so the comparison below goes through
-        // `local_counterpart()`, the same named projection the project
-        // gate above uses, instead of a raw string compare.
-        let declared = match TrackingRef::parse(RawRefName::new(entry.version.as_str())) {
-            Ok(t) => t,
-            Err(e) => {
-                branch_errors.push(format!(
-                    "{}: manifest declares an invalid tracking branch '{}': {e:#}",
-                    repo_path.as_str(),
-                    entry.version,
-                ));
-                continue;
-            }
-        };
-        if !attached.is_named(&declared.local_counterpart()) {
+        if !attached.is_named(&entry.version.local_counterpart()) {
             eprintln!(
                 "rwv push: warning: {} is on branch '{}', manifest declares '{}'",
                 repo_path.as_str(),
                 attached,
-                declared,
+                entry.version,
             );
         }
         plan.push(PushPlanItem {
@@ -853,7 +834,7 @@ mod tests {
     //! user-visible strings.
     use super::*;
     use crate::manifest::RepoPath;
-    use crate::vcs::RawRevisionId;
+    use crate::vcs::{RawRefName, RawRevisionId, TrackingRef};
     use std::collections::BTreeMap;
 
     // --- short_sha ---------------------------------------------------------

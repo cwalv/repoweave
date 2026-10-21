@@ -13,7 +13,8 @@ use crate::registry::{
     builtin_registries, CreationParamError, ParamKind, ParamMap, ParamSpec, RegistryName, Upstream,
 };
 use crate::vcs::{
-    vcs_for, DeletionWarrant, EphemeralRefName, HeadAttachment, RefName, RemoteBranchCopies, Vcs,
+    vcs_for, DeletionWarrant, EphemeralRefName, HeadAttachment, RemoteBranchCopies, TrackingRef,
+    Vcs,
 };
 use crate::workspace::{operand_path, project_dir, Checkout, WorkspaceContext};
 use crate::workweave_index::RefRegistry;
@@ -388,13 +389,14 @@ pub fn run_add(
                 url
             );
         };
-        let default_branch = RefName::new(remote_default.local_counterpart().to_string());
+        let version = TrackingRef::try_from(&remote_default)
+            .with_context(|| untrackable_remote_default(&repo_path, &dest))?;
 
         // Add entry to manifest.
         let entry = RepoEntry {
             vcs_type,
             url: parsed_url,
-            version: default_branch,
+            version,
             role,
             submodules: crate::manifest::Submodules::Local,
         };
@@ -778,6 +780,14 @@ impl AddLeftovers {
     }
 }
 
+fn untrackable_remote_default(repo_path: &RepoPath, clone: &Path) -> String {
+    format!(
+        "rwv add: '{}' at {}: the remote's default branch cannot be its `version`",
+        repo_path.as_str(),
+        operator_path(clone),
+    )
+}
+
 fn clone_into(vcs: &dyn Vcs, url: &RepoUrl, dest: &Path) -> anyhow::Result<()> {
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)
@@ -881,13 +891,14 @@ fn run_add_from_local_path(
             path_arg
         );
     };
-    let default_branch = RefName::new(remote_default.local_counterpart().to_string());
+    let version = TrackingRef::try_from(&remote_default)
+        .with_context(|| untrackable_remote_default(repo_path, clone_dir))?;
 
     // Add entry to manifest using the inferred origin URL.
     let entry = RepoEntry {
         vcs_type,
         url: origin_url.parse()?,
-        version: default_branch,
+        version,
         role,
         submodules: crate::manifest::Submodules::Local,
     };
@@ -1588,9 +1599,9 @@ pub fn run_add_new(
             }
         }
 
-        let default_branch = match vcs.head_attachment(&dest)? {
-            HeadAttachment::Unborn(u) => RefName::new(u.to_string()),
-            HeadAttachment::Attached(a) => RefName::new(a.to_string()),
+        let created_on = match vcs.head_attachment(&dest)? {
+            HeadAttachment::Unborn(u) => TrackingRef::parse(u.name().clone()),
+            HeadAttachment::Attached(a) => TrackingRef::try_from(&a),
             HeadAttachment::Detached(_) => match cloned_from {
                 Some(upstream) => anyhow::bail!(
                     "rwv add: the clone at {} has a detached HEAD right after creation, \
@@ -1610,10 +1621,18 @@ pub fn run_add_new(
             },
         };
 
+        let version = created_on.with_context(|| {
+            format!(
+                "rwv add: '{}' at {}: the branch the repo was created on cannot be its `version`",
+                repo_path.as_str(),
+                operator_path(&dest),
+            )
+        })?;
+
         let entry = RepoEntry {
             vcs_type,
             url,
-            version: default_branch,
+            version,
             role,
             submodules: crate::manifest::Submodules::Local,
         };

@@ -179,24 +179,20 @@ now produces a finding, pinned by
 
 ### 1.3 L2 — the canonical member store (`<weave>/<repo_path>`): a branch is a tracking declaration
 
-A member repo's `version:` field in `rwv.toml` is typed `RefName`
-(`manifest.rs:573`) `[V]` and is **branch-only by design**. This is a settled
-decision, restated here so it need not be looked up:
+A member repo's `version:` field in `rwv.toml` is typed `TrackingRef`
+(`RepoEntry.version`, `src/manifest.rs`), parsed when the manifest loads, and
+is **branch-only by design**. This is a settled decision, restated here so it
+need not be looked up:
 
 > The manifest declares what to TRACK; the lock records where you ARE.
 
 A tag or SHA in `version:` conflates the two layers — genuine pinning needs a
 differently-named field. `rwv update` means "advance to the tip of the branch
 you declared", and that verb is meaningless without a per-repo branch name.
-Counting every read of a `version` field — the manifest's `version:` or its
-lock-entry echo — `check.rs` has 8 sites, `fetch.rs` 12, `sync.rs` 5,
-`push.rs` 4, `lock.rs` 3, `update.rs` 5 `[V]`. (Of `sync.rs`'s 5, only
-`sync.rs:1265` reads the manifest; the other four read lock entries.) The
-counts rose where this model added a *typed* read: `push.rs`, `fetch.rs`, and
-`update.rs` each now parse the declaration at their seam —
-`TrackingRef::parse(RawRefName::new(entry.version.as_str()))` at `push.rs:395`,
-`fetch.rs:754`, `update.rs:678` `[V]` — because `manifest.rs`'s field is still
-typed `RefName` and migrating it is separate work (§4.2).
+The field deserializes through `TrackingRef::parse`, so a SHA- or tag-shaped
+`version:` fails to load at its line, and no consumer re-parses what it reads:
+each picks a projection (`local_counterpart`, `on_remote`) off the value the
+manifest already holds.
 
 Note precisely what `version:` names: a branch **on the remote**. `rwv update`
 resolves it through `Vcs::resolve_branch_on_remote`, which explicitly refuses
@@ -316,15 +312,13 @@ longer exist** — `current_ref` and `delete_branch` were deleted, ephemeral
 names are minted by `EphemeralRefName::mint`, and `default_branch` — the
 method the fallback lived in — has been deleted from `GitVcs` and from the
 trait `[V]`. `RefName` itself survives, still unvalidated, but only on the
-surface this model did not reach: `manifest.rs:573`'s `version:` field
-(parsed into a `TrackingRef` at each consumer's seam rather than at the
-field, §1.3), `tag_at_head` (`vcs.rs:1947`), the `BranchAlreadyExists` error
-payload (`:295`), and the two prune predicates (`:2298`, `:2318`) `[V]`.
-`rwv add` still *writes* the field through `RefName::new`
-(`add_remove.rs:308`, `:410`, `:694-695`) `[V]`, but the value it wraps is
-now an observed `RemoteDefaultBranch` or an observed `HeadAttachment` rather
-than a fabrication — §6.2. Migrating the manifest field is the one piece of
-§4.2's table left undone.
+surface this model did not reach: `tag_at_head` and the two prune predicates
+(`branch_has_remote_counterpart`, `count_commits_ahead_of_remote`). The
+manifest's `version:` field is a `TrackingRef` parsed at load (§1.3), and
+`rwv add` writes it through `TrackingRef::try_from` an observed
+`RemoteDefaultBranch` or `AttachedRef` (or `TrackingRef::parse` of an
+`UnbornRef`'s name), so a default branch that reads as a tag or a SHA is
+refused at the add rather than written for a later verb to refuse.
 
 ### 2.1 What the conflation produced, concretely
 
@@ -748,13 +742,11 @@ only once every call site had been restated in terms of this surface — and
 that restatement was the audit: a site that could not say which replacement it
 meant was a site nobody had classified" `[V]`.
 
-Two things this section specified are **not** shipped, and are called out at
-point of use rather than here: `manifest.rs`'s `version:` field is still typed
-`RefName` (consumers parse a `TrackingRef` at their own seam, §1.3), and Q6 —
-which ref a member repo publishes — is still open, with `PublishRef` holding
-the shape of the answer but not the answer (`PublishRef::from_local`,
-`vcs.rs:1419`, is the unchosen alternative, `#[allow(dead_code)]` and exercised
-only by a unit test) `[V]`.
+One thing this section specified is **not** shipped, and is called out at
+point of use rather than here: Q6 — which ref a member repo publishes — is
+still open, with `PublishRef` holding the shape of the answer but not the
+answer (`PublishRef::from_local`, `vcs.rs:1419`, is the unchosen alternative,
+`#[allow(dead_code)]` and exercised only by a unit test) `[V]`.
 
 ### 4.1 The precedent, in this same file
 
@@ -844,10 +836,10 @@ the section's end.
 git `check-ref-format` intersection (`validate_ref_name`, `vcs.rs:740-786`)
 and then rejects SHA-shaped (`RefNameError::ShaShaped`, ≥7 all-hex) and
 tag-shaped (`RefNameError::TagShaped`, `vN.N…`) input outright
-(`vcs.rs:843-857`) `[V]`. Like `ResolvedRevisionId`, it has no `Deserialize`
-impl. One caveat this document must not let slide: parsing happens at each
-*consumer's* seam, not at manifest load, because `manifest.rs:573` still
-carries `RefName` (§1.3, §2).
+(`vcs.rs:843-857`) `[V]`. Unlike `ResolvedRevisionId` it deserializes, but
+only through `parse` (`#[serde(try_from = "RawRefName")]`): a declaration's
+only check is its shape, which needs no repo, so the manifest load is the
+parse boundary (§1.3).
 
 Notion (4) — "nothing" — is not a type. It is the absence of an `AttachedRef`,
 and it is expressed by the enum in §4.5.
