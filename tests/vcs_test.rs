@@ -1,7 +1,7 @@
 use repoweave::git::git_vcs;
 use repoweave::vcs::{
-    ConflictOp, DerivedContentPolicy, DiscardOutcome, RawRefName, RemoteRef, ReplayExclusionState,
-    ResolvedRevisionId, TrackingRef, VcsError,
+    ConflictOp, DerivedContentPolicy, DiscardOutcome, MidOperation, RawRefName, RemoteRef,
+    ReplayExclusionState, ResolvedRevisionId, TrackingRef, VcsError,
 };
 use std::fs;
 use std::path::Path;
@@ -1269,8 +1269,8 @@ fn rebase_conflict_on_non_lock_file_returns_rebase_conflict_and_leaves_mid_op() 
     // Repo is left mid-rebase so `git rebase --continue` works.
     let mid_op = repoweave::git::git_vcs().mid_operation(p);
     assert_eq!(
-        mid_op.as_deref(),
-        Some("mid-rebase"),
+        mid_op,
+        Some(MidOperation::Conflict(ConflictOp::Rebase)),
         "repo should be left mid-rebase for the operator to resolve and continue"
     );
 }
@@ -1387,8 +1387,8 @@ fn rebase_stopped_commit_detail_returns_sha_and_subject() {
     );
     assert!(result.is_err(), "expected conflict on rebase");
     assert_eq!(
-        git_vcs().mid_operation(p).as_deref(),
-        Some("mid-rebase"),
+        git_vcs().mid_operation(p),
+        Some(MidOperation::Conflict(ConflictOp::Rebase)),
         "repo must be mid-rebase after conflicting rebase"
     );
 
@@ -1517,8 +1517,8 @@ fn rebase_continue_with_unstaged_conflicts_bails_and_leaves_mid_rebase() {
         "first rebase must conflict; got {first:?}"
     );
     assert_eq!(
-        git_vcs().mid_operation(p).as_deref(),
-        Some("mid-rebase"),
+        git_vcs().mid_operation(p),
+        Some(MidOperation::Conflict(ConflictOp::Rebase)),
         "fixture precondition: repo must be mid-rebase"
     );
 
@@ -1535,8 +1535,8 @@ fn rebase_continue_with_unstaged_conflicts_bails_and_leaves_mid_rebase() {
         "expected RebaseConflict, got {cont:?}"
     );
     assert_eq!(
-        git_vcs().mid_operation(p).as_deref(),
-        Some("mid-rebase"),
+        git_vcs().mid_operation(p),
+        Some(MidOperation::Conflict(ConflictOp::Rebase)),
         "repo must still be mid-rebase after a failed continue so the \
          operator can stage-and-retry"
     );
@@ -1612,8 +1612,8 @@ fn rebase_continue_after_staging_completes_and_resolves_lock_pick_via_inline_fla
         "expected first rebase to conflict on shared; got {first:?}"
     );
     assert_eq!(
-        git_vcs().mid_operation(p).as_deref(),
-        Some("mid-rebase"),
+        git_vcs().mid_operation(p),
+        Some(MidOperation::Conflict(ConflictOp::Rebase)),
         "repo must be mid-rebase after F1 conflict"
     );
 

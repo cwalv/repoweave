@@ -3,11 +3,11 @@
 use crate::registry::CloneUrl;
 use crate::vcs::{
     CommitSummary, ConflictOp, ContentIdentity, DerivedContentPolicy, DerivedContentResolution,
-    DiscardOutcome, ForeignTipPolicy, HeadAttachment, HeadObservation, LocalRefName, PreAbortRef,
-    PublishRef, RawRefName, RawRevisionId, RecordedSubmodule, RefOrigin, RemoteBranchCopies,
-    RemoteDefaultBranch, RemoteRef, ReplayExclusionState, ResolvedRevisionId, SubmoduleBirth,
-    TrackedFile, TrackedFileKind, UniqueDiff, Vcs, VcsError, VerifiedRestoreOutcome,
-    WorkspacePopulation,
+    DiscardOutcome, ForeignTipPolicy, HeadAttachment, HeadObservation, LocalRefName, MidOperation,
+    PreAbortRef, PublishRef, RawRefName, RawRevisionId, RecordedSubmodule, RefOrigin,
+    RemoteBranchCopies, RemoteDefaultBranch, RemoteRef, ReplayExclusionState, ResolvedRevisionId,
+    SubmoduleBirth, TrackedFile, TrackedFileKind, UniqueDiff, Vcs, VcsError,
+    VerifiedRestoreOutcome, WorkspacePopulation,
 };
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
@@ -1141,7 +1141,7 @@ impl GitVcs {
     /// HEAD's *position*, and repositioning HEAD out from under it loses
     /// the bisect with nothing to resume from. That is the state the
     /// detached-MOVE precondition exists to see.
-    pub fn mid_op_state(repo: &Path) -> Option<String> {
+    pub fn mid_op_state(repo: &Path) -> Option<MidOperation> {
         let git_dir = match Self::run_trimmed(&["rev-parse", "--git-dir"], repo) {
             Ok(s) => {
                 let p = std::path::PathBuf::from(&s);
@@ -1154,16 +1154,16 @@ impl GitVcs {
             Err(_) => return None,
         };
         if git_dir.join("rebase-apply").exists() || git_dir.join("rebase-merge").exists() {
-            return Some("mid-rebase".to_owned());
+            return Some(MidOperation::Conflict(ConflictOp::Rebase));
         }
         if git_dir.join("MERGE_HEAD").exists() {
-            return Some("mid-merge".to_owned());
+            return Some(MidOperation::Conflict(ConflictOp::Merge));
         }
         if git_dir.join("CHERRY_PICK_HEAD").exists() {
-            return Some("mid-cherry-pick".to_owned());
+            return Some(MidOperation::Conflict(ConflictOp::CherryPick));
         }
         if git_dir.join("BISECT_LOG").exists() {
-            return Some("mid-bisect".to_owned());
+            return Some(MidOperation::Bisect);
         }
         None
     }
@@ -1751,7 +1751,7 @@ impl Vcs for GitVcs {
 
         // Non-zero exit. If the repo is in mid-rebase, this is a conflict;
         // otherwise it's some other rebase error (bad refs, etc.).
-        if matches!(Self::mid_op_state(repo).as_deref(), Some("mid-rebase")) {
+        if Self::mid_op_state(repo) == Some(MidOperation::Conflict(ConflictOp::Rebase)) {
             return Err(VcsError::RebaseConflict {
                 repo: repo.to_path_buf(),
                 op: ConflictOp::Rebase,
@@ -1773,13 +1773,14 @@ impl Vcs for GitVcs {
         // call site already inspects `mid_op` to route between a fresh
         // rebase and this method, so reaching this function on a clean repo
         // is a bug, not an in-band condition.
-        if !matches!(Self::mid_op_state(repo).as_deref(), Some("mid-rebase")) {
+        if Self::mid_op_state(repo) != Some(MidOperation::Conflict(ConflictOp::Rebase)) {
             return Err(VcsError::CommandFailed {
                 args: vec!["rebase".to_owned(), "--continue".to_owned()],
                 repo: repo.to_path_buf(),
                 stderr: format!(
-                    "rebase_continue called on {} which is not mid-rebase",
-                    repo.display()
+                    "rebase_continue called on {} which is not {}",
+                    repo.display(),
+                    MidOperation::Conflict(ConflictOp::Rebase)
                 ),
             });
         }
@@ -1815,7 +1816,7 @@ impl Vcs for GitVcs {
         // on a further genuine conflict OR the operator's resolution left
         // conflict markers unstaged. Both surface as the same operator
         // signal: resolve → stage → resume.
-        if matches!(Self::mid_op_state(repo).as_deref(), Some("mid-rebase")) {
+        if Self::mid_op_state(repo) == Some(MidOperation::Conflict(ConflictOp::Rebase)) {
             return Err(VcsError::RebaseConflict {
                 repo: repo.to_path_buf(),
                 op: ConflictOp::Rebase,
@@ -2274,15 +2275,6 @@ impl Vcs for GitVcs {
         })
     }
 
-    fn mid_op(&self, repo: &Path) -> Option<ConflictOp> {
-        match Self::mid_op_state(repo).as_deref() {
-            Some("mid-rebase") => Some(ConflictOp::Rebase),
-            Some("mid-merge") => Some(ConflictOp::Merge),
-            Some("mid-cherry-pick") => Some(ConflictOp::CherryPick),
-            _ => None,
-        }
-    }
-
     fn cancel_in_flight_op(&self, repo: &Path) {
         let abort_args: &[&str] = match self.mid_op(repo) {
             Some(ConflictOp::Rebase) => &["rebase", "--abort"],
@@ -2710,7 +2702,7 @@ impl Vcs for GitVcs {
         }
     }
 
-    fn mid_operation(&self, repo: &Path) -> Option<String> {
+    fn mid_operation(&self, repo: &Path) -> Option<MidOperation> {
         Self::mid_op_state(repo)
     }
 

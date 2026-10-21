@@ -15,6 +15,7 @@
 //! on both `sync` and `sync-to`.
 
 use assert_cmd::Command as AssertCommand;
+use repoweave::vcs::{ConflictOp, MidOperation};
 use std::path::{Path, PathBuf};
 
 mod common;
@@ -857,10 +858,8 @@ fn strand_a_pull_from_an_ahead_workweave(extra: &[&str]) -> StrandedPull {
         .failure();
 
     assert_eq!(
-        repoweave::git::git_vcs()
-            .mid_operation(&f.main.project_dir)
-            .as_deref(),
-        Some("mid-rebase"),
+        repoweave::git::git_vcs().mid_operation(&f.main.project_dir),
+        Some(MidOperation::Conflict(ConflictOp::Rebase)),
         "the pull must strand mid-replay, or there is nothing for `--continue` to resume"
     );
     let dest_after_strand = head(&f.main.manifest_repo);

@@ -373,7 +373,7 @@ Show per-repo state for the CWD workspace.
 | tip | Current HEAD SHA (first 12 chars) |
 | lock SHA | SHA from `rwv.lock` (first 12 chars), `-` if no lock |
 | relation | `ok` / `ahead` / `behind` / `diverged` / `no-lock` / `unknown` / `missing` / `unreachable` |
-| mid-op | Present if mid-rebase, mid-merge, etc. |
+| mid-op | `mid-rebase` / `mid-merge` / `mid-cherry-pick` / `mid-bisect` when the repo is stopped in that operation; absent otherwise |
 
 `--json` emits the envelope `{"$schema": "...", "repos": [...]}`. Each record includes `lock_pinned_by_name` (`true` when an older or hand-edited `rwv.lock` entry holds a tag or branch name rather than a 40-character hex commit SHA; `rwv lock` rewrites it to a commit SHA). See [JSON envelope convention](#--json-envelope-convention).
 

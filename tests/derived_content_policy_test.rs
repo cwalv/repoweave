@@ -14,7 +14,9 @@
 //! keeps the two from being read as one test of the same thing.
 
 use repoweave::git::{git_vcs, has_rwv_merge_driver_config};
-use repoweave::vcs::{ConflictOp, DerivedContentPolicy, ResolvedRevisionId, VcsError};
+use repoweave::vcs::{
+    ConflictOp, DerivedContentPolicy, MidOperation, ResolvedRevisionId, VcsError,
+};
 use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
@@ -149,8 +151,8 @@ fn the_same_replay_without_the_policy_stops_on_the_same_path() {
         "expected the ordinary textual-merge conflict, got {err:?}"
     );
     assert_eq!(
-        git_vcs().mid_operation(p).as_deref(),
-        Some("mid-rebase"),
+        git_vcs().mid_operation(p),
+        Some(MidOperation::Conflict(ConflictOp::Rebase)),
         "an unresolved conflict must leave the repo where the operator can act on it"
     );
     git_vcs().cancel_in_flight_op(p);

@@ -25,8 +25,8 @@
 use repoweave::git::git_vcs;
 use repoweave::manifest::{ProjectName, WorkweaveName};
 use repoweave::vcs::{
-    EphemeralRefName, HeadAttachment, RawRefName, RefNameError, ResolvedRevisionId, TrackingRef,
-    VcsError,
+    EphemeralRefName, HeadAttachment, MidOperation, RawRefName, RefNameError, ResolvedRevisionId,
+    TrackingRef, VcsError,
 };
 use std::path::Path;
 use tempfile::TempDir;
@@ -411,7 +411,11 @@ fn advance_detached_head_refuses_a_repo_stopped_mid_bisect() {
     match git_vcs().advance_detached_head(&witness, &mid) {
         Err(VcsError::MidOperation { repo: r, operation }) => {
             assert_eq!(r, repo.path());
-            assert_eq!(operation, "mid-bisect", "the refusal names the operation");
+            assert_eq!(
+                operation,
+                MidOperation::Bisect,
+                "the refusal names the operation"
+            );
         }
         other => panic!("expected MidOperation, got {other:?}"),
     }
@@ -433,8 +437,8 @@ fn mid_operation_sees_a_bisect_that_mid_op_cannot() {
     common::git_in(repo.path(), &["bisect", "good", base.as_str()]);
 
     assert_eq!(
-        git_vcs().mid_operation(repo.path()).as_deref(),
-        Some("mid-bisect")
+        git_vcs().mid_operation(repo.path()),
+        Some(MidOperation::Bisect)
     );
     assert!(
         git_vcs().mid_op(repo.path()).is_none(),

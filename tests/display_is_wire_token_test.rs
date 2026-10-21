@@ -5,7 +5,7 @@
 use clap::ValueEnum;
 use repoweave::integration::IssueKind;
 use repoweave::op_state::{OpPhase, OpVerb, SyncStrategy};
-use repoweave::vcs::ConflictOp;
+use repoweave::vcs::{ConflictOp, MidOperation};
 use repoweave::workspace::AdvisoryKindOutput;
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -62,11 +62,37 @@ fn op_phase_displays_as_the_token_it_serializes_to() {
 
 #[test]
 fn conflict_op_displays_as_the_token_it_serializes_to() {
-    assert_display_is_the_wire_token(&[
-        ConflictOp::Rebase,
-        ConflictOp::Merge,
-        ConflictOp::CherryPick,
-    ]);
+    assert_display_is_the_wire_token(&ConflictOp::ALL);
+}
+
+#[test]
+fn mid_operation_displays_as_the_token_it_serializes_to() {
+    let variants: Vec<MidOperation> = MidOperation::all().collect();
+    assert_display_is_the_wire_token(&variants);
+
+    let tokens: BTreeSet<String> = variants.iter().map(wire).collect();
+    assert_eq!(
+        tokens,
+        BTreeSet::from(
+            ["mid-rebase", "mid-merge", "mid-cherry-pick", "mid-bisect"].map(str::to_owned)
+        ),
+        "the tokens `rwv status --json` reports in `mid_op`"
+    );
+    for variant in variants {
+        let parsed: MidOperation =
+            serde_json::from_value(Value::String(variant.to_string())).unwrap();
+        assert_eq!(parsed, variant, "parsed back from its own token");
+    }
+}
+
+#[test]
+fn a_mid_operation_token_without_its_prefix_or_name_does_not_parse() {
+    for token in ["rebase", "bisect", "mid-", "mid-bogus", "Mid-Rebase"] {
+        assert!(
+            serde_json::from_value::<MidOperation>(Value::String(token.to_owned())).is_err(),
+            "`{token}` parsed"
+        );
+    }
 }
 
 #[test]

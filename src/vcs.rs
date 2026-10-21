@@ -8,8 +8,9 @@ use crate::cli::consent::{
 };
 use crate::manifest::{ProjectName, WorkweaveName};
 use crate::registry::CloneUrl;
+use crate::wire_token::{parse_wire_token, wire_token};
 use schemars::JsonSchema;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -245,7 +246,7 @@ pub struct UniqueDiff {
 /// them from a repo's on-disk state — but a given field can be narrower than
 /// the type: every [`VcsError::RebaseConflict`] raised carries `Rebase`, so
 /// `Rebase` is the only value that field will actually carry.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum ConflictOp {
     /// Native rebase (`git rebase`).
@@ -264,11 +265,102 @@ pub enum ConflictOp {
     CherryPick,
 }
 
+impl ConflictOp {
+    pub const ALL: [Self; 3] = [Self::Rebase, Self::Merge, Self::CherryPick];
+}
+
 impl std::fmt::Display for ConflictOp {
-    /// Callers compose `mid-{op}` messages from it rather than carrying a
-    /// second copy of the VCS's vocabulary.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&crate::wire_token::wire_token(self))
+        f.write_str(&wire_token(self))
+    }
+}
+
+/// The operation a repository is stopped in, spelled `mid-<operation>`.
+///
+/// A conflict has a resume path and is a [`ConflictOp`]. A bisect has none, so
+/// no conflict-resume code sees it, but it is operator state that a
+/// repositioned HEAD would lose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MidOperation {
+    Conflict(ConflictOp),
+    Bisect,
+}
+
+impl MidOperation {
+    const PREFIX: &'static str = "mid-";
+    const BISECT: &'static str = "bisect";
+
+    pub fn all() -> impl Iterator<Item = Self> {
+        ConflictOp::ALL
+            .into_iter()
+            .map(Self::Conflict)
+            .chain([Self::Bisect])
+    }
+
+    pub fn conflict(self) -> Option<ConflictOp> {
+        match self {
+            Self::Conflict(op) => Some(op),
+            Self::Bisect => None,
+        }
+    }
+
+    fn parse(token: &str) -> Option<Self> {
+        let word = token.strip_prefix(Self::PREFIX)?;
+        if word == Self::BISECT {
+            return Some(Self::Bisect);
+        }
+        parse_wire_token(word).map(Self::Conflict)
+    }
+}
+
+impl fmt::Display for MidOperation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(Self::PREFIX)?;
+        match self {
+            Self::Conflict(op) => write!(f, "{op}"),
+            Self::Bisect => f.write_str(Self::BISECT),
+        }
+    }
+}
+
+impl Serialize for MidOperation {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for MidOperation {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let token = String::deserialize(deserializer)?;
+        Self::parse(&token).ok_or_else(|| {
+            serde::de::Error::custom(format!("`{token}` is not a mid-operation token"))
+        })
+    }
+}
+
+impl JsonSchema for MidOperation {
+    fn schema_name() -> String {
+        "MidOperation".to_owned()
+    }
+
+    fn json_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+        schemars::schema::SchemaObject {
+            instance_type: Some(schemars::schema::InstanceType::String.into()),
+            enum_values: Some(
+                Self::all()
+                    .map(|op| serde_json::Value::String(op.to_string()))
+                    .collect(),
+            ),
+            metadata: Some(Box::new(schemars::schema::Metadata {
+                description: Some(
+                    "The operation a repository is stopped in: a conflict being resolved, or a bisect."
+                        .to_owned(),
+                ),
+                ..Default::default()
+            })),
+            ..Default::default()
+        }
+        .into()
     }
 }
 
@@ -350,8 +442,7 @@ pub enum VcsError {
     /// the first is rwv's to move.
     MidOperation {
         repo: PathBuf,
-        /// Short label naming the in-flight operation.
-        operation: String,
+        operation: MidOperation,
     },
     /// A VCS hook refused an operation the VCS had otherwise completed.
     ///
@@ -446,7 +537,7 @@ pub enum VcsErrorOutput {
     MidOperation {
         #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
         repo: PathBuf,
-        operation: String,
+        operation: MidOperation,
     },
     HookRejected {
         #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
@@ -497,7 +588,7 @@ impl From<&VcsError> for VcsErrorOutput {
             },
             VcsError::MidOperation { repo, operation } => Self::MidOperation {
                 repo: repo.clone(),
-                operation: operation.clone(),
+                operation: *operation,
             },
             VcsError::HookRejected { repo, stderr } => Self::HookRejected {
                 repo: repo.clone(),
@@ -2640,15 +2731,16 @@ pub trait Vcs: Send + Sync {
         foreign_tip_policy: ForeignTipPolicy,
     ) -> Result<VerifiedRestoreOutcome, VcsError>;
 
-    /// Return the in-flight VCS operation `repo` is currently mid-way
-    /// through, if any.
+    /// Return the in-flight operation with a conflict-resume path that
+    /// `repo` is currently mid-way through, if any.
     ///
-    /// For git: detects mid-rebase
-    /// (`rebase-merge/` or `rebase-apply/` present), mid-merge
-    /// (`MERGE_HEAD` present), or mid-cherry-pick (`CHERRY_PICK_HEAD`
-    /// present). Returns `None` when the repo is in a clean (non-in-flight)
-    /// state.
-    fn mid_op(&self, repo: &Path) -> Option<ConflictOp>;
+    /// A bisect has no such path and is not reported here; see
+    /// [`mid_operation`].
+    ///
+    /// [`mid_operation`]: Vcs::mid_operation
+    fn mid_op(&self, repo: &Path) -> Option<ConflictOp> {
+        self.mid_operation(repo).and_then(MidOperation::conflict)
+    }
 
     /// Cancel any in-flight VCS operation in `repo` (rebase, merge,
     /// cherry-pick). No-op when the repo is in a clean state.
@@ -3061,15 +3153,19 @@ pub trait Vcs: Send + Sync {
         name: &RawRefName,
     ) -> Result<Option<ResolvedRevisionId>, VcsError>;
 
-    /// A short label naming the in-flight operation `repo` is mid-way
-    /// through, or `None` when it is in a clean state.
+    /// The in-flight operation `repo` is mid-way through, or `None` when it
+    /// is in a clean state.
+    ///
+    /// For git: mid-rebase (`rebase-merge/` or `rebase-apply/` present),
+    /// mid-merge (`MERGE_HEAD`), mid-cherry-pick (`CHERRY_PICK_HEAD`) or
+    /// mid-bisect (`BISECT_LOG`).
     ///
     /// Broader than [`mid_op`]: that one reports only the operations with a
     /// conflict-resume path, and returns `None` for a bisect, which is
     /// exactly the state the detached-MOVE precondition has to see.
     ///
     /// [`mid_op`]: Vcs::mid_op
-    fn mid_operation(&self, repo: &Path) -> Option<String>;
+    fn mid_operation(&self, repo: &Path) -> Option<MidOperation>;
 
     // ---- MOVE --------------------------------------------------------------
 

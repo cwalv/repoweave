@@ -521,6 +521,16 @@ Schema:
         }
       ]
     },
+    "MidOperation": {
+      "description": "The operation a repository is stopped in: a conflict being resolved, or a bisect.",
+      "type": "string",
+      "enum": [
+        "mid-rebase",
+        "mid-merge",
+        "mid-cherry-pick",
+        "mid-bisect"
+      ]
+    },
     "PlacementOutput": {
       "description": "How the files of one checkout were placed when a verb created or moved it.",
       "type": "object",
@@ -998,7 +1008,7 @@ Schema:
               ]
             },
             "operation": {
-              "type": "string"
+              "$ref": "#/definitions/MidOperation"
             },
             "repo": {
               "type": "string"

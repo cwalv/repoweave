@@ -55,7 +55,8 @@ The `$schema` URL points to the committed schema artifact. Each element of
 `repos` is a `RepoStatus` record: `path` (manifest-relative), `absolute_path`
 (fully resolved), `branch`, `tip`, `lock_sha`, `relation`
 (`ok`/`ahead`/`behind`/`diverged`/`no-lock`/`unknown`/`missing`/`unreachable`),
-`mid_op`, `role`, `url`, `project`.
+`mid_op` (`mid-rebase`/`mid-merge`/`mid-cherry-pick`/`mid-bisect`, or `null`),
+`role`, `url`, `project`.
 
 `op` is present only when this workspace owns or leases an in-flight op: an
 `OpStatus` record carrying `id`, `verb` (`sync`/`sync-to`), `phase`
@@ -137,6 +138,16 @@ Schema:
             "unreachable"
           ]
         }
+      ]
+    },
+    "MidOperation": {
+      "description": "The operation a repository is stopped in: a conflict being resolved, or a bisect.",
+      "type": "string",
+      "enum": [
+        "mid-rebase",
+        "mid-merge",
+        "mid-cherry-pick",
+        "mid-bisect"
       ]
     },
     "OpPhase": {
@@ -307,9 +318,13 @@ Schema:
           ]
         },
         "mid_op": {
-          "type": [
-            "string",
-            "null"
+          "anyOf": [
+            {
+              "$ref": "#/definitions/MidOperation"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "parent": {
@@ -412,6 +427,6 @@ rwv status --json | jq -r '.repos[] | select(.role == "fork") | .absolute_path'
   workweave. Run from inside the workspace tree.
 - *manifest parse failure* — a project's `rwv.toml` is malformed; fix the
   YAML and retry.
-- mid-op state populated (`merge`, `rebase`, `cherry-pick`, etc.) — the repo
-  is in the middle of a git operation. Resolve it before retrying mutating
-  commands.
+- `mid_op` set (`mid-rebase`, `mid-merge`, `mid-cherry-pick` or `mid-bisect`)
+  — the repo is in the middle of a git operation. Resolve it before retrying
+  mutating commands.

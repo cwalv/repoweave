@@ -97,7 +97,7 @@ use repoweave::update::{
     RepoUpdateRecord, UpdateJsonOutput, UpdateKind, UpdateNdjsonRecord, UPDATE_RECORD_SCHEMA_URL,
     UPDATE_SCHEMA_URL,
 };
-use repoweave::vcs::{ConflictOp, VcsErrorOutput};
+use repoweave::vcs::{ConflictOp, MidOperation, VcsErrorOutput};
 use repoweave::workspace::{AdvisoryKindOutput, AdvisoryOutput, Resolution};
 use serde_json::{json, Value};
 use std::collections::{BTreeSet, HashMap};
@@ -517,7 +517,7 @@ fn status_repos() -> Vec<RepoStatus> {
                 lock_sha: (!sparse).then(|| sha('b')),
                 lock_pinned_by_name: sparse,
                 relation,
-                mid_op: sparse.then(|| "rebase".to_owned()),
+                mid_op: MidOperation::all().nth(i / 2).filter(|_| sparse),
                 role: "owned".to_owned(),
                 url: "https://github.com/acme/repo.git".to_owned(),
                 project: "proj".to_owned(),
@@ -600,7 +600,7 @@ fn status_corpus() -> Vec<(&'static str, Value)> {
 /// stops this file compiling.
 fn every_vcs_error() -> Vec<VcsErrorOutput> {
     let repo = PathBuf::from(ABS);
-    vec![
+    let mut errors = vec![
         VcsErrorOutput::NotARepo { path: repo.clone() },
         VcsErrorOutput::RevisionNotFound {
             repo: repo.clone(),
@@ -623,10 +623,6 @@ fn every_vcs_error() -> Vec<VcsErrorOutput> {
             expected: sha('a'),
             observed: sha('b'),
         },
-        VcsErrorOutput::MidOperation {
-            repo: repo.clone(),
-            operation: "rebase".to_owned(),
-        },
         VcsErrorOutput::HookRejected {
             repo: repo.clone(),
             stderr: "pre-push refused".to_owned(),
@@ -641,10 +637,17 @@ fn every_vcs_error() -> Vec<VcsErrorOutput> {
         },
         VcsErrorOutput::CommandFailed {
             args: vec!["rev-parse".to_owned(), "HEAD".to_owned()],
-            repo,
+            repo: repo.clone(),
             stderr: "fatal".to_owned(),
         },
-    ]
+    ];
+    errors.extend(
+        MidOperation::all().map(|operation| VcsErrorOutput::MidOperation {
+            repo: repo.clone(),
+            operation,
+        }),
+    );
+    errors
 }
 
 /// Exhaustive on purpose: a new `VcsErrorOutput` variant stops this file

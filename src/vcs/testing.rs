@@ -563,10 +563,6 @@ impl Vcs for FakeVcs {
         unsupported("verified_restore_savepoint")
     }
 
-    fn mid_op(&self, _repo: &Path) -> Option<ConflictOp> {
-        unsupported("mid_op")
-    }
-
     fn cancel_in_flight_op(&self, _repo: &Path) {
         unsupported("cancel_in_flight_op")
     }
@@ -670,7 +666,7 @@ impl Vcs for FakeVcs {
         unsupported("observe_head")
     }
 
-    fn mid_operation(&self, _repo: &Path) -> Option<String> {
+    fn mid_operation(&self, _repo: &Path) -> Option<MidOperation> {
         unsupported("mid_operation")
     }
 

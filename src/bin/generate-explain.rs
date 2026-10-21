@@ -3706,6 +3706,8 @@ fn token_vocabulary(root: &Path, cli: &clap::Command) -> TokenVocabulary {
         .collect();
     let mut code_words = src_code_kebab_words(root);
     clap_words(cli, &mut code_words);
+    // Composed by `Display`, not spelled in any literal the source scan reads.
+    code_words.extend(repoweave::vcs::MidOperation::all().map(|op| op.to_string()));
     TokenVocabulary {
         finding_kinds,
         sub_kinds,

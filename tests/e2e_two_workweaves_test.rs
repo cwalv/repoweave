@@ -13,6 +13,7 @@
 //! are CWD-driven so the assertions don't depend on which side is primary.
 
 use assert_cmd::Command as AssertCommand;
+use repoweave::vcs::{ConflictOp, MidOperation};
 use std::path::{Path, PathBuf};
 
 mod common;
@@ -973,8 +974,8 @@ fn sync_rebase_continue_then_resync_does_not_clobber_user_resolution() {
     );
     let mid_op = repoweave::git::git_vcs().mid_operation(&ww2.project_dir);
     assert_eq!(
-        mid_op.as_deref(),
-        Some("mid-rebase"),
+        mid_op,
+        Some(MidOperation::Conflict(ConflictOp::Rebase)),
         "conflicted sync rebase should leave the repo mid-rebase, got {mid_op:?}"
     );
 

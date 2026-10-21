@@ -3,7 +3,7 @@
 use crate::manifest::{Project, ProjectName};
 use crate::op_state;
 use crate::selector::RepoFilter;
-use crate::vcs::{vcs_for, ResolvedRevisionId, Vcs};
+use crate::vcs::{vcs_for, MidOperation, ResolvedRevisionId, Vcs};
 use crate::workspace::{project_dir, Checkout, Resolution, WorkspaceContext};
 use anyhow::Context;
 use schemars::JsonSchema;
@@ -148,7 +148,7 @@ pub struct RepoStatus {
     /// commit id; `rwv lock` records the commit id.
     pub lock_pinned_by_name: bool,
     pub relation: LockRelation,
-    pub mid_op: Option<String>,
+    pub mid_op: Option<MidOperation>,
     pub role: String,
     pub url: String,
     pub project: String,
@@ -519,8 +519,7 @@ fn print_table(entries: &[RepoStatus]) {
             .unwrap_or("-");
         let mid = entry
             .mid_op
-            .as_deref()
-            .map(|s| format!("  [{s}]"))
+            .map(|op| format!("  [{op}]"))
             .unwrap_or_default();
         let by_name = if entry.lock_pinned_by_name {
             "  [pinned by name; run `rwv lock`]"
