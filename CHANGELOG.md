@@ -112,9 +112,11 @@ parallel: `rwv each --role fork -- git checkout -b feat/x`. It is a plugin,
 every repo except reference repos; output lines are prefixed with their repo
 (`--group` holds each repo's output until it finishes); every repo runs even
 after one fails, and a summary names the failures; the exit status is 0 only if
-every repo succeeded. `--json`, `--fail-fast`, `--dry-run`, `--shell`,
-`--timeout`, `--joblog`, `--results` and `--progress` are described in the
-`rwv each` reference. Ctrl-C and `--timeout` end a command's whole process tree.
+every repo succeeded. A bare command name is found on `PATH` once, before any
+repo runs, and every repo runs that program. `--json`, `--fail-fast`,
+`--dry-run`, `--shell`, `--timeout`, `--joblog`, `--results` and `--progress`
+are described in the `rwv each` reference. Ctrl-C and `--timeout` end a
+command's whole process tree.
 
 ### Every release channel installs `rwv-each` beside `rwv`, and no longer `generate-explain`
 

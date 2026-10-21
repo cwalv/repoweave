@@ -5,6 +5,7 @@
 
 mod cli;
 mod output;
+mod program;
 mod report;
 mod run;
 mod schema_url;

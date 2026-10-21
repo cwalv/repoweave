@@ -470,6 +470,42 @@ fn a_command_not_on_path_fails_before_any_repo_runs() {
 }
 
 #[test]
+fn a_program_found_through_a_relative_path_entry_is_the_same_file_in_every_repo() {
+    let w = Weave::new(&[(APP, "owned"), (LIB, "owned")]);
+    for (dir, says) in [
+        (w.ws.join("tools"), "invocation"),
+        (w.ws.join(APP).join("tools"), "checkout"),
+    ] {
+        std::fs::create_dir_all(&dir).unwrap();
+        common::write_plugin(
+            &dir,
+            "mytool",
+            &format!("echo {says}\n"),
+            &format!("echo {says}\n"),
+        );
+    }
+    let path = std::env::join_paths(
+        std::iter::once(PathBuf::from("tools")).chain(std::env::split_paths(&path_with_bins())),
+    )
+    .unwrap();
+    let out = w
+        .each_cmd(&["-j", "1", "--json", "--", "mytool"])
+        .env("PATH", path)
+        .output()
+        .expect("rwv each runs");
+    let env = envelope(&out);
+    for repo in [APP, LIB] {
+        let outcome = outcome_of(&env, repo);
+        assert_eq!(outcome["status"], "ok", "{repo}: {outcome}");
+        assert_eq!(
+            outcome["stdout"].as_str().unwrap().trim(),
+            "invocation",
+            "{repo}"
+        );
+    }
+}
+
+#[test]
 fn no_command_is_a_usage_error() {
     let w = Weave::standard();
     let out = w.each(&["--role", "owned"]);

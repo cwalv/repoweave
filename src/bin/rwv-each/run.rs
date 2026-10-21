@@ -1,6 +1,5 @@
 use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Read};
-use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
@@ -10,6 +9,7 @@ use std::time::{Duration, Instant, SystemTime};
 use anyhow::Context;
 
 use crate::output::Stream;
+use crate::program::Program;
 use crate::report::Reporter;
 use crate::select::Repo;
 use crate::tree;
@@ -40,19 +40,9 @@ pub enum Layout {
     Silent,
 }
 
-#[derive(Debug, Clone)]
 pub enum CommandSpec {
     Argv { program: Program, args: Vec<String> },
     Shell(String),
-}
-
-#[derive(Debug, Clone)]
-pub enum Program {
-    /// Found on `PATH` once, before any repo runs; `spelled` is what the
-    /// operator typed.
-    Resolved { spelled: String, path: PathBuf },
-    /// Spelled with a directory, so relative to each repo's checkout.
-    InRepo(PathBuf),
 }
 
 impl CommandSpec {
@@ -63,16 +53,9 @@ impl CommandSpec {
         let (program, args) = command
             .split_first()
             .context("no command given to run in each repo")?;
-        let path = Path::new(program);
-        let program = if path.components().count() > 1 || path.is_absolute() {
-            Program::InRepo(path.to_path_buf())
-        } else {
-            Program::Resolved {
-                spelled: program.clone(),
-                path: which::which(program)
-                    .with_context(|| format!("`{program}` was not found on PATH"))?,
-            }
-        };
+        let program = Program::locate(program.clone(), |name| {
+            which::which(name).with_context(|| format!("`{name}` was not found on PATH"))
+        })?;
         Ok(Self::Argv {
             program,
             args: args.to_vec(),
@@ -82,35 +65,28 @@ impl CommandSpec {
     pub fn display(&self) -> String {
         match self {
             Self::Shell(line) => line.clone(),
-            Self::Argv { program, args } => {
-                let program = match program {
-                    Program::Resolved { spelled, .. } => spelled.clone(),
-                    Program::InRepo(p) => p.to_string_lossy().into_owned(),
-                };
-                std::iter::once(program.as_str())
-                    .chain(args.iter().map(String::as_str))
-                    .map(display_word)
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            }
+            Self::Argv { program, args } => std::iter::once(program.spelled())
+                .chain(args.iter().map(String::as_str))
+                .map(display_word)
+                .collect::<Vec<_>>()
+                .join(" "),
         }
     }
 
     fn command_in(&self, repo: &Repo) -> Command {
         let mut command = match self {
             Self::Argv { program, args } => {
-                let program = match program {
-                    Program::Resolved { path, .. } => path.clone(),
-                    Program::InRepo(p) => repo.dir.join(p),
-                };
-                let mut command = Command::new(program);
+                let mut command = program.command_in(&repo.dir);
                 command.args(args);
                 command
             }
-            Self::Shell(line) => shell_command(line),
+            Self::Shell(line) => {
+                let mut command = shell_command(line);
+                command.current_dir(&repo.dir);
+                command
+            }
         };
         command
-            .current_dir(&repo.dir)
             .env("RWV_REPO", &repo.path)
             .env("RWV_REPO_ROLE", &repo.role)
             .env("RWV_REPO_PATH", &repo.dir);
@@ -431,17 +407,16 @@ pub fn rwv_program() -> OsString {
 mod tests {
     use super::*;
 
+    use std::path::PathBuf;
+
+    fn argv(words: &[&str]) -> CommandSpec {
+        let words: Vec<String> = words.iter().map(|w| w.to_string()).collect();
+        CommandSpec::new(&words, None).unwrap_or_else(|e| panic!("{e:#}"))
+    }
+
     #[test]
     fn display_quotes_only_words_a_shell_would_split_or_expand() {
-        let spec = CommandSpec::Argv {
-            program: Program::InRepo(PathBuf::from("./build.sh")),
-            args: vec![
-                "--out=dir".into(),
-                "two words".into(),
-                "it's".into(),
-                "$HOME".into(),
-            ],
-        };
+        let spec = argv(&["./build.sh", "--out=dir", "two words", "it's", "$HOME"]);
         assert_eq!(
             spec.display(),
             r#"./build.sh --out=dir 'two words' 'it'\''s' '$HOME'"#
@@ -450,31 +425,22 @@ mod tests {
 
     #[test]
     fn display_keeps_the_program_as_the_operator_spelled_it() {
+        let program = Program::locate("git".into(), |_| {
+            Ok::<_, std::io::Error>(PathBuf::from("/opt/bin/git.exe"))
+        })
+        .unwrap_or_else(|e| panic!("{e:#}"));
         let spec = CommandSpec::Argv {
-            program: Program::Resolved {
-                spelled: "git".into(),
-                path: PathBuf::from("/opt/bin/git.exe"),
-            },
+            program,
             args: vec!["status".into()],
         };
         assert_eq!(spec.display(), "git status");
     }
 
     #[test]
-    fn a_program_spelled_with_a_directory_runs_relative_to_each_repo() {
-        let spec = CommandSpec::new(&["./scripts/test.sh".into()], None).unwrap();
-        assert!(matches!(
-            spec,
-            CommandSpec::Argv {
-                program: Program::InRepo(_),
-                ..
-            }
-        ));
-    }
-
-    #[test]
     fn a_bare_program_name_missing_from_path_is_refused_before_anything_runs() {
-        let err = CommandSpec::new(&["rwv-each-no-such-program".into()], None).unwrap_err();
+        let err = CommandSpec::new(&["rwv-each-no-such-program".into()], None)
+            .err()
+            .expect("a name on no PATH entry is refused");
         assert!(err.to_string().contains("not found on PATH"), "{err}");
     }
 }
