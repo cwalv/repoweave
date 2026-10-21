@@ -18,8 +18,10 @@
 //!
 //! Driven through `rwv doctor --json`, where each finding is one entry on the
 //! integration channel carrying its integration and the deserializer's account
-//! of the field. The second test drives the hook itself: a go-work whose
-//! settings do not parse authors nothing.
+//! of the field. The second test holds the same population to the refusal
+//! `rwv materialize` and the install hooks take from `check()`: an integration
+//! that reports the finding only from other hooks is not in it. The third
+//! drives a go-work whose settings do not parse, which authors nothing.
 
 use std::path::{Path, PathBuf};
 
@@ -112,6 +114,41 @@ fn a_setting_of_the_wrong_type_is_reported_for_every_key_of_every_integration() 
     assert!(
         failures.is_empty(),
         "a wrong-typed setting must be reported, and name its key:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn materialize_refuses_over_a_setting_of_the_wrong_type_for_every_key_of_every_integration() {
+    let builtin = builtin_integrations();
+    let mut failures = Vec::new();
+
+    for integration in &builtin {
+        for key in integration.settings_keys() {
+            let tmp = common::tempdir().unwrap();
+            let ws = weave_with_setting(tmp.path(), integration.name(), key);
+
+            let (ok, stdout, stderr) = rwv(&["materialize"], &ws);
+            let out = format!("{stdout}\n{stderr}");
+
+            let refused_naming_both = !ok
+                && out.contains("nothing here was changed")
+                && out.contains(&format!("{}: ", integration.name()))
+                && out.contains(&format!("`{key}`"));
+            if !refused_naming_both {
+                failures.push(format!(
+                    "{} `{key} = 7`: materialize must refuse, change nothing and name both; \
+                     ok={ok}:\n{out}",
+                    integration.name()
+                ));
+            }
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "an integration whose settings do not parse is in the population materialize \
+         and the install hooks refuse over:\n{}",
         failures.join("\n")
     );
 }

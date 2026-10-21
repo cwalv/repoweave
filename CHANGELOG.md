@@ -6,6 +6,15 @@ claim that nothing changed in them.
 
 ## Unreleased
 
+### Breaking: a malformed `hide-dotfiles` stops materialize and the install hooks
+
+A `hide-dotfiles` that is not a boolean in `[integrations.vscode-workspace]` was
+reported by `rwv doctor` as `malformed-settings`, but `rwv materialize` and the
+install hooks ran past it, unlike a malformed setting of any other integration.
+They now refuse over it, naming the key, and change nothing, so a wrong-typed
+setting stops the same verbs whichever integration it is in. Write
+`hide-dotfiles = true` or `hide-dotfiles = false`.
+
 ### Breaking: the stale-generation advisory's `kind` is `derived-state-stale`
 
 An entry of the `advisories` array in `rwv sync --json` and `rwv doctor --json`

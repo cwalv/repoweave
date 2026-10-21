@@ -1583,11 +1583,10 @@ which is why they are two tokens.
 Always `safe_to_fix: false`. The repair is an edit to a file you hold the pen
 on, and the only repair `--fix` has for this project regenerates from the very
 settings that did not read — so it is withheld rather than attempted and
-reported as failed. Where the integration reads its settings before anything
-else, as `cargo-workspace` does, the other verbs stop on the same block, each
-naming it and the field: `rwv materialize` refuses before its first step,
-changing nothing; the intent verbs refuse and leave `rwv.toml` unchanged; and
-`rwv activate` withholds its install hooks.
+reported as failed. The other verbs stop on the same block, each naming it and
+the field: `rwv materialize` refuses before its first step, changing nothing;
+the intent verbs refuse and leave `rwv.toml` unchanged; and `rwv activate`
+withholds its install hooks.
 
 Everything that integration would otherwise have reported for this project is
 missing from the run alongside it. A hook that cannot read its own

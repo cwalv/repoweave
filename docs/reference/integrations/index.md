@@ -91,7 +91,7 @@ Each table accepts `enabled` plus the keys its integration reads:
 | `vscode-workspace` | `hide-dotfiles` |
 | `static-files` | `files` |
 
-An unknown key in one of these tables, a table naming an integration that does not exist, or an `enabled` that is not `true` or `false`, is refused when `rwv.toml` is parsed: every verb that reads the manifest exits 1 with the TOML line and column and what was expected, which is the accepted names and the nearest match for a key or a table, and `true` or `false` for `enabled` (`rwv status` skips the project with a warning instead). A key whose value has the wrong type is reported by `rwv doctor` as `malformed-settings`, for every key above besides `enabled`; in a `cargo-workspace`, `go-work` or `static-files` table it also stops every verb that runs install hooks from running them until it is corrected.
+An unknown key in one of these tables, a table naming an integration that does not exist, or an `enabled` that is not `true` or `false`, is refused when `rwv.toml` is parsed: every verb that reads the manifest exits 1 with the TOML line and column and what was expected, which is the accepted names and the nearest match for a key or a table, and `true` or `false` for `enabled` (`rwv status` skips the project with a warning instead). A key whose value has the wrong type is reported by `rwv doctor` as `malformed-settings`, for every key above besides `enabled`, and it also stops every verb that runs install hooks from running them until it is corrected.
 
 Changing `enabled` takes effect at the next authoring pass or `rwv doctor --fix` for a newly enabled integration, and at `rwv materialize` for a newly disabled one — see [add an integration](../../how-to/add-an-integration.md).
 

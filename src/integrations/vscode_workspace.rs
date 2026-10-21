@@ -532,6 +532,10 @@ impl Integration for VscodeWorkspace {
     }
 
     fn check(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
+        if let Err(issue) = ctx.settings_or_issue::<VscodeConfig>(self.name()) {
+            return Ok(vec![issue]);
+        }
+
         let filename = format!(
             "{}.code-workspace",
             crate::workspace::flat_project_segment(ctx.project)
@@ -748,6 +752,43 @@ mod tests {
             vec![SurfacedFile::written_at_source(
                 "test-project.code-workspace"
             )]
+        );
+    }
+
+    #[test]
+    fn check_reports_a_hide_dotfiles_that_is_not_a_boolean_rather_than_a_missing_file() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let manifest = Manifest::from_toml_str("[repositories]\n").unwrap();
+        let project = ProjectName::new("test-project").unwrap();
+        let config = IntegrationConfig::from_toml("hide-dotfiles = 7");
+        let cache = HashMap::new();
+        let ctx = IntegrationContext {
+            output_dir: root,
+            workspace_root: root,
+            container_kind: ContainerKind::Primary,
+            project: &project,
+            repos: manifest
+                .iter_entries()
+                .map(|(rp, e)| (rp.clone(), e.clone()))
+                .collect(),
+            config: &config,
+            all_repos_on_disk: &[],
+            all_project_paths: &[],
+            detection_cache: &cache,
+            workweave: None,
+        };
+
+        let issues = VscodeWorkspace.check(&ctx).unwrap();
+
+        let [issue] = issues.as_slice() else {
+            panic!("expected one finding, got {issues:?}");
+        };
+        assert_eq!(issue.kind, IssueKind::MalformedSettings);
+        assert!(
+            issue.message.contains("hide-dotfiles"),
+            "the finding names the key: {}",
+            issue.message
         );
     }
 
