@@ -3950,7 +3950,9 @@ mod branch_model_tests {
         DetachConsent, DiscardLocalCommitsConsent, DiscardUnmergedConsent, ReattachConsent,
     };
     use crate::op_state::OpId;
-    use crate::vcs::{DeletionWarrant, DiscardWarrant, OwnedRef, RawRefName, TrackingRef};
+    use crate::vcs::{
+        DeletionWarrant, DiscardWarrant, OwnedRef, RawRefName, TrackingRef, VcsErrorKind,
+    };
 
     /// A local branch name, obtained the only way one can be: through the
     /// named projection off a declared tracking ref.
@@ -4484,7 +4486,7 @@ mod branch_model_tests {
         let err = GitVcs
             .detach_head(&w, &target, DetachConsent::granted())
             .unwrap_err();
-        assert_eq!(err.kind(), "stale-ref-witness");
+        assert_eq!(err.kind(), VcsErrorKind::StaleRefWitness);
         assert_eq!(
             GitVcs.head_attachment(p.path()).unwrap().to_string(),
             "on branch 'elsewhere'",
@@ -4524,7 +4526,7 @@ mod branch_model_tests {
         let err = GitVcs
             .reattach_head(from, &local("target"), ReattachConsent::granted())
             .unwrap_err();
-        assert_eq!(err.kind(), "stale-ref-witness");
+        assert_eq!(err.kind(), VcsErrorKind::StaleRefWitness);
         assert_eq!(
             GitVcs.head_attachment(p.path()).unwrap().to_string(),
             "on branch 'main'"
@@ -4565,7 +4567,11 @@ mod branch_model_tests {
                 .reattach_head(from, &local(name), ReattachConsent::granted())
                 .unwrap_err();
 
-            assert_eq!(err.kind(), "command-failed", "{name}: expected a refusal");
+            assert_eq!(
+                err.kind(),
+                VcsErrorKind::CommandFailed,
+                "{name}: expected a refusal"
+            );
             assert!(
                 GitVcs
                     .resolve_local_branch_tip(&work, &RawRefName::new(name))
@@ -4812,7 +4818,7 @@ mod branch_model_tests {
         };
 
         let err = GitVcs.reset_attached_ref(&w, &a_base, warrant).unwrap_err();
-        assert_eq!(err.kind(), "stale-ref-witness");
+        assert_eq!(err.kind(), VcsErrorKind::StaleRefWitness);
         assert_eq!(
             GitVcs.head_revision(a.path()).unwrap(),
             a_tip,
@@ -4946,7 +4952,7 @@ mod branch_model_tests {
         let err = GitVcs
             .push_ref(&clone, &publish_ref_of(&clone), false)
             .expect_err("a non-fast-forward push must refuse without force");
-        assert_eq!(err.kind(), "command-failed");
+        assert_eq!(err.kind(), VcsErrorKind::CommandFailed);
         assert_eq!(
             git_bare(&bare, &["rev-parse", "main"]),
             foreign.id().as_str(),

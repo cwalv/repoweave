@@ -20,6 +20,8 @@
 //! VCS kinds — sync's as the outer tag, the VCS one as the `cause` beneath it
 //! — so a reader holding a failed repo outcome looks both up in one place.
 
+use repoweave::sync::SyncFailureKind;
+use repoweave::vcs::VcsErrorKind;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
@@ -41,93 +43,34 @@ fn entries() -> BTreeSet<String> {
         .collect()
 }
 
-/// Tokens the VCS wire register publishes, read out of the one function that
-/// mints them rather than listed here.
+/// Tokens the VCS wire register publishes: `VcsErrorKind`'s, the type whose
+/// serialization is the tag.
 ///
-/// **One source, and which one is the whole point.** `VcsError::kind` is the
-/// register; `ConflictOp`'s `Display` is not. Those spellings — `rebase`,
-/// `merge`, `cherry-pick` — are values of a *field* on `rebase-conflict`, not
-/// discriminants a consumer branches on, and they are documented inside that
-/// entry rather than as entries of their own. A walk that swept the whole file
-/// for `=> "literal"` arms collected `cherry-pick` and not its two siblings,
-/// because that walk also required a hyphen and only one of the three has one.
-/// Reading the minting function is what makes the population the register
-/// rather than an artifact of the spelling.
-fn minted(file: &str) -> BTreeSet<String> {
-    let src = std::fs::read_to_string(manifest_dir().join("src").join(file))
-        .unwrap_or_else(|e| panic!("src/{file} reads: {e}"));
-    const MINT: &str = "pub fn kind(&self) -> &'static str {";
-    let body = src
-        .split_once(MINT)
-        .unwrap_or_else(|| panic!("src/{file} still declares {MINT:?}"))
-        .1
-        .split_once("\n    }")
-        .expect("the minting function still closes")
-        .0;
-    let mut out = BTreeSet::new();
-    let mut rest = body;
-    while let Some(at) = rest.find("=> \"") {
-        let after = &rest[at + 4..];
-        let Some(end) = after.find('"') else { break };
-        out.insert(after[..end].to_owned());
-        rest = &after[end..];
-    }
-    out
-}
-
+/// `ConflictOp`'s tokens — `rebase`, `merge`, `cherry-pick` — are not in it.
+/// They are values of a *field* on `rebase-conflict`, not discriminants a
+/// consumer branches on, and they are documented inside that entry rather than
+/// as entries of their own.
 fn published() -> BTreeSet<String> {
-    minted("vcs.rs")
+    VcsErrorKind::ALL.iter().map(ToString::to_string).collect()
 }
 
-/// The tokens `SyncFailure::kind` mints — the page's second register.
-///
-/// Not the wire producer: `rwv sync --json` serializes `SyncFailureOutput`.
-/// `sync_failure_kind_matches_wire_tag` pins the two over every variant, which
-/// is what makes reading the match arms a faithful read of the wire.
+/// The tokens `SyncFailureKind` lists — the page's second register.
 fn sync_failure_kinds() -> BTreeSet<String> {
-    minted("sync.rs")
+    SyncFailureKind::ALL
+        .iter()
+        .map(ToString::to_string)
+        .collect()
 }
 
 /// Published kinds with no entry, and why each is recorded rather than written.
 ///
-/// **Empty.** Every kind `VcsError::kind` mints resolves to an entry — seven on
+/// **Empty.** Every kind `VcsErrorKind` lists resolves to an entry — seven on
 /// this page, and `mid-operation` and `untracked-collision` from the refusal
 /// register, which named those two conditions first and keeps them.
 ///
 /// Asserted exactly in both directions, so a kind arriving without an entry
 /// reds, and so does a recorded exemption that has quietly gained one.
 const NO_ENTRY: &[(&str, &str)] = &[];
-
-#[test]
-fn the_vcs_register_walk_is_not_vacuous() {
-    let published = published();
-    // Lowered from 11 when three variants nothing constructed were retired off
-    // the wire. The floor tracks the register's known size, not a claim that it
-    // may only grow.
-    assert!(
-        published.len() >= 8,
-        "the VCS register walk yielded {} tokens; it has stopped matching the \
-         arms it reads:\n{published:#?}",
-        published.len()
-    );
-    // `io` is the sentinel that matters: it carries no hyphen, and a walk that
-    // required one dropped it silently while looking correct on every other
-    // token.
-    for expected in ["not-a-repo", "command-failed", "io"] {
-        assert!(
-            published.contains(expected),
-            "the walk lost {expected:?}, which VcsError::kind still mints:\n{published:#?}"
-        );
-    }
-    // The negative half. `cherry-pick` is a ConflictOp field value, not a kind;
-    // a walk that reads the whole file instead of the minting function collects
-    // it and gives this page an entry nothing routes to.
-    assert!(
-        !published.contains("cherry-pick"),
-        "the walk strayed outside VcsError::kind and picked up a field \
-         value:\n{published:#?}"
-    );
-}
 
 /// A kind's entry lives wherever that entry already lives: `mid-operation` and
 /// `untracked-collision` are shared with the refusal register and are served
@@ -194,14 +137,7 @@ fn explain_serves_every_entry_on_the_page() {
 /// so its single entry stays on the findings page and this still passes.
 #[test]
 fn every_sync_failure_kind_has_an_entry() {
-    let kinds = sync_failure_kinds();
-    assert!(
-        kinds.len() >= 3,
-        "the sync register walk yielded {} tokens; it has stopped matching the \
-         arms it reads:\n{kinds:#?}",
-        kinds.len()
-    );
-    let undocumented: Vec<String> = kinds
+    let undocumented: Vec<String> = sync_failure_kinds()
         .into_iter()
         .filter(|t| repoweave::explain::entry_for_token(t).is_none())
         .collect();

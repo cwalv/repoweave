@@ -681,7 +681,7 @@ fn sync_failures() -> Vec<SyncFailureOutput> {
                 message,
                 cause: Some(cause),
             },
-            1 => SyncFailureOutput::FastForwardImpossible { message, cause },
+            1 => SyncFailureOutput::FfImpossible { message, cause },
             _ => SyncFailureOutput::RebaseFailed { message, cause },
         });
     }

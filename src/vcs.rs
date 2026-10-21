@@ -556,19 +556,54 @@ pub enum VcsError {
     },
 }
 
+/// Which [`VcsError`] variant a failure is, as the tag it travels under in
+/// `--json` output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum VcsErrorKind {
+    NotARepo,
+    RevisionNotFound,
+    RebaseConflict,
+    StaleRefWitness,
+    MidOperation,
+    HookRejected,
+    UntrackedCollision,
+    Io,
+    CommandFailed,
+}
+
+impl VcsErrorKind {
+    pub const ALL: [Self; 9] = [
+        Self::NotARepo,
+        Self::RevisionNotFound,
+        Self::RebaseConflict,
+        Self::StaleRefWitness,
+        Self::MidOperation,
+        Self::HookRejected,
+        Self::UntrackedCollision,
+        Self::Io,
+        Self::CommandFailed,
+    ];
+}
+
+impl fmt::Display for VcsErrorKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&wire_token(self))
+    }
+}
+
 impl VcsError {
-    /// Stable variant tag suitable for `--json` output.
-    pub fn kind(&self) -> &'static str {
+    pub fn kind(&self) -> VcsErrorKind {
         match self {
-            Self::NotARepo(_) => "not-a-repo",
-            Self::RevisionNotFound { .. } => "revision-not-found",
-            Self::RebaseConflict { .. } => "rebase-conflict",
-            Self::StaleRefWitness { .. } => "stale-ref-witness",
-            Self::MidOperation { .. } => "mid-operation",
-            Self::HookRejected { .. } => "hook-rejected",
-            Self::UntrackedCollision { .. } => "untracked-collision",
-            Self::Io { .. } => "io",
-            Self::CommandFailed { .. } => "command-failed",
+            Self::NotARepo(_) => VcsErrorKind::NotARepo,
+            Self::RevisionNotFound { .. } => VcsErrorKind::RevisionNotFound,
+            Self::RebaseConflict { .. } => VcsErrorKind::RebaseConflict,
+            Self::StaleRefWitness { .. } => VcsErrorKind::StaleRefWitness,
+            Self::MidOperation { .. } => VcsErrorKind::MidOperation,
+            Self::HookRejected { .. } => VcsErrorKind::HookRejected,
+            Self::UntrackedCollision { .. } => VcsErrorKind::UntrackedCollision,
+            Self::Io { .. } => VcsErrorKind::Io,
+            Self::CommandFailed { .. } => VcsErrorKind::CommandFailed,
         }
     }
 }
@@ -578,8 +613,7 @@ impl VcsError {
 /// `VcsError` itself can't derive `Serialize` cleanly because tuple variants
 /// (and `io::Error`) don't play nicely with serde's internally-tagged enum
 /// representation. This struct-only mirror does: every variant carries
-/// named fields, the tag matches [`VcsError::kind`], and a `From<&VcsError>`
-/// impl converts at JSON-emission time.
+/// named fields, and a `From<&VcsError>` impl converts at JSON-emission time.
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum VcsErrorOutput {

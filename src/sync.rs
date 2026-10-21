@@ -25,6 +25,7 @@ use crate::vcs::{
     ForeignTipPolicy, HeadAttachment, ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput,
     VerifiedRestoreOutcome,
 };
+use crate::wire_token::wire_token;
 use crate::workspace::{
     project_dir, project_rel_path, AdvisoryKindOutput, AdvisoryOutput, Checkout, Resolution,
     WorkspaceContext,
@@ -402,17 +403,32 @@ pub enum SyncFailure {
     RebaseFailed { error: String, cause: VcsError },
 }
 
+/// Which [`SyncFailure`] variant a failure is, as the `kind` it carries in
+/// `rwv sync --json`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SyncFailureKind {
+    HeadUnreadable,
+    FfImpossible,
+    RebaseFailed,
+}
+
+impl SyncFailureKind {
+    pub const ALL: [Self; 3] = [Self::HeadUnreadable, Self::FfImpossible, Self::RebaseFailed];
+}
+
+impl fmt::Display for SyncFailureKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&wire_token(self))
+    }
+}
+
 impl SyncFailure {
-    /// Stable variant tag, spelled to match [`SyncFailureOutput`]'s wire
-    /// `kind` (pinned by `sync_failure_kind_matches_wire_tag`). `rwv sync
-    /// --json` itself serializes a `SyncFailureOutput` directly and never
-    /// calls this; it exists for library consumers of this type who want
-    /// the tag without constructing the wire type.
-    pub fn kind(&self) -> &'static str {
+    pub fn kind(&self) -> SyncFailureKind {
         match self {
-            Self::HeadUnreadable { .. } => "head-unreadable",
-            Self::FastForwardImpossible { .. } => "ff-impossible",
-            Self::RebaseFailed { .. } => "rebase-failed",
+            Self::HeadUnreadable { .. } => SyncFailureKind::HeadUnreadable,
+            Self::FastForwardImpossible { .. } => SyncFailureKind::FfImpossible,
+            Self::RebaseFailed { .. } => SyncFailureKind::RebaseFailed,
         }
     }
 
@@ -495,8 +511,7 @@ impl RepoSyncOutcome {
 /// Wire-output mirror of [`SyncFailure`] for `--json` emission.
 ///
 /// Carries the same payload as the in-memory enum but with a `cause`
-/// represented as the serializable [`VcsErrorOutput`]. The `#[serde(rename)]`
-/// override below keeps the wire tag matching [`SyncFailure::kind`].
+/// represented as the serializable [`VcsErrorOutput`].
 ///
 /// `message` is the human-readable display string of the failure (free-form
 /// text, not a typed discriminant). `cause` is the structured typed cause —
@@ -512,8 +527,7 @@ pub enum SyncFailureOutput {
         #[serde(skip_serializing_if = "Option::is_none")]
         cause: Option<VcsErrorOutput>,
     },
-    #[serde(rename = "ff-impossible")]
-    FastForwardImpossible {
+    FfImpossible {
         /// Free-form display message for this failure. Not a typed discriminant.
         message: String,
         cause: VcsErrorOutput,
@@ -533,7 +547,7 @@ impl From<&SyncFailure> for SyncFailureOutput {
                 message,
                 cause: cause.as_ref().map(VcsErrorOutput::from),
             },
-            SyncFailure::FastForwardImpossible { cause, .. } => Self::FastForwardImpossible {
+            SyncFailure::FastForwardImpossible { cause, .. } => Self::FfImpossible {
                 message,
                 cause: cause.into(),
             },
@@ -9098,17 +9112,24 @@ mod tests {
     }
 
     #[test]
-    fn sync_failure_kind_matches_wire_tag() {
-        for failure in all_sync_failures() {
-            let internal = failure.kind();
-            let wire = serde_json::to_value(SyncFailureOutput::from(&failure)).unwrap();
-            let wire_kind = wire["kind"].as_str().expect("wire kind is a string");
+    fn every_sync_failure_kind_is_the_tag_its_wire_mirror_carries() {
+        let failures = all_sync_failures();
+        for failure in &failures {
+            let wire = serde_json::to_value(SyncFailureOutput::from(failure)).unwrap();
             assert_eq!(
-                internal, wire_kind,
-                "SyncFailure::kind() must match SyncFailureOutput's wire tag; \
-                 got kind()={internal:?}, wire={wire_kind:?}"
+                failure.kind().to_string(),
+                wire["kind"].as_str().expect("wire kind is a string"),
+                "{failure:?}: the kind and the wire tag differ"
             );
         }
+
+        let listed: std::collections::BTreeSet<String> =
+            failures.iter().map(|f| f.kind().to_string()).collect();
+        let all: std::collections::BTreeSet<String> = SyncFailureKind::ALL
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(listed, all, "SyncFailureKind::ALL omits a kind");
     }
 
     #[test]

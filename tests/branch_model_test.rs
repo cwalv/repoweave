@@ -27,7 +27,7 @@ use repoweave::manifest::{ProjectName, WorkweaveName};
 use repoweave::op_state::SavepointKey;
 use repoweave::vcs::{
     EphemeralRefName, HeadAttachment, MidOperation, RawRefName, RefNameError, ResolvedRevisionId,
-    TrackingRef, VcsError,
+    TrackingRef, VcsError, VcsErrorKind,
 };
 use std::path::Path;
 use tempfile::TempDir;
@@ -188,7 +188,7 @@ fn a_symbolic_head_that_names_no_branch_is_an_error_not_an_attachment() {
     common::git_in(repo.path(), &["symbolic-ref", "HEAD", "refs/foo/bar"]);
 
     let err = git_vcs().head_attachment(repo.path()).unwrap_err();
-    assert_eq!(err.kind(), "command-failed");
+    assert_eq!(err.kind(), VcsErrorKind::CommandFailed);
     assert!(
         err.to_string().contains("refs/foo/bar"),
         "the error should name what it found, got: {err}"
@@ -214,7 +214,7 @@ fn head_attachment_kinds_are_distinguishable_in_json_output() {
     // point of the split is lost if the wire form re-collapses it.
     let dir = common::tempdir().unwrap();
     let err = git_vcs().head_attachment(dir.path()).unwrap_err();
-    assert_eq!(err.kind(), "not-a-repo");
+    assert_eq!(err.kind(), VcsErrorKind::NotARepo);
 }
 
 #[test]
@@ -307,7 +307,7 @@ fn advance_attached_ref_refuses_a_witness_for_a_repo_that_became_detached() {
     let err = git_vcs()
         .advance_attached_ref(&witness, &target)
         .unwrap_err();
-    assert_eq!(err.kind(), "stale-ref-witness");
+    assert_eq!(err.kind(), VcsErrorKind::StaleRefWitness);
     assert_eq!(
         git_vcs().head_revision(repo.path()).unwrap(),
         base,
@@ -470,7 +470,7 @@ fn advance_detached_head_refuses_a_stale_witness() {
     let err = git_vcs()
         .advance_detached_head(&witness, &target)
         .unwrap_err();
-    assert_eq!(err.kind(), "stale-ref-witness");
+    assert_eq!(err.kind(), VcsErrorKind::StaleRefWitness);
     assert_eq!(
         git_vcs().head_attachment(repo.path()).unwrap().to_string(),
         "on branch 'main'"

@@ -22,11 +22,12 @@
 //!
 //! **Scope.** The five registers above. `RefusalKind` is parsed from its
 //! declaration in `src/refusal.rs`; `IssueKind`'s tags are what
-//! `IssueKindOutput` serializes, read from its committed schema; the three
-//! match-minted ones are parsed from `src/check.rs`, `src/vcs.rs` and
-//! `src/sync.rs`, each from the body of the one function that mints it, so
-//! every arm is in range whatever it is spelled like. A token built by
-//! concatenation is still invisible; one written as a constant is resolved.
+//! `IssueKindOutput` serializes, read from its committed schema; the VCS and
+//! sync kinds are `VcsErrorKind::ALL` and `SyncFailureKind::ALL`, the types
+//! whose serialization is the tag; and the doctor kinds are parsed from the
+//! body of the one function in `src/check.rs` that mints them, so every arm is
+//! in range whatever it is spelled like. A token built by concatenation is
+//! still invisible; one written as a constant is resolved.
 //!
 //! **A field value is not a condition.** `ConflictOp` serializes `rebase` /
 //! `merge` / `cherry-pick` into `--json`, but as the `op` field *inside* the
@@ -70,6 +71,8 @@
 mod common;
 
 use common::json_schema;
+use repoweave::sync::SyncFailureKind;
+use repoweave::vcs::VcsErrorKind;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -359,25 +362,30 @@ fn kebab(name: &str) -> String {
 
 /// The hand-minted registers, each as the file that declares it and the
 /// signature of the one function that mints its tokens.
-///
-/// `sync` is the one whose minting function is not itself the wire producer:
-/// `rwv sync --json` serializes `SyncFailureOutput` and never calls
-/// `SyncFailure::kind`. Reading the match arms is faithful only because
-/// `sync_failure_kind_matches_wire_tag` pins the two spellings against each
-/// other over every variant, so a rename on the wire side cannot pass while the
-/// arms stand still.
-const MINTED_REGISTERS: &[(&str, &str, &str)] = &[
-    (
-        "doctor",
-        "check.rs",
-        "pub fn wire_kind(&self) -> &'static str {",
-    ),
-    ("vcs", "vcs.rs", "pub fn kind(&self) -> &'static str {"),
-    ("sync", "sync.rs", "pub fn kind(&self) -> &'static str {"),
-];
+const MINTED_REGISTERS: &[(&str, &str, &str)] = &[(
+    "doctor",
+    "check.rs",
+    "pub fn wire_kind(&self) -> &'static str {",
+)];
+
+fn vcs_tokens() -> BTreeSet<String> {
+    VcsErrorKind::ALL.iter().map(ToString::to_string).collect()
+}
+
+fn sync_failure_tokens() -> BTreeSet<String> {
+    SyncFailureKind::ALL
+        .iter()
+        .map(ToString::to_string)
+        .collect()
+}
 
 fn registers() -> BTreeMap<&'static str, BTreeSet<String>> {
-    let mut out = BTreeMap::from([("refusal", refusal_tokens()), ("issue", issue_tokens())]);
+    let mut out = BTreeMap::from([
+        ("refusal", refusal_tokens()),
+        ("issue", issue_tokens()),
+        ("vcs", vcs_tokens()),
+        ("sync", sync_failure_tokens()),
+    ]);
     for (name, file, signature) in MINTED_REGISTERS {
         out.insert(name, arm_tokens(&source(file), signature));
     }
@@ -524,6 +532,28 @@ fn an_op_name_is_not_also_a_condition_name() {
         "these name an in-flight operation on one surface and a condition on another, and \
          an operator reading one off `--json` cannot tell which:\n{collided:#?}"
     );
+}
+
+/// The kind enums list exactly the tags their wire mirrors declare. The mirrors
+/// are what `--json` serializes and what the committed schemas are generated
+/// from, so a variant added to one side and not the other, or renamed on one,
+/// reds here.
+#[test]
+fn the_kind_enums_list_exactly_the_tags_their_wire_mirrors_declare() {
+    let mut vocabs = kebab_vocabularies();
+    for (kinds, mirror) in [
+        (vcs_tokens(), "VcsErrorOutput"),
+        (sync_failure_tokens(), "SyncFailureOutput"),
+    ] {
+        let declared = vocabs
+            .remove(mirror)
+            .unwrap_or_else(|| panic!("the committed schemas declare {mirror}"));
+        assert!(
+            !declared.is_empty(),
+            "{mirror}: the schema walk read nothing"
+        );
+        assert_eq!(kinds, declared, "{mirror}");
+    }
 }
 
 /// The D1 sentence, asserted between registers rather than within one.

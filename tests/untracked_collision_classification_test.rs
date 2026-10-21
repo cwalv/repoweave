@@ -11,7 +11,7 @@
 //! the repo, so a hand-built error proves only that the arms agree with the
 //! hand-built error.
 
-use repoweave::vcs::{ResolvedRevisionId, VcsError};
+use repoweave::vcs::{ResolvedRevisionId, VcsError, VcsErrorKind};
 use std::path::Path;
 
 mod common;
@@ -91,7 +91,7 @@ fn a_tracked_modification_is_not_an_untracked_collision() {
     }
     assert_eq!(
         err.kind(),
-        "command-failed",
+        VcsErrorKind::CommandFailed,
         "with no kind of its own, this falls back to the raw failure: {err}"
     );
     let VcsError::CommandFailed { stderr, .. } = &err else {
@@ -176,7 +176,7 @@ fn a_diverged_tip_is_not_an_untracked_collision() {
     }
     assert_eq!(
         err.kind(),
-        "command-failed",
+        VcsErrorKind::CommandFailed,
         "divergence has no kind of its own here: {err}"
     );
 }

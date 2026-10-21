@@ -14,7 +14,7 @@ use repoweave::sync::{
     SyncFailure, SyncFailureOutput, SyncJsonOutput, SyncOutcomeOutput, SYNC_JSON_SCHEMA_URL,
     SYNC_RECORD_SCHEMA_URL,
 };
-use repoweave::vcs::{ConflictOp, VcsError, VcsErrorOutput};
+use repoweave::vcs::{ConflictOp, MidOperation, VcsError, VcsErrorKind, VcsErrorOutput};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
@@ -511,8 +511,8 @@ fn head_unreadable_without_cause_omits_cause_field() {
 }
 
 // ---------------------------------------------------------------------------
-// VcsError -> VcsErrorOutput tag snapshot. Pins the kebab-case tags so any
-// drift between `VcsError::kind()` and serde's tag renaming is caught.
+// VcsError -> VcsErrorOutput: the tag a failure's kind spells is the tag its
+// wire mirror carries, for every variant.
 // ---------------------------------------------------------------------------
 
 fn vcs_kind_via_serde(err: &VcsError) -> String {
@@ -521,52 +521,82 @@ fn vcs_kind_via_serde(err: &VcsError) -> String {
     v.get("kind").and_then(Value::as_str).unwrap().to_owned()
 }
 
-#[test]
-fn vcs_error_kind_tags_match_kind_method() {
-    let cases: Vec<(VcsError, &str)> = vec![
-        (VcsError::NotARepo(PathBuf::from("/x")), "not-a-repo"),
-        (
-            VcsError::RevisionNotFound {
-                repo: PathBuf::from("/x"),
-                rev: "v1".into(),
-            },
-            "revision-not-found",
-        ),
-        (
-            VcsError::RebaseConflict {
-                repo: PathBuf::from("/x"),
-                op: ConflictOp::Merge,
-            },
-            "rebase-conflict",
-        ),
-        (
-            VcsError::Io {
-                ctx: "spawn".into(),
-                source: std::io::Error::other("boom"),
-            },
-            "io",
-        ),
-        (
-            VcsError::CommandFailed {
-                args: vec!["status".into()],
-                repo: PathBuf::from("/x"),
-                stderr: "oops".into(),
-            },
-            "command-failed",
-        ),
+/// One `VcsError` of every variant. The match with no default arm stops this
+/// compiling when a variant is added.
+fn every_vcs_error() -> Vec<VcsError> {
+    let repo = || PathBuf::from("/x");
+    let all = vec![
+        VcsError::NotARepo(repo()),
+        VcsError::RevisionNotFound {
+            repo: repo(),
+            rev: "v1".into(),
+        },
+        VcsError::RebaseConflict {
+            repo: repo(),
+            op: ConflictOp::Merge,
+        },
+        VcsError::StaleRefWitness {
+            repo: repo(),
+            expected: "a".into(),
+            observed: "b".into(),
+        },
+        VcsError::MidOperation {
+            repo: repo(),
+            operation: MidOperation::Bisect,
+        },
+        VcsError::HookRejected {
+            repo: repo(),
+            stderr: "no".into(),
+        },
+        VcsError::UntrackedCollision {
+            repo: repo(),
+            paths: vec!["f".into()],
+        },
+        VcsError::Io {
+            ctx: "spawn".into(),
+            source: std::io::Error::other("boom"),
+        },
+        VcsError::CommandFailed {
+            args: vec!["status".into()],
+            repo: repo(),
+            stderr: "oops".into(),
+        },
     ];
-    for (err, expected) in &cases {
+    for err in &all {
+        match err {
+            VcsError::NotARepo(_)
+            | VcsError::RevisionNotFound { .. }
+            | VcsError::RebaseConflict { .. }
+            | VcsError::StaleRefWitness { .. }
+            | VcsError::MidOperation { .. }
+            | VcsError::HookRejected { .. }
+            | VcsError::UntrackedCollision { .. }
+            | VcsError::Io { .. }
+            | VcsError::CommandFailed { .. } => {}
+        }
+    }
+    all
+}
+
+#[test]
+fn every_vcs_error_kind_is_the_tag_its_wire_mirror_carries() {
+    let errors = every_vcs_error();
+    for err in &errors {
         assert_eq!(
-            err.kind(),
-            *expected,
-            "VcsError::kind() drift for {expected}"
-        );
-        assert_eq!(
+            err.kind().to_string(),
             vcs_kind_via_serde(err),
-            *expected,
-            "serde-tag drift for {expected}"
+            "{err:?}: the kind and the wire tag differ"
         );
     }
+
+    let listed: std::collections::BTreeSet<String> =
+        errors.iter().map(|e| e.kind().to_string()).collect();
+    let all: std::collections::BTreeSet<String> =
+        VcsErrorKind::ALL.iter().map(ToString::to_string).collect();
+    assert_eq!(
+        listed, all,
+        "VcsErrorKind::ALL omits a kind, or lists one no error has"
+    );
 }
 
 #[test]

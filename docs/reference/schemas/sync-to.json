@@ -468,7 +468,7 @@
       }
     },
     "SyncFailureOutput": {
-      "description": "Wire-output mirror of [`SyncFailure`] for `--json` emission.\n\nCarries the same payload as the in-memory enum but with a `cause` represented as the serializable [`VcsErrorOutput`]. The `#[serde(rename)]` override below keeps the wire tag matching [`SyncFailure::kind`].\n\n`message` is the human-readable display string of the failure (free-form text, not a typed discriminant). `cause` is the structured typed cause — always present on `ff-impossible` and `rebase-failed`, optional on `head-unreadable` — and consumers that want to branch on failure mode should inspect `cause.kind` rather than parsing `message`.",
+      "description": "Wire-output mirror of [`SyncFailure`] for `--json` emission.\n\nCarries the same payload as the in-memory enum but with a `cause` represented as the serializable [`VcsErrorOutput`].\n\n`message` is the human-readable display string of the failure (free-form text, not a typed discriminant). `cause` is the structured typed cause — always present on `ff-impossible` and `rebase-failed`, optional on `head-unreadable` — and consumers that want to branch on failure mode should inspect `cause.kind` rather than parsing `message`.",
       "oneOf": [
         {
           "type": "object",
@@ -757,7 +757,7 @@
       ]
     },
     "VcsErrorOutput": {
-      "description": "Wire-output mirror of [`VcsError`] for `--json` emission.\n\n`VcsError` itself can't derive `Serialize` cleanly because tuple variants (and `io::Error`) don't play nicely with serde's internally-tagged enum representation. This struct-only mirror does: every variant carries named fields, the tag matches [`VcsError::kind`], and a `From<&VcsError>` impl converts at JSON-emission time.",
+      "description": "Wire-output mirror of [`VcsError`] for `--json` emission.\n\n`VcsError` itself can't derive `Serialize` cleanly because tuple variants (and `io::Error`) don't play nicely with serde's internally-tagged enum representation. This struct-only mirror does: every variant carries named fields, and a `From<&VcsError>` impl converts at JSON-emission time.",
       "oneOf": [
         {
           "type": "object",
