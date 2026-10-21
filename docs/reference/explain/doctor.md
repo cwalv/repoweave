@@ -1302,6 +1302,62 @@ Schema:
           "additionalProperties": false
         },
         {
+          "description": "The clone records its remote as a relative path. git reads one from the top of whichever checkout it runs in, and every workweave checkout of the member shares the canonical clone's record, so the path names a different remote from each. Warning severity; report-only.",
+          "type": "object",
+          "required": [
+            "relative-remote"
+          ],
+          "properties": {
+            "relative-remote": {
+              "type": "object",
+              "required": [
+                "path",
+                "remote"
+              ],
+              "properties": {
+                "manifest_remote": {
+                  "description": "The URL the manifest's `url` resolves to, when it resolves.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "path": {
+                  "description": "The path as the clone records it.",
+                  "type": "string"
+                },
+                "remote": {
+                  "description": "The name the backend gives the remote, for the repair command.",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "The manifest's `url` is neither a URL nor registry shorthand, so it names no remote and no clone of the member can be made. Error severity; report-only.",
+          "type": "object",
+          "required": [
+            "unresolvable-url"
+          ],
+          "properties": {
+            "unresolvable-url": {
+              "type": "object",
+              "required": [
+                "manifest_url"
+              ],
+              "properties": {
+                "manifest_url": {
+                  "description": "The `url` as `rwv.toml` spells it.",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
           "description": "The SHA pinned in `rwv.lock` is absent from the clone's object store. The canonical store is missing the pinned revision; refresh it from its remote (run a fetch — not a sync — to recover). Error severity; report-only.",
           "type": "object",
           "required": [
