@@ -3890,7 +3890,8 @@ pub fn scan_cargo_ecosystem(
 ///    the comparison; an entry whose URL derives no path at all (`placement`
 ///    returns `None`) has nothing to compare against and is skipped too.
 pub fn scan_provenance(workspace_dir: &Path, projects: &[Project]) -> Vec<CheckViolation> {
-    use crate::manifest::{clone_urls_equivalent, Role};
+    use crate::manifest::Role;
+    use crate::registry::{recorded_remote, resolve_to_clone_info};
     use crate::vcs::vcs_for;
 
     let mut violations = Vec::new();
@@ -3923,20 +3924,23 @@ pub fn scan_provenance(workspace_dir: &Path, projects: &[Project]) -> Vec<CheckV
                 continue;
             }
 
-            let manifest_url = entry.url.to_string();
-            let actual_url = match vcs.remote_url(&repo_abs) {
+            let actual = match recorded_remote(vcs.as_ref(), &repo_abs) {
                 Ok(Some(u)) => u,
                 Ok(None) => continue, // no remote recorded — not this check's concern
                 Err(_) => continue,   // can't read remote — skip silently
             };
+            // A url that resolves to no remote has nothing to compare.
+            let Ok(declared) = resolve_to_clone_info(&entry.url) else {
+                continue;
+            };
 
-            if !clone_urls_equivalent(&manifest_url, &actual_url) {
+            if !declared.url.names_same_remote(&actual) {
                 violations.push(CheckViolation::Provenance {
                     project: project.name.clone(),
                     repo: repo_path.clone(),
                     sub_kind: ProvenanceKind::OriginUrlMismatch {
-                        manifest_url,
-                        actual_url,
+                        manifest_url: entry.url.to_string(),
+                        actual_url: actual.to_string(),
                         is_reference_role: entry.role == crate::manifest::Role::Reference,
                     },
                 });

@@ -256,7 +256,7 @@ fn manifest_round_trip() {
     for (key, orig_entry) in original.iter_entries() {
         let de_entry = deserialized.get_entry(key).unwrap();
         assert_eq!(orig_entry.vcs_type, de_entry.vcs_type);
-        assert_eq!(orig_entry.url, de_entry.url);
+        assert_eq!(orig_entry.url.to_string(), de_entry.url.to_string());
         assert_eq!(orig_entry.version, de_entry.version);
         assert_eq!(orig_entry.role, de_entry.role);
     }
@@ -273,7 +273,7 @@ fn lock_round_trip() {
     for (key, orig_entry) in original.iter_entries() {
         let de_entry = deserialized.get_entry(key).unwrap();
         assert_eq!(orig_entry.vcs_type, de_entry.vcs_type);
-        assert_eq!(orig_entry.url, de_entry.url);
+        assert_eq!(orig_entry.url.to_string(), de_entry.url.to_string());
         assert_eq!(orig_entry.version, de_entry.version);
     }
 }

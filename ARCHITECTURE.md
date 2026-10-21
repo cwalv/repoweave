@@ -81,7 +81,7 @@ empty is what lets the consent tokens in `src/cli/consent.rs` stay
 | `cli::consent` (`src/cli/consent.rs`) | The consent tokens and the `DriftConsent` either/or enum, each token minted only from its named flag by a `pub(in crate::cli)` `from_flag`. |
 | `cli::dispatch` (`src/cli/dispatch.rs`) | `run()` — argv interception, parse, the single resolution point, and the verb match. |
 | `workspace` (`src/workspace.rs`, 5171) | `WorkspaceContext` and its `resolve`; `Checkout`; `Resolution`; the `.rwv-active` / `.rwv-workweave` marker constants. |
-| `registry` (`src/registry.rs`, 685) | Host-to-local-prefix mapping. `Registry` trait; `CloneUrl`, the only URL a `Vcs` method hands git, constructed only here; `resolve_to_clone_info`, which turns a manifest `url` or CLI source, shorthand included, into one. Unrelated to integrations despite the name. |
+| `registry` (`src/registry.rs`, 685) | Host-to-local-prefix mapping. `Registry` trait; `CloneUrl`, the only URL a `Vcs` method hands git, constructed only here and compared only by `names_same_remote`; `resolve_to_clone_info`, which turns a manifest `url` or CLI source, shorthand included, into one; `recorded_remote`, which reads a clone's configured remote as one. Unrelated to integrations despite the name. |
 | `selector` (`src/selector.rs`, 438) | The shared `--role` / `--repo` filter grammar. |
 
 ### Data model

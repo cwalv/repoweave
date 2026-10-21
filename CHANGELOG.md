@@ -15,6 +15,18 @@ They now refuse over it, naming the key, and change nothing, so a wrong-typed
 setting stops the same verbs whichever integration it is in. Write
 `hide-dotfiles = true` or `hide-dotfiles = false`.
 
+### A member's URL names one remote however it is spelled
+
+Two URLs for a member are the same when they name the same remote, with
+registry shorthand read as the URL it resolves to. `rwv doctor` no longer
+reports `origin-url-mismatch` for a member added as `github/acme/x` whose clone
+records `https://github.com/acme/x.git`, and `rwv add https://github.com/acme/x`
+or `rwv add github/acme/x --new` finishes that member where it refused with
+`occupied-placement`. A `url` that resolves to no remote, such as a plain path,
+raises no `origin-url-mismatch`; a clone of it refuses with
+`unresolvable-repo-source`. The finding names an `origin` that is an absolute
+path by its `file://` URL, the spelling `rwv.toml` takes.
+
 ### Breaking: the stale-generation advisory's `kind` is `derived-state-stale`
 
 An entry of the `advisories` array in `rwv sync --json` and `rwv doctor --json`

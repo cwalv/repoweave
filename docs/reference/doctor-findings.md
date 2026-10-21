@@ -1016,8 +1016,10 @@ submodule with the commit the member records.
 
 #### `origin-url-mismatch`
 
-**Warning. Report-only.** The clone's `origin` URL differs from the
-manifest's. Until it is reconciled, a push may publish to the wrong remote.
+**Warning. Report-only.** The clone's `origin` names a different remote from
+the manifest's `url`, registry shorthand read as the URL it resolves to. A
+`url` that resolves to no remote is not compared. Until it is reconciled, a
+push may publish to the wrong remote.
 
 **What to do:** decide which is right and change the other. `--fix` has no arm
 here because that decision is yours: a `reference`-role repo may point at a

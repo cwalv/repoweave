@@ -239,7 +239,7 @@ fn encoded_file_url_matches_the_bare_path_origin() {
 /// `HOME`'s global `.gitconfig`), must not be flagged — doctor compares the
 /// configured URL, not the one `git remote get-url` would resolve it to.
 /// The rewrite target changes host rather than just scheme/syntax (unlike
-/// the scp-style `git@host:owner/repo` rewrite, which `clone_urls_equivalent`
+/// the scp-style `git@host:owner/repo` rewrite, which `CloneUrl::names_same_remote`
 /// already treats as equivalent to its `https://host/owner/repo` form) so
 /// this pins the fix rather than the pre-existing normalization.
 #[test]

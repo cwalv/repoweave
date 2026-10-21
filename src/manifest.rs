@@ -155,7 +155,7 @@ pub use crate::naming::{
 /// `Display` reconstructs the canonical clone URL or shorthand form. For
 /// inputs the registry list does not recognize, [`RepoUrl::Unknown`]
 /// preserves the raw string verbatim.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone)]
 pub enum RepoUrl {
     /// `https://{host}/{owner}/{repo}.git` — host matched a domain registry.
     Https {
@@ -271,74 +271,6 @@ impl RepoUrl {
             repo,
         ))
     }
-}
-
-/// Loose equivalence between two clone URL strings.
-///
-/// Returns `true` when both strings resolve to the same logical repo after
-/// stripping trailing slashes, a `.git` suffix, and normalizing `git@host:`
-/// SCP-style URLs to `https://host/`. A bare absolute path, in any platform's
-/// spelling, compares as the `file://` URL [`mint_file_url`] makes of it, and a
-/// `file://` URL is percent-decoded, so `C:\a\b`, `C:/a/b` and `file:///C:/a/b`
-/// name one repo. A `file://` URL keeps its `//`, so a UNC share never matches
-/// an `https://` host of the same name. It recognizes two spellings of one
-/// remote; it is not a security-grade comparison.
-///
-/// [`mint_file_url`]: crate::path_spelling::mint_file_url
-pub fn clone_urls_equivalent(a: &str, b: &str) -> bool {
-    normalize_clone_url(a) == normalize_clone_url(b)
-}
-
-fn normalize_clone_url(s: &str) -> String {
-    let s = s.trim().trim_end_matches('/');
-    let minted;
-    let s = if crate::path_spelling::is_absolute_spelling(s) {
-        minted = crate::path_spelling::mint_file_url(s);
-        minted.as_str()
-    } else {
-        s
-    };
-    // SCP-style: git@host:owner/repo(.git) -> host/owner/repo
-    let body = if let Some(rest) = s.strip_prefix("git@") {
-        rest.replacen(':', "/", 1)
-    } else if let Some(rest) = s.strip_prefix("https://") {
-        rest.to_owned()
-    } else if let Some(rest) = s.strip_prefix("http://") {
-        rest.to_owned()
-    } else if let Some(rest) = s.strip_prefix("ssh://") {
-        rest.trim_start_matches("git@").to_owned()
-    } else if let Some(rest) = s.strip_prefix("file:") {
-        percent_decode(rest)
-    } else {
-        s.to_owned()
-    };
-    body.trim_end_matches('/')
-        .trim_end_matches(".git")
-        .to_ascii_lowercase()
-}
-
-fn percent_decode(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        let decoded = (bytes[i] == b'%')
-            .then(|| bytes.get(i + 1..i + 3))
-            .flatten()
-            .and_then(|hex| std::str::from_utf8(hex).ok())
-            .and_then(|hex| u8::from_str_radix(hex, 16).ok());
-        match decoded {
-            Some(byte) => {
-                out.push(byte);
-                i += 3;
-            }
-            None => {
-                out.push(bytes[i]);
-                i += 1;
-            }
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
 }
 
 impl fmt::Display for RepoUrl {
@@ -2150,108 +2082,6 @@ role = "owned"
         assert!(Role::Owned.is_active());
     }
 
-    // ========================================================================
-    // clone_urls_equivalent
-    // ========================================================================
-
-    #[test]
-    fn urls_equivalent_strip_dot_git() {
-        assert!(clone_urls_equivalent(
-            "https://github.com/a/b.git",
-            "https://github.com/a/b"
-        ));
-    }
-
-    #[test]
-    fn urls_equivalent_ssh_vs_https() {
-        assert!(clone_urls_equivalent(
-            "git@github.com:a/b.git",
-            "https://github.com/a/b.git"
-        ));
-    }
-
-    #[test]
-    fn urls_equivalent_trailing_slash() {
-        assert!(clone_urls_equivalent(
-            "https://github.com/a/b/",
-            "https://github.com/a/b"
-        ));
-    }
-
-    #[test]
-    fn urls_equivalent_encoded_file_url_and_the_bare_path_it_encodes() {
-        assert!(clone_urls_equivalent(
-            "file:///srv/my%20repos/caf%C3%A9/100%25/a%2Bb%40c",
-            "/srv/my repos/café/100%/a+b@c"
-        ));
-    }
-
-    /// git records a clone's source path as `origin` verbatim, so a Windows
-    /// clone made from a temp-dir root with a `/`-joined tail carries both
-    /// separators, while `rwv add` is handed the `file://` URL.
-    #[test]
-    fn urls_equivalent_a_drive_letter_path_in_either_separator_and_its_file_url() {
-        let url = "file:///C:/Users/runneradmin/AppData/Local/Temp/.tmpYVOHxo/ours/remotes/lib.git";
-        for path in [
-            r"C:\Users\runneradmin\AppData\Local\Temp\.tmpYVOHxo\ours/remotes/lib.git",
-            r"C:\Users\runneradmin\AppData\Local\Temp\.tmpYVOHxo\ours\remotes\lib.git",
-            "C:/Users/runneradmin/AppData/Local/Temp/.tmpYVOHxo/ours/remotes/lib.git",
-            r"c:\users\runneradmin\appdata\local\temp\.tmpyvohxo\ours\remotes\lib",
-        ] {
-            assert!(clone_urls_equivalent(path, url), "{path} vs {url}");
-            assert!(clone_urls_equivalent(url, path), "{url} vs {path}");
-        }
-    }
-
-    #[test]
-    fn urls_equivalent_a_unc_path_and_its_host_file_url() {
-        assert!(clone_urls_equivalent(
-            r"\\server\share\My Repos\lib.git",
-            "file://server/share/My%20Repos/lib.git"
-        ));
-    }
-
-    #[test]
-    fn urls_not_equivalent_a_unc_share_and_an_https_host_of_the_same_name() {
-        assert!(!clone_urls_equivalent(
-            r"\\server\share\lib.git",
-            "https://server/share/lib.git"
-        ));
-        assert!(!clone_urls_equivalent(
-            "file://server/share/lib.git",
-            "https://server/share/lib.git"
-        ));
-    }
-
-    #[test]
-    fn urls_not_equivalent_on_different_drives() {
-        assert!(!clone_urls_equivalent(
-            r"D:\Users\dev\lib.git",
-            "file:///C:/Users/dev/lib.git"
-        ));
-    }
-
-    /// Off a drive letter or a UNC share, `\` is filename content.
-    #[test]
-    fn urls_equivalent_reads_a_backslash_in_a_posix_path_as_content() {
-        assert!(!clone_urls_equivalent(
-            r"/srv/a\b/lib.git",
-            "file:///srv/a/b/lib.git"
-        ));
-        assert!(clone_urls_equivalent(
-            r"/srv/a\b/lib.git",
-            "file:///srv/a%5Cb/lib.git"
-        ));
-    }
-
-    #[test]
-    fn urls_equivalent_different_repos() {
-        assert!(!clone_urls_equivalent(
-            "https://github.com/a/b.git",
-            "https://github.com/a/c.git"
-        ));
-    }
-
     #[test]
     fn role_fork_is_active() {
         assert!(Role::Fork.is_active());
@@ -2472,7 +2302,7 @@ role = "owned"
         for (key, orig) in &original.repositories {
             let rest = &restored.repositories[key];
             assert_eq!(orig.vcs_type, rest.vcs_type);
-            assert_eq!(orig.url, rest.url);
+            assert_eq!(orig.url.to_string(), rest.url.to_string());
             assert_eq!(orig.version, rest.version);
             assert_eq!(orig.role, rest.role);
         }
@@ -2488,7 +2318,7 @@ role = "owned"
         for (key, orig) in &original.repositories {
             let rest = &restored.repositories[key];
             assert_eq!(orig.vcs_type, rest.vcs_type);
-            assert_eq!(orig.url, rest.url);
+            assert_eq!(orig.url.to_string(), rest.url.to_string());
             assert_eq!(orig.version, rest.version);
         }
     }

@@ -238,8 +238,13 @@ fn add_refuses_a_url_that_disagrees_with_the_hand_added_entry() {
 
 /// Whether the clone at `clone` is a clone of `url`.
 fn clones(clone: &Path, url: &str) -> bool {
-    let origin = common::git_in(clone, &["remote", "get-url", "origin"]);
-    repoweave::manifest::clone_urls_equivalent(&origin, url)
+    let source: repoweave::manifest::RepoUrl = url.parse().unwrap();
+    let wanted = repoweave::registry::resolve_to_clone_info(&source)
+        .unwrap()
+        .url;
+    repoweave::registry::recorded_remote(repoweave::git::git_vcs().as_ref(), clone)
+        .unwrap()
+        .is_some_and(|recorded| recorded.names_same_remote(&wanted))
 }
 
 /// An add over an entry the manifest maps to another URL, whose clone is on

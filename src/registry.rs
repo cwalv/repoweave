@@ -9,7 +9,8 @@
 use crate::manifest::{RepoPath, RepoUrl, VcsType};
 use crate::path_spelling::{file_url_suggestion, is_absolute_spelling, mint_file_url};
 use crate::refusal::RefusalKind;
-use std::path::PathBuf;
+use crate::vcs::{Vcs, VcsError};
+use std::path::{Path, PathBuf};
 
 /// A short name for a code host or directory that serves as the first path
 /// segment in the canonical layout: `{registry}/{owner}/{repo}/`.
@@ -424,8 +425,8 @@ fn extract_owner_repo(path: &str) -> Option<(String, String)> {
 // Built-in registries and CloneInfo extraction
 // ---------------------------------------------------------------------------
 
-/// A URL git can clone from as written: never registry shorthand, never a
-/// plain path.
+/// A remote in the spelling git takes it: never registry shorthand, and an
+/// absolute path only as its `file://` URL.
 #[derive(Debug, Clone)]
 pub struct CloneUrl(String);
 
@@ -433,6 +434,74 @@ impl CloneUrl {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// Whether `self` and `other` spell one remote: a trailing `/` or `.git`,
+    /// `git@host:` for `https://host/`, percent-encoding in a `file://` URL,
+    /// and ASCII case do not tell two remotes apart. A `file://` URL keeps its
+    /// `//`, so a UNC share never matches an `https://` host of the same name.
+    /// Not a security-grade comparison.
+    pub fn names_same_remote(&self, other: &CloneUrl) -> bool {
+        self.remote_key() == other.remote_key()
+    }
+
+    fn remote_key(&self) -> String {
+        let s = self.0.trim().trim_end_matches('/');
+        let body = if let Some(rest) = s.strip_prefix("git@") {
+            rest.replacen(':', "/", 1)
+        } else if let Some(rest) = s.strip_prefix("https://") {
+            rest.to_owned()
+        } else if let Some(rest) = s.strip_prefix("http://") {
+            rest.to_owned()
+        } else if let Some(rest) = s.strip_prefix("ssh://") {
+            rest.trim_start_matches("git@").to_owned()
+        } else if let Some(rest) = s.strip_prefix("file:") {
+            percent_decode(rest)
+        } else {
+            s.to_owned()
+        };
+        body.trim_end_matches('/')
+            .trim_end_matches(".git")
+            .to_ascii_lowercase()
+    }
+
+    fn recorded(text: String) -> CloneUrl {
+        if is_absolute_spelling(&text) {
+            CloneUrl(mint_file_url(&text))
+        } else {
+            CloneUrl(text)
+        }
+    }
+}
+
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let decoded = (bytes[i] == b'%')
+            .then(|| bytes.get(i + 1..i + 3))
+            .flatten()
+            .and_then(|hex| std::str::from_utf8(hex).ok())
+            .and_then(|hex| u8::from_str_radix(hex, 16).ok());
+        match decoded {
+            Some(byte) => {
+                out.push(byte);
+                i += 3;
+            }
+            None => {
+                out.push(bytes[i]);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// The remote `repo` records under the conventional name, as configured
+/// rather than as an `insteadOf` rule rewrites it, or `None` when it records
+/// none.
+pub fn recorded_remote(vcs: &dyn Vcs, repo: &Path) -> Result<Option<CloneUrl>, VcsError> {
+    Ok(vcs.remote_url(repo)?.map(CloneUrl::recorded))
 }
 
 impl std::fmt::Display for CloneUrl {
@@ -1024,6 +1093,127 @@ mod tests {
             format!("{err:#}").contains("file:///srv/repos/x"),
             "the refusal names the spelling to write instead: {err:#}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // CloneUrl::names_same_remote
+    // -----------------------------------------------------------------------
+
+    fn recorded(s: &str) -> CloneUrl {
+        CloneUrl::recorded(s.to_owned())
+    }
+
+    fn same(a: &str, b: &str) -> bool {
+        recorded(a).names_same_remote(&recorded(b))
+    }
+
+    #[test]
+    fn shorthand_resolves_to_the_remote_its_url_names() {
+        let resolved = resolve_to_clone_info(&parse("github/acme/x")).unwrap().url;
+        for spelling in [
+            "https://github.com/acme/x.git",
+            "https://github.com/acme/x",
+            "git@github.com:acme/x.git",
+        ] {
+            assert!(
+                resolved.names_same_remote(&recorded(spelling)),
+                "{spelling}"
+            );
+        }
+        assert!(!resolved.names_same_remote(&recorded("github/acme/x")));
+    }
+
+    #[test]
+    fn a_recorded_absolute_path_is_held_as_its_file_url() {
+        assert_eq!(recorded("/srv/repos/x").as_str(), "file:///srv/repos/x");
+        assert_eq!(recorded(r"C:\repos\x").as_str(), "file:///C:/repos/x");
+        assert_eq!(
+            recorded("https://github.com/a/b").as_str(),
+            "https://github.com/a/b"
+        );
+    }
+
+    #[test]
+    fn same_remote_strip_dot_git() {
+        assert!(same("https://github.com/a/b.git", "https://github.com/a/b"));
+    }
+
+    #[test]
+    fn same_remote_ssh_vs_https() {
+        assert!(same("git@github.com:a/b.git", "https://github.com/a/b.git"));
+    }
+
+    #[test]
+    fn same_remote_trailing_slash() {
+        assert!(same("https://github.com/a/b/", "https://github.com/a/b"));
+    }
+
+    #[test]
+    fn same_remote_encoded_file_url_and_the_bare_path_it_encodes() {
+        assert!(same(
+            "file:///srv/my%20repos/caf%C3%A9/100%25/a%2Bb%40c",
+            "/srv/my repos/café/100%/a+b@c"
+        ));
+    }
+
+    /// git records a clone's source path as `origin` verbatim, so a Windows
+    /// clone made from a temp-dir root with a `/`-joined tail carries both
+    /// separators, while `rwv add` is handed the `file://` URL.
+    #[test]
+    fn same_remote_a_drive_letter_path_in_either_separator_and_its_file_url() {
+        let url = "file:///C:/Users/runneradmin/AppData/Local/Temp/.tmpYVOHxo/ours/remotes/lib.git";
+        for path in [
+            r"C:\Users\runneradmin\AppData\Local\Temp\.tmpYVOHxo\ours/remotes/lib.git",
+            r"C:\Users\runneradmin\AppData\Local\Temp\.tmpYVOHxo\ours\remotes\lib.git",
+            "C:/Users/runneradmin/AppData/Local/Temp/.tmpYVOHxo/ours/remotes/lib.git",
+            r"c:\users\runneradmin\appdata\local\temp\.tmpyvohxo\ours\remotes\lib",
+        ] {
+            assert!(same(path, url), "{path} vs {url}");
+            assert!(same(url, path), "{url} vs {path}");
+        }
+    }
+
+    #[test]
+    fn same_remote_a_unc_path_and_its_host_file_url() {
+        assert!(same(
+            r"\\server\share\My Repos\lib.git",
+            "file://server/share/My%20Repos/lib.git"
+        ));
+    }
+
+    #[test]
+    fn not_same_remote_a_unc_share_and_an_https_host_of_the_same_name() {
+        assert!(!same(
+            r"\\server\share\lib.git",
+            "https://server/share/lib.git"
+        ));
+        assert!(!same(
+            "file://server/share/lib.git",
+            "https://server/share/lib.git"
+        ));
+    }
+
+    #[test]
+    fn not_same_remote_on_different_drives() {
+        assert!(!same(
+            r"D:\Users\dev\lib.git",
+            "file:///C:/Users/dev/lib.git"
+        ));
+    }
+
+    /// Off a drive letter or a UNC share, `\` is filename content.
+    #[test]
+    fn same_remote_reads_a_backslash_in_a_posix_path_as_content() {
+        assert!(!same(r"/srv/a\b/lib.git", "file:///srv/a/b/lib.git"));
+        assert!(same(r"/srv/a\b/lib.git", "file:///srv/a%5Cb/lib.git"));
+    }
+
+    #[test]
+    fn not_same_remote_different_repos() {
+        assert!(!same(
+            "https://github.com/a/b.git",
+            "https://github.com/a/c.git"
+        ));
     }
 
     #[test]

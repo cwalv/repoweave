@@ -45,7 +45,7 @@ fn domain_registry_parse_ssh_url_without_git_suffix() {
 fn domain_registry_git_suffix_presence_and_absence_yield_same_result() {
     let with: RepoUrl = "https://github.com/owner/repo.git".parse().unwrap();
     let without: RepoUrl = "https://github.com/owner/repo".parse().unwrap();
-    assert_eq!(with, without);
+    assert_eq!(with.to_string(), without.to_string());
 }
 
 // ---------------------------------------------------------------------------

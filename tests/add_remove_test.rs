@@ -308,27 +308,101 @@ fn rwv_with_fake_github(tmp: &Path) -> Command {
 }
 
 /// A weave whose manifest lists `github/acme/x` as `rwv add github/acme/x`
-/// wrote it, and whose clone of it is gone: the state a collaborator's
-/// fresh machine starts from.
-fn shorthand_member_without_its_clone(tmp: &tempfile::TempDir) -> PathBuf {
+/// wrote it, with the clone that add made.
+fn shorthand_member(tmp: &tempfile::TempDir) -> PathBuf {
     let bare = tmp.path().join("fakegithub").join("acme").join("x.git");
     std::fs::create_dir_all(bare.parent().unwrap()).unwrap();
     init_bare_repo_with_commit(&bare);
-    let (workspace, project_dir) = setup_workspace_with_project(tmp, &[]);
+    let (workspace, _project_dir) = setup_workspace_with_project(tmp, &[]);
 
     rwv_with_fake_github(tmp.path())
         .args(["add", "github/acme/x"])
         .current_dir(&workspace)
         .assert()
         .success();
-    let manifest = std::fs::read_to_string(project_dir.join("rwv.toml")).unwrap();
+    let manifest = shorthand_manifest(&workspace);
     assert!(
         manifest.contains("url = \"github/acme/x\""),
         "rwv.toml keeps the source as the operator spelled it:\n{manifest}"
     );
+    workspace
+}
 
+fn shorthand_manifest(workspace: &Path) -> String {
+    std::fs::read_to_string(workspace.join("projects/test-project/rwv.toml")).unwrap()
+}
+
+/// [`shorthand_member`] with its clone gone: the state a collaborator's
+/// fresh machine starts from.
+fn shorthand_member_without_its_clone(tmp: &tempfile::TempDir) -> PathBuf {
+    let workspace = shorthand_member(tmp);
     std::fs::remove_dir_all(workspace.join("github/acme/x")).unwrap();
     workspace
+}
+
+fn doctor_reports_origin_url_mismatch(workspace: &Path) -> bool {
+    let out = rwv()
+        .args(["doctor", "--json"])
+        .current_dir(workspace)
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout).contains("origin-url-mismatch")
+}
+
+#[test]
+fn doctor_reads_a_shorthand_url_as_the_remote_it_resolves_to() {
+    let tmp = common::tempdir().unwrap();
+    let workspace = shorthand_member(&tmp);
+
+    assert!(
+        !doctor_reports_origin_url_mismatch(&workspace),
+        "the clone of github/acme/x records https://github.com/acme/x.git, the \
+         remote the shorthand names"
+    );
+
+    common::git_in(
+        workspace.join("github/acme/x"),
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "https://github.com/acme/other.git",
+        ],
+    );
+    assert!(
+        doctor_reports_origin_url_mismatch(&workspace),
+        "a clone of another remote is still reported"
+    );
+}
+
+#[test]
+fn add_by_url_finishes_a_member_added_by_shorthand() {
+    let tmp = common::tempdir().unwrap();
+    let workspace = shorthand_member(&tmp);
+    let manifest_before = shorthand_manifest(&workspace);
+
+    rwv_with_fake_github(tmp.path())
+        .args(["add", "https://github.com/acme/x"])
+        .current_dir(&workspace)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("already exists in manifest"));
+    assert_eq!(shorthand_manifest(&workspace), manifest_before);
+}
+
+#[test]
+fn add_new_finishes_a_member_added_by_shorthand() {
+    let tmp = common::tempdir().unwrap();
+    let workspace = shorthand_member(&tmp);
+    let manifest_before = shorthand_manifest(&workspace);
+
+    rwv_with_fake_github(tmp.path())
+        .args(["add", "github/acme/x", "--new"])
+        .current_dir(&workspace)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("already exists in manifest"));
+    assert_eq!(shorthand_manifest(&workspace), manifest_before);
 }
 
 #[test]

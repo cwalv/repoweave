@@ -5,12 +5,11 @@ use crate::integration_runner::missing_active_members;
 use crate::manifest::{
     LockFile, Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role, Submodules, VcsType,
 };
-use crate::path_spelling::{
-    file_url_suggestion, is_absolute_spelling, mint_file_url, operator_path,
-};
+use crate::path_spelling::{file_url_suggestion, is_absolute_spelling, operator_path};
 use crate::refusal::{refusal, RefusalKind};
 use crate::registry::{
-    builtin_registries, CreationParamError, ParamKind, ParamMap, ParamSpec, RegistryName, Upstream,
+    builtin_registries, recorded_remote, resolve_to_clone_info, CloneUrl, CreationParamError,
+    ParamKind, ParamMap, ParamSpec, RegistryName, Upstream,
 };
 use crate::vcs::{
     vcs_for, DeletionWarrant, EphemeralRefName, HeadAttachment, RemoteBranchCopies, TrackingRef,
@@ -287,6 +286,7 @@ pub fn run_add(
             ));
         }
     };
+    let clone_url = resolve_to_clone_info(&parsed_url)?.url;
     // `rwv add` mints the manifest entry, so the backend is an input to the
     // verb rather than a lookup: one value feeds both the handle this verb
     // operates through and the `vcs_type` it records.
@@ -311,7 +311,8 @@ pub fn run_add(
     let dest = ctx.primary_path().join(repo_path.as_path());
 
     if let Some(existing) = manifest.get_entry(&repo_path) {
-        if !crate::manifest::clone_urls_equivalent(&existing.url.to_string(), url) {
+        let declared = resolve_to_clone_info(&existing.url)?.url;
+        if !declared.names_same_remote(&clone_url) {
             let remove = format!("`rwv remove {repo_path} --delete`");
             let replace = match ctx.checkout {
                 Checkout::Workweave { .. } if dest.exists() => {
@@ -339,7 +340,7 @@ pub fn run_add(
                 &dest,
                 existing.role,
             );
-            clone_into(vcs.as_ref(), &existing.url, &dest)?;
+            clone_into(vcs.as_ref(), &declared, &dest)?;
         }
         place_member(
             vcs.as_ref(),
@@ -354,7 +355,7 @@ pub fn run_add(
 
     refuse_non_clone_at_placements(vcs.as_ref(), ctx, &repo_path, &format!("rwv add {url}"))?;
     if vcs.is_repo(&dest) {
-        refuse_foreign_clone_at_placement(vcs.as_ref(), &parsed_url, &dest, &repo_path)?;
+        refuse_foreign_clone_at_placement(vcs.as_ref(), &clone_url, &dest, &repo_path)?;
     }
 
     // Warn when this clone path is already registered by another project.
@@ -369,7 +370,7 @@ pub fn run_add(
                 operator_path(&dest)
             );
         } else {
-            clone_into(vcs.as_ref(), &parsed_url, &dest)?;
+            clone_into(vcs.as_ref(), &clone_url, &dest)?;
             left.clone = Some(dest.clone());
         }
 
@@ -462,12 +463,11 @@ fn refuse_non_clone_at(
 /// through `--adopt`, under its own origin.
 fn refuse_foreign_clone_at_placement(
     vcs: &dyn Vcs,
-    url: &RepoUrl,
+    clone_url: &CloneUrl,
     dest: &Path,
     repo_path: &RepoPath,
 ) -> anyhow::Result<()> {
-    let clone_url = crate::registry::resolve_to_clone_info(url)?.url;
-    let recorded = vcs.remote_url(dest).with_context(|| {
+    let recorded = recorded_remote(vcs, dest).with_context(|| {
         format!(
             "could not determine the {} URL for '{}'",
             vcs.conventional_remote_name(),
@@ -475,8 +475,8 @@ fn refuse_foreign_clone_at_placement(
         )
     })?;
     if recorded
-        .as_deref()
-        .is_some_and(|r| crate::manifest::clone_urls_equivalent(r, clone_url.as_str()))
+        .as_ref()
+        .is_some_and(|r| r.names_same_remote(clone_url))
     {
         return Ok(());
     }
@@ -788,13 +788,12 @@ fn untrackable_remote_default(repo_path: &RepoPath, clone: &Path) -> String {
     )
 }
 
-fn clone_into(vcs: &dyn Vcs, url: &RepoUrl, dest: &Path) -> anyhow::Result<()> {
+fn clone_into(vcs: &dyn Vcs, clone_url: &CloneUrl, dest: &Path) -> anyhow::Result<()> {
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("failed to create directory {}", operator_path(parent)))?;
     }
-    let clone_url = crate::registry::resolve_to_clone_info(url)?.url;
-    vcs.clone_repo(&clone_url, dest).with_context(|| {
+    vcs.clone_repo(clone_url, dest).with_context(|| {
         format!(
             "failed to clone '{}' into {}",
             clone_url,
@@ -817,7 +816,7 @@ fn announce_already_registered(repo_path: &RepoPath) {
 /// Register the clone at `clone_dir` as `repo_path`, inferring the URL by
 /// reading the clone's `origin` remote.
 ///
-/// Returns the manifest with the member added and the URL it was recorded
+/// Returns the manifest with the member added and the remote it was recorded
 /// under, unwritten, or `None` when the manifest already names it.
 fn run_add_from_local_path(
     vcs: &dyn Vcs,
@@ -827,10 +826,8 @@ fn run_add_from_local_path(
     clone_dir: &Path,
     role: Role,
     manifest_path: &Path,
-) -> anyhow::Result<Option<(Manifest, String)>> {
-    // Read the recorded URL from the existing clone.
-    let raw_url = vcs
-        .remote_url(clone_dir)
+) -> anyhow::Result<Option<(Manifest, CloneUrl)>> {
+    let recorded = recorded_remote(vcs, clone_dir)
         .with_context(|| {
             format!(
                 "could not determine the {} URL for '{}'",
@@ -848,19 +845,6 @@ fn run_add_from_local_path(
                 ),
             )
         })?;
-
-    // Normalize bare absolute paths to file:// URLs so manifests are
-    // consistent regardless of how the clone was created. The second
-    // disjunct is the platform's other absolute spelling — a drive-letter
-    // path git reports verbatim — and is reachable only on a Windows build,
-    // where `Path::is_absolute` recognizes that shape.
-    let origin_url = if raw_url.starts_with('/')
-        || (!raw_url.contains("://") && Path::new(&raw_url).is_absolute())
-    {
-        mint_file_url(&raw_url)
-    } else {
-        raw_url
-    };
 
     // Load and check existing manifest.
     let mut manifest = Manifest::from_path(manifest_path).with_context(|| {
@@ -894,16 +878,15 @@ fn run_add_from_local_path(
     let version = TrackingRef::try_from(&remote_default)
         .with_context(|| untrackable_remote_default(repo_path, clone_dir))?;
 
-    // Add entry to manifest using the inferred origin URL.
     let entry = RepoEntry {
         vcs_type,
-        url: origin_url.parse()?,
+        url: RepoUrl::from(&recorded),
         version,
         role,
         submodules: crate::manifest::Submodules::Local,
     };
     manifest.insert_repo(repo_path.clone(), entry);
-    Ok(Some((manifest, origin_url)))
+    Ok(Some((manifest, recorded)))
 }
 
 /// Execute `rwv remove PATH [--delete] [--delete-shared-clone]`.
@@ -1480,7 +1463,10 @@ pub fn run_add_new(
     let dest = ctx.primary_path().join(repo_path.as_path());
 
     if let Some(existing) = manifest.get_entry(&repo_path) {
-        if existing.url == url {
+        if resolve_to_clone_info(&existing.url)?
+            .url
+            .names_same_remote(&plan.url)
+        {
             announce_already_registered(&repo_path);
             place_member(
                 vcs.as_ref(),
