@@ -167,6 +167,22 @@ fn remote_tracking(branch: &RefName) -> String {
     format!("{}{branch}", remote_tracking_namespace())
 }
 
+/// The only spelling of a local branch handed to git where git resolves a
+/// revision or refspec. A bare `<branch>` there resolves to a tag of that name
+/// before `refs/heads/<branch>`.
+fn local_branch(name: &str) -> String {
+    format!("refs/heads/{name}")
+}
+
+fn local_branch_tip_args(name: &str) -> Vec<String> {
+    vec![
+        "rev-parse".to_owned(),
+        "--verify".to_owned(),
+        "--quiet".to_owned(),
+        format!("{}^{{commit}}", local_branch(name)),
+    ]
+}
+
 // ---------------------------------------------------------------------------
 // Replay-exclusion (rwv.lock) — merge-driver constants
 // ---------------------------------------------------------------------------
@@ -2301,7 +2317,11 @@ impl Vcs for GitVcs {
         repo: &Path,
         branch: &RefName,
     ) -> Result<usize, VcsError> {
-        let range = format!("{}..{}", remote_tracking(branch), branch.as_str());
+        let range = format!(
+            "{}..{}",
+            remote_tracking(branch),
+            local_branch(branch.as_str())
+        );
         let out = Self::run_trimmed(&["rev-list", "--count", &range], repo)?;
         Ok(out.trim().parse::<usize>().unwrap_or(0))
     }
@@ -2672,10 +2692,9 @@ impl Vcs for GitVcs {
         name: &RawRefName,
     ) -> Result<Option<ResolvedRevisionId>, VcsError> {
         let repo = Self::work_dir_for_store(repo);
-        // Fully qualified: `refs/heads/<name>` cannot be answered by a tag
-        // or a remote-tracking ref of the same name.
-        let qualified = format!("refs/heads/{}^{{commit}}", name.as_str());
-        match Self::run_trimmed(&["rev-parse", "--verify", "--quiet", &qualified], &repo) {
+        let args = local_branch_tip_args(name.as_str());
+        let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+        match Self::run_trimmed(&argv, &repo) {
             Ok(sha) => Ok(ResolvedRevisionId::from_rev_parse_output(&sha)),
             // `--quiet` makes "no such ref" an exit code with no stderr,
             // which is the absence this method reports rather than an error.
@@ -2774,12 +2793,7 @@ impl Vcs for GitVcs {
             // reads as "no such ref", so a reported form omitting it would
             // not reproduce the answer it claims to explain.
             return Err(VcsError::CommandFailed {
-                args: vec![
-                    "rev-parse".to_owned(),
-                    "--verify".to_owned(),
-                    "--quiet".to_owned(),
-                    format!("refs/heads/{name}^{{commit}}"),
-                ],
+                args: local_branch_tip_args(name.as_str()),
                 repo: Self::work_dir_for_store(repo),
                 stderr: format!(
                     "no local branch named '{name}': attaching to a branch that \
@@ -2827,12 +2841,7 @@ impl Vcs for GitVcs {
         // terms rather than on git's.
         if self.resolve_local_branch_tip(repo, name)?.is_some() {
             return Err(VcsError::CommandFailed {
-                args: vec![
-                    "rev-parse".to_owned(),
-                    "--verify".to_owned(),
-                    "--quiet".to_owned(),
-                    format!("refs/heads/{name}^{{commit}}"),
-                ],
+                args: local_branch_tip_args(name.as_str()),
                 repo: repo.to_path_buf(),
                 stderr: format!(
                     "a local branch named '{name}' already exists: birthing it here \
@@ -2853,7 +2862,9 @@ impl Vcs for GitVcs {
             args.push("--force");
         }
         args.push(GIT_DEFAULT_REMOTE_NAME);
-        args.push(r.name().as_str());
+        let branch = local_branch(r.name().as_str());
+        let refspec = format!("{branch}:{branch}");
+        args.push(&refspec);
         Self::run(&args, repo)?;
         Ok(())
     }
@@ -4061,6 +4072,28 @@ mod branch_model_tests {
         );
     }
 
+    #[test]
+    fn create_worktree_on_adopts_the_branch_when_a_tag_shares_its_name() {
+        let store = repo();
+        let start = GitVcs.head_revision(store.path()).unwrap();
+        git(store.path(), &["branch", "p--ww"]);
+        git(store.path(), &["checkout", "p--ww"]);
+        let unique = commit(store.path(), "unique-work");
+        git(store.path(), &["checkout", "main"]);
+        git(store.path(), &["tag", "p--ww", start.as_str()]);
+
+        let (_dest_home, dest) = worktree_dest();
+        GitVcs
+            .create_worktree_on(&receipt(store.path(), "p--ww", &start), &dest)
+            .unwrap();
+
+        assert_eq!(
+            GitVcs.head_attachment(&dest).unwrap().to_string(),
+            "on branch 'p--ww'"
+        );
+        assert_eq!(GitVcs.head_revision(&dest).unwrap(), unique);
+    }
+
     // -----------------------------------------------------------------------
     // Birth: a hook refusing the add is not a generic command failure
     // -----------------------------------------------------------------------
@@ -4377,6 +4410,21 @@ mod branch_model_tests {
         assert!(
             matches!(err, VcsError::RevisionNotFound { ref rev, .. } if rev == "refs/remotes/origin/feature"),
             "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn count_commits_ahead_of_remote_is_not_answered_by_a_tag_named_like_the_branch() {
+        let (_tmp, clone, _remote_tip) = clone_ahead_of_its_remote();
+        git(&clone, &["tag", "main", "refs/remotes/origin/main"]);
+
+        let ahead = GitVcs
+            .count_commits_ahead_of_remote(&clone, &RefName::new("main"))
+            .unwrap();
+
+        assert_eq!(
+            ahead, 1,
+            "the unpushed commit is on the branch, not the tag"
         );
     }
 
@@ -4794,6 +4842,22 @@ mod branch_model_tests {
             .push_ref(&clone, &publish_ref_of(&clone), true)
             .expect("force should overwrite the divergent remote tip");
         assert_eq!(git_bare(&bare, &["rev-parse", "main"]), local_tip.as_str());
+    }
+
+    #[test]
+    fn push_ref_publishes_the_branch_when_a_tag_shares_its_name() {
+        let (_tmp, clone, bare) = clone_of_bare_origin();
+        let tip = commit(&clone, "on-main");
+        git(&clone, &["tag", "main"]);
+
+        GitVcs
+            .push_ref(&clone, &publish_ref_of(&clone), false)
+            .expect("a tag named like the branch must not make the push ambiguous");
+
+        assert_eq!(
+            git_bare(&bare, &["rev-parse", "refs/heads/main"]),
+            tip.as_str()
+        );
     }
 
     #[test]

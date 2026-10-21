@@ -8634,6 +8634,27 @@ mod tests {
     }
 
     #[test]
+    fn prune_dropped_repo_refuses_unpushed_work_when_a_tag_shares_the_branch_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ctx, store, project) = primary_with_cloned_store(tmp.path());
+        let unpushed = commit(&store, "only-here");
+        git(&store, &["tag", "main", "refs/remotes/origin/main"]);
+
+        let err = prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped(), &project)
+            .expect_err("a store holding an unpushed commit is not prunable");
+
+        assert!(
+            format!("{err:#}").contains("local-only commits"),
+            "the local-only refusal must fire on the branch, not be answered by the tag; got:\n{err:#}"
+        );
+        assert_eq!(
+            git(&store, &["rev-parse", "refs/heads/main"]),
+            unpushed.as_str(),
+            "the unpushed commit must survive the refused prune"
+        );
+    }
+
+    #[test]
     fn prune_dropped_repo_refuses_when_the_ahead_count_cannot_be_taken() {
         // The remote-tracking ref is present, so the counterpart probe passes
         // and the branch reaches the ahead-count; it points at an object the
