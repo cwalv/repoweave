@@ -41,19 +41,33 @@ fn run_each_against(status: &Value) -> (bool, String, String) {
     .unwrap();
     std::fs::set_permissions(&standin, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-    let out = Command::new(bin.join("rwv-each"))
-        .args(["--dry-run", "--role", "reference", "--", "true"])
-        .env("RWV_WORKSPACE", tmp.path())
-        .env("RWV_PROJECT", "demo")
-        .env_remove("RWV_WORKWEAVE")
-        .env_remove("RWV_WORKWEAVE_UNREGISTERED")
-        .output()
-        .expect("rwv-each runs");
-    (
-        out.status.success(),
-        String::from_utf8_lossy(&out.stdout).into_owned(),
-        String::from_utf8_lossy(&out.stderr).into_owned(),
-    )
+    // A sibling test's fork can still hold a just-written file open for
+    // writing; exec then fails with ETXTBSY, here or in the plugin's own spawn
+    // of the stand-in, until that child execs or exits.
+    for _ in 0..100 {
+        let out = Command::new(bin.join("rwv-each"))
+            .args(["--dry-run", "--role", "reference", "--", "true"])
+            .env("RWV_WORKSPACE", tmp.path())
+            .env("RWV_PROJECT", "demo")
+            .env_remove("RWV_WORKWEAVE")
+            .env_remove("RWV_WORKWEAVE_UNREGISTERED")
+            .output();
+        let busy = match &out {
+            Err(e) => e.kind() == std::io::ErrorKind::ExecutableFileBusy,
+            Ok(out) => String::from_utf8_lossy(&out.stderr).contains("Text file busy"),
+        };
+        if busy {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            continue;
+        }
+        let out = out.expect("rwv-each runs");
+        return (
+            out.status.success(),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        );
+    }
+    panic!("rwv-each stayed busy (ETXTBSY) for 2s")
 }
 
 fn repo(path: &str, role: &str, relation: &str) -> Value {
