@@ -16,7 +16,7 @@ use crate::op_state::{
     self, OpId, OpVerb, Override, Overrides, OwnerRecord, SavepointKey, SyncStrategy,
 };
 use crate::parallel::run_in_parallel;
-use crate::path_spelling::resolve;
+use crate::path_spelling::CanonicalPath;
 use crate::placement::PlacementOutput;
 use crate::refusal::RefusalKind;
 use crate::share::FilePlacement;
@@ -199,7 +199,7 @@ fn workspace_name(ctx: &WorkspaceContext) -> anyhow::Result<String> {
     match &ctx.checkout {
         Checkout::Workweave {
             name, dir, project, ..
-        } => Ok(name.require(dir, project)?.as_str().to_owned()),
+        } => Ok(name.require(dir.as_path(), project)?.as_str().to_owned()),
         Checkout::Primary { .. } => Ok(ctx
             .primary_path()
             .file_name()
@@ -1820,7 +1820,7 @@ fn materialize_missing_repo(
                 ctx.primary_path(),
                 ctx.active_path(),
                 project_name,
-                name.require(dir, project)?,
+                name.require(dir.as_path(), project)?,
                 repo_path,
                 entry.role,
                 entry.submodules,
@@ -1885,10 +1885,10 @@ fn check_store_unclaimed(
     // canonicalized: the registration records a resolved path, and the
     // store path here is built by joining onto the workspace root, which
     // may reach it through a symlink.
-    let store_key = resolve(store).unwrap_or_else(|_| store.to_path_buf());
+    let store_key = CanonicalPath::of(store);
     let live: Vec<String> = registered
         .iter()
-        .filter(|p| resolve(p).unwrap_or_else(|_| p.to_path_buf()) != store_key)
+        .filter(|p| CanonicalPath::of(p) != store_key)
         .map(|p| p.display().to_string())
         .collect();
     if !live.is_empty() {
@@ -2104,8 +2104,7 @@ pub(crate) fn plan_checkout_removal(
                 // The fallback is `dest` itself, which makes an unresolvable
                 // store refuse rather than be assumed linked.
                 let store = crate::workweave::resolved_worktree_parent(vcs, &dest, &dest);
-                let dest_canonical = resolve(&dest).unwrap_or_else(|_| dest.clone());
-                if store == dest_canonical {
+                if store == CanonicalPath::of(&dest) {
                     crate::refuse!(
                         RefusalKind::CloneTopology,
                         "{repo_path}: {dropped}, but the checkout at {} is itself a \
@@ -2949,7 +2948,7 @@ fn run_machine(
         source_workweave: match &ctx.cwd_ctx.checkout {
             Checkout::Workweave {
                 name, dir, project, ..
-            } => Some(name.require(dir, project)?.as_str().to_owned()),
+            } => Some(name.require(dir.as_path(), project)?.as_str().to_owned()),
             Checkout::Primary { .. } => None,
         },
         target: ctx.dest_workspace_dir.clone(),
@@ -3655,15 +3654,15 @@ fn guard_and_mark<'a>(
             &op_id,
             strategy,
             cwd_project_name.clone(),
-            source_workspace_dir.clone(),
-            cwd_workspace_dir.clone(),
+            &source_workspace_dir,
+            &cwd_workspace_dir,
         ),
         MachineVerb::SyncTo => OwnerRecord::new_sync_to(
             &op_id,
             strategy,
             cwd_project_name.clone(),
-            cwd_workspace_dir.clone(),
-            dest_workspace_dir.clone(),
+            &cwd_workspace_dir,
+            &dest_workspace_dir,
             retire,
         ),
     };
@@ -3925,10 +3924,9 @@ fn load_continuing_context<'a>(
     handler: &'a dyn OutputHandler,
 ) -> anyhow::Result<OpContext<'a>> {
     let emit_text = handler.emit_text();
-    let invocation_workspace_dir = invocation_ctx.active_path().to_path_buf();
     let op_state::ResolvedOwner {
         record,
-        owner_workspace: owner_workspace_dir,
+        owner_workspace,
     } = op;
     let op_id = record.id.clone();
 
@@ -4004,7 +4002,7 @@ fn load_continuing_context<'a>(
     // there rather than back at the phase that stranded.
     let entry_phase = resume_entry_phase(&record.phase);
     if entry_phase != record.phase {
-        op_state::set_phase(&owner_workspace_dir, entry_phase.clone())
+        op_state::set_phase(owner_workspace.as_path(), entry_phase.clone())
             .context("failed to record the phase this resume re-enters")?;
     }
 
@@ -4028,7 +4026,7 @@ fn load_continuing_context<'a>(
     let strategy = record.strategy;
 
     // Re-root the engine context at the OWNER workspace. When `--continue` is
-    // invoked from the leased target, `invocation_workspace_dir` points at the
+    // invoked from the leased target, the invocation workspace is the
     // target — but every phase (replay's per-repo enumeration, materialize,
     // record_converged_tips, cleanup's savepoint drop, retire's workweave
     // identity check) must operate on the owner's workspace, not the target's.
@@ -4037,11 +4035,12 @@ fn load_continuing_context<'a>(
     // re-resolution of the invocation origin (which would violate the single-
     // resolution rule) but the resolution of a different, computed workspace
     // (the owner path recovered from op-state).
-    let cwd_ctx = if owner_workspace_dir == invocation_workspace_dir {
+    let cwd_ctx = if owner_workspace == *invocation_ctx.active_root() {
         invocation_ctx.clone()
     } else {
-        WorkspaceContext::resolve_for_project(&owner_workspace_dir, &record.project)?
+        WorkspaceContext::resolve_for_project(owner_workspace.as_path(), &record.project)?
     };
+    let owner_workspace_dir = owner_workspace.into_path_buf();
     let cwd_workspace_dir = owner_workspace_dir.clone();
 
     // Resolve source/dest workspaces by verb. OwnerRecord's `source`/`target`
@@ -4059,14 +4058,14 @@ fn load_continuing_context<'a>(
 
     let (source_workspace_dir, dest_workspace_dir, cli_path) = match recorded_verb {
         MachineVerb::Sync => (
-            record.source.clone(),
-            record.target.clone(),
-            record.source.clone(),
+            record.source.as_path().to_path_buf(),
+            record.target.as_path().to_path_buf(),
+            record.source.as_path().to_path_buf(),
         ),
         MachineVerb::SyncTo => (
-            record.target.clone(),
-            record.target.clone(),
-            record.target.clone(),
+            record.target.as_path().to_path_buf(),
+            record.target.as_path().to_path_buf(),
+            record.target.as_path().to_path_buf(),
         ),
     };
 
@@ -4077,15 +4076,17 @@ fn load_continuing_context<'a>(
         source_project_name,
         source_kind,
     ) = {
-        let source_ctx =
-            WorkspaceContext::resolve_for_project(&source_workspace_dir, &cwd_project_name)
-                .with_context(|| {
-                    format!(
-                        "failed to resolve {} as a workspace of project `{}`",
-                        source_workspace_dir.display(),
-                        cwd_project_name.as_str(),
-                    )
-                })?;
+        let source_ctx = WorkspaceContext::resolve_for_project(
+            source_workspace_dir.as_path(),
+            &cwd_project_name,
+        )
+        .with_context(|| {
+            format!(
+                "failed to resolve {} as a workspace of project `{}`",
+                source_workspace_dir.display(),
+                cwd_project_name.as_str(),
+            )
+        })?;
         let root = source_ctx.active_path().to_path_buf();
         let dir = project_dir(&root, &cwd_project_name);
         (
@@ -4248,18 +4249,13 @@ fn warn_on_sibling_sync(cwd_ctx: &WorkspaceContext, source_workspace_dir: &Path,
             Err(_) => return,
         };
         if let Checkout::Workweave { dir: source_ww, .. } = &source_ctx.checkout {
-            let cwd_canonical = resolve(cwd_ww).unwrap_or_else(|_| cwd_ww.to_path_buf());
-            let source_canonical = resolve(source_ww).unwrap_or_else(|_| source_ww.to_path_buf());
-            if cwd_canonical != source_canonical {
-                let cwd_parent = resolve(cwd_parent).unwrap_or_else(|_| cwd_parent.clone());
-                if cwd_parent != source_canonical && emit_text {
-                    eprintln!(
-                        "warning: syncing across workweave siblings ({} → {}); \
-                         this skips the recorded parent (informational — proceeding).",
-                        cwd_canonical.display(),
-                        source_canonical.display(),
-                    );
-                }
+            if cwd_ww != source_ww && cwd_parent != source_ww && emit_text {
+                eprintln!(
+                    "warning: syncing across workweave siblings ({} → {}); \
+                     this skips the recorded parent (informational — proceeding).",
+                    cwd_ww.as_path().display(),
+                    source_ww.as_path().display(),
+                );
             }
         }
     }
@@ -5897,7 +5893,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             match &target_ctx.checkout {
                 Checkout::Workweave {
                     name, dir, project, ..
-                } => match name.require(dir, project).and_then(|name| {
+                } => match name.require(dir.as_path(), project).and_then(|name| {
                     crate::workweave::materialize_member(
                         vcs.as_ref(),
                         target_ctx.primary_path(),
@@ -6073,8 +6069,8 @@ fn run_retire(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             let retired = retire_workweave_after_sync_to(
                 ctx.project_vcs.as_ref(),
                 &ctx.cwd_ctx,
-                dir,
-                name.require(dir, project)?,
+                dir.as_path(),
+                name.require(dir.as_path(), project)?,
                 project,
                 &ctx.cwd_project_dir,
                 &ctx.dest_workspace_dir,
@@ -6683,20 +6679,6 @@ fn regenerate_lock_phase3(
 // rwv abort
 // ---------------------------------------------------------------------------
 
-/// Workspace identity comparison for abort: canonicalize both sides
-/// (fall back to the raw path when canonicalization fails, e.g. the
-/// workspace was deleted). Op records hold operator-supplied paths
-/// verbatim (`SyncSource::Path` does not canonicalize), so a recorded
-/// path may reach the same workspace through a symlink — e.g. macOS's
-/// `/var` → `/private/var` tempdirs, or a symlinked weaveroot — while
-/// every workspace resolution canonicalizes. Textual comparison
-/// would misclassify the workspace and pick the wrong savepoint namespace.
-fn same_workspace(a: &Path, b: &Path) -> bool {
-    let ca = resolve(a).unwrap_or_else(|_| a.to_path_buf());
-    let cb = resolve(b).unwrap_or_else(|_| b.to_path_buf());
-    ca == cb
-}
-
 /// Which of an op's workspaces a restore is running in, decided by the
 /// workspace's identity in the owner record and never by which of the two
 /// `rwv abort` was invoked from.
@@ -6713,8 +6695,8 @@ enum AbortSide {
 }
 
 impl AbortSide {
-    fn of(workspace: &Path, record: &OwnerRecord) -> Self {
-        if record.verb == OpVerb::SyncTo && same_workspace(workspace, &record.target) {
+    fn of(workspace: &CanonicalPath, record: &OwnerRecord) -> Self {
+        if record.verb == OpVerb::SyncTo && *workspace == record.target {
             Self::SyncToTarget
         } else {
             Self::Replay
@@ -6779,7 +6761,8 @@ pub fn run_abort(
     ctx: &WorkspaceContext,
     abandon: &crate::cli::consent::AbandonForeignTipConsent,
 ) -> anyhow::Result<()> {
-    let workspace_dir = ctx.active_path().to_path_buf();
+    let workspace = ctx.active_root();
+    let workspace_dir = workspace.as_path().to_path_buf();
 
     // resolve_to_owner follows a lease pointer if the workspace holds a lease,
     // so `rwv abort` invoked from either the owner or a leased workspace finds
@@ -6788,7 +6771,7 @@ pub fn run_abort(
         crate::refuse!(RefusalKind::NoOpRecorded, "no operation in progress")
     };
     let other_workspace = (resolved.record.verb == OpVerb::SyncTo).then(|| {
-        if same_workspace(&resolved.owner_workspace, &workspace_dir) {
+        if resolved.owner_workspace == *workspace {
             resolved.record.target.clone()
         } else {
             resolved.owner_workspace.clone()
@@ -6811,7 +6794,7 @@ pub fn run_abort(
         .context("failed to load CWD project")?;
     refuse_symlinked_members(&workspace_dir, &op_project_name)?;
     if let Some(other) = &other_workspace {
-        refuse_symlinked_members(other, &op_project_name)?;
+        refuse_symlinked_members(other.as_path(), &op_project_name)?;
     }
 
     let mut tally = AbortTally::default();
@@ -6820,7 +6803,7 @@ pub fn run_abort(
         &workspace_dir,
         &cwd_project_dir,
         &cwd_project,
-        AbortSide::of(&workspace_dir, &owner_record),
+        AbortSide::of(workspace, &owner_record),
         "",
         &op_id,
         &owner_record,
@@ -6832,13 +6815,13 @@ pub fn run_abort(
         // Best-effort: an other workspace that does not present the op's
         // project is skipped with a warning rather than restored from
         // whatever else lives there.
-        match WorkspaceContext::resolve_for_project(other_dir, &op_project_name) {
+        match WorkspaceContext::resolve_for_project(other_dir.as_path(), &op_project_name) {
             Ok(other_ctx) => {
                 let other_ws_dir = other_ctx.active_path().to_path_buf();
                 let other_project_dir = project_dir(&other_ws_dir, &op_project_name);
                 match Project::from_dir_skip_lock(&other_project_dir, op_project_name.clone()) {
                     Ok(other_project) => {
-                        let side = AbortSide::of(&other_ws_dir, &owner_record);
+                        let side = AbortSide::of(other_ctx.active_root(), &owner_record);
                         restore_abort_workspace(
                             &other_ws_dir,
                             &other_project_dir,
@@ -6868,7 +6851,7 @@ pub fn run_abort(
             Err(e) => {
                 eprintln!(
                     "  warning: could not resolve workspace at {}: {e:#}; skipping",
-                    other_dir.display()
+                    other_dir.as_path().display()
                 );
             }
         }
@@ -7811,6 +7794,7 @@ fn ff_advance_repo(
 mod tests {
     use super::*;
     use crate::git::git_vcs;
+    use crate::path_spelling::resolve;
     use crate::vcs::EphemeralRefName;
 
     // -----------------------------------------------------------------------
@@ -8804,7 +8788,7 @@ mod tests {
         std::fs::create_dir_all(ww.join("github/example")).unwrap();
         let primary_canon = resolve(&primary).unwrap();
         crate::workspace::WorkweaveMarker::new(
-            primary_canon.clone(),
+            &primary_canon,
             ProjectName::new("web-app").unwrap(),
             &primary_canon,
         )
@@ -8814,7 +8798,7 @@ mod tests {
             &primary_canon,
             &ProjectName::new("web-app").unwrap(),
             &crate::manifest::WorkweaveName::new("feat").unwrap(),
-            crate::workweave_index::canonical_recorded_path(&ww),
+            CanonicalPath::of(&ww),
         )
         .unwrap();
 
@@ -8957,7 +8941,7 @@ mod tests {
         std::fs::create_dir_all(ww.join("github/example")).unwrap();
         let primary_canon = resolve(&primary).unwrap();
         crate::workspace::WorkweaveMarker::new(
-            primary_canon.clone(),
+            &primary_canon,
             ProjectName::new("web-app").unwrap(),
             &primary_canon,
         )
@@ -8967,7 +8951,7 @@ mod tests {
             &primary_canon,
             &ProjectName::new("web-app").unwrap(),
             &crate::manifest::WorkweaveName::new("feat").unwrap(),
-            crate::workweave_index::canonical_recorded_path(&ww),
+            CanonicalPath::of(&ww),
         )
         .unwrap();
 

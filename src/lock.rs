@@ -379,7 +379,9 @@ pub(crate) fn write_project_lock(
             let name = ctx.require_active_project_on_disk()?.clone();
             (name, None)
         }
-        Checkout::Workweave { dir, project, .. } => (project.clone(), Some(dir.clone())),
+        Checkout::Workweave { dir, project, .. } => {
+            (project.clone(), Some(dir.as_path().to_path_buf()))
+        }
     };
 
     let project_dir = project_dir(ctx.active_path(), &project_name);

@@ -51,7 +51,7 @@ fn make_workweave(tmp: &Path, ws: &Path, project: &str, name: &str) -> std::path
     std::fs::create_dir_all(&ww_dir).unwrap();
     let primary_canon = repoweave::path_spelling::resolve(ws).unwrap();
     let marker = WorkweaveMarker::new(
-        primary_canon.clone(),
+        &primary_canon,
         ProjectName::new(project).unwrap(),
         &primary_canon,
     );

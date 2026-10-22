@@ -35,7 +35,7 @@ use crate::manifest::{
     LockFile, Manifest, ProjectName, RepoKey, RepoPath, Role, Submodules, WorkweaveId,
     WorkweaveName,
 };
-use crate::path_spelling::resolve;
+use crate::path_spelling::{resolve, CanonicalPath};
 use crate::refusal::RefusalKind;
 use crate::share::{FilePlacement, FilePrimitives, Filesystem};
 use crate::symlink::LinkTarget;
@@ -44,8 +44,7 @@ use crate::vcs::{
     RawRefName, ResolvedRevisionId, Vcs, VcsError,
 };
 use crate::workspace::{
-    project_dir, project_rel_dir, project_rel_path, workweave_name_in, CanonicalPath,
-    WorkweaveMarker,
+    project_dir, project_rel_dir, project_rel_path, workweave_name_in, WorkweaveMarker,
 };
 use crate::workweave_index;
 use crate::workweave_index::RefRegistry;
@@ -116,7 +115,7 @@ pub fn refuse_symlinked_members(workspace_dir: &Path, project: &ProjectName) -> 
 /// (list, delete, sync targets, etc.) resolves via the recorded name → path
 /// entries, so it does not consult this at all.
 pub fn workweave_container(primary_root: &Path, project: &ProjectName) -> anyhow::Result<PathBuf> {
-    workweave_index::resolve_container(primary_root, project)
+    workweave_index::resolve_container(primary_root, project).map(CanonicalPath::into_path_buf)
 }
 
 /// Result of validating a registry entry against its on-disk marker.
@@ -152,7 +151,7 @@ pub enum RegistryEntryValidation {
 /// on a registered path. Correctness against a stale/foreign index depends on
 /// this check running.
 pub fn validate_registry_entry(
-    primary_root: &Path,
+    primary: &CanonicalPath,
     project: &ProjectName,
     path: &Path,
 ) -> RegistryEntryValidation {
@@ -168,7 +167,7 @@ pub fn validate_registry_entry(
             }
         }
     };
-    if !marker.names_primary(primary_root) {
+    if !marker.names_primary(primary) {
         return RegistryEntryValidation::ForeignPrimary;
     }
     if marker.project() != project {
@@ -197,8 +196,8 @@ pub fn resolve_registered_workweave(
         Some(p) => p,
         None => return Ok(None),
     };
-    match validate_registry_entry(primary_root, project, &raw) {
-        RegistryEntryValidation::Valid => Ok(Some(raw)),
+    match validate_registry_entry(&CanonicalPath::of(primary_root), project, raw.as_path()) {
+        RegistryEntryValidation::Valid => Ok(Some(raw.into_path_buf())),
         _ => Ok(None),
     }
 }
@@ -223,7 +222,7 @@ pub fn workweave_name_for_path(
     let found = index
         .workweaves
         .into_iter()
-        .find(|(_, recorded)| workweave_index::same_directory(recorded, path));
+        .find(|(_, recorded)| recorded.same_directory(path));
     Ok(found.map(|(name, _)| name))
 }
 
@@ -287,14 +286,14 @@ pub fn ensure_registered_workweave(
             project.as_str()
         ),
     };
-    match validate_registry_entry(primary_root, project, &raw) {
-        RegistryEntryValidation::Valid => Ok(raw),
+    match validate_registry_entry(&CanonicalPath::of(primary_root), project, raw.as_path()) {
+        RegistryEntryValidation::Valid => Ok(raw.into_path_buf()),
         RegistryEntryValidation::MissingDirectory => crate::refuse!(
             RefusalKind::StaleRegistryEntry,
             "workweave `{}` is recorded at {} but that directory no longer \
              exists; run `rwv doctor --fix` to prune the stale entry",
             name.as_str(),
-            raw.display()
+            raw.as_path().display()
         ),
         RegistryEntryValidation::MissingMarker => crate::refuse!(
             RefusalKind::StaleRegistryEntry,
@@ -302,7 +301,7 @@ pub fn ensure_registered_workweave(
              `.rwv-workweave` marker — refusing to touch it; run `rwv doctor` \
              for guidance",
             name.as_str(),
-            raw.display()
+            raw.as_path().display()
         ),
         RegistryEntryValidation::ForeignPrimary => crate::refuse!(
             RefusalKind::StaleRegistryEntry,
@@ -311,7 +310,7 @@ pub fn ensure_registered_workweave(
              workweave. This can arise from a committed / hand-edited \
              registry; run `rwv doctor` to investigate.",
             name.as_str(),
-            raw.display()
+            raw.as_path().display()
         ),
         RegistryEntryValidation::ProjectMismatch { actual } => crate::refuse!(
             RefusalKind::StaleRegistryEntry,
@@ -319,7 +318,7 @@ pub fn ensure_registered_workweave(
              `{}`, not `{}` — refusing to touch it; run `rwv doctor` to \
              investigate the registry / marker disagreement",
             name.as_str(),
-            raw.display(),
+            raw.as_path().display(),
             actual.as_str(),
             project.as_str()
         ),
@@ -329,7 +328,7 @@ pub fn ensure_registered_workweave(
              read ({detail}); refusing to touch it. Run `rwv doctor` for \
              remediation.",
             name.as_str(),
-            raw.display()
+            raw.as_path().display()
         ),
     }
 }
@@ -1070,7 +1069,7 @@ impl BirthOutcome {
 /// through git's common-dir is what makes that true — the path each verb
 /// happens to hold is not.
 pub(crate) fn receipt_store_for(vcs: &dyn Vcs, checkout: &Path) -> PathBuf {
-    resolved_worktree_parent(vcs, checkout, checkout)
+    resolved_worktree_parent(vcs, checkout, checkout).into_path_buf()
 }
 
 /// A member worktree [`materialize_member`] gave a workweave.
@@ -1151,9 +1150,7 @@ pub(crate) fn materialize_member(
 /// `checkout` holds itself — a full clone, not a workspace linked into a store
 /// elsewhere.
 pub(crate) fn is_own_store(store: &Path, checkout: &Path) -> bool {
-    let own = crate::git::store_path_in(checkout);
-    let resolved = |p: &Path| resolve(p).unwrap_or_else(|_| p.to_path_buf());
-    resolved(store) == resolved(&own)
+    CanonicalPath::of(store) == CanonicalPath::of(&crate::git::store_path_in(checkout))
 }
 
 /// Replace the full clone at `repo_path` in the workweave at `workweave_dir`
@@ -1281,11 +1278,11 @@ fn refuse_unless_replaceable(
         Some(_) => true,
     };
 
-    let own = resolve(standalone).unwrap_or_else(|_| standalone.to_path_buf());
+    let own = CanonicalPath::of(standalone);
     let dependents: Vec<String> = vcs
         .list_worktrees(standalone)?
         .into_iter()
-        .filter(|wt| resolve(wt).unwrap_or_else(|_| wt.clone()) != own)
+        .filter(|wt| CanonicalPath::of(wt) != own)
         .map(|wt| wt.display().to_string())
         .collect();
     if !dependents.is_empty() {
@@ -1687,9 +1684,7 @@ pub fn create_workweave(
     // and `birth_ephemeral_worktree` refuses to destroy a ref it cannot prove
     // is a stale leftover.
     if let Some(recorded) = workweave_index::lookup_raw(primary_root, project, name)? {
-        if workweave_index::canonical_recorded_path(&recorded)
-            != workweave_index::canonical_recorded_path(&workweave_dir)
-        {
+        if recorded != CanonicalPath::of(&workweave_dir) {
             crate::refuse!(
                 RefusalKind::WorkweaveNameTaken,
                 "project `{project}` already records a workweave named `{name}` at {recorded}; \
@@ -1699,7 +1694,7 @@ pub fn create_workweave(
                  gone — run `rwv doctor --fix` to prune the stale entry.",
                 project = project.as_str(),
                 name = name.as_str(),
-                recorded = recorded.display(),
+                recorded = recorded.as_path().display(),
                 requested = workweave_dir.display(),
                 branch = EphemeralRefName::mint(&flat),
             );
@@ -1746,7 +1741,7 @@ pub fn create_workweave(
                 // both are destroyed by the replace.
                 let mut paths =
                     collect_dirty_paths(project_vcs.as_ref(), &workweave_dir, project, &manifest);
-                let baselines = merge_baselines(&workweave_dir, primary_root);
+                let baselines = merge_baselines(&workweave_dir, &CanonicalPath::of(primary_root));
                 paths.extend(collect_diverged_paths(
                     project_vcs.as_ref(),
                     &workweave_dir,
@@ -2245,7 +2240,7 @@ pub fn create_workweave(
     // where to land. For workweaves forked directly from primary, parent
     // == primary; for workweaves forked from another workweave, parent is
     // that workweave's directory.
-    let marker = WorkweaveMarker::new(primary_root.to_path_buf(), project.clone(), source_root);
+    let marker = WorkweaveMarker::new(primary_root, project.clone(), source_root);
     // The marker is the ONLY identity file a workweave root gets: it and
     // `.rwv-active` name the same fact and are mutually exclusive, occupying
     // one tier of the resolution chain rather than two. A pointer beside it
@@ -2272,9 +2267,13 @@ pub fn create_workweave(
     // registry entry becomes an on-disk orphan that consumers cannot address
     // by name, and silent auto-adoption in read paths is deliberately not
     // provided (see module docs).
-    let recorded_dir = resolve(&workweave_dir).unwrap_or_else(|_| workweave_dir.clone());
-    workweave_index::record_workweave(primary_root, project, name, recorded_dir)
-        .context("failed to record workweave in the primary-side registry")?;
+    workweave_index::record_workweave(
+        primary_root,
+        project,
+        name,
+        CanonicalPath::of(&workweave_dir),
+    )
+    .context("failed to record workweave in the primary-side registry")?;
 
     // All steps complete — defuse the rollback guard so Drop is a no-op.
     rollback.defuse();
@@ -2455,13 +2454,13 @@ fn reuse_existing_workweave(
         );
     }
 
-    if !marker.names_primary(primary_root) {
+    if !marker.names_primary(&CanonicalPath::of(primary_root)) {
         crate::refuse!(
             RefusalKind::ForeignWorkweaveInTargetDir,
             "workweave at {} is for primary workspace {}, refusing to recreate for {}; \
              rerun with --replace-existing to overwrite",
             workweave_dir.display(),
-            marker.primary().display(),
+            marker.primary().as_path().display(),
             primary_root.display()
         );
     }
@@ -2600,15 +2599,14 @@ fn member_depth_checkouts(workweave_dir: &Path, manifest: &Manifest) -> Vec<Memb
 /// always included. With stacked workweaves a child workweave's work lands
 /// in its parent workweave and may reach primary only after further
 /// sync-to hops — checking primary alone would refuse every child retire.
-fn merge_baselines(workweave_dir: &Path, ws_root: &Path) -> Vec<PathBuf> {
+fn merge_baselines(workweave_dir: &Path, ws_root: &CanonicalPath) -> Vec<PathBuf> {
     let mut baselines: Vec<PathBuf> = Vec::new();
-    let root = CanonicalPath::of(ws_root);
     if let Ok(Some(marker)) = WorkweaveMarker::read(workweave_dir) {
-        if marker.parent().as_path().exists() && *marker.parent() != root {
+        if marker.parent().as_path().exists() && marker.parent() != ws_root {
             baselines.push(marker.parent().as_path().to_path_buf());
         }
     }
-    baselines.push(ws_root.to_path_buf());
+    baselines.push(ws_root.as_path().to_path_buf());
     baselines
 }
 
@@ -2653,9 +2651,9 @@ fn collect_diverged_paths(
         // and we conservatively decline to vouch — see below.
         let wt_canonical = match vcs
             .resolve_canonical_store(wt)
-            .and_then(|s| s.parent().map(|p| p.to_path_buf()))
+            .and_then(|s| s.parent().map(CanonicalPath::of))
         {
-            Some(p) => resolve(&p).unwrap_or(p),
+            Some(p) => p,
             None => {
                 diverged.push(format!(
                     "{label}: canonical-store lookup failed: not a repo"
@@ -2679,9 +2677,9 @@ fn collect_diverged_paths(
             // and let the operator run `rwv doctor`.
             let base_canonical = match vcs
                 .resolve_canonical_store(&canonical)
-                .and_then(|s| s.parent().map(|p| p.to_path_buf()))
+                .and_then(|s| s.parent().map(CanonicalPath::of))
             {
-                Some(p) => resolve(&p).unwrap_or(p),
+                Some(p) => p,
                 None => continue,
             };
             if base_canonical != wt_canonical {
@@ -2691,7 +2689,7 @@ fn collect_diverged_paths(
                 // Run is_ancestor in the resolved canonical store so the
                 // query is rooted in the DAG that contains both refs.
                 if vcs
-                    .is_ancestor(&wt_canonical, &wt_head, &c)
+                    .is_ancestor(wt_canonical.as_path(), &wt_head, &c)
                     .unwrap_or(false)
                 {
                     return; // vouched: this baseline contains the work
@@ -2787,16 +2785,20 @@ fn collect_dirty_repos_by_walk(vcs: &dyn Vcs, dir: &Path) -> Vec<String> {
 /// used unconditionally — preserving behavior for the (now-explicit)
 /// "checkout is gone" branch while making the canonical resolution
 /// authoritative for the live case.
-pub(crate) fn resolved_worktree_parent(vcs: &dyn Vcs, checkout: &Path, fallback: &Path) -> PathBuf {
+pub(crate) fn resolved_worktree_parent(
+    vcs: &dyn Vcs,
+    checkout: &Path,
+    fallback: &Path,
+) -> CanonicalPath {
     if !checkout.exists() {
-        return fallback.to_path_buf();
+        return CanonicalPath::of(fallback);
     }
     match vcs
         .resolve_canonical_store(checkout)
-        .and_then(|s| s.parent().map(|p| p.to_path_buf()))
+        .and_then(|s| s.parent().map(CanonicalPath::of))
     {
-        Some(p) => resolve(&p).unwrap_or(p),
-        None => fallback.to_path_buf(),
+        Some(p) => p,
+        None => CanonicalPath::of(fallback),
     }
 }
 
@@ -2834,12 +2836,12 @@ fn refuse_if_checkouts_host_foreign_worktrees(
         }
         let canonical = match vcs
             .resolve_canonical_store(checkout)
-            .and_then(|s| s.parent().map(|p| p.to_path_buf()))
+            .and_then(|s| s.parent().map(CanonicalPath::of))
         {
-            Some(p) => resolve(&p).unwrap_or(p),
+            Some(p) => p,
             None => return, // not a repo; nothing to host
         };
-        let checkout_canonical = resolve(checkout).unwrap_or(checkout.to_path_buf());
+        let checkout_canonical = CanonicalPath::of(checkout);
         if canonical != checkout_canonical {
             // Linked workspace — the canonical store lives elsewhere; this
             // checkout cannot have foreign dependents.
@@ -2852,14 +2854,14 @@ fn refuse_if_checkouts_host_foreign_worktrees(
             Ok(ws) => ws,
             Err(_) => return,
         };
-        let ww_canonical = resolve(workweave_dir).unwrap_or(workweave_dir.to_path_buf());
+        let ww_canonical = CanonicalPath::of(workweave_dir);
         let mut foreign: Vec<PathBuf> = Vec::new();
         for wt in worktrees {
-            let wt_canon = resolve(&wt).unwrap_or(wt.clone());
+            let wt_canon = CanonicalPath::of(&wt);
             if wt_canon == checkout_canonical {
                 continue; // the canonical store's own "main" entry
             }
-            if !wt_canon.starts_with(&ww_canonical) {
+            if !ww_canonical.contains(&wt_canon) {
                 foreign.push(wt);
             }
         }
@@ -3301,7 +3303,7 @@ fn delete_workweave_inner_at(
     // while the workweave's marker still exists (it names the parent). Work
     // counts as merged when its recorded parent OR the primary weave contains
     // it — nested workweaves land in their parent first.
-    let baselines = merge_baselines(&workweave_dir, ws_root);
+    let baselines = merge_baselines(&workweave_dir, &CanonicalPath::of(ws_root));
 
     // Committed-but-unmerged work is just as lost as uncommitted work:
     // the ephemeral-ref cleanup below destroys the only ref to those
@@ -3368,7 +3370,8 @@ fn delete_workweave_inner_at(
         // know about this checkout — running `worktree remove` there leaves
         // a stale registration. See docs/explanation/joints/clone-topology.md.
         let fallback_repo_abs = ws_root.join(repo_path.as_path());
-        let repo_abs = resolved_worktree_parent(vcs.as_ref(), &worktree_path, &fallback_repo_abs);
+        let repo_store = resolved_worktree_parent(vcs.as_ref(), &worktree_path, &fallback_repo_abs);
+        let repo_abs = repo_store.as_path().to_path_buf();
 
         if worktree_path.exists() {
             // Detect "checkout is its own canonical store" — `git worktree
@@ -3380,9 +3383,7 @@ fn delete_workweave_inner_at(
             // the registration cleanup (there is no parent to clean) and
             // also the prune / branch-delete loop (nothing else can know
             // about this store's refs once the dir is gone).
-            let checkout_canonical =
-                resolve(&worktree_path).unwrap_or_else(|_| worktree_path.clone());
-            let is_lone_canonical = repo_abs == checkout_canonical;
+            let is_lone_canonical = repo_store == CanonicalPath::of(&worktree_path);
             if is_lone_canonical {
                 // Nothing to unregister; the dir-removal at the end of
                 // delete_workweave will clean up the on-disk store.
@@ -3437,7 +3438,8 @@ fn delete_workweave_inner_at(
         project_vcs.as_ref(),
         &project_worktree,
         &project_dir_fallback,
-    );
+    )
+    .into_path_buf();
     if project_worktree.exists() && crate::git::is_linked_worktree(&project_worktree) {
         if let Err(e) = project_vcs.remove_worktree(&project_store, &project_worktree) {
             let msg = format!("{}: {e:#}", project_rel_path(project));
@@ -3470,17 +3472,15 @@ fn delete_workweave_inner_at(
     // under the tree being removed: the hosting process may not be rwv's
     // own (a test harness shares one working directory across every
     // concurrent thread), so a directory this delete does not hold hostage
-    // stays where it is. Both sides are canonicalized so `starts_with`
-    // compares one spelling; a working directory that cannot be read or
-    // canonicalized cannot be proven outside, and stepping out of it is
-    // harmless. The live cwd — not the resolved origin — is the subject on
+    // stays where it is. A working directory that cannot be read or resolved
+    // cannot be proven outside, and stepping out of it is harmless. The live cwd — not the resolved origin — is the subject on
     // purpose: `-C` points the origin elsewhere while the handle stays put.
     if workweave_dir.exists() {
         let cwd_inside = match (
-            std::env::current_dir().and_then(|d| resolve(&d)),
-            resolve(&workweave_dir),
+            std::env::current_dir().and_then(|d| CanonicalPath::existing(&d)),
+            CanonicalPath::existing(&workweave_dir),
         ) {
-            (Ok(cwd), Ok(ww)) => cwd.starts_with(&ww),
+            (Ok(cwd), Ok(ww)) => ww.contains(&cwd),
             _ => true,
         };
         if cwd_inside {
@@ -3554,15 +3554,17 @@ fn list_workweave_dirs_for_project(
         Some(idx) => idx,
         None => return Ok(Vec::new()),
     };
+    let primary = CanonicalPath::of(ws_root);
     let mut result: Vec<(WorkweaveName, PathBuf)> = index
         .workweaves
         .into_iter()
         .filter(|(_, path)| {
             matches!(
-                validate_registry_entry(ws_root, project, path),
+                validate_registry_entry(&primary, project, path.as_path()),
                 RegistryEntryValidation::Valid
             )
         })
+        .map(|(name, path)| (name, path.into_path_buf()))
         .collect();
     result.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(result)
@@ -3583,26 +3585,21 @@ fn list_workweave_dirs_for_project(
 /// plus every recorded per-project container) and returns marker-bearing
 /// directories whose `.rwv-workweave` `primary` canonicalizes to `ws_root`.
 pub fn list_workweave_dirs(ws_root: &Path) -> Vec<(WorkweaveId, PathBuf)> {
-    let mut containers: Vec<PathBuf> = Vec::new();
-    let push_unique = |p: PathBuf, containers: &mut Vec<PathBuf>| {
-        let canonical = resolve(&p).unwrap_or(p);
-        if !containers.contains(&canonical) {
-            containers.push(canonical);
-        }
-    };
-    push_unique(workweave_index::default_container(ws_root), &mut containers);
+    let mut containers = std::collections::BTreeSet::new();
+    containers.insert(CanonicalPath::of(&workweave_index::default_container(
+        ws_root,
+    )));
     for project in crate::workspace::discover_projects(ws_root) {
         if let Ok(Some(idx)) = workweave_index::read(ws_root, &project) {
-            push_unique(idx.container, &mut containers);
+            containers.insert(idx.container);
         }
     }
 
-    let mut seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+    let mut seen = std::collections::HashSet::new();
     let mut result: Vec<(WorkweaveId, PathBuf)> = Vec::new();
     for container in &containers {
-        for (id, dir) in doctor_scan_container(ws_root, container) {
-            let canonical = resolve(&dir).unwrap_or_else(|_| dir.clone());
-            if seen.insert(canonical) {
+        for (id, dir) in doctor_scan_container(ws_root, container.as_path()) {
+            if seen.insert(CanonicalPath::of(&dir)) {
                 result.push((id, dir));
             }
         }
@@ -3634,6 +3631,7 @@ pub fn list_workweave_dirs(ws_root: &Path) -> Vec<(WorkweaveId, PathBuf)> {
 /// This is the ONLY surviving on-disk scan (the pre-registry list/delete
 /// scan was deleted). Every other code path resolves via the registry.
 pub fn doctor_scan_container(ws_root: &Path, container: &Path) -> Vec<(WorkweaveId, PathBuf)> {
+    let primary = CanonicalPath::of(ws_root);
     let mut result = Vec::new();
     let entries = match std::fs::read_dir(container) {
         Ok(e) => e,
@@ -3648,7 +3646,7 @@ pub fn doctor_scan_container(ws_root: &Path, container: &Path) -> Vec<(Workweave
             Ok(Some(m)) => m,
             _ => continue,
         };
-        if !marker.names_primary(ws_root) {
+        if !marker.names_primary(&primary) {
             continue;
         }
         let project_name = marker.project().clone();
@@ -3793,10 +3791,10 @@ pub fn workweave_log(
             project,
             parent,
         } => (
-            name.require(dir, project)?.clone(),
-            dir.clone(),
+            name.require(dir.as_path(), project)?.clone(),
+            dir.as_path().to_path_buf(),
             project.clone(),
-            parent.clone(),
+            parent.as_path().to_path_buf(),
         ),
         Checkout::Primary { .. } => {
             crate::refuse!(
@@ -3810,7 +3808,7 @@ pub fn workweave_log(
 
     if !parent_path.exists() {
         // Reuse the friendly dangling-parent remediation the sync path uses.
-        crate::sync::check_parent_not_dangling(&parent_path, ctx.primary_path())?;
+        crate::sync::check_parent_not_dangling(parent_path.as_path(), ctx.primary_path())?;
     }
 
     let manifest = load_manifest(ctx.primary_path(), &project)?;
@@ -4124,7 +4122,7 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
             // Fire-and-forget: log errors but always succeed.
             if let Ok(Some(marker)) = WorkweaveMarker::read(Path::new(&worktree_path)) {
                 let outcome = workweave_name_for_path(
-                    marker.primary(),
+                    marker.primary().as_path(),
                     marker.project(),
                     Path::new(&worktree_path),
                 )
@@ -4145,7 +4143,7 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
                     // "Claude moved on" is not the operator consenting to lose
                     // work: dirty or unmerged work refuses on stderr.
                     delete_workweave(
-                        marker.primary(),
+                        marker.primary().as_path(),
                         marker.project(),
                         &name,
                         Some(Path::new(&worktree_path)),
@@ -4810,8 +4808,7 @@ mod tests {
     // `merge_baselines` returns the workspaces whose lineage counts as "this
     // work has landed", and `delete_workweave` names them in its refusal.
     // Whether the recorded parent IS the workspace already being appended is
-    // a comparison between a value stored resolved and one handed in raw, so
-    // it holds only if both sides are brought to the same spelling.
+    // a comparison of two identities, however the caller spelled its root.
     // -----------------------------------------------------------------------
 
     /// A primary and a workweave whose marker records that primary as its
@@ -4822,13 +4819,9 @@ mod tests {
         let workweave_dir = tmp.path().join(".workweaves").join("web-app--feat");
         std::fs::create_dir_all(&primary).unwrap();
         std::fs::create_dir_all(&workweave_dir).unwrap();
-        WorkweaveMarker::new(
-            primary.clone(),
-            ProjectName::new("web-app").unwrap(),
-            &primary,
-        )
-        .write(&workweave_dir)
-        .unwrap();
+        WorkweaveMarker::new(&primary, ProjectName::new("web-app").unwrap(), &primary)
+            .write(&workweave_dir)
+            .unwrap();
         (tmp, primary, workweave_dir)
     }
 
@@ -4842,11 +4835,30 @@ mod tests {
             "precondition: the detoured spelling resolves to the primary"
         );
 
-        let baselines = merge_baselines(&workweave_dir, &detoured);
+        let baselines = merge_baselines(&workweave_dir, &CanonicalPath::of(&detoured));
 
         assert_eq!(
             baselines,
-            vec![detoured],
+            vec![resolve(&primary).unwrap()],
+            "the recorded parent IS this workspace, so it must not be listed a second \
+             time under another spelling"
+        );
+    }
+
+    /// The macOS `/var` geometry: the root the caller holds and the parent the
+    /// marker records name one directory through a symlink.
+    #[test]
+    fn merge_baselines_recognizes_a_symlinked_spelling_of_the_parent() {
+        let (tmp, primary, workweave_dir) = forked_from_primary();
+        let link = tmp.path().join("link");
+        crate::symlink::create(tmp.path(), &link, crate::symlink::LinkTarget::Directory).unwrap();
+        let symlinked = link.join(primary.file_name().unwrap());
+
+        let baselines = merge_baselines(&workweave_dir, &CanonicalPath::of(&symlinked));
+
+        assert_eq!(
+            baselines,
+            vec![resolve(&primary).unwrap()],
             "the recorded parent IS this workspace, so it must not be listed a second \
              time under another spelling"
         );
@@ -4858,7 +4870,7 @@ mod tests {
         let elsewhere = tmp.path().join("other");
         std::fs::create_dir_all(&elsewhere).unwrap();
 
-        let baselines = merge_baselines(&workweave_dir, &elsewhere);
+        let baselines = merge_baselines(&workweave_dir, &CanonicalPath::of(&elsewhere));
 
         assert_eq!(
             baselines.len(),

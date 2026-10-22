@@ -106,7 +106,7 @@ fn write_marker(ww_dir: &Path, primary: &Path, project: &str) {
         primary,
         &repoweave::manifest::ProjectName::new(project).unwrap(),
         &name,
-        ww_dir.to_path_buf(),
+        repoweave::path_spelling::CanonicalPath::of(ww_dir),
     )
     .expect("record_workweave should succeed for test fixture");
 }

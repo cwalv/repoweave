@@ -1104,8 +1104,8 @@ fn abort_succeeds_when_rwv_lock_contains_conflict_markers() {
         &op_id,
         repoweave::op_state::SyncStrategy::Rebase,
         repoweave::manifest::ProjectName::new("web-app").unwrap(),
-        ws.root.clone(),
-        ws.root.clone(),
+        &ws.root,
+        &ws.root,
     );
     let op_id = owner.id.clone();
     repoweave::op_state::write_owner(&ws.root, &owner).unwrap();

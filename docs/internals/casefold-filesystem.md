@@ -7,8 +7,9 @@
 > workweaves go through rwv verbs. If you need an operation no verb provides,
 > that is a UX gap: file it rather than working around it at the file level.
 
-`workweave_index::same_directory` decides directory identity by `(dev, ino)`
-rather than by comparing canonicalized path strings. On a filesystem that does
+`CanonicalPath::same_directory` (`src/path_spelling.rs`) decides directory
+identity by `(dev, ino)` rather than by comparing resolved path strings, which
+is what `CanonicalPath`'s own equality compares. On a filesystem that does
 not fold case, the two approaches never disagree: `canonicalize` resolves
 every alias to the one spelling on disk, so a case-drifted query and the
 on-disk entry canonicalize to the same string regardless of which comparison
@@ -115,10 +116,10 @@ measurement:
 1. Run the suite against the mount as above and confirm
    `a_confusable_sibling_warns_at_mint_and_is_still_created` passes, folding
    arm, with output showing `lists it as`.
-2. Apply the mutation: in `src/workweave_index.rs`, change
-   `same_directory`'s body to the old comparison —
-   `canonical_recorded_path(a) == canonical_recorded_path(b)` unconditionally,
-   deleting the `cfg(unix)` `(dev, ino)` block above it.
+2. Apply the mutation: in `src/path_spelling.rs`, change
+   `same_directory`'s body to the spelling comparison —
+   `*self == CanonicalPath::of(other)` unconditionally, deleting the
+   `cfg(unix)` `(dev, ino)` block above it.
 3. Re-run the same test against the mount. It must fail, and the failure must
    be the `lists it as` assertion specifically — check which assertion fired,
    not just that the test went red; an earlier assertion failing first would

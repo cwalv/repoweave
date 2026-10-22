@@ -68,7 +68,7 @@ pub fn render_context(ctx: &WorkspaceContext) -> String {
         Checkout::Workweave {
             name, dir, project, ..
         } => {
-            out.push_str(&format!("- **Workweave**: `{}`\n", dir.display()));
+            out.push_str(&format!("- **Workweave**: `{}`\n", dir.as_path().display()));
             out.push_str(&format!(
                 "- **Weave**: `{}`\n",
                 ctx.primary_path().display()
@@ -429,7 +429,7 @@ enabled = true
         // workweave (marker-less resolution was removed).
         let primary_canon = resolve(&root).unwrap();
         crate::workspace::WorkweaveMarker::new(
-            primary_canon.clone(),
+            &primary_canon,
             crate::manifest::ProjectName::new("ws").unwrap(),
             &primary_canon,
         )

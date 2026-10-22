@@ -66,9 +66,9 @@ impl From<&op_state::ResolvedOwner> for OpStatus {
             verb: resolved.record.verb,
             phase: resolved.record.phase.clone(),
             started_at: resolved.record.started_at.clone(),
-            owner: WirePath::of(&resolved.owner_workspace),
-            source: WirePath::of(&resolved.record.source),
-            target: WirePath::of(&resolved.record.target),
+            owner: WirePath::of(resolved.owner_workspace.as_path()),
+            source: WirePath::of(resolved.record.source.as_path()),
+            target: WirePath::of(resolved.record.target.as_path()),
             overrides: resolved.record.overrides.iter().collect(),
         }
     }
@@ -250,7 +250,7 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool, filter: &RepoFilter) -> an
     // wrong for stacked or adopted-to-primary parents).
     let recorded_parent: Option<std::path::PathBuf> = match &ctx.checkout {
         Checkout::Primary { .. } => None,
-        Checkout::Workweave { parent, .. } => Some(parent.clone()),
+        Checkout::Workweave { parent, .. } => Some(parent.as_path().to_path_buf()),
     };
 
     let mut entries: Vec<RepoStatus> = Vec::new();
@@ -468,7 +468,7 @@ fn print_op_header(op: &op_state::ResolvedOwner) {
         id = op.record.id,
         phase = op.record.phase,
         elapsed = op_state::elapsed_since(&op.record.started_at),
-        owner = crate::path_spelling::operator_path(&op.owner_workspace),
+        owner = crate::path_spelling::operator_path(op.owner_workspace.as_path()),
     );
     println!(
         "  resume with `{resume}`, or `rwv abort` to discard",

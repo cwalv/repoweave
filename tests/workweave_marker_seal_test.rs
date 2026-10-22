@@ -1,6 +1,6 @@
 //! `WorkweaveMarker`'s three fields are private; `WorkweaveMarker::new` is
-//! the only constructor, and it canonicalizes `parent` on the way in — a
-//! step a field-by-field literal has no way to be forced through. Unlike
+//! the only constructor, and it resolves `primary` and `parent` on the way in
+//! — a step a field-by-field literal has no way to be forced through. Unlike
 //! `WeaveRootIdentity`'s payloads (see `root_identity_seal_test.rs`), `new`
 //! is meant to be called from many sites — production and tests alike — so
 //! there is no "exactly one caller" invariant to pin here, only "every
@@ -77,8 +77,8 @@ fn the_harness_can_compile_a_legal_snippet() {
         r#"
         use repoweave::manifest::ProjectName;
         use repoweave::workspace::WorkweaveMarker;
-        use std::path::{Path, PathBuf};
-        pub fn legal(primary: PathBuf, project: ProjectName, parent: &Path) -> WorkweaveMarker {
+        use std::path::Path;
+        pub fn legal(primary: &Path, project: ProjectName, parent: &Path) -> WorkweaveMarker {
             let marker = WorkweaveMarker::new(primary, project, parent);
             let _ = (marker.primary(), marker.project(), marker.parent());
             marker
@@ -95,10 +95,10 @@ fn a_marker_cannot_be_assembled_field_by_field_from_outside_the_crate() {
         "WorkweaveMarker's fields are private; only `new` builds one",
         r#"
         use repoweave::manifest::ProjectName;
-        use repoweave::workspace::{CanonicalPath, WorkweaveMarker};
-        use std::path::PathBuf;
+        use repoweave::path_spelling::CanonicalPath;
+        use repoweave::workspace::WorkweaveMarker;
         pub fn forge(
-            primary: PathBuf,
+            primary: CanonicalPath,
             project: ProjectName,
             parent: CanonicalPath,
         ) -> WorkweaveMarker {

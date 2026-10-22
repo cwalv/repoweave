@@ -247,8 +247,8 @@ fn concurrent_op_detection_error_names_phase_and_start_time() {
         &op_id,
         repoweave::op_state::SyncStrategy::Rebase,
         repoweave::manifest::ProjectName::new("web-app").unwrap(),
-        primary.root.clone(),
-        ww.root.clone(),
+        &primary.root,
+        &ww.root,
     );
     owner.phase = repoweave::op_state::OpPhase::Relock;
     owner.started_at = STALE_STARTED_AT.to_owned();

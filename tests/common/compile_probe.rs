@@ -406,18 +406,38 @@ fn repoweave_rlib() -> PathBuf {
 /// passed for the crate's own dependencies, so a probe that names `anyhow`
 /// fails to compile for a reason that has nothing to do with what it pins.
 pub fn compile(snippet: &str) -> (bool, String) {
+    compile_with(snippet, &[])
+}
+
+/// As [`compile`], with each of `dependencies` — crates the library itself
+/// depends on — also in scope, for a probe whose subject is a trait one of
+/// them defines.
+///
+/// A dependency is the one `lib<name>-*.rlib` in the deps directory; more
+/// than one is refused rather than guessed between, since a probe compiled
+/// against a different build of the crate than the library's sees a
+/// different trait.
+pub fn compile_with(snippet: &str, dependencies: &[&str]) -> (bool, String) {
     let tmp = crate::common::tempdir().expect("tempdir");
     let src = tmp.path().join("probe.rs");
     std::fs::write(&src, snippet).expect("write probe");
 
-    let out = Command::new("rustc")
+    let mut rustc = Command::new("rustc");
+    rustc
         .arg("--edition=2021")
         .arg("--crate-type=lib")
         .arg("--emit=metadata")
         .arg("--out-dir")
         .arg(tmp.path())
         .arg("--extern")
-        .arg(format!("repoweave={}", repoweave_rlib().display()))
+        .arg(format!("repoweave={}", repoweave_rlib().display()));
+    for dependency in dependencies {
+        rustc.arg("--extern").arg(format!(
+            "{dependency}={}",
+            dependency_rlib(dependency).display()
+        ));
+    }
+    let out = rustc
         .arg("-L")
         .arg(format!("dependency={}", deps_dir().display()))
         .arg(&src)
@@ -428,6 +448,28 @@ pub fn compile(snippet: &str) -> (bool, String) {
         out.status.success(),
         String::from_utf8_lossy(&out.stderr).into_owned(),
     )
+}
+
+fn dependency_rlib(name: &str) -> PathBuf {
+    let deps = deps_dir();
+    let prefix = format!("lib{name}-");
+    let found: Vec<PathBuf> = std::fs::read_dir(&deps)
+        .expect("read the deps directory")
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with(&prefix) && n.ends_with(".rlib"))
+        })
+        .collect();
+    match found.as_slice() {
+        [one] => one.clone(),
+        _ => panic!(
+            "expected exactly one {prefix}*.rlib in {}, found {found:?}",
+            deps.display()
+        ),
+    }
 }
 
 /// Assert `snippet` fails to compile with exactly `code`, and say what it
@@ -443,7 +485,28 @@ pub fn assert_fails_with(code: &str, what: &str, snippet: &str) {
 /// one alone — so such a snippet keeps failing after half the invariant is
 /// gone. Where the count is the point, it is asserted.
 pub fn assert_fails_n_times(code: &str, n: usize, what: &str, snippet: &str) {
-    let (compiled, stderr) = compile(snippet);
+    assert_fails_with_n_times_given(code, n, what, &[], snippet);
+}
+
+/// As [`assert_fails_with`], compiled with [`compile_with`]'s `dependencies`
+/// in scope.
+pub fn assert_fails_with_dependencies(
+    code: &str,
+    what: &str,
+    dependencies: &[&str],
+    snippet: &str,
+) {
+    assert_fails_with_n_times_given(code, 1, what, dependencies, snippet);
+}
+
+fn assert_fails_with_n_times_given(
+    code: &str,
+    n: usize,
+    what: &str,
+    dependencies: &[&str],
+    snippet: &str,
+) {
+    let (compiled, stderr) = compile_with(snippet, dependencies);
     assert!(
         !stderr.contains("error[E0514]"),
         "{what}: the probe compiler disagrees with the one that built the \

@@ -65,7 +65,7 @@ use crate::integrations::merge::{
     Ownership, Remedy,
 };
 use crate::manifest::GoWorkConfig;
-use crate::path_spelling::resolve;
+use crate::path_spelling::CanonicalPath;
 use crate::tool_program::ToolProgram;
 use anyhow::Context;
 use std::path::Path;
@@ -554,7 +554,10 @@ fn activate_via_go_tool(
     // but both resolve to the same inode. fs::copy on a symlink-to-self
     // truncates the file. Canonicalize both sides and skip the
     // copy when they resolve to the same path.
-    let same_file = match (resolve(&work_tmp), resolve(go_work_path)) {
+    let same_file = match (
+        CanonicalPath::existing(&work_tmp),
+        CanonicalPath::existing(go_work_path),
+    ) {
         (Ok(a), Ok(b)) => a == b,
         _ => false,
     };

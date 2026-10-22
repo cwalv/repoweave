@@ -1237,7 +1237,8 @@ fn rm_rf_of_a_container_placed_seat_is_fixed_in_one_pass() {
 
     let seat_dir = workweaves_dir(&ws).join("myproj--seat");
     assert!(
-        seat_checkout.starts_with(&seat_dir),
+        repoweave::path_spelling::CanonicalPath::of(&seat_dir)
+            .contains(&repoweave::path_spelling::CanonicalPath::of(&seat_checkout)),
         "fixture: `create` should place the seat's checkout under the \
          container path {}; got {}",
         seat_dir.display(),
@@ -1956,7 +1957,7 @@ fn record_placement(primary: &Path, project: &str, workweave: &str, dir: &Path) 
         primary,
         &ProjectName::new(project).unwrap(),
         &repoweave::manifest::WorkweaveName::new(workweave).unwrap(),
-        dir.to_path_buf(),
+        repoweave::path_spelling::CanonicalPath::of(dir),
     )
     .expect("placement recorded");
 }
@@ -2614,8 +2615,8 @@ fn migration_skips_a_workweave_with_an_operation_in_flight() {
         &repoweave::op_state::OpId::new_now(),
         repoweave::op_state::SyncStrategy::Rebase,
         repoweave::manifest::ProjectName::new("myproj").unwrap(),
-        ws.clone(),
-        ww_dir.clone(),
+        &ws,
+        &ww_dir,
     );
     repoweave::op_state::write_owner(&ww_dir, &owner).expect("owner record written");
 
@@ -3532,8 +3533,8 @@ fn an_in_flight_op_leaves_the_migration_finding_standing_beside_the_op_state_one
         &repoweave::op_state::OpId::new_now(),
         repoweave::op_state::SyncStrategy::Rebase,
         repoweave::manifest::ProjectName::new("myproj").unwrap(),
-        ws.clone(),
-        ww_dir.clone(),
+        &ws,
+        &ww_dir,
     );
     repoweave::op_state::write_owner(&ww_dir, &owner).expect("owner record written");
 

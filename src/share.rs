@@ -9,7 +9,7 @@
 //! operation asks the backend again.
 
 use crate::manifest::{RepoPath, Role};
-use crate::path_spelling::resolve;
+use crate::path_spelling::CanonicalPath;
 use crate::vcs::{
     BornRef, OwnedRef, RecordedSubmodule, ResolvedRevisionId, SubmoduleBirth, TrackedFile, Vcs,
     VcsError, WorkspacePopulation,
@@ -298,7 +298,7 @@ struct Source {
 /// Every other workspace of the repository `dest` belongs to, those at
 /// `at` first and then the primary's checkout.
 fn sources(vcs: &dyn Vcs, dest: &Path, at: &ResolvedRevisionId) -> Vec<Source> {
-    let same = |a: &Path, b: &Path| match (resolve(a), resolve(b)) {
+    let same = |a: &Path, b: &Path| match (CanonicalPath::existing(a), CanonicalPath::existing(b)) {
         (Ok(a), Ok(b)) => a == b,
         _ => false,
     };
@@ -675,12 +675,10 @@ pub(crate) mod testing {
         }
 
         fn enter(&self, from: &Path, to: &Path, mode: Mode) -> io::Result<()> {
-            if let Some((_, _, kind)) = self
-                .failures
-                .lock()
-                .unwrap()
-                .iter()
-                .find(|(source, m, _)| *m == mode && from.starts_with(source))
+            if let Some((_, _, kind)) =
+                self.failures.lock().unwrap().iter().find(|(source, m, _)| {
+                    *m == mode && CanonicalPath::of(source).contains(&CanonicalPath::of(from))
+                })
             {
                 return Err(io::Error::from(*kind));
             }
@@ -724,6 +722,7 @@ mod tests {
     use super::*;
     use crate::git::{git_command_in_test, git_vcs, under_both_line_endings, LineEndings};
     use crate::manifest::Manifest;
+    use crate::path_spelling::resolve;
     use crate::vcs::RawRefName;
 
     fn git(dir: &Path, args: &[&str]) -> String {
@@ -926,6 +925,10 @@ mod tests {
                     .starts_with(".rwv-place-probe")
             })
             .map(|(from, _)| {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "the source is the candidate `from` is spelled under, for the strip below"
+                )]
                 let source = candidates
                     .iter()
                     .find(|c| from.starts_with(c))

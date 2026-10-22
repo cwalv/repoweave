@@ -1,7 +1,7 @@
 //! Git implementation of the [`Vcs`] trait.
 
 use crate::op_state::SavepointKey;
-use crate::path_spelling::resolve;
+use crate::path_spelling::CanonicalPath;
 use crate::registry::CloneUrl;
 use crate::vcs::{
     CommitId, CommitSummary, ConflictOp, ContentIdentity, DerivedContentPolicy,
@@ -935,13 +935,13 @@ impl GitVcs {
     /// This runs inside the failing add, so the registration is observed
     /// before any rwv-side rollback can prune it.
     fn is_registered_worktree(&self, store: &Path, dest: &Path) -> bool {
-        let Ok(dest) = resolve(dest) else {
+        let Ok(dest) = CanonicalPath::existing(dest) else {
             return false;
         };
         self.list_worktrees(store).is_ok_and(|worktrees| {
             worktrees
                 .iter()
-                .any(|w| resolve(w).is_ok_and(|w| w == dest))
+                .any(|w| CanonicalPath::existing(w).is_ok_and(|w| w == dest))
         })
     }
 
@@ -1492,7 +1492,10 @@ impl Vcs for GitVcs {
         let Ok(top) = Self::run_trimmed(&["rev-parse", "--show-toplevel"], path) else {
             return false;
         };
-        match (resolve(Path::new(&top)), resolve(path)) {
+        match (
+            CanonicalPath::existing(Path::new(&top)),
+            CanonicalPath::existing(path),
+        ) {
             (Ok(top), Ok(path)) => top == path,
             _ => false,
         }

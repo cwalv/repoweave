@@ -30,6 +30,7 @@ use crate::sync;
 use crate::update;
 
 use crate::manifest::{ProjectName, WorkweaveName};
+use crate::path_spelling::CanonicalPath;
 use crate::refusal::{refusal, RefusalKind};
 use crate::workspace::{acquire_origin_dir, WorkspaceContext};
 
@@ -981,12 +982,12 @@ pub fn run() -> anyhow::Result<()> {
                         let recorded = crate::workweave_index::set_container(
                             primary_root,
                             &project,
-                            path.locate(&invocation),
+                            CanonicalPath::of(&path.locate(&invocation)),
                         )?;
                         eprintln!(
                             "recorded workweave container for project `{}`: {}",
                             project.as_str(),
-                            recorded.display()
+                            recorded.as_path().display()
                         );
                     }
                 }
@@ -1175,8 +1176,11 @@ pub fn run() -> anyhow::Result<()> {
                                 // (os error 2)` a dangling parent would
                                 // otherwise produce with friendly
                                 // doctor-remediation text.
-                                sync::check_parent_not_dangling(parent, ctx.primary_path())?;
-                                sync::SyncSource::Path(parent.clone())
+                                sync::check_parent_not_dangling(
+                                    parent.as_path(),
+                                    ctx.primary_path(),
+                                )?;
+                                sync::SyncSource::Path(parent.as_path().to_path_buf())
                             }
                             crate::workspace::Checkout::Primary { .. } => {
                                 crate::refuse!(

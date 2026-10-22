@@ -8,6 +8,9 @@
 //! `clippy.toml` bans every other way to canonicalize, so no path rwv holds
 //! carries the prefix unless no plain spelling exists for it.
 //!
+//! [`CanonicalPath`] is a resolved path held as an identity: the type every
+//! compared or recorded location takes, comparable only with another.
+//!
 //! Two spellings answer for an absolute path. They differ on the separator,
 //! and the difference is a difference of audience:
 //!
@@ -35,12 +38,19 @@
 //! [`native_join`] spells a path into a file another tool keeps, the way that
 //! tool's own path library would have written it.
 
+use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::io;
 use std::path::{Path, PathBuf};
 
 /// `path` with every symlink and `.`/`..` resolved, spelled as
 /// [`plain_spelling`] spells it.
+///
+/// On Windows the answer is the spelling on disk, case included: NTFS names
+/// each component as stored, whatever case it was asked in. Two spellings of
+/// one directory therefore resolve to one string there, which is what lets a
+/// resolved spelling serve as an identity ([`CanonicalPath`]). Wine, like a
+/// case-folding Linux filesystem, answers in the case it was asked in.
 pub fn resolve(path: &Path) -> io::Result<PathBuf> {
     #[expect(
         clippy::disallowed_methods,
@@ -56,6 +66,100 @@ pub(crate) fn plain_path(path: &Path) -> Cow<'_, Path> {
         Some(Cow::Owned(plain)) => Cow::Owned(PathBuf::from(plain)),
         Some(Cow::Borrowed(plain)) => Cow::Borrowed(Path::new(plain)),
         None => Cow::Borrowed(path),
+    }
+}
+
+/// The identity of a location: the one spelling every equivalent spelling of
+/// it resolves to.
+///
+/// Equality, order and hash are on that spelling, so a set or a record keyed
+/// by it is lawful. Wherever [`resolve`] answers in the spelling on disk that
+/// is also the filesystem's verdict; where it echoes the spelling it was asked
+/// with — a case-folding Linux filesystem — [`Self::same_directory`] asks the
+/// filesystem instead.
+///
+/// A path that is not on disk resolves through its nearest existing ancestor,
+/// with the missing tail joined back on, so a directory nobody has created yet
+/// compares by the same rule as one that exists. A path none of whose
+/// ancestors exist — a record naming another machine's tree — is kept as
+/// given, and compares textually, which is all a comparison can offer for a
+/// path the filesystem cannot speak about.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(transparent)]
+pub struct CanonicalPath(PathBuf);
+
+impl CanonicalPath {
+    pub fn of(path: &Path) -> Self {
+        let mut missing = Vec::new();
+        let mut existing = path;
+        loop {
+            if let Ok(resolved) = resolve(existing) {
+                return CanonicalPath(missing.iter().rev().fold(resolved, |p, leaf| p.join(leaf)));
+            }
+            match (existing.parent(), existing.file_name()) {
+                (Some(parent), Some(leaf)) => {
+                    missing.push(leaf);
+                    existing = parent;
+                }
+                _ => return CanonicalPath(path.to_path_buf()),
+            }
+        }
+    }
+
+    /// Whether `other` is this location or lies beneath it.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a prefix test between two resolved spellings is containment"
+    )]
+    pub fn contains(&self, other: &CanonicalPath) -> bool {
+        other.0.starts_with(&self.0)
+    }
+
+    /// Whether `other` is the directory object this names, by the
+    /// filesystem's own verdict rather than by spelling.
+    ///
+    /// On Unix that is `(dev, ino)`, wherever both exist. Stable Rust offers
+    /// no file identity on Windows, where `resolve` answers in the spelling on
+    /// disk, so the resolved spelling is the whole answer there; it is also
+    /// the answer for a path that is gone and so has no identity to read.
+    pub fn same_directory(&self, other: &Path) -> bool {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if let (Ok(a), Ok(b)) = (std::fs::metadata(&self.0), std::fs::metadata(other)) {
+                return (a.dev(), a.ino()) == (b.dev(), b.ino());
+            }
+        }
+        *self == CanonicalPath::of(other)
+    }
+
+    /// The identity of a location that must exist, or the error resolving
+    /// it gave.
+    pub fn existing(path: &Path) -> std::io::Result<Self> {
+        resolve(path).map(CanonicalPath)
+    }
+
+    /// The directory containing this one. A resolved path's parent is itself
+    /// resolved, so no resolution runs.
+    pub fn parent(&self) -> Option<CanonicalPath> {
+        self.0.parent().map(|p| CanonicalPath(p.to_path_buf()))
+    }
+
+    pub fn as_path(&self) -> &Path {
+        &self.0
+    }
+
+    pub fn into_path_buf(self) -> PathBuf {
+        self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for CanonicalPath {
+    /// A recorded path is resolved as it is read, so a record written in any
+    /// spelling — by an earlier rwv, or by hand — compares by the rule a
+    /// fresh one does.
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Ok(CanonicalPath::of(&PathBuf::deserialize(d)?))
     }
 }
 

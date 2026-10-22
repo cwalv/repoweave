@@ -829,14 +829,6 @@ const ROUTED: &[Routed] = &[
     Routed {
         file: "add_remove.rs",
         scope: "",
-        needle: r#""failed to resolve weave root {}","#,
-        renders: 1,
-        prints: "run_add_new's failure to canonicalize the primary weave root for the \
-                 inside-the-weave check",
-    },
-    Routed {
-        file: "add_remove.rs",
-        scope: "",
         needle: r#""the root '{}' is inside the weave at '{}'; the upstream it would \"#,
         renders: 2,
         prints: "run_add_new's refusal when the creation root sits inside the weave it \

@@ -73,11 +73,7 @@ fn register_workweave(ws: &Path, project: &str, name: &str) -> PathBuf {
     std::fs::create_dir_all(&ww_dir).unwrap();
 
     // Write the `.rwv-workweave` marker so the round-trip validation passes.
-    let marker = WorkweaveMarker::new(
-        ws_canon.clone(),
-        ProjectName::new(project).unwrap(),
-        &ws_canon,
-    );
+    let marker = WorkweaveMarker::new(&ws_canon, ProjectName::new(project).unwrap(), &ws_canon);
     marker.write(&ww_dir).unwrap();
 
     // Also place the project dir structure inside the workweave so that
@@ -91,13 +87,17 @@ fn register_workweave(ws: &Path, project: &str, name: &str) -> PathBuf {
         &ws_canon,
         &ProjectName::new(project).unwrap(),
         &repoweave::manifest::WorkweaveName::new(name).unwrap(),
-        ww_dir.clone(),
+        repoweave::path_spelling::CanonicalPath::of(&ww_dir),
     )
     .unwrap();
 
     // Seed the container in the index (required by `list`).
-    workweave_index::set_container(&ws_canon, &ProjectName::new(project).unwrap(), container)
-        .unwrap();
+    workweave_index::set_container(
+        &ws_canon,
+        &ProjectName::new(project).unwrap(),
+        repoweave::path_spelling::CanonicalPath::of(&container),
+    )
+    .unwrap();
 
     ww_dir
 }

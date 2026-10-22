@@ -82,7 +82,7 @@
 //! until it lets go, which the publish waits out.
 
 use crate::manifest::{ProjectName, WorkweaveName};
-use crate::path_spelling::resolve;
+use crate::path_spelling::CanonicalPath;
 use crate::refusal::RefusalKind;
 use crate::vcs::{
     CommitId, EphemeralRefName, LegacyEphemeralRefName, OwnedRef, RawRefName, ResolvedRevisionId,
@@ -119,10 +119,10 @@ pub(crate) const INDEX_CLAIM_FILE: &str = ".rwv-workweave-index.lock";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkweaveIndex {
     /// Absolute container directory for new workweaves in this project.
-    pub container: PathBuf,
+    pub container: CanonicalPath,
     /// Recorded `name → absolute path` entries.
     #[serde(default)]
-    pub workweaves: BTreeMap<WorkweaveName, PathBuf>,
+    pub workweaves: BTreeMap<WorkweaveName, CanonicalPath>,
     /// Ownership receipts. Private: [`RefRegistry`] is the only thing that
     /// may add or remove one — a receipt written any other way would be an
     /// ownership claim nobody checked, which is what R2 exists to prevent.
@@ -138,7 +138,7 @@ impl WorkweaveIndex {
     /// The receipt registry is present-and-empty, not absent: an index this
     /// build wrote is not a legacy index, and
     /// [`WorkweaveIndex::has_receipt_registry`] must not claim otherwise.
-    pub fn new(container: PathBuf) -> Self {
+    pub fn new(container: CanonicalPath) -> Self {
         Self {
             container,
             workweaves: BTreeMap::new(),
@@ -182,7 +182,7 @@ struct RefReceipt {
     /// file: the index is machine-local (dotted, ignored, never committed),
     /// and a receipt has to name a path the VCS can be pointed at — every
     /// consumer of [`OwnedRef::store`] hands it straight to a `Vcs` method.
-    store: PathBuf,
+    store: CanonicalPath,
     /// The recorded ref name, as written into the store.
     name: RawRefName,
     /// The canonical commit id the ref was created at.
@@ -204,52 +204,6 @@ pub fn default_container(primary_root: &Path) -> PathBuf {
         .parent()
         .expect("weave root should have a parent")
         .join(".workweaves")
-}
-
-/// The form in which this index records an absolute path, for a directory that
-/// may not exist yet.
-///
-/// Recorded paths are canonicalized, so comparing a recorded entry against a
-/// directory no one has created yet needs the *parent* canonicalized and the
-/// leaf rejoined — otherwise a `/tmp` that is a symlink makes every
-/// not-yet-created path look different from its own recorded entry. The
-/// container is subject to the same rule as the placements under it: on macOS
-/// a temporary directory reached through `/var` records one way and resolves
-/// the other.
-pub(crate) fn canonical_recorded_path(dir: &Path) -> PathBuf {
-    if let Ok(p) = resolve(dir) {
-        return p;
-    }
-    match (dir.parent(), dir.file_name()) {
-        (Some(parent), Some(leaf)) => resolve(parent)
-            .map(|p| p.join(leaf))
-            .unwrap_or_else(|_| dir.to_path_buf()),
-        _ => dir.to_path_buf(),
-    }
-}
-
-/// Whether two paths denote the same directory object on disk.
-///
-/// The question a recorded path answers is "which object is this", and the
-/// filesystem is authoritative for it in a way string comparison is not: on a
-/// case-folding filesystem `canonicalize` hands back the spelling it was
-/// asked with rather than the one on disk, so two spellings of one directory
-/// compare unequal while `(dev, ino)` identifies them as one object.
-///
-/// Windows has no file-identity accessor in stable Rust, and its
-/// `canonicalize` does resolve to the on-disk spelling, so there the recorded
-/// path convention is the whole answer. It is also the fallback wherever the
-/// identity cannot be read — a recorded entry whose directory is gone has no
-/// identity to compare.
-pub(crate) fn same_directory(a: &Path, b: &Path) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        if let (Ok(a_meta), Ok(b_meta)) = (std::fs::metadata(a), std::fs::metadata(b)) {
-            return (a_meta.dev(), a_meta.ino()) == (b_meta.dev(), b_meta.ino());
-        }
-    }
-    canonical_recorded_path(a) == canonical_recorded_path(b)
 }
 
 /// Read the index file for `(primary_root, project)`.
@@ -401,11 +355,14 @@ fn claim_path(primary_root: &Path, project: &ProjectName) -> PathBuf {
 /// Priority:
 ///   1. The `container` field of the recorded index, if the index exists.
 ///   2. [`default_container`] (`<parent-of-root>/.workweaves`).
-pub fn resolve_container(primary_root: &Path, project: &ProjectName) -> anyhow::Result<PathBuf> {
+pub fn resolve_container(
+    primary_root: &Path,
+    project: &ProjectName,
+) -> anyhow::Result<CanonicalPath> {
     if let Some(idx) = read(primary_root, project)? {
         return Ok(idx.container);
     }
-    Ok(canonical_recorded_path(&default_container(primary_root)))
+    Ok(CanonicalPath::of(&default_container(primary_root)))
 }
 
 /// Read the index of the `(primary_root, project)` pair `claim` covers, for a
@@ -445,20 +402,13 @@ pub fn read_for_edit(claim: &IndexClaim) -> anyhow::Result<Option<WorkweaveIndex
 /// Set the container in the index for `(primary_root, project)`, creating
 /// the index file with an empty `workweaves` map if it did not exist.
 ///
-/// The recorded entries are preserved. `container` must be absolute; it is
-/// recorded in `canonical_recorded_path` form, like the placements under it,
-/// and that recorded form is returned.
-///
-/// Canonicalizing here rather than in each caller is what keeps the rule true:
-/// the container and the placements beneath it are written by different code
-/// paths, and a rule every caller has to remember is one this index spent a
-/// release not obeying.
+/// The recorded entries are preserved, and the recorded container is
+/// returned.
 pub fn set_container(
     primary_root: &Path,
     project: &ProjectName,
-    container: PathBuf,
-) -> anyhow::Result<PathBuf> {
-    let container = canonical_recorded_path(&container);
+    container: CanonicalPath,
+) -> anyhow::Result<CanonicalPath> {
     IndexClaim::hold(primary_root, project, |claim| {
         let mut index =
             read_for_edit(claim)?.unwrap_or_else(|| WorkweaveIndex::new(container.clone()));
@@ -479,7 +429,7 @@ pub fn record_workweave(
     primary_root: &Path,
     project: &ProjectName,
     name: &WorkweaveName,
-    path: PathBuf,
+    path: CanonicalPath,
 ) -> anyhow::Result<()> {
     IndexClaim::hold(primary_root, project, |claim| {
         let mut index = read_or_seed(claim)?;
@@ -503,9 +453,9 @@ fn read_or_seed(claim: &IndexClaim) -> anyhow::Result<WorkweaveIndex> {
     if let Some(idx) = read_for_edit(claim)? {
         return Ok(idx);
     }
-    Ok(WorkweaveIndex::new(canonical_recorded_path(
-        &default_container(&claim.primary_root),
-    )))
+    Ok(WorkweaveIndex::new(CanonicalPath::of(&default_container(
+        &claim.primary_root,
+    ))))
 }
 
 /// Remove a workweave entry from the index. No-op if the entry (or the index
@@ -541,7 +491,7 @@ pub fn lookup_raw(
     primary_root: &Path,
     project: &ProjectName,
     name: &WorkweaveName,
-) -> anyhow::Result<Option<PathBuf>> {
+) -> anyhow::Result<Option<CanonicalPath>> {
     Ok(read(primary_root, project)?.and_then(|idx| idx.workweaves.get(name).cloned()))
 }
 
@@ -621,16 +571,18 @@ pub fn lookup_raw(
 /// # A receipt cannot be written around the registry
 ///
 /// ```no_run
+/// use repoweave::path_spelling::CanonicalPath;
 /// use repoweave::workweave_index::WorkweaveIndex;
-/// use std::path::PathBuf;
-/// let _index = WorkweaveIndex::new(PathBuf::from("/container"));
+/// use std::path::Path;
+/// let _index = WorkweaveIndex::new(CanonicalPath::of(Path::new("/container")));
 /// ```
 ///
 /// ```compile_fail
+/// use repoweave::path_spelling::CanonicalPath;
 /// use repoweave::workweave_index::WorkweaveIndex;
-/// use std::path::PathBuf;
+/// use std::path::Path;
 /// let _index = WorkweaveIndex {
-///     container: PathBuf::from("/container"),
+///     container: CanonicalPath::of(Path::new("/container")),
 ///     workweaves: Default::default(),
 ///     receipts: None,
 /// };
@@ -737,7 +689,7 @@ impl RefRegistry {
         raw_name: RawRefName,
         created_at: ResolvedRevisionId,
     ) -> anyhow::Result<OwnedRef> {
-        let key_store = resolve(store).with_context(|| {
+        let key_store = CanonicalPath::existing(store).with_context(|| {
             format!(
                 "cannot record an ownership receipt for {}: the store does not exist",
                 store.display()
@@ -753,7 +705,7 @@ impl RefRegistry {
 
             if let Some(existing) = receipts
                 .iter()
-                .find(|r| same_store(&r.store, &key_store) && r.name == raw_name)
+                .find(|r| r.store == key_store && r.name == raw_name)
             {
                 return existing.to_owned_ref(&self.index_path());
             }
@@ -765,7 +717,11 @@ impl RefRegistry {
             });
             write(claim, &index)?;
 
-            Ok(OwnedRef::from_receipt(key_store, raw_name, created_at))
+            Ok(OwnedRef::from_receipt(
+                key_store.into_path_buf(),
+                raw_name,
+                created_at,
+            ))
         })
     }
 
@@ -781,10 +737,10 @@ impl RefRegistry {
         let Some(receipts) = index.receipts.as_ref() else {
             return Ok(None);
         };
-        let key_store = store_key(store);
+        let key_store = CanonicalPath::of(store);
         receipts
             .iter()
-            .find(|r| same_store(&r.store, &key_store) && &r.name == name)
+            .find(|r| r.store == key_store && &r.name == name)
             .map(|r| r.to_owned_ref(&self.index_path()))
             .transpose()
     }
@@ -795,8 +751,8 @@ impl RefRegistry {
     /// has been retracted; this is how a caller enumerates them. Ordered as
     /// recorded.
     pub fn list_for_store(&self, store: &Path) -> anyhow::Result<Vec<OwnedRef>> {
-        let key_store = store_key(store);
-        self.list_matching(|r| same_store(&r.store, &key_store))
+        let key_store = CanonicalPath::of(store);
+        self.list_matching(|r| r.store == key_store)
     }
 
     /// Every receipt in this project's registry, across stores.
@@ -826,9 +782,9 @@ impl RefRegistry {
             let Some(receipts) = index.receipts.as_mut() else {
                 return Ok(false);
             };
-            let key_store = store_key(store);
+            let key_store = CanonicalPath::of(store);
             let before = receipts.len();
-            receipts.retain(|r| !(same_store(&r.store, &key_store) && &r.name == name));
+            receipts.retain(|r| !(r.store == key_store && &r.name == name));
             if receipts.len() == before {
                 return Ok(false);
             }
@@ -941,34 +897,11 @@ impl RefReceipt {
                 )
             })?;
         Ok(OwnedRef::from_receipt(
-            self.store.clone(),
+            self.store.as_path().to_path_buf(),
             self.name.clone(),
             created_at,
         ))
     }
-}
-
-/// The comparable form of a store path: canonicalized when the store is
-/// there, verbatim when it is not.
-///
-/// Receipts outlive their store — R4 retracts them *before* destroying it,
-/// and a doctor pass reads them after a directory has gone missing — so
-/// this cannot require the path to resolve. Recording canonicalizes (see
-/// [`RefRegistry::record_created`], which refuses otherwise), so the
-/// fallback only ever compares a query against an already-canonical
-/// recorded key: it matches when the caller spells the store the way it was
-/// recorded, which is what every in-tree caller does. No lexical
-/// `..`-folding is attempted; guessing a symlinked path's identity wrong
-/// would mean matching a receipt from a *different* store, and claiming
-/// ownership of someone else's ref is the failure R2 exists to prevent.
-fn store_key(store: &Path) -> PathBuf {
-    resolve(store).unwrap_or_else(|_| store.to_path_buf())
-}
-
-/// Whether a recorded store key and an already-keyed query name the same
-/// store. `query_key` must have come from [`store_key`].
-fn same_store(recorded: &Path, query_key: &Path) -> bool {
-    recorded == query_key || store_key(recorded).as_path() == query_key
 }
 
 /// Ensure the project repo's ignore-surface excludes `.rwv-workweave-index`.
@@ -1105,7 +1038,7 @@ mod tests {
     fn make_store(weave: &Path, rel: &str) -> PathBuf {
         let p = weave.join(rel);
         std::fs::create_dir_all(&p).unwrap();
-        resolve(&p).unwrap()
+        CanonicalPath::existing(&p).unwrap().into_path_buf()
     }
 
     /// A distinct canonical revision per `hex` character.
@@ -1138,7 +1071,7 @@ mod tests {
             &primary,
             &project,
             &crate::manifest::WorkweaveName::new("hotfix").unwrap(),
-            PathBuf::from("/c/web-app--hotfix"),
+            CanonicalPath::of(Path::new("/c/web-app--hotfix")),
         )
         .unwrap();
         assert!(
@@ -1211,7 +1144,7 @@ mod tests {
             &primary,
             &project,
             &crate::manifest::WorkweaveName::new("hotfix").unwrap(),
-            PathBuf::from("/c/web-app--hotfix"),
+            CanonicalPath::of(Path::new("/c/web-app--hotfix")),
         )
         .expect_err("a held claim must refuse the write, not drop it silently");
         let waited = started.elapsed();
@@ -1262,20 +1195,23 @@ mod tests {
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
 
-        let mut index = WorkweaveIndex::new(PathBuf::from("/abs/container"));
+        let mut index = WorkweaveIndex::new(CanonicalPath::of(Path::new("/abs/container")));
         index.workweaves.insert(
             crate::manifest::WorkweaveName::new("hotfix").unwrap(),
-            PathBuf::from("/abs/container/web-app--hotfix"),
+            CanonicalPath::of(Path::new("/abs/container/web-app--hotfix")),
         );
         IndexClaim::hold(&primary, &project, |claim| write(claim, &index)).unwrap();
 
         let got = read(&primary, &project).unwrap().unwrap();
-        assert_eq!(got.container, PathBuf::from("/abs/container"));
+        assert_eq!(
+            got.container,
+            CanonicalPath::of(Path::new("/abs/container"))
+        );
         assert_eq!(
             got.workweaves
                 .get(&crate::manifest::WorkweaveName::new("hotfix").unwrap())
                 .unwrap(),
-            &PathBuf::from("/abs/container/web-app--hotfix")
+            &CanonicalPath::of(Path::new("/abs/container/web-app--hotfix"))
         );
     }
 
@@ -1289,7 +1225,7 @@ mod tests {
             &primary,
             &project,
             &crate::manifest::WorkweaveName::new("feat-a").unwrap(),
-            PathBuf::from("/abs/container/web-app--feat-a"),
+            CanonicalPath::of(Path::new("/abs/container/web-app--feat-a")),
         )
         .unwrap();
 
@@ -1298,7 +1234,7 @@ mod tests {
         // set, recorded in the same canonical form as the placements under it.
         assert_eq!(
             got.container,
-            canonical_recorded_path(&primary.parent().unwrap().join(".workweaves"))
+            CanonicalPath::of(&primary.parent().unwrap().join(".workweaves"))
         );
         assert_eq!(got.workweaves.len(), 1);
     }
@@ -1313,14 +1249,14 @@ mod tests {
             &primary,
             &project,
             &crate::manifest::WorkweaveName::new("a").unwrap(),
-            PathBuf::from("/x/web-app--a"),
+            CanonicalPath::of(Path::new("/x/web-app--a")),
         )
         .unwrap();
         record_workweave(
             &primary,
             &project,
             &crate::manifest::WorkweaveName::new("b").unwrap(),
-            PathBuf::from("/x/web-app--b"),
+            CanonicalPath::of(Path::new("/x/web-app--b")),
         )
         .unwrap();
         forget_workweave(
@@ -1367,18 +1303,18 @@ mod tests {
             &primary,
             &project,
             &crate::manifest::WorkweaveName::new("a").unwrap(),
-            PathBuf::from("/orig/web-app--a"),
+            CanonicalPath::of(Path::new("/orig/web-app--a")),
         )
         .unwrap();
-        set_container(&primary, &project, container.clone()).unwrap();
+        set_container(&primary, &project, CanonicalPath::of(&container)).unwrap();
 
         let got = read(&primary, &project).unwrap().unwrap();
-        assert_eq!(got.container, canonical_recorded_path(&container));
+        assert_eq!(got.container, CanonicalPath::of(&container));
         assert_eq!(
             got.workweaves
                 .get(&crate::manifest::WorkweaveName::new("a").unwrap())
                 .unwrap(),
-            &PathBuf::from("/orig/web-app--a")
+            &CanonicalPath::of(Path::new("/orig/web-app--a"))
         );
     }
 
@@ -1422,7 +1358,7 @@ mod tests {
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
 
-        let index = WorkweaveIndex::new(PathBuf::from("/container"));
+        let index = WorkweaveIndex::new(CanonicalPath::of(Path::new("/container")));
         IndexClaim::hold(&primary, &project, |claim| write(claim, &index)).unwrap();
 
         // The chokepoint owns hygiene: any write path (create, delete,
@@ -1468,9 +1404,9 @@ mod tests {
         let recorded = tmp.path().join("recorded");
         std::fs::create_dir_all(&recorded).unwrap();
 
-        set_container(&primary, &project, recorded.clone()).unwrap();
+        set_container(&primary, &project, CanonicalPath::of(&recorded)).unwrap();
         let got = resolve_container(&primary, &project).unwrap();
-        assert_eq!(got, canonical_recorded_path(&recorded));
+        assert_eq!(got, CanonicalPath::of(&recorded));
     }
 
     #[test]
@@ -1482,17 +1418,17 @@ mod tests {
         let got = resolve_container(&primary, &project).unwrap();
         assert_eq!(
             got,
-            canonical_recorded_path(&primary.parent().unwrap().join(".workweaves"))
+            CanonicalPath::of(&primary.parent().unwrap().join(".workweaves"))
         );
     }
 
     /// Both spellings are written out here rather than computed, and that is
     /// the point: every other assertion in this file that names
-    /// `canonical_recorded_path` builds its expected value by calling it, so
-    /// each of those holds whatever the function does — including nothing.
-    /// The second case is the arm the container takes before anyone creates
-    /// it, and it resolves a parent no `canonicalize` of the whole path can
-    /// reach.
+    /// `CanonicalPath::of` builds its expected value by calling it, so each of
+    /// those holds whatever the function does — including nothing. The
+    /// missing-tail cases are the arm the container takes before anyone
+    /// creates it, and they resolve an ancestor no `canonicalize` of the whole
+    /// path can reach.
     #[test]
     fn a_recorded_path_resolves_a_symlinked_spelling() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1508,11 +1444,15 @@ mod tests {
             "fixture precondition: `link` must be a symlink, or neither spelling differs"
         );
 
-        let resolved = resolve(&real).unwrap();
-        assert_eq!(canonical_recorded_path(&link), resolved);
+        let resolved = CanonicalPath::existing(&real).unwrap();
+        assert_eq!(CanonicalPath::of(&link), resolved);
         assert_eq!(
-            canonical_recorded_path(&link.join("not-created-yet")),
-            resolved.join("not-created-yet")
+            CanonicalPath::of(&link.join("not-created-yet")).as_path(),
+            resolved.as_path().join("not-created-yet")
+        );
+        assert_eq!(
+            CanonicalPath::of(&link.join("not").join("created")).as_path(),
+            resolved.as_path().join("not").join("created")
         );
     }
 
@@ -1702,7 +1642,7 @@ mod tests {
             &primary,
             &project,
             &crate::manifest::WorkweaveName::new("hotfix").unwrap(),
-            workweave.clone(),
+            CanonicalPath::of(&workweave),
         )
         .unwrap();
 
@@ -1793,10 +1733,15 @@ mod tests {
             &primary,
             &project,
             &crate::manifest::WorkweaveName::new("other").unwrap(),
-            PathBuf::from("/x/web-app--other"),
+            CanonicalPath::of(Path::new("/x/web-app--other")),
         )
         .unwrap();
-        set_container(&primary, &project, PathBuf::from("/new-container")).unwrap();
+        set_container(
+            &primary,
+            &project,
+            CanonicalPath::of(Path::new("/new-container")),
+        )
+        .unwrap();
         forget_workweave(
             &primary,
             &project,
@@ -1889,7 +1834,10 @@ mod tests {
 
         let migrated = read(&primary, &project).unwrap().unwrap();
         assert!(migrated.has_receipt_registry());
-        assert_eq!(migrated.container, PathBuf::from("/abs/container"));
+        assert_eq!(
+            migrated.container,
+            CanonicalPath::of(Path::new("/abs/container"))
+        );
         assert!(migrated
             .workweaves
             .contains_key(&crate::manifest::WorkweaveName::new("hotfix").unwrap()));
@@ -1919,7 +1867,7 @@ mod tests {
             &primary,
             &project,
             &crate::manifest::WorkweaveName::new("a").unwrap(),
-            PathBuf::from("/x/web-app--a"),
+            CanonicalPath::of(Path::new("/x/web-app--a")),
         )
         .unwrap();
         assert!(read(&primary, &project)

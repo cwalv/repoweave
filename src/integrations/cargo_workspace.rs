@@ -167,7 +167,7 @@ use crate::owned_state::{
     check_owned_digest, fully_owned_digest_mismatch_issue, stamp_owned_generation, ObservedInputs,
     OwnedDigestCheck,
 };
-use crate::path_spelling::resolve;
+use crate::path_spelling::CanonicalPath;
 use crate::tool_program::ToolProgram;
 use anyhow::Context;
 use semver::{Version, VersionReq};
@@ -193,10 +193,10 @@ struct PackageIndexEntry {
     /// table, or when the version is inherited from `[workspace.package]`
     /// (v1: not resolved through — see the code comment where this is set).
     version: Option<String>,
-    /// Best-effort canonicalized absolute dir. Used by `compute_patches`
+    /// The member directory's identity. Used by `compute_patches`
     /// (committed-paths mode) to match `path = "..."` targets against
     /// members regardless of workspace layout tricks.
-    absolute_dir: std::path::PathBuf,
+    absolute_dir: CanonicalPath,
 }
 
 /// One rwv-generated `[patch.<registry>].<crate>` entry to emit.
@@ -1733,13 +1733,12 @@ impl CargoWorkspace {
                 .get("version")
                 .and_then(|i| i.as_str())
                 .map(String::from);
-            let abs = resolve(&member_dir).unwrap_or(member_dir.clone());
             out.insert(
                 p.clone(),
                 PackageIndexEntry {
                     crate_name: name.to_string(),
                     version,
-                    absolute_dir: abs,
+                    absolute_dir: CanonicalPath::of(&member_dir),
                 },
             );
         }
@@ -1776,7 +1775,7 @@ impl CargoWorkspace {
         let index = Self::build_package_index(ctx, members)?;
         // Inverse: canonical dir → (weave-relative path, crate name).
         // This is what we look up a `path = "..."` target against.
-        let mut by_abs: BTreeMap<std::path::PathBuf, (String, String)> = BTreeMap::new();
+        let mut by_abs: BTreeMap<CanonicalPath, (String, String)> = BTreeMap::new();
         for (member_path, entry) in &index {
             by_abs.insert(
                 entry.absolute_dir.clone(),
@@ -1814,8 +1813,7 @@ impl CargoWorkspace {
                     };
                     let Some(rel) = path_str else { continue };
 
-                    let target = member_dir.join(rel);
-                    let target_abs = resolve(&target).unwrap_or(target.clone());
+                    let target_abs = CanonicalPath::of(&member_dir.join(rel));
 
                     let Some((target_member, target_crate)) = by_abs.get(&target_abs) else {
                         continue;
@@ -3009,8 +3007,7 @@ impl CargoWorkspace {
         let mut records: Vec<PatchShadowingRecord> = Vec::new();
         let mut seen: BTreeSet<(std::path::PathBuf, String, String)> = BTreeSet::new();
 
-        // Canonicalize the ceiling once for identity comparison.
-        let ceiling = resolve(workspace_root).unwrap_or_else(|_| workspace_root.to_path_buf());
+        let ceiling = CanonicalPath::of(workspace_root);
 
         for member in members {
             let member_dir = workspace_root.join(member);
@@ -3083,18 +3080,16 @@ fn collect_patch_keys(
 /// every `.cargo/config.toml` found on the way. Order is closest-first
 /// (member's own config first, then its parent's, etc.).
 ///
-/// `ceiling` is compared by canonical path; if `start` is not under
-/// `ceiling` (e.g. a symlinked or foreign path), the walk still terminates
-/// at filesystem root.
-fn walk_cargo_configs(start: &Path, ceiling: &Path) -> Vec<std::path::PathBuf> {
+/// If `start` is not under `ceiling` (e.g. a symlinked or foreign path), the
+/// walk still terminates at filesystem root.
+fn walk_cargo_configs(start: &Path, ceiling: &CanonicalPath) -> Vec<std::path::PathBuf> {
     let mut out = Vec::new();
-    let start_canonical = resolve(start).unwrap_or_else(|_| start.to_path_buf());
-    let mut cur: Option<&Path> = Some(&start_canonical);
+    let mut cur = Some(CanonicalPath::of(start));
     while let Some(dir) = cur {
-        if dir == ceiling {
+        if dir == *ceiling {
             break;
         }
-        let cfg = dir.join(".cargo").join("config.toml");
+        let cfg = dir.as_path().join(".cargo").join("config.toml");
         if cfg.is_file() {
             out.push(cfg);
         }

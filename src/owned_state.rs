@@ -35,7 +35,7 @@
 //! identical story and can port by calling the same three helpers.
 
 use crate::integration::{Issue, IssueKind, IssueSource, Severity};
-use crate::path_spelling::resolve;
+use crate::path_spelling::CanonicalPath;
 use crate::refusal::RefusalKind;
 use crate::workweave_index;
 use anyhow::Context;
@@ -549,22 +549,22 @@ fn non_member_path_dep_manifest_digests(workspace_root: &Path) -> BTreeMap<Strin
         return BTreeMap::new();
     };
     let members = workspace_members(&ws_doc);
-    let member_dirs: BTreeSet<std::path::PathBuf> = members
+    let member_dirs: BTreeSet<CanonicalPath> = members
         .iter()
-        .map(|m| canonicalize_or_owned(&workspace_root.join(m)))
+        .map(|m| CanonicalPath::of(&workspace_root.join(m)))
         .collect();
 
-    let ws_root_canon = canonicalize_or_owned(workspace_root);
+    let ws_root_canon = CanonicalPath::of(workspace_root);
 
     let mut queue: Vec<std::path::PathBuf> = members
         .iter()
         .map(|m| workspace_root.join(m).join("Cargo.toml"))
         .collect();
-    let mut seen: BTreeSet<std::path::PathBuf> = BTreeSet::new();
+    let mut seen: BTreeSet<CanonicalPath> = BTreeSet::new();
     let mut outside: BTreeMap<String, String> = BTreeMap::new();
 
     while let Some(manifest_path) = queue.pop() {
-        let manifest_canon = canonicalize_or_owned(&manifest_path);
+        let manifest_canon = CanonicalPath::of(&manifest_path);
         if !seen.insert(manifest_canon.clone()) {
             continue;
         }
@@ -580,14 +580,11 @@ fn non_member_path_dep_manifest_digests(workspace_root: &Path) -> BTreeMap<Strin
         };
 
         for target_manifest in path_dep_targets(&doc, &manifest_dir) {
-            let target_canon = canonicalize_or_owned(&target_manifest);
+            let target_canon = CanonicalPath::of(&target_manifest);
             let target_dir_canon = target_canon
                 .parent()
-                .map(std::path::Path::to_path_buf)
                 .unwrap_or_else(|| target_canon.clone());
-            let inside_member = member_dirs
-                .iter()
-                .any(|m| target_dir_canon == *m || target_dir_canon.starts_with(m));
+            let inside_member = member_dirs.iter().any(|m| m.contains(&target_dir_canon));
             if inside_member {
                 // Covered by the member's own commit pin — the outer doc
                 // spells out the argument. Still enqueue for the walk so a
@@ -596,11 +593,15 @@ fn non_member_path_dep_manifest_digests(workspace_root: &Path) -> BTreeMap<Strin
                 queue.push(target_manifest);
                 continue;
             }
-            let Ok(content) = std::fs::read(&target_canon) else {
+            let Ok(content) = std::fs::read(target_canon.as_path()) else {
                 queue.push(target_manifest);
                 continue;
             };
-            let key = workspace_relative_key(&ws_root_canon, workspace_root, &target_canon);
+            let key = workspace_relative_key(
+                ws_root_canon.as_path(),
+                workspace_root,
+                target_canon.as_path(),
+            );
             outside.insert(key, owned_digest(&content));
             queue.push(target_manifest);
         }
@@ -693,12 +694,6 @@ fn collect_path_deps(
             out.push(manifest_dir.join(rel).join("Cargo.toml"));
         }
     }
-}
-
-/// Best-effort canonicalize; fall back to the input on error so unmapped
-/// filesystems and missing files still yield a deterministic key.
-fn canonicalize_or_owned(path: &Path) -> std::path::PathBuf {
-    resolve(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// A stable workspace-relative string spelling of `target`. Paths inside

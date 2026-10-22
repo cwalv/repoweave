@@ -158,7 +158,9 @@ pub fn run_update(
             let name = ctx.require_active_project_on_disk()?.clone();
             (name, None)
         }
-        Checkout::Workweave { dir, project, .. } => (project.clone(), Some(dir.clone())),
+        Checkout::Workweave { dir, project, .. } => {
+            (project.clone(), Some(dir.as_path().to_path_buf()))
+        }
     };
 
     update_for_project(

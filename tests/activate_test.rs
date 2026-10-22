@@ -741,7 +741,7 @@ fn activate_from_workweave_is_rejected() {
     std::fs::create_dir_all(&workweave_dir).unwrap();
     let primary_canon = repoweave::path_spelling::resolve(&ws).unwrap();
     let marker = WorkweaveMarker::new(
-        primary_canon.clone(),
+        &primary_canon,
         ProjectName::new("my-proj").unwrap(),
         &primary_canon,
     );
@@ -792,7 +792,7 @@ fn activate_different_project_from_workweave_is_rejected() {
     std::fs::create_dir_all(&workweave_dir).unwrap();
     let primary_canon = repoweave::path_spelling::resolve(&ws).unwrap();
     let marker = WorkweaveMarker::new(
-        primary_canon.clone(),
+        &primary_canon,
         ProjectName::new("proj-a").unwrap(),
         &primary_canon,
     );
@@ -849,7 +849,7 @@ fn activate_intent_from_a_workweave_checkout_authors_at_primary() {
     std::fs::create_dir_all(workweave_dir.join("github/acme/server")).unwrap();
     let primary_canon = repoweave::path_spelling::resolve(&ws).unwrap();
     WorkweaveMarker::new(
-        primary_canon.clone(),
+        &primary_canon,
         ProjectName::new("web-app").unwrap(),
         &primary_canon,
     )

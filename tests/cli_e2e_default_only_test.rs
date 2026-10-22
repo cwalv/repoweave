@@ -1122,7 +1122,8 @@ fn add_writes_only_inside_tempdir_sandbox() {
     // Sanity: the created dir should be under the tempdir root, not under any
     // ancestor of the tempdir (i.e., not at /tmp/github/... or /github/...).
     assert!(
-        expected_dest.starts_with(tmp.path()),
+        repoweave::path_spelling::CanonicalPath::of(tmp.path())
+            .contains(&repoweave::path_spelling::CanonicalPath::of(&expected_dest)),
         "regression: repo dir must be a descendant of the tempdir root; \
          got {} which is not under {}",
         expected_dest.display(),

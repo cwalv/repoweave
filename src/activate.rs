@@ -697,7 +697,7 @@ pub(crate) fn activate_intent_for(
     departing: &[RepoPath],
 ) -> Result<Vec<SkippedEffect>, ActivationFailure> {
     match &ctx.checkout {
-        Checkout::Workweave { dir, .. } => workweave_intent(project, dir, departing),
+        Checkout::Workweave { dir, .. } => workweave_intent(project, dir.as_path(), departing),
         Checkout::Primary { .. } => activate_in_phases(
             ctx.primary_path(),
             project,
@@ -2210,7 +2210,7 @@ impl SurfacingSites {
         };
         Self {
             primary: PrimaryProjects::under(
-                marker.primary_resolved().as_path(),
+                marker.primary().as_path(),
                 crate::path_spelling::link_target,
             ),
             workweave_links: manifest

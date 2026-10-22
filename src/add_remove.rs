@@ -5,7 +5,7 @@ use crate::integration_runner::missing_active_members;
 use crate::manifest::{
     LockFile, Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role, Submodules, VcsType,
 };
-use crate::path_spelling::{file_url_suggestion, operator_path, resolve};
+use crate::path_spelling::{file_url_suggestion, operator_path, CanonicalPath};
 use crate::refusal::{refusal, RefusalKind};
 use crate::registry::{
     builtin_registries, recorded_remote, resolve_to_clone_info, CloneUrl, CreationParamError,
@@ -135,10 +135,10 @@ fn place_member(
             vcs,
             ctx.primary_path(),
             canonical,
-            dir,
+            dir.as_path(),
             repo_path,
             project,
-            name.require(dir, project)?,
+            name.require(dir.as_path(), project)?,
             role,
             submodules,
         ),
@@ -584,6 +584,10 @@ fn adopt_placement(
         Checkout::Workweave { dir, .. } => Some(dir.as_path()),
         Checkout::Primary { .. } => None,
     };
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the operand is held lexically normalized, not resolved, so containment here is lexical"
+    )]
     let containing = [Some(primary), workweave]
         .into_iter()
         .flatten()
@@ -640,7 +644,7 @@ fn adopt_placement(
 fn shares_store(vcs: &dyn Vcs, a: &Path, b: &Path) -> bool {
     let store = |p: &Path| {
         vcs.resolve_canonical_store(p)
-            .and_then(|s| resolve(&s).ok())
+            .and_then(|s| CanonicalPath::existing(&s).ok())
     };
     matches!((store(a), store(b)), (Some(x), Some(y)) if x == y)
 }
@@ -975,7 +979,7 @@ pub fn run_remove(
             EphemeralRefName::mint(
                 &crate::manifest::WorkweaveId {
                     project: project.clone(),
-                    name: name.require(dir, project)?.clone(),
+                    name: name.require(dir.as_path(), project)?.clone(),
                 }
                 .flat(),
             ),
@@ -1189,10 +1193,9 @@ fn refuse_claimed_store(vcs: &dyn Vcs, primary_root: &Path, repo_dir: &Path) -> 
 
     match vcs.list_worktrees(repo_dir) {
         Ok(worktrees) => {
-            let store = resolve(repo_dir).unwrap_or_else(|_| repo_dir.to_path_buf());
+            let store = CanonicalPath::of(repo_dir);
             for wt in worktrees {
-                let wt_canonical = resolve(&wt).unwrap_or_else(|_| wt.clone());
-                if wt_canonical != store {
+                if CanonicalPath::of(&wt) != store {
                     claims.push(format!(
                         "live worktree registered at {}",
                         operator_path(&wt)
@@ -1580,22 +1583,16 @@ pub fn run_add_new(
                         operator_path(root)
                     );
                 }
-                let root_canon = resolve(root)
+                let root_canon = CanonicalPath::existing(root)
                     .with_context(|| format!("failed to resolve root {}", operator_path(root)))?;
-                let weave_canon = resolve(ctx.primary_path()).with_context(|| {
-                    format!(
-                        "failed to resolve weave root {}",
-                        operator_path(ctx.primary_path())
-                    )
-                })?;
-                if root_canon.starts_with(&weave_canon) {
+                if ctx.primary_root().contains(&root_canon) {
                     crate::refuse!(
                         RefusalKind::UnusableCreationParam,
                         "the root '{}' is inside the weave at '{}'; the upstream it would \
                      create would then be walked, deletable, and reportable as a member \
                      of the very weave it backs — choose a root outside the weave",
                         operator_path(root),
-                        operator_path(&weave_canon)
+                        operator_path(ctx.primary_path())
                     );
                 }
 

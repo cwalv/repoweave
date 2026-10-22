@@ -27,7 +27,7 @@
 
 use crate::integration_runner::IntegrationContextBase;
 use crate::manifest::{Manifest, ProjectName, RepoPath, WorkweaveId, WorkweaveName};
-use crate::path_spelling::{native_relative, resolve};
+use crate::path_spelling::{native_relative, CanonicalPath};
 use crate::refusal::RefusalKind;
 use crate::registry::builtin_registry_names;
 use crate::vcs::Vcs;
@@ -79,7 +79,7 @@ pub fn acquire_origin_dir() -> anyhow::Result<PathBuf> {
 /// [`active_path`]: WorkspaceContext::active_path
 #[derive(Debug, Clone)]
 pub struct WorkspaceContext {
-    primary_root: PathBuf,
+    primary_root: CanonicalPath,
     /// The witness for [`PrimaryIdentity::select_project`], present exactly
     /// when the walk landed on a primary root. A workweave resolves through
     /// the marker and so has none, which is what makes "select a project from
@@ -185,13 +185,13 @@ pub enum Checkout {
     Workweave {
         name: WorkweaveNameRecord,
         /// The workweave directory path (e.g., `.workweaves/feat/` or `root/../ws--feat/`).
-        dir: PathBuf,
+        dir: CanonicalPath,
         /// The project this workweave belongs to.
         project: ProjectName,
         /// The workspace this workweave was forked from, per its marker: the
         /// primary when forked from primary, the parent workweave's path
         /// when forked from another workweave.
-        parent: PathBuf,
+        parent: CanonicalPath,
     },
 }
 
@@ -490,7 +490,8 @@ pub enum MintedDir {
 fn listed_occupant(dir: &Path) -> Option<String> {
     let parent = dir.parent()?;
     std::fs::read_dir(parent).ok()?.flatten().find_map(|entry| {
-        crate::workweave_index::same_directory(&entry.path(), dir)
+        CanonicalPath::of(&entry.path())
+            .same_directory(dir)
             .then(|| entry.file_name().to_string_lossy().into_owned())
     })
 }
@@ -614,15 +615,15 @@ pub fn is_workspace_root(dir: &Path) -> bool {
 /// The ceiling fires when `current` is inside `home` but `parent` is not —
 /// i.e., the walk is about to cross above the home directory boundary.
 ///
-/// Both `current` and `parent` must already be canonicalized (symlinks
-/// resolved), and `home` must likewise be the canonicalized home path so that
-/// the `starts_with` comparison is reliable on symlinked-home systems.
-///
 /// Extracted as a pure function so tests can drive it with an arbitrary
 /// (possibly symlinked) home path without mutating process-wide state.
-fn home_ceiling_blocks(current: &Path, parent: &Path, home: Option<&Path>) -> bool {
+fn home_ceiling_blocks(
+    current: &CanonicalPath,
+    parent: &CanonicalPath,
+    home: Option<&CanonicalPath>,
+) -> bool {
     match home {
-        Some(h) => current.starts_with(h) && !parent.starts_with(h),
+        Some(h) => h.contains(current) && !h.contains(parent),
         None => false,
     }
 }
@@ -1155,7 +1156,7 @@ pub fn require_workspace_or_empty(cwd: &Path, allow_non_empty_dir: bool) -> anyh
 /// much of [`RootObservation`] they are willing to act on.
 struct RootSite {
     cwd: PathBuf,
-    dir: PathBuf,
+    dir: CanonicalPath,
 }
 
 /// Walk up from `cwd` to the nearest directory carrying weave-root identity
@@ -1167,7 +1168,8 @@ struct RootSite {
 /// is shaped exactly like a primary and walking past one hands the tree a
 /// primary's authority on the strength of its own broken claim.
 fn walk_to_weave_root(cwd: &Path) -> anyhow::Result<(RootSite, RootObservation)> {
-    let cwd = resolve(cwd).with_context(|| format!("failed to canonicalize {}", cwd.display()))?;
+    let cwd = CanonicalPath::existing(cwd)
+        .with_context(|| format!("failed to canonicalize {}", cwd.display()))?;
 
     // Hard ceiling: never search above $HOME.
     //
@@ -1185,45 +1187,42 @@ fn walk_to_weave_root(cwd: &Path) -> anyhow::Result<(RootSite, RootObservation)>
     // /tmp/…) walk normally until the filesystem root — there is no
     // cross-branch escape risk from those trees because their ancestors
     // never include $HOME-rooted directories.
-    // Canonicalize home so that the ceiling check compares against the
-    // real path.  On systems where $HOME contains a symlinked component
-    // (e.g. /home -> /private/home on macOS, or a bespoke symlink on
-    // Linux), `std::env::home_dir()` returns the raw env value while `cwd`
-    // above has already been canonicalized.  Without canonicalization the
-    // `starts_with` test always returns false (the paths are spelled
-    // differently) and the ceiling silently never fires.
-    let home_dir = std::env::home_dir().and_then(|h| resolve(&h).ok());
+    // `std::env::home_dir()` returns the raw env value, which on a system
+    // whose $HOME has a symlinked component (/home -> /private/home on
+    // macOS) is another spelling of the directory `cwd` resolved through;
+    // compared unresolved, the ceiling would never fire.
+    let home_dir = std::env::home_dir().and_then(|h| CanonicalPath::existing(&h).ok());
 
-    let mut current = cwd.as_path();
+    let mut current = cwd.clone();
     loop {
-        if let Some(observation) = observe_root(current) {
+        if let Some(observation) = observe_root(current.as_path()) {
             let site = RootSite {
-                cwd: cwd.clone(),
-                dir: current.to_path_buf(),
+                cwd: cwd.into_path_buf(),
+                dir: current,
             };
             return Ok((site, observation));
         }
 
         match current.parent() {
-            Some(parent) if parent != current => {
+            Some(parent) => {
                 // Apply the $HOME ceiling: if `current` is inside $HOME but
                 // `parent` is not, stop here rather than walking above $HOME.
                 // This prevents workspace resolution from escaping to an
                 // unrelated filesystem branch (e.g. a test sandbox running
                 // inside a workweave from reaching the real primary weave).
-                if home_ceiling_blocks(current, parent, home_dir.as_deref()) {
+                if home_ceiling_blocks(&current, &parent, home_dir.as_ref()) {
                     break;
                 }
                 current = parent;
             }
-            _ => break,
+            None => break,
         }
     }
 
     crate::refuse!(
         RefusalKind::NoWeaveRoot,
         "no repoweave workspace found above {}",
-        cwd.display()
+        cwd.as_path().display()
     )
 }
 
@@ -1281,9 +1280,9 @@ impl RootSite {
         binding: ProjectBinding,
     ) -> anyhow::Result<WorkspaceContext> {
         let name = match crate::workweave::workweave_name_for_path(
-            &marker.primary,
+            marker.primary.as_path(),
             &marker.project,
-            &self.dir,
+            self.dir.as_path(),
         ) {
             Ok(Some(recorded)) => WorkweaveNameRecord::Recorded(recorded),
             Ok(None) => WorkweaveNameRecord::Unregistered,
@@ -1303,7 +1302,7 @@ impl RootSite {
                          structural records disagree; nothing here can pick between \
                          them. Run the operation against a workspace of `{}`, or check \
                          whether the marker is the file that is wrong.",
-                        self.dir.display(),
+                        self.dir.as_path().display(),
                         marker.project.as_str(),
                         p.as_str(),
                         p.as_str(),
@@ -1316,14 +1315,14 @@ impl RootSite {
             }
         };
         Ok(WorkspaceContext {
-            cwd_project_hint: detect_project(&self.cwd, &marker.primary),
+            cwd_project_hint: detect_project(&self.cwd, marker.primary.as_path()),
             primary_root: marker.primary,
             primary_identity: None,
             checkout: Checkout::Workweave {
                 name,
                 dir: self.dir,
                 project,
-                parent: marker.parent.into_path_buf(),
+                parent: marker.parent,
             },
             project_provenance: Some(provenance),
         })
@@ -1345,7 +1344,7 @@ impl RootSite {
             ProjectBinding::Unbound => (None, None),
         };
         WorkspaceContext {
-            cwd_project_hint: detect_project(&self.cwd, &self.dir),
+            cwd_project_hint: detect_project(&self.cwd, self.dir.as_path()),
             primary_root: self.dir,
             primary_identity: Some(identity),
             checkout: Checkout::Primary { project },
@@ -1587,7 +1586,7 @@ impl WorkspaceContext {
         if let Some(project) = self.active_project() {
             eprintln!(
                 "target: workspace {} · project {} (.rwv-active)",
-                crate::path_spelling::operator_path(&self.primary_root),
+                crate::path_spelling::operator_path(self.primary_root.as_path()),
                 project.as_str(),
             );
         }
@@ -1725,6 +1724,11 @@ impl WorkspaceContext {
     /// and the files `static-files` surfaces to the root. These all live
     /// under the primary regardless of where CWD currently is.
     pub fn primary_path(&self) -> &Path {
+        self.primary_root.as_path()
+    }
+
+    /// The primary weave's identity, for comparing it with another location.
+    pub fn primary_root(&self) -> &CanonicalPath {
         &self.primary_root
     }
 
@@ -1747,6 +1751,11 @@ impl WorkspaceContext {
     /// itself a workspace; reading or writing through the primary from
     /// inside a workweave clobbers the workweave's view of the world.
     pub fn active_path(&self) -> &Path {
+        self.active_root().as_path()
+    }
+
+    /// The identity of the directory [`Self::active_path`] names.
+    pub fn active_root(&self) -> &CanonicalPath {
         match &self.checkout {
             Checkout::Primary { .. } => &self.primary_root,
             Checkout::Workweave { dir, .. } => dir,
@@ -1768,12 +1777,12 @@ impl WorkspaceContext {
             Checkout::Primary { .. } => {
                 lines.push(format!(
                     "Weave: {}",
-                    crate::path_spelling::operator_path(&self.primary_root)
+                    crate::path_spelling::operator_path(self.primary_root.as_path())
                 ));
                 if let Some(p) = &active {
                     lines.push(format!("Project: {}", p.as_str()));
                     let manifest_path =
-                        project_dir(&self.primary_root, p).join(Manifest::FILE_NAME);
+                        project_dir(self.primary_root.as_path(), p).join(Manifest::FILE_NAME);
                     if let Ok(manifest) = Manifest::from_path(&manifest_path) {
                         lines.push(format!("Repos: {}", manifest.len()));
                     }
@@ -1782,16 +1791,16 @@ impl WorkspaceContext {
             Checkout::Workweave { name, dir, .. } => {
                 lines.push(format!(
                     "Workweave: {}",
-                    crate::path_spelling::operator_path(dir)
+                    crate::path_spelling::operator_path(dir.as_path())
                 ));
                 lines.push(format!(
                     "Weave: {}",
-                    crate::path_spelling::operator_path(&self.primary_root)
+                    crate::path_spelling::operator_path(self.primary_root.as_path())
                 ));
                 if let Some(p) = &active {
                     lines.push(format!("Project: {}", p.as_str()));
                     let manifest_path =
-                        project_dir(&self.primary_root, p).join(Manifest::FILE_NAME);
+                        project_dir(self.primary_root.as_path(), p).join(Manifest::FILE_NAME);
                     if let Ok(manifest) = Manifest::from_path(&manifest_path) {
                         lines.push(format!("Repos: {}", manifest.len()));
                     }
@@ -1815,7 +1824,7 @@ impl WorkspaceContext {
             }
         }
 
-        let project_names = spelled_project_names(&self.primary_root);
+        let project_names = spelled_project_names(self.primary_root.as_path());
         if !project_names.is_empty() {
             lines.push(format!("Projects: {}", project_names.join(", ")));
         }
@@ -1844,7 +1853,7 @@ impl WorkspaceContext {
     /// independently computed.
     pub fn resolution(&self) -> Option<Resolution> {
         let project = self.active_project()?;
-        let workspace = crate::path_spelling::WirePath::of(&self.primary_root);
+        let workspace = crate::path_spelling::WirePath::of(self.primary_root.as_path());
         let (workweave, workweave_unregistered) = match &self.checkout {
             Checkout::Primary { .. } => (None, false),
             Checkout::Workweave { name, project, .. } => match name.recorded() {
@@ -1969,41 +1978,6 @@ pub use crate::naming::workweave_name_in;
 // WorkweaveMarker — `.rwv-workweave` marker file
 // ---------------------------------------------------------------------------
 
-/// A path held in the one spelling every equivalent spelling resolves to, so
-/// that two values denoting the same directory compare equal.
-///
-/// A path that is not on disk cannot be resolved and is kept verbatim — a
-/// marker naming another machine's tree still round-trips through this type.
-/// Equality between two such values is therefore textual, which is the most
-/// any comparison can offer for a path the filesystem cannot speak about.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(transparent)]
-pub struct CanonicalPath(PathBuf);
-
-impl CanonicalPath {
-    pub fn of(path: &Path) -> Self {
-        CanonicalPath(resolve(path).unwrap_or_else(|_| path.to_path_buf()))
-    }
-
-    pub fn as_path(&self) -> &Path {
-        &self.0
-    }
-
-    pub fn into_path_buf(self) -> PathBuf {
-        self.0
-    }
-}
-
-impl<'de> Deserialize<'de> for CanonicalPath {
-    /// Deriving this instead would let a hand-edited or migrated file put a
-    /// value in this type that its name promises is impossible, and every
-    /// comparison downstream would then be textual against an arbitrary
-    /// spelling.
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        Ok(CanonicalPath::of(&PathBuf::deserialize(d)?))
-    }
-}
-
 /// Metadata written to `.rwv-workweave` in a workweave root.
 ///
 /// Records the relationship to the primary workspace and the workspace this
@@ -2020,7 +1994,7 @@ impl<'de> Deserialize<'de> for CanonicalPath {
 /// `rwv doctor --fix` before the workweave can be used.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkweaveMarker {
-    primary: PathBuf,
+    primary: CanonicalPath,
     project: ProjectName,
     parent: CanonicalPath,
 }
@@ -2031,31 +2005,23 @@ impl WorkweaveMarker {
         dir.join(WORKWEAVE_MARKER_FILE)
     }
 
-    /// Build a marker for a workweave forked from `parent_source`.
-    ///
-    /// `primary` is recorded as given. Resolving it here would change the
-    /// bytes this type writes to `.rwv-workweave` for a non-canonical input,
-    /// which is an on-disk format change; [`Self::names_primary`] carries the
-    /// resolution instead, at every comparison.
-    pub fn new(primary: PathBuf, project: ProjectName, parent_source: &Path) -> Self {
+    /// Build a marker for a workweave of `primary`'s, forked from
+    /// `parent_source`.
+    pub fn new(primary: &Path, project: ProjectName, parent_source: &Path) -> Self {
         WorkweaveMarker {
-            primary,
+            primary: CanonicalPath::of(primary),
             project,
             parent: CanonicalPath::of(parent_source),
         }
     }
 
-    pub fn primary(&self) -> &Path {
+    pub fn primary(&self) -> &CanonicalPath {
         &self.primary
     }
 
-    pub fn primary_resolved(&self) -> CanonicalPath {
-        CanonicalPath::of(&self.primary)
-    }
-
     /// Whether `candidate` is the primary workspace this marker names.
-    pub fn names_primary(&self, candidate: &Path) -> bool {
-        self.primary_resolved() == CanonicalPath::of(candidate)
+    pub fn names_primary(&self, candidate: &CanonicalPath) -> bool {
+        self.primary == *candidate
     }
 
     pub fn project(&self) -> &ProjectName {
@@ -2149,7 +2115,7 @@ impl WorkweaveMarker {
             );
         let parent = field("parent").unwrap_or(primary);
         let marker = Self {
-            primary: PathBuf::from(primary),
+            primary: CanonicalPath::of(Path::new(primary)),
             project,
             parent: CanonicalPath::of(Path::new(parent)),
         };
@@ -2463,12 +2429,12 @@ pub fn observe_root(dir: &Path) -> Option<RootObservation> {
             pointer: observe_active_pointer(dir),
         },
         MarkerPresence::Usable(marker) => {
-            if !is_workspace_root(&marker.primary) {
+            if !is_workspace_root(marker.primary.as_path()) {
                 RootObservation::MarkerUnverifiable {
                     marker_path,
                     project_hint: Some(marker.project),
                     defect: MarkerDefect::DanglingPrimary {
-                        primary: marker.primary,
+                        primary: marker.primary.into_path_buf(),
                     },
                     pointer: observe_active_pointer(dir),
                 }
@@ -2671,6 +2637,7 @@ pub fn pending_index_migration(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::path_spelling::resolve;
 
     /// Helper: create a minimal workspace directory structure under `parent`.
     /// Returns the workspace root path.
@@ -2691,7 +2658,7 @@ mod tests {
             primary,
             &project,
             &crate::manifest::WorkweaveName::new(name).unwrap(),
-            crate::workweave_index::canonical_recorded_path(dir),
+            CanonicalPath::of(dir),
         )
         .unwrap();
     }
@@ -2965,7 +2932,7 @@ mod tests {
         // Write a marker so the workweave is recognized.
         let primary_canon = resolve(&root).unwrap();
         let marker = WorkweaveMarker {
-            primary: primary_canon.clone(),
+            primary: CanonicalPath::of(&primary_canon),
             project: ProjectName::new("ws").unwrap(),
             parent: CanonicalPath::of(&primary_canon),
         };
@@ -3242,7 +3209,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
         let marker = WorkweaveMarker {
-            primary: PathBuf::from("/home/user/weaveroot"),
+            primary: CanonicalPath::of(Path::new("/home/user/weaveroot")),
             project: ProjectName::new("my-project").unwrap(),
             parent: CanonicalPath::of(Path::new("/home/user/weaveroot")),
         };
@@ -3269,7 +3236,7 @@ mod tests {
         let primary = PathBuf::from("/home/user/weaveroot/primary");
         let parent = PathBuf::from("/home/user/weaveroot/.workweaves/primary--ww1");
         let marker = WorkweaveMarker {
-            primary: primary.clone(),
+            primary: CanonicalPath::of(&primary),
             project: ProjectName::new("p").unwrap(),
             parent: CanonicalPath::of(&parent),
         };
@@ -3317,7 +3284,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
         WorkweaveMarker {
-            primary: PathBuf::from("/home/user/primary"),
+            primary: CanonicalPath::of(Path::new("/home/user/primary")),
             project: ProjectName::new("p").unwrap(),
             parent: CanonicalPath::of(Path::new("/home/user/parent")),
         }
@@ -3447,7 +3414,10 @@ mod tests {
             Path::new("/home/user/.workweaves/primary--ww1"),
             "explicit parent must survive migration"
         );
-        assert_eq!(marker.primary, PathBuf::from("/home/user/primary"));
+        assert_eq!(
+            marker.primary,
+            CanonicalPath::of(Path::new("/home/user/primary"))
+        );
     }
 
     #[test]
@@ -3465,9 +3435,9 @@ mod tests {
         let marker = WorkweaveMarker::read(dir).unwrap().unwrap();
         assert_eq!(
             marker.primary,
-            PathBuf::from("/home/user/weaveroot/primary")
+            CanonicalPath::of(Path::new("/home/user/weaveroot/primary"))
         );
-        assert_eq!(marker.parent.as_path(), marker.primary);
+        assert_eq!(marker.parent, marker.primary);
         assert_eq!(marker.project.as_str(), "legacy-project");
     }
 
@@ -3505,9 +3475,9 @@ mod tests {
             .expect("migrated marker must be present");
         assert_eq!(
             marker.primary,
-            PathBuf::from("/home/user/weaveroot/has: a colon-space")
+            CanonicalPath::of(Path::new("/home/user/weaveroot/has: a colon-space"))
         );
-        assert_eq!(marker.parent.as_path(), marker.primary);
+        assert_eq!(marker.parent, marker.primary);
     }
 
     /// Fixture: a primary with `projects/<name>/`, ready for an index.
@@ -3548,7 +3518,7 @@ mod tests {
         crate::workweave_index::IndexClaim::hold(&primary, &project, |claim| {
             crate::workweave_index::write(
                 claim,
-                &crate::workweave_index::WorkweaveIndex::new(PathBuf::from("/c")),
+                &crate::workweave_index::WorkweaveIndex::new(CanonicalPath::of(Path::new("/c"))),
             )
         })
         .unwrap();
@@ -3575,7 +3545,7 @@ mod tests {
 
         let primary_canon = resolve(&root).unwrap();
         let marker = WorkweaveMarker {
-            primary: primary_canon.clone(),
+            primary: CanonicalPath::of(&primary_canon),
             project: ProjectName::new("web-app").unwrap(),
             parent: CanonicalPath::of(&primary_canon),
         };
@@ -3589,7 +3559,7 @@ mod tests {
                 name, dir, project, ..
             } => {
                 assert_eq!(name.recorded().unwrap().as_str(), "feat");
-                assert_eq!(*dir, resolve(&weave_dir).unwrap());
+                assert_eq!(*dir, CanonicalPath::of(&resolve(&weave_dir).unwrap()));
                 assert_eq!(project.as_str(), "web-app");
             }
             Checkout::Primary { .. } => panic!("expected Workweave"),
@@ -3604,7 +3574,7 @@ mod tests {
         std::fs::create_dir_all(&weave_dir).unwrap();
         let primary_canon = resolve(&root).unwrap();
         WorkweaveMarker::new(
-            primary_canon.clone(),
+            &primary_canon,
             ProjectName::new("web-app").unwrap(),
             &primary_canon,
         )
@@ -3698,7 +3668,7 @@ mod tests {
 
         let primary_canon = resolve(&root).unwrap();
         let marker = WorkweaveMarker {
-            primary: primary_canon.clone(),
+            primary: CanonicalPath::of(&primary_canon),
             project: ProjectName::new("web-app").unwrap(),
             parent: CanonicalPath::of(&primary_canon),
         };
@@ -3712,7 +3682,7 @@ mod tests {
                 name, dir, project, ..
             } => {
                 assert_eq!(name.recorded().unwrap().as_str(), "feat");
-                assert_eq!(*dir, resolve(&weave_dir).unwrap());
+                assert_eq!(*dir, CanonicalPath::of(&resolve(&weave_dir).unwrap()));
                 assert_eq!(project.as_str(), "web-app");
             }
             Checkout::Primary { .. } => panic!("expected Workweave"),
@@ -3732,7 +3702,7 @@ mod tests {
 
         let primary_canon = resolve(&root).unwrap();
         let marker = WorkweaveMarker {
-            primary: primary_canon.clone(),
+            primary: CanonicalPath::of(&primary_canon),
             project: ProjectName::new("marker-project").unwrap(),
             parent: CanonicalPath::of(&primary_canon),
         };
@@ -3790,7 +3760,7 @@ mod tests {
         let dangling = parent.join("gone");
         std::fs::create_dir_all(&dangling).unwrap();
         WorkweaveMarker {
-            primary: dangling.clone(),
+            primary: CanonicalPath::of(&dangling),
             project: ProjectName::new("web-app").unwrap(),
             parent: CanonicalPath::of(&dangling),
         }
@@ -3850,7 +3820,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let primary_canon = resolve(&root).unwrap();
         WorkweaveMarker {
-            primary: primary_canon.clone(),
+            primary: CanonicalPath::of(&primary_canon),
             project: ProjectName::new("web-app").unwrap(),
             parent: CanonicalPath::of(&primary_canon),
         }
@@ -3950,7 +3920,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let primary_canon = resolve(&root).unwrap();
         WorkweaveMarker {
-            primary: primary_canon.clone(),
+            primary: CanonicalPath::of(&primary_canon),
             project: ProjectName::new("web-app").unwrap(),
             parent: CanonicalPath::of(&primary_canon),
         }
@@ -3959,7 +3929,9 @@ mod tests {
 
         let ctx = WorkspaceContext::resolve_invocation(&dir, None).unwrap();
         match &ctx.checkout {
-            Checkout::Workweave { parent, .. } => assert_eq!(*parent, primary_canon),
+            Checkout::Workweave { parent, .. } => {
+                assert_eq!(*parent, CanonicalPath::of(&primary_canon))
+            }
             Checkout::Primary { .. } => panic!("expected Workweave"),
         }
     }
@@ -3977,7 +3949,7 @@ mod tests {
         let upper = tmp.path().join(".workweaves").join("web-app--upper");
         std::fs::create_dir_all(&upper).unwrap();
         WorkweaveMarker {
-            primary: primary_canon.clone(),
+            primary: CanonicalPath::of(&primary_canon),
             project: ProjectName::new("web-app").unwrap(),
             parent: CanonicalPath::of(&primary_canon),
         }
@@ -3988,7 +3960,7 @@ mod tests {
         std::fs::create_dir_all(&lower).unwrap();
         let upper_canon = resolve(&upper).unwrap();
         WorkweaveMarker {
-            primary: primary_canon.clone(),
+            primary: CanonicalPath::of(&primary_canon),
             project: ProjectName::new("web-app").unwrap(),
             parent: CanonicalPath::of(&upper_canon),
         }
@@ -3999,8 +3971,8 @@ mod tests {
         assert_eq!(ctx.primary_path(), primary_canon);
         match &ctx.checkout {
             Checkout::Workweave { parent, .. } => {
-                assert_eq!(*parent, upper_canon);
-                assert_ne!(*parent, primary_canon);
+                assert_eq!(*parent, CanonicalPath::of(&upper_canon));
+                assert_ne!(*parent, CanonicalPath::of(&primary_canon));
             }
             Checkout::Primary { .. } => panic!("expected Workweave"),
         }
@@ -4135,18 +4107,12 @@ mod tests {
         let above = base.join("above");
         std::fs::create_dir_all(&above).unwrap();
 
-        // Canonicalize paths as `resolve()` does for `current` and `parent`.
-        let current_canon = resolve(&subdir).unwrap();
-        let parent_canon = resolve(&above).unwrap();
+        let current_canon = CanonicalPath::existing(&subdir).unwrap();
+        let parent_canon = CanonicalPath::existing(&above).unwrap();
 
-        // Pre-fix: passing the raw symlink spelling → ceiling silently no-ops.
-        assert!(
-            !home_ceiling_blocks(&current_canon, &parent_canon, Some(&link_home)),
-            "raw symlink path does NOT match canonicalized current — ceiling is blind (this is the bug)"
-        );
-
-        // Post-fix: passing the canonicalized home → ceiling fires correctly.
-        let canon_home = resolve(&link_home).unwrap();
+        // The home spelled through its symlink still names the directory
+        // `current` resolved through.
+        let canon_home = CanonicalPath::of(&link_home);
         assert!(
             home_ceiling_blocks(&current_canon, &parent_canon, Some(&canon_home)),
             "canonicalized home must make the ceiling fire and block the walk"
@@ -4164,9 +4130,9 @@ mod tests {
         let real_home = base.join("real_home");
         std::fs::create_dir_all(real_home.join("deep").join("inner")).unwrap();
 
-        let current = resolve(&real_home.join("deep").join("inner")).unwrap();
-        let parent = resolve(&real_home.join("deep")).unwrap();
-        let canon_home = resolve(&real_home).unwrap();
+        let current = CanonicalPath::existing(&real_home.join("deep").join("inner")).unwrap();
+        let parent = CanonicalPath::existing(&real_home.join("deep")).unwrap();
+        let canon_home = CanonicalPath::existing(&real_home).unwrap();
 
         assert!(
             !home_ceiling_blocks(&current, &parent, Some(&canon_home)),
@@ -4265,7 +4231,7 @@ mod tests {
     /// naming `project`.
     fn write_marker(dir: &Path, primary: &Path, project: &str) {
         let marker = WorkweaveMarker {
-            primary: primary.to_path_buf(),
+            primary: CanonicalPath::of(primary),
             project: ProjectName::new(project).unwrap(),
             parent: CanonicalPath::of(primary),
         };
@@ -4749,7 +4715,7 @@ mod tests {
         let weave_dir = tmp.path().join("ws--fo-abc");
         std::fs::create_dir_all(&weave_dir).unwrap();
         let marker = WorkweaveMarker {
-            primary: primary_canon.clone(),
+            primary: CanonicalPath::of(&primary_canon),
             project: ProjectName::new("myproject").unwrap(),
             parent: CanonicalPath::of(&primary_canon),
         };
@@ -4801,7 +4767,7 @@ mod tests {
         let weave_dir = tmp.path().join("ws--w1");
         std::fs::create_dir_all(&weave_dir).unwrap();
         WorkweaveMarker {
-            primary: primary_canon.clone(),
+            primary: CanonicalPath::of(&primary_canon),
             project: ProjectName::new("myproject").unwrap(),
             parent: CanonicalPath::of(&primary_canon),
         }
@@ -4859,7 +4825,7 @@ mod tests {
         let weave_dir = tmp.path().join("ws--fo-abc");
         std::fs::create_dir_all(&weave_dir).unwrap();
         let marker = WorkweaveMarker {
-            primary: primary_canon.clone(),
+            primary: CanonicalPath::of(&primary_canon),
             project: ProjectName::new("myproject").unwrap(),
             parent: CanonicalPath::of(&primary_canon),
         };
@@ -4900,7 +4866,7 @@ mod tests {
         let weave_dir = tmp.path().join("myproject--unrecorded");
         std::fs::create_dir_all(&weave_dir).unwrap();
         WorkweaveMarker {
-            primary: primary_canon.clone(),
+            primary: CanonicalPath::of(&primary_canon),
             project: ProjectName::new("myproject").unwrap(),
             parent: CanonicalPath::of(&primary_canon),
         }
@@ -5004,7 +4970,7 @@ mod tests {
         let dir = parent.join(name);
         std::fs::create_dir_all(&dir).unwrap();
         let marker = WorkweaveMarker {
-            primary: primary.to_path_buf(),
+            primary: CanonicalPath::of(primary),
             project: ProjectName::new(project).unwrap(),
             parent: CanonicalPath::of(primary),
         };
@@ -5032,7 +4998,7 @@ mod tests {
         match observe(&weave_dir) {
             RootObservation::Workweave { marker } => {
                 assert_eq!(marker.project.as_str(), "myproject");
-                assert_eq!(marker.primary, primary);
+                assert_eq!(marker.primary, CanonicalPath::of(&primary));
             }
             other => panic!("expected Workweave, got {other:?}"),
         }

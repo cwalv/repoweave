@@ -81,6 +81,7 @@
 
 use crate::durable_file::CreateNewError;
 use crate::manifest::{ProjectName, RepoKey};
+use crate::path_spelling::CanonicalPath;
 use crate::refusal::RefusalKind;
 use crate::vcs::CommitId;
 use crate::wire_token::wire_token;
@@ -506,11 +507,11 @@ pub struct OwnerRecord {
     /// the op is parked, and a workspace pointing elsewhere still holds this
     /// op's repos.
     pub project: ProjectName,
-    /// Absolute path of the source workspace.
-    pub source: PathBuf,
-    /// Absolute path of the target workspace (for `sync`: same as the owner
-    /// workspace; for `sync-to`: the named target workspace).
-    pub target: PathBuf,
+    /// The source workspace.
+    pub source: CanonicalPath,
+    /// The target workspace (for `sync`: same as the owner workspace; for
+    /// `sync-to`: the named target workspace).
+    pub target: CanonicalPath,
     /// Whether `--retire` was passed.
     pub retire: bool,
     /// Current phase.
@@ -549,8 +550,8 @@ struct WireOwnerRecord {
     verb: OpVerb,
     strategy: SyncStrategy,
     project: ProjectName,
-    source: PathBuf,
-    target: PathBuf,
+    source: CanonicalPath,
+    target: CanonicalPath,
     retire: bool,
     phase: OpPhase,
     advanced_tips: BTreeMap<RepoKey, CommitId>,
@@ -618,16 +619,16 @@ impl OwnerRecord {
         op_id: &OpId,
         strategy: SyncStrategy,
         project: ProjectName,
-        source_workspace: PathBuf,
-        cwd_workspace: PathBuf,
+        source_workspace: &Path,
+        cwd_workspace: &Path,
     ) -> Self {
         Self {
             id: op_id.clone(),
             verb: OpVerb::Sync,
             strategy,
             project,
-            source: source_workspace,
-            target: cwd_workspace,
+            source: CanonicalPath::of(source_workspace),
+            target: CanonicalPath::of(cwd_workspace),
             retire: false,
             phase: OpPhase::Replay,
             tips: PhaseTips::default(),
@@ -643,8 +644,8 @@ impl OwnerRecord {
         op_id: &OpId,
         strategy: SyncStrategy,
         project: ProjectName,
-        cwd_workspace: PathBuf,
-        target_workspace: PathBuf,
+        cwd_workspace: &Path,
+        target_workspace: &Path,
         retire: bool,
     ) -> Self {
         Self {
@@ -652,8 +653,8 @@ impl OwnerRecord {
             verb: OpVerb::SyncTo,
             strategy,
             project,
-            source: cwd_workspace,
-            target: target_workspace,
+            source: CanonicalPath::of(cwd_workspace),
+            target: CanonicalPath::of(target_workspace),
             retire,
             phase: OpPhase::Replay,
             tips: PhaseTips::default(),
@@ -695,9 +696,9 @@ pub struct LeaseRecord {
     /// Unique operation identifier (nanosecond wall-clock string). Same as
     /// the owner record's `id`.
     pub id: OpId,
-    /// Absolute path to the owner workspace (the workspace holding the full
-    /// owner record). Follow this pointer to load op state.
-    pub owner: PathBuf,
+    /// The owner workspace (the workspace holding the full owner record).
+    /// Follow this pointer to load op state.
+    pub owner: CanonicalPath,
     /// RFC3339 UTC timestamp at which this lease was written.
     ///
     /// Surfaced in `rwv doctor` dead-lease reports as observability-only
@@ -730,8 +731,8 @@ impl LeaseRecord {
 pub struct ResolvedOwner {
     /// The full owner record.
     pub record: OwnerRecord,
-    /// The absolute path to the owner workspace (where `.rwv-op` lives).
-    pub owner_workspace: PathBuf,
+    /// The owner workspace (where `.rwv-op` lives).
+    pub owner_workspace: CanonicalPath,
 }
 
 /// Resolve a workspace's op-state to the canonical owner record.
@@ -756,7 +757,7 @@ pub fn resolve_to_owner(workspace_dir: &Path) -> anyhow::Result<Option<ResolvedO
         })?;
         return Ok(Some(ResolvedOwner {
             record,
-            owner_workspace: workspace_dir.to_path_buf(),
+            owner_workspace: CanonicalPath::of(workspace_dir),
         }));
     }
 
@@ -766,7 +767,7 @@ pub fn resolve_to_owner(workspace_dir: &Path) -> anyhow::Result<Option<ResolvedO
             anyhow::anyhow!("internal: lease disappeared at {}", workspace_dir.display())
         })?;
         // Follow the pointer.
-        let record = read_owner(&lease.owner)?.ok_or_else(|| {
+        let record = read_owner(lease.owner.as_path())?.ok_or_else(|| {
             crate::refusal::refusal(
                 RefusalKind::DeadOpLease,
                 format!(
@@ -775,9 +776,9 @@ pub fn resolve_to_owner(workspace_dir: &Path) -> anyhow::Result<Option<ResolvedO
                  removed. Run `rwv abort` in the owner workspace to clean up, or \
                  manually remove {} and {}.",
                     workspace_dir.display(),
-                    lease.owner.display(),
+                    lease.owner.as_path().display(),
                     workspace_dir.join(OP_LEASE_FILE).display(),
-                    lease.owner.join(OP_STATE_FILE).display(),
+                    lease.owner.as_path().join(OP_STATE_FILE).display(),
                 ),
             )
         })?;
@@ -957,7 +958,7 @@ fn in_flight_sentence_for(dir: &Path) -> anyhow::Result<Option<String>> {
         // is dangling (owner workspace moved / op-state hand-removed), fall
         // back to the lease's own fields rather than failing the guard —
         // the operator still learns an op involves this workspace.
-        match read_owner(&lease.owner) {
+        match read_owner(lease.owner.as_path()) {
             Ok(Some(record)) => {
                 let elapsed = elapsed_since(&record.started_at);
                 return Ok(Some(format!(
@@ -968,7 +969,7 @@ fn in_flight_sentence_for(dir: &Path) -> anyhow::Result<Option<String>> {
                     verb = record.verb,
                     phase = record.phase,
                     dir = crate::path_spelling::operator_path(dir),
-                    owner = crate::path_spelling::operator_path(&lease.owner),
+                    owner = crate::path_spelling::operator_path(lease.owner.as_path()),
                     resume = resume_command(record.verb),
                 )));
             }
@@ -979,7 +980,7 @@ fn in_flight_sentence_for(dir: &Path) -> anyhow::Result<Option<String>> {
                      `rwv abort` to discard.",
                     id = lease.id,
                     dir = crate::path_spelling::operator_path(dir),
-                    owner = crate::path_spelling::operator_path(&lease.owner),
+                    owner = crate::path_spelling::operator_path(lease.owner.as_path()),
                 )));
             }
         }
@@ -1148,7 +1149,7 @@ pub fn acquire_op(
         let lease_path = LeaseRecord::path_in(ws);
         let lease = LeaseRecord {
             id: owner_record.id.clone(),
-            owner: owner_workspace_dir.to_path_buf(),
+            owner: CanonicalPath::of(owner_workspace_dir),
             created_at: Some(utc_now_rfc3339()),
         };
         let lease_json = match serde_json::to_string_pretty(&lease) {
@@ -1273,12 +1274,12 @@ pub fn detect_dead_lease(workspace_dir: &Path) -> anyhow::Result<Option<DeadLeas
         return Ok(None);
     };
     let created_at = lease.created_at.clone();
-    let owner_path = OwnerRecord::path_in(&lease.owner);
+    let owner_path = OwnerRecord::path_in(lease.owner.as_path());
     if !owner_path.exists() {
         return Ok(Some(DeadLease {
             workspace_dir: workspace_dir.to_path_buf(),
             op_id: lease.id,
-            recorded_owner: lease.owner,
+            recorded_owner: lease.owner.into_path_buf(),
             reason: DeadLeaseReason::OwnerRecordAbsent,
             created_at,
         }));
@@ -1286,13 +1287,13 @@ pub fn detect_dead_lease(workspace_dir: &Path) -> anyhow::Result<Option<DeadLeas
     // Owner record exists — check op-id match. If the owner file is present
     // but unparseable, treat that as a live/undecided case: the stale-op-state
     // check will surface the parse issue via its own path.
-    if let Ok(Some(owner_record)) = read_owner(&lease.owner) {
+    if let Ok(Some(owner_record)) = read_owner(lease.owner.as_path()) {
         if owner_record.id != lease.id {
             let owner_op_id = owner_record.id.clone();
             return Ok(Some(DeadLease {
                 workspace_dir: workspace_dir.to_path_buf(),
                 op_id: lease.id,
-                recorded_owner: lease.owner,
+                recorded_owner: lease.owner.into_path_buf(),
                 reason: DeadLeaseReason::OwnerOpIdMismatch { owner_op_id },
                 created_at,
             }));
@@ -1574,8 +1575,8 @@ mod tests {
                 &OpId::new_now(),
                 strategy,
                 test_project(),
-                PathBuf::from("/src/ws"),
-                PathBuf::from("/cwd/ws"),
+                Path::new("/src/ws"),
+                Path::new("/cwd/ws"),
             );
             write_owner(dir, &record).unwrap();
             let json = std::fs::read_to_string(dir.join(OP_STATE_FILE)).unwrap();
@@ -1622,8 +1623,8 @@ mod tests {
             &op_id,
             SyncStrategy::Rebase,
             test_project(),
-            PathBuf::from("/src/ws"),
-            PathBuf::from("/cwd/ws"),
+            Path::new("/src/ws"),
+            Path::new("/cwd/ws"),
         );
         write_owner(dir, &record).unwrap();
         let read_back = read_owner(dir).unwrap().unwrap();
@@ -1655,8 +1656,8 @@ mod tests {
             &op_id,
             SyncStrategy::Rebase,
             test_project(),
-            PathBuf::from("/src/ws"),
-            PathBuf::from("/cwd/ws"),
+            Path::new("/src/ws"),
+            Path::new("/cwd/ws"),
         );
         let advanced = record.tips.advanced_mut().unwrap();
         advanced.insert(member("github/foo/bar"), tip('a'));
@@ -1921,8 +1922,8 @@ mod tests {
             &op_id,
             SyncStrategy::Rebase,
             test_project(),
-            PathBuf::from("/src/ws"),
-            PathBuf::from("/cwd/ws"),
+            Path::new("/src/ws"),
+            Path::new("/cwd/ws"),
         );
         // Populate the replay half, then converge (the atomic swap).
         record
@@ -2019,8 +2020,8 @@ mod tests {
             &op_id,
             SyncStrategy::Ff,
             test_project(),
-            PathBuf::from("/cwd/ws"),
-            PathBuf::from("/tgt/ws"),
+            Path::new("/cwd/ws"),
+            Path::new("/tgt/ws"),
             true,
         );
         write_owner(dir, &record).unwrap();
@@ -2046,8 +2047,8 @@ mod tests {
             &op_id,
             SyncStrategy::Ff,
             test_project(),
-            PathBuf::from("/src"),
-            PathBuf::from("/tgt"),
+            Path::new("/src"),
+            Path::new("/tgt"),
         );
         write_owner(dir, &record).unwrap();
         assert!(read_owner(dir).unwrap().is_some());
@@ -2064,8 +2065,8 @@ mod tests {
             &op_id,
             SyncStrategy::Rebase,
             test_project(),
-            PathBuf::from("/src"),
-            PathBuf::from("/tgt"),
+            Path::new("/src"),
+            Path::new("/tgt"),
         );
         write_owner(dir, &record).unwrap();
         set_phase(dir, OpPhase::Relock).unwrap();
@@ -2101,8 +2102,8 @@ mod tests {
             &op_id,
             SyncStrategy::Rebase,
             test_project(),
-            PathBuf::from("/src"),
-            PathBuf::from("/tgt"),
+            Path::new("/src"),
+            Path::new("/tgt"),
         );
         write_owner(dir, &record).unwrap();
         let path = OwnerRecord::path_in(dir);
@@ -2156,8 +2157,8 @@ mod tests {
             &op_id,
             SyncStrategy::Rebase,
             test_project(),
-            PathBuf::from("/src"),
-            PathBuf::from("/tgt"),
+            Path::new("/src"),
+            Path::new("/tgt"),
         );
         write_owner(dir, &original).unwrap();
 
@@ -2199,8 +2200,8 @@ mod tests {
             &op_id,
             SyncStrategy::Rebase,
             test_project(),
-            PathBuf::from("/src/ws"),
-            PathBuf::from("/cwd/ws"),
+            Path::new("/src/ws"),
+            Path::new("/cwd/ws"),
         );
         let json = serde_json::to_string_pretty(&record).unwrap();
         let path = OwnerRecord::path_in(dir);
@@ -2242,13 +2243,13 @@ mod tests {
         let dir = tmp.path();
         let lease = LeaseRecord {
             id: "1234567890".parse().unwrap(),
-            owner: PathBuf::from("/owner/ws"),
+            owner: CanonicalPath::of(Path::new("/owner/ws")),
             created_at: None,
         };
         overwrite_lease_in_test(dir, &lease).unwrap();
         let read_back = read_lease(dir).unwrap().unwrap();
         assert_eq!(read_back.id.as_str(), "1234567890");
-        assert_eq!(read_back.owner, PathBuf::from("/owner/ws"));
+        assert_eq!(read_back.owner, CanonicalPath::of(Path::new("/owner/ws")));
     }
 
     #[test]
@@ -2278,7 +2279,7 @@ mod tests {
         let dir = tmp.path();
         let lease = LeaseRecord {
             id: "abc".parse().unwrap(),
-            owner: PathBuf::from("/owner"),
+            owner: CanonicalPath::of(Path::new("/owner")),
             created_at: None,
         };
         overwrite_lease_in_test(dir, &lease).unwrap();
@@ -2301,13 +2302,13 @@ mod tests {
             &op_id,
             SyncStrategy::Rebase,
             test_project(),
-            PathBuf::from("/src"),
-            PathBuf::from("/tgt"),
+            Path::new("/src"),
+            Path::new("/tgt"),
         );
         write_owner(&owner_dir, &record).unwrap();
 
         let resolved = resolve_to_owner(&owner_dir).unwrap().unwrap();
-        assert_eq!(resolved.owner_workspace, owner_dir);
+        assert_eq!(resolved.owner_workspace, CanonicalPath::of(&owner_dir));
         assert_eq!(resolved.record.id, record.id);
     }
 
@@ -2324,21 +2325,21 @@ mod tests {
             &op_id,
             SyncStrategy::Rebase,
             test_project(),
-            PathBuf::from("/cwd"),
-            PathBuf::from("/tgt"),
+            Path::new("/cwd"),
+            Path::new("/tgt"),
             false,
         );
         write_owner(&owner_dir, &record).unwrap();
 
         let lease = LeaseRecord {
             id: op_id.clone(),
-            owner: owner_dir.clone(),
+            owner: CanonicalPath::of(&owner_dir),
             created_at: None,
         };
         overwrite_lease_in_test(&lease_dir, &lease).unwrap();
 
         let resolved = resolve_to_owner(&lease_dir).unwrap().unwrap();
-        assert_eq!(resolved.owner_workspace, owner_dir);
+        assert_eq!(resolved.owner_workspace, CanonicalPath::of(&owner_dir));
         assert_eq!(resolved.record.id, record.id);
         assert_eq!(resolved.record.verb, OpVerb::SyncTo);
     }
@@ -2368,8 +2369,8 @@ mod tests {
             &op_id,
             SyncStrategy::Ff,
             test_project(),
-            PathBuf::from("/src"),
-            PathBuf::from("/tgt"),
+            Path::new("/src"),
+            Path::new("/tgt"),
         );
         write_owner(dir, &record).unwrap();
         let err = check_no_op_in_progress(&[dir]).unwrap_err().to_string();
@@ -2389,7 +2390,7 @@ mod tests {
         let dir = tmp.path();
         let lease = LeaseRecord {
             id: "some-op-id".parse().unwrap(),
-            owner: PathBuf::from("/owner/ws"),
+            owner: CanonicalPath::of(Path::new("/owner/ws")),
             created_at: None,
         };
         overwrite_lease_in_test(dir, &lease).unwrap();
@@ -2422,8 +2423,8 @@ mod tests {
             &op_id,
             SyncStrategy::Rebase,
             test_project(),
-            PathBuf::from("/cwd"),
-            PathBuf::from("/tgt"),
+            Path::new("/cwd"),
+            Path::new("/tgt"),
             false,
         );
         record.started_at = stale_started_at();
@@ -2457,15 +2458,15 @@ mod tests {
             &op_id,
             SyncStrategy::Rebase,
             test_project(),
-            owner_dir.clone(),
-            PathBuf::from("/tgt"),
+            &owner_dir,
+            Path::new("/tgt"),
             false,
         );
         record.started_at = stale_started_at();
         write_owner(&owner_dir, &record).unwrap();
         let lease = LeaseRecord {
             id: op_id.clone(),
-            owner: owner_dir.clone(),
+            owner: CanonicalPath::of(&owner_dir),
             created_at: None,
         };
         overwrite_lease_in_test(&lease_dir, &lease).unwrap();
@@ -2498,7 +2499,7 @@ mod tests {
         let owner = tmp.path().join("nonexistent-owner");
         let lease = LeaseRecord {
             id: "dangling-op".parse().unwrap(),
-            owner: owner.clone(),
+            owner: CanonicalPath::of(&owner),
             created_at: None,
         };
         overwrite_lease_in_test(dir, &lease).unwrap();
@@ -2528,8 +2529,8 @@ mod tests {
             &op_id,
             SyncStrategy::Ff,
             test_project(),
-            PathBuf::from("/src"),
-            PathBuf::from("/tgt"),
+            Path::new("/src"),
+            Path::new("/tgt"),
         );
         write_owner(&dirty_dir, &record).unwrap();
 
@@ -2555,8 +2556,8 @@ mod tests {
             &op_id,
             SyncStrategy::Rebase,
             test_project(),
-            PathBuf::from("/src"),
-            PathBuf::from("/tgt"),
+            Path::new("/src"),
+            Path::new("/tgt"),
         );
         write_owner(dir, &record).unwrap();
         let ResolvedOwner {
@@ -2564,7 +2565,7 @@ mod tests {
             owner_workspace: owner_ws,
         } = resume(dir).unwrap();
         assert_eq!(resumed.id, record.id);
-        assert_eq!(owner_ws, dir);
+        assert_eq!(owner_ws, CanonicalPath::of(dir));
     }
 
     #[test]
@@ -2580,14 +2581,14 @@ mod tests {
             &op_id,
             SyncStrategy::Ff,
             test_project(),
-            PathBuf::from("/cwd"),
-            PathBuf::from("/tgt"),
+            Path::new("/cwd"),
+            Path::new("/tgt"),
             false,
         );
         write_owner(&owner_dir, &record).unwrap();
         let lease = LeaseRecord {
             id: op_id.clone(),
-            owner: owner_dir.clone(),
+            owner: CanonicalPath::of(&owner_dir),
             created_at: None,
         };
         overwrite_lease_in_test(&lease_dir, &lease).unwrap();
@@ -2597,7 +2598,7 @@ mod tests {
             owner_workspace: owner_ws,
         } = resume(&lease_dir).unwrap();
         assert_eq!(resumed.id, record.id);
-        assert_eq!(owner_ws, owner_dir);
+        assert_eq!(owner_ws, CanonicalPath::of(&owner_dir));
     }
 
     #[test]
@@ -2623,13 +2624,13 @@ mod tests {
             &op_id,
             SyncStrategy::Ff,
             test_project(),
-            PathBuf::from("/src"),
-            PathBuf::from("/tgt"),
+            Path::new("/src"),
+            Path::new("/tgt"),
         );
         write_owner(dir, &record).unwrap();
         let lease = LeaseRecord {
             id: op_id.clone(),
-            owner: PathBuf::from("/owner"),
+            owner: CanonicalPath::of(Path::new("/owner")),
             created_at: None,
         };
         overwrite_lease_in_test(dir, &lease).unwrap();
@@ -2671,13 +2672,7 @@ mod tests {
     }
 
     fn make_sync_record(op_id: &OpId, owner: &Path, source: &Path) -> OwnerRecord {
-        OwnerRecord::new_sync(
-            op_id,
-            SyncStrategy::Rebase,
-            test_project(),
-            source.to_path_buf(),
-            owner.to_path_buf(),
-        )
+        OwnerRecord::new_sync(op_id, SyncStrategy::Rebase, test_project(), source, owner)
     }
 
     fn make_sync_to_record(op_id: &OpId, owner: &Path, target: &Path) -> OwnerRecord {
@@ -2685,8 +2680,8 @@ mod tests {
             op_id,
             SyncStrategy::Rebase,
             test_project(),
-            owner.to_path_buf(),
-            target.to_path_buf(),
+            owner,
+            target,
             false,
         )
     }
@@ -2728,7 +2723,7 @@ mod tests {
         // Lease points back at the owner.
         let lease = read_lease(&target_dir).unwrap().unwrap();
         assert_eq!(lease.id, op_id);
-        assert_eq!(lease.owner, owner_dir);
+        assert_eq!(lease.owner, CanonicalPath::of(&owner_dir));
         assert_eq!(acquired.owner_workspace(), owner_dir);
     }
 
@@ -2807,7 +2802,7 @@ mod tests {
         // Plant a lease at the target (as if a prior sync-to already claimed it).
         let prior_lease = LeaseRecord {
             id: "prior-op".parse().unwrap(),
-            owner: PathBuf::from("/some/prior/owner"),
+            owner: CanonicalPath::of(Path::new("/some/prior/owner")),
             created_at: None,
         };
         overwrite_lease_in_test(&target_dir, &prior_lease).unwrap();
@@ -2939,7 +2934,7 @@ mod tests {
             &lease_dir,
             &LeaseRecord {
                 id: op_id.clone(),
-                owner: owner_dir.clone(),
+                owner: CanonicalPath::of(&owner_dir),
                 created_at: None,
             },
         )
@@ -2962,7 +2957,7 @@ mod tests {
             &lease_dir,
             &LeaseRecord {
                 id: "dangling-op".parse().unwrap(),
-                owner: owner_dir.clone(),
+                owner: CanonicalPath::of(&owner_dir),
                 created_at: None,
             },
         )
@@ -2993,7 +2988,7 @@ mod tests {
             &lease_dir,
             &LeaseRecord {
                 id: "old-op-id".parse().unwrap(),
-                owner: owner_dir.clone(),
+                owner: CanonicalPath::of(&owner_dir),
                 created_at: None,
             },
         )
@@ -3018,7 +3013,7 @@ mod tests {
             lease_dir,
             &LeaseRecord {
                 id: "dangling-op".parse().unwrap(),
-                owner: PathBuf::from("/gone"),
+                owner: CanonicalPath::of(Path::new("/gone")),
                 created_at: None,
             },
         )

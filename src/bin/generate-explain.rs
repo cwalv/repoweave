@@ -97,6 +97,7 @@ use repoweave::check::DoctorJsonOutput;
 use repoweave::cli::Cli;
 use repoweave::explain;
 use repoweave::fetch::{FetchJsonOutput, FetchOutcomeNdjsonRecord, FETCH_RECORD_SCHEMA_URL};
+use repoweave::path_spelling::CanonicalPath;
 use repoweave::placement::{PlacementNdjsonRecord, PLACEMENT_RECORD_SCHEMA_URL};
 use repoweave::plugins::envelope_vars;
 use repoweave::push::{
@@ -732,15 +733,15 @@ fn shipped_prose_auxiliary_files(root: &Path) -> Vec<PathBuf> {
 }
 
 /// Collect all `.md` files under `root` recursively, excluding any path whose
-/// canonical prefix matches one of the entries in `exclude_dirs` (compared as
-/// canonical absolute paths so symlinks don't confuse the check).
-fn collect_md_files(root: &Path, exclude_dirs: &[PathBuf]) -> Vec<PathBuf> {
+/// location lies under one of the entries in `exclude_dirs` (compared as
+/// identities so symlinks don't confuse the check).
+fn collect_md_files(root: &Path, exclude_dirs: &[CanonicalPath]) -> Vec<PathBuf> {
     let mut out = Vec::new();
     collect_md_files_inner(root, exclude_dirs, &mut out);
     out
 }
 
-fn collect_md_files_inner(dir: &Path, exclude_dirs: &[PathBuf], out: &mut Vec<PathBuf>) {
+fn collect_md_files_inner(dir: &Path, exclude_dirs: &[CanonicalPath], out: &mut Vec<PathBuf>) {
     let rd = match std::fs::read_dir(dir) {
         Ok(rd) => rd,
         Err(_) => return,
@@ -749,12 +750,9 @@ fn collect_md_files_inner(dir: &Path, exclude_dirs: &[PathBuf], out: &mut Vec<Pa
     entries.sort_by_key(|e| e.file_name());
     for entry in entries {
         let path = entry.path();
-        let canonical = repoweave::path_spelling::resolve(&path).unwrap_or_else(|_| path.clone());
         if path.is_dir() {
-            if exclude_dirs
-                .iter()
-                .any(|ex| canonical == *ex || canonical.starts_with(ex))
-            {
+            let canonical = CanonicalPath::of(&path);
+            if exclude_dirs.iter().any(|ex| ex.contains(&canonical)) {
                 continue;
             }
             collect_md_files_inner(&path, exclude_dirs, out);
@@ -789,20 +787,17 @@ fn collect_md_files_inner(dir: &Path, exclude_dirs: &[PathBuf], out: &mut Vec<Pa
 /// clean.
 fn check_assembled_docs(docs_dir: &Path) -> Vec<String> {
     // Template directories to exclude entirely.
-    let mut exclude_dirs: Vec<PathBuf> = Vec::new();
-    for tmpl_rel in &["reference/explain/templates", "reference/prime/templates"] {
-        let p = docs_dir.join(tmpl_rel);
-        let canonical = repoweave::path_spelling::resolve(&p).unwrap_or(p);
-        exclude_dirs.push(canonical);
-    }
+    let exclude_dirs: Vec<CanonicalPath> =
+        ["reference/explain/templates", "reference/prime/templates"]
+            .iter()
+            .map(|rel| CanonicalPath::of(&docs_dir.join(rel)))
+            .collect();
 
     // Assembled-output directories: rustdoc-leak detection applies here.
-    let mut assembled_dirs: Vec<PathBuf> = Vec::new();
-    for asm_rel in &["reference/explain", "reference/prime"] {
-        let p = docs_dir.join(asm_rel);
-        let canonical = repoweave::path_spelling::resolve(&p).unwrap_or(p);
-        assembled_dirs.push(canonical);
-    }
+    let assembled_dirs: Vec<CanonicalPath> = ["reference/explain", "reference/prime"]
+        .iter()
+        .map(|rel| CanonicalPath::of(&docs_dir.join(rel)))
+        .collect();
 
     // Matches all markdown links: [text](target)
     let link_re = Regex::new(r"\[([^\]]*)\]\(([^)]+)\)").unwrap();
@@ -837,11 +832,8 @@ fn check_assembled_docs(docs_dir: &Path) -> Vec<String> {
         };
 
         // Determine whether this file is in an assembled-output directory.
-        let canonical_file =
-            repoweave::path_spelling::resolve(md_path).unwrap_or_else(|_| md_path.clone());
-        let is_assembled = assembled_dirs
-            .iter()
-            .any(|ad| canonical_file.starts_with(ad));
+        let canonical_file = CanonicalPath::of(md_path);
+        let is_assembled = assembled_dirs.iter().any(|ad| ad.contains(&canonical_file));
 
         if is_assembled {
             // --- Check for bare autolinks (rustdoc leakage not caught by the
@@ -924,7 +916,7 @@ fn check_help_flag_ordering(docs_dir: &Path) -> Vec<String> {
     let wrong_order = Regex::new(r"rwv --help [a-z][a-z0-9-]*").unwrap();
 
     let mut findings = Vec::new();
-    for page in collect_md_files(&explain_dir, &[template_dir]) {
+    for page in collect_md_files(&explain_dir, &[CanonicalPath::of(&template_dir)]) {
         let content = fs::read_to_string(&page).unwrap_or_default();
         for (lineno, line) in content.lines().enumerate() {
             if let Some(m) = wrong_order.find(line) {
@@ -3103,9 +3095,10 @@ fn check_no_internals_on_operator_surfaces(root: &Path) -> Vec<String> {
     let explain_dir = root.join("docs/reference/explain");
     let templates_dir = explain_dir.join("templates");
     let schemas_dir = root.join("docs/reference/schemas");
-    let mut files: Vec<PathBuf> = collect_md_files(&explain_dir, &[templates_dir])
-        .into_iter()
-        .collect();
+    let mut files: Vec<PathBuf> =
+        collect_md_files(&explain_dir, &[CanonicalPath::of(&templates_dir)])
+            .into_iter()
+            .collect();
     if schemas_dir.is_dir() {
         for entry in fs::read_dir(&schemas_dir).into_iter().flatten().flatten() {
             let path = entry.path();
@@ -3833,7 +3826,12 @@ fn src_code_kebab_words(root: &Path) -> HashSet<String> {
     let plugins: Vec<PathBuf> = PLUGIN_SOURCE_DIRS.iter().map(|d| root.join(d)).collect();
     let mut words = HashSet::new();
     for path in collect_rs_files(&root.join("src")) {
-        if path.starts_with(&bin) && !plugins.iter().any(|p| path.starts_with(p)) {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "every path here is a join onto `root`, so the prefix is lexical by construction"
+        )]
+        let unshipped = path.starts_with(&bin) && !plugins.iter().any(|p| path.starts_with(p));
+        if unshipped {
             continue;
         }
         let Ok(content) = fs::read_to_string(&path) else {

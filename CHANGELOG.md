@@ -185,7 +185,16 @@ whose `origin` is recorded as a `\\?\` path now compares equal to the same path
 spelled plain. A path with no plain spelling — longer than 260 characters, or
 naming a reserved device such as `CON` — keeps the prefix. A member or project
 under the root is spelled with `\` throughout, `C:\w\github\org\repo`, never
-`C:\w\github/org/repo`.
+`C:\w\github/org/repo`. A workweave marker, workweave index or in-progress
+operation record written by an earlier rwv in the `\\?\` spelling is read as
+the plain spelling, with no migration step.
+
+### A recorded path names its directory in any spelling
+
+Workweave markers, workweave indexes and in-progress operation records hold
+each path resolved, and resolve it again when read, so a record written through
+a symlinked spelling of a directory — macOS's `/var` for `/private/var`, a
+symlinked weave root — matches that directory wherever rwv compares it.
 
 ### `rwv --version` leads with the release version on every build
 

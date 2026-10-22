@@ -2,4 +2,5 @@ disallowed-methods = [
     { path = "std::fs::canonicalize", reason = "resolve through path_spelling::resolve, which never yields the Windows verbatim spelling" },
     { path = "std::path::Path::canonicalize", reason = "resolve through path_spelling::resolve, which never yields the Windows verbatim spelling" },
     { path = "dunce::canonicalize", reason = "resolve through path_spelling::resolve, which also respells a UNC path" },
+    { path = "std::path::Path::starts_with", reason = "containment of a location is CanonicalPath::contains; a prefix of a relative name is a question about its components" },
 ]

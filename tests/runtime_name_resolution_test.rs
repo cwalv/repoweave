@@ -480,10 +480,10 @@ fn body_text(body: &[SourceLine]) -> String {
 /// This is a source pin because it is not observable at runtime here: on a
 /// case-sensitive filesystem `canonicalize` resolves every alias, so the two
 /// matchers agree on every directory a test can build. Reduce `same_directory`
-/// to the canonicalized-path comparison and the whole suite stays green.
+/// to the resolved-spelling comparison and the whole suite stays green.
 #[test]
 fn the_registry_match_reads_filesystem_identity() {
-    let matcher = body_text(&function_body("workweave_index.rs", "fn same_directory("));
+    let matcher = body_text(&function_body("path_spelling.rs", "fn same_directory("));
     assert!(
         matcher.contains(".dev()") && matcher.contains(".ino()"),
         "the match must read filesystem identity: {matcher}"

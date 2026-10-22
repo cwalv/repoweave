@@ -666,8 +666,13 @@ permission bits and signals.
 `clippy.toml` bans every way to canonicalize a path but one:
 `path_spelling::resolve` (`src/path_spelling.rs`) is the only producer of a
 resolved path, and it never yields the Windows verbatim `\\?\` spelling where
-a plain one names the same path. Host clippy cannot see a `cfg(windows)` item,
-so the gate's windows stage also lints for the Windows target.
+a plain one names the same path. A location that is compared or recorded is a
+`path_spelling::CanonicalPath`, its identity: equal by resolved spelling, with
+`contains` for containment and `same_directory` for the filesystem's own
+verdict, and comparable with nothing but another identity. `clippy.toml` bans
+`Path::starts_with` so containment goes through `contains`. Host clippy cannot
+see a `cfg(windows)` item, so the gate's windows stage also lints for the
+Windows target.
 
 ## 9. Where the contract lives
 

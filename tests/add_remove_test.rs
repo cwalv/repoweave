@@ -8,6 +8,8 @@ use std::process;
 
 mod common;
 
+use repoweave::path_spelling::CanonicalPath;
+
 /// Build a `Command` for the `rwv` binary.
 fn rwv() -> Command {
     common::rwv()
@@ -2030,7 +2032,7 @@ fn add_from_workweave_clones_to_primary_canonical_path() {
     // The canonical clone exists under primary, matching its remote.
     let cloned = find_cloned_repo(&primary, &bare);
     assert!(
-        cloned.starts_with(&primary),
+        CanonicalPath::of(&primary).contains(&CanonicalPath::of(&cloned)),
         "clone must live under primary's path, got {} (primary: {})",
         cloned.display(),
         primary.display()
@@ -2211,7 +2213,7 @@ fn add_url_arm_from_workweave_git_common_dir_points_to_primary_clone() {
     // Locate the canonical clone under primary.
     let canonical = find_cloned_repo(&primary, &bare);
     assert!(
-        canonical.starts_with(&primary),
+        CanonicalPath::of(&primary).contains(&CanonicalPath::of(&canonical)),
         "canonical clone must be under primary ({}), got {}",
         primary.display(),
         canonical.display()
@@ -2239,12 +2241,12 @@ fn add_url_arm_from_workweave_git_common_dir_points_to_primary_clone() {
     // 2. git-common-dir must be inside the canonical clone's .git, not
     //    inside the workweave directory.
     let common_dir = git_common_dir(&workweave_repo);
-    let canonical_git = repoweave::path_spelling::resolve(&canonical.join(".git")).unwrap();
+    let canonical_git = CanonicalPath::existing(&canonical.join(".git")).unwrap();
     assert!(
-        common_dir.starts_with(&canonical_git),
+        canonical_git.contains(&CanonicalPath::of(&common_dir)),
         "git-common-dir ({}) must be inside the canonical clone's .git ({})",
         common_dir.display(),
-        canonical_git.display()
+        canonical_git.as_path().display()
     );
 
     // 3. Ephemeral branch must be the FLAT {project}--{weave} name.
@@ -2351,12 +2353,12 @@ fn add_local_path_arm_from_workweave_git_common_dir_points_to_primary_clone() {
 
     // git-common-dir must be inside the canonical clone's .git directory.
     let common_dir = git_common_dir(&workweave_repo);
-    let canonical_git = repoweave::path_spelling::resolve(&canonical.join(".git")).unwrap();
+    let canonical_git = CanonicalPath::existing(&canonical.join(".git")).unwrap();
     assert!(
-        common_dir.starts_with(&canonical_git),
+        canonical_git.contains(&CanonicalPath::of(&common_dir)),
         "git-common-dir ({}) must be inside the canonical clone's .git ({}) [adopt arm]",
         common_dir.display(),
-        canonical_git.display()
+        canonical_git.as_path().display()
     );
 
     // Ephemeral branch: the flat {project}--{weave}, no segmented third component.

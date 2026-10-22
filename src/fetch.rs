@@ -387,7 +387,7 @@ pub fn run_fetch_in_place(
         } => materialize_workweave_members(
             ctx,
             &name,
-            workweave.require(dir, project)?,
+            workweave.require(dir.as_path(), project)?,
             &project_dir,
             no_reference,
             filter,
