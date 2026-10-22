@@ -4043,7 +4043,7 @@ struct ClaudeHookInput {
     cwd: Option<String>,
     branch_name: Option<String>,
     session_id: Option<String>,
-    hook_event_name: Option<String>,
+    hook_event_name: Option<crate::setup::HookEvent>,
     worktree_path: Option<String>,
 }
 
@@ -4078,8 +4078,10 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
     let input: ClaudeHookInput = serde_json::from_reader(std::io::stdin())
         .context("failed to parse hook JSON from stdin")?;
 
-    match input.hook_event_name.as_deref() {
-        Some("WorktreeCreate") => {
+    use crate::setup::HookEvent;
+
+    match input.hook_event_name {
+        Some(HookEvent::WorktreeCreate) => {
             let cwd = input
                 .cwd
                 .ok_or_else(|| anyhow!("missing cwd in hook input"))?;
@@ -4114,7 +4116,7 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
             ))?;
             println!("{}", path.display());
         }
-        Some("WorktreeRemove") => {
+        Some(HookEvent::WorktreeRemove) => {
             let worktree_path = input
                 .worktree_path
                 .ok_or_else(|| anyhow!("missing worktree_path in hook input"))?;
@@ -4157,9 +4159,14 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
             }
             // Always exit 0.
         }
-        other => {
-            anyhow::bail!("unknown hook_event_name: {:?}", other);
+        Some(other) => {
+            anyhow::bail!(
+                "`{other}` is not a workweave hook event: `rwv workweave --claude-hook` handles {} and {}",
+                HookEvent::WORKWEAVE[0],
+                HookEvent::WORKWEAVE[1]
+            );
         }
+        None => anyhow::bail!("missing hook_event_name in hook input"),
     }
 
     Ok(())
@@ -4493,15 +4500,12 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn claude_hook_unknown_event_errors() {
-        // Deserialize directly and call the dispatch logic via the public API.
-        // We simulate by constructing the input struct.
+    fn claude_hook_unknown_event_does_not_parse() {
         let json = r#"{"hook_event_name":"UnknownEvent"}"#;
-        let input: ClaudeHookInput = serde_json::from_str(json).unwrap();
-        // The match arm should hit the `other` branch.
-        assert_eq!(input.hook_event_name.as_deref(), Some("UnknownEvent"));
-        assert!(input.cwd.is_none());
-        assert!(input.worktree_path.is_none());
+        let err = serde_json::from_str::<ClaudeHookInput>(json)
+            .err()
+            .expect("an event Claude Code does not define is not an input");
+        assert!(err.to_string().contains("UnknownEvent"), "{err}");
     }
 
     #[test]
@@ -4529,7 +4533,10 @@ mod tests {
         assert_eq!(input.cwd.as_deref(), Some("/home/user/ws"));
         assert_eq!(input.branch_name.as_deref(), Some("feat/new-thing"));
         assert_eq!(input.session_id.as_deref(), Some("sess-001"));
-        assert_eq!(input.hook_event_name.as_deref(), Some("WorktreeCreate"));
+        assert_eq!(
+            input.hook_event_name,
+            Some(crate::setup::HookEvent::WorktreeCreate)
+        );
         assert_eq!(input.worktree_path.as_deref(), Some(wt_str));
     }
 

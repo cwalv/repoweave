@@ -1845,7 +1845,7 @@ fn claude_hook_unknown_event_errors() {
         .write_stdin(json)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("unknown hook_event_name"));
+        .stderr(predicate::str::contains("SomeUnknownEvent"));
 }
 
 #[test]

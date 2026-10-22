@@ -17,15 +17,32 @@ use std::path::{Path, PathBuf};
 /// The command string registered as a hook.
 const HOOK_COMMAND: &str = "rwv prime";
 
-/// Hook events we register `rwv prime` under.
-const HOOK_EVENTS: &[&str] = &["SessionStart", "PreCompact"];
-
 /// The command registered for WorktreeCreate and WorktreeRemove hooks.
 /// A single binary handles both events by reading `hook_event_name` from stdin JSON.
 const WORKWEAVE_HOOK_COMMAND: &str = "rwv workweave --claude-hook";
 
-/// Workweave hook events handled by `rwv workweave --claude-hook`.
-const WORKWEAVE_HOOK_EVENTS: &[&str] = &["WorktreeCreate", "WorktreeRemove"];
+/// A Claude Code hook event, spelled the way Claude Code names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum HookEvent {
+    SessionStart,
+    PreCompact,
+    WorktreeCreate,
+    WorktreeRemove,
+}
+
+impl HookEvent {
+    /// The events `rwv prime` is registered under.
+    pub const PRIME: [Self; 2] = [Self::SessionStart, Self::PreCompact];
+
+    /// The events `rwv workweave --claude-hook` handles.
+    pub const WORKWEAVE: [Self; 2] = [Self::WorktreeCreate, Self::WorktreeRemove];
+}
+
+impl std::fmt::Display for HookEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&crate::wire_token::wire_token(self))
+    }
+}
 
 /// Resolve `~/.claude/settings.json`.
 fn claude_settings_path() -> anyhow::Result<PathBuf> {
@@ -159,16 +176,16 @@ fn claude_inner(settings_path: &Path) -> anyhow::Result<()> {
     let mut changed = false;
 
     // Register `rwv prime` for SessionStart + PreCompact.
-    for &event in HOOK_EVENTS {
-        if ensure_command_hook_registered(hooks_obj, event, HOOK_COMMAND) {
+    for event in HookEvent::PRIME {
+        if ensure_command_hook_registered(hooks_obj, &event.to_string(), HOOK_COMMAND) {
             changed = true;
         }
     }
 
     // Register `rwv workweave --claude-hook` for WorktreeCreate + WorktreeRemove.
     // The same command handles both events by reading hook_event_name from stdin JSON.
-    for &event in WORKWEAVE_HOOK_EVENTS {
-        if ensure_command_hook_registered(hooks_obj, event, WORKWEAVE_HOOK_COMMAND) {
+    for event in HookEvent::WORKWEAVE {
+        if ensure_command_hook_registered(hooks_obj, &event.to_string(), WORKWEAVE_HOOK_COMMAND) {
             changed = true;
         }
     }
@@ -258,6 +275,29 @@ fn group_contains_command(group: &Value, command: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[test]
+    fn hook_events_are_spelled_the_way_claude_code_names_them() {
+        let spelled: Vec<String> = HookEvent::PRIME
+            .into_iter()
+            .chain(HookEvent::WORKWEAVE)
+            .map(|event| event.to_string())
+            .collect();
+        assert_eq!(
+            spelled,
+            [
+                "SessionStart",
+                "PreCompact",
+                "WorktreeCreate",
+                "WorktreeRemove"
+            ]
+        );
+        assert_eq!(
+            serde_json::from_str::<HookEvent>("\"WorktreeCreate\"").unwrap(),
+            HookEvent::WorktreeCreate
+        );
+        assert!(serde_json::from_str::<HookEvent>("\"worktree-create\"").is_err());
+    }
+
     /// Helper: call claude_at with a temp settings path.
     fn claude_at_tmp(settings_path: &Path) -> anyhow::Result<()> {
         claude_at(settings_path)
@@ -289,8 +329,9 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
 
         // rwv prime registered for SessionStart + PreCompact
-        for event in HOOK_EVENTS {
-            let arr = content["hooks"][event].as_array().unwrap();
+        for event in HookEvent::PRIME {
+            let event = event.to_string();
+            let arr = content["hooks"][&event].as_array().unwrap();
             assert!(!arr.is_empty(), "{event} should have hooks");
             let found = arr.iter().any(|g| {
                 g["hooks"]
@@ -305,9 +346,9 @@ mod tests {
         }
 
         // Workweave hook events registered with rwv workweave --claude-hook
-        for &event in WORKWEAVE_HOOK_EVENTS {
+        for event in HookEvent::WORKWEAVE {
             assert!(
-                content["hooks"][event].as_array().is_some(),
+                content["hooks"][event.to_string()].as_array().is_some(),
                 "{event} should be registered"
             );
         }
@@ -342,8 +383,8 @@ mod tests {
         let content: Value =
             serde_json::from_str(&std::fs::read_to_string(&settings_path).unwrap()).unwrap();
 
-        for &event in WORKWEAVE_HOOK_EVENTS {
-            let arr = content["hooks"][event]
+        for event in HookEvent::WORKWEAVE {
+            let arr = content["hooks"][event.to_string()]
                 .as_array()
                 .unwrap_or_else(|| panic!("{event} should be present"));
             let found = arr.iter().any(|g| {
