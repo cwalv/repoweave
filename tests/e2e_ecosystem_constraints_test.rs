@@ -53,6 +53,17 @@ fn tool_available(name: &str) -> bool {
     which::which(name).is_ok()
 }
 
+/// Fail the calling test when `tool` is not on PATH. It fails and does not
+/// skip: what it measures is the tool's own behavior, and a PATH shim would
+/// only prove the shim ran.
+fn require_tool(tool: &str, measures: &str) {
+    assert!(
+        tool_available(tool),
+        "FAIL: `{tool}` is not on PATH, and this test fails rather than skips without it. \
+         It measures {measures}, not a stand-in for it. Install `{tool}` to make it pass."
+    );
+}
+
 /// The major version `program --version` reports, or `None` where the spawn
 /// failed or printed nothing a version can be read out of.
 ///
@@ -101,12 +112,7 @@ fn write_file(path: &Path, content: &str) {
 ///   the local version satisfies the version constraint.
 #[test]
 fn cargo_catches_workspace_version_mismatch() {
-    assert!(
-        tool_available("cargo"),
-        "SKIP: cargo not on PATH. This test measures cargo's own resolver, \
-         not a stand-in for it — a PATH shim would only prove the shim ran. \
-         Install cargo to lift this."
-    );
+    require_tool("cargo", "cargo's own resolver");
 
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
@@ -202,12 +208,7 @@ fn cargo_catches_workspace_version_mismatch() {
 ///   Error contains: `github.com/test/lib@v0.0.0: reading github.com/test/lib/go.mod`
 #[test]
 fn go_work_catches_version_mismatch() {
-    assert!(
-        tool_available("go"),
-        "SKIP: go not on PATH. This test measures go's own module-path \
-         resolution, not a stand-in for it — a PATH shim would only prove \
-         the shim ran. Install go to lift this."
-    );
+    require_tool("go", "go's own module-path resolution");
 
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
@@ -301,12 +302,7 @@ fn go_work_catches_version_mismatch() {
 #[test]
 fn npm_workspace_checks_version_mismatch() {
     let npm = common::node_tool("npm");
-    assert!(
-        tool_available(&npm),
-        "SKIP: npm not on PATH. This test measures npm's own workspace \
-         resolver, not a stand-in for it — a PATH shim would only prove \
-         the shim ran. Install npm to lift this."
-    );
+    require_tool(&npm, "npm's own workspace resolver");
     let Some(npm_major) = tool_major_version(&npm) else {
         panic!(
             "`{npm}` is on PATH but reports no version, so nothing here knows \
@@ -405,12 +401,7 @@ fn npm_workspace_checks_version_mismatch() {
 ///   This matches pip's behavior for editable / path installs.
 #[test]
 fn uv_workspace_silently_allows_version_mismatch() {
-    assert!(
-        tool_available("uv"),
-        "SKIP: uv not on PATH. This test measures uv's own \
-         workspace-source override, not a stand-in for it — a PATH shim \
-         would only prove the shim ran. Install uv to lift this."
-    );
+    require_tool("uv", "uv's own workspace-source override");
 
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
