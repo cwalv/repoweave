@@ -45,6 +45,7 @@
 //! No requirement is active while every migratory arm still ships. The
 //! window parameterization is deliberately absent until v1.
 
+use crate::state_file::{StateFile, StatePath};
 use crate::vcs::CommitId;
 use anyhow::Context;
 use semver::Version;
@@ -87,12 +88,16 @@ pub struct FloorRequirement {
 /// its floor here.
 pub const ACTIVE_REQUIREMENT: Option<FloorRequirement> = None;
 
+fn floor_path(ws_root: &Path) -> StatePath {
+    StateFile::HealthFloor.in_dir(ws_root)
+}
+
 /// Read the weave's floor record. `Ok(None)` when none was ever recorded;
 /// an unreadable or unparseable file also reads as `None` (the conservative
 /// direction: an illegible floor licenses nothing). A record whose version is
 /// not a semver is unparseable.
 pub fn read(ws_root: &Path) -> Option<HealthFloor> {
-    let raw = std::fs::read_to_string(ws_root.join(FLOOR_FILE)).ok()?;
+    let raw = floor_path(ws_root).read_to_string().ok()?;
     serde_json::from_str(&raw).ok()
 }
 
@@ -123,8 +128,8 @@ pub fn record_clean_run(ws_root: &Path, vcs: &dyn crate::vcs::Vcs) -> anyhow::Re
         recorded_at: Some(crate::op_state::utc_now_rfc3339()),
     };
     let bytes = serde_json::to_vec_pretty(&floor).context("serialize health floor")?;
-    crate::state_file::StateFile::HealthFloor
-        .publish_in(ws_root, &bytes)
+    floor_path(ws_root)
+        .publish(&bytes)
         .context("write health floor")?;
     Ok(())
 }

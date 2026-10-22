@@ -227,7 +227,7 @@ fn fixture_impl(npm_in_lib: bool) -> Fixture {
     std::fs::write(project_dir.join(".gitignore"), gitignore).unwrap();
     let raw_lock = format!("{{\"repositories\": {{{}}}}}", lock_entries.join(","));
     let lock = repoweave::manifest::LockFile::from_json_str(&raw_lock).unwrap();
-    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
+    repoweave::lock::write_lock_in(&lock, &project_dir).unwrap();
     std::fs::write(ws.join(".rwv-active"), "app\n").unwrap();
 
     let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws, None).unwrap();

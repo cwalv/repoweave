@@ -96,11 +96,11 @@ fn call_sites(needle: &str) -> Vec<(String, usize)> {
 /// that reached exclusion by some other route — its own `create_new` on a file
 /// of its own, an `flock`, a lease taken through a helper this does not name —
 /// is not caught. What narrows that gap is not here but in
-/// `tests/state_file_publish_audit_test.rs`, which holds `EXCLUSIVE_CREATE` —
-/// the closed, derived set of names rwv publishes by exclusive create — to its
-/// declared constants in both directions. A new exclusion mechanism has to
-/// register a name there to be published at all, and that file reddens when one
-/// appears.
+/// `tests/state_file_publish_audit_test.rs`, which holds `StateFile::ALL` —
+/// the closed, derived set of names rwv keeps as state, the claim files among
+/// them — to its declared constants in both directions. A new exclusion
+/// mechanism has to add a `StateFile` to get a `StatePath` at all, and that
+/// file reddens when a constant for one appears without it.
 #[test]
 fn the_op_lease_is_syncs_tool_and_not_a_verb_surface_mutex() {
     let sites = call_sites("acquire_op(");

@@ -441,7 +441,7 @@ pub struct PushWorkspace {
 /// Write an `rwv.lock` into `project_dir` pinning each
 /// `(repo_path, url, version)`.
 ///
-/// Goes through `LockFile::from_json_str` and `lock::write_lock` rather than
+/// Goes through `LockFile::from_json_str` and `lock::write_lock_in` rather than
 /// formatting the on-disk JSON, for two reasons a hand-written fixture cannot
 /// give you. The parse means a fixture that has drifted to an unparseable
 /// shape fails loudly here instead of being written and silently skipped past
@@ -477,8 +477,7 @@ pub fn fixture_lock(project_dir: &std::path::Path, repos: &[(&str, &str, &str)])
     let raw = format!("{{\"repositories\": {{{}}}}}", entries.join(","));
     let lock = repoweave::manifest::LockFile::from_json_str(&raw)
         .expect("a fixture lock must parse before it is written");
-    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock"))
-        .expect("a fixture lock must be writable");
+    repoweave::lock::write_lock_in(&lock, project_dir).expect("a fixture lock must be writable");
 }
 
 /// The bytes [`fixture_lock`] writes, for a caller that needs them as a value

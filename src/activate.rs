@@ -54,6 +54,7 @@ use crate::owned_state::{
 };
 use crate::refusal::RefusalKind;
 use crate::skipped::{SkipReason, SkippedEffect};
+use crate::state_file::StatePath;
 use crate::symlink::LinkTarget;
 use crate::vcs::Vcs;
 use crate::workspace::{
@@ -992,7 +993,7 @@ fn reset_ledger_no_generator_rebuilt(output_dir: &Path) -> anyhow::Result<()> {
         "[reset] core: {} did not parse ({error}) and nothing here regenerated \
          it, so it is now an empty record — rwv attests no generated file for \
          this project until one is generated again",
-        crate::path_spelling::operator_path(&ledger_path(output_dir))
+        ledger_path(output_dir)
     );
     Ok(())
 }
@@ -1593,13 +1594,80 @@ pub(crate) fn own_copy_owned_paths(
 /// the old one did. Only regular files are held: a directory or a link at an
 /// owned path is a `static-files` source, which no regeneration writes.
 pub(crate) struct RestorePoint {
-    files: Vec<(std::path::PathBuf, FileBefore)>,
+    files: Vec<(Held, FileBefore)>,
 }
 
 enum FileBefore {
     Bytes(Vec<u8>),
     /// With the directories that did not exist either, deepest first.
     Absent(Vec<std::path::PathBuf>),
+}
+
+/// A file a [`RestorePoint`] holds: a plain path, or a state file reachable
+/// only through its own durable operations.
+pub(crate) enum Held {
+    File(std::path::PathBuf),
+    State(StatePath),
+}
+
+impl Held {
+    fn symlink_metadata(&self) -> std::io::Result<std::fs::Metadata> {
+        match self {
+            Held::File(path) => path.symlink_metadata(),
+            Held::State(path) => path.symlink_metadata(),
+        }
+    }
+
+    fn read(&self) -> std::io::Result<Vec<u8>> {
+        match self {
+            Held::File(path) => std::fs::read(path),
+            Held::State(path) => path.read(),
+        }
+    }
+
+    fn dir(&self) -> Option<&Path> {
+        match self {
+            Held::File(path) => path.parent(),
+            Held::State(path) => Some(path.dir()),
+        }
+    }
+
+    fn publish(&self, bytes: &[u8]) -> anyhow::Result<()> {
+        match self {
+            Held::File(path) => crate::durable_file::replace(path, bytes),
+            Held::State(path) => path.publish(bytes),
+        }
+    }
+
+    fn remove(&self) -> std::io::Result<()> {
+        match self {
+            Held::File(path) => std::fs::remove_file(path),
+            Held::State(path) => path.remove(),
+        }
+    }
+
+    fn missing_dirs(&self) -> Vec<std::path::PathBuf> {
+        self.dir()
+            .into_iter()
+            .flat_map(Path::ancestors)
+            .take_while(|dir| dir.symlink_metadata().is_err())
+            .map(Path::to_path_buf)
+            .collect()
+    }
+
+    /// Whether this is the plain file at `path`.
+    pub(crate) fn is_file_at(&self, path: &Path) -> bool {
+        matches!(self, Held::File(held) if held == path)
+    }
+}
+
+impl std::fmt::Display for Held {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Held::File(path) => write!(f, "{}", crate::path_spelling::operator_path(path)),
+            Held::State(path) => write!(f, "{path}"),
+        }
+    }
 }
 
 impl RestorePoint {
@@ -1610,7 +1678,7 @@ impl RestorePoint {
     ) -> anyhow::Result<Self> {
         let dir = project_dir(root, project);
         let mut paths: BTreeSet<std::path::PathBuf> =
-            BTreeSet::from([dir.join(Manifest::FILE_NAME), ledger_path(&dir)]);
+            BTreeSet::from([dir.join(Manifest::FILE_NAME)]);
         for manifest in manifests {
             paths.extend(
                 owned_paths(root, project, manifest)
@@ -1619,50 +1687,48 @@ impl RestorePoint {
             );
         }
 
+        let held = std::iter::once(Held::State(ledger_path(&dir)))
+            .chain(paths.into_iter().map(Held::File));
         let mut files = Vec::new();
-        for path in paths {
-            let before = match path.symlink_metadata() {
-                Ok(meta) if meta.is_file() => {
-                    FileBefore::Bytes(std::fs::read(&path).with_context(|| {
-                        format!("reading {} before changing it", path.display())
-                    })?)
-                }
-                Ok(_) => continue,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => FileBefore::Absent(
-                    path.ancestors()
-                        .skip(1)
-                        .take_while(|dir| dir.symlink_metadata().is_err())
-                        .map(Path::to_path_buf)
-                        .collect(),
+        for held in held {
+            let before = match held.symlink_metadata() {
+                Ok(meta) if meta.is_file() => FileBefore::Bytes(
+                    held.read()
+                        .with_context(|| format!("reading {held} before changing it"))?,
                 ),
+                Ok(_) => continue,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    FileBefore::Absent(held.missing_dirs())
+                }
                 Err(e) => {
-                    return Err(anyhow::Error::new(e)
-                        .context(format!("reading {} before changing it", path.display())))
+                    return Err(
+                        anyhow::Error::new(e).context(format!("reading {held} before changing it"))
+                    )
                 }
             };
-            files.push((path, before));
+            files.push((held, before));
         }
         Ok(Self { files })
     }
 
     /// Put every file back as [`RestorePoint::take`] found it, leaving one that
-    /// already matches untouched. Returns the paths it could not put back.
-    pub(crate) fn restore(&self) -> Vec<std::path::PathBuf> {
+    /// already matches untouched. Returns the files it could not put back.
+    pub(crate) fn restore(&self) -> Vec<&Held> {
         let mut unrestored = Vec::new();
-        for (path, before) in &self.files {
+        for (held, before) in &self.files {
             let restored = match before {
                 FileBefore::Bytes(bytes) => {
-                    std::fs::read(path).is_ok_and(|now| now == *bytes)
-                        || path
-                            .parent()
+                    held.read().is_ok_and(|now| now == *bytes)
+                        || held
+                            .dir()
                             .map_or(Ok(()), std::fs::create_dir_all)
                             .map_err(anyhow::Error::from)
-                            .and_then(|()| crate::durable_file::replace(path, bytes))
+                            .and_then(|()| held.publish(bytes))
                             .is_ok()
                 }
                 FileBefore::Absent(missing_dirs) => {
-                    let removed = !path.symlink_metadata().is_ok_and(|m| m.is_file())
-                        || std::fs::remove_file(path).is_ok();
+                    let removed = !held.symlink_metadata().is_ok_and(|m| m.is_file())
+                        || held.remove().is_ok();
                     for dir in missing_dirs {
                         let _ = std::fs::remove_dir(dir);
                     }
@@ -1670,7 +1736,7 @@ impl RestorePoint {
                 }
             };
             if !restored {
-                unrestored.push(path.clone());
+                unrestored.push(held);
             }
         }
         unrestored
@@ -3504,7 +3570,7 @@ mod tests {
         std::fs::write(dir.join("nested/new.md"), "made by the failed run\n").unwrap();
         std::fs::write(dir.join(".claude"), "rewritten\n").unwrap();
 
-        assert_eq!(restore_point.restore(), Vec::<std::path::PathBuf>::new());
+        assert!(restore_point.restore().is_empty());
 
         assert_eq!(
             std::fs::read(dir.join(Manifest::FILE_NAME)).unwrap(),
@@ -3517,6 +3583,77 @@ mod tests {
         assert!(
             !dir.join("nested").exists(),
             "a file the run created goes, with the directory made for it"
+        );
+    }
+
+    #[test]
+    fn a_restore_point_puts_back_the_ledger_a_regeneration_restamped() {
+        let (tmp, project) = make_surfacing_workspace(&[".claude"]);
+        let root = tmp.path();
+        let dir = project_dir(root, &project);
+        let manifest = load_manifest(root, &project);
+        stamp_owned_digest(&dir, "Cargo.lock", b"accepted\n").unwrap();
+        let before = ledger_path(&dir).read().unwrap();
+
+        let restore_point = RestorePoint::take(root, &project, &[&manifest]).unwrap();
+        stamp_owned_digest(&dir, "Cargo.lock", b"regenerated\n").unwrap();
+        stamp_owned_digest(&dir, "package-lock.json", b"new\n").unwrap();
+        assert_ne!(ledger_path(&dir).read().unwrap(), before);
+
+        assert!(restore_point.restore().is_empty());
+
+        assert_eq!(ledger_path(&dir).read().unwrap(), before);
+    }
+
+    #[test]
+    fn a_restore_point_removes_a_ledger_the_regeneration_created() {
+        let (tmp, project) = make_surfacing_workspace(&[".claude"]);
+        let root = tmp.path();
+        let dir = project_dir(root, &project);
+        let manifest = load_manifest(root, &project);
+        assert!(!ledger_path(&dir).exists());
+
+        let restore_point = RestorePoint::take(root, &project, &[&manifest]).unwrap();
+        stamp_owned_digest(&dir, "Cargo.lock", b"regenerated\n").unwrap();
+        assert!(ledger_path(&dir).exists());
+
+        assert!(restore_point.restore().is_empty());
+
+        assert!(!ledger_path(&dir).exists());
+    }
+
+    #[test]
+    fn a_restore_point_names_the_files_it_could_not_put_back() {
+        let (tmp, project) = make_surfacing_workspace(&[".claude"]);
+        let root = tmp.path();
+        let dir = project_dir(root, &project);
+        let manifest = load_manifest(root, &project);
+        stamp_owned_digest(&dir, "Cargo.lock", b"accepted\n").unwrap();
+        let manifest_path = dir.join(Manifest::FILE_NAME);
+
+        let restore_point = RestorePoint::take(root, &project, &[&manifest]).unwrap();
+        for held in [manifest_path.clone(), dir.join(".rwv-owned-digests")] {
+            std::fs::remove_file(&held).unwrap();
+            std::fs::create_dir(&held).unwrap();
+        }
+
+        let unrestored = restore_point.restore();
+
+        let named: Vec<String> = unrestored.iter().map(|held| held.to_string()).collect();
+        assert_eq!(
+            named,
+            vec![
+                ledger_path(&dir).to_string(),
+                crate::path_spelling::operator_path(&manifest_path)
+            ]
+        );
+        assert_eq!(
+            unrestored
+                .iter()
+                .map(|held| held.is_file_at(&manifest_path))
+                .collect::<Vec<_>>(),
+            vec![false, true],
+            "only the plain file is the manifest; the ledger is a state file"
         );
     }
 

@@ -185,12 +185,12 @@ pub(crate) fn pinned_by_name_warning(
 /// raw [`LockFile`] (round-trip) or a [`ResolvedLockFile`] (post-lock
 /// generation). Both serialize as the same JSON shape — a single string
 /// per `version`.
-pub fn write_lock<L: serde::Serialize>(lock: &L, path: &Path) -> anyhow::Result<()> {
+pub fn write_lock_in<L: serde::Serialize>(lock: &L, project_dir: &Path) -> anyhow::Result<()> {
     let mut json = serde_json::to_string_pretty(lock).context("failed to serialize lock file")?;
     json.push('\n');
-    crate::state_file::StateFile::ProjectLock
-        .publish_at(path, json.as_bytes())
-        .with_context(|| format!("failed to write {}", path.display()))
+    let path = LockFile::path_in(project_dir);
+    path.publish(json.as_bytes())
+        .with_context(|| format!("failed to write {path}"))
 }
 
 /// Stage `rwv.lock` and commit from `project_dir`.
@@ -404,21 +404,21 @@ pub(crate) fn write_project_lock(
         dirty,
     )?;
 
-    let lock_path = project_dir.join(LockFile::FILE_NAME);
+    let lock_path = LockFile::path_in(&project_dir);
     // Read old lock before overwriting so the commit message can list what
     // changed. Resolve the raw lock against on-disk repos so the diff
     // computed by `commit_lock_file` is a canonical-SHA comparison rather
     // than a string comparison of possibly-tag-form values.
     let old_lock = if commit.is_some() {
-        LockFile::from_path(&lock_path)
+        LockFile::from_state(&lock_path)
             .ok()
             .map(|raw| raw.resolve_versions(ctx.primary_path()).0)
     } else {
         None
     };
-    write_lock(&lock, &lock_path)?;
+    write_lock_in(&lock, &project_dir)?;
 
-    eprintln!("Wrote {}", lock_path.display());
+    eprintln!("Wrote {lock_path}");
 
     Ok(commit.map(|message| PendingLockCommit {
         project_dir,

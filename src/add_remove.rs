@@ -222,7 +222,10 @@ pub(crate) fn settle_manifest(
                     "every file the regeneration had rewritten was put back"
                 }));
             }
-            let manifest_note = if unrestored.contains(&manifest_path) {
+            let manifest_note = if unrestored
+                .iter()
+                .any(|held| held.is_file_at(&manifest_path))
+            {
                 "; rwv.toml still carries the change"
             } else {
                 ""
@@ -232,7 +235,7 @@ pub(crate) fn settle_manifest(
                  were: {}{manifest_note}",
                 unrestored
                     .iter()
-                    .map(|p| operator_path(p))
+                    .map(ToString::to_string)
                     .collect::<Vec<_>>()
                     .join(", ")
             )))
@@ -1103,10 +1106,10 @@ fn leftover_checkout_vcs(
             format!("path '{}' not found in manifest", repo_path.as_str()),
         )
     };
-    let lock_path = project_dir.join(LockFile::FILE_NAME);
+    let lock_path = LockFile::path_in(project_dir);
     let locked = if lock_path.exists() {
-        LockFile::from_path(&lock_path)
-            .with_context(|| format!("failed to load lock at {}", operator_path(&lock_path)))?
+        LockFile::from_state(&lock_path)
+            .with_context(|| format!("failed to load lock at {lock_path}"))?
             .get_entry(repo_path)
             .map(|entry| entry.vcs_type)
     } else {

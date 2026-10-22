@@ -100,11 +100,19 @@ const ROUTED: &[Routed] = &[
     },
     Routed {
         file: "activate.rs",
-        scope: "fn reset_ledger_no_generator_rebuilt(",
-        needle: r#""[reset] core: {} did not parse"#,
+        scope: "impl std::fmt::Display for Held {",
+        needle: r#"Held::File(path) => write!(f, "{}", "#,
         renders: 1,
-        prints: "materialize's notice that it emptied an unreadable owned-generation \
-                 record nothing here could rebuild",
+        prints: "a file a failed regeneration could not put back, as add and remove list it; \
+                 a state file in that list renders through the one mint in state_file.rs",
+    },
+    Routed {
+        file: "state_file.rs",
+        scope: "",
+        needle: r#"write!(f, "{}", "#,
+        renders: 1,
+        prints: "the location of any state file wherever a message names one: the one mint \
+                 behind every StatePath's Display",
     },
     Routed {
         file: "check.rs",
@@ -117,8 +125,9 @@ const ROUTED: &[Routed] = &[
         file: "check.rs",
         scope: "",
         needle: r#"`--fix` does not touch the pointer until the marker is repaired","#,
-        renders: 1,
-        prints: "doctor: the same conflict with the marker unverifiable",
+        renders: 2,
+        prints: "doctor: the same conflict with the marker unverifiable, naming the root \
+                 and the marker",
     },
     Routed {
         file: "check.rs",
@@ -285,7 +294,7 @@ const ROUTED: &[Routed] = &[
         file: "owned_state.rs",
         scope: "",
         needle: r#""another rwv still holds the owned-digest ledger of {dir} \"#,
-        renders: 2,
+        renders: 1,
         prints: "the owned-digest ledger claim refusal, naming the directory and the \
                  claim file to delete",
     },
@@ -293,7 +302,7 @@ const ROUTED: &[Routed] = &[
         file: "owned_state.rs",
         scope: "",
         needle: r#""failed to release the claim on the owned-digest ledger of {dir}. \"#,
-        renders: 2,
+        renders: 1,
         prints: "the error an edit returns when its ledger claim could not be removed, \
                  naming the directory and the claim file to delete",
     },
@@ -301,7 +310,7 @@ const ROUTED: &[Routed] = &[
         file: "workweave_index.rs",
         scope: "",
         needle: r#""another rwv still holds the workweave index of project \"#,
-        renders: 2,
+        renders: 1,
         prints: "the workweave-index claim refusal, naming the primary root and \
                  the claim file to delete",
     },
@@ -309,7 +318,7 @@ const ROUTED: &[Routed] = &[
         file: "workweave_index.rs",
         scope: "",
         needle: r#""failed to release the claim on the workweave index of project \"#,
-        renders: 2,
+        renders: 1,
         prints: "the error an edit returns when its index claim could not be removed, \
                  naming the primary root and the claim file to delete",
     },
@@ -518,14 +527,6 @@ const ROUTED: &[Routed] = &[
         needle: r#""failed to load manifest at {}","#,
         renders: 1,
         prints: "settle_manifest's own manifest-load failure",
-    },
-    Routed {
-        file: "add_remove.rs",
-        scope: "",
-        needle: r#""the regeneration failed, and these files could not be put back as they \"#,
-        renders: 1,
-        prints: "settle_manifest's failed-regeneration notice, listing files the restore \
-                 could not put back",
     },
     Routed {
         file: "add_remove.rs",
@@ -768,13 +769,6 @@ const ROUTED: &[Routed] = &[
         renders: 1,
         prints: "run_remove's notice that a workweave's branch holding commits stays, naming \
                  the canonical clone it stays in",
-    },
-    Routed {
-        file: "add_remove.rs",
-        scope: "",
-        needle: r#"format!("failed to load lock at {}""#,
-        renders: 1,
-        prints: "leftover_checkout_vcs's failure to read rwv.lock",
     },
     Routed {
         file: "add_remove.rs",

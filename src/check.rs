@@ -3118,7 +3118,7 @@ pub fn scan_for_legacy_workweave_markers(ws_root: &Path) -> Vec<LegacyWorkweaveM
             }
             if let Some(primary) = crate::workspace::legacy_marker_primary(&dir) {
                 found.push(LegacyWorkweaveMarkerFile {
-                    marker_path: crate::workspace::WorkweaveMarker::path_in(&dir),
+                    marker_path: crate::workspace::WorkweaveMarker::path_in(&dir).reported(),
                     primary,
                 });
             }
@@ -3401,7 +3401,7 @@ fn scan_unreadable_owned_state(ws_root: &Path) -> Vec<CheckViolation> {
             crate::owned_state::unreadable_ledger(&project_dir).map(|error| {
                 let active = presented.as_ref() == Some(&project);
                 CheckViolation::UnreadableOwnedState {
-                    state_path: crate::owned_state::ledger_path(&project_dir),
+                    state_path: crate::owned_state::ledger_path(&project_dir).reported(),
                     project,
                     error,
                     active,
@@ -3431,7 +3431,7 @@ fn scan_registry_reconciliation(vcs: &dyn crate::vcs::Vcs, ws_root: &Path) -> Ve
                 unreadable_index_projects.insert(project.as_str().to_string());
                 violations.push(CheckViolation::UnreadableWorkweaveIndex {
                     project: project.clone(),
-                    index_path: crate::workweave_index::index_path(ws_root, &project),
+                    index_path: crate::workweave_index::index_path(ws_root, &project).reported(),
                     error: format!("{e:#}"),
                 });
                 None
@@ -3486,10 +3486,10 @@ fn scan_registry_reconciliation(vcs: &dyn crate::vcs::Vcs, ws_root: &Path) -> Ve
         let index_path = crate::workweave_index::index_path(ws_root, &project);
         if index_path.exists() && is_tracked_in_parent_repo(vcs, &index_path) {
             violations.push(CheckViolation::WorkweaveTreeIntegrity {
-                workweave_dir: index_path.clone(),
+                workweave_dir: index_path.reported(),
                 sub_kind: WorkweaveTreeIntegrityKind::TrackedIndex {
                     project: project.clone(),
-                    index_path,
+                    index_path: index_path.reported(),
                 },
             });
         }
@@ -3536,16 +3536,12 @@ fn scan_registry_reconciliation(vcs: &dyn crate::vcs::Vcs, ws_root: &Path) -> Ve
 /// repo at all answers `false` rather than escaping upward. An unreachable
 /// git is `false` too — hygiene surfaces should never fabricate findings on
 /// non-git-managed projects.
-fn is_tracked_in_parent_repo(vcs: &dyn crate::vcs::Vcs, path: &Path) -> bool {
-    let dir = match path.parent() {
-        Some(d) => d,
-        None => return false,
-    };
-    let name = match path.file_name() {
-        Some(n) => n,
-        None => return false,
-    };
-    vcs.is_tracked(dir, Path::new(name)).unwrap_or(false)
+fn is_tracked_in_parent_repo(
+    vcs: &dyn crate::vcs::Vcs,
+    path: &crate::state_file::StatePath,
+) -> bool {
+    vcs.is_tracked(path.dir(), Path::new(path.file().file_name()))
+        .unwrap_or(false)
 }
 
 /// Adopt an on-disk workweave into its project's `.rwv-workweave-index`.
@@ -3701,7 +3697,7 @@ fn classify_weave_root_identity(
                 root: root.to_path_buf(),
                 pointer_project: pointer.named_project().cloned(),
                 sub_kind: WeaveRootIdentityConflictKind::MarkerUnverifiable {
-                    marker_path,
+                    marker_path: marker_path.reported(),
                     defect,
                 },
             })
@@ -8182,7 +8178,7 @@ impl CheckViolation {
                              `.rwv-workweave`; the two are mutually exclusive. {} \
                              `--fix` does not touch the pointer until the marker is repaired",
                         crate::path_spelling::operator_path(&root),
-                        defect.refusal(marker_path)
+                        defect.refusal(&crate::path_spelling::operator_path(marker_path))
                     ),
                     WeaveRootIdentityConflictKind::Unwitnessed { detail } => format!(
                         "{}: carries both `.rwv-active` (which {pointer}) and \
@@ -9353,11 +9349,11 @@ fn apply_workspace_repairs(
             match crate::workspace::clear_active_project(ctx.primary_path()) {
                 Ok(()) => outln!(
                     "[fixed] core: removed {} (it named no project rwv can select)",
-                    path.display()
+                    path
                 ),
                 Err(e) => fix_errors.push(format!(
                     "unreadable-active-project fix failed for {}: {e:#}",
-                    path.display()
+                    path
                 )),
             }
         }
@@ -9429,7 +9425,7 @@ fn apply_workspace_repairs(
         match registry.migrate_legacy_index() {
             Ok(true) => outln!(
                 "[fixed] core: added the ref-ownership registry to {}",
-                crate::workweave_index::index_path(ctx.primary_path(), &project).display()
+                crate::workweave_index::index_path(ctx.primary_path(), &project)
             ),
             Ok(false) => {}
             Err(e) => fix_errors.push(format!(
@@ -10814,7 +10810,10 @@ fn collect_doctor_violations(
             }
         }
         Some(PointerContent::Unreadable { path, detail }) => {
-            violations.push(CheckViolation::UnreadableActiveProject { path, detail });
+            violations.push(CheckViolation::UnreadableActiveProject {
+                path: path.reported(),
+                detail,
+            });
         }
         None => {}
     }
@@ -10862,7 +10861,7 @@ fn collect_doctor_violations(
         match crate::workspace::pending_index_migration(ctx.primary_path(), &project) {
             Ok(Some(index_path)) => violations.push(CheckViolation::LegacyWorkweaveIndex {
                 project,
-                index_path,
+                index_path: index_path.reported(),
             }),
             Ok(None) => {}
             // An index that does not parse has no shape to classify, and this

@@ -3730,8 +3730,8 @@ fn guard_and_mark<'a>(
     // before any work: the lock file goes back to the bytes the op found, and
     // the claim and savepoints are released, so nothing is left to abort.
     if !cwd_lock_behind.is_empty() {
-        let lock_path = cwd_project_dir.join(LockFile::FILE_NAME);
-        let lock_found = std::fs::read(&lock_path).ok();
+        let lock_path = LockFile::path_in(&cwd_project_dir);
+        let lock_found = lock_path.read().ok();
         let relocked = match regenerate_lock_phase3(
             project_vcs.as_ref(),
             cwd_ctx,
@@ -3743,7 +3743,7 @@ fn guard_and_mark<'a>(
             Err(e) => {
                 let restored = lock_found
                     .as_ref()
-                    .map_or(Ok(()), |bytes| std::fs::write(&lock_path, bytes));
+                    .map_or(Ok(()), |bytes| lock_path.publish(bytes));
                 for (dir, id) in &project_anchors {
                     delete_savepoint(project_vcs.as_ref(), dir, id);
                 }
@@ -3762,9 +3762,8 @@ fn guard_and_mark<'a>(
                 let restore_note = match restored {
                     Ok(()) => String::new(),
                     Err(r) => format!(
-                        "\n\nRestoring {} to the bytes the op found also failed ({r}); check \
-                         it before re-running.",
-                        lock_path.display()
+                        "\n\nRestoring {lock_path} to the bytes the op found also failed ({r}); \
+                         check it before re-running."
                     ),
                 };
                 anyhow::bail!(
@@ -6573,8 +6572,7 @@ fn regenerate_lock_phase3(
     )
     .context("failed to generate lock")?;
 
-    let lock_path = cwd_project_dir.join(LockFile::FILE_NAME);
-    crate::lock::write_lock(&new_lock, &lock_path)?;
+    crate::lock::write_lock_in(&new_lock, cwd_project_dir)?;
 
     let message = auto_relock_commit_message(source_workspace_name);
     if !commit_lock_file_with_message(vcs, cwd_project_dir, &message)? {

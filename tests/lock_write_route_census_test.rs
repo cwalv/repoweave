@@ -18,7 +18,7 @@
 //!
 //! **Population, derived from the write side.** The consolidation that added
 //! the builder derived its population from the functions already reaching
-//! `LockFile::from_json_str` plus `lock::write_lock` — so a site that skipped
+//! `LockFile::from_json_str` plus `lock::write_lock_in` — so a site that skipped
 //! both and wrote bytes, the very shape the builder exists to prevent, could
 //! not appear in it. [`lock_writes`] instead reads every tracked `.rs` file
 //! under `tests/` and reports each call to `fs::write`, `fs::copy`,
@@ -26,7 +26,7 @@
 //! argument resolves to a path whose last component is `rwv.lock`. A
 //! destination resolves through an inline `.join("…rwv.lock")`, through a bare
 //! `"…rwv.lock"` literal, or through an identifier the same file bound to one
-//! of those with a `let`. `common::fixture_lock` and `lock::write_lock` are
+//! of those with a `let`. `common::fixture_lock` and `lock::write_lock_in` are
 //! not byte-writes and never appear, which is what makes the report a list of
 //! unmediated sites rather than a list of locks.
 //!
@@ -690,7 +690,7 @@ fn a_builder_call_is_not_a_byte_write() {
     let found = findings(
         r#"fn fixture(dir: &std::path::Path) {
     common::fixture_lock(dir, &[("github/acme/server", "https://x", "abc")]);
-    repoweave::lock::write_lock(&lock, &dir.join("rwv.lock")).unwrap();
+    repoweave::lock::write_lock_in(&lock, &dir.join("rwv.lock")).unwrap();
 }
 "#,
     );

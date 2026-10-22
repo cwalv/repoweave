@@ -96,7 +96,8 @@ empty is what lets the consent tokens in `src/cli/consent.rs` stay
 | `workweave_index` (`src/workweave_index.rs`, 1779) | The primary-side `.rwv-workweave-index` and `RefRegistry` — the ref-ownership receipt store. |
 | `op_state` (`src/op_state.rs`) | The in-flight-operation record: `OpVerb`, `OpPhase`, `OwnerRecord`, `PhaseTips`, `TouchedWorkspaces`, `acquire_op`; and `OpId`, `SavepointKey` and `SyncStrategy`: the two record fields the engine also reads, and the key a savepoint is filed under. |
 | `owned_state` (`src/owned_state.rs`, 1025) | The attested-generation ledger `.rwv-owned-digests` (`OWNED_DIGESTS_FILE`,): what rwv last accepted for each fully-owned generated file, and the inputs a generation read. Consumed by `activate`, `check`, `workweave` and the cargo integration. |
-| `durable_file` (`src/durable_file.rs`) | The one whole-file publish path: `replace` (overwrite) and `create_new` (refuse an occupied target), both temp-then-fsync-then-publish. Used by `workweave_index` and `op_state`. |
+| `durable_file` (`src/durable_file.rs`) | The one whole-file publish path: `replace` (overwrite) and `create_new` (refuse an occupied target), both temp-then-fsync-then-publish. A state file reaches it only through `StatePath`. |
+| `state_file` (`src/state_file.rs`) | `StateFile`, the closed list of files rwv keeps as its own record, and `StatePath`, where one lives. A `StatePath` is not `AsRef<Path>` and hands out no path, so no path-taking write accepts it; its `publish`, `create` and `claim` are the writes, and each goes through `durable_file`. |
 
 ### Verbs
 

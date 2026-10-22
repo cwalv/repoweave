@@ -1337,7 +1337,7 @@ fn a_resolved_tag_form_entry_is_written_back_as_its_commit_id() {
     let out_dir = project_dir.join("roundtrip");
     std::fs::create_dir_all(&out_dir).unwrap();
     let out_path = out_dir.join("rwv.lock");
-    repoweave::lock::write_lock(&resolved, &out_path).unwrap();
+    repoweave::lock::write_lock_in(&resolved, &out_dir).unwrap();
     let reparsed = repoweave::manifest::LockFile::from_path(&out_path).unwrap();
     let entry = &reparsed.repo_map()
         [&repoweave::manifest::RepoPath::new(repo_path).expect("known-safe literal")];

@@ -84,6 +84,7 @@
 use crate::manifest::{ProjectName, WorkweaveName};
 use crate::path_spelling::CanonicalPath;
 use crate::refusal::RefusalKind;
+use crate::state_file::{StateFile, StatePath};
 use crate::vcs::{
     CommitId, EphemeralRefName, LegacyEphemeralRefName, OwnedRef, RawRefName, ResolvedRevisionId,
 };
@@ -189,9 +190,9 @@ struct RefReceipt {
     created_at: String,
 }
 
-/// The absolute path of the index file for `(primary_root, project)`.
-pub fn index_path(primary_root: &Path, project: &ProjectName) -> PathBuf {
-    project_dir(primary_root, project).join(INDEX_FILENAME)
+/// Where the index file for `(primary_root, project)` lives.
+pub fn index_path(primary_root: &Path, project: &ProjectName) -> StatePath {
+    StateFile::WorkweaveIndex.in_dir(&project_dir(primary_root, project))
 }
 
 /// The default container for a primary workspace: `<parent-of-root>/.workweaves`.
@@ -217,10 +218,11 @@ pub fn read(primary_root: &Path, project: &ProjectName) -> anyhow::Result<Option
     if !path.exists() {
         return Ok(None);
     }
-    let content = std::fs::read_to_string(&path)
-        .with_context(|| format!("failed to read {}", path.display()))?;
-    let index: WorkweaveIndex = serde_json::from_str(&content)
-        .with_context(|| format!("failed to parse {}", path.display()))?;
+    let content = path
+        .read_to_string()
+        .with_context(|| format!("failed to read {path}"))?;
+    let index: WorkweaveIndex =
+        serde_json::from_str(&content).with_context(|| format!("failed to parse {path}"))?;
     Ok(Some(index))
 }
 
@@ -236,9 +238,7 @@ pub fn read(primary_root: &Path, project: &ProjectName) -> anyhow::Result<Option
 pub fn write(claim: &IndexClaim, index: &WorkweaveIndex) -> anyhow::Result<()> {
     let (primary_root, project) = (claim.primary_root.as_path(), &claim.project);
     let path = index_path(primary_root, project);
-    let parent = path
-        .parent()
-        .expect("index_path always has a parent (projects/<name>/)");
+    let parent = path.dir();
     if !parent.exists() {
         crate::refuse!(
             RefusalKind::ProjectDirMissing,
@@ -254,7 +254,7 @@ pub fn write(claim: &IndexClaim, index: &WorkweaveIndex) -> anyhow::Result<()> {
     let _ = ensure_ignore_entry(primary_root, project);
     let content =
         serde_json::to_string_pretty(index).context("failed to serialize workweave index")?;
-    crate::state_file::StateFile::WorkweaveIndex.publish_in(parent, content.as_bytes())
+    path.publish(content.as_bytes())
 }
 
 /// An exclusive claim on one project's index, released when it drops.
@@ -297,14 +297,13 @@ impl IndexClaim {
     ) -> anyhow::Result<T> {
         let claim = Self::acquire(primary_root, project)?;
         let outcome = edit(&claim);
-        let path = claim_path(primary_root, project);
         let released = claim.file.release().with_context(|| {
             format!(
                 "failed to release the claim on the workweave index of project \
                  {project} at {root}. Every later write to it refuses until {claim} \
                  is deleted",
                 root = crate::path_spelling::operator_path(primary_root),
-                claim = crate::path_spelling::operator_path(&path),
+                claim = claim_path(primary_root, project),
             )
         });
         crate::durable_file::after_release(outcome, released)
@@ -312,9 +311,7 @@ impl IndexClaim {
 
     fn acquire(primary_root: &Path, project: &ProjectName) -> anyhow::Result<Self> {
         let path = claim_path(primary_root, project);
-        let parent = path
-            .parent()
-            .expect("claim_path always has a parent (projects/<name>/)");
+        let parent = path.dir();
         if !parent.exists() {
             crate::refuse!(
                 RefusalKind::ProjectDirMissing,
@@ -322,7 +319,7 @@ impl IndexClaim {
                 parent.display()
             );
         }
-        match crate::durable_file::claim(&path) {
+        match path.claim() {
             Ok(file) => Ok(Self {
                 primary_root: primary_root.to_path_buf(),
                 project: project.clone(),
@@ -335,19 +332,18 @@ impl IndexClaim {
                      {project} at {root} ({held_by}). If no rwv is running, \
                      delete {claim} and rerun.",
                     root = crate::path_spelling::operator_path(primary_root),
-                    claim = crate::path_spelling::operator_path(&path),
+                    claim = path,
                 );
             }
-            Err(crate::durable_file::ClaimError::Io(e)) => Err(anyhow::Error::new(e).context(
-                format!("failed to claim the workweave index at {}", path.display()),
-            )),
+            Err(crate::durable_file::ClaimError::Io(e)) => Err(anyhow::Error::new(e)
+                .context(format!("failed to claim the workweave index at {path}"))),
         }
     }
 }
 
 /// Where `(primary_root, project)`'s index claim lives.
-fn claim_path(primary_root: &Path, project: &ProjectName) -> PathBuf {
-    project_dir(primary_root, project).join(INDEX_CLAIM_FILE)
+fn claim_path(primary_root: &Path, project: &ProjectName) -> StatePath {
+    StateFile::IndexClaim.in_dir(&project_dir(primary_root, project))
 }
 
 /// Resolve the effective container for new workweaves in `(primary_root, project)`.
@@ -828,7 +824,7 @@ impl RefRegistry {
     }
 
     /// The index file this registry reads and writes.
-    fn index_path(&self) -> PathBuf {
+    fn index_path(&self) -> StatePath {
         index_path(&self.primary_root, &self.project)
     }
 
@@ -862,14 +858,13 @@ impl RefRegistry {
 /// Free function rather than a method so the wording has one home; the
 /// detection side lives at [`crate::workspace::pending_index_migration`],
 /// next to the marker check it mirrors.
-fn legacy_index_error(path: &Path) -> anyhow::Error {
+fn legacy_index_error(path: &StatePath) -> anyhow::Error {
     crate::refusal::refusal(
         RefusalKind::LegacyWorkweaveIndex,
         format!(
-            "{} is a legacy workweave index written before ref-ownership receipts \
+            "{path} is a legacy workweave index written before ref-ownership receipts \
              existed (no `receipts` field). Run `rwv doctor --fix` to migrate it \
-             before creating or destroying refs in this project.",
-            path.display()
+             before creating or destroying refs in this project."
         ),
     )
 }
@@ -881,18 +876,16 @@ impl RefReceipt {
     /// a corrupt receipt, and the alternative to refusing is handing out an
     /// [`OwnedRef`] whose recorded tip is not a commit id — which every
     /// warrant check would then compare against and silently never match.
-    fn to_owned_ref(&self, path: &Path) -> anyhow::Result<OwnedRef> {
+    fn to_owned_ref(&self, path: &StatePath) -> anyhow::Result<OwnedRef> {
         let created_at = CommitId::parse(&self.created_at)
             .map(ResolvedRevisionId::from)
             .map_err(|_| {
                 crate::refusal::refusal(
                     RefusalKind::ReceiptRevisionUncanonical,
                     format!(
-                        "{}: ownership receipt for '{}' records '{}' as its created-at \
+                        "{path}: ownership receipt for '{}' records '{}' as its created-at \
                          revision, which is not a canonical commit id",
-                        path.display(),
-                        self.name,
-                        self.created_at
+                        self.name, self.created_at
                     ),
                 )
             })?;
@@ -1137,7 +1130,7 @@ mod tests {
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
         let claim = claim_path(&primary, &project);
-        std::fs::write(&claim, "pid 999999\n").unwrap();
+        claim.create(b"pid 999999\n").unwrap();
 
         let started = std::time::Instant::now();
         let err = record_workweave(
@@ -1757,11 +1750,11 @@ mod tests {
 
     /// Write a legacy index: current shape minus the registry field.
     fn write_legacy_index(primary: &Path, project: &ProjectName) {
-        std::fs::write(
-            index_path(primary, project),
-            r#"{"container":"/abs/container","workweaves":{"hotfix":"/abs/container/web-app--hotfix"}}"#,
-        )
-        .unwrap();
+        index_path(primary, project)
+            .publish(
+                br#"{"container":"/abs/container","workweaves":{"hotfix":"/abs/container/web-app--hotfix"}}"#,
+            )
+            .unwrap();
     }
 
     #[test]
@@ -1772,7 +1765,7 @@ mod tests {
         let store = make_store(tmp.path(), "weave/github/acme/server");
         write_legacy_index(&primary, &project);
 
-        let before = std::fs::read_to_string(index_path(&primary, &project)).unwrap();
+        let before = index_path(&primary, &project).read_to_string().unwrap();
         let err = RefRegistry::for_project(&primary, &project)
             .record_created(&store, ephemeral(&project, "hotfix"), rev('a'))
             .unwrap_err();
@@ -1787,7 +1780,7 @@ mod tests {
         );
 
         assert_eq!(
-            std::fs::read_to_string(index_path(&primary, &project)).unwrap(),
+            index_path(&primary, &project).read_to_string().unwrap(),
             before,
             "a refused record must not half-migrate the index — the missing \
              field is the only signal the migration has not run"
@@ -1889,14 +1882,15 @@ mod tests {
         let project = make_project(&primary, "web-app");
         let store = make_store(tmp.path(), "weave/github/acme/server");
 
-        std::fs::write(
-            index_path(&primary, &project),
-            format!(
-                r#"{{"container":"/c","workweaves":{{}},"receipts":[{{"store":{:?},"name":"web-app--hotfix","created_at":"HEAD~1"}}]}}"#,
-                store.display().to_string()
-            ),
-        )
-        .unwrap();
+        index_path(&primary, &project)
+            .publish(
+                format!(
+                    r#"{{"container":"/c","workweaves":{{}},"receipts":[{{"store":{:?},"name":"web-app--hotfix","created_at":"HEAD~1"}}]}}"#,
+                    store.display().to_string()
+                )
+                .as_bytes(),
+            )
+            .unwrap();
 
         let err = RefRegistry::for_project(&primary, &project)
             .lookup(&store, &RawRefName::new("web-app--hotfix"))
@@ -1949,15 +1943,16 @@ mod tests {
 
         let link = tmp.path().join("server-link");
         crate::symlink::create(&store, &link, crate::symlink::LinkTarget::Directory).unwrap();
-        std::fs::write(
-            index_path(&primary, &project),
-            format!(
-                r#"{{"container":"/c","workweaves":{{}},"receipts":[{{"store":{:?},"name":"web-app--hotfix","created_at":{:?}}}]}}"#,
-                link.display().to_string(),
-                "a".repeat(40)
-            ),
-        )
-        .unwrap();
+        index_path(&primary, &project)
+            .publish(
+                format!(
+                    r#"{{"container":"/c","workweaves":{{}},"receipts":[{{"store":{:?},"name":"web-app--hotfix","created_at":{:?}}}]}}"#,
+                    link.display().to_string(),
+                    "a".repeat(40)
+                )
+                .as_bytes(),
+            )
+            .unwrap();
 
         let found = RefRegistry::for_project(&primary, &project)
             .lookup(&store, &RawRefName::new("web-app--hotfix"))
@@ -1993,18 +1988,18 @@ mod tests {
         registry
             .record_created(&store, ephemeral(&project, "a"), rev('a'))
             .unwrap();
-        let first_inode = std::fs::metadata(&path).unwrap().ino();
+        let first_inode = path.symlink_metadata().unwrap().ino();
 
         registry
             .record_created(&store, ephemeral(&project, "b"), rev('b'))
             .unwrap();
         assert_ne!(
-            std::fs::metadata(&path).unwrap().ino(),
+            path.symlink_metadata().unwrap().ino(),
             first_inode,
             "the index must be replaced by rename, not rewritten in place"
         );
 
-        let leftovers: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+        let leftovers: Vec<_> = std::fs::read_dir(path.dir())
             .unwrap()
             .flatten()
             .map(|e| e.file_name().to_string_lossy().into_owned())

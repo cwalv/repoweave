@@ -163,7 +163,7 @@ impl Fixture {
 
     /// Write an `rwv.lock` covering exactly `entries` — `(repo_path, sha)`.
     ///
-    /// Round-trips through the real parser + `lock::write_lock`: a
+    /// Round-trips through the real parser + `lock::write_lock_in`: a
     /// hand-formatted string that differs only in whitespace from what
     /// `rwv lock` itself would emit still diffs against a real relock.
     fn write_lock(&self, entries: &[(&str, &str)]) {
@@ -176,7 +176,7 @@ impl Fixture {
         }
         let raw = format!("{{\"repositories\": {{{}}}}}", parts.join(","));
         let lock = repoweave::manifest::LockFile::from_json_str(&raw).unwrap();
-        repoweave::lock::write_lock(&lock, &self.lock_path()).unwrap();
+        repoweave::lock::write_lock_in(&lock, &self.project_dir).unwrap();
     }
 
     /// Materialize a manifest repo and leave it ON `main` at the second

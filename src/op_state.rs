@@ -83,6 +83,7 @@ use crate::durable_file::CreateNewError;
 use crate::manifest::{ProjectName, RepoKey};
 use crate::path_spelling::CanonicalPath;
 use crate::refusal::RefusalKind;
+use crate::state_file::{StateFile, StatePath};
 use crate::vcs::CommitId;
 use crate::wire_token::wire_token;
 use anyhow::Context;
@@ -676,9 +677,9 @@ impl OwnerRecord {
         }
     }
 
-    /// Path to the owner op-state file within `workspace_dir`.
-    pub fn path_in(workspace_dir: &Path) -> PathBuf {
-        workspace_dir.join(OP_STATE_FILE)
+    /// The owner op-state file within `workspace_dir`.
+    pub fn path_in(workspace_dir: &Path) -> StatePath {
+        StateFile::OpRecord.in_dir(workspace_dir)
     }
 }
 
@@ -716,9 +717,9 @@ pub struct LeaseRecord {
 }
 
 impl LeaseRecord {
-    /// Path to the lease file within `workspace_dir`.
-    pub fn path_in(workspace_dir: &Path) -> PathBuf {
-        workspace_dir.join(OP_LEASE_FILE)
+    /// The lease file within `workspace_dir`.
+    pub fn path_in(workspace_dir: &Path) -> StatePath {
+        StateFile::OpLease.in_dir(workspace_dir)
     }
 }
 
@@ -777,8 +778,8 @@ pub fn resolve_to_owner(workspace_dir: &Path) -> anyhow::Result<Option<ResolvedO
                  manually remove {} and {}.",
                     workspace_dir.display(),
                     lease.owner.as_path().display(),
-                    workspace_dir.join(OP_LEASE_FILE).display(),
-                    lease.owner.as_path().join(OP_STATE_FILE).display(),
+                    lease_path,
+                    OwnerRecord::path_in(lease.owner.as_path()),
                 ),
             )
         })?;
@@ -807,9 +808,8 @@ pub fn resolve_to_owner(workspace_dir: &Path) -> anyhow::Result<Option<ResolvedO
 /// in-flight record. Callers that just need a check without a claim use
 /// [`check_no_op_in_progress`].
 pub fn write_owner(workspace_dir: &Path, record: &OwnerRecord) -> anyhow::Result<()> {
-    let path = OwnerRecord::path_in(workspace_dir);
     let json = serde_json::to_string_pretty(record).context("failed to serialize owner record")?;
-    crate::durable_file::replace(&path, json.as_bytes())
+    OwnerRecord::path_in(workspace_dir).publish(json.as_bytes())
 }
 
 /// Read the `.rwv-op` file from `workspace_dir`, returning `None` if absent.
@@ -820,14 +820,14 @@ pub fn read_owner(workspace_dir: &Path) -> anyhow::Result<Option<OwnerRecord>> {
     if !path.exists() {
         return Ok(None);
     }
-    let json = std::fs::read_to_string(&path)
-        .with_context(|| format!("failed to read owner record from {}", path.display()))?;
+    let json = path
+        .read_to_string()
+        .with_context(|| format!("failed to read owner record from {path}"))?;
     let record: OwnerRecord = serde_json::from_str(&json).map_err(|e| {
         anyhow::anyhow!(
-            "failed to parse owner record at {}: {e:#}. Resuming an op and aborting it both \
+            "failed to parse owner record at {path}: {e:#}. Resuming an op and aborting it both \
              read this record, so one this rwv cannot parse blocks both; remove the file to \
-             discard the op, and `rwv doctor` will list the savepoints it left",
-            path.display()
+             discard the op, and `rwv doctor` will list the savepoints it left"
         )
     })?;
     Ok(Some(record))
@@ -852,7 +852,7 @@ pub fn set_phase(workspace_dir: &Path, new_phase: OpPhase) -> anyhow::Result<()>
 
 /// Remove the `.rwv-op` owner record from `workspace_dir`. No-op if absent.
 pub fn clear_owner(workspace_dir: &Path) {
-    let _ = std::fs::remove_file(OwnerRecord::path_in(workspace_dir));
+    let _ = OwnerRecord::path_in(workspace_dir).remove();
 }
 
 // ---------------------------------------------------------------------------
@@ -867,16 +867,17 @@ pub fn read_lease(workspace_dir: &Path) -> anyhow::Result<Option<LeaseRecord>> {
     if !path.exists() {
         return Ok(None);
     }
-    let json = std::fs::read_to_string(&path)
-        .with_context(|| format!("failed to read lease from {}", path.display()))?;
-    let lease: LeaseRecord = serde_json::from_str(&json)
-        .with_context(|| format!("failed to parse lease at {}", path.display()))?;
+    let json = path
+        .read_to_string()
+        .with_context(|| format!("failed to read lease from {path}"))?;
+    let lease: LeaseRecord =
+        serde_json::from_str(&json).with_context(|| format!("failed to parse lease at {path}"))?;
     Ok(Some(lease))
 }
 
 /// Remove the `.rwv-op-lease` lease file from `workspace_dir`. No-op if absent.
 pub fn clear_lease(workspace_dir: &Path) {
-    let _ = std::fs::remove_file(LeaseRecord::path_in(workspace_dir));
+    let _ = LeaseRecord::path_in(workspace_dir).remove();
 }
 
 /// Remove both op-state files (owner record + lease) from `workspace_dir`.
@@ -1117,7 +1118,7 @@ pub fn acquire_op(
     let owner_path = OwnerRecord::path_in(owner_workspace_dir);
     let owner_json = serde_json::to_string_pretty(owner_record)
         .context("failed to serialize owner record for acquisition")?;
-    match crate::durable_file::create_new(&owner_path, owner_json.as_bytes()) {
+    match owner_path.create(owner_json.as_bytes()) {
         Ok(()) => {}
         Err(CreateNewError::AlreadyExists) => {
             // Race: another op landed here. Read it back for the standard
@@ -1137,10 +1138,8 @@ pub fn acquire_op(
             );
         }
         Err(CreateNewError::Io(e)) => {
-            return Err(anyhow::Error::new(e).context(format!(
-                "failed to acquire owner record at {}",
-                owner_path.display()
-            )));
+            return Err(anyhow::Error::new(e)
+                .context(format!("failed to acquire owner record at {owner_path}")));
         }
     }
 
@@ -1162,7 +1161,7 @@ pub fn acquire_op(
                 return Err(anyhow::Error::new(e).context("failed to serialize lease record"));
             }
         };
-        match crate::durable_file::create_new(&lease_path, lease_json.as_bytes()) {
+        match lease_path.create(lease_json.as_bytes()) {
             Ok(()) => acquired_leases.push(ws.clone()),
             Err(CreateNewError::AlreadyExists) => {
                 // Race on a lease: undo owner + any leases we already wrote,
@@ -1179,10 +1178,8 @@ pub fn acquire_op(
             }
             Err(CreateNewError::Io(e)) => {
                 rollback_acquired(owner_workspace_dir, &acquired_leases);
-                return Err(anyhow::Error::new(e).context(format!(
-                    "failed to acquire lease at {}",
-                    lease_path.display()
-                )));
+                return Err(anyhow::Error::new(e)
+                    .context(format!("failed to acquire lease at {lease_path}")));
             }
         }
     }
@@ -2107,12 +2104,12 @@ mod tests {
         );
         write_owner(dir, &record).unwrap();
         let path = OwnerRecord::path_in(dir);
-        let first_inode = std::fs::metadata(&path).unwrap().ino();
+        let first_inode = path.symlink_metadata().unwrap().ino();
 
         record.phase = OpPhase::Relock;
         write_owner(dir, &record).unwrap();
         assert_ne!(
-            std::fs::metadata(&path).unwrap().ino(),
+            path.symlink_metadata().unwrap().ino(),
             first_inode,
             "the owner record must be replaced by rename, not rewritten in place"
         );
@@ -2207,7 +2204,7 @@ mod tests {
         let path = OwnerRecord::path_in(dir);
 
         for len in 0..json.len() {
-            std::fs::write(&path, &json.as_bytes()[..len]).unwrap();
+            path.publish(&json.as_bytes()[..len]).unwrap();
             let result = read_owner(dir);
             assert!(
                 result.is_err(),
@@ -2215,7 +2212,7 @@ mod tests {
             );
         }
 
-        std::fs::write(&path, &json).unwrap();
+        path.publish(json.as_bytes()).unwrap();
         assert_eq!(read_owner(dir).unwrap().unwrap(), record);
     }
 
@@ -2233,8 +2230,8 @@ mod tests {
         let path = LeaseRecord::path_in(workspace_dir);
         let json =
             serde_json::to_string_pretty(lease).context("failed to serialize lease record")?;
-        std::fs::write(&path, json)
-            .with_context(|| format!("failed to write lease to {}", path.display()))
+        path.publish(json.as_bytes())
+            .with_context(|| format!("failed to write lease to {path}"))
     }
 
     #[test]

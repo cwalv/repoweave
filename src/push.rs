@@ -263,7 +263,7 @@ pub fn run_push(
     //    collaborators' `rwv fetch` (they hit "object missing" against the
     //    pinned-but-unpublished SHAs). The filter narrows the push loop,
     //    not the precondition.
-    let lock_path = project_dir.join(LockFile::FILE_NAME);
+    let lock_path = LockFile::path_in(&project_dir);
     let lock_entries: std::collections::BTreeMap<RepoPath, RawRevisionId> =
         if let Some(raw_lock) = &project.lock {
             raw_lock
@@ -301,9 +301,8 @@ pub fn run_push(
         };
         let Some(lock_raw) = lock_entries.get(repo_path) else {
             lock_mismatches.push(format!(
-                "{}: missing from {} — run `rwv lock --commit` to record local state",
+                "{}: missing from {lock_path} — run `rwv lock --commit` to record local state",
                 repo_path.as_str(),
-                lock_path.display()
             ));
             continue;
         };
@@ -332,9 +331,8 @@ pub fn run_push(
 
     if !lock_mismatches.is_empty() {
         eprintln!(
-            "rwv push: {} repo(s) disagree with {}:",
+            "rwv push: {} repo(s) disagree with {lock_path}:",
             lock_mismatches.len(),
-            lock_path.display()
         );
         for msg in &lock_mismatches {
             eprintln!("  - {msg}");

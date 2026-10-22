@@ -29,6 +29,7 @@ use crate::manifest::{Manifest, ProjectName, RepoPath, WorkweaveId, WorkweaveNam
 use crate::path_spelling::{native_relative, CanonicalPath};
 use crate::refusal::RefusalKind;
 use crate::registry::builtin_registry_names;
+use crate::state_file::{StateFile, StatePath};
 use crate::vcs::Vcs;
 use anyhow::Context;
 use saphyr::{LoadableYamlNode, YamlOwned};
@@ -658,14 +659,14 @@ pub(crate) const WORKWEAVE_MARKER_FILE: &str = ".rwv-workweave";
 /// [`observe_root`] is the one caller, so every verb reads the pointer as
 /// resolution does.
 fn read_active_pointer(root: &Path) -> ActivePointer {
-    let path = root.join(ACTIVE_PROJECT_FILE);
+    let path = active_project_path(root);
     let unreadable = |detail: String| {
         ActivePointer::Present(PointerContent::Unreadable {
             path: path.clone(),
             detail,
         })
     };
-    let content = match std::fs::read_to_string(&path) {
+    let content = match path.read_to_string() {
         Ok(content) => content,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return ActivePointer::Absent,
         Err(e) => return unreadable(format!("the file cannot be read: {e:#}")),
@@ -687,13 +688,17 @@ fn read_active_pointer(root: &Path) -> ActivePointer {
 /// absent case succeeds: a caller made to probe first would be spelling the
 /// file name at its own site again to do it.
 pub fn clear_active_project(root: &Path) -> anyhow::Result<()> {
-    let path = root.join(ACTIVE_PROJECT_FILE);
-    match std::fs::remove_file(&path) {
+    let path = active_project_path(root);
+    match path.remove() {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
-            Err(e).with_context(|| format!("failed to remove {}", path.display()))
+            Err(e).with_context(|| format!("failed to remove {path}"))
         }
         _ => Ok(()),
     }
+}
+
+fn active_project_path(root: &Path) -> StatePath {
+    StateFile::ActiveProject.in_dir(root)
 }
 
 /// The first path segments a member checkout can occupy under `root`: every
@@ -1973,8 +1978,8 @@ pub use marker::WorkweaveMarker;
 
 impl WorkweaveMarker {
     /// Where this type's file sits inside `dir`.
-    pub fn path_in(dir: &Path) -> PathBuf {
-        dir.join(WORKWEAVE_MARKER_FILE)
+    pub fn path_in(dir: &Path) -> StatePath {
+        StateFile::WorkweaveMarker.in_dir(dir)
     }
 
     /// Read the marker file from `dir`.
@@ -2005,9 +2010,8 @@ impl WorkweaveMarker {
         let path = Self::path_in(dir);
         let content =
             serde_json::to_string_pretty(self).context("failed to serialize .rwv-workweave")?;
-        crate::state_file::StateFile::WorkweaveMarker
-            .publish_in(dir, format!("{content}\n").as_bytes())
-            .with_context(|| format!("failed to write {}", path.display()))?;
+        path.publish(format!("{content}\n").as_bytes())
+            .with_context(|| format!("failed to write {path}"))?;
         Ok(())
     }
 
@@ -2031,23 +2035,20 @@ impl WorkweaveMarker {
     /// [`crate::health_floor`]).
     pub fn migrate_legacy(dir: &Path) -> anyhow::Result<bool> {
         let path = Self::path_in(dir);
-        let content = std::fs::read_to_string(&path)
-            .with_context(|| format!("failed to read {} for --fix", path.display()))?;
+        let content = path
+            .read_to_string()
+            .with_context(|| format!("failed to read {path} for --fix"))?;
         if serde_json::from_str::<Self>(&content).is_ok() {
             return Ok(false);
         }
         let docs = YamlOwned::load_from_str(&content)
-            .with_context(|| format!("failed to parse .rwv-workweave at {}", path.display()))?;
+            .with_context(|| format!("failed to parse .rwv-workweave at {path}"))?;
         let raw = docs
             .first()
-            .ok_or_else(|| anyhow::anyhow!("{} is not a YAML mapping", path.display()))?;
+            .ok_or_else(|| anyhow::anyhow!("{path} is not a YAML mapping"))?;
         let field = |key: &str| raw.as_mapping_get(key).and_then(|v| v.as_str());
-        let primary = field("primary").ok_or_else(|| {
-            anyhow::anyhow!(
-                "{} is missing the required `primary:` field",
-                path.display()
-            )
-        })?;
+        let primary = field("primary")
+            .ok_or_else(|| anyhow::anyhow!("{path} is missing the required `primary:` field"))?;
         let project = field("project")
             .and_then(|p| ProjectName::new(p).ok())
             .expect(
@@ -2114,16 +2115,16 @@ impl MarkerDefect<PathBuf> {
     /// The operator-facing refusal for a marker carrying this defect: what is
     /// wrong, the value that is wrong, and every exit that does not require
     /// the reader to guess an identity on the tree's behalf.
-    pub fn refusal(&self, marker_path: &Path) -> String {
+    pub fn refusal(&self, marker_path: &impl std::fmt::Display) -> String {
         match self {
             MarkerDefect::DanglingPrimary { primary } => format!(
                 "{} names primary: {}, which is not a weave root. \
                  A copied or rsync'd workweave tree is the usual cause. Repair \
                  `primary:` to name the workspace this tree belongs to, or delete \
                  {} to adopt this tree as a standalone weave.",
-                marker_path.display(),
+                marker_path,
                 primary.display(),
-                marker_path.display()
+                marker_path
             ),
             MarkerDefect::Legacy => format!(
                 "{} is a legacy workweave marker (YAML format, or missing the required \
@@ -2132,12 +2133,12 @@ impl MarkerDefect<PathBuf> {
                  so a self-invoked `--fix` hits this same refusal and changes nothing. \
                  The file is still readable YAML, so its own `primary:` names the weave \
                  to run from — `rwv doctor --fix -C <that path>` needs no `cd`.",
-                marker_path.display()
+                marker_path
             ),
             MarkerDefect::Unreadable { detail } => format!(
                 "{detail}. Repair {}, or delete it to adopt this tree as a \
                  standalone weave.",
-                marker_path.display()
+                marker_path
             ),
         }
     }
@@ -2166,7 +2167,7 @@ enum MarkerPresence {
 /// (for surfacing) and, if the defect is [`MarkerDefect::Legacy`], a primary
 /// (for `rwv doctor`'s legacy-marker report) — and this is the last point
 /// anything can read either from the raw YAML.
-fn observe_marker(marker_path: &Path) -> MarkerPresence {
+fn observe_marker(marker_path: &StatePath) -> MarkerPresence {
     if !marker_path.exists() {
         return MarkerPresence::Absent;
     }
@@ -2178,14 +2179,10 @@ fn observe_marker(marker_path: &Path) -> MarkerPresence {
                 primary_hint,
             }
         };
-    let content = match std::fs::read_to_string(marker_path) {
+    let content = match marker_path.read_to_string() {
         Ok(content) => content,
         Err(e) => {
-            return unreadable(
-                format!("failed to read {}: {e:#}", marker_path.display()),
-                None,
-                None,
-            );
+            return unreadable(format!("failed to read {marker_path}: {e:#}"), None, None);
         }
     };
     if let Ok(marker) = serde_json::from_str::<WorkweaveMarker>(&content) {
@@ -2195,10 +2192,7 @@ fn observe_marker(marker_path: &Path) -> MarkerPresence {
         Ok(docs) => docs,
         Err(e) => {
             return unreadable(
-                format!(
-                    "failed to parse .rwv-workweave at {}: {e:#}",
-                    marker_path.display()
-                ),
+                format!("failed to parse .rwv-workweave at {marker_path}: {e:#}"),
                 None,
                 None,
             );
@@ -2206,7 +2200,7 @@ fn observe_marker(marker_path: &Path) -> MarkerPresence {
     };
     let Some(raw) = docs.first().filter(|raw| raw.as_mapping().is_some()) else {
         return unreadable(
-            format!("{} is not a JSON or YAML mapping", marker_path.display()),
+            format!("{marker_path} is not a JSON or YAML mapping"),
             None,
             None,
         );
@@ -2226,7 +2220,7 @@ fn observe_marker(marker_path: &Path) -> MarkerPresence {
                 "{} is a legacy (YAML) workweave marker with no `primary:` field, so it \
                  cannot be migrated automatically. Write it by hand as JSON with the three \
                  required fields: `primary`, `project`, and `parent`",
-                marker_path.display()
+                marker_path
             ),
             project_hint,
             None,
@@ -2242,7 +2236,7 @@ fn observe_marker(marker_path: &Path) -> MarkerPresence {
                 "{} is a legacy (YAML) workweave marker with {reason}, so it \
                  cannot be migrated automatically. Write it by hand as JSON with the three \
                  required fields: `primary`, `project`, and `parent`",
-                marker_path.display()
+                marker_path
             ),
             None,
             Some(primary_hint),
@@ -2312,7 +2306,7 @@ pub enum PointerContent {
     /// Empty, unreadable, or text that is not a project name. rwv writes none
     /// of these, so the file states nothing a verb may act on.
     Unreadable {
-        path: PathBuf,
+        path: StatePath,
         detail: String,
     },
 }
@@ -2333,7 +2327,7 @@ impl ActivePointer {
                     "{} names no project rwv can select ({detail}). Run \
                      `rwv activate <project>` to select a project, or `rwv doctor --fix` to \
                      remove the file.",
-                    path.display()
+                    path
                 )
             }
         }
@@ -2392,7 +2386,7 @@ pub enum RootObservation {
     /// `Disputed` are the two halves a verified marker splits into on exactly
     /// that test.
     MarkerUnverifiable {
-        marker_path: PathBuf,
+        marker_path: StatePath,
         defect: MarkerDefect<PathBuf>,
         project_hint: Option<ProjectName>,
         pointer: ActivePointer,
@@ -2515,7 +2509,7 @@ pub use root_identity::{PrimaryIdentity, WeaveRootIdentity, WorkweaveIdentity};
 pub fn pending_index_migration(
     primary_root: &Path,
     project: &ProjectName,
-) -> anyhow::Result<Option<PathBuf>> {
+) -> anyhow::Result<Option<StatePath>> {
     let Some(index) = crate::workweave_index::read(primary_root, project)? else {
         return Ok(None);
     };
@@ -2879,7 +2873,7 @@ mod tests {
     fn unreadable_detail(root: &Path) -> String {
         match read_active_pointer(root) {
             ActivePointer::Present(PointerContent::Unreadable { path, detail }) => {
-                assert_eq!(path, root.join(ACTIVE_PROJECT_FILE));
+                assert_eq!(path, active_project_path(root));
                 detail
             }
             other => panic!("expected an unreadable pointer, got {other:?}"),
@@ -3415,7 +3409,8 @@ mod tests {
         let primary = tmp.path().join("ws");
         let project = primary_with_project(&primary, "web-app");
         let path = crate::workweave_index::index_path(&primary, &project);
-        std::fs::write(&path, r#"{"container":"/c","workweaves":{}}"#).unwrap();
+        path.publish(br#"{"container":"/c","workweaves":{}}"#)
+            .unwrap();
 
         assert_eq!(
             pending_index_migration(&primary, &project).unwrap(),
@@ -5005,7 +5000,7 @@ mod tests {
                 project_hint,
                 pointer,
             } => {
-                assert_eq!(marker_path, weave_dir.join(WORKWEAVE_MARKER_FILE));
+                assert_eq!(marker_path, WorkweaveMarker::path_in(&weave_dir));
                 match defect {
                     MarkerDefect::DanglingPrimary { primary } => assert_eq!(primary, gone),
                     other => panic!("expected DanglingPrimary, got {other:?}"),
@@ -5343,7 +5338,7 @@ mod tests {
 
     #[test]
     fn require_exclusive_refuses_every_marker_defect() {
-        let marker_path = PathBuf::from("/weave/ws--feat/.rwv-workweave");
+        let marker_path = WorkweaveMarker::path_in(Path::new("/weave/ws--feat"));
         for defect in all_marker_defects() {
             let described = format!("{defect:?}");
             let err = RootObservation::MarkerUnverifiable {
@@ -5361,7 +5356,7 @@ mod tests {
             .to_string();
 
             assert!(
-                err.contains(&marker_path.display().to_string()),
+                err.contains(&marker_path.to_string()),
                 "{described}: the refusal must name the marker; got: {err}"
             );
         }

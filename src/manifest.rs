@@ -5,6 +5,7 @@
 
 use crate::integration::Integration;
 use crate::registry::RegistryName;
+use crate::state_file::{StateFile, StatePath};
 use crate::vcs::{RawRevisionId, ResolvedRevisionId, TrackingRef};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
@@ -1805,10 +1806,26 @@ impl LockFile {
     }
 
     pub fn from_path(path: &Path) -> anyhow::Result<Self> {
-        let content = std::fs::read_to_string(path)
-            .with_context(|| format!("failed to read {}", path.display()))?;
+        Self::read_from(std::fs::read_to_string(path), path.display())
+    }
+
+    /// Load the lock file at a project's [`StatePath`].
+    pub fn from_state(path: &StatePath) -> anyhow::Result<Self> {
+        Self::read_from(path.read_to_string(), path)
+    }
+
+    /// Where the lock file of the project in `project_dir` lives.
+    pub fn path_in(project_dir: &Path) -> StatePath {
+        StateFile::ProjectLock.in_dir(project_dir)
+    }
+
+    fn read_from(
+        read: std::io::Result<String>,
+        shown: impl std::fmt::Display,
+    ) -> anyhow::Result<Self> {
+        let content = read.with_context(|| format!("failed to read {shown}"))?;
         Self::from_json_str(&content)
-            .with_context(|| format!("failed to parse rwv.lock at {}", path.display()))
+            .with_context(|| format!("failed to parse rwv.lock at {shown}"))
     }
 
     /// The remedy for any `rwv.lock` parse failure.
@@ -1974,9 +1991,9 @@ impl Project {
         // path, and a caller that reports this error has no other way to tell
         // which of the two files failed.
         let manifest = Manifest::from_path(&dir.join(Manifest::FILE_NAME))?;
-        let lock_path = dir.join(LockFile::FILE_NAME);
+        let lock_path = LockFile::path_in(dir);
         let lock = if lock_path.exists() {
-            Some(LockFile::from_path(&lock_path)?)
+            Some(LockFile::from_state(&lock_path)?)
         } else {
             None
         };

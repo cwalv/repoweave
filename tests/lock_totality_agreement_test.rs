@@ -103,7 +103,7 @@ fn write_lock(project_dir: &Path, repos: &[(&str, &str)]) {
         .collect();
     let raw = format!("{{\"repositories\": {{{}}}}}", entries.join(","));
     let lock = repoweave::manifest::LockFile::from_json_str(&raw).unwrap();
-    repoweave::lock::write_lock(&lock, &project_dir.join("rwv.lock")).unwrap();
+    repoweave::lock::write_lock_in(&lock, project_dir).unwrap();
 }
 
 fn run_locked(cwd: &Path) -> (String, bool) {

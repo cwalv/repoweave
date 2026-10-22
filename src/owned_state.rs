@@ -37,6 +37,7 @@
 use crate::integration::{Issue, IssueKind, IssueSource, Severity};
 use crate::path_spelling::CanonicalPath;
 use crate::refusal::RefusalKind;
+use crate::state_file::{StateFile, StatePath};
 use crate::workweave_index;
 use anyhow::Context;
 use std::collections::{BTreeMap, BTreeSet};
@@ -139,16 +140,19 @@ impl LedgerEntry {
 /// it, and it is what keeps this total read from being a claim that nothing is
 /// wrong.
 fn read_owned_digests(state_dir: &Path) -> BTreeMap<String, LedgerEntry> {
-    let path = state_dir.join(OWNED_DIGESTS_FILE);
-    let Ok(text) = std::fs::read_to_string(&path) else {
+    let Ok(text) = ledger_path(state_dir).read_to_string() else {
         return BTreeMap::new();
     };
     serde_json::from_str(&text).unwrap_or_default()
 }
 
 /// Where `dir`'s ledger lives.
-pub fn ledger_path(dir: &Path) -> std::path::PathBuf {
-    dir.join(OWNED_DIGESTS_FILE)
+pub fn ledger_path(dir: &Path) -> StatePath {
+    StateFile::OwnedDigests.in_dir(dir)
+}
+
+fn claim_path(dir: &Path) -> StatePath {
+    StateFile::OwnedDigestsClaim.in_dir(dir)
 }
 
 /// Why `dir`'s ledger cannot be read as a ledger, when a file is there but is
@@ -163,8 +167,7 @@ pub fn ledger_path(dir: &Path) -> std::path::PathBuf {
 /// A read error other than absence is reported here too. It is the same
 /// situation for the axes downstream: the file's content did not reach them.
 pub fn unreadable_ledger(dir: &Path) -> Option<String> {
-    let path = ledger_path(dir);
-    match std::fs::read_to_string(&path) {
+    match ledger_path(dir).read_to_string() {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => Some(format!("read failed: {e:#}")),
         Ok(text) => serde_json::from_str::<BTreeMap<String, LedgerEntry>>(&text)
@@ -203,21 +206,20 @@ impl LedgerClaim {
     pub fn hold<T>(dir: &Path, edit: impl FnOnce(&Self) -> anyhow::Result<T>) -> anyhow::Result<T> {
         let claim = Self::acquire(dir)?;
         let outcome = edit(&claim);
-        let path = dir.join(OWNED_DIGESTS_CLAIM_FILE);
         let released = claim.file.release().with_context(|| {
             format!(
                 "failed to release the claim on the owned-digest ledger of {dir}. \
                  Every later stamp there refuses until {claim} is deleted",
                 dir = crate::path_spelling::operator_path(dir),
-                claim = crate::path_spelling::operator_path(&path),
+                claim = claim_path(dir),
             )
         });
         crate::durable_file::after_release(outcome, released)
     }
 
     fn acquire(dir: &Path) -> anyhow::Result<Self> {
-        let path = dir.join(OWNED_DIGESTS_CLAIM_FILE);
-        match crate::durable_file::claim(&path) {
+        let path = claim_path(dir);
+        match path.claim() {
             Ok(file) => Ok(Self {
                 dir: dir.to_path_buf(),
                 file,
@@ -228,7 +230,7 @@ impl LedgerClaim {
                     "another rwv still holds the owned-digest ledger of {dir} \
                      ({held_by}). If no rwv is running, delete {claim} and rerun.",
                     dir = crate::path_spelling::operator_path(dir),
-                    claim = crate::path_spelling::operator_path(&path),
+                    claim = path,
                 );
             }
             Err(crate::durable_file::ClaimError::Io(e)) => {
@@ -305,12 +307,11 @@ fn write_owned_digests(
     entries: &BTreeMap<String, LedgerEntry>,
 ) -> anyhow::Result<()> {
     let dir = claim.dir.as_path();
-    let path = dir.join(OWNED_DIGESTS_FILE);
+    let path = ledger_path(dir);
     let json = serde_json::to_string_pretty(entries)
-        .with_context(|| format!("serializing owned-digest state for {}", path.display()))?;
-    crate::state_file::StateFile::OwnedDigests
-        .publish_in(dir, json.as_bytes())
-        .with_context(|| format!("writing owned-digest state {}", path.display()))?;
+        .with_context(|| format!("serializing owned-digest state for {path}"))?;
+    path.publish(json.as_bytes())
+        .with_context(|| format!("writing owned-digest state {path}"))?;
     // Best effort — an ignore failure must never fail the stamp itself. Under
     // the claim, so two rwv processes cannot each append one name and publish
     // an ignore surface missing the other's.

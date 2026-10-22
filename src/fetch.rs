@@ -500,11 +500,11 @@ fn materialize_workweave_members(
     placements: &mut Vec<PlacementOutput>,
 ) -> anyhow::Result<bool> {
     let manifest = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME))?;
-    let lock_path = project_dir.join(LockFile::FILE_NAME);
+    let lock_path = LockFile::path_in(project_dir);
     if !lock_path.exists() {
         return Ok(false);
     }
-    let lock = LockFile::from_path(&lock_path)?;
+    let lock = LockFile::from_state(&lock_path)?;
     let mut failures: Vec<String> = Vec::new();
     let mut created = false;
     for (repo_path, entry) in manifest.iter_entries() {
@@ -604,11 +604,11 @@ fn fetch_project_repos(
     // Load the lock file. In Frozen mode the lock must exist and cover all
     // manifest repos. In Default mode the lock may be absent (bootstrap), and
     // missing repos are added additively after fetch.
-    let lock_path = project_dir.join(LockFile::FILE_NAME);
+    let lock_path = LockFile::path_in(project_dir);
     let existing_lock: Option<LockFile> = if lock_path.exists() {
         Some(
-            LockFile::from_path(&lock_path)
-                .with_context(|| format!("failed to read lock file at {}", lock_path.display()))?,
+            LockFile::from_state(&lock_path)
+                .with_context(|| format!("failed to read lock file at {lock_path}"))?,
         )
     } else {
         None
@@ -619,10 +619,7 @@ fn fetch_project_repos(
             let lock = existing_lock.as_ref().ok_or_else(|| {
                 refusal(
                     RefusalKind::MissingLock,
-                    format!(
-                        "rwv fetch --frozen: lock file does not exist at {}",
-                        lock_path.display()
-                    ),
+                    format!("rwv fetch --frozen: lock file does not exist at {lock_path}"),
                 )
             })?;
             let missing = find_incomplete_repos(&manifest, lock, selection);
@@ -891,8 +888,8 @@ fn fetch_project_repos(
         if needs_bootstrap {
             // Snapshot the full set of manifest repos from disk.
             let new_lock = lock::generate_lock(&lock_manifest, workspace_root, None, true)?;
-            lock::write_lock(&new_lock, &lock_path)?;
-            eprintln!("rwv fetch: wrote {}", lock_path.display());
+            lock::write_lock_in(&new_lock, project_dir)?;
+            eprintln!("rwv fetch: wrote {lock_path}");
         } else if has_additions {
             // Existing entries keep the commits they pin. One pinned by name
             // is written as the commit the name resolves to now, which is
@@ -919,8 +916,8 @@ fn fetch_project_repos(
                     merged.insert_entry(repo_path.clone(), entry.to_raw());
                 }
             }
-            lock::write_lock(&merged, &lock_path)?;
-            eprintln!("rwv fetch: wrote {}", lock_path.display());
+            lock::write_lock_in(&merged, project_dir)?;
+            eprintln!("rwv fetch: wrote {lock_path}");
         }
     }
 

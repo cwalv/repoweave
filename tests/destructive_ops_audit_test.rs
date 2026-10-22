@@ -434,42 +434,6 @@ const ALLOWLIST: &[Allowed] = &[
             user refs.",
     },
     Allowed {
-        file: "workspace.rs",
-        pattern: "remove_file",
-        count: 1,
-        callers: &[("clear_active_project", 3)],
-        justification: "clear_active_project: the one site that removes the \
-            .rwv-active pointer (rwv-internal state). Unconditional here by \
-            design — the pointer's owner cannot know which caller's \
-            precondition applies, so each caller establishes its own in \
-            FRONT of the call, and the entry an auditor reads is this one \
-            regardless of how many callers there are. \
-            Every current caller is a doctor --fix arm. \
-            (1) dangling pointer: the named project's directory \
-            is gone, so the pointer selects nothing that exists. \
-            (3) unreadable pointer: the file is empty, unreadable, or holds \
-            text that is not a project name. rwv never writes such a file and \
-            no verb acts on it — each refuses instead — so it selects nothing \
-            and its removal discards no selection. \
-            (2) weave-root identity conflict: the precondition \
-            is evidence the tree does not contain. \
-            classify_weave_root_identity emits the fixable RegisteredWorkweave \
-            sub-kind only when the marker names THIS workspace's primary AND \
-            that primary's .rwv-workweave-index records this exact directory \
-            as one of its workweaves. Under that precondition the pointer is \
-            provably redundant — the marker beside it and the registry entry \
-            above it each already name the project, which is the pointer's \
-            entire content — so the delete discards no fact that survives only \
-            here. Every other shape (unreadable marker, foreign primary, \
-            unregistered directory) takes the report-only Unwitnessed arm and \
-            --fix touches neither file: with no external witness, deleting one \
-            would be a guess, and the marker carries primary/parent values \
-            that do NOT exist elsewhere. The marker is never the file deleted. \
-            An absent pointer succeeds rather than erroring, which is what \
-            lets a caller skip its own existence probe; it widens nothing, \
-            since deleting nothing destroys nothing.",
-    },
-    Allowed {
         file: "activate.rs",
         pattern: "symlink::remove(",
         count: 4,
@@ -547,9 +511,9 @@ const ALLOWLIST: &[Allowed] = &[
         count: 3,
         callers: &[],
         justification: "deactivate's .rwv-active removal moved to \
-            workspace.rs's clear_active_project, audited above; the two \
-            symlink unlinks moved behind symlink::remove, audited under \
-            that pattern. \
+            workspace.rs's clear_active_project, audited under state_file.rs; \
+            the two symlink unlinks moved behind symlink::remove, audited \
+            under that pattern. \
             (3) settle_arrived_drift's regenerate arm. Precondition: the file \
             is named by the owned-digest ledger AND its bytes differ from the \
             digest recorded when rwv accepted its generation — a fully-owned \
@@ -581,8 +545,9 @@ const ALLOWLIST: &[Allowed] = &[
             immediately before the verb wrote its manifest, and is a regular \
             file now; and it is rwv.toml, the owned-state ledger, or an owned \
             path under the manifest before or after the edit — all inside \
-            projects/<project>/. So the file is one the failed regeneration \
-            created. No consent: the verb is undoing its own write, and the \
+            projects/<project>/; the ledger's own unlink goes through \
+            StatePath::remove, audited under state_file.rs. So the file is one \
+            the failed regeneration created. No consent: the verb is undoing its own write, and the \
             error it returns says the change was put back. Recoverable: the \
             file is a derivation of the refused edit, and re-running the verb \
             once its cause is fixed regenerates it. The one case that removes \
@@ -590,14 +555,46 @@ const ALLOWLIST: &[Allowed] = &[
             file inside the verb's own regeneration.",
     },
     Allowed {
-        file: "op_state.rs",
+        file: "state_file.rs",
         pattern: "remove_file",
-        count: 2,
-        callers: &[],
-        justification: "(1) clear_owner: removing the .rwv-op owner record (rwv-internal). \
-            (2) clear_lease: removing the .rwv-op-lease thin lease (rwv-internal). \
-            Both operate on rwv-internal bookkeeping, never user data. The temp-file \
-            cleanup that used to sit here moved to durable_file.rs, audited below.",
+        count: 1,
+        callers: &[("clear_active_project", 3)],
+        justification: "StatePath::remove, the one unlink of a state file. A \
+            StatePath names only a file of the closed StateFile list, and only \
+            StateFile::in_dir builds one, so what this removes is rwv-internal \
+            bookkeeping, never user data, and the type gate binds a new caller \
+            exactly as it binds an old one. Callers: clear_owner and \
+            clear_lease (op_state), RestorePoint::restore (activate; audited \
+            under activate.rs (5)), and clear_active_project (workspace). \
+            clear_active_project removes the .rwv-active pointer. It is \
+            unconditional here by design — the pointer's owner cannot know \
+            which caller's precondition applies, so each caller establishes \
+            its own in FRONT of the call, and the entry an auditor reads is \
+            this one regardless of how many callers there are. \
+            Every current caller is a doctor --fix arm. \
+            (1) dangling pointer: the named project's directory \
+            is gone, so the pointer selects nothing that exists. \
+            (3) unreadable pointer: the file is empty, unreadable, or holds \
+            text that is not a project name. rwv never writes such a file and \
+            no verb acts on it — each refuses instead — so it selects nothing \
+            and its removal discards no selection. \
+            (2) weave-root identity conflict: the precondition \
+            is evidence the tree does not contain. \
+            classify_weave_root_identity emits the fixable RegisteredWorkweave \
+            sub-kind only when the marker names THIS workspace's primary AND \
+            that primary's .rwv-workweave-index records this exact directory \
+            as one of its workweaves. Under that precondition the pointer is \
+            provably redundant — the marker beside it and the registry entry \
+            above it each already name the project, which is the pointer's \
+            entire content — so the delete discards no fact that survives only \
+            here. Every other shape (unreadable marker, foreign primary, \
+            unregistered directory) takes the report-only Unwitnessed arm and \
+            --fix touches neither file: with no external witness, deleting one \
+            would be a guess, and the marker carries primary/parent values \
+            that do NOT exist elsewhere. The marker is never the file deleted. \
+            An absent pointer succeeds rather than erroring, which is what \
+            lets a caller skip its own existence probe; it widens nothing, \
+            since deleting nothing destroys nothing.",
     },
     Allowed {
         file: "durable_file.rs",

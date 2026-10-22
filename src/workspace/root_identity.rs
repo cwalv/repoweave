@@ -1,7 +1,7 @@
 //! The identity payloads' fields are private to this module, so
 //! [`RootObservation::require_exclusive`] is their one producer.
 
-use super::{ActivePointer, RootObservation, WorkweaveMarker, ACTIVE_PROJECT_FILE};
+use super::{active_project_path, ActivePointer, RootObservation, WorkweaveMarker};
 use crate::manifest::ProjectName;
 use crate::refusal::RefusalKind;
 use anyhow::Context;
@@ -27,8 +27,8 @@ impl RootObservation {
                  it removes the redundant file where the primary-side workweave \
                  registry names this tree, and reports the conflict where nothing \
                  outside the tree settles which file is the stray.",
-                WorkweaveMarker::path_in(&root).display(),
-                root.join(ACTIVE_PROJECT_FILE).display()
+                WorkweaveMarker::path_in(&root),
+                active_project_path(&root)
             ),
             RootObservation::MarkerUnverifiable {
                 marker_path,
@@ -97,9 +97,8 @@ impl PrimaryIdentity {
     ///
     /// [`CheckViolation::WeaveRootIdentityConflict`]: crate::check::CheckViolation::WeaveRootIdentityConflict
     pub fn select_project(&self, project: &ProjectName) -> anyhow::Result<()> {
-        let path = self.root.join(ACTIVE_PROJECT_FILE);
-        crate::state_file::StateFile::ActiveProject
-            .publish_in(&self.root, format!("{}\n", project.as_str()).as_bytes())
-            .with_context(|| format!("failed to write {}", path.display()))
+        let path = active_project_path(&self.root);
+        path.publish(format!("{}\n", project.as_str()).as_bytes())
+            .with_context(|| format!("failed to write {path}"))
     }
 }
