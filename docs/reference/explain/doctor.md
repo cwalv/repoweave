@@ -644,11 +644,7 @@ Schema:
                 },
                 "workweave": {
                   "description": "The live workweave the receipt says that ref belongs to.",
-                  "allOf": [
-                    {
-                      "$ref": "#/definitions/WorkweaveId"
-                    }
-                  ]
+                  "type": "string"
                 }
               }
             }
@@ -2986,10 +2982,6 @@ Schema:
           ]
         }
       ]
-    },
-    "WorkweaveId": {
-      "description": "A workweave's identity: its project and its name there, as `<project>--<name>`.",
-      "type": "string"
     },
     "WorkweaveTreeIntegrityKind": {
       "description": "Discriminator for `CheckViolation::WorkweaveTreeIntegrity` findings.",

@@ -1986,7 +1986,7 @@ pub enum ViolationOutput {
         path: String,
         absolute_path: String,
         /// The workweave's identity, `<project>--<name>`; `None` for the primary weave.
-        workweave: Option<String>,
+        workweave: Option<WorkweaveId>,
         #[serde(rename = "sub_kind")]
         sub_kind: PermissionsKind,
         /// How many tracked regular files disagree with the member's role.
@@ -2015,7 +2015,7 @@ pub enum ViolationOutput {
         absolute_path: String,
         /// The workweave's identity, `<project>--<name>`; `None` for the canonical clone in the
         /// primary weave.
-        workweave: Option<String>,
+        workweave: Option<WorkweaveId>,
         #[serde(rename = "sub_kind")]
         sub_kind: DriftKind,
     },
@@ -2023,7 +2023,7 @@ pub enum ViolationOutput {
         path: String,
         absolute_path: String,
         /// The workweave's identity, `<project>--<name>`; `None` for the primary weave.
-        workweave: Option<String>,
+        workweave: Option<WorkweaveId>,
         #[serde(rename = "sub_kind")]
         sub_kind: IndexDriftKind,
     },
@@ -2031,7 +2031,7 @@ pub enum ViolationOutput {
         path: String,
         absolute_path: String,
         /// The workweave's identity, `<project>--<name>`; `None` for the primary weave.
-        workweave: Option<String>,
+        workweave: Option<WorkweaveId>,
         #[serde(rename = "sub_kind")]
         sub_kind: WorkingTreeDriftKind,
     },
@@ -2166,7 +2166,7 @@ pub enum ViolationOutput {
         path: String,
         absolute_path: String,
         /// The workweave's identity, `<project>--<name>`; `None` for the primary weave.
-        workweave: Option<String>,
+        workweave: Option<WorkweaveId>,
         /// Absolute path of the missing worktree directory.
         missing_path: String,
     },
@@ -2215,7 +2215,7 @@ pub enum ViolationOutput {
         path: String,
         absolute_path: String,
         /// The workweave's identity, `<project>--<name>`; `None` for the primary weave.
-        workweave: Option<String>,
+        workweave: Option<WorkweaveId>,
         /// Opaque op-id from the savepoint ref's trailing path component.
         op_id: String,
         /// Safe-vs-live classification.
@@ -2228,7 +2228,7 @@ pub enum ViolationOutput {
         path: String,
         absolute_path: String,
         /// The workweave's identity, `<project>--<name>`; `None` for the primary weave.
-        workweave: Option<String>,
+        workweave: Option<WorkweaveId>,
         /// The reference, spelled as the VCS spells it.
         ref_name: String,
     },
@@ -2269,7 +2269,7 @@ pub enum ViolationOutput {
         /// Absolute path of the worktree checkout in the workweave.
         absolute_path: String,
         /// The workweave's identity, `<project>--<name>`.
-        workweave: String,
+        workweave: WorkweaveId,
         /// Absolute path of the canonical clone directory that is absent.
         canonical_path: String,
     },
@@ -2281,7 +2281,7 @@ pub enum ViolationOutput {
         /// Manifest-relative path to the repo.
         path: String,
         /// The workweave's identity, `<project>--<name>`.
-        workweave: String,
+        workweave: WorkweaveId,
         #[serde(rename = "sub_kind")]
         sub_kind: SubmoduleCommitKind,
         /// Submodule paths (relative to the repo root) that are empty on disk.
@@ -2378,7 +2378,7 @@ impl ViolationOutput {
             } => Self::MemberPermissions {
                 absolute_path: abs_in(&workweave, workspace_dir, workweave_dirs, &repo),
                 path: repo.to_string(),
-                workweave: workweave.map(|w| w.to_string()),
+                workweave: workweave.clone(),
                 sub_kind: kind,
                 files,
             },
@@ -2417,7 +2417,7 @@ impl ViolationOutput {
             } => Self::WorkweaveDrift {
                 absolute_path: abs_in(&workweave, workspace_dir, workweave_dirs, &repo),
                 path: repo.to_string(),
-                workweave: workweave.map(|w| w.to_string()),
+                workweave: workweave.clone(),
                 sub_kind: kind,
             },
             CheckViolation::IndexDrift {
@@ -2427,7 +2427,7 @@ impl ViolationOutput {
             } => Self::IndexDrift {
                 absolute_path: abs_in(&workweave, workspace_dir, workweave_dirs, &repo),
                 path: repo.to_string(),
-                workweave: workweave.map(|w| w.to_string()),
+                workweave: workweave.clone(),
                 sub_kind: kind,
             },
             CheckViolation::WorkingTreeDrift {
@@ -2437,7 +2437,7 @@ impl ViolationOutput {
             } => Self::WorkingTreeDrift {
                 absolute_path: abs_in(&workweave, workspace_dir, workweave_dirs, &repo),
                 path: repo.to_string(),
-                workweave: workweave.map(|w| w.to_string()),
+                workweave: workweave.clone(),
                 sub_kind: kind,
             },
             CheckViolation::MissingReplayExclusion { project, sub_kind } => {
@@ -2612,7 +2612,7 @@ impl ViolationOutput {
             } => Self::StaleWorktreeRegistration {
                 absolute_path: abs_in(&workweave, workspace_dir, workweave_dirs, &repo),
                 path: repo.to_string(),
-                workweave: workweave.map(|w| w.to_string()),
+                workweave: workweave.clone(),
                 missing_path: crate::path_spelling::wire_path(&missing_path),
             },
             CheckViolation::StaleOpState {
@@ -2663,7 +2663,7 @@ impl ViolationOutput {
             } => Self::OrphanedSavepoint {
                 absolute_path: abs_in(&workweave, workspace_dir, workweave_dirs, &repo),
                 path: repo.to_string(),
-                workweave: workweave.map(|w| w.to_string()),
+                workweave: workweave.clone(),
                 op_id: key.to_string(),
                 sub_kind,
             },
@@ -2674,7 +2674,7 @@ impl ViolationOutput {
             } => Self::UnrecognizedSavepointRef {
                 absolute_path: abs_in(&workweave, workspace_dir, workweave_dirs, &repo),
                 path: repo.to_string(),
-                workweave: workweave.map(|w| w.to_string()),
+                workweave: workweave.clone(),
                 ref_name,
             },
             CheckViolation::CargoVersionSkew {
@@ -2713,7 +2713,7 @@ impl ViolationOutput {
                 Self::MissingCanonicalClone {
                     absolute_path: crate::path_spelling::wire_path(&ww_dir.join(repo.as_path())),
                     path: repo.to_string(),
-                    workweave: workweave.to_string(),
+                    workweave: workweave.clone(),
                     canonical_path: crate::path_spelling::wire_path(&canonical_path),
                 }
             }
@@ -2732,7 +2732,7 @@ impl ViolationOutput {
                 Self::UninitializedSubmodule {
                     absolute_path,
                     path: repo.to_string(),
-                    workweave: workweave.to_string(),
+                    workweave: workweave.clone(),
                     sub_kind,
                     empty_paths,
                 }

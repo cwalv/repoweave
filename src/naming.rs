@@ -456,6 +456,10 @@ impl schemars::JsonSchema for WorkweaveId {
         "WorkweaveId".to_owned()
     }
 
+    fn is_referenceable() -> bool {
+        false
+    }
+
     fn json_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
         schemars::schema::SchemaObject {
             instance_type: Some(schemars::schema::InstanceType::String.into()),
