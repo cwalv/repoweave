@@ -28,7 +28,14 @@ docs/reference/schemas/**      merge=rwv-ours
 docs/reference/prime/**        merge=rwv-ours
 docs/reference/*/templates/**  !merge
 
-# Scripts and hooks run under a POSIX shell, where a CR in the shebang line
-# names an interpreter that does not exist. Keep them LF on every checkout.
-.githooks/* text eol=lf
-*.sh text eol=lf
+# Every text file checks out LF on every host, whatever its core.autocrlf or
+# core.eol says; Git for Windows installs core.autocrlf=true. This repository's
+# bytes are read as well as compiled: the tests scan them, include_str! embeds
+# the docs in the binary, and a POSIX shell reads a CR after a shebang as part
+# of the interpreter's name. A path that must hold CRLF is named below with
+# -text, and tests/repo_line_endings_test.rs holds the rule and that list.
+* text=auto eol=lf
+
+# gita writes its CSVs with CRLF line endings, Python's csv default, and these
+# fixtures are the bytes it writes.
+tests/fixtures/gita/*.csv -text
