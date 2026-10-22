@@ -153,16 +153,16 @@ func Message() string {
 
     let ww_name = repoweave::manifest::WorkweaveName::new("agent-1").unwrap();
     let ww_project = repoweave::manifest::ProjectName::new("web-app").unwrap();
-    let ww_dir = repoweave::workweave::create_workweave(
-        &ws,
-        &ws,
-        &ww_project,
-        &ww_name,
-        None,
-        repoweave::workweave::DirtySource::Refuse,
-        None,
-        repoweave::activate::ActivateOptions::default(),
-    )
+    let ww_dir = repoweave::workweave::create_workweave(repoweave::workweave::CreateWorkweave {
+        primary_root: &ws,
+        source_root: &ws,
+        project: &ww_project,
+        name: &ww_name,
+        replace_existing: None,
+        dirty_source: repoweave::workweave::DirtySource::Refuse,
+        dir_override: None,
+        activation: repoweave::activate::ActivateOptions::default(),
+    })
     .expect("create_workweave should succeed");
 
     // ------------------------------------------------------------------

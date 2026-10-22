@@ -1600,59 +1600,61 @@ pub enum DirtySource {
     Capture,
 }
 
+/// What `rwv workweave create` is asked to make. The two roots play different
+/// roles, so each is named where it is given.
+pub struct CreateWorkweave<'a> {
+    /// The surrounding weave: where new workweaves live
+    /// (`<primary_parent>/.workweaves/`), and the primary recorded in the
+    /// `.rwv-workweave` marker.
+    pub primary_root: &'a Path,
+    /// The workspace forked from: the manifest, per-repo HEADs,
+    /// `projects/<project>/` worktree, and `workweave:` copy/link sources are
+    /// all read from it. The primary itself when forking from primary; when an
+    /// agent forks a peer from inside its own workweave, that workweave.
+    pub source_root: &'a Path,
+    pub project: &'a ProjectName,
+    pub name: &'a WorkweaveName,
+    /// If the workweave directory already exists:
+    /// - `None`: validate that the existing workweave matches this
+    ///   `(primary, project)` pair and has no local modifications relative to
+    ///   the source, then short-circuit. This preserves non-git state (e.g.
+    ///   `.runtime/`, `.claude/`) written by agents between invocations, which
+    ///   agent runtimes rely on across a restart. Refuses if the marker is
+    ///   missing or for a different project, or if any worktree has
+    ///   uncommitted changes or has diverged from the source.
+    /// - `Some`: destroy the existing workweave and recreate from scratch,
+    ///   refusing while it holds uncommitted or unmerged work.
+    pub replace_existing: Option<ReplaceExistingConsent>,
+    pub dirty_source: DirtySource,
+    /// The per-invocation placement override, already absolute. `None` lands
+    /// the workweave at `<container>/<project>--<name>`, the container from
+    /// [`workweave_container`]. Either way the resulting absolute path is
+    /// recorded in the registry, so a per-workweave override is as visible to
+    /// a later `list` / `delete` / doctor as a default-container placement.
+    pub dir_override: Option<&'a Path>,
+    /// What the workweave's activation runs with; its `no_materialize` skips
+    /// the install hooks.
+    pub activation: crate::activate::ActivateOptions,
+}
+
 /// Create a workweave: for each repo in the manifest, create a worktree in the
 /// workweave directory on an ephemeral branch `{project}--{workweave_name}`.
 /// Also creates a worktree for the project repo, processes `workweave:` artifacts,
 /// writes the marker file, and runs activate. No `.rwv-active` is written: the
 /// marker names the project, and the two files are mutually exclusive.
 ///
-/// `primary_root` locates the surrounding weave: it determines where new
-/// workweaves live (`<primary_parent>/.workweaves/`) and is recorded in the
-/// `.rwv-workweave` marker so the workweave knows its primary.
-///
-/// `source_root` is the workspace forked from: the manifest, per-repo HEADs,
-/// `projects/<project>/` worktree, and `workweave:` copy/link sources are
-/// all read from `source_root`. When forking from primary, pass the same path
-/// for both. When forking from another workweave (an agent creating a peer
-/// workweave from inside its own), `source_root` is that workweave's
-/// directory while `primary_root` remains the primary weave.
-///
-/// If the workweave directory already exists, behavior depends on
-/// `replace_existing`:
-/// - `None`: validate that the existing workweave matches this
-///   `(primary, project)` pair and has no local modifications relative to
-///   `source_root`, then short-circuit. This preserves non-git state (e.g.
-///   `.runtime/`, `.claude/`) written by agents between invocations, which
-///   agent runtimes rely on across a restart.
-///   Returns an error if the marker is missing or for a different project,
-///   or if any worktree has uncommitted changes or has diverged from the
-///   source.
-/// - `Some`: destroy the existing workweave and recreate from scratch,
-///   refusing while it holds uncommitted or unmerged work.
-///
-/// `activation` is what the workweave's activation runs with; its
-/// `no_materialize` skips the install hooks.
-///
-/// `dir_override` is the optional per-invocation placement override. When
-/// `Some(p)`, the workweave lands at `p`, which the caller has already made
-/// absolute; when `None`, it lands at
-/// `<container>/<project>--<name>` where `container` comes from
-/// [`workweave_container`]. Either way the resulting absolute path is
-/// recorded in the registry so per-workweave overrides are as visible to
-/// later `list` / `delete` / doctor as default-container placements.
-///
 /// Returns the absolute path of the created workweave directory.
-#[allow(clippy::too_many_arguments)]
-pub fn create_workweave(
-    primary_root: &Path,
-    source_root: &Path,
-    project: &ProjectName,
-    name: &WorkweaveName,
-    replace_existing: Option<ReplaceExistingConsent>,
-    dirty_source: DirtySource,
-    dir_override: Option<&Path>,
-    activation: crate::activate::ActivateOptions,
-) -> anyhow::Result<PathBuf> {
+pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf> {
+    let CreateWorkweave {
+        primary_root,
+        source_root,
+        project,
+        name,
+        replace_existing,
+        dirty_source,
+        dir_override,
+        activation,
+    } = request;
     let project_vcs = project_vcs();
     let manifest = load_manifest(source_root, project)?;
     refuse_symlinked_members(source_root, project)?;
@@ -4104,16 +4106,16 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
             let name =
                 derive_workweave_name(input.branch_name.as_deref(), input.session_id.as_deref());
 
-            let path = hand_over_seat(create_workweave(
+            let path = hand_over_seat(create_workweave(CreateWorkweave {
                 primary_root,
                 source_root,
-                &project,
-                &WorkweaveName::new(&name)?,
-                None,
-                DirtySource::Refuse,
-                None,
-                crate::activate::ActivateOptions::default(),
-            ))?;
+                project: &project,
+                name: &WorkweaveName::new(&name)?,
+                replace_existing: None,
+                dirty_source: DirtySource::Refuse,
+                dir_override: None,
+                activation: crate::activate::ActivateOptions::default(),
+            }))?;
             outln!("{}", path.display());
         }
         Some(HookEvent::WorktreeRemove) => {

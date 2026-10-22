@@ -3482,16 +3482,16 @@ role = "owned"
     let refs_heads = repo1.join(".git/refs/heads");
     let project = ProjectName::new("locked-branch".to_string()).unwrap();
     let ww_name = WorkweaveName::new("stuck".to_string()).unwrap();
-    let err = create_workweave(
-        &ws,
-        &ws,
-        &project,
-        &ww_name,
-        None,
-        repoweave::workweave::DirtySource::Refuse,
-        None,
-        repoweave::activate::ActivateOptions::default(),
-    );
+    let err = create_workweave(repoweave::workweave::CreateWorkweave {
+        primary_root: &ws,
+        source_root: &ws,
+        project: &project,
+        name: &ww_name,
+        replace_existing: None,
+        dirty_source: repoweave::workweave::DirtySource::Refuse,
+        dir_override: None,
+        activation: repoweave::activate::ActivateOptions::default(),
+    });
 
     // Restore permissions so tempdir cleanup doesn't fail.
     let _ = std::fs::set_permissions(&refs_heads, std::fs::Permissions::from_mode(0o755));

@@ -952,20 +952,23 @@ pub fn run() -> anyhow::Result<()> {
                                 .resolve_in_project(primary_root, &project)?,
                         };
                         let dir_override = dir.map(|d| d.locate(&invocation));
-                        let created = crate::workweave::create_workweave(
-                            primary_root,
-                            &source_root,
-                            &project,
-                            &WorkweaveName::new(name)?,
-                            consent::ReplaceExistingConsent::from_flag(replace_existing),
-                            if capture_dirty {
-                                crate::workweave::DirtySource::Capture
-                            } else {
-                                crate::workweave::DirtySource::Refuse
-                            },
-                            dir_override.as_deref(),
-                            activate::ActivateOptions { no_materialize },
-                        );
+                        let created =
+                            crate::workweave::create_workweave(crate::workweave::CreateWorkweave {
+                                primary_root,
+                                source_root: &source_root,
+                                project: &project,
+                                name: &WorkweaveName::new(name)?,
+                                replace_existing: consent::ReplaceExistingConsent::from_flag(
+                                    replace_existing,
+                                ),
+                                dirty_source: if capture_dirty {
+                                    crate::workweave::DirtySource::Capture
+                                } else {
+                                    crate::workweave::DirtySource::Refuse
+                                },
+                                dir_override: dir_override.as_deref(),
+                                activation: activate::ActivateOptions { no_materialize },
+                            });
                         let workweave_path = if hook_mode {
                             crate::workweave::hand_over_seat(created)?
                         } else {

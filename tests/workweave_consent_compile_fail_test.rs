@@ -18,15 +18,24 @@ fn the_harness_can_delete_and_create_without_consent() {
         r#"
         use repoweave::activate::ActivateOptions;
         use repoweave::manifest::{ProjectName, WorkweaveName};
-        use repoweave::workweave::{create_workweave, delete_workweave, DirtySource};
+        use repoweave::workweave::{
+            create_workweave, delete_workweave, CreateWorkweave, DirtySource,
+        };
         use std::path::Path;
         pub fn delete(ws: &Path, p: &ProjectName, n: &WorkweaveName) {
             let _ = delete_workweave(ws, p, n, None, None, None);
         }
         pub fn create(ws: &Path, p: &ProjectName, n: &WorkweaveName) {
-            let _ = create_workweave(
-                ws, ws, p, n, None, DirtySource::Refuse, None, ActivateOptions::default(),
-            );
+            let _ = create_workweave(CreateWorkweave {
+                primary_root: ws,
+                source_root: ws,
+                project: p,
+                name: n,
+                replace_existing: None,
+                dirty_source: DirtySource::Refuse,
+                dir_override: None,
+                activation: ActivateOptions::default(),
+            });
         }
         "#,
     );
@@ -57,12 +66,19 @@ fn create_does_not_take_a_bool_for_replacing_an_existing_workweave() {
         r#"
         use repoweave::activate::ActivateOptions;
         use repoweave::manifest::{ProjectName, WorkweaveName};
-        use repoweave::workweave::{create_workweave, DirtySource};
+        use repoweave::workweave::{create_workweave, CreateWorkweave, DirtySource};
         use std::path::Path;
         pub fn create(ws: &Path, p: &ProjectName, n: &WorkweaveName) {
-            let _ = create_workweave(
-                ws, ws, p, n, true, DirtySource::Refuse, None, ActivateOptions::default(),
-            );
+            let _ = create_workweave(CreateWorkweave {
+                primary_root: ws,
+                source_root: ws,
+                project: p,
+                name: n,
+                replace_existing: true,
+                dirty_source: DirtySource::Refuse,
+                dir_override: None,
+                activation: ActivateOptions::default(),
+            });
         }
         "#,
     );
@@ -76,11 +92,19 @@ fn create_does_not_take_a_bool_for_the_dirty_source() {
         r#"
         use repoweave::activate::ActivateOptions;
         use repoweave::manifest::{ProjectName, WorkweaveName};
-        use repoweave::workweave::create_workweave;
+        use repoweave::workweave::{create_workweave, CreateWorkweave};
         use std::path::Path;
         pub fn create(ws: &Path, p: &ProjectName, n: &WorkweaveName) {
-            let no_replace = Default::default();
-            let _ = create_workweave(ws, ws, p, n, no_replace, true, None, ActivateOptions::default());
+            let _ = create_workweave(CreateWorkweave {
+                primary_root: ws,
+                source_root: ws,
+                project: p,
+                name: n,
+                replace_existing: None,
+                dirty_source: true,
+                dir_override: None,
+                activation: ActivateOptions::default(),
+            });
         }
         "#,
     );

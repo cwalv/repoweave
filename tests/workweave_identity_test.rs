@@ -17,7 +17,7 @@
 //! against the live weave.
 
 use repoweave::manifest::{ProjectName, WorkweaveName};
-use repoweave::workweave::{create_workweave, delete_workweave, DirtySource};
+use repoweave::workweave::{create_workweave, delete_workweave, CreateWorkweave, DirtySource};
 use std::path::{Path, PathBuf};
 
 mod common;
@@ -58,16 +58,16 @@ role = "owned"
 }
 
 fn create(ws: &Path, project: &str, name: &str) -> PathBuf {
-    create_workweave(
-        ws,
-        ws,
-        &ProjectName::new(project).unwrap(),
-        &WorkweaveName::new(name).unwrap(),
-        None,
-        DirtySource::Refuse,
-        None,
-        repoweave::activate::ActivateOptions::default(),
-    )
+    create_workweave(CreateWorkweave {
+        primary_root: ws,
+        source_root: ws,
+        project: &ProjectName::new(project).unwrap(),
+        name: &WorkweaveName::new(name).unwrap(),
+        replace_existing: None,
+        dirty_source: DirtySource::Refuse,
+        dir_override: None,
+        activation: repoweave::activate::ActivateOptions::default(),
+    })
     .expect("create should succeed")
 }
 
