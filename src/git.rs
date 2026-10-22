@@ -1643,7 +1643,10 @@ impl Vcs for GitVcs {
             let (meta, name) = record.split_once('\t')?;
             let mut fields = meta.split(' ');
             let (mode, kind, oid) = (fields.next()?, fields.next()?, fields.next()?);
-            (name == path && kind == "blob" && matches!(mode, "100644" | "100755")).then_some(oid)
+            (name == path
+                && kind == "blob"
+                && FileMode::parse(mode).is_some_and(FileMode::is_regular_file))
+            .then_some(oid)
         });
         Ok(match committed_blob {
             Some(blob) => Self::unfiltered_hashes(repo, &[path])?
@@ -3271,16 +3274,44 @@ fn content_identity(
     ))
 }
 
+/// How git records a path in the index and in a tree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FileMode {
+    Regular,
+    Executable,
+    Symlink,
+    /// A submodule's commit.
+    Gitlink,
+}
+
+impl FileMode {
+    /// The mode named by git's octal spelling, or `None` for one git does not
+    /// record a path under in an index.
+    fn parse(token: &str) -> Option<Self> {
+        match token {
+            "100644" => Some(Self::Regular),
+            "100755" => Some(Self::Executable),
+            "120000" => Some(Self::Symlink),
+            "160000" => Some(Self::Gitlink),
+            _ => None,
+        }
+    }
+
+    fn is_regular_file(self) -> bool {
+        matches!(self, Self::Regular | Self::Executable)
+    }
+}
+
 /// One merged index entry.
 struct IndexEntry {
-    mode: String,
+    mode: FileMode,
     blob: String,
     path: String,
 }
 
 impl IndexEntry {
     fn is_regular_file(&self) -> bool {
-        matches!(self.mode.as_str(), "100644" | "100755")
+        self.mode.is_regular_file()
     }
 }
 
@@ -3452,8 +3483,13 @@ impl GitVcs {
                 .try_into()
                 .map_err(|_| malformed(record))?;
             if stage == "0" {
+                let mode = FileMode::parse(mode).ok_or_else(|| VcsError::CommandFailed {
+                    args: vec!["ls-files".to_owned(), "--stage".to_owned(), "-z".to_owned()],
+                    repo: workspace.to_path_buf(),
+                    stderr: format!("unrecognized mode {mode} for {path}"),
+                })?;
                 entries.push(IndexEntry {
-                    mode: mode.to_owned(),
+                    mode,
                     blob: blob.to_owned(),
                     path: path.to_owned(),
                 });
@@ -3543,24 +3579,17 @@ impl GitVcs {
                     checks_out_verbatim(attrs, &config)
                         .then(|| content_identity(&entry.blob, attrs, &config))
                 };
-                let kind = match entry.mode.as_str() {
-                    "100644" => TrackedFileKind::File {
+                let kind = match entry.mode {
+                    FileMode::Regular => TrackedFileKind::File {
                         executable: false,
                         identity: identity(),
                     },
-                    "100755" => TrackedFileKind::File {
+                    FileMode::Executable => TrackedFileKind::File {
                         executable: true,
                         identity: identity(),
                     },
-                    "120000" => TrackedFileKind::Symlink,
-                    "160000" => TrackedFileKind::NestedRepository,
-                    other => {
-                        return Err(VcsError::CommandFailed {
-                            args: vec!["ls-files".to_owned(), "--stage".to_owned()],
-                            repo: workspace.to_path_buf(),
-                            stderr: format!("unrecognized mode {other} for {}", entry.path),
-                        })
-                    }
+                    FileMode::Symlink => TrackedFileKind::Symlink,
+                    FileMode::Gitlink => TrackedFileKind::NestedRepository,
                 };
                 Ok(TrackedFile {
                     path: entry.path.clone(),
@@ -3720,7 +3749,7 @@ impl WorkspacePopulation for GitVcs {
     fn recorded_submodules(&self, workspace: &Path) -> Result<Vec<RecordedSubmodule>, VcsError> {
         let gitlinks: Vec<IndexEntry> = Self::index_entries(workspace)?
             .into_iter()
-            .filter(|e| e.mode == GITLINK_MODE)
+            .filter(|e| e.mode == FileMode::Gitlink)
             .collect();
         if gitlinks.is_empty() {
             return Ok(Vec::new());
@@ -3869,9 +3898,6 @@ impl WorkspacePopulation for GitVcs {
 fn module_repository(module_data: &Path, submodule: &RecordedSubmodule) -> PathBuf {
     module_data.join("modules").join(&submodule.name)
 }
-
-/// The index mode git records a submodule's commit under.
-const GITLINK_MODE: &str = "160000";
 
 /// Whether a `.gitmodules` name stays inside the `modules/` directory it is
 /// joined under. git refuses a `..` component for the same reason; a name
@@ -5927,6 +5953,24 @@ mod population_tests {
                 .len(),
             shareable
         );
+    }
+
+    #[test]
+    fn a_mode_git_does_not_record_in_an_index_does_not_parse() {
+        let recorded = [
+            ("100644", FileMode::Regular),
+            ("100755", FileMode::Executable),
+            ("120000", FileMode::Symlink),
+            ("160000", FileMode::Gitlink),
+        ];
+        for (token, mode) in recorded {
+            assert_eq!(FileMode::parse(token), Some(mode), "{token}");
+        }
+        for token in ["100664", "040000", "0", "", "100644 "] {
+            assert_eq!(FileMode::parse(token), None, "{token:?}");
+        }
+        assert!(FileMode::Regular.is_regular_file() && FileMode::Executable.is_regular_file());
+        assert!(!FileMode::Symlink.is_regular_file() && !FileMode::Gitlink.is_regular_file());
     }
 
     #[test]
