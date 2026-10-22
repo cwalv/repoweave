@@ -13,6 +13,7 @@
 
 use std::fmt;
 
+use schemars::JsonSchema;
 use serde::Serialize;
 
 /// The condition a refusal names.
@@ -28,7 +29,10 @@ use serde::Serialize;
 /// splits a condition in two under the reader's feet — the spellings move
 /// together or not at all. `docs/reference/doctor-findings.md` carries the
 /// finding side.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+///
+/// The derived schema is the register's enumeration: it lists every variant
+/// under the token serde writes for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum RefusalKind {
     /// A sync/sync-to op already holds op-state covering this workspace.

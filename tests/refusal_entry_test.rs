@@ -12,53 +12,13 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod common;
 
-/// Every token the register mints, read out of the enum's own declaration.
-///
-/// Structural, and licensed as a prohibition over an enumerable population: no
-/// runtime handle enumerates a fieldless enum without a derive this crate does
-/// not carry, and a hand-written list of 97 variants is a second copy of the
-/// register that drifts from it silently.
-///
-/// Scope: the `pub enum RefusalKind` block of `src/refusal.rs`, matched on
-/// four-space-indented `Variant,` lines. A variant written on a shared line, or
-/// one carrying a `#[serde(rename)]` that overrides the case transform, is
-/// invisible here — [`the_case_transform_matches_serde`] is what keeps the
-/// transform itself honest.
+use common::json_schema;
+
+/// Every token the register mints, from the schema derived for `RefusalKind`.
 fn minted_tokens() -> Vec<String> {
-    let src = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/refusal.rs"),
-    )
-    .expect("the refusal module is readable");
-    variant_tokens(&src)
-}
-
-fn variant_tokens(enum_src: &str) -> Vec<String> {
-    let body = enum_src
-        .split_once("pub enum RefusalKind {")
-        .expect("the enum is declared")
-        .1;
-    let body = body.split_once("\n}").expect("the enum closes").0;
-
-    body.lines()
-        .filter_map(|l| {
-            let l = l.strip_suffix('\r').unwrap_or(l);
-            let name = l.strip_prefix("    ")?.strip_suffix(',')?;
-            (!name.starts_with(char::is_lowercase)
-                && !name.starts_with('#')
-                && name.chars().all(|c| c.is_ascii_alphanumeric()))
-            .then(|| kebab(name))
-        })
+    json_schema::derived_enum_tokens::<RefusalKind>()
+        .into_iter()
         .collect()
-}
-
-/// A CRLF checkout leaves the block's final line ending in a bare `\r` once
-/// the closing brace is sliced off at `\n}`, and `lines()` keeps that `\r`
-/// on an unterminated final line — so the last variant, and only the last,
-/// fell out of the walk on Windows.
-#[test]
-fn the_last_variant_survives_a_crlf_checkout() {
-    let src = "pub enum RefusalKind {\r\n    FirstThing,\r\n    LastThing,\r\n}\r\n";
-    assert_eq!(variant_tokens(src), ["first-thing", "last-thing"]);
 }
 
 /// The published entry pages, read from disk rather than through the module
@@ -69,50 +29,6 @@ fn pages_text() -> String {
     let findings =
         std::fs::read_to_string(docs.join("doctor-findings.md")).expect("findings published");
     format!("{refusals}\n{findings}")
-}
-
-/// serde's `rename_all = "kebab-case"`, reproduced outside serde.
-fn kebab(variant: &str) -> String {
-    let mut out = String::new();
-    for (i, c) in variant.char_indices() {
-        if c.is_ascii_uppercase() {
-            if i != 0 {
-                out.push('-');
-            }
-            out.push(c.to_ascii_lowercase());
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
-
-/// The whole file rests on reproducing serde's transform by hand, so the
-/// transform is checked against tokens serde actually produced. `VersionIsAPin`
-/// is the shape that breaks a naive splitter — a one-letter word between two
-/// longer ones.
-///
-/// Residue: no variant carries two adjacent capitals, so the transform's
-/// behavior on that shape is unexercised here and cannot be pinned without a
-/// variant that has it. serde would split between them; so does this.
-#[test]
-fn the_case_transform_matches_serde() {
-    let ground_truth = [
-        (RefusalKind::VersionIsAPin, "VersionIsAPin"),
-        (RefusalKind::OpInProgress, "OpInProgress"),
-        (RefusalKind::PushFromWorkweave, "PushFromWorkweave"),
-        (
-            RefusalKind::DroppedRepoHasUniqueCommits,
-            "DroppedRepoHasUniqueCommits",
-        ),
-    ];
-    for (kind, variant) in ground_truth {
-        assert_eq!(
-            kind.token(),
-            kebab(variant),
-            "transform diverged on {variant}"
-        );
-    }
 }
 
 #[test]

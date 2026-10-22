@@ -580,6 +580,13 @@ pub fn census(schema: &Value) -> Census {
     Census { seen, unknown }
 }
 
+/// The tokens `T` serializes to, read from the schema schemars derives for it,
+/// which names every variant of a fieldless enum with no list to keep.
+pub fn derived_enum_tokens<T: schemars::JsonSchema>() -> BTreeSet<String> {
+    let schema = serde_json::to_value(schemars::schema_for!(T)).expect("a schema serializes");
+    enum_member_tokens(&schema)
+}
+
 /// Every string member of every `enum` in `schema`: the tokens a fieldless
 /// enum's generated schema declares, whichever of schemars' `oneOf` shapes the
 /// variants' doc comments gave it.

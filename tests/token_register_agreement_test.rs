@@ -20,8 +20,8 @@
 //! never listed here; the one thing this file states is *intent*, which is the
 //! one thing source cannot tell you (see [`INTENDED_REUSE`]).
 //!
-//! **Scope.** The five registers above. `RefusalKind` is parsed from its
-//! declaration in `src/refusal.rs`; `IssueKind`'s tags are what
+//! **Scope.** The five registers above. `RefusalKind`'s tokens are read from
+//! the schema schemars derives for it; `IssueKind`'s tags are what
 //! `IssueKindOutput` serializes, read from its committed schema; the doctor,
 //! VCS and sync kinds are `ViolationKind::ALL`, `VcsErrorKind::ALL` and
 //! `SyncFailureKind::ALL`, the types whose serialization is the tag.
@@ -69,6 +69,7 @@ mod common;
 
 use common::json_schema;
 use repoweave::check::ViolationKind;
+use repoweave::refusal::RefusalKind;
 use repoweave::sync::SyncFailureKind;
 use repoweave::vcs::VcsErrorKind;
 use serde_json::Value;
@@ -187,10 +188,9 @@ fn source(file: &str) -> String {
 /// names is blind to the exact edit this file exists to catch — three
 /// mutations proved it by slipping past an earlier version of this function.
 ///
-/// Fieldless variants only, which is what both callers declare. A variant
-/// carrying fields spans lines this yields nothing for, so a register that
-/// grows one goes partially blind — the reason each caller is pinned against a
-/// count it does not compute itself.
+/// Fieldless variants only, which is what its caller declares. A variant
+/// carrying fields spans lines this yields nothing for, so an enum that grows
+/// one goes partially blind.
 fn serde_enum_tokens(src: &str, decl: &str) -> BTreeSet<String> {
     let body = src
         .split_once(decl)
@@ -223,7 +223,7 @@ fn serde_enum_tokens(src: &str, decl: &str) -> BTreeSet<String> {
 }
 
 fn refusal_tokens() -> BTreeSet<String> {
-    serde_enum_tokens(&source("refusal.rs"), "pub enum RefusalKind {")
+    json_schema::derived_enum_tokens::<RefusalKind>()
 }
 
 /// The tags an integration finding's kind carries, read from the committed
@@ -248,10 +248,7 @@ fn conflict_op_tokens() -> BTreeSet<String> {
 /// [`the_declaration_walk_reads_the_same_tokens_on_a_crlf_checkout`]. An entry
 /// that goes stale cannot pass quietly — `serde_enum_tokens` panics on a
 /// declaration it cannot find.
-const SERDE_ENUM_DECLARATIONS: &[(&str, &str)] = &[
-    ("refusal.rs", "pub enum RefusalKind {"),
-    ("vcs.rs", "pub enum ConflictOp {"),
-];
+const SERDE_ENUM_DECLARATIONS: &[(&str, &str)] = &[("vcs.rs", "pub enum ConflictOp {")];
 
 fn kebab(name: &str) -> String {
     let mut out = String::new();
@@ -299,9 +296,10 @@ fn registers() -> BTreeMap<&'static str, BTreeSet<String>> {
 ///
 /// **What a floor does not do**: it catches a register going dark wholesale,
 /// not one going partially blind, because it is by construction below the
-/// register's real size. It stands behind `refusal`, the one register still
-/// parsed from source; the others are types' `ALL`, held to their wire mirrors'
-/// schemas by [`the_kind_enums_list_exactly_the_tags_their_wire_mirrors_declare`].
+/// register's real size. `refusal` is read from its derived schema, which
+/// lists every variant by construction; the others are types' `ALL`, held to
+/// their wire mirrors' schemas by
+/// [`the_kind_enums_list_exactly_the_tags_their_wire_mirrors_declare`].
 #[test]
 fn the_register_walk_is_not_vacuous() {
     let regs = registers();
