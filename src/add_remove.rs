@@ -5,17 +5,17 @@ use crate::integration_runner::missing_active_members;
 use crate::manifest::{
     LockFile, Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role, Submodules, VcsType,
 };
-use crate::path_spelling::{file_url_suggestion, is_absolute_spelling, operator_path, resolve};
+use crate::path_spelling::{file_url_suggestion, operator_path, resolve};
 use crate::refusal::{refusal, RefusalKind};
 use crate::registry::{
     builtin_registries, recorded_remote, resolve_to_clone_info, CloneUrl, CreationParamError,
-    ParamKind, ParamMap, ParamSpec, RecordedRemote, RegistryName, Upstream,
+    ParamKind, ParamMap, RecordedRemote, RegistryName, Upstream,
 };
 use crate::vcs::{
     vcs_for, DeletionWarrant, EphemeralRefName, HeadAttachment, RemoteBranchCopies, TrackingRef,
     Vcs,
 };
-use crate::workspace::{operand_path, project_dir, Checkout, WorkspaceContext};
+use crate::workspace::{project_dir, Checkout, WorkspaceContext};
 use crate::workweave_index::RefRegistry;
 use anyhow::Context;
 use std::path::{Path, PathBuf};
@@ -492,22 +492,20 @@ fn refuse_foreign_clone_at_placement(
     )
 }
 
-/// `rwv add --adopt <path>`: register the clone `path` names, read against
-/// `invocation_dir` — the process cwd, or the `-C`/`-w` directory. Its member
-/// path is its position inside whichever weave root contains it, and the
-/// clone itself is always the canonical one under the primary root.
+/// `rwv add --adopt <path>`: register the clone the absolute `path` names. Its
+/// member path is its position inside whichever weave root contains it, and
+/// the clone itself is always the canonical one under the primary root.
 pub fn run_add_adopt(
-    path: &str,
+    path: &Path,
     role: Role,
     ctx: &WorkspaceContext,
-    invocation_dir: &Path,
     opts: ActivateOptions,
 ) -> anyhow::Result<()> {
     let vcs_type = VcsType::Git;
     let vcs = vcs_for(vcs_type);
     let (project, project_dir) = find_project(ctx)?;
     let manifest_path = project_dir.join(Manifest::FILE_NAME);
-    let (repo_path, candidate) = adopt_placement(vcs.as_ref(), ctx, invocation_dir, path)?;
+    let (repo_path, candidate) = adopt_placement(vcs.as_ref(), ctx, path)?;
     if !vcs.is_repo(&candidate) {
         crate::refuse!(
             RefusalKind::NoCloneToAdopt,
@@ -554,7 +552,7 @@ pub fn run_add_adopt(
             e,
             &manifest_path,
             &repo_path,
-            &format!("rwv add --adopt {path}"),
+            &format!("rwv add --adopt {}", operator_path(path)),
         )
     })?;
     if let Some((_, origin_url)) = registration {
@@ -578,12 +576,9 @@ pub fn run_add_adopt(
 fn adopt_placement(
     vcs: &dyn Vcs,
     ctx: &WorkspaceContext,
-    invocation_dir: &Path,
-    raw: &str,
+    path: &Path,
 ) -> anyhow::Result<(RepoPath, PathBuf)> {
-    let base = resolve(invocation_dir)
-        .with_context(|| format!("failed to canonicalize {}", operator_path(invocation_dir)))?;
-    let named = lexically_normal(&operand_path(&base, raw));
+    let named = lexically_normal(path);
     let primary = ctx.primary_path();
     let workweave = match &ctx.checkout {
         Checkout::Workweave { dir, .. } => Some(dir.as_path()),
@@ -605,9 +600,8 @@ fn adopt_placement(
         };
         crate::refuse!(
             RefusalKind::AdoptPathOutsideWeave,
-            "rwv add --adopt: '{raw}' names '{}', which is not under {roots}. A relative \
-             path is read from the directory rwv runs in (or -C/-w); name the clone by a path \
-             inside the weave.",
+            "rwv add --adopt: '{}' is not under {roots}. A relative path is read from the \
+             directory rwv runs in (or -C/-w); name the clone by a path inside the weave.",
             operator_path(&named)
         );
     };
@@ -637,7 +631,7 @@ fn adopt_placement(
             vcs,
             &checkout,
             &repo_path,
-            &format!("rwv add --adopt {raw}"),
+            &format!("rwv add --adopt {}", operator_path(path)),
         )?;
     }
     Ok((repo_path, canonical))
@@ -820,7 +814,7 @@ fn run_add_from_local_path(
     vcs: &dyn Vcs,
     vcs_type: VcsType,
     repo_path: &RepoPath,
-    path_arg: &str,
+    adopted: &Path,
     clone_dir: &Path,
     role: Role,
     manifest_path: &Path,
@@ -850,9 +844,10 @@ fn run_add_from_local_path(
             "'{dir}' records its {remote} remote as the relative path '{path}', which git \
              reads from each checkout's own directory, so it names no one URL to record; \
              give it an absolute URL (`git -C {dir} remote set-url {remote} <url>`) and \
-             re-run `rwv add --adopt {path_arg}`",
+             re-run `rwv add --adopt {adopted}`",
             dir = operator_path(clone_dir),
             remote = vcs.conventional_remote_name(),
+            adopted = operator_path(adopted),
         ),
     };
 
@@ -882,7 +877,7 @@ fn run_add_from_local_path(
             repo_path.as_str(),
             operator_path(clone_dir),
             vcs.clone_default_branch_repair_hint(clone_dir, RemoteBranchCopies::AsLastFetched)?,
-            path_arg
+            operator_path(adopted)
         );
     };
     let version = TrackingRef::try_from(&remote_default)
@@ -1387,39 +1382,82 @@ fn build_creation_params(
     Ok(map)
 }
 
-/// Respell each relative [`ParamKind::Path`] value in `params` as the
-/// absolute path it names from `invocation_dir`. An empty value names no path
-/// and is left for the planner to refuse.
-fn resolve_path_params(
-    specs: &[ParamSpec],
-    params: &mut ParamMap,
-    invocation_dir: &Path,
-) -> anyhow::Result<()> {
-    for spec in specs.iter().filter(|s| s.kind == ParamKind::Path) {
-        let Some(raw) = params.get(spec.name) else {
-            continue;
-        };
-        if raw.is_empty() || is_absolute_spelling(raw) {
-            continue;
-        }
-        // A `-w` dir read from a record can carry the Windows verbatim prefix,
-        // under which a join folds `..` away and which no `file://` URL can spell.
-        let resolved = operand_path(dunce::simplified(invocation_dir), raw);
-        let Some(spelled) = resolved.to_str().map(str::to_owned) else {
-            crate::refuse!(
-                RefusalKind::UnusableCreationParam,
-                "creation parameter '{}' resolves to '{}', which is not valid UTF-8",
-                spec.name,
-                operator_path(&resolved)
-            );
-        };
-        params.insert(spec.name, spelled);
+/// An `rwv add --new` creation as argv states it: the registry its address
+/// names, and the parameter map the address, `--param` and `--params-json`
+/// assemble. Its path parameters stay argv text until
+/// [`Self::locate_path_params`] reads them from the directory rwv runs in, so
+/// the planner sees absolute strings.
+pub struct CreationRequest {
+    address: String,
+    registry: Box<dyn crate::registry::Registry>,
+    params: ParamMap,
+}
+
+impl CreationRequest {
+    pub fn parse(
+        address: &str,
+        params: &[String],
+        params_json: Option<&str>,
+    ) -> anyhow::Result<Self> {
+        let (registry_name, prefix) = parse_creation_address(address)?;
+        let registry = builtin_registries()
+            .into_iter()
+            .find(|r| r.name() == &registry_name)
+            .ok_or_else(|| {
+                let names = crate::registry::builtin_registry_names();
+                let known: Vec<&str> = names.iter().map(|n| n.as_str()).collect();
+                refusal(
+                    RefusalKind::UnknownRegistry,
+                    format!(
+                        "'{}' is not a registry rwv can create through. Known registries: {}. \
+                         To add a repo a registry already hosts, use `rwv add <url>` instead.",
+                        registry_name.as_str(),
+                        known.join(", ")
+                    ),
+                )
+            })?;
+        let params = build_creation_params(prefix, params, params_json)?;
+        Ok(Self {
+            address: address.to_owned(),
+            registry,
+            params,
+        })
     }
-    Ok(())
+
+    /// Replace each non-empty [`ParamKind::Path`] value with the location
+    /// `locate` reads it as. An empty value names no path and is left for the
+    /// planner to refuse.
+    pub fn locate_path_params(&mut self, locate: impl Fn(&str) -> PathBuf) -> anyhow::Result<()> {
+        for spec in self
+            .registry
+            .creation_params()
+            .iter()
+            .filter(|s| s.kind == ParamKind::Path)
+        {
+            let Some(raw) = self.params.get(spec.name) else {
+                continue;
+            };
+            if raw.is_empty() {
+                continue;
+            }
+            let located = locate(raw);
+            let Some(spelled) = located.to_str().map(str::to_owned) else {
+                crate::refuse!(
+                    RefusalKind::UnusableCreationParam,
+                    "creation parameter '{}' resolves to '{}', which is not valid UTF-8",
+                    spec.name,
+                    operator_path(&located)
+                );
+            };
+            self.params.insert(spec.name, spelled);
+        }
+        Ok(())
+    }
 }
 
 /// Execute `rwv add <creation-address> --new [--param NAME=VALUE]...
-/// [--params-json JSON] [--role ROLE]`.
+/// [--params-json JSON] [--role ROLE]`, for a `request` whose path parameters
+/// are already located.
 ///
 /// The address names a registry — a bare name, or a three-segment shorthand
 /// that fills `owner` and `repo` for any registry (fork 7) — which turns a
@@ -1429,16 +1467,11 @@ fn resolve_path_params(
 /// the member's path from that URL; nothing here asserts one.
 ///
 /// `ctx` is the already-resolved invocation context. Handlers must not
-/// re-resolve. `invocation_dir` is the directory the context was resolved
-/// from — the process cwd, or the `-C`/`-w` directory — and is what a
-/// relative path parameter is relative to.
+/// re-resolve.
 pub fn run_add_new(
-    address: &str,
+    request: CreationRequest,
     role: Role,
-    params: &[String],
-    params_json: Option<&str>,
     ctx: &WorkspaceContext,
-    invocation_dir: &Path,
     opts: ActivateOptions,
 ) -> anyhow::Result<()> {
     // `rwv add` mints the manifest entry, so the backend is an input to the
@@ -1448,29 +1481,12 @@ pub fn run_add_new(
     let vcs = vcs_for(vcs_type);
     let (project, project_dir) = find_project(ctx)?;
     let manifest_path = project_dir.join(Manifest::FILE_NAME);
-
-    let (registry_name, prefix) = parse_creation_address(address)?;
-
-    let owned_registries = builtin_registries();
-    let registry = owned_registries
-        .iter()
-        .find(|r| r.name() == &registry_name)
-        .ok_or_else(|| {
-            let names = crate::registry::builtin_registry_names();
-            let known: Vec<&str> = names.iter().map(|n| n.as_str()).collect();
-            refusal(
-                RefusalKind::UnknownRegistry,
-                format!(
-                    "'{}' is not a registry rwv can create through. Known registries: {}. \
-                     To add a repo a registry already hosts, use `rwv add <url>` instead.",
-                    registry_name.as_str(),
-                    known.join(", ")
-                ),
-            )
-        })?;
-
-    let mut param_map = build_creation_params(prefix, params, params_json)?;
-    resolve_path_params(registry.creation_params(), &mut param_map, invocation_dir)?;
+    let CreationRequest {
+        address,
+        registry,
+        params: param_map,
+    } = request;
+    let registry_name = registry.name().clone();
 
     let plan = match registry.plan_creation(&param_map) {
         Ok(plan) => plan,

@@ -30,28 +30,29 @@ use crate::sync;
 use crate::update;
 
 use crate::manifest::{ProjectName, WorkweaveName};
-use crate::path_spelling::resolve;
 use crate::refusal::{refusal, RefusalKind};
-use crate::workspace::{acquire_origin_dir, operand_path, WorkspaceContext};
+use crate::workspace::{acquire_origin_dir, WorkspaceContext};
+
+use super::operand::{InvocationDir, Operand};
 use anyhow::Context;
 use clap::{CommandFactory, FromArgMatches};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-/// Validate and canonicalize the `-C <path>` argument.
+/// The `-C <path>` directory, read from the process cwd, which must exist.
 ///
-/// The argument must be an existing path on disk (canonicalize will error
-/// otherwise). A bare `<project>--<name>` string that matches the workweave
-/// name shape but does not exist as a path gets a corrective error pointing
-/// at `-w/--workweave`.
-fn resolve_cwd_override(raw: &str) -> anyhow::Result<PathBuf> {
-    let p = std::path::Path::new(raw);
+/// A bare `<project>--<name>` string that matches the workweave name shape but
+/// does not exist as a path gets a corrective error pointing at
+/// `-w/--workweave`.
+fn resolve_cwd_override(operand: Operand, cwd: &InvocationDir) -> anyhow::Result<InvocationDir> {
+    let raw = operand.text().to_string_lossy().into_owned();
+    let p = operand.locate(cwd);
 
     // Before trying to canonicalize, check whether this looks like a
     // workweave name (<project>--<name>) that does not exist on disk.
     // That is the most common mistake: passing a workweave identity to
     // -C instead of -w/--workweave.
-    if !p.exists() && crate::naming::has_flat_address_shape(raw) {
+    if !p.exists() && crate::naming::has_flat_address_shape(&raw) {
         crate::refuse!(
             RefusalKind::WrongAddressFlag,
             "'-C {raw}' looks like a workweave name rather than a path, \
@@ -64,7 +65,8 @@ fn resolve_cwd_override(raw: &str) -> anyhow::Result<PathBuf> {
         );
     }
 
-    resolve(p).with_context(|| format!("'-C {raw}': path does not exist or cannot be accessed"))
+    InvocationDir::resolved(&p)
+        .with_context(|| format!("'-C {raw}': path does not exist or cannot be accessed"))
 }
 
 /// The `-w` address for a `<project>--<name>` argument whose project half was
@@ -656,22 +658,29 @@ pub fn run() -> anyhow::Result<()> {
     // ------------------------------------------------------------------
 
     // Step 1: workspace origin — cwd or -C path.
-    let workspace_origin = match cli.cwd_override.as_deref() {
-        None => acquire_origin_dir()?,
-        Some(raw) => resolve_cwd_override(raw)?,
+    let cwd = InvocationDir::resolved(&acquire_origin_dir()?)
+        .context("failed to resolve the current directory")?;
+    let cwd_overridden = cli.cwd_override.is_some();
+    let workspace_origin = match cli.cwd_override {
+        None => cwd,
+        Some(operand) => resolve_cwd_override(operand, &cwd)?,
     };
 
     // Step 2: workweave selection — registry lookup when -w is given.
     // `workweave_flag_project` carries the project parsed from `-w <proj>--<name>`.
     // When absent, dispatch uses `workspace_origin` directly.
-    let (origin_dir, workweave_flag_project): (PathBuf, Option<ProjectName>) =
+    let (invocation, workweave_flag_project): (InvocationDir, Option<ProjectName>) =
         match cli.workweave_flag.as_deref() {
             None => (workspace_origin, None),
             Some(raw) => {
-                let (ww_path, project) = resolve_workweave_flag(raw, &workspace_origin)?;
-                (ww_path, Some(project))
+                let (ww_path, project) = resolve_workweave_flag(raw, workspace_origin.as_path())?;
+                let dir = InvocationDir::resolved(&ww_path).with_context(|| {
+                    format!("'-w {raw}': failed to resolve {}", ww_path.display())
+                })?;
+                (dir, Some(project))
             }
         };
+    let origin_dir = invocation.as_path();
     // `use_workweave_flag` is true when `-w` was given; downstream resolver
     // calls apply `with_workweave_flag_provenance()` to stamp the correct
     // chain-step provenance on the resolved context.
@@ -679,14 +688,14 @@ pub fn run() -> anyhow::Result<()> {
 
     match cli.command {
         None => {
-            let ctx = WorkspaceContext::resolve_invocation(&origin_dir, None)?;
+            let ctx = WorkspaceContext::resolve_invocation(origin_dir, None)?;
             println!("{}", ctx.display());
         }
         Some(Commands::Activate {
             project,
             no_materialize,
         }) => {
-            let ctx = WorkspaceContext::resolve_invocation(&origin_dir, None)?;
+            let ctx = WorkspaceContext::resolve_invocation(origin_dir, None)?;
             activate::activate_with_options(
                 &ProjectName::new(project)?,
                 &ctx,
@@ -698,7 +707,7 @@ pub fn run() -> anyhow::Result<()> {
             adopt_drifted,
             remove_undeclared_links,
         }) => {
-            let ctx = WorkspaceContext::resolve_invocation(&origin_dir, None)?;
+            let ctx = WorkspaceContext::resolve_invocation(origin_dir, None)?;
             // clap refuses the two together, so this reads as the exclusive
             // choice it is rather than a precedence.
             let consent = consent::RegenerateDriftedConsent::from_flag(regenerate_drifted)
@@ -716,11 +725,11 @@ pub fn run() -> anyhow::Result<()> {
             // `prime` tolerates the not-in-a-workspace case (silent unless
             // `--no-suppress`); resolve here and pass `Option<&ctx>` so
             // the handler stays free of resolution logic.
-            let ctx = WorkspaceContext::resolve_invocation(&origin_dir, None).ok();
+            let ctx = WorkspaceContext::resolve_invocation(origin_dir, None).ok();
             prime::prime(ctx.as_ref(), no_suppress)?;
         }
         Some(Commands::Resolve) => {
-            let ctx = WorkspaceContext::resolve_invocation(&origin_dir, None)?;
+            let ctx = WorkspaceContext::resolve_invocation(origin_dir, None)?;
             println!("{}", crate::path_spelling::operator_path(ctx.active_path()));
         }
         Some(Commands::Add {
@@ -734,20 +743,18 @@ pub fn run() -> anyhow::Result<()> {
             no_materialize,
         }) => {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
-            let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
+            let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
             let activation = activate::ActivateOptions { no_materialize };
             if new {
-                add_remove::run_add_new(
-                    &url,
-                    role,
-                    &params,
-                    params_json.as_deref(),
-                    &ctx,
-                    &origin_dir,
-                    activation,
-                )?;
+                let mut request =
+                    add_remove::CreationRequest::parse(&url, &params, params_json.as_deref())?;
+                request.locate_path_params(|raw| {
+                    Operand::from(std::ffi::OsString::from(raw)).locate(&invocation)
+                })?;
+                add_remove::run_add_new(request, role, &ctx, activation)?;
             } else if adopt {
-                add_remove::run_add_adopt(&url, role, &ctx, &origin_dir, activation)?;
+                let path = Operand::from(std::ffi::OsString::from(url)).locate(&invocation);
+                add_remove::run_add_adopt(&path, role, &ctx, activation)?;
             } else {
                 add_remove::run_add(&url, role, &ctx, activation)?;
             }
@@ -790,10 +797,10 @@ pub fn run() -> anyhow::Result<()> {
                     // an empty directory, or a non-empty one under
                     // --allow-non-empty-dir). The origin dir is the bootstrap
                     // target — no invocation-context resolution yet.
-                    crate::workspace::require_workspace_or_empty(&origin_dir, allow_non_empty_dir)?;
+                    crate::workspace::require_workspace_or_empty(origin_dir, allow_non_empty_dir)?;
                     fetch::run_fetch(
                         &src,
-                        &origin_dir,
+                        origin_dir,
                         mode,
                         no_reference,
                         detach_checkouts,
@@ -821,13 +828,13 @@ pub fn run() -> anyhow::Result<()> {
                     }
                     let project_override =
                         project.map(crate::manifest::ProjectName::new).transpose()?;
-                    let ctx = WorkspaceContext::resolve_invocation(&origin_dir, project_override)
+                    let ctx = WorkspaceContext::resolve_invocation(origin_dir, project_override)
                         .with_context(|| {
-                        format!(
-                            "rwv fetch: no SOURCE and no repoweave workspace found above {}",
-                            origin_dir.display(),
-                        )
-                    })?;
+                            format!(
+                                "rwv fetch: no SOURCE and no repoweave workspace found above {}",
+                                origin_dir.display(),
+                            )
+                        })?;
                     let ctx = bind_project_scoped(ctx, use_workweave_flag)?;
                     fetch::run_fetch_in_place(
                         &ctx,
@@ -852,15 +859,11 @@ pub fn run() -> anyhow::Result<()> {
             if adopt {
                 init::init_adopt(
                     &project,
-                    &origin_dir,
+                    origin_dir,
                     activate::ActivateOptions { no_materialize },
                 )?;
             } else {
-                init::init(
-                    &ProjectName::new(project)?,
-                    provider.as_deref(),
-                    &origin_dir,
-                )?;
+                init::init(&ProjectName::new(project)?, provider.as_deref(), origin_dir)?;
             }
         }
         Some(Commands::Role {
@@ -870,7 +873,7 @@ pub fn run() -> anyhow::Result<()> {
             no_materialize,
         }) => {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
-            let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
+            let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
             refuse_symlinked_members_here(&ctx)?;
             crate::role::run_role(
                 &repo,
@@ -887,7 +890,7 @@ pub fn run() -> anyhow::Result<()> {
             no_materialize,
         }) => {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
-            let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
+            let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
             add_remove::run_remove(
                 &path,
                 add_remove::Removal::from_flags(delete, delete_shared_clone)?,
@@ -909,7 +912,7 @@ pub fn run() -> anyhow::Result<()> {
             } else {
                 let project = project.expect("project is required unless --claude-hook is set");
                 let project = crate::manifest::ProjectName::new(project)?;
-                let ctx = WorkspaceContext::resolve_invocation(&origin_dir, None)?;
+                let ctx = WorkspaceContext::resolve_invocation(origin_dir, None)?;
                 let primary_root = ctx.primary_path();
 
                 match action {
@@ -944,10 +947,10 @@ pub fn run() -> anyhow::Result<()> {
                         let source_root = match from {
                             None => ctx.active_path().to_path_buf(),
                             Some(source) => source
-                                .anchored_at(&origin_dir)
+                                .locate(&invocation)
                                 .resolve_in_project(primary_root, &project)?,
                         };
-                        let dir_override = dir.as_deref().map(|d| operand_path(&origin_dir, d));
+                        let dir_override = dir.map(|d| d.locate(&invocation));
                         let created = crate::workweave::create_workweave(
                             primary_root,
                             &source_root,
@@ -978,7 +981,7 @@ pub fn run() -> anyhow::Result<()> {
                         let recorded = crate::workweave_index::set_container(
                             primary_root,
                             &project,
-                            operand_path(&origin_dir, &path),
+                            path.locate(&invocation),
                         )?;
                         eprintln!(
                             "recorded workweave container for project `{}`: {}",
@@ -1001,7 +1004,7 @@ pub fn run() -> anyhow::Result<()> {
         }) => {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
             let ctx = resolve_project_scoped_tolerating_disputed_root(
-                &origin_dir,
+                origin_dir,
                 project_override,
                 use_workweave_flag,
             )?;
@@ -1055,7 +1058,7 @@ pub fn run() -> anyhow::Result<()> {
             project,
         }) => {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
-            let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
+            let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
             refuse_symlinked_members_here(&ctx)?;
             let commit = commit.then(|| lock::CommitMessage::from_flag(message));
             lock::lock(&ctx, dirty, commit)?;
@@ -1067,7 +1070,7 @@ pub fn run() -> anyhow::Result<()> {
         }) => {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
             let ctx = resolve_project_scoped_tolerating_disputed_root(
-                &origin_dir,
+                origin_dir,
                 project_override,
                 use_workweave_flag,
             )?;
@@ -1078,7 +1081,7 @@ pub fn run() -> anyhow::Result<()> {
         Some(Commands::Abort {
             abandon_foreign_tip,
         }) => {
-            let ctx = WorkspaceContext::resolve_invocation(&origin_dir, None)?;
+            let ctx = WorkspaceContext::resolve_invocation(origin_dir, None)?;
             sync::run_abort(
                 &ctx,
                 &crate::cli::consent::AbandonForeignTipConsent::from_flag(&abandon_foreign_tip),
@@ -1096,7 +1099,7 @@ pub fn run() -> anyhow::Result<()> {
         }) => {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
             let ctx =
-                resolve_project_scoped(&origin_dir, project_override.clone(), use_workweave_flag)?;
+                resolve_project_scoped(origin_dir, project_override.clone(), use_workweave_flag)?;
             // sync's default is serial (jobs=1). This differs from fetch/update
             // (which auto-resolve to min(nproc, 8)) because sync's `--json`
             // contract pins envelope output under `-j 1` and NDJSON under
@@ -1118,7 +1121,7 @@ pub fn run() -> anyhow::Result<()> {
                 sync::SyncRequest::Fresh {
                     source: source
                         .expect("clap requires <SOURCE> unless --continue")
-                        .anchored_at(&origin_dir),
+                        .locate(&invocation),
                     strategy,
                     allow_stale_lock,
                     discard_local_commits: consent::DiscardLocalCommitsConsent::from_flag(
@@ -1147,7 +1150,7 @@ pub fn run() -> anyhow::Result<()> {
         }) => {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
             let ctx =
-                resolve_project_scoped(&origin_dir, project_override.clone(), use_workweave_flag)?;
+                resolve_project_scoped(origin_dir, project_override.clone(), use_workweave_flag)?;
             let jobs = match jobs {
                 Some(n) => crate::parallel::resolve_jobs(Some(n)),
                 None => 1,
@@ -1162,7 +1165,7 @@ pub fn run() -> anyhow::Result<()> {
             } else {
                 // A bare `rwv sync-to` targets the `.rwv-workweave` marker's parent.
                 let target = match target {
-                    Some(t) => t.anchored_at(&origin_dir),
+                    Some(t) => t.locate(&invocation),
                     None => {
                         // Bare `rwv sync-to` — must be inside a workweave. Reuse
                         // the invocation context we already resolved above.
@@ -1214,7 +1217,7 @@ pub fn run() -> anyhow::Result<()> {
             json,
         }) => {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
-            let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
+            let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
             let filter = crate::selector::RepoFilter::parse(&roles, &repos)?;
             // push's default is serial (jobs=1). This differs from fetch/update
             // (which auto-resolve to min(nproc, 8)) because push's `--json`
@@ -1247,7 +1250,7 @@ pub fn run() -> anyhow::Result<()> {
             no_materialize,
         }) => {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
-            let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
+            let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
             // Mint once from the parsed flag; the token threads down to
             // advance_checkout, where it gates the ff-or-refuse guard.
             let detach_checkouts = consent::DetachConsent::from_flag(detach_checkouts);
@@ -1330,10 +1333,10 @@ pub fn run() -> anyhow::Result<()> {
             // In both cases we attempt resolution so the envelope is set
             // on the child. On success, the full envelope is injected;
             // on soft-fallthrough failure, only `RWV_VERSION` is set.
-            let resolution = if cli.cwd_override.is_some() || workweave_flag_project.is_some() {
+            let resolution = if cwd_overridden || workweave_flag_project.is_some() {
                 // Explicit address: failure is an rwv error before exec.
                 let ctx =
-                    WorkspaceContext::resolve_invocation(&origin_dir, None).with_context(|| {
+                    WorkspaceContext::resolve_invocation(origin_dir, None).with_context(|| {
                         format!(
                             "external verb `{verb}`: could not resolve workspace from {}",
                             origin_dir.display()
@@ -1342,7 +1345,7 @@ pub fn run() -> anyhow::Result<()> {
                 ctx.resolution()
             } else {
                 // No flags: soft fallthrough — tolerate resolution failure.
-                WorkspaceContext::resolve_invocation(&origin_dir, None)
+                WorkspaceContext::resolve_invocation(origin_dir, None)
                     .ok()
                     .and_then(|ctx| ctx.resolution())
             };
@@ -1353,7 +1356,7 @@ pub fn run() -> anyhow::Result<()> {
             // so the Ok arm is `Infallible` — the empty match is how the
             // type-checker proves that arm is unreachable.
             let never =
-                plugins::dispatch_external(verb, &plugin_args, &origin_dir, resolution.as_ref())?;
+                plugins::dispatch_external(verb, &plugin_args, origin_dir, resolution.as_ref())?;
             match never {}
         }
     }

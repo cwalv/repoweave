@@ -50,7 +50,8 @@ pub fn resolve(path: &Path) -> io::Result<PathBuf> {
     Ok(plain_path(&resolved).into_owned())
 }
 
-fn plain_path(path: &Path) -> Cow<'_, Path> {
+/// `path` spelled as [`plain_spelling`] spells it.
+pub(crate) fn plain_path(path: &Path) -> Cow<'_, Path> {
     match path.to_str().map(plain_spelling) {
         Some(Cow::Owned(plain)) => Cow::Owned(PathBuf::from(plain)),
         Some(Cow::Borrowed(plain)) => Cow::Borrowed(Path::new(plain)),

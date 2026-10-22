@@ -29,6 +29,18 @@ checks passed over it. In `rwv status --json` and
 `dependency` and `reference` rather than any string; the values are
 unchanged.
 
+### A path argument is absolute by the host's rule
+
+A path given to `-C`, `rwv add --adopt`, `rwv add --new --param root=`,
+`--params-json`, `rwv sync`, `rwv sync-to`, or `rwv workweave create --from`,
+`--dir` or `set-container` is absolute when this host reads it as absolute, and
+is otherwise read from the directory rwv runs in. `--param root=C:\x` on Linux
+used to pass as absolute because it looked like a Windows path; it now names
+`C:\x` under the directory rwv runs in, as any other relative path does. An
+absolute Windows path in the verbatim spelling (`\\?\C:\x`) arrives as `C:\x`.
+A refused `rwv add --adopt` names its re-run with the absolute path the argument
+was read as.
+
 ### Breaking: `canonical-holds-live-workweave-ref` names its workweave as `<project>--<name>`
 
 In `rwv doctor --json`, a `branch-discipline` /

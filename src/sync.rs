@@ -10,7 +10,7 @@ use crate::integrations::builtin_integrations;
 use crate::lock::{commit_lock_file_with_message, generate_lock};
 use crate::manifest::{
     IntegrationConfig, LockFile, Manifest, Project, ProjectName, RepoKey, RepoPath,
-    ResolvedLockFile, WorkweaveName, WorkweaveNameError,
+    ResolvedLockFile, WorkweaveName,
 };
 use crate::op_state::{
     self, OpId, OpVerb, Override, Overrides, OwnerRecord, SavepointKey, SyncStrategy,
@@ -38,7 +38,6 @@ use serde::Serialize;
 use std::fmt;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
@@ -229,18 +228,14 @@ pub fn auto_relock_commit_message(source: &str) -> String {
 // ---------------------------------------------------------------------------
 
 /// A workspace named on the command line: `rwv sync <source>`, `rwv sync-to
-/// <target>` and `rwv workweave create --from <source>` all read it this way.
+/// <target>` and `rwv workweave create --from <source>` all name one.
+/// [`crate::cli::operand::SourceArg`] is argv's spelling of it, and its
+/// `Path` arm arrives here already located, absolute.
 ///
-/// The boundary parser ([`FromStr`]) disambiguates by shape:
-/// - `Primary` — the literal string `"primary"` (the primary workspace root).
-/// - `Workweave(name)` — a bare identifier with no path separators or leading
-///   dot. Resolves via the primary-side registry
+/// - `Primary` — the primary workspace root.
+/// - `Workweave(name)` — resolves via the primary-side registry
 ///   ([`crate::workweave_index`]) with marker round-trip validation.
-/// - `Path(p)` — anything else: a location, read against the invocation
-///   directory by [`SyncSource::anchored_at`].
-///
-/// `SyncSource` is the single source of truth for this disambiguation; the
-/// resolver matches on the enum rather than re-parsing strings.
+/// - `Path(p)` — a location.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyncSource {
     Primary,
@@ -302,31 +297,6 @@ impl SyncSource {
             Self::Path(p) => Ok(p.clone()),
         }
     }
-
-    /// This source with a `Path` read against `invocation_dir` — the process
-    /// cwd, or the `-C`/`-w` directory. [`Self::resolve`] takes a `Path` as
-    /// the location it already is, so dispatch anchors every parsed source
-    /// before it reaches the engine.
-    pub fn anchored_at(self, invocation_dir: &Path) -> Self {
-        match self {
-            Self::Path(p) => Self::Path(crate::workspace::operand_path(invocation_dir, p)),
-            other => other,
-        }
-    }
-}
-
-impl FromStr for SyncSource {
-    type Err = WorkweaveNameError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s == "primary" {
-            return Ok(Self::Primary);
-        }
-        if looks_path_like(s) {
-            return Ok(Self::Path(PathBuf::from(s)));
-        }
-        Ok(Self::Workweave(WorkweaveName::new(s)?))
-    }
 }
 
 impl fmt::Display for SyncSource {
@@ -337,16 +307,6 @@ impl fmt::Display for SyncSource {
             Self::Path(p) => f.write_str(&p.to_string_lossy()),
         }
     }
-}
-
-/// A string is "path-like" when it contains a separator, starts with a dot
-/// (so `.` and `./foo` parse as paths), or is absolute. Bare identifiers fall
-/// through to the workweave-name interpretation.
-fn looks_path_like(s: &str) -> bool {
-    s.contains('/')
-        || s.contains(std::path::MAIN_SEPARATOR)
-        || s.starts_with('.')
-        || PathBuf::from(s).is_absolute()
 }
 
 /// Refuse when the workweave's recorded `parent:` no longer exists on disk
@@ -9111,58 +9071,6 @@ mod tests {
     }
 
     #[test]
-    fn sync_source_parses_primary() {
-        assert_eq!(
-            "primary".parse::<SyncSource>().unwrap(),
-            SyncSource::Primary
-        );
-    }
-
-    #[test]
-    fn sync_source_parses_workweave_name() {
-        let parsed: SyncSource = "hotfix".parse().unwrap();
-        assert_eq!(
-            parsed,
-            SyncSource::Workweave(WorkweaveName::new("hotfix").unwrap())
-        );
-    }
-
-    /// Not path-like (`looks_path_like` requires a separator, a leading dot,
-    /// or an absolute path), so this reaches the `WorkweaveName::new` arm and
-    /// is refused there rather than silently minting an ambiguous name.
-    #[test]
-    fn sync_source_parse_rejects_double_dash() {
-        let err = "proj--feat--v2".parse::<SyncSource>().unwrap_err();
-        assert!(
-            matches!(err, WorkweaveNameError::AmbiguousDelimiter(_)),
-            "expected AmbiguousDelimiter, got: {err:?}"
-        );
-    }
-
-    #[test]
-    fn sync_source_parses_relative_path_with_slash() {
-        let parsed: SyncSource = ".workweaves/foo--bar".parse().unwrap();
-        assert_eq!(
-            parsed,
-            SyncSource::Path(PathBuf::from(".workweaves/foo--bar"))
-        );
-    }
-
-    #[test]
-    fn sync_source_parses_dot_relative() {
-        let parsed: SyncSource = "./foo".parse().unwrap();
-        assert_eq!(parsed, SyncSource::Path(PathBuf::from("./foo")));
-    }
-
-    #[test]
-    fn sync_source_parses_absolute_path() {
-        let abs_path = std::env::temp_dir().join("some/path");
-        let abs_str = abs_path.to_str().unwrap();
-        let parsed: SyncSource = abs_str.parse().unwrap();
-        assert_eq!(parsed, SyncSource::Path(abs_path));
-    }
-
-    #[test]
     fn sync_source_display_round_trips_primary() {
         assert_eq!(SyncSource::Primary.to_string(), "primary");
     }
@@ -9171,14 +9079,12 @@ mod tests {
     fn sync_source_display_round_trips_workweave() {
         let s = SyncSource::Workweave(WorkweaveName::new("ww1").unwrap());
         assert_eq!(s.to_string(), "ww1");
-        assert_eq!(s.to_string().parse::<SyncSource>().unwrap(), s);
     }
 
     #[test]
     fn sync_source_display_round_trips_path() {
         let s = SyncSource::Path(PathBuf::from("/abs/path"));
         assert_eq!(s.to_string(), "/abs/path");
-        assert_eq!(s.to_string().parse::<SyncSource>().unwrap(), s);
     }
 
     /// Every `SyncFailure` variant; the match with no default arm forces

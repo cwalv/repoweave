@@ -9,6 +9,7 @@
 
 pub mod consent;
 pub mod dispatch;
+pub mod operand;
 
 use std::ffi::OsString;
 
@@ -17,7 +18,7 @@ use clap_complete::Shell;
 
 use crate::manifest;
 use crate::op_state::SyncStrategy;
-use crate::sync::SyncSource;
+use operand::{Operand, SourceArg};
 
 #[derive(Parser)]
 #[command(name = "rwv", bin_name = "rwv", version = crate::rwv_version_with_build(), about = "A cross-repo workspace manager")]
@@ -36,7 +37,7 @@ pub struct Cli {
         global = true,
         help_heading = "Global options"
     )]
-    pub cwd_override: Option<String>,
+    pub cwd_override: Option<Operand>,
 
     /// Address a workweave by identity (<project>--<name>). The workspace is
     /// found via -C or process cwd; the workweave is then selected from the
@@ -337,7 +338,7 @@ pub enum Commands {
         /// `--continue` is passed (source is then read from the in-progress
         /// op-state file). If you meant to land work upward, use `rwv sync-to`.
         #[arg(required_unless_present = "do_continue")]
-        source: Option<SyncSource>,
+        source: Option<SourceArg>,
         /// Sync strategy: ff (default) or rebase
         #[arg(long, default_value = "ff", value_enum, conflicts_with = "do_continue")]
         strategy: SyncStrategy,
@@ -384,7 +385,7 @@ pub enum Commands {
         /// the recorded parent from `.rwv-workweave`; errors if not in a workweave.
         /// Must not be passed alongside `--continue` (target is then read from op-state).
         #[arg(conflicts_with = "do_continue")]
-        target: Option<SyncSource>,
+        target: Option<SourceArg>,
         /// Sync strategy for step 1 (rebase CWD against target). Default: rebase.
         /// ff means CWD must already be strictly ahead of target (no-op step 1).
         /// rebase replays CWD's unique commits onto target's tip.
@@ -550,7 +551,7 @@ pub enum WorkweaveAction {
         /// copy a workweave with `cp`: the result aliases the original's git
         /// state rather than duplicating it.
         #[arg(long)]
-        from: Option<SyncSource>,
+        from: Option<SourceArg>,
         /// Allow creation even when the source project directory has
         /// uncommitted changes. Uncommitted edits to `rwv.toml` and `rwv.lock`
         /// are moved into the new workweave's project worktree: copied there,
@@ -568,7 +569,7 @@ pub enum WorkweaveAction {
         /// experiments, or one-off placements. Absolute paths are used
         /// as-is; relative paths resolve against the invocation directory.
         #[arg(long)]
-        dir: Option<String>,
+        dir: Option<Operand>,
         /// Skip integration install hooks (e.g., `npm install`, `uv sync`) in the new workweave; `rwv materialize` inside it runs them later
         #[arg(long)]
         no_materialize: bool,
@@ -600,7 +601,7 @@ pub enum WorkweaveAction {
     SetContainer {
         /// Path to record. Relative paths resolve against the invocation
         /// directory.
-        path: String,
+        path: Operand,
     },
     /// Show this workweave's UNIQUE commits vs its recorded parent, per repo.
     ///

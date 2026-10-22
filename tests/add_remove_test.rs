@@ -870,8 +870,14 @@ fn add_local_path_refuses_rather_than_fabricate_main_when_origin_head_is_unset()
         stderr.contains("`git fetch origin`") && stderr.contains("`git remote set-head origin -a`"),
         "refusal must lead with the fetch a never-fetched clone needs, got: {stderr}"
     );
+    let adopted = repoweave::path_spelling::resolve(&workspace)
+        .unwrap()
+        .join(repo_path);
     assert!(
-        stderr.contains(&format!("then re-run `rwv add --adopt {repo_path}`")),
+        stderr.contains(&format!(
+            "then re-run `rwv add --adopt {}`",
+            adopted.display()
+        )),
         "refusal must name the re-run that registers this clone, got: {stderr}"
     );
 

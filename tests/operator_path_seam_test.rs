@@ -537,13 +537,6 @@ const ROUTED: &[Routed] = &[
     },
     Routed {
         file: "add_remove.rs",
-        scope: "fn adopt_placement(",
-        needle: r#"format!("failed to canonicalize {}", operator_path(invocation_dir))"#,
-        renders: 1,
-        prints: "add --adopt's failure to canonicalize the invocation directory",
-    },
-    Routed {
-        file: "add_remove.rs",
         scope: "",
         needle: r#""rwv add: the placement '{}' ({}) holds {found}, which can be neither registered \"#,
         renders: 1,
@@ -567,9 +560,23 @@ const ROUTED: &[Routed] = &[
     Routed {
         file: "add_remove.rs",
         scope: "",
-        needle: r#""rwv add --adopt: '{raw}' names '{}', which is not under {roots}. A relative \"#,
+        needle: r#""rwv add --adopt: '{}' is not under {roots}. A relative path is read from the \"#,
         renders: 1,
         prints: "add --adopt's refusal of a location under no weave root, naming it",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "fn adopt_placement(",
+        needle: r#"&format!("rwv add --adopt {}", operator_path(path)),"#,
+        renders: 1,
+        prints: "the re-run an adopt into a workweave names when its placement holds no clone",
+    },
+    Routed {
+        file: "add_remove.rs",
+        scope: "pub fn run_add_adopt(",
+        needle: r#"&format!("rwv add --adopt {}", operator_path(path)),"#,
+        renders: 1,
+        prints: "the re-run a refused adopt names when it registered nothing",
     },
     Routed {
         file: "add_remove.rs",
@@ -706,7 +713,7 @@ const ROUTED: &[Routed] = &[
         file: "add_remove.rs",
         scope: "fn run_add_from_local_path(",
         needle: r#""'{dir}' records its {remote} remote as the relative path '{path}', which git \"#,
-        renders: 1,
+        renders: 2,
         prints: "the no-remote-URL refusal for a clone whose remote is a relative path",
     },
     Routed {
@@ -728,7 +735,7 @@ const ROUTED: &[Routed] = &[
         file: "add_remove.rs",
         scope: "fn run_add_from_local_path(",
         needle: r#""rwv add: '{}' at {}: {}, then re-run `rwv add --adopt {}`","#,
-        renders: 1,
+        renders: 2,
         prints: "run_add_from_local_path's refusal when the adopted clone has no default \
                  branch",
     },

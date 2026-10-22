@@ -79,6 +79,7 @@ empty is what lets the consent tokens in `src/cli/consent.rs` stay
 |---|---|
 | `cli` (`src/cli.rs`, 563) | The clap type tree: `Cli` and `Commands`. |
 | `cli::consent` (`src/cli/consent.rs`) | The consent tokens and the `DriftConsent` either/or enum, each token minted only from its named flag by a `pub(in crate::cli)` `from_flag`. |
+| `cli::operand` (`src/cli/operand.rs`) | `Operand`, a path argument as argv spelled it, and `InvocationDir`, the resolved directory it is read from; `Operand::locate` and the `InvocationDir` mint are `pub(in crate::cli)`. `SourceArg` is argv's spelling of a `SyncSource`. |
 | `cli::dispatch` (`src/cli/dispatch.rs`) | `run()` — argv interception, parse, the single resolution point, and the verb match. |
 | `workspace` (`src/workspace.rs`, 5171) | `WorkspaceContext` and its `resolve`; `Checkout`; `Resolution`; the `.rwv-active` / `.rwv-workweave` marker constants. |
 | `registry` (`src/registry.rs`, 685) | Host-to-local-prefix mapping. `Registry` trait; `CloneUrl`, the only URL a `Vcs` method hands git, constructed only here and compared only by `names_same_remote`; `resolve_to_clone_info`, which turns a manifest `url` or CLI source, shorthand included, into one; `recorded_remote`, which reads a clone's configured remote as one. Unrelated to integrations despite the name. |
@@ -143,8 +144,12 @@ order:
   (`src/workspace.rs`) — the only cwd read that feeds resolution; the one
   other reader is `workweave delete`'s step-out probe, which treats the cwd
   as an open handle to release, never as an origin. With `-C`, the
-  canonicalized override. **Resolution never `chdir`s** (`dispatch.rs`);
-  every path is absolute from here on. The one `chdir` in the tree is that
+  override read from that cwd. Either way the origin is an
+  `cli::operand::InvocationDir`, resolved, which only `crate::cli` can mint.
+  **Resolution never `chdir`s** (`dispatch.rs`); every path is absolute from
+  here on: a path argument is an `Operand` in the parsed CLI struct, and
+  dispatch locates each one against the `InvocationDir` before it calls a
+  handler. The one `chdir` in the tree is that
   same step-out, long after resolution, releasing the deleting process's own
   handle on a workweave it is about to remove.
 - *Workweave selection.* `-w <project>--<name>` is resolved against the
@@ -576,8 +581,8 @@ them before the external-subcommand fallthrough fires, so a `rwv-status` on
 Invocation is a plain subprocess: `build_command` is the single seam
 that constructs it, `dispatch_external` spawns and waits, and the call
 site is `src/cli/dispatch.rs`. The child starts in the invocation dir that
-`src/cli/dispatch.rs` resolved (`-C`, `-w`, or process cwd), the same dir
-`workspace::operand_path` resolves core verbs' relative arguments against.
+`src/cli/dispatch.rs` resolved (`-C`, `-w`, or process cwd), the same
+`InvocationDir` core verbs' relative path arguments are located against.
 Stdio is fully inherited — the child owns the terminal and rwv wraps none of
 its output. Exit status propagates, with
 signals mapped to `128 + sig`.
