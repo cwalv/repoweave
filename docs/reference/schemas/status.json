@@ -288,7 +288,7 @@
           "$ref": "#/definitions/LockRelation"
         },
         "role": {
-          "type": "string"
+          "$ref": "#/definitions/Role"
         },
         "tip": {
           "type": [
@@ -329,6 +329,39 @@
           "type": "boolean"
         }
       }
+    },
+    "Role": {
+      "description": "How freely code in this repo may be modified within the owning project.\n\n**Naming.** The variant is spelled `owned` everywhere on the wire (the manifest, `--role` CLI arguments, `--json` output). The legacy `primary` spelling — used before the rename — is **not** accepted by the parser.",
+      "oneOf": [
+        {
+          "description": "Your code. Change freely.",
+          "type": "string",
+          "enum": [
+            "owned"
+          ]
+        },
+        {
+          "description": "Forked upstream. Changes ideally go upstream.",
+          "type": "string",
+          "enum": [
+            "fork"
+          ]
+        },
+        {
+          "description": "Build dependency. Changes need upstream acceptance.",
+          "type": "string",
+          "enum": [
+            "dependency"
+          ]
+        },
+        {
+          "description": "Read-only study material. No local changes.",
+          "type": "string",
+          "enum": [
+            "reference"
+          ]
+        }
+      ]
     }
   }
 }

@@ -1,6 +1,6 @@
 //! `rwv status` — per-repo state of the CWD workspace.
 
-use crate::manifest::{Project, ProjectName};
+use crate::manifest::{Project, ProjectName, Role};
 use crate::op_state;
 use crate::selector::RepoFilter;
 use crate::vcs::{vcs_for, CommitId, MidOperation, ResolvedRevisionId, Vcs};
@@ -149,9 +149,9 @@ pub struct RepoStatus {
     pub lock_pinned_by_name: bool,
     pub relation: LockRelation,
     pub mid_op: Option<MidOperation>,
-    pub role: String,
+    pub role: Role,
     pub url: String,
-    pub project: String,
+    pub project: ProjectName,
     pub absolute_path: String,
     /// Recorded parent (path + per-repo parent tip) when CWD is a workweave;
     /// `None` in the primary weave (no marker, hence no recorded parent).
@@ -327,9 +327,9 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool, filter: &RepoFilter) -> an
                     lock_pinned_by_name,
                     relation: LockRelation::Missing,
                     mid_op: None,
-                    role: entry.role.as_str().to_string(),
+                    role: entry.role,
                     url: entry.url.to_string(),
-                    project: pname.to_string(),
+                    project: pname.clone(),
                     absolute_path: crate::path_spelling::wire_path(&repo_abs),
                     parent: recorded_parent.as_ref().map(|parent_path| ParentInfo {
                         path: parent_path.to_string_lossy().to_string(),
@@ -375,9 +375,9 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool, filter: &RepoFilter) -> an
                     lock_pinned_by_name,
                     relation: LockRelation::Unreachable,
                     mid_op,
-                    role: entry.role.as_str().to_string(),
+                    role: entry.role,
                     url: entry.url.to_string(),
-                    project: pname.to_string(),
+                    project: pname.clone(),
                     absolute_path: crate::path_spelling::wire_path(&repo_abs),
                     parent,
                 });
@@ -423,9 +423,9 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool, filter: &RepoFilter) -> an
                     .is_some_and(|e| !e.version.is_commit_id()),
                 relation,
                 mid_op,
-                role: entry.role.as_str().to_string(),
+                role: entry.role,
                 url: entry.url.to_string(),
-                project: pname.to_string(),
+                project: pname.clone(),
                 absolute_path: crate::path_spelling::wire_path(&repo_abs),
                 parent,
             });
@@ -562,9 +562,9 @@ mod tests {
                 lock_pinned_by_name: false,
                 relation: LockRelation::Ok,
                 mid_op: None,
-                role: "owned".into(),
+                role: Role::Owned,
                 url: "https://example.com/repo.git".into(),
-                project: "demo".into(),
+                project: ProjectName::new("demo").unwrap(),
                 absolute_path: "/abs/github/org/repo".into(),
                 parent: None,
             }],
@@ -660,9 +660,9 @@ mod tests {
                 lock_pinned_by_name: false,
                 relation: LockRelation::Ok,
                 mid_op: None,
-                role: "owned".into(),
+                role: Role::Owned,
                 url: "https://example.com/repo.git".into(),
-                project: "demo".into(),
+                project: ProjectName::new("demo").unwrap(),
                 absolute_path: "/abs/github/org/repo".into(),
                 parent: Some(ParentInfo {
                     // A STACKED parent path: the recorded parent is itself a

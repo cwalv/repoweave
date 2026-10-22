@@ -6,6 +6,19 @@ claim that nothing changed in them.
 
 ## Unreleased
 
+### Project and workweave names are checked where they arrive
+
+`rwv fetch <source>` refuses a source whose repository name is not a legal
+project name (`unrenderable-name` or `invalid-ref-name`) before it clones; it
+used to create `projects/<name>` for a name `rwv activate` then refused. A
+`.rwv-workweave-index` that records a name no workweave can have is reported
+by `rwv doctor` as `unreadable-workweave-index`, naming the name; the entry
+used to count as recorded while `-w` addressing and doctor's live-branch
+checks passed over it. In `rwv status --json` and
+`rwv doctor --json`, the schemas describe `role` as one of `owned`, `fork`,
+`dependency` and `reference` rather than any string; the values are
+unchanged.
+
 ### Breaking: `canonical-holds-live-workweave-ref` names its workweave as `<project>--<name>`
 
 In `rwv doctor --json`, a `branch-discipline` /

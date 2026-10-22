@@ -35,7 +35,7 @@ fn make_manifest(repos: Vec<(&str, Role)>) -> Manifest {
         let last = path.split('/').next_back().unwrap();
         yaml.push_str(&format!(
             "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"https://github.com/test/{last}.git\"\nversion = \"main\"\nrole = \"{}\"\n",
-            role.as_str()
+            role
         ));
     }
     Manifest::from_toml_str(&yaml).unwrap()

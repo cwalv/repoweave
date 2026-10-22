@@ -52,7 +52,7 @@ impl Gita {
         let mut grouped: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for (rp, entry) in &active {
             grouped
-                .entry(entry.role.as_str().to_string())
+                .entry(entry.role.to_string())
                 .or_default()
                 .push(basename(rp));
         }

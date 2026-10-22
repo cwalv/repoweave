@@ -1714,8 +1714,8 @@ fn warn_if_shared_clone(
              this project registers it as {} — the physical clone is shared",
             operator_path(clone_dest),
             other_project.as_str(),
-            other_role.as_str(),
-            this_role.as_str(),
+            other_role,
+            this_role,
         );
     }
 }

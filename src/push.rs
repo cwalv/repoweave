@@ -66,13 +66,13 @@ pub enum PushOutcomeOutput {
         absolute_path: String,
         /// The project name (e.g. `"my-app"`). Distinguishes the project repo's
         /// path convention (`projects/<name>/`) from member-repo paths.
-        project: String,
+        project: ProjectName,
     },
     /// Project repo push failed.
     ProjectRepoFailed {
         path: String,
         absolute_path: String,
-        project: String,
+        project: ProjectName,
         /// Free-form error message from the git push attempt.
         message: String,
     },
@@ -654,12 +654,12 @@ pub fn run_push(
         Ok(()) => PushOutcomeOutput::ProjectRepoPushed {
             path: project_path_str,
             absolute_path: project_abs_str,
-            project: project_name.as_str().to_string(),
+            project: project_name.clone(),
         },
         Err(e) => PushOutcomeOutput::ProjectRepoFailed {
             path: project_path_str,
             absolute_path: project_abs_str,
-            project: project_name.as_str().to_string(),
+            project: project_name.clone(),
             message: format!("{e:#}"),
         },
     };

@@ -1,16 +1,12 @@
 //! Pins the role vocabulary (`owned`, `fork`, `dependency`, `reference`) to
 //! `Role` in `src/manifest.rs`.
 //!
-//! selector.rs used to carry its own `impl FromStr for Role` matching all four
-//! spellings by hand. A new variant compiled clean and was unparseable via
-//! `--role` on fetch/update/push while parseable on `rwv add` — one flag name,
-//! two parse paths, and nothing to make them disagree loudly.
-//!
-//! Three mints exist by construction — serde's `rename_all`, clap's
-//! `ValueEnum`, and `Role::as_str` — so the first test here makes them assert
-//! against each other rather than trusting that they agree. The second scans
-//! `src/` for a fourth appearing, with the spellings taken from `Role::as_str`
-//! rather than typed into this file.
+//! A role is spelled by serde's `rename_all`; `Display` reads that spelling
+//! back through `wire_token`, `FromStr` matches against `Display`, and clap's
+//! `ValueEnum` derives its values from the same kebab-case rule. Clap's rule is
+//! declared separately from serde's, so the first test makes the spellings
+//! assert against each other. The second scans `src/` for one written as a
+//! literal, with the spellings taken from `Display` rather than typed here.
 //!
 //! Residue: the source scan skips `src/bin/`. generate-explain.rs carries an
 //! English stopword list containing the word `reference`, which is not a role
@@ -20,7 +16,7 @@
 mod common;
 
 use clap::ValueEnum;
-use common::src_scan::{production_lines, SourceLine};
+use common::src_scan::production_lines;
 use repoweave::manifest::Role;
 use std::str::FromStr;
 
@@ -42,8 +38,8 @@ fn all_roles() -> Vec<Role> {
 fn role_all_lists_every_variant() {
     let mut expected = all_roles();
     let mut actual = Role::ALL.to_vec();
-    expected.sort_by_key(|r| r.as_str());
-    actual.sort_by_key(|r| r.as_str());
+    expected.sort();
+    actual.sort();
     assert_eq!(
         actual, expected,
         "Role::ALL drives --role parsing and its error text; a variant \
@@ -51,14 +47,15 @@ fn role_all_lists_every_variant() {
     );
 }
 
-/// serde, clap and `as_str` are three independent spellings of one vocabulary.
-/// Any one of them drifting is what this catches.
+/// serde and clap declare their rename rules separately, and `Display` and
+/// `FromStr` read serde's. Any one of them drifting is what this catches.
 #[test]
-fn the_three_mints_agree_and_round_trip() {
+fn the_spellings_agree_and_round_trip() {
     let roles = all_roles();
     assert!(!roles.is_empty(), "no variants to check");
     for role in roles {
-        let via_as_str = role.as_str();
+        let via_display = role.to_string();
+        let via_as_str = via_display.as_str();
 
         let via_serde = match toml::Value::try_from(role).expect("Role serializes") {
             toml::Value::String(s) => s,
@@ -66,7 +63,7 @@ fn the_three_mints_agree_and_round_trip() {
         };
         assert_eq!(
             via_serde, via_as_str,
-            "serde's wire spelling and Role::as_str are one vocabulary"
+            "serde's wire spelling and Role's Display are one vocabulary"
         );
 
         let via_clap = role
@@ -75,13 +72,13 @@ fn the_three_mints_agree_and_round_trip() {
         assert_eq!(
             via_clap.get_name(),
             via_as_str,
-            "clap's --role value and Role::as_str are one vocabulary"
+            "clap's --role value and Role's Display are one vocabulary"
         );
 
         assert_eq!(
-            <Role as FromStr>::from_str(via_as_str).expect("as_str output parses back"),
+            <Role as FromStr>::from_str(via_as_str).expect("Display output parses back"),
             role,
-            "FromStr must accept what as_str writes"
+            "FromStr must accept what Display writes"
         );
         assert_eq!(
             <Role as FromStr>::from_str(&via_as_str.to_uppercase())
@@ -103,7 +100,7 @@ fn the_legacy_spelling_is_rejected_with_the_migration_hint() {
         .expect_err("the legacy spelling must not parse as a role")
         .to_string();
     assert!(
-        err.contains(Role::LEGACY_SPELLING) && err.contains(Role::Owned.as_str()),
+        err.contains(Role::LEGACY_SPELLING) && err.contains(&Role::Owned.to_string()),
         "the legacy-spelling rejection must name both the refused spelling \
          and its replacement, got: {err}"
     );
@@ -119,46 +116,32 @@ fn the_legacy_spelling_is_rejected_with_the_migration_hint() {
 fn quoted_spellings() -> Vec<String> {
     all_roles()
         .into_iter()
-        .map(|r| format!("\"{}\"", r.as_str()))
-        .collect()
-}
-
-fn lines_quoting_a_spelling(lines: &[SourceLine], file: &str) -> Vec<SourceLine> {
-    let needles = quoted_spellings();
-    lines
-        .iter()
-        .filter(|l| l.file == file)
-        .filter(|l| needles.iter().any(|n| l.text.contains(n.as_str())))
-        .cloned()
+        .map(|r| format!("\"{r}\""))
         .collect()
 }
 
 #[test]
-fn no_module_outside_manifest_spells_the_role_vocabulary() {
-    let lines = production_lines();
-    let owner = "manifest.rs";
-
-    let minted = lines_quoting_a_spelling(&lines, owner);
+fn no_module_spells_the_role_vocabulary() {
+    let needles = quoted_spellings();
+    let manifest_source =
+        std::fs::read_to_string(common::src_scan::src_dir().join("manifest.rs")).unwrap();
     assert!(
-        minted.len() >= all_roles().len(),
-        "expected every spelling quoted at its mint in src/{owner}, found {} of {} \
-         — the needles no longer match the source shape, so emptiness elsewhere \
-         would prove nothing. Found: {minted:#?}",
-        minted.len(),
-        all_roles().len()
+        needles.iter().any(|n| manifest_source.contains(n.as_str())),
+        "src/manifest.rs's own tests quote a role in a TOML fixture; none of {needles:?} \
+         matches there, so the needles no longer match the source shape and emptiness below \
+         would prove nothing"
     );
 
-    let needles = quoted_spellings();
-    let hits: Vec<String> = lines
+    let hits: Vec<String> = production_lines()
         .iter()
-        .filter(|l| l.file != owner && !l.file.starts_with("bin/"))
+        .filter(|l| !l.file.starts_with("bin/"))
         .filter(|l| needles.iter().any(|n| l.text.contains(n.as_str())))
         .map(|l| format!("{} {}", l.site(), l.text.trim()))
         .collect();
     assert!(
         hits.is_empty(),
-        "the role spellings are minted by Role::as_str in src/{owner}; a module \
-         that writes one as a literal is a second parse path waiting to \
-         disagree. Route it through Role / Role::ALL. Found: {hits:#?}"
+        "a role is spelled by Role's serde rename rule in src/manifest.rs; a module \
+         that writes one as a literal is a second parse path waiting to disagree. \
+         Route it through Role / Role::ALL. Found: {hits:#?}"
     );
 }

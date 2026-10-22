@@ -62,7 +62,7 @@ fn project_repo_pushed_serializes_with_project_repo_pushed_kind() {
     let v = to_value(&PushOutcomeOutput::ProjectRepoPushed {
         path: "projects/my-app".into(),
         absolute_path: "/abs/projects/my-app".into(),
-        project: "my-app".into(),
+        project: repoweave::manifest::ProjectName::new("my-app").unwrap(),
     });
     assert_eq!(v["kind"], "project-repo-pushed");
     assert_eq!(v["path"], "projects/my-app");
@@ -74,7 +74,7 @@ fn project_repo_failed_serializes_with_project_repo_failed_kind() {
     let v = to_value(&PushOutcomeOutput::ProjectRepoFailed {
         path: "projects/my-app".into(),
         absolute_path: "/abs/projects/my-app".into(),
-        project: "my-app".into(),
+        project: repoweave::manifest::ProjectName::new("my-app").unwrap(),
         message: "push failed: no remote".into(),
     });
     assert_eq!(v["kind"], "project-repo-failed");
@@ -132,7 +132,7 @@ fn push_json_envelope_round_trips() {
             PushOutcomeOutput::ProjectRepoPushed {
                 path: "projects/my-app".into(),
                 absolute_path: "/abs/projects/my-app".into(),
-                project: "my-app".into(),
+                project: repoweave::manifest::ProjectName::new("my-app").unwrap(),
             },
         ],
         resolution: None,
@@ -177,13 +177,13 @@ fn push_outcome_is_failure_only_for_failed_variants() {
     assert!(!PushOutcomeOutput::ProjectRepoPushed {
         path: "p".into(),
         absolute_path: "/a".into(),
-        project: "proj".into()
+        project: repoweave::manifest::ProjectName::new("proj").unwrap()
     }
     .is_failure());
     assert!(PushOutcomeOutput::ProjectRepoFailed {
         path: "p".into(),
         absolute_path: "/a".into(),
-        project: "proj".into(),
+        project: repoweave::manifest::ProjectName::new("proj").unwrap(),
         message: "err".into()
     }
     .is_failure());

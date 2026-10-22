@@ -2305,7 +2305,7 @@ pub enum ViolationOutput {
 #[derive(Debug, Serialize, JsonSchema, Clone)]
 pub struct ProjectRoleOutput {
     pub project: ProjectName,
-    pub role: String,
+    pub role: Role,
 }
 
 /// Wire representation of [`crate::integrations::cargo_workspace::CargoSkewOccurrence`].
@@ -2389,7 +2389,7 @@ impl ViolationOutput {
                     .into_iter()
                     .map(|(project, role)| ProjectRoleOutput {
                         project: project.clone(),
-                        role: role.as_str().to_owned(),
+                        role,
                     })
                     .collect(),
             },
@@ -5880,7 +5880,7 @@ fn repair_member_permissions(
                     println!(
                         "[fixed] core: settled {changed} tracked file(s) of {location} for \
                          its role ({role})",
-                        role = slot.role.as_str(),
+                        role = slot.role,
                     );
                 }
                 settled.insert((slot.workweave, slot.repo));

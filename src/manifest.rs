@@ -317,9 +317,20 @@ impl<'de> Deserialize<'de> for RepoUrl {
 /// (the manifest, `--role` CLI arguments, `--json` output). The legacy
 /// `primary` spelling — used before the rename — is **not** accepted by
 /// the parser.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
-#[serde(rename_all = "lowercase")]
-#[clap(rename_all = "lowercase")]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    clap::ValueEnum,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "kebab-case")]
+#[clap(rename_all = "kebab-case")]
 pub enum Role {
     /// Your code. Change freely.
     Owned,
@@ -346,15 +357,6 @@ impl Role {
         !matches!(self, Role::Reference)
     }
 
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Role::Owned => "owned",
-            Role::Fork => "fork",
-            Role::Dependency => "dependency",
-            Role::Reference => "reference",
-        }
-    }
-
     /// The spelling this role is no longer accepted under, and the sentence
     /// naming the one that replaced it.
     ///
@@ -368,14 +370,14 @@ impl Role {
             "the `{legacy}` role spelling is no longer accepted; the role is \
              spelled `{owned}`",
             legacy = Self::LEGACY_SPELLING,
-            owned = Role::Owned.as_str()
+            owned = Role::Owned
         )
     }
 }
 
 impl fmt::Display for Role {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
+        f.write_str(&crate::wire_token::wire_token(self))
     }
 }
 
@@ -391,7 +393,7 @@ impl fmt::Display for RoleParseError {
         if self.0.eq_ignore_ascii_case(Role::LEGACY_SPELLING) {
             return f.write_str(&Role::legacy_spelling_hint());
         }
-        let accepted: Vec<&str> = Role::ALL.iter().map(|r| r.as_str()).collect();
+        let accepted: Vec<String> = Role::ALL.iter().map(Role::to_string).collect();
         write!(
             f,
             "'{}' is not a recognized role (expected {})",
@@ -406,7 +408,7 @@ impl std::error::Error for RoleParseError {}
 impl FromStr for Role {
     type Err = RoleParseError;
 
-    /// Case-insensitive, over the same spellings [`Role::as_str`] writes.
+    /// Case-insensitive, over the same spellings [`Role`]'s `Display` writes.
     ///
     /// [`Role::LEGACY_SPELLING`] is deliberately absent: it must reach
     /// [`RoleParseError`] so the operator gets the migration sentence
@@ -415,7 +417,7 @@ impl FromStr for Role {
         Role::ALL
             .iter()
             .copied()
-            .find(|r| r.as_str().eq_ignore_ascii_case(s))
+            .find(|r| r.to_string().eq_ignore_ascii_case(s))
             .ok_or_else(|| RoleParseError(s.to_owned()))
     }
 }
@@ -438,7 +440,7 @@ impl<'de> Deserialize<'de> for Role {
 
 /// The version control system backing a repo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
 pub enum VcsType {
     Git,
     // Future: Jj, Sl, Hg
@@ -464,7 +466,7 @@ pub struct RepoEntry {
 /// Where a new checkout of a member gets the content of the submodules it
 /// records.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "kebab-case")]
 pub enum Submodules {
     /// From the module data the canonical clone already holds, never the
     /// network; a submodule whose commit is not there stays uninitialized.
@@ -2364,7 +2366,7 @@ role = "primary"
             "refusal should carry the migration sentence, got: {msg}"
         );
         assert!(
-            msg.contains(Role::Owned.as_str()),
+            msg.contains(&Role::Owned.to_string()),
             "refusal should name the replacement spelling, got: {msg}"
         );
         assert!(

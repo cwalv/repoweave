@@ -262,6 +262,8 @@ pub fn corpus() -> Vec<CheckViolation> {
             roles: vec![
                 (project(), Role::Reference),
                 (ProjectName::new("other").unwrap(), Role::Owned),
+                (ProjectName::new("third").unwrap(), Role::Fork),
+                (ProjectName::new("fourth").unwrap(), Role::Dependency),
             ],
         },
         CheckViolation::StaleLock {

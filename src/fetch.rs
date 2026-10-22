@@ -1179,7 +1179,7 @@ fn fetch_one(
         "rwv fetch: cloning {} from {} (role: {})",
         repo_path.as_str(),
         clone_url,
-        entry.role.as_str()
+        entry.role
     ));
 
     let mut add_to_lock: Option<RepoPath> = None;

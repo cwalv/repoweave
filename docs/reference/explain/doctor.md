@@ -1301,7 +1301,7 @@ Schema:
           "type": "string"
         },
         "role": {
-          "type": "string"
+          "$ref": "#/definitions/Role"
         }
       }
     },
@@ -1496,6 +1496,39 @@ Schema:
           "type": "boolean"
         }
       }
+    },
+    "Role": {
+      "description": "How freely code in this repo may be modified within the owning project.\n\n**Naming.** The variant is spelled `owned` everywhere on the wire (the manifest, `--role` CLI arguments, `--json` output). The legacy `primary` spelling — used before the rename — is **not** accepted by the parser.",
+      "oneOf": [
+        {
+          "description": "Your code. Change freely.",
+          "type": "string",
+          "enum": [
+            "owned"
+          ]
+        },
+        {
+          "description": "Forked upstream. Changes ideally go upstream.",
+          "type": "string",
+          "enum": [
+            "fork"
+          ]
+        },
+        {
+          "description": "Build dependency. Changes need upstream acceptance.",
+          "type": "string",
+          "enum": [
+            "dependency"
+          ]
+        },
+        {
+          "description": "Read-only study material. No local changes.",
+          "type": "string",
+          "enum": [
+            "reference"
+          ]
+        }
+      ]
     },
     "SeverityOutput": {
       "description": "`crate::integration::Severity` on the wire.",
@@ -3057,7 +3090,7 @@ Schema:
           "additionalProperties": false
         },
         {
-          "description": "A registered workweave entry whose recorded path is not a valid workweave (missing directory, missing marker, or marker validation fails). Auto-fixable: `rwv doctor --fix` prunes the stale entry.\n\nThis surfaces both \"workweave was deleted out-of-band with the registry left behind\" and \"index committed to VCS carries paths that are wrong on this machine\" — the design's advisory-index doctrine depends on doctor catching both.\n\n`project` is a plain `String` on the wire because `ProjectName` does not (yet) derive `JsonSchema`; every other sub-kind uses `String` for names on the wire for the same reason.",
+          "description": "A registered workweave entry whose recorded path is not a valid workweave (missing directory, missing marker, or marker validation fails). Auto-fixable: `rwv doctor --fix` prunes the stale entry.\n\nThis surfaces both \"workweave was deleted out-of-band with the registry left behind\" and \"index committed to VCS carries paths that are wrong on this machine\" — the design's advisory-index doctrine depends on doctor catching both.",
           "type": "object",
           "required": [
             "stale-registry-entry"

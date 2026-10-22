@@ -462,12 +462,12 @@ fn push_outcomes() -> Vec<PushOutcomeOutput> {
         PushOutcomeOutput::ProjectRepoPushed {
             path: "projects/proj".to_owned(),
             absolute_path: "/ws/projects/proj".to_owned(),
-            project: "proj".to_owned(),
+            project: repoweave::manifest::ProjectName::new("proj").unwrap(),
         },
         PushOutcomeOutput::ProjectRepoFailed {
             path: "projects/proj".to_owned(),
             absolute_path: "/ws/projects/proj".to_owned(),
-            project: "proj".to_owned(),
+            project: repoweave::manifest::ProjectName::new("proj").unwrap(),
             message: "remote rejected".to_owned(),
         },
     ]
@@ -527,9 +527,9 @@ fn status_repos() -> Vec<RepoStatus> {
                 lock_pinned_by_name: sparse,
                 relation,
                 mid_op: MidOperation::all().nth(i / 2).filter(|_| sparse),
-                role: "owned".to_owned(),
+                role: repoweave::manifest::Role::ALL[i % repoweave::manifest::Role::ALL.len()],
                 url: "https://github.com/acme/repo.git".to_owned(),
-                project: "proj".to_owned(),
+                project: repoweave::manifest::ProjectName::new("proj").unwrap(),
                 absolute_path: ABS.to_owned(),
                 parent: (!sparse).then(|| ParentInfo {
                     path: "/ws".to_owned(),

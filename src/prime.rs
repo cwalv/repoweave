@@ -145,7 +145,7 @@ fn render_repo_table(out: &mut String, manifest: &Manifest) {
         out.push_str(&format!(
             "| `{}` | {} | {} | {} |\n",
             rp.as_str(),
-            entry.role.as_str(),
+            entry.role,
             entry.version,
             entry.url
         ));

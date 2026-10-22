@@ -3714,7 +3714,7 @@ pub struct WorkweaveLogRepo {
 #[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub struct WorkweaveLogOutput {
     /// The workweave name.
-    pub workweave: String,
+    pub workweave: WorkweaveName,
     /// The recorded parent workspace path (from the `.rwv-workweave` marker).
     pub parent: String,
     /// Whether this is a `diff` result (`true`) or a `log` result (`false`).
@@ -3955,7 +3955,7 @@ pub fn workweave_log(
     };
 
     let output = WorkweaveLogOutput {
-        workweave: ww_name.as_str().to_string(),
+        workweave: ww_name.clone(),
         parent: parent_path.to_string_lossy().to_string(),
         diff,
         repos,
