@@ -41,6 +41,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
+mod sync_to_envelope;
+
 /// Which side of a sync a check or error is reporting against.
 #[derive(Debug, Clone, Copy)]
 enum Side {
@@ -2515,109 +2517,6 @@ impl OutputHandler for JsonNdjsonHandler<'_> {
                 advance: &advance,
             },
         );
-    }
-}
-
-/// Envelope-mode handler for `rwv sync-to --json` (serial mode).
-///
-/// Extends [`JsonEnvelopeHandler`]'s buffering with a second accumulator for
-/// step-3 advance records (one per repo that was actually fast-forwarded in
-/// the advance-target phase). After the machine completes, the caller reads
-/// both `records` and `step3_advances` to assemble the full
-/// [`SyncToJsonOutput`] envelope.
-///
-/// Text chatter is suppressed (`emit_text` returns `false`).
-pub struct JsonEnvelopeSyncToHandler<'a> {
-    records: &'a Mutex<Vec<SyncOutcomeOutput>>,
-    /// Per-member step-3 advance records keyed by the repo path string
-    /// `record` was given. Only populated when the target's branch pointer
-    /// actually moved.
-    step3_advances: &'a Mutex<std::collections::HashMap<String, Step3AdvanceOutput>>,
-    /// The project repo's step-3 advance, when its branch pointer moved.
-    project_repo_advance: &'a Mutex<Option<Step3AdvanceOutput>>,
-    /// The machine's coordinates for this op, `None` until it has a context.
-    coordinates: &'a Mutex<Option<OpCoordinates>>,
-    /// The workweave retire deleted, `None` when retire did not delete one.
-    retired: &'a Mutex<Option<WorkweaveName>>,
-    /// The phase the resumed op's record stood at, `None` on a fresh run.
-    resumed: &'a Mutex<Option<op_state::OpPhase>>,
-    placements: &'a Mutex<Vec<PlacementOutput>>,
-    members: &'a Mutex<Vec<MemberOutput>>,
-    complete: &'a AtomicBool,
-}
-
-impl OutputHandler for JsonEnvelopeSyncToHandler<'_> {
-    fn emit_text(&self) -> bool {
-        false
-    }
-
-    fn record_coordinates(&self, coordinates: OpCoordinates) {
-        let mut guard = self.coordinates.lock().unwrap_or_else(|e| e.into_inner());
-        *guard = Some(coordinates);
-    }
-
-    fn record_retired(&self, retired: &RetiredWorkweave) {
-        let mut guard = self.retired.lock().unwrap_or_else(|e| e.into_inner());
-        *guard = Some(retired.name.clone());
-    }
-
-    fn record_resumed(&self, phase: op_state::OpPhase) {
-        let mut guard = self.resumed.lock().unwrap_or_else(|e| e.into_inner());
-        *guard = Some(phase);
-    }
-
-    fn record_complete(&self) {
-        self.complete.store(true, Ordering::Relaxed);
-    }
-
-    fn record_member(&self, member: MemberOutput) {
-        let mut guard = self.members.lock().unwrap_or_else(|e| e.into_inner());
-        guard.push(member);
-    }
-
-    fn record(
-        &self,
-        path: &str,
-        abs_path: &Path,
-        outcome: &RepoSyncOutcome,
-        containment: Option<ContainmentOutput>,
-    ) {
-        let out = SyncOutcomeOutput::from_outcome(
-            path.to_owned(),
-            crate::path_spelling::WirePath::of(abs_path),
-            outcome,
-            containment,
-        );
-        let mut guard = self.records.lock().unwrap_or_else(|e| e.into_inner());
-        guard.push(out);
-    }
-
-    fn record_step3_advance(&self, repo: &RepoKey, from_sha: &str, to_sha: &str) {
-        let advance = Step3AdvanceOutput {
-            from_sha: from_sha.to_owned(),
-            to_sha: to_sha.to_owned(),
-        };
-        match repo {
-            RepoKey::Project => {
-                let mut guard = self
-                    .project_repo_advance
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner());
-                *guard = Some(advance);
-            }
-            RepoKey::Member(path) => {
-                let mut guard = self
-                    .step3_advances
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner());
-                guard.insert(path.to_string(), advance);
-            }
-        }
-    }
-
-    fn record_placement(&self, placement: PlacementOutput) {
-        let mut guard = self.placements.lock().unwrap_or_else(|e| e.into_inner());
-        guard.push(placement);
     }
 }
 
@@ -7513,114 +7412,38 @@ pub struct SyncToJsonRun {
 
 /// Run the `rwv sync-to` machine under `--json` and assemble its envelope.
 ///
-/// Every identity field on the envelope is the machine's own answer: the
-/// coordinates it recorded once its context resolved, and the witness retire's
-/// delete returned. On a resumed op those differ from what the invocation
-/// carries — the op is owned by a workspace the caller need not be in, and its
-/// target is in the op record rather than in `request`.
+/// The envelope is built from what the machine reported alone, plus the
+/// invocation's resolution: the coordinates it recorded once its context
+/// resolved, and the witness retire's delete returned. On a resumed op those
+/// differ from what the invocation carries — the op is owned by a workspace
+/// the caller need not be in, and its target is in the op record.
 pub fn sync_to_json_run(
     ctx: &WorkspaceContext,
     request: SyncRequest,
     shape: JsonShape,
 ) -> SyncToJsonRun {
-    let records: Mutex<Vec<SyncOutcomeOutput>> = Mutex::new(Vec::new());
-    let placements: Mutex<Vec<PlacementOutput>> = Mutex::new(Vec::new());
-    let members: Mutex<Vec<MemberOutput>> = Mutex::new(Vec::new());
-    let complete = AtomicBool::new(false);
-    let step3_advances: Mutex<std::collections::HashMap<String, Step3AdvanceOutput>> =
-        Mutex::new(std::collections::HashMap::new());
-    let project_repo_advance: Mutex<Option<Step3AdvanceOutput>> = Mutex::new(None);
-    let coordinates: Mutex<Option<OpCoordinates>> = Mutex::new(None);
-    let retired: Mutex<Option<WorkweaveName>> = Mutex::new(None);
-    let resumed: Mutex<Option<op_state::OpPhase>> = Mutex::new(None);
-    let stdout_lock: Mutex<()> = Mutex::new(());
-    let project_level_result = if shape == JsonShape::Ndjson {
+    if shape == JsonShape::Ndjson {
+        let records: Mutex<Vec<SyncOutcomeOutput>> = Mutex::new(Vec::new());
+        let stdout_lock: Mutex<()> = Mutex::new(());
         let handler = JsonNdjsonHandler {
             stdout_lock: &stdout_lock,
             records: &records,
             schema_url: SYNC_TO_RECORD_SCHEMA_URL,
         };
-        run_machine(MachineVerb::SyncTo, ctx, request, &handler)
-    } else {
-        let handler = JsonEnvelopeSyncToHandler {
-            records: &records,
-            step3_advances: &step3_advances,
-            project_repo_advance: &project_repo_advance,
-            coordinates: &coordinates,
-            retired: &retired,
-            resumed: &resumed,
-            placements: &placements,
-            members: &members,
-            complete: &complete,
+        let project_level_result = run_machine(MachineVerb::SyncTo, ctx, request, &handler);
+        let records = records.into_inner().unwrap_or_else(|e| e.into_inner());
+        return SyncToJsonRun {
+            envelope: None,
+            any_failure: records.iter().any(SyncOutcomeOutput::is_failure),
+            project_level_result,
         };
-        run_machine(MachineVerb::SyncTo, ctx, request, &handler)
-    };
-
-    let records = records.into_inner().unwrap_or_else(|e| e.into_inner());
-    let placements = placements.into_inner().unwrap_or_else(|e| e.into_inner());
-    let members = members.into_inner().unwrap_or_else(|e| e.into_inner());
-    let mut step3_map = step3_advances
-        .into_inner()
-        .unwrap_or_else(|e| e.into_inner());
-    let coordinates = coordinates.into_inner().unwrap_or_else(|e| e.into_inner());
-    let retired = retired.into_inner().unwrap_or_else(|e| e.into_inner());
-    let resumed = resumed.into_inner().unwrap_or_else(|e| e.into_inner());
-    let complete = complete.into_inner();
-
-    let any_failure = records.iter().any(SyncOutcomeOutput::is_failure);
-
-    // Nothing to describe when we never reached the per-repo loop (a
-    // project-level precondition failure): the error is the whole story, and
-    // the tail propagates it. A complete op is described however it exits.
-    let envelope = if shape == JsonShape::Ndjson
-        || (records.is_empty() && project_level_result.is_err() && !complete)
-    {
-        None
-    } else {
-        // Splice step3_advance into each per-outcome record.
-        //
-        // A resume that re-entered downstream of replay records no outcomes,
-        // so an advance it performs has no record to ride on and stays in the
-        // map — the `resumed` field's doc names this limit for consumers.
-        let mut outcomes: Vec<SyncOutcomeOutput> = records;
-        for outcome in &mut outcomes {
-            // Match by path field to look up the advance record.
-            let path_key = match outcome {
-                SyncOutcomeOutput::Converged { path, .. }
-                | SyncOutcomeOutput::AlreadyAhead { path, .. }
-                | SyncOutcomeOutput::NoOp { path, .. }
-                | SyncOutcomeOutput::Failed { path, .. } => path.clone(),
-            };
-            if let Some(adv) = step3_map.remove(&path_key) {
-                *outcome.step3_advance_mut() = Some(adv);
-            }
-        }
-
-        let project_repo_advance = project_repo_advance
-            .into_inner()
-            .unwrap_or_else(|e| e.into_inner());
-
-        // The machine records its coordinates before its first phase, and
-        // every record above is written by a phase. Nothing here means the op
-        // refused before it started, and the refusal is the whole story.
-        coordinates.map(|coordinates| SyncToJsonOutput {
-            schema: SYNC_TO_JSON_SCHEMA_URL.to_owned(),
-            source_workweave: coordinates.source_workweave,
-            target: crate::path_spelling::WirePath::of(&coordinates.target),
-            retired: retired.is_some(),
-            resumed,
-            outcomes,
-            placements,
-            members,
-            complete,
-            project_repo_advance,
-            resolution: ctx.resolution(),
-        })
-    };
-
+    }
+    let recorder = sync_to_envelope::SyncToRecorder::default();
+    let project_level_result = run_machine(MachineVerb::SyncTo, ctx, request, &recorder);
+    let outcome = recorder.into_outcome();
     SyncToJsonRun {
-        envelope,
-        any_failure,
+        any_failure: outcome.any_failure(),
+        envelope: outcome.envelope(project_level_result.is_err(), ctx.resolution()),
         project_level_result,
     }
 }
