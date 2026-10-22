@@ -1438,6 +1438,48 @@ fn remove_with_delete_flag_removes_clone() {
 
 #[test]
 
+fn remove_delete_shared_clone_without_delete_is_refused_and_changes_nothing() {
+    let tmp = common::tempdir().unwrap();
+
+    let bare = tmp.path().join("keep-me.git");
+    init_bare_repo_with_commit(&bare);
+    let remote_url = common::file_url(&bare);
+
+    let repo_path = "local/org/keep-me";
+    let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[(repo_path, &remote_url)]);
+
+    let repo_dir = workspace.join(repo_path);
+    std::fs::create_dir_all(repo_dir.parent().unwrap()).unwrap();
+    let status = common::git()
+        .args([
+            "clone",
+            &bare.to_string_lossy(),
+            &repo_dir.to_string_lossy(),
+        ])
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .status()
+        .expect("git clone failed");
+    assert!(status.success());
+
+    rwv()
+        .args(["remove", repo_path, "--delete-shared-clone"])
+        .current_dir(&workspace)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--delete"));
+
+    let manifest_content =
+        std::fs::read_to_string(workspace.join("projects/test-project/rwv.toml")).unwrap();
+    assert!(
+        manifest_content.contains(repo_path),
+        "a refused remove must leave the manifest as it was, got:\n{manifest_content}"
+    );
+    assert!(repo_dir.exists(), "a refused remove deletes nothing");
+}
+
+#[test]
+
 fn remove_nonexistent_path_errors_clearly() {
     let tmp = common::tempdir().unwrap();
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);

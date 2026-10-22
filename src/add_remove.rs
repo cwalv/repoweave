@@ -899,6 +899,41 @@ fn run_add_from_local_path(
     Ok(Some((manifest, recorded)))
 }
 
+/// What `rwv remove` does beyond dropping the manifest entry.
+///
+/// `--delete-shared-clone` waives a guard on deleting the canonical clone, so
+/// it means nothing without `--delete`; the type has no value for that pair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Removal {
+    /// Drop the entry and leave the checkout on disk.
+    Unregister,
+    /// Also delete this workspace's checkout.
+    DeleteCheckout,
+    /// Also delete this workspace's checkout, even when another project lists
+    /// the canonical clone.
+    DeleteCheckoutAndSharedClone,
+}
+
+impl Removal {
+    /// The removal the `--delete` and `--delete-shared-clone` flags ask for.
+    pub fn from_flags(delete: bool, delete_shared_clone: bool) -> anyhow::Result<Self> {
+        match (delete, delete_shared_clone) {
+            (false, false) => Ok(Self::Unregister),
+            (true, false) => Ok(Self::DeleteCheckout),
+            (true, true) => Ok(Self::DeleteCheckoutAndSharedClone),
+            (false, true) => anyhow::bail!("`--delete-shared-clone` requires `--delete`"),
+        }
+    }
+
+    fn deletes_checkout(self) -> bool {
+        !matches!(self, Self::Unregister)
+    }
+
+    fn waives_shared_clone_guard(self) -> bool {
+        matches!(self, Self::DeleteCheckoutAndSharedClone)
+    }
+}
+
 /// Execute `rwv remove PATH [--delete] [--delete-shared-clone]`.
 ///
 /// An entry already gone from the manifest is finished the same way, as long
@@ -914,8 +949,7 @@ fn run_add_from_local_path(
 /// re-resolve.
 pub fn run_remove(
     path: &str,
-    delete: bool,
-    delete_shared_clone: bool,
+    removal: Removal,
     ctx: &WorkspaceContext,
     opts: ActivateOptions,
 ) -> anyhow::Result<()> {
@@ -941,7 +975,7 @@ pub fn run_remove(
     let workweave_ref = match &ctx.checkout {
         Checkout::Workweave {
             name, dir, project, ..
-        } if delete => Some((
+        } if removal.deletes_checkout() => Some((
             project,
             EphemeralRefName::mint(
                 &crate::manifest::WorkweaveId {
@@ -953,9 +987,14 @@ pub fn run_remove(
         )),
         _ => None,
     };
-    let removal = if delete {
+    let plan = if removal.deletes_checkout() {
         if let Checkout::Primary { .. } = ctx.checkout {
-            refuse_shared_clone_delete(ctx, &project, &repo_path, delete_shared_clone)?;
+            refuse_shared_clone_delete(
+                ctx,
+                &project,
+                &repo_path,
+                removal.waives_shared_clone_guard(),
+            )?;
             let repo_dir = ctx.primary_path().join(repo_path.as_path());
             if repo_dir.exists() {
                 refuse_claimed_store(vcs.as_ref(), ctx.primary_path(), &repo_dir)?;
@@ -972,8 +1011,8 @@ pub fn run_remove(
         None
     };
 
-    let departing: &[RepoPath] = match &removal {
-        Some(removal) if removal.removes_anything() => std::slice::from_ref(&repo_path),
+    let departing: &[RepoPath] = match &plan {
+        Some(plan) if plan.removes_anything() => std::slice::from_ref(&repo_path),
         _ => &[],
     };
     settle_manifest(
@@ -993,10 +1032,10 @@ pub fn run_remove(
         );
     }
 
-    if let Some(removal) = removal {
+    if let Some(plan) = plan {
         let checkout = ctx.active_path().join(repo_path.as_path());
-        let deleted = removal.removes_anything();
-        removal.perform(vcs.as_ref(), &repo_path)?;
+        let deleted = plan.removes_anything();
+        plan.perform(vcs.as_ref(), &repo_path)?;
         if deleted {
             eprintln!("Deleted '{}'", operator_path(&checkout));
         }
@@ -1878,5 +1917,36 @@ mod tests {
     #[test]
     fn build_creation_params_malformed_param_flag_refuses() {
         assert!(build_creation_params(None, &["no-equals-sign".to_string()], None).is_err());
+    }
+
+    #[test]
+    fn every_removal_comes_from_the_flags_that_ask_for_it_and_no_other_pair_parses() {
+        let all = [
+            Removal::Unregister,
+            Removal::DeleteCheckout,
+            Removal::DeleteCheckoutAndSharedClone,
+        ];
+        for removal in all {
+            let flags = (
+                removal.deletes_checkout(),
+                removal.waives_shared_clone_guard(),
+            );
+            assert_eq!(
+                Removal::from_flags(flags.0, flags.1).unwrap(),
+                removal,
+                "{removal:?} read back from its own flags"
+            );
+        }
+
+        let parsed = [(false, false), (false, true), (true, false), (true, true)]
+            .into_iter()
+            .filter(|&(delete, shared)| Removal::from_flags(delete, shared).is_ok())
+            .count();
+        assert_eq!(
+            parsed,
+            all.len(),
+            "a flag pair parses with no Removal of its own"
+        );
+        assert!(Removal::from_flags(false, true).is_err());
     }
 }

@@ -245,7 +245,7 @@ Remove the repository from `rwv.toml`, regenerate integration-managed workspace 
 | Flag | Effect |
 |---|---|
 | `--delete` | Also delete this workspace's checkout of the repo: the canonical clone at primary, the workweave's worktree inside a workweave, along with the branch the workweave holds in the canonical clone. Refuses over uncommitted changes or commits nothing else reaches |
-| `--delete-shared-clone` | With `--delete` at primary, remove the clone even if other projects still reference it. Without it, a clone another project lists refuses (`shared-clone-referenced`); the check runs only at primary, since a workweave's worktree is that workweave's own |
+| `--delete-shared-clone` | Requires `--delete`. At primary, removes the clone even if other projects still reference it. Without it, a clone another project lists refuses (`shared-clone-referenced`); the check runs only at primary, since a workweave's worktree is that workweave's own |
 | `--no-materialize` | Skip the install hooks; regeneration still runs, and `rwv materialize` runs the hooks later |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 

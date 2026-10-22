@@ -219,7 +219,7 @@ pub enum Commands {
         #[arg(long)]
         delete: bool,
         /// With `--delete`, remove the clone even if other projects still reference it
-        #[arg(long)]
+        #[arg(long, requires = "delete")]
         delete_shared_clone: bool,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]

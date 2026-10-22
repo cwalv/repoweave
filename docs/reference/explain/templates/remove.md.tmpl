@@ -63,7 +63,7 @@ rwv remove <path> [--delete] [--delete-shared-clone] [--project <name>] [--no-ma
 - `--delete` — also remove this workspace's checkout from disk (see "What
   `--delete` deletes" above).
 - `--delete-shared-clone` — delete the clone even when another project still
-  references it. Has no effect without `--delete`.
+  references it. Requires `--delete`.
 - `--project <name>` — operate on this project rather than the active project.
   Does not change `.rwv-active`.
 - `--no-materialize` — skip the integration install hooks (`npm install`,

@@ -890,8 +890,7 @@ pub fn run() -> anyhow::Result<()> {
             let ctx = resolve_project_scoped(&origin_dir, project_override, use_workweave_flag)?;
             add_remove::run_remove(
                 &path,
-                delete,
-                delete_shared_clone,
+                add_remove::Removal::from_flags(delete, delete_shared_clone)?,
                 &ctx,
                 activate::ActivateOptions { no_materialize },
             )?;
