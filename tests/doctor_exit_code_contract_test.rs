@@ -121,10 +121,11 @@ fn error_fixture(parent: &Path) -> PathBuf {
 /// half is the regression this fix closes (it used to fail on any
 /// violation, warnings included).
 ///
-/// **Mutation evidence**: reverting `doctor_exit_signal`'s unfiltered arm
-/// (`else { has_error }`, check.rs) to `else { true }` reddens this test;
+/// **Mutation evidence**: reverting `doctor_verdict`'s unfiltered arm
+/// (`severities.any(is_error)`, check.rs) to a bare `true` reddens this test;
 /// `run_check` and `run_check_json` both call that one function with the
-/// same arguments, so the mutation holds for either caller.
+/// severities of the findings they report, so the mutation holds for either
+/// caller.
 #[test]
 fn warning_only_exits_zero_without_kind_in_both_modes() {
     let tmp = common::tempdir().unwrap();
@@ -167,8 +168,8 @@ fn warning_only_exits_zero_without_kind_in_both_modes() {
 /// modes — severity-gating still catches an error once the warning-only
 /// case no longer does.
 ///
-/// **Mutation evidence**: reverting `doctor_exit_signal`'s unfiltered arm
-/// (`else { has_error }`, check.rs) to `else { false }` reddens both
+/// **Mutation evidence**: reverting `doctor_verdict`'s unfiltered arm
+/// (`severities.any(is_error)`, check.rs) to a bare `false` reddens both
 /// halves — the same shared function
 /// `warning_only_exits_zero_without_kind_in_both_modes` pins the other
 /// direction of. Moving `severity()`'s `DanglingReference` arm to
@@ -215,8 +216,8 @@ fn error_finding_exits_nonzero_without_kind_in_both_modes() {
 /// `--kind` while json's own (pre-existing) `--kind` rule already failed
 /// on it.
 ///
-/// **Mutation evidence**: reverting `doctor_exit_signal`'s `kind_filtered`
-/// arm (check.rs) from `finding_count > 0` to `has_error` reddens this
+/// **Mutation evidence**: reverting `doctor_verdict`'s filtered arm
+/// (check.rs) from "any finding survived" to "any error survived" reddens this
 /// test — the matched warning no longer counts as a match on its own, in
 /// either caller.
 #[test]

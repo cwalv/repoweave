@@ -6475,7 +6475,7 @@ pub fn scan_state_hygiene(
 /// that belongs to `active_project`.
 ///
 /// Used to scope branch-discipline findings (and the corresponding `--fix`
-/// deletions) to the active project when `scope_all` is `false`.
+/// deletions) to the active project when the scope is [`Scope::ActiveProject`].
 ///
 /// Two path shapes are handled:
 ///
@@ -6495,7 +6495,7 @@ pub fn scan_state_hygiene(
 ///   lives directly under `ws_root`.  The manifest-relative path is
 ///   derived by stripping `ws_root`, normalized to forward slashes, and
 ///   looked up in `known_repos`.  When `known_repos` was built from only
-///   the active project's manifest (the default when `!scope_all`), a hit
+///   the active project's manifest (the default scope, `Scope::ActiveProject`), a hit
 ///   means the active project owns this repo.
 ///
 /// Returns `true` (include) when:
@@ -9109,7 +9109,7 @@ pub fn restore_working_tree_to_head(repo: &Path) -> anyhow::Result<()> {
 ///
 /// `ctx` is the already-resolved invocation context (with `--project` baked
 /// in when passed). Handlers must not re-resolve.
-pub fn run_check_locked(ctx: &crate::workspace::WorkspaceContext) -> anyhow::Result<bool> {
+pub fn run_check_locked(ctx: &crate::workspace::WorkspaceContext) -> anyhow::Result<Verdict> {
     use crate::manifest::Project;
     use crate::vcs::{probe_vcs, vcs_for};
     use crate::workspace::Checkout;
@@ -9214,7 +9214,11 @@ pub fn run_check_locked(ctx: &crate::workspace::WorkspaceContext) -> anyhow::Res
         }
     }
 
-    Ok(any_drift)
+    Ok(if any_drift {
+        Verdict::Fail
+    } else {
+        Verdict::Pass
+    })
 }
 
 /// Repairs that have to land before the workspace is read. A legacy marker
@@ -9755,10 +9759,21 @@ fn apply_finding_repairs(
 /// fixable `verify()` or surfacing finding is repaired in place and dropped
 /// from the report, so the operator is never shown both `[fixed]` and the
 /// warning it resolved. Under [`Repair::Report`] every finding is returned.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Repair {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Repair {
     Report,
     Apply,
+}
+
+impl Repair {
+    /// The repair `--fix` asks for.
+    pub fn from_fix_flag(fix: bool) -> Self {
+        if fix {
+            Self::Apply
+        } else {
+            Self::Report
+        }
+    }
 }
 
 /// Every generated file in the loaded projects whose attested inputs no longer
@@ -10190,24 +10205,67 @@ impl KindFilter {
     }
 }
 
-/// The one place `rwv doctor` decides whether to exit non-zero, text and
-/// `--json` alike.
+/// What a `rwv doctor` run decided: whether the process exits non-zero.
 ///
-/// Without `--kind`, only an error-severity finding — violation or
-/// integration issue — exits the run; a warning-severity one exits 0.
-/// `--kind` has already narrowed `finding_count` to what the filter admits,
-/// so any survivor there exits the run regardless of severity: that is what
-/// lets a CI gate escalate a warning-severity kind such as `tool-missing`
-/// by naming it.
-fn doctor_exit_signal(kind_filtered: bool, finding_count: usize, has_error: bool) -> bool {
-    if kind_filtered {
-        finding_count > 0
-    } else {
-        has_error
+/// The three runners return it and dispatch reads the exit from it, so no
+/// caller holds a bool whose `true` it must remember means "exit 1".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verdict {
+    /// Exit 0.
+    Pass,
+    /// Exit 1.
+    Fail,
+}
+
+/// How much of the weave a doctor run looks at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    /// The active project: stale locks, dangling references and integration
+    /// hooks are scoped to it, and orphan detection is skipped (a repo absent
+    /// from the active project may belong to another). A workspace with no
+    /// active project has nothing to narrow to and is scanned weave-wide.
+    ActiveProject,
+    /// `--all`: every project, orphan detection across them included.
+    Weave,
+}
+
+impl Scope {
+    /// The scope `--all` asks for.
+    pub fn from_all_flag(all: bool) -> Self {
+        if all {
+            Self::Weave
+        } else {
+            Self::ActiveProject
+        }
     }
 }
 
-/// When `fix` is `true`, the repairable subset is remediated in place before
+/// The one place `rwv doctor` decides whether to exit non-zero, text and
+/// `--json` alike.
+///
+/// `severities` are those of the findings the run reports. Without `--kind`,
+/// only an error-severity finding fails the run; a warning-severity one
+/// passes. `--kind` has already narrowed the findings to what the filter
+/// admits, so any survivor fails the run regardless of severity: that is what
+/// lets a CI gate escalate a warning-severity kind such as `tool-missing` by
+/// naming it.
+fn doctor_verdict(
+    kind_filter: Option<&KindFilter>,
+    severities: impl IntoIterator<Item = crate::integration::Severity>,
+) -> Verdict {
+    let mut severities = severities.into_iter();
+    let failed = match kind_filter {
+        Some(_) => severities.next().is_some(),
+        None => severities.any(|severity| severity == crate::integration::Severity::Error),
+    };
+    if failed {
+        Verdict::Fail
+    } else {
+        Verdict::Pass
+    }
+}
+
+/// Under [`Repair::Apply`], the repairable subset is remediated in place before
 /// the report is rendered, so a repaired workspace reports healthy.
 ///
 /// Both of its inputs are collected elsewhere and shared with
@@ -10216,17 +10274,12 @@ fn doctor_exit_signal(kind_filtered: bool, finding_count: usize, has_error: bool
 /// function raises itself is a `--fix` arm's own failure, which `--json` has no
 /// `--fix` to produce.
 ///
-/// When `scope_all` is `false` (the default), only the active project is
-/// checked: stale locks, dangling references, and integration hooks are
-/// scoped to that project, and orphan detection is skipped (a repo absent
-/// from the active project may belong to another project). Pass `scope_all =
-/// true` (via `--all`) to reproduce the weave-wide behavior, including orphan
-/// detection across every project.
+/// [`Scope`] says how much of the weave is checked.
 ///
-/// Returns `Ok(true)` (exit 1) when `kind_filter` is absent and some
-/// finding is error-severity, or when it is present and it admits any
-/// finding regardless of severity; `Ok(false)` otherwise. [`run_check_json`]
-/// follows the same contract.
+/// Returns [`Verdict::Fail`] when `kind_filter` is absent and some finding is
+/// error-severity, or when it is present and it admits any finding regardless
+/// of severity; [`Verdict::Pass`] otherwise. [`run_check_json`] follows the
+/// same contract.
 ///
 /// `ctx` is the already-resolved invocation context (with `--project` baked
 /// in when passed). Handlers must not re-resolve.
@@ -10243,12 +10296,12 @@ fn doctor_exit_signal(kind_filtered: bool, finding_count: usize, has_error: bool
 /// [`ReattachConsent`]: crate::cli::consent::ReattachConsent
 pub fn run_check(
     ctx: &crate::workspace::WorkspaceContext,
-    fix: bool,
-    scope_all: bool,
+    repair: Repair,
+    scope: Scope,
     reattach: Option<crate::cli::consent::ReattachConsent>,
     adopt_detached: Option<crate::cli::consent::AdoptDetachedConsent>,
     kind_filter: Option<&KindFilter>,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<Verdict> {
     use crate::integration::Severity;
 
     // The P2 gate: a binary whose release removed migratory arms refuses a
@@ -10257,20 +10310,20 @@ pub fn run_check(
     crate::health_floor::enforce(ctx.primary_path())?;
 
     let mut fix_errors: Vec<String> = Vec::new();
+    let fix = repair == Repair::Apply;
 
     if fix {
         apply_prelude_repairs(ctx, &mut fix_errors);
-        let project_scope = if scope_all {
-            None
-        } else {
-            ctx.active_project()
+        let project_scope = match scope {
+            Scope::Weave => None,
+            Scope::ActiveProject => ctx.active_project(),
         };
         repair_member_gaps(ctx, project_scope, &mut fix_errors);
         repair_standalone_members(ctx, project_scope, &mut fix_errors);
         repair_uninitialized_submodules(ctx, project_scope);
     }
 
-    let world = load_doctor_world(ctx, scope_all)?;
+    let world = load_doctor_world(ctx, scope)?;
 
     if fix {
         apply_workspace_repairs(ctx, &world, reattach, adopt_detached, &mut fix_errors);
@@ -10337,10 +10390,7 @@ pub fn run_check(
     }
 
     match kind_filter {
-        None => all_issues.extend(collect_doctor_issues(
-            &world,
-            if fix { Repair::Apply } else { Repair::Report },
-        )),
+        None => all_issues.extend(collect_doctor_issues(&world, repair)),
         Some(filter) => all_issues.extend(
             collect_doctor_issues(&world, Repair::Report)
                 .into_iter()
@@ -10348,17 +10398,14 @@ pub fn run_check(
         ),
     }
 
-    let mut has_errors = false;
     for issue in &all_issues {
         let prefix = match issue.severity {
             Severity::Warning => "warning",
-            Severity::Error => {
-                has_errors = true;
-                "error"
-            }
+            Severity::Error => "error",
         };
         println!("[{prefix}] {}: {}", issue.source, issue.message);
     }
+    let verdict = doctor_verdict(kind_filter, all_issues.iter().map(|issue| issue.severity));
 
     // The P1 record: a clean weave-wide unfiltered run advances the health
     // floor. Weave-wide because the floor licenses arm removal for the
@@ -10368,7 +10415,11 @@ pub fn run_check(
     // repair; report-only warnings do not block, per the classification
     // where `violations_all_report_only` is computed. Best-effort: a
     // floor is a record, not a precondition of the run that earned it.
-    if scope_all && kind_filter.is_none() && violations_all_report_only && !has_errors {
+    if scope == Scope::Weave
+        && kind_filter.is_none()
+        && violations_all_report_only
+        && verdict == Verdict::Pass
+    {
         if let Err(e) =
             crate::health_floor::record_clean_run(ctx.primary_path(), world.vcs.as_ref())
         {
@@ -10376,11 +10427,7 @@ pub fn run_check(
         }
     }
 
-    Ok(doctor_exit_signal(
-        kind_filter.is_some(),
-        all_issues.len(),
-        has_errors,
-    ))
+    Ok(verdict)
 }
 
 /// Build the payload for `rwv doctor --json` from a vector of violations and
@@ -10421,7 +10468,7 @@ struct DoctorWorld {
     vcs: Box<dyn crate::vcs::Vcs>,
     project_vcs: Box<dyn crate::vcs::Vcs>,
     active_project: Option<crate::manifest::ProjectName>,
-    scope_all: bool,
+    scope: Scope,
     input: CheckInput,
     unparseable_projects: Vec<(crate::manifest::ProjectName, PathBuf, String)>,
     head_read_failures: Vec<(RepoPath, String)>,
@@ -10444,17 +10491,16 @@ impl DoctorWorld {
     /// the weave-wide path even without `--all`, because there is nothing to
     /// narrow to.
     fn project_scope(&self) -> Option<&ProjectName> {
-        if self.scope_all {
-            None
-        } else {
-            self.active_project.as_ref()
+        match self.scope {
+            Scope::Weave => None,
+            Scope::ActiveProject => self.active_project.as_ref(),
         }
     }
 }
 
 fn load_doctor_world(
     ctx: &crate::workspace::WorkspaceContext,
-    scope_all: bool,
+    scope: Scope,
 ) -> anyhow::Result<DoctorWorld> {
     use crate::manifest::Project;
     use crate::workspace::WorkspaceSession;
@@ -10501,7 +10547,7 @@ fn load_doctor_world(
         let dir = project_dir(&workspace_dir, name);
         let manifest_path = dir.join(Manifest::FILE_NAME);
 
-        if !scope_all {
+        if scope == Scope::ActiveProject {
             if let Some(ref active) = active_project {
                 if name != active {
                     if let Err(e) = Manifest::from_path(&manifest_path) {
@@ -10547,7 +10593,7 @@ fn load_doctor_world(
 
     // Orphan detection is weave-wide by construction: a repo is orphaned only
     // if it belongs to *no* project, which a partial load cannot establish.
-    let check_orphans = scope_all || active_project.is_none();
+    let check_orphans = scope == Scope::Weave || active_project.is_none();
 
     let unknown_segment_repos =
         crate::workspace::scan_unknown_segment_repos(&workspace_dir, vcs.as_ref());
@@ -10568,7 +10614,7 @@ fn load_doctor_world(
         vcs,
         project_vcs: crate::vcs::project_vcs(),
         active_project,
-        scope_all,
+        scope,
         input,
         unparseable_projects,
         head_read_failures,
@@ -11034,26 +11080,25 @@ fn collect_doctor_violations(
 /// Emits `{ "$schema": "...", "violations": [...], "issues": [...] }` to
 /// stdout, from the same two collection passes [`run_check`] renders as text.
 ///
-/// Returns `Ok(true)` (exit 1) or `Ok(false)` under the same contract
-/// [`run_check`] follows, so a caller scripting against `--json` reads the
-/// same signal a human reads off the text report.
+/// Returns the [`Verdict`] under the same contract [`run_check`] follows, so
+/// a caller scripting against `--json` reads the same signal a human reads off
+/// the text report.
 ///
 /// There is no `--fix` on this path, so nothing here repairs and nothing mints
 /// a `--fix` failure.
 ///
-/// When `scope_all` is `false` (the default), only the active project is
-/// checked and orphan detection is skipped. Pass `scope_all = true` (`--all`)
-/// to reproduce the weave-wide scan.
+/// [`Scope::ActiveProject`] checks only the active project and skips orphan
+/// detection; [`Scope::Weave`] is the weave-wide scan.
 pub fn run_check_json(
     ctx: &crate::workspace::WorkspaceContext,
-    scope_all: bool,
+    scope: Scope,
     kind_filter: Option<&KindFilter>,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<Verdict> {
     // The P2 gate, same as the text path. This surface never RECORDS a
     // floor — `--json` is a machine-reading surface and does not mutate
     // weave state; the floor records from the operator's text-mode run.
     crate::health_floor::enforce(ctx.primary_path())?;
-    let world = load_doctor_world(ctx, scope_all)?;
+    let world = load_doctor_world(ctx, scope)?;
     let DoctorFindings {
         violations,
         workweave_dirs,
@@ -11074,20 +11119,16 @@ pub fn run_check_json(
         .into_iter()
         .filter(|issue| kind_filter.is_none_or(|filter| filter.admits_issue(issue)))
         .collect();
-    let has_error = violations
-        .iter()
-        .any(|v| v.severity() == crate::integration::Severity::Error)
-        || issues
+    let verdict = doctor_verdict(
+        kind_filter,
+        violations
             .iter()
-            .any(|i| i.severity == crate::integration::Severity::Error);
-    let has_violations = doctor_exit_signal(
-        kind_filter.is_some(),
-        violations.len() + issues.len(),
-        has_error,
+            .map(CheckViolation::severity)
+            .chain(issues.iter().map(|issue| issue.severity)),
     );
     // Discover `rwv-*` executables on PATH for the inventory. This is
     // reporting only — the presence or absence of plugins never affects the
-    // has_violations signal or the doctor exit code.
+    // verdict or the doctor exit code.
     let plugins = crate::plugins::discover_plugins(None::<&std::ffi::OsStr>);
     let advisories = stale_generation_findings(&world)
         .iter()
@@ -11105,5 +11146,35 @@ pub fn run_check_json(
     let out =
         serde_json::to_string_pretty(&payload).context("failed to serialize doctor output")?;
     println!("{out}");
-    Ok(has_violations)
+    Ok(verdict)
+}
+
+#[cfg(test)]
+mod verdict_tests {
+    use super::*;
+    use crate::integration::Severity::{Error, Warning};
+
+    #[test]
+    fn without_a_filter_only_an_error_fails_the_run() {
+        assert_eq!(doctor_verdict(None, []), Verdict::Pass);
+        assert_eq!(doctor_verdict(None, [Warning, Warning]), Verdict::Pass);
+        assert_eq!(doctor_verdict(None, [Warning, Error]), Verdict::Fail);
+    }
+
+    #[test]
+    fn with_a_filter_any_finding_it_admitted_fails_the_run_whatever_its_severity() {
+        let filter = KindFilter::new(&["tool-missing".to_owned()]).unwrap();
+
+        assert_eq!(doctor_verdict(Some(&filter), []), Verdict::Pass);
+        assert_eq!(doctor_verdict(Some(&filter), [Warning]), Verdict::Fail);
+        assert_eq!(doctor_verdict(Some(&filter), [Error]), Verdict::Fail);
+    }
+
+    #[test]
+    fn scope_is_asked_for_by_the_all_flag_alone() {
+        assert_eq!(Scope::from_all_flag(true), Scope::Weave);
+        assert_eq!(Scope::from_all_flag(false), Scope::ActiveProject);
+        assert_eq!(Repair::from_fix_flag(true), Repair::Apply);
+        assert_eq!(Repair::from_fix_flag(false), Repair::Report);
+    }
 }

@@ -1028,28 +1028,23 @@ pub fn run() -> anyhow::Result<()> {
             if fix {
                 ctx.refuse_cwd_in_inactive_project()?;
             }
-            if locked {
-                let has_drift = check::run_check_locked(&ctx)?;
-                if has_drift {
-                    std::process::exit(1);
-                }
+            let scope = check::Scope::from_all_flag(all);
+            let verdict = if locked {
+                check::run_check_locked(&ctx)?
             } else if json {
-                let has_errors = check::run_check_json(&ctx, all, kind_filter.as_ref())?;
-                if has_errors {
-                    std::process::exit(1);
-                }
+                check::run_check_json(&ctx, scope, kind_filter.as_ref())?
             } else {
-                let has_errors = check::run_check(
+                check::run_check(
                     &ctx,
-                    fix,
-                    all,
+                    check::Repair::from_fix_flag(fix),
+                    scope,
                     reattach_checkouts,
                     adopt_detached_checkouts,
                     kind_filter.as_ref(),
-                )?;
-                if has_errors {
-                    std::process::exit(1);
-                }
+                )?
+            };
+            if verdict == check::Verdict::Fail {
+                std::process::exit(1);
             }
         }
         Some(Commands::Lock {
