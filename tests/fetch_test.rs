@@ -1586,3 +1586,32 @@ fn fetch_union_role_and_repo_selectors() {
         "other dep not matched by either flag"
     );
 }
+
+/// A source whose repository name is not a legal project name is refused
+/// before anything is cloned: `projects/<name>` would be a project no later
+/// verb could name.
+#[test]
+fn fetch_refuses_a_source_named_like_no_project_before_cloning() {
+    let tmp = common::tempdir().unwrap();
+    let workspace = tmp.path().join("ws");
+    std::fs::create_dir_all(&workspace).unwrap();
+    let bare = tmp.path().join("bad--name.git");
+    init_bare_repo_with_commit(&bare);
+
+    let out = rwv()
+        .args(["fetch", &common::file_url(&bare)])
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !out.status.success()
+            && stderr.contains("'bad--name' is not a valid project name")
+            && stderr.contains("rwv explain unrenderable-name"),
+        "the derived name is refused with its token:\n{stderr}"
+    );
+    assert!(
+        !workspace.join("projects").join("bad--name").exists(),
+        "nothing is cloned for a name that is refused"
+    );
+}
