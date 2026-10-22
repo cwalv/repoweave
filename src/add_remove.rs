@@ -5,7 +5,7 @@ use crate::integration_runner::missing_active_members;
 use crate::manifest::{
     LockFile, Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role, Submodules, VcsType,
 };
-use crate::path_spelling::{file_url_suggestion, operator_path, CanonicalPath};
+use crate::path_spelling::{file_url_suggestion, CanonicalPath};
 use crate::refusal::{refusal, RefusalKind};
 use crate::registry::{
     builtin_registries, recorded_remote, resolve_to_clone_info, CloneUrl, CreationParamError,
@@ -83,7 +83,7 @@ fn create_worktree_in_workweave(
                 "rwv add: canonical clone at {} has no commits yet; \
                  skipping worktree creation in workweave \
                  (after the first commit, `rwv lock` then `rwv doctor --fix` here create it)",
-                operator_path(canonical_clone)
+                canonical_clone.display()
             );
             return Ok(());
         }
@@ -103,8 +103,8 @@ fn create_worktree_in_workweave(
     .with_context(|| {
         format!(
             "failed to create worktree at {} from canonical clone {}",
-            operator_path(&dest),
-            operator_path(canonical_clone)
+            dest.display(),
+            canonical_clone.display()
         )
     })?;
     if let Some(files) = born.files {
@@ -179,12 +179,8 @@ pub(crate) fn settle_manifest(
 ) -> anyhow::Result<()> {
     let root = ctx.active_path();
     let manifest_path = project_dir(root, project).join(Manifest::FILE_NAME);
-    let on_disk = Manifest::from_path(&manifest_path).with_context(|| {
-        format!(
-            "failed to load manifest at {}",
-            operator_path(&manifest_path)
-        )
-    })?;
+    let on_disk = Manifest::from_path(&manifest_path)
+        .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?;
     let manifest = edited.unwrap_or(&on_disk);
     let restore_point = RestorePoint::take(root, project, &[&on_disk, manifest])?;
     if let Some(edited) = edited {
@@ -299,12 +295,8 @@ pub fn run_add(
     let manifest_path = project_dir.join(Manifest::FILE_NAME);
 
     // Load and check existing manifest.
-    let mut manifest = Manifest::from_path(&manifest_path).with_context(|| {
-        format!(
-            "failed to load manifest at {}",
-            operator_path(&manifest_path)
-        )
-    })?;
+    let mut manifest = Manifest::from_path(&manifest_path)
+        .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?;
 
     // Clone the repo if it doesn't exist on disk. The clone always lives
     // at primary's canonical path — the canonical store, in tier-0
@@ -370,7 +362,7 @@ pub fn run_add(
         if dest.exists() {
             eprintln!(
                 "Directory already exists at '{}', skipping clone",
-                operator_path(&dest)
+                dest.display()
             );
         } else {
             clone_into(vcs.as_ref(), &clone_url, &dest)?;
@@ -378,17 +370,14 @@ pub fn run_add(
         }
 
         let Some(remote_default) = vcs.remote_default_branch(&dest).with_context(|| {
-            format!(
-                "failed to determine default branch for {}",
-                operator_path(&dest)
-            )
+            format!("failed to determine default branch for {}", dest.display())
         })?
         else {
             crate::refuse!(
                 RefusalKind::NoRemoteDefaultBranch,
                 "rwv add: '{}' at {}: {}, then re-run `rwv add {}`",
                 repo_path.as_str(),
-                operator_path(&dest),
+                dest.display(),
                 vcs.clone_default_branch_repair_hint(&dest, RemoteBranchCopies::JustCloned)?,
                 url
             );
@@ -457,7 +446,7 @@ fn refuse_non_clone_at(
         "rwv add: the placement '{}' ({}) holds {found}, which can be neither registered \
          nor have a checkout placed over it. Move it aside and re-run `{retry}`.",
         repo_path.as_str(),
-        operator_path(at),
+        at.display(),
     )
 }
 
@@ -474,7 +463,7 @@ fn refuse_foreign_clone_at_placement(
         format!(
             "could not determine the {} URL for '{}'",
             vcs.conventional_remote_name(),
-            operator_path(dest)
+            dest.display()
         )
     })?;
     if let Some(RecordedRemote::Url(r)) = &recorded {
@@ -515,7 +504,7 @@ pub fn run_add_adopt(
             "rwv add --adopt: no clone at '{}'. --adopt registers a clone already under \
              the weave root; to clone from a remote instead, drop --adopt and give its URL \
              (`file://` for a local one).",
-            operator_path(&candidate)
+            candidate.display()
         );
     }
     warn_if_shared_clone(ctx.primary_path(), &project, &repo_path, &candidate, role);
@@ -555,7 +544,7 @@ pub fn run_add_adopt(
             e,
             &manifest_path,
             &repo_path,
-            &format!("rwv add --adopt {}", operator_path(path)),
+            &format!("rwv add --adopt {}", path.display()),
         )
     })?;
     if let Some((_, origin_url)) = registration {
@@ -598,17 +587,17 @@ fn adopt_placement(
         let roots = match workweave {
             Some(ww) => format!(
                 "this workweave ('{}') or the primary weave ('{}')",
-                operator_path(ww.as_path()),
-                operator_path(primary.as_path())
+                ww.as_path().display(),
+                primary.as_path().display()
             ),
-            None => format!("the weave root '{}'", operator_path(primary.as_path())),
+            None => format!("the weave root '{}'", primary.as_path().display()),
         };
         crate::refuse!(
             RefusalKind::AdoptPathOutsideWeave,
             "rwv add --adopt: '{}' is not under {roots}. A relative path is read from the \
              directory rwv runs in (or -C/-w), and a symlink in it is followed; name the clone \
              by a path inside the weave.",
-            operator_path(named.as_path())
+            named.as_path().display()
         );
     };
     let member: Vec<String> = named
@@ -628,17 +617,17 @@ fn adopt_placement(
                 "rwv add --adopt: '{}' is a clone of its own, not a worktree of the primary's \
                  clone at '{}'. --adopt registers the clone under the primary weave root; move \
                  '{}' there, or name '{}' directly.",
-                operator_path(&checkout),
-                operator_path(&canonical),
-                operator_path(&checkout),
-                operator_path(&canonical)
+                checkout.display(),
+                canonical.display(),
+                checkout.display(),
+                canonical.display()
             );
         }
         refuse_non_clone_at(
             vcs,
             &checkout,
             &repo_path,
-            &format!("rwv add --adopt {}", operator_path(path)),
+            &format!("rwv add --adopt {}", path.display()),
         )?;
     }
     Ok((repo_path, canonical))
@@ -694,7 +683,7 @@ impl AddLeftovers {
             .map(Path::to_path_buf)
             .collect();
         std::fs::create_dir_all(dir)
-            .with_context(|| format!("failed to create directory {}", operator_path(dir)))?;
+            .with_context(|| format!("failed to create directory {}", dir.display()))?;
         self.made.extend(missing.into_iter().rev().map(Made::Dir));
         Ok(())
     }
@@ -719,13 +708,12 @@ impl AddLeftovers {
         for made in self.made.into_iter().rev() {
             match made {
                 Made::Repo(repo) if repo.exists() => match std::fs::remove_dir_all(&repo) {
-                    Ok(()) => lines.push(format!(
-                        "removed {}, which it had created",
-                        operator_path(&repo)
-                    )),
+                    Ok(()) => {
+                        lines.push(format!("removed {}, which it had created", repo.display()))
+                    }
                     Err(e) => lines.push(format!(
                         "{} was created by it and could not be removed ({e:#}); delete it by hand",
-                        operator_path(&repo)
+                        repo.display()
                     )),
                 },
                 Made::Repo(_) => {}
@@ -738,7 +726,7 @@ impl AddLeftovers {
             lines.push(format!(
                 "kept the worktree it made at {}: `{rerun}` reuses it, and \
                  `rwv remove {repo_path} --delete` in this workweave removes it",
-                operator_path(worktree)
+                worktree.display()
             ));
         }
         if let Some(clone) = &self.clone {
@@ -750,7 +738,7 @@ impl AddLeftovers {
             lines.push(format!(
                 "kept the clone it made at {}: `{rerun}` reuses it, and \
                  `rwv remove {repo_path} --delete` in the primary weave removes it{after_worktree}",
-                operator_path(clone)
+                clone.display()
             ));
         }
         if lines.is_empty() {
@@ -767,22 +755,17 @@ fn untrackable_remote_default(repo_path: &RepoPath, clone: &Path) -> String {
     format!(
         "rwv add: '{}' at {}: the remote's default branch cannot be its `version`",
         repo_path.as_str(),
-        operator_path(clone),
+        clone.display(),
     )
 }
 
 fn clone_into(vcs: &dyn Vcs, clone_url: &CloneUrl, dest: &Path) -> anyhow::Result<()> {
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create directory {}", operator_path(parent)))?;
+            .with_context(|| format!("failed to create directory {}", parent.display()))?;
     }
-    vcs.clone_repo(clone_url, dest).with_context(|| {
-        format!(
-            "failed to clone '{}' into {}",
-            clone_url,
-            operator_path(dest)
-        )
-    })?;
+    vcs.clone_repo(clone_url, dest)
+        .with_context(|| format!("failed to clone '{}' into {}", clone_url, dest.display()))?;
     Ok(())
 }
 
@@ -815,7 +798,7 @@ fn run_add_from_local_path(
             format!(
                 "could not determine the {} URL for '{}'",
                 vcs.conventional_remote_name(),
-                operator_path(clone_dir)
+                clone_dir.display()
             )
         })?
         .ok_or_else(|| {
@@ -823,7 +806,7 @@ fn run_add_from_local_path(
                 RefusalKind::NoRemoteUrl,
                 format!(
                     "'{}' has no {} remote to read a URL from",
-                    operator_path(clone_dir),
+                    clone_dir.display(),
                     vcs.conventional_remote_name()
                 ),
             )
@@ -836,19 +819,15 @@ fn run_add_from_local_path(
              reads from each checkout's own directory, so it names no one URL to record; \
              give it an absolute URL (`git -C {dir} remote set-url {remote} <url>`) and \
              re-run `rwv add --adopt {adopted}`",
-            dir = operator_path(clone_dir),
+            dir = clone_dir.display(),
             remote = vcs.conventional_remote_name(),
-            adopted = operator_path(adopted),
+            adopted = adopted.display(),
         ),
     };
 
     // Load and check existing manifest.
-    let mut manifest = Manifest::from_path(manifest_path).with_context(|| {
-        format!(
-            "failed to load manifest at {}",
-            operator_path(manifest_path)
-        )
-    })?;
+    let mut manifest = Manifest::from_path(manifest_path)
+        .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?;
 
     if manifest.contains_repo(repo_path) {
         announce_already_registered(repo_path);
@@ -858,7 +837,7 @@ fn run_add_from_local_path(
     let Some(remote_default) = vcs.remote_default_branch(clone_dir).with_context(|| {
         format!(
             "failed to determine default branch for {}",
-            operator_path(clone_dir)
+            clone_dir.display()
         )
     })?
     else {
@@ -866,9 +845,9 @@ fn run_add_from_local_path(
             RefusalKind::NoRemoteDefaultBranch,
             "rwv add: '{}' at {}: {}, then re-run `rwv add --adopt {}`",
             repo_path.as_str(),
-            operator_path(clone_dir),
+            clone_dir.display(),
             vcs.clone_default_branch_repair_hint(clone_dir, RemoteBranchCopies::AsLastFetched)?,
-            operator_path(adopted)
+            adopted.display()
         );
     };
     let version = TrackingRef::try_from(&remote_default)
@@ -944,12 +923,8 @@ pub fn run_remove(
 
     let repo_path = RepoPath::new(path)?;
 
-    let mut manifest = Manifest::from_path(&manifest_path).with_context(|| {
-        format!(
-            "failed to load manifest at {}",
-            operator_path(&manifest_path)
-        )
-    })?;
+    let mut manifest = Manifest::from_path(&manifest_path)
+        .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?;
 
     let removed = manifest.remove_repo(&repo_path);
     let vcs_type = match &removed {
@@ -1023,7 +998,7 @@ pub fn run_remove(
         let deleted = plan.removes_anything();
         plan.perform(vcs.as_ref(), &repo_path)?;
         if deleted {
-            eprintln!("Deleted '{}'", operator_path(&checkout));
+            eprintln!("Deleted '{}'", checkout.display());
         }
         if let Some((project, ephemeral)) = workweave_ref {
             let canonical = ctx.primary_path().join(repo_path.as_path());
@@ -1039,7 +1014,7 @@ pub fn run_remove(
                     "'{}' is out of this workweave, but the branch the workweave held in \
                      {} could not be deleted",
                     repo_path.as_str(),
-                    operator_path(&canonical)
+                    canonical.display()
                 )
             })?;
         }
@@ -1080,7 +1055,7 @@ fn retire_workweave_ref(
             eprintln!(
                 "warning: kept branch `{owned}` in {}: it holds commits the clone's \
                  checkout does not",
-                operator_path(&store)
+                store.display()
             );
             return Ok(());
         };
@@ -1183,10 +1158,7 @@ fn refuse_claimed_store(vcs: &dyn Vcs, primary_root: &Path, repo_dir: &Path) -> 
             let store = CanonicalPath::of(repo_dir);
             for wt in worktrees {
                 if CanonicalPath::of(&wt) != store {
-                    claims.push(format!(
-                        "live worktree registered at {}",
-                        operator_path(&wt)
-                    ));
+                    claims.push(format!("live worktree registered at {}", wt.display()));
                 }
             }
         }
@@ -1200,7 +1172,7 @@ fn refuse_claimed_store(vcs: &dyn Vcs, primary_root: &Path, repo_dir: &Path) -> 
                     "refusing to delete '{}': it is a repo whose worktree registrations \
                      could not be read ({e:#}), so rwv cannot establish that no live \
                      worktree is using it.",
-                    operator_path(repo_dir)
+                    repo_dir.display()
                 );
             }
         }
@@ -1220,7 +1192,7 @@ fn refuse_claimed_store(vcs: &dyn Vcs, primary_root: &Path, repo_dir: &Path) -> 
                 "refusing to delete '{}': the ownership receipts for project `{}` could \
                  not be read ({e:#}), so rwv cannot establish that no ref it created still \
                  lives in this store.",
-                operator_path(repo_dir),
+                repo_dir.display(),
                 project.as_str()
             ),
         }
@@ -1235,7 +1207,7 @@ fn refuse_claimed_store(vcs: &dyn Vcs, primary_root: &Path, repo_dir: &Path) -> 
          Deleting it would take every ref and object with it at once. Delete the \
          workweaves that hold these first (`rwv workweave <project> delete <name>`), \
          which removes their worktrees and retracts their receipts, then re-run.",
-        operator_path(repo_dir),
+        repo_dir.display(),
         claims.join("\n  "),
     )
 }
@@ -1436,7 +1408,7 @@ impl CreationRequest {
                     RefusalKind::UnusableCreationParam,
                     "creation parameter '{}' resolves to '{}', which is not valid UTF-8",
                     spec.name,
-                    operator_path(&located)
+                    located.display()
                 );
             };
             self.params.insert(spec.name, spelled);
@@ -1510,12 +1482,8 @@ pub fn run_add_new(
         crate::registry::placement(&url).expect("a CreationPlan's minted URL is always placeable");
 
     // Load and check existing manifest.
-    let mut manifest = Manifest::from_path(&manifest_path).with_context(|| {
-        format!(
-            "failed to load manifest at {}",
-            operator_path(&manifest_path)
-        )
-    })?;
+    let mut manifest = Manifest::from_path(&manifest_path)
+        .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?;
 
     // Creation always lives at primary's canonical path (clones are global
     // infrastructure).
@@ -1567,19 +1535,19 @@ pub fn run_add_new(
                         RefusalKind::UnusableCreationParam,
                         "the root '{}' does not exist; rwv creates '<root>/<owner>/<repo>' but \
                      not '<root>' itself — create it first",
-                        operator_path(root)
+                        root.display()
                     );
                 }
                 let root_canon = CanonicalPath::existing(root)
-                    .with_context(|| format!("failed to resolve root {}", operator_path(root)))?;
+                    .with_context(|| format!("failed to resolve root {}", root.display()))?;
                 if ctx.primary_root().contains(&root_canon) {
                     crate::refuse!(
                         RefusalKind::UnusableCreationParam,
                         "the root '{}' is inside the weave at '{}'; the upstream it would \
                      create would then be walked, deletable, and reportable as a member \
                      of the very weave it backs — choose a root outside the weave",
-                        operator_path(root),
-                        operator_path(ctx.primary_path())
+                        root.display(),
+                        ctx.primary_path().display()
                     );
                 }
 
@@ -1589,17 +1557,14 @@ pub fn run_add_new(
                     }
                     left.made.push(Made::Repo(bare_path.clone()));
                     vcs.init_bare_repo(bare_path).with_context(|| {
-                        format!(
-                            "failed to init bare upstream at {}",
-                            operator_path(bare_path)
-                        )
+                        format!("failed to init bare upstream at {}", bare_path.display())
                     })?;
                 }
 
                 if dest.exists() {
                     eprintln!(
                         "Directory already exists at '{}', skipping clone",
-                        operator_path(&dest)
+                        dest.display()
                     );
                 } else {
                     if let Some(parent) = dest.parent() {
@@ -1607,11 +1572,7 @@ pub fn run_add_new(
                     }
                     left.made.push(Made::Repo(dest.clone()));
                     vcs.clone_repo(&plan.url, &dest).with_context(|| {
-                        format!(
-                            "failed to clone '{}' into {}",
-                            plan.url,
-                            operator_path(&dest)
-                        )
+                        format!("failed to clone '{}' into {}", plan.url, dest.display())
                     })?;
                     cloned_from = Some(bare_path);
                 }
@@ -1620,18 +1581,17 @@ pub fn run_add_new(
                 if dest.exists() {
                     eprintln!(
                         "Directory already exists at '{}', skipping init",
-                        operator_path(&dest)
+                        dest.display()
                     );
                 } else {
                     if let Some(parent) = dest.parent() {
                         left.make_dir_all(parent)?;
                     }
                     left.made.push(Made::Repo(dest.clone()));
-                    vcs.init_repo(&dest).with_context(|| {
-                        format!("failed to init repo at {}", operator_path(&dest))
-                    })?;
+                    vcs.init_repo(&dest)
+                        .with_context(|| format!("failed to init repo at {}", dest.display()))?;
                     vcs.add_remote(&dest, &plan.url).with_context(|| {
-                        format!("failed to add the remote in {}", operator_path(&dest))
+                        format!("failed to add the remote in {}", dest.display())
                     })?;
                 }
             }
@@ -1646,14 +1606,14 @@ pub fn run_add_new(
                      taken from the upstream at {upstream}; point that upstream's HEAD at a \
                      branch (`git -C {upstream} symbolic-ref HEAD refs/heads/<branch>`) \
                      before retrying `rwv add {address} --new`",
-                    operator_path(&dest),
-                    upstream = operator_path(upstream),
+                    dest.display(),
+                    upstream = upstream.display(),
                 ),
                 None => anyhow::bail!(
                     "rwv add: repo at {} has a detached HEAD right after creation; \
                      inspect with `git -C {} status` before retrying `rwv add {} --new`",
-                    operator_path(&dest),
-                    operator_path(&dest),
+                    dest.display(),
+                    dest.display(),
                     address
                 ),
             },
@@ -1663,7 +1623,7 @@ pub fn run_add_new(
             format!(
                 "rwv add: '{}' at {}: the branch the repo was created on cannot be its `version`",
                 repo_path.as_str(),
-                operator_path(&dest),
+                dest.display(),
             )
         })?;
 
@@ -1757,7 +1717,7 @@ fn warn_if_shared_clone(
         eprintln!(
             "[warning] add: clone {} is already registered by project '{}' with role {}; \
              this project registers it as {} — the physical clone is shared",
-            operator_path(clone_dest),
+            clone_dest.display(),
             other_project.as_str(),
             other_role,
             this_role,

@@ -302,7 +302,7 @@ impl IndexClaim {
                 "failed to release the claim on the workweave index of project \
                  {project} at {root}. Every later write to it refuses until {claim} \
                  is deleted",
-                root = crate::path_spelling::operator_path(primary_root),
+                root = primary_root.display(),
                 claim = claim_path(primary_root, project),
             )
         });
@@ -331,7 +331,7 @@ impl IndexClaim {
                     "another rwv still holds the workweave index of project \
                      {project} at {root} ({held_by}). If no rwv is running, \
                      delete {claim} and rerun.",
-                    root = crate::path_spelling::operator_path(primary_root),
+                    root = primary_root.display(),
                     claim = path,
                 );
             }

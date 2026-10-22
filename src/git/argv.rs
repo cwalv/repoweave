@@ -7,8 +7,8 @@
 //! (`AsRef<str>`, which a `&Path` is not) or a [`GitArg`]. A path handed to
 //! either slot without the conversion is a type error.
 //!
-//! This module names nothing outside `std` and `dunce`, so a compile probe can
-//! include the file on its own.
+//! This module names nothing outside `std`, so a compile probe can include the
+//! file on its own.
 
 use std::fmt;
 use std::io;
@@ -30,12 +30,9 @@ const GIT_ENV_VARS: &[&str] = &[
     "GIT_DISCOVERY_ACROSS_FILESYSTEM",
 ];
 
-/// A path in the form git is told it.
+/// A path in the form git is told it: its UTF-8 text, unchanged.
 ///
-/// Only [`GitArg::from_path`] makes one. git refuses an argument in the
-/// Windows `\\?\` extended-length spelling — `git worktree add //?/C:/…` fails
-/// outright — and a weave root read from a record can carry it, so the prefix
-/// comes off there.
+/// Only [`GitArg::from_path`] makes one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct GitArg {
     text: String,
@@ -59,17 +56,11 @@ impl NotUtf8 {
 }
 
 impl GitArg {
-    /// The one conversion from a path to text for git.
-    ///
-    /// `dunce::simplified` drops the extended-length prefix only where Windows
-    /// itself accepts the short form — not over the legacy length limit, not a
-    /// UNC share, not a reserved device name — and is the identity on every
-    /// other platform, so a caller states no `cfg`.
-    ///
-    /// `subject` names the path to the operator when it is not valid UTF-8.
+    /// The one conversion from a path to text for git: a path that is not
+    /// valid UTF-8 is refused, naming it as `subject`, rather than handed to
+    /// git in a lossy spelling that names some other path.
     pub(super) fn from_path(path: &Path, subject: &str) -> Result<GitArg, NotUtf8> {
-        dunce::simplified(path)
-            .to_str()
+        path.to_str()
             .map(|text| GitArg {
                 text: text.to_owned(),
             })
@@ -209,14 +200,9 @@ impl GitCommand {
 
 #[cfg(test)]
 mod tests {
-    //! What [`GitArg::from_path`] does to the extended-length prefix.
-    //!
-    //! The prefix exists only on Windows, so the assertion that matters is
-    //! compiled everywhere and executed on one platform — the advisory Windows
-    //! workflow is the only thing that runs it. The other direction is what
-    //! every platform can state, and it is the half that goes wrong if this
-    //! seam ever reaches for `canonicalize` instead: a path handed to git must
-    //! come back the path that was handed in, not a resolved one.
+    //! A path handed to git is the path that was handed in, not a resolved
+    //! one, and a path that is not valid UTF-8 is refused rather than
+    //! respelled.
 
     use super::*;
 
@@ -228,7 +214,7 @@ mod tests {
     }
 
     #[test]
-    fn a_path_with_no_extended_length_prefix_is_handed_over_unchanged() {
+    fn a_path_is_handed_over_unchanged() {
         let absolute = if cfg!(windows) {
             r"C:\weave\member"
         } else {
@@ -255,9 +241,13 @@ mod tests {
         }
     }
 
-    #[cfg(windows)]
+    #[cfg(unix)]
     #[test]
-    fn a_drive_letter_path_loses_the_prefix_git_refuses() {
-        assert_eq!(told(r"\\?\C:\weave\member"), r"C:\weave\member");
+    fn a_path_that_is_not_utf8_is_refused_by_name() {
+        use std::os::unix::ffi::OsStrExt;
+        let path = Path::new(std::ffi::OsStr::from_bytes(b"/weave/\xff"));
+        let refused = GitArg::from_path(path, "worktree path").unwrap_err();
+        assert_eq!(refused.subject(), "worktree path");
+        assert_eq!(refused.path(), path);
     }
 }

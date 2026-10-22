@@ -100,12 +100,9 @@ Behavioral is the default. A structural pin is licensed in exactly two
 situations, and the license is stated in the test's own doc comment:
 
 - **No behavioral assertion can distinguish** correct from broken on any
-  platform or fixture the suite reaches. Two shipped precedents: a spelling
-  seam whose two spellings are byte-identical on the platform the suite
-  runs on (`operator_path` vs `.display()` off Windows — dropping the
-  verbatim prefix is the identity there by construction), and a single-read
-  chokepoint whose divergence window is too small to drive
-  (`tests/checkout_classification_single_read_test.rs`).
+  platform or fixture the suite reaches. The shipped precedent is a
+  single-read chokepoint whose divergence window is too small to drive
+  (`tests/source_classification_single_read_test.rs`).
 - **The property is a prohibition over an enumerable population** — a seam
   census, a destructive-call inventory
   (`tests/destructive_ops_audit_test.rs`).

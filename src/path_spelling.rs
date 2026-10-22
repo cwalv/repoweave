@@ -11,29 +11,25 @@
 //! [`CanonicalPath`] is a resolved path held as an identity: the type every
 //! compared or recorded location takes, comparable only with another.
 //!
-//! Two spellings answer for an absolute path. They differ on the separator,
-//! and the difference is a difference of audience:
+//! A held path carries the prefix only where no plain spelling names it, so
+//! `Display` of one is the spelling a person receives: the native one, which
+//! pastes into their own shell and file manager.
 //!
-//! - [`WirePath`] answers a **program**. `--json` documents shell
-//!   composition as its consumer (`jq -r … | xargs -I {} git -C {}` is the
-//!   shipped recipe), and a backslash-separated value cannot survive bare
-//!   `xargs` — the measured failure. `C:/Users/…` carries no `xargs`-active
-//!   bytes and is accepted by git, cmd and PowerShell alike.
-//! - [`operator_path`] answers a **person**: the native spelling, which is
-//!   what pastes into their own shell and file manager.
+//! [`WirePath`] answers a **program** instead, and differs on the separator.
+//! `--json` documents shell composition as its consumer (`jq -r … | xargs -I
+//! {} git -C {}` is the shipped recipe), and a backslash-separated value
+//! cannot survive bare `xargs` — the measured failure. `C:/Users/…` carries no
+//! `xargs`-active bytes and is accepted by git, cmd and PowerShell alike.
 //!
-//! The third, [`weave_relative`], answers for a path *inside* a weave, where
-//! the audience question does not arise: a location rwv keeps a name for is
-//! spelled the way rwv spells it.
+//! [`weave_relative`] answers for a path *inside* a weave, where the audience
+//! question does not arise: a location rwv keeps a name for is spelled the way
+//! rwv spells it.
 //!
-//! On Unix all three are the identity on an absolute path — a `/`-rooted path
-//! never carries the verbatim prefix, and no separator is rewritten, because
-//! `\` is an ordinary character in a Unix filename and rewriting it would
-//! corrupt the path rather than respell it. So the wire output on Unix is
-//! byte-for-byte what it was before any of them existed.
+//! On Unix neither rewrites a separator: `\` is an ordinary character in a
+//! Unix filename, and rewriting it would corrupt the path rather than respell
+//! it. So the wire output on Unix is byte-for-byte the path.
 //!
-//! [`mint_file_url`] is a fourth spelling, for a path becoming a `file://`
-//! URL rather than a path on some other path-shaped surface.
+//! [`mint_file_url`] spells a path as a `file://` URL.
 //!
 //! [`native_join`] spells a path into a file another tool keeps, the way that
 //! tool's own path library would have written it.
@@ -241,8 +237,8 @@ fn is_reserved_device_name(name: &str) -> bool {
     })
 }
 
-/// An absolute path as a program receives it: verbatim prefix dropped,
-/// `/`-separated on every platform.
+/// An absolute path as a program receives it: `/`-separated on every
+/// platform.
 ///
 /// Every `--json` field whose value is a filesystem absolute path holds one.
 /// [`WirePath::of`] is its one mint; reading it back out of `--json` refuses
@@ -252,14 +248,13 @@ pub struct WirePath(String);
 
 impl WirePath {
     pub fn of(path: &Path) -> WirePath {
-        let simplified = plain_path(path);
         #[cfg(windows)]
         {
-            WirePath(simplified.to_string_lossy().replace('\\', "/"))
+            WirePath(path.to_string_lossy().replace('\\', "/"))
         }
         #[cfg(not(windows))]
         {
-            WirePath(simplified.to_string_lossy().into_owned())
+            WirePath(path.to_string_lossy().into_owned())
         }
     }
 
@@ -309,28 +304,6 @@ pub fn wire_path(path: &Path) -> String {
     WirePath::of(path).0
 }
 
-/// The spelling a person receives: verbatim prefix dropped, native separators
-/// kept.
-///
-/// Every absolute path printed into operator text — a refusal, a status
-/// header, a materialize list — is built from this. Identities in that same
-/// text keep rendering through their own `Display`; this is for locations, not
-/// for names.
-pub fn operator_path(path: &Path) -> String {
-    plain_path(path).to_string_lossy().into_owned()
-}
-
-/// The spelling an absolute symlink target is written in, so that
-/// `std::fs::read_link` hands back the same path.
-///
-/// Windows stores an absolute target in NT form, and `read_link` returns a
-/// drive-letter target without the verbatim prefix whatever spelling created
-/// it. A link planned as `\\?\C:\…` therefore reads back as `C:\…`, and any
-/// comparison of the read-back against the plan misjudges rwv's own link.
-pub fn link_target(path: &Path) -> Cow<'_, Path> {
-    plain_path(path)
-}
-
 /// `fragment`, a `/`-separated relative name rwv keeps, as a native relative
 /// path: one component per segment, so a join onto a native root is spelled
 /// natively throughout rather than `C:\w\github/org/repo`.
@@ -347,8 +320,8 @@ pub fn native_relative(fragment: &str) -> PathBuf {
 /// manifest keys, surfacing declarations, `rwv.lock` entries. Rendered
 /// natively it comes back to the operator as a second spelling of a name they
 /// hold, and one they cannot paste into the file it came from. An absolute
-/// path takes [`operator_path`] instead: that names a location on their host,
-/// which rwv has no vocabulary for.
+/// path renders through `Display` instead: that names a location on their
+/// host, which rwv has no vocabulary for.
 ///
 /// Unix keeps the bytes. A `\` there is a character in a filename, so
 /// rewriting one renames the file rather than respelling it.
@@ -399,8 +372,8 @@ pub fn mint_file_url(path: &str) -> String {
 }
 
 /// The `/`-separated weave-relative `relative` under `root`, spelled as the
-/// host's own path library spells an absolute path: verbatim prefix dropped,
-/// and every separator `\` under a drive letter or a UNC share, `/` otherwise.
+/// host's own path library spells an absolute path: every separator `\` under
+/// a drive letter or a UNC share, `/` otherwise.
 ///
 /// For a tool that stores a path and compares it as a string. gita stores
 /// `os.path.abspath` of the path it is handed, and on Windows Python rewrites
@@ -409,7 +382,6 @@ pub fn mint_file_url(path: &str) -> String {
 /// same code on every host.
 pub fn native_join(root: &Path, relative: &str) -> String {
     let root = root.to_string_lossy();
-    let root = plain_spelling(&root);
     if starts_with_drive_letter(&root) || root.starts_with(r"\\") {
         format!(r"{}\{relative}", root.trim_end_matches(['\\', '/'])).replace('/', r"\")
     } else {
@@ -458,7 +430,6 @@ fn encode_url_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     #[test]
     fn a_wire_path_reads_back_only_what_the_mint_writes() {
@@ -482,7 +453,6 @@ mod tests {
     fn unix_wire_output_is_byte_identical_to_the_path() {
         let p = PathBuf::from("/weave/projects/web-app");
         assert_eq!(wire_path(&p), "/weave/projects/web-app");
-        assert_eq!(operator_path(&p), "/weave/projects/web-app");
 
         let odd = PathBuf::from("/weave/a\\b/c");
         assert_eq!(
@@ -522,38 +492,19 @@ mod tests {
     }
 
     /// The Windows arm, which no run on this host exercises — the CI advisory
-    /// suite is where it executes. Kept as a unit test over the two functions
-    /// rather than as an end-to-end fixture because the behavior under test
-    /// is entirely in the spelling, and a Windows runner is the only thing
-    /// that can produce the inputs.
+    /// suite is where it executes.
     #[cfg(windows)]
     #[test]
-    fn windows_wire_output_is_simplified_and_forward_separated() {
-        let verbatim = PathBuf::from(r"\\?\C:\Users\dev\weave");
+    fn windows_wire_output_is_forward_separated() {
         assert_eq!(
-            wire_path(&verbatim),
+            wire_path(Path::new(r"C:\Users\dev\weave")),
             "C:/Users/dev/weave",
-            "the wire spelling drops the verbatim prefix and forward-separates"
-        );
-        assert_eq!(
-            operator_path(&verbatim),
-            r"C:\Users\dev\weave",
-            "the operator spelling drops the prefix and keeps native separators"
-        );
-        assert!(
-            !wire_path(&verbatim).contains('\\'),
             "no backslash may reach a value documented as xargs-composable"
         );
-    }
-
-    /// Win32 reads `\\server\share\…` as the share `\\?\UNC\server\share\…`
-    /// names, so neither spelling keeps the prefix.
-    #[cfg(windows)]
-    #[test]
-    fn a_unc_share_drops_the_verbatim_prefix() {
-        let unc = PathBuf::from(r"\\?\UNC\server\share\weave");
-        assert_eq!(wire_path(&unc), "//server/share/weave");
-        assert_eq!(operator_path(&unc), r"\\server\share\weave");
+        assert_eq!(
+            wire_path(Path::new(r"\\server\share\weave")),
+            "//server/share/weave"
+        );
     }
 
     #[cfg(windows)]
@@ -572,12 +523,10 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn a_link_written_in_the_link_target_spelling_reads_back_unchanged() {
+    fn a_link_to_a_resolved_path_reads_back_unchanged() {
         let tmp = tempfile::tempdir().unwrap();
-        let plain = resolve(tmp.path()).unwrap().join("shared.db");
-        std::fs::write(&plain, "").unwrap();
-        let verbatim = PathBuf::from(format!(r"\\?\{}", plain.display()));
-        let target = link_target(&verbatim);
+        let target = resolve(tmp.path()).unwrap().join("shared.db");
+        std::fs::write(&target, "").unwrap();
         let link = tmp.path().join("link");
         crate::symlink::create(&target, &link, crate::symlink::LinkTarget::File).unwrap();
         assert_eq!(std::fs::read_link(&link).unwrap(), target);
@@ -816,19 +765,6 @@ mod tests {
         assert_eq!(
             native_join(Path::new(r"\\server\share\weave"), "github/chatly/protocol"),
             r"\\server\share\weave\github\chatly\protocol"
-        );
-    }
-
-    /// A root read from a record can carry the verbatim prefix, under which
-    /// Windows translates no `/`; gita is never handed that spelling.
-    #[test]
-    fn native_join_drops_the_verbatim_prefix_of_a_recorded_root() {
-        assert_eq!(
-            native_join(
-                Path::new(r"\\?\C:\Users\dev\weave"),
-                "github/chatly/protocol"
-            ),
-            r"C:\Users\dev\weave\github\chatly\protocol"
         );
     }
 

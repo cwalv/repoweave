@@ -1606,7 +1606,7 @@ impl Vcs for GitVcs {
         format!(
             "`git -C {at} clean -X -d -n` lists what would go, and \
              `git -C {at} clean -X -d -f` deletes it",
-            at = crate::path_spelling::operator_path(workspace),
+            at = workspace.display(),
         )
     }
     fn stage_paths(&self, repo: &Path, paths: &[&str]) -> Result<(), VcsError> {

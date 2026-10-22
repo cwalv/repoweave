@@ -360,7 +360,7 @@ pub fn write_parseable<D: ManagedDoc>(path: &Path, text: &str) -> Result<()> {
         anyhow::bail!(
             "refusing to write {}: the content generated for it does not parse ({e:#}); \
              the file is left as it was",
-            crate::path_spelling::operator_path(path)
+            path.display()
         );
     }
     std::fs::write(path, text).with_context(|| format!("writing {}", path.display()))
@@ -1873,7 +1873,7 @@ pub fn drift_issues(
                 message: format!(
                     "{name} managed file present but unmarked: {}; \
                      rwv will NOT auto-take-over (would discard user content). {}",
-                    crate::path_spelling::operator_path(path),
+                    path.display(),
                     remedy.user_held
                 )
                 .into(),
@@ -1897,7 +1897,7 @@ pub fn drift_issues(
         message: format!(
             "{name} managed file has drift: {}; {} \
              Run rwv doctor --fix to regenerate",
-            crate::path_spelling::operator_path(path),
+            path.display(),
             remedy.drift
         )
         .into(),
@@ -1917,7 +1917,7 @@ pub fn missing_issue(name: &str, path: &Path) -> Issue {
         severity: Severity::Warning,
         message: format!(
             "{name} managed file missing: {}; run rwv doctor --fix to regenerate",
-            crate::path_spelling::operator_path(path)
+            path.display()
         )
         .into(),
         kind: IssueKind::ManagedFileMissing,
@@ -1960,7 +1960,7 @@ pub fn orphaned_region_issues<D: ManagedDoc>(
         message: format!(
             "{name} managed file has drift: {}; {detail} \
              Run rwv doctor --fix to regenerate",
-            crate::path_spelling::operator_path(path)
+            path.display()
         )
         .into(),
         kind: IssueKind::ManagedFileDrift,
@@ -1990,7 +1990,7 @@ pub fn fully_owned_drift_issue(name: &str, path: &Path, detail: &str) -> Issue {
         message: format!(
             "{name} generated file has drift: {} ({detail}); \
              run rwv doctor --fix to regenerate",
-            crate::path_spelling::operator_path(path)
+            path.display()
         )
         .into(),
         kind: IssueKind::ManagedFileDrift,

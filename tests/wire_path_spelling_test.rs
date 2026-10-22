@@ -10,7 +10,6 @@
 //! on most arms) and a type alone does not catch a path held in a `String`.
 
 use std::collections::BTreeSet;
-use std::path::Path;
 #[cfg(not(windows))]
 use std::path::PathBuf;
 
@@ -196,58 +195,5 @@ fn unix_wire_output_is_unchanged_by_the_seam() {
             raw,
             "the wire mint must not alter a Unix path"
         );
-        assert_eq!(
-            repoweave::path_spelling::operator_path(&p),
-            raw,
-            "the operator render must not alter a Unix path"
-        );
     }
-}
-
-/// `src/add_remove.rs` builds every path in its refused-add, kept-clone and
-/// kept-worktree messages from `ctx.primary_path()` or `ctx.active_path()` —
-/// a root read from a record can carry the Windows verbatim `\\?\` prefix.
-/// A raw `.display()` on one of those leaks the prefix into text the operator
-/// never typed. `every_wire_path_field_is_minted_by_the_seam` above does not
-/// catch this: it reads struct-literal `field: value,` syntax keyed on wire
-/// field names, and a refusal message is neither — it is a path spliced
-/// straight into an `eprintln!`/`format!`/`refuse!` argument, naming no field
-/// this host's scan recognizes. So the operator surface had no instrument of
-/// its own; this is it, scoped to the one file the leak was found in.
-#[test]
-fn add_remove_prints_every_path_through_the_operator_mint() {
-    let leaked: Vec<String> = production_lines()
-        .into_iter()
-        .filter(|l| l.file == "add_remove.rs" && l.text.contains(".display()"))
-        .map(|l| format!("{}: {}", l.site(), l.text.trim()))
-        .collect();
-    assert!(
-        leaked.is_empty(),
-        "these lines print a path straight off `.display()` instead of through \
-         `path_spelling::operator_path`, which is what drops the Windows \
-         verbatim prefix a workspace root read from a record can carry:\n{leaked:#?}"
-    );
-}
-
-/// Wire and operator spellings are two functions on purpose. They agree here
-/// and must not be collapsed into one on that basis — the divergence is on
-/// Windows, which this host cannot produce.
-#[test]
-fn the_two_renders_are_separate_seams() {
-    let lines = production_lines();
-    let has_wire = lines
-        .iter()
-        .any(|l| l.file == "path_spelling.rs" && l.text.contains("pub struct WirePath("));
-    let has_operator = lines
-        .iter()
-        .any(|l| l.file == "path_spelling.rs" && l.text.contains("pub fn operator_path("));
-    assert!(
-        has_wire && has_operator,
-        "both renders must exist as their own functions"
-    );
-    assert_eq!(
-        repoweave::path_spelling::WirePath::of(Path::new("/a/b")).as_str(),
-        repoweave::path_spelling::operator_path(Path::new("/a/b")),
-        "on this platform they agree — the difference under test lives on Windows"
-    );
 }

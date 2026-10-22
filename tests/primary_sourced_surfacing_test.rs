@@ -375,40 +375,53 @@ fn switching_the_entry_back_to_plain_replaces_the_absolute_link() {
 
 #[test]
 fn a_workweave_link_into_the_primarys_projects_is_left_to_workweave_link() {
+    assert_workweave_link_into_the_primarys_projects_is_left_alone("linked.md");
+}
+
+/// A `\` in the name is a character of it on Unix, so the name the doctor's
+/// walk reads back off the link must be the declared one.
+#[cfg(unix)]
+#[test]
+fn a_backslashed_workweave_link_is_left_to_workweave_link() {
+    assert_workweave_link_into_the_primarys_projects_is_left_alone(r"a\b.md");
+}
+
+fn assert_workweave_link_into_the_primarys_projects_is_left_alone(name: &str) {
     let weaves = primary();
     let alpha = weaves.primary.join("projects/alpha");
-    std::fs::write(alpha.join("linked.md"), "linked\n").unwrap();
+    std::fs::write(alpha.join(name), "linked\n").unwrap();
     repoweave::symlink::create(
-        Path::new("projects/alpha/linked.md"),
-        &weaves.primary.join("linked.md"),
+        &Path::new("projects/alpha").join(name),
+        &weaves.primary.join(name),
         repoweave::symlink::LinkTarget::File,
     )
     .unwrap();
     std::fs::write(
         alpha.join("rwv.toml"),
-        format!("{MANIFEST}\n[workweave]\nlink = [\"linked.md\"]\n"),
+        format!("{MANIFEST}\n[workweave]\nlink = ['{name}']\n"),
     )
     .unwrap();
     common::git_in(&alpha, &["add", "-A"]);
     common::git_in(&alpha, &["commit", "-m", "link"]);
 
     let ww = weaves.create("one", None);
-    let made = link(&ww, "linked.md");
+    let made = link(&ww, name);
     assert_eq!(
         made,
         repoweave::path_spelling::resolve(&weaves.primary)
             .unwrap()
-            .join("projects/alpha/linked.md"),
+            .join("projects/alpha")
+            .join(name),
         "fixture: workweave.link canonicalizes into the primary's project tree"
     );
 
     let doctor = rwv_output(&ww, &["doctor"]);
     assert!(
-        surfacing_lines(&doctor, "linked.md").is_empty(),
+        surfacing_lines(&doctor, name).is_empty(),
         "a workweave.link link is not rwv surfacing:\n{doctor}"
     );
     rwv_output(&ww, &["materialize", "--remove-undeclared-links"]);
-    assert_eq!(link(&ww, "linked.md"), made);
+    assert_eq!(link(&ww, name), made);
 }
 
 #[test]

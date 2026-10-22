@@ -1700,7 +1700,7 @@ fn replay_exclusion_also_broken_note(
          problem: {summary}. Fix it there too, separately, before this converges:\n\
            cd {dir}\n\
            rwv doctor --fix",
-        dir = crate::path_spelling::operator_path(source_project_dir),
+        dir = source_project_dir.display(),
         summary = replay_exclusion_problem_summary(problem),
     )
 }
@@ -1724,7 +1724,7 @@ fn replay_exclusion_source_only_refusal(
          To fix: run `rwv doctor --fix` there:\n\
            cd {dir}\n\
            rwv doctor --fix",
-        dir = crate::path_spelling::operator_path(source_project_dir),
+        dir = source_project_dir.display(),
         summary = replay_exclusion_problem_summary(problem),
     )
 }

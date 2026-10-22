@@ -169,7 +169,7 @@ impl StatePath {
 impl std::fmt::Display for StatePath {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let located = self.located();
-        write!(f, "{}", crate::path_spelling::operator_path(&located))
+        write!(f, "{}", located.display())
     }
 }
 
@@ -231,10 +231,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let marker = StateFile::WorkweaveMarker.in_dir(tmp.path());
         let located = tmp.path().join(StateFile::WorkweaveMarker.file_name());
-        assert_eq!(
-            marker.to_string(),
-            crate::path_spelling::operator_path(&located)
-        );
+        assert_eq!(marker.to_string(), located.display().to_string());
         assert_eq!(marker.wire(), WirePath::of(&located));
     }
 }

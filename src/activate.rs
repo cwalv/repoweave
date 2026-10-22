@@ -31,7 +31,6 @@
 //!
 //! `deactivate` removes the symlinks and `.rwv-active`.
 
-use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -542,9 +541,9 @@ fn settle_arrived_drift(output_dir: &Path, consent: Option<DriftConsent>) -> any
                 .map(|file| {
                     format!(
                         "\n  {}",
-                        crate::path_spelling::operator_path(
-                            &output_dir.join(crate::path_spelling::native_relative(&file.name))
-                        )
+                        output_dir
+                            .join(crate::path_spelling::native_relative(&file.name))
+                            .display()
                     )
                 })
                 .collect::<String>();
@@ -629,7 +628,7 @@ pub fn activate_with_options(
             RefusalKind::WrongCheckoutKind,
             "rwv activate has no effect in a workweave (project is fixed at creation). \
              cd to primary ({}) and rerun.",
-            crate::path_spelling::operator_path(ctx.primary_path())
+            ctx.primary_path().display()
         ),
     };
 
@@ -1063,9 +1062,9 @@ fn withhold_hooks_over_unsettled_drift(output_dir: &Path) -> bool {
         .map(|file| {
             format!(
                 "\n  {}",
-                crate::path_spelling::operator_path(
-                    &output_dir.join(crate::path_spelling::native_relative(&file.name))
-                )
+                output_dir
+                    .join(crate::path_spelling::native_relative(&file.name))
+                    .display()
             )
         })
         .collect::<String>();
@@ -1380,12 +1379,7 @@ fn remove_activation_symlinks_in(
                     Ok(r) => r,
                     Err(_) => continue,
                 };
-                // The owned set is keyed by the integrations' declared
-                // names, whose separators are `/` by contract; the walk
-                // renders this path with the platform's, so the lookup
-                // converts spelling at the boundary or a nested link is
-                // never recognized as owned where the platform writes `\`.
-                let rel_str = rel_from_root.to_string_lossy().replace('\\', "/");
+                let rel_str = crate::path_spelling::weave_relative(rel_from_root);
                 let in_owned_set = owned_files.contains(rel_str.as_str());
                 let resolves_to_projects =
                     target_resolves_to_projects(sites, rel_from_root, &target);
@@ -1664,7 +1658,7 @@ impl Held {
 impl std::fmt::Display for Held {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Held::File(path) => write!(f, "{}", crate::path_spelling::operator_path(path)),
+            Held::File(path) => write!(f, "{}", path.display()),
             Held::State(path) => write!(f, "{path}"),
         }
     }
@@ -2255,12 +2249,6 @@ enum PrimaryProjects {
     Unknown,
 }
 
-impl PrimaryProjects {
-    fn under(primary: &Path, read_back_spelling: fn(&Path) -> Cow<'_, Path>) -> Self {
-        PrimaryProjects::At(read_back_spelling(primary).join(PROJECTS_DIR))
-    }
-}
-
 /// One link surfacing makes: what `<root>/<file>` reads, and the file that
 /// reaches.
 struct PlannedLink {
@@ -2304,10 +2292,7 @@ impl SurfacingSites {
             };
         };
         Self {
-            primary: PrimaryProjects::under(
-                marker.primary().as_path(),
-                crate::path_spelling::link_target,
-            ),
+            primary: PrimaryProjects::At(marker.primary().as_path().join(PROJECTS_DIR)),
             workweave_links: manifest
                 .workweave
                 .iter()
@@ -2356,7 +2341,7 @@ impl SurfacingSites {
         let PrimaryProjects::At(projects) = &self.primary else {
             return None;
         };
-        let rel = rel_from_root.to_string_lossy().replace('\\', "/");
+        let rel = crate::path_spelling::weave_relative(rel_from_root);
         if self.workweave_links.contains(&rel) {
             return None;
         }
@@ -2436,7 +2421,7 @@ fn quoted_link_target(target: &Path) -> String {
     format!(
         "`{}`",
         if target.is_absolute() {
-            crate::path_spelling::operator_path(target)
+            target.display().to_string()
         } else {
             crate::path_spelling::weave_relative(target)
         }
@@ -2567,7 +2552,7 @@ fn collect_undeclared_links_in(
         let Ok(rel_from_root) = path.strip_prefix(root) else {
             continue;
         };
-        let rel = rel_from_root.to_string_lossy().replace('\\', "/");
+        let rel = crate::path_spelling::weave_relative(rel_from_root);
         if declared.contains(rel.as_str()) {
             continue;
         }
@@ -3478,10 +3463,6 @@ mod tests {
             r"`C:\primary\projects\p\a.md`"
         );
         assert_eq!(
-            quoted_link_target(Path::new(r"\\?\C:\primary\projects\p\a.md")),
-            r"`C:\primary\projects\p\a.md`"
-        );
-        assert_eq!(
             quoted_link_target(Path::new(r"projects\p\a.md")),
             "`projects/p/a.md`"
         );
@@ -3644,7 +3625,7 @@ mod tests {
             named,
             vec![
                 ledger_path(&dir).to_string(),
-                crate::path_spelling::operator_path(&manifest_path)
+                manifest_path.display().to_string()
             ]
         );
         assert_eq!(
@@ -4905,22 +4886,9 @@ mod tests {
         }
     }
 
-    /// Only Windows spells one path two ways, so a `/verbatim` prefix stands in
-    /// for `\\?\` here: what matters is that the plan is spelled the way the
-    /// link reads back, and that the read-back is recognized as rwv's.
     #[test]
-    fn a_primary_sourced_link_is_planned_in_the_spelling_it_reads_back_in() {
-        fn as_read_back(path: &Path) -> Cow<'_, Path> {
-            Cow::Borrowed(
-                path.to_str()
-                    .and_then(|s| s.strip_prefix("/verbatim"))
-                    .map_or(path, Path::new),
-            )
-        }
-        let sites = workweave_sites(PrimaryProjects::under(
-            Path::new("/verbatim/primary"),
-            as_read_back,
-        ));
+    fn a_primary_sourced_link_is_recognized_as_rwvs_own_surfacing() {
+        let sites = workweave_sites(PrimaryProjects::At("/primary/projects".into()));
         let project = ProjectName::new("alpha").unwrap();
         let read_back = Path::new("/primary/projects/alpha/shared.db");
 

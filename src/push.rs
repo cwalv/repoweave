@@ -172,7 +172,7 @@ pub fn run_push(
     if let Checkout::Workweave { name, dir, .. } = &ctx.checkout {
         let addressed = match name.recorded() {
             Some(name) => format!("'{name}'"),
-            None => format!("at {}", crate::path_spelling::operator_path(dir.as_path())),
+            None => format!("at {}", dir.as_path().display()),
         };
         crate::refuse!(
             RefusalKind::PushFromWorkweave,

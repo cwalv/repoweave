@@ -39,7 +39,6 @@
 
 use assert_cmd::Command;
 use repoweave::manifest::{Manifest, ProjectName, RepoPath, WorkweaveName};
-use repoweave::path_spelling::operator_path;
 use repoweave::workspace::{confusable_siblings, describe_existing, diverged_occupant};
 use std::path::{Path, PathBuf};
 
@@ -278,7 +277,7 @@ fn minting_a_project_over_an_occupied_path_refuses() {
         "the refusal must say what happened: {stderr}"
     );
     assert!(
-        stderr.contains(&operator_path(&ws.join("projects").join("chatly"))),
+        stderr.contains(&ws.join("projects").join("chatly").display().to_string()),
         "the refusal must name the occupied path: {stderr}"
     );
 }
@@ -508,7 +507,7 @@ fn a_confusable_sibling_warns_at_mint_and_is_still_created() {
             "one entry cannot answer to two spellings, so the mint must refuse: {stderr}"
         );
         assert!(
-            stderr.contains(&operator_path(&ws.join("projects").join("Chatly"))),
+            stderr.contains(&ws.join("projects").join("Chatly").display().to_string()),
             "the refusal must name the path that was asked for: {stderr}"
         );
         assert!(

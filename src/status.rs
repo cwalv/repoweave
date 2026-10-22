@@ -473,7 +473,7 @@ fn print_op_header(op: &op_state::ResolvedOwner) {
         id = op.record.id,
         phase = op.record.phase,
         elapsed = op_state::elapsed_since(&op.record.started_at),
-        owner = crate::path_spelling::operator_path(op.owner_workspace.as_path()),
+        owner = op.owner_workspace.as_path().display(),
     );
     outln!(
         "  resume with `{resume}`, or `rwv abort` to discard",

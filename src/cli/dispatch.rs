@@ -734,7 +734,7 @@ pub fn run() -> anyhow::Result<()> {
         }
         Some(Commands::Resolve) => {
             let ctx = WorkspaceContext::resolve_unbound(origin_dir)?;
-            outln!("{}", crate::path_spelling::operator_path(ctx.active_path()));
+            outln!("{}", ctx.active_path().display());
         }
         Some(Commands::Add {
             url,

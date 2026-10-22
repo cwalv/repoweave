@@ -234,9 +234,10 @@ fn rwv_display_in_workweave() {
         .unwrap_or_else(|| panic!("context display has no `Workweave:` line:\n{stdout}"));
     assert_eq!(
         named,
-        repoweave::path_spelling::operator_path(
-            &repoweave::path_spelling::resolve(&ww_dir).unwrap()
-        )
+        repoweave::path_spelling::resolve(&ww_dir)
+            .unwrap()
+            .display()
+            .to_string()
     );
 
     // Root path (primary weave root) must appear.

@@ -397,10 +397,7 @@ fn doctor_at_the_primary_reports_and_repairs_a_workweaves_symlinks() {
 fn verbs_refuse_an_unmigrated_workweave_and_name_doctor_fix() {
     let tmp = common::tempdir().unwrap();
     let weave = unmigrated_weave(tmp.path());
-    let remedy = format!(
-        "rwv -C {} doctor --fix",
-        repoweave::path_spelling::operator_path(&weave.seat)
-    );
+    let remedy = format!("rwv -C {} doctor --fix", weave.seat.display());
     let primary_arg = weave.primary.to_string_lossy().into_owned();
     let seat_arg = weave.seat.to_string_lossy().into_owned();
     let linked_before = canonical_state(&weave.linked_canonical);
@@ -585,10 +582,7 @@ fn doctor_fix_migrates_a_member_under_a_parked_op_and_abort_then_restores() {
     let stderr = String::from_utf8_lossy(&refused.stderr);
     assert_eq!(refused.status.code(), Some(1), "stderr:\n{stderr}");
     assert!(
-        stderr.contains(&format!(
-            "rwv -C {} doctor --fix",
-            repoweave::path_spelling::operator_path(&seat)
-        )),
+        stderr.contains(&format!("rwv -C {} doctor --fix", seat.display())),
         "abort must name the repair; stderr:\n{stderr}"
     );
     assert_routes_to(&stderr, "workweave-drift");

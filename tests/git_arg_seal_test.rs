@@ -5,8 +5,8 @@
 //! Each probe includes `src/git/argv.rs` by `#[path]`, so the snippet stands
 //! where `src/git.rs` stands relative to that module. That is what lets a probe
 //! see a field widened to `pub(super)`: from outside the crate, `pub(super)`
-//! and private refuse alike. The module names nothing outside `std` and
-//! `dunce`, which is what allows this.
+//! and private refuse alike. The module names nothing outside `std`, which is
+//! what allows this.
 //!
 //! The command-line side is closed by the type: `GitCommand` keeps its
 //! `Command` private and takes arguments only as an `Argv`, whose text slot
@@ -23,10 +23,8 @@ mod common;
 
 use std::path::{Path, PathBuf};
 
-use common::compile_probe::{assert_fails_with_dependencies, compile_with};
+use common::compile_probe::{assert_fails_with, compile};
 use common::src_scan::production_lines;
-
-const DEPENDENCIES: &[&str] = &["dunce"];
 
 fn argv_rs() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src/git/argv.rs")
@@ -37,7 +35,7 @@ fn including(module: &Path, body: &str) -> String {
 }
 
 fn refuses(code: &str, what: &str, body: &str) {
-    assert_fails_with_dependencies(code, what, DEPENDENCIES, &including(&argv_rs(), body));
+    assert_fails_with(code, what, &including(&argv_rs(), body));
 }
 
 const FORGES_A_GIT_ARG: &str = r#"
@@ -54,10 +52,9 @@ const READS_THE_COMMAND: &str = r#"
 
 #[test]
 fn the_harness_can_compile_a_legal_use_of_the_module() {
-    let (compiled, stderr) = compile_with(
-        &including(
-            &argv_rs(),
-            r#"
+    let (compiled, stderr) = compile(&including(
+        &argv_rs(),
+        r#"
             pub fn legal(p: &std::path::Path) -> Option<std::io::Result<std::process::Output>> {
                 let dest = argv::GitArg::from_path(p, "destination path").ok()?;
                 Some(
@@ -70,9 +67,7 @@ fn the_harness_can_compile_a_legal_use_of_the_module() {
                 )
             }
             "#,
-        ),
-        DEPENDENCIES,
-    );
+    ));
     assert!(compiled, "control snippet must compile; got:\n{stderr}");
 }
 
@@ -220,7 +215,7 @@ fn the_probes_see_a_field_widened_to_pub_super() {
         ("forging a GitArg", FORGES_A_GIT_ARG),
         ("reading the command", READS_THE_COMMAND),
     ] {
-        let (compiled, stderr) = compile_with(&including(&copy, body), DEPENDENCIES);
+        let (compiled, stderr) = compile(&including(&copy, body));
         assert!(
             compiled,
             "the {what} probe must compile against a widened copy, or it cannot \

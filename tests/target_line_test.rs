@@ -52,7 +52,7 @@ fn expected_target_line(ws: &Path, project: &str) -> String {
     let canon = repoweave::path_spelling::resolve(ws).unwrap();
     format!(
         "target: workspace {} · project {} (.rwv-active)",
-        repoweave::path_spelling::operator_path(&canon),
+        canon.display(),
         project,
     )
 }

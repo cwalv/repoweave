@@ -949,8 +949,8 @@ impl Integration for CargoWorkspace {
                 "[warning] cargo-workspace: cargo {subcommand} wrote {}, a real file where \
                  its link belongs, so the generation is not recorded until it is taken \
                  into {} — run `rwv doctor --fix`",
-                crate::path_spelling::operator_path(&surfaced),
-                crate::path_spelling::operator_path(&lock_path)
+                surfaced.display(),
+                lock_path.display()
             );
             return Ok(HookOutcome::Done);
         }
@@ -989,7 +989,7 @@ impl Integration for CargoWorkspace {
                 "[warning] cargo-workspace: the rustc-wrapper key was not fitted to this \
                  host: {} is a symlink, and a write through it could land outside this \
                  weave",
-                crate::path_spelling::operator_path(&link)
+                link.display()
             );
             return Ok(());
         }

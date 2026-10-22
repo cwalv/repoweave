@@ -330,7 +330,7 @@ fn create_and_doctor_name_the_same_missing_lock_path() {
     );
     assert_eq!(
         doctor_path,
-        repoweave::path_spelling::operator_path(&f.ww_canonical_lock()),
+        f.ww_canonical_lock().display().to_string(),
         "and that file is the canonical one `--fix` writes, not the weave-root view \
          (which is a link to it, and names nothing a report could send anyone to)"
     );

@@ -224,7 +224,8 @@ pub fn file_url(path: impl AsRef<std::path::Path>) -> String {
 /// so a Windows drive-letter path becomes `/C:/…`. For templates that spell
 /// the `file://` prefix themselves.
 pub fn url_path(path: impl AsRef<std::path::Path>) -> String {
-    let p = dunce::simplified(path.as_ref())
+    let p = path
+        .as_ref()
         .to_str()
         .expect("fixture path is valid UTF-8")
         .replace('\\', "/");
@@ -959,23 +960,21 @@ pub fn node_tool(name: &str) -> String {
 /// prefix dropped. Compare both sides through this, never one.
 ///
 /// Green whether or not the message it reads carries the spelling that message
-/// is owed, so it cannot be the pin for a surface that mints. Two kinds of
-/// call site keep it. One reads a render that still
-/// stringifies its own path, and gives the call up when that render moves onto
-/// `operator_path`. The other reads text this repository does not author:
-/// `git worktree list --porcelain` answers in git's spelling, which no decision
-/// here governs, and flattening is the only honest comparison available.
+/// is owed, so it cannot be the pin for a surface rwv renders. It is for text
+/// this repository does not author: `git worktree list --porcelain` answers in
+/// git's spelling, which no decision here governs, and flattening is the only
+/// honest comparison available.
 pub fn flatten_path_spelling(s: &str) -> String {
     s.replace('\\', "/").replace("//?/", "")
 }
 
-/// Assert the context display's `Weave:` line names `root`, in the spelling
-/// the operator seam mints for it.
+/// Assert the context display's `Weave:` line names `root`, as `Display`
+/// renders it.
 ///
-/// Whole-line equality rather than containment: the simplified spelling is a
-/// substring of the verbatim one, so `stdout.contains(simplified)` is
-/// satisfied by a line that still carries the Windows `\\?\` prefix — it is
-/// green exactly when the leak it would catch is present.
+/// Whole-line equality rather than containment: the plain spelling is a
+/// substring of the verbatim one, so `stdout.contains(plain)` is satisfied by
+/// a line that still carries the Windows `\\?\` prefix — it is green exactly
+/// when the leak it would catch is present.
 pub fn assert_weave_line(stdout: &str, root: impl AsRef<std::path::Path>) {
     let named = stdout
         .lines()
@@ -983,50 +982,40 @@ pub fn assert_weave_line(stdout: &str, root: impl AsRef<std::path::Path>) {
         .unwrap_or_else(|| panic!("context display has no `Weave:` line:\n{stdout}"));
     assert_eq!(
         named,
-        repoweave::path_spelling::operator_path(root.as_ref()),
+        root.as_ref().display().to_string(),
         "the `Weave:` line must name the weave root in the operator spelling"
     );
 }
 
-/// The whole stdout of a command that prints one path and nothing else, in the
-/// spelling the operator seam mints for it.
+/// The whole stdout of a command that prints one path and nothing else, as
+/// `Display` renders it.
 ///
 /// Equality for the reason [`assert_weave_line`] gives: containment cannot pin
 /// a spelling whose correct form is a substring of the wrong one.
 pub fn operator_path_stdout(path: impl AsRef<std::path::Path>) -> String {
-    format!(
-        "{}\n",
-        repoweave::path_spelling::operator_path(path.as_ref())
-    )
+    format!("{}\n", path.as_ref().display())
 }
 
 /// Assert `text` names `path` where the path sits inside a sentence, so
 /// whole-line equality is not available.
 ///
 /// Two assertions, because containment alone is not a pin here either: the
-/// minted spelling is a substring of the internal one, so `contains(minted)`
-/// is satisfied by text that still carries the `\\?\` prefix — green exactly
+/// plain spelling is a substring of the verbatim one, so `contains(plain)` is
+/// satisfied by text that still carries the `\\?\` prefix — green exactly
 /// when the leak is present. The second assertion is what closes that, and it
-/// names only THIS path, so an unrelated unminted path elsewhere in the same
-/// message is somebody else's finding rather than a false red here.
-///
-/// Off Windows the two spellings are one string and the second assertion is
-/// provably vacuous — the `minted == internal` arm says so rather than leaving
-/// a reader to work it out. The pin it provides is a Windows pin; on Unix
-/// nothing here can distinguish the two, which is why the seam also carries a
-/// structural pin (`tests/operator_path_seam_test.rs`).
+/// names only THIS path, so an unrelated path elsewhere in the same message is
+/// somebody else's finding rather than a false red here. Off Windows no path
+/// carries the prefix, and the second assertion cannot fail.
 pub fn assert_names_operator_path(text: &str, path: impl AsRef<std::path::Path>) {
-    let path = path.as_ref();
-    let minted = repoweave::path_spelling::operator_path(path);
+    let plain = path.as_ref().display().to_string();
     assert!(
-        text.contains(&minted),
-        "the message must name {minted} in the operator spelling; got:\n{text}"
+        text.contains(&plain),
+        "the message must name {plain} in the operator spelling; got:\n{text}"
     );
-    let internal = path.display().to_string();
+    let verbatim = format!(r"\\?\{plain}");
     assert!(
-        minted == internal || !text.contains(&internal),
-        "the message still carries the internal spelling {internal}; it is owed \
-         {minted}, which is what `crate::path_spelling::operator_path` mints. Got:\n{text}"
+        !text.contains(&verbatim),
+        "the message names {plain} in the verbatim spelling {verbatim}; got:\n{text}"
     );
 }
 

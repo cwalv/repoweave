@@ -92,7 +92,7 @@ pub fn refuse_symlinked_members(workspace_dir: &Path, project: &ProjectName) -> 
          link with a worktree at the revision the workweave's rwv.lock pins; doctor names \
          what a revision the canonical clone does not hold needs first. The clone a link \
          points at is left untouched.",
-        dir = crate::path_spelling::operator_path(workspace_dir),
+        dir = workspace_dir.display(),
         n = linked.len(),
         list = linked
             .iter()
@@ -1184,8 +1184,8 @@ pub(crate) fn replace_standalone_member(
     std::fs::rename(&slot, &aside).with_context(|| {
         format!(
             "failed to move the full clone at {} aside to {}",
-            crate::path_spelling::operator_path(&slot),
-            crate::path_spelling::operator_path(&aside)
+            slot.display(),
+            aside.display()
         )
     })?;
 
@@ -1213,7 +1213,7 @@ pub(crate) fn replace_standalone_member(
                 format!(
                     "created the worktree for {repo_path}, but the full clone it replaced is \
                      still at {}",
-                    crate::path_spelling::operator_path(&aside)
+                    aside.display()
                 )
             })?;
             Ok(born)
@@ -1222,12 +1222,12 @@ pub(crate) fn replace_standalone_member(
             Ok(()) => Err(e),
             Err(restore) => Err(e.context(format!(
                 "the full clone of {repo_path} is left at {} (moving it back failed: {restore})",
-                crate::path_spelling::operator_path(&aside)
+                aside.display()
             ))),
         },
         Err(e) => Err(e.context(format!(
             "the full clone of {repo_path} is left at {}",
-            crate::path_spelling::operator_path(&aside)
+            aside.display()
         ))),
     }
 }
@@ -1253,7 +1253,7 @@ fn refuse_unless_replaceable(
             "{} already exists, and the clone is moved there while its worktree is \
              created. An interrupted repair leaves one behind: check that nothing in it is \
              needed, then remove it.",
-            crate::path_spelling::operator_path(aside)
+            aside.display()
         ));
     }
 
@@ -1262,7 +1262,7 @@ fn refuse_unless_replaceable(
             reasons.push(format!(
                 "there is no canonical clone at {} to link a worktree into; \
                  `rwv fetch --project {project}` in the primary weave materializes it.",
-                crate::path_spelling::operator_path(canonical)
+                canonical.display()
             ));
             false
         }
@@ -1270,8 +1270,8 @@ fn refuse_unless_replaceable(
             reasons.push(format!(
                 "the canonical slot {} is itself a worktree of {}, not a full clone to link \
                  a worktree into; `rwv doctor` reports it as clone-topology.",
-                crate::path_spelling::operator_path(canonical),
-                crate::path_spelling::operator_path(&store)
+                canonical.display(),
+                store.display()
             ));
             false
         }
@@ -1318,7 +1318,7 @@ fn refuse_unless_replaceable(
             reasons.push(format!(
                 "these refs hold commits no ref of the canonical clone at {} reaches; land \
                  those commits there, or delete the refs:{}",
-                crate::path_spelling::operator_path(canonical),
+                canonical.display(),
                 listed(&unreached)
             ));
         }
@@ -1339,7 +1339,7 @@ fn refuse_unless_replaceable(
             RefusalKind::StandaloneInWorkweave,
             "not replacing the full clone at {} with a worktree of the canonical clone:\n  - {}\n\n\
              Nothing was changed. Re-run `rwv doctor --fix` once each of these is resolved.",
-            crate::path_spelling::operator_path(standalone),
+            standalone.display(),
             reasons.join("\n  - "),
         ),
     }
@@ -2321,7 +2321,7 @@ impl std::fmt::Display for HooksIncomplete {
             f,
             "workweave created at {}; only its install hooks did not complete. Fix \
              the cause, then run `rwv materialize` inside it",
-            crate::path_spelling::operator_path(&self.dir)
+            self.dir.display()
         )
     }
 }
@@ -3177,8 +3177,8 @@ pub fn delete_workweave(
                  out which of them the registry should name.",
                 name = name.as_str(),
                 project = project.as_str(),
-                registered = crate::path_spelling::operator_path(&workweave_dir),
-                expected = crate::path_spelling::operator_path(expected.as_path()),
+                registered = workweave_dir.display(),
+                expected = expected.as_path().display(),
             );
         }
     }
@@ -3754,7 +3754,7 @@ pub struct WorkweaveLogOutput {
 fn missing_checkout_note(which: &str, path: &Path) -> String {
     format!(
         "{which} checkout missing at {}; run `rwv fetch` in that workweave to re-materialize it",
-        crate::path_spelling::operator_path(path)
+        path.display()
     )
 }
 

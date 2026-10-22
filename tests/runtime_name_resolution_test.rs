@@ -254,9 +254,7 @@ fn unregistered_workweave_is_addressed_by_directory_in_push_refusal() {
     assert!(
         stderr.contains(&format!(
             "workweave at {}",
-            repoweave::path_spelling::operator_path(
-                &repoweave::path_spelling::resolve(&dir).unwrap()
-            )
+            repoweave::path_spelling::resolve(&dir).unwrap().display()
         )),
         "the refusal must address the workweave by directory: {stderr}"
     );

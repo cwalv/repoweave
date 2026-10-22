@@ -6,6 +6,15 @@ claim that nothing changed in them.
 
 ## Unreleased
 
+### A `\` in a surfaced name is part of the name on Unix
+
+A `static-files` entry or `[workweave] link` whose name holds a `\` was read
+back from the weave root as though the `\` separated directories. `rwv doctor`
+reported its link as undeclared, `rwv materialize --remove-undeclared-links`
+removed it, and switching to another project left one in a subdirectory
+behind. On Unix the link is now recognized under the name it was declared
+with.
+
 ### `cargo-patch-shadowing` reads the project's own weave-level patches
 
 `rwv doctor` read the weave-level `[patch]` tables for `cargo-patch-shadowing`

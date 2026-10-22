@@ -508,7 +508,7 @@ fn a_legacy_nested_workweave_is_reported_with_the_retire_remedy() {
     assert!(
         !combined.contains(&format!(
             "{}: directory under workweaves parent has no",
-            repoweave::path_spelling::operator_path(nested.parent().unwrap())
+            nested.parent().unwrap().display()
         )),
         "the stray-directory report must not stand beside it: {combined}"
     );

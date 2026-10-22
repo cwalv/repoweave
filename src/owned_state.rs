@@ -210,7 +210,7 @@ impl LedgerClaim {
             format!(
                 "failed to release the claim on the owned-digest ledger of {dir}. \
                  Every later stamp there refuses until {claim} is deleted",
-                dir = crate::path_spelling::operator_path(dir),
+                dir = dir.display(),
                 claim = claim_path(dir),
             )
         });
@@ -229,7 +229,7 @@ impl LedgerClaim {
                     RefusalKind::StateClaimHeld,
                     "another rwv still holds the owned-digest ledger of {dir} \
                      ({held_by}). If no rwv is running, delete {claim} and rerun.",
-                    dir = crate::path_spelling::operator_path(dir),
+                    dir = dir.display(),
                     claim = path,
                 );
             }

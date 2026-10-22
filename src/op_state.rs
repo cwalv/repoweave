@@ -948,7 +948,7 @@ fn in_flight_sentence_for(dir: &Path) -> anyhow::Result<Option<String>> {
              or `rwv abort` to discard.",
             verb = record.verb,
             phase = record.phase,
-            dir = crate::path_spelling::operator_path(dir),
+            dir = dir.display(),
             resume = resume_command(record.verb),
         )));
     }
@@ -969,8 +969,8 @@ fn in_flight_sentence_for(dir: &Path) -> anyhow::Result<Option<String>> {
                      resolving, or `rwv abort` to discard.",
                     verb = record.verb,
                     phase = record.phase,
-                    dir = crate::path_spelling::operator_path(dir),
-                    owner = crate::path_spelling::operator_path(lease.owner.as_path()),
+                    dir = dir.display(),
+                    owner = lease.owner.as_path().display(),
                     resume = resume_command(record.verb),
                 )));
             }
@@ -980,8 +980,8 @@ fn in_flight_sentence_for(dir: &Path) -> anyhow::Result<Option<String>> {
                      Rerun the owning verb with `--continue` from the owner workspace, or \
                      `rwv abort` to discard.",
                     id = lease.id,
-                    dir = crate::path_spelling::operator_path(dir),
-                    owner = crate::path_spelling::operator_path(lease.owner.as_path()),
+                    dir = dir.display(),
+                    owner = lease.owner.as_path().display(),
                 )));
             }
         }
@@ -2441,7 +2441,7 @@ mod tests {
                  Rerun with `rwv sync-to --continue` from that workspace after \
                  resolving, or `rwv abort` to discard.",
                 elapsed = elapsed_since(&record.started_at),
-                dir = crate::path_spelling::operator_path(dir),
+                dir = dir.display(),
             )
         );
     }
@@ -2486,8 +2486,8 @@ mod tests {
                  Rerun with `rwv sync-to --continue` from the owner workspace after \
                  resolving, or `rwv abort` to discard.",
                 elapsed = elapsed_since(&record.started_at),
-                dir = crate::path_spelling::operator_path(&lease_dir),
-                owner = crate::path_spelling::operator_path(&owner_dir),
+                dir = lease_dir.display(),
+                owner = owner_dir.display(),
             )
         );
     }
@@ -2514,8 +2514,8 @@ mod tests {
                 "op dangling-op in progress (lease at {dir}; owner workspace: {owner}).\n\
                  Rerun the owning verb with `--continue` from the owner workspace, or \
                  `rwv abort` to discard.",
-                dir = crate::path_spelling::operator_path(dir),
-                owner = crate::path_spelling::operator_path(&owner),
+                dir = dir.display(),
+                owner = owner.display(),
             )
         );
     }

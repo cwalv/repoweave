@@ -992,7 +992,7 @@ fn sync_rebase_with_clean_cwd_but_corrupt_source_names_the_source_directory() {
         "the refusal must direct the operator at `rwv doctor --fix`; got:\n{stderr}"
     );
     assert!(
-        !stderr.contains(&repoweave::path_spelling::operator_path(&ww.project_dir)),
+        !stderr.contains(&ww.project_dir.display().to_string()),
         "the refusal must not blame ww's directory — ww's own .gitattributes is clean; \
          got:\n{stderr}"
     );

@@ -189,7 +189,7 @@ fn every_integration_names_the_canonical_path_for_an_inactive_project() {
         let canonical = common::under(&f.ws, "projects/beta").join(file);
         let expected = format!(
             "{integration} managed file missing: {}; run rwv doctor --fix to regenerate",
-            repoweave::path_spelling::operator_path(&canonical)
+            canonical.display()
         );
         assert!(
             report.contains(&expected),
@@ -226,7 +226,7 @@ fn no_finding_names_the_weave_root_view_of_an_inactive_project() {
         // is *about* the root. Only the content findings are constrained here.
         let root_view = format!(
             "managed file missing: {}",
-            repoweave::path_spelling::operator_path(&common::under(&f.ws, file))
+            common::under(&f.ws, file).display()
         );
         assert!(
             !report.contains(&root_view),
@@ -236,7 +236,7 @@ fn no_finding_names_the_weave_root_view_of_an_inactive_project() {
         );
         let root_drift = format!(
             "managed file has drift: {}",
-            repoweave::path_spelling::operator_path(&common::under(&f.ws, file))
+            common::under(&f.ws, file).display()
         );
         assert!(
             !report.contains(&root_drift),
@@ -280,9 +280,7 @@ fn an_inactive_project_is_not_verified_against_the_active_project_s_file() {
         assert!(
             report.contains(&format!(
                 "{integration} managed file missing: {}",
-                repoweave::path_spelling::operator_path(
-                    &common::under(&f.ws, "projects/beta").join(file)
-                )
+                common::under(&f.ws, "projects/beta").join(file).display()
             )),
             "beta's `{file}` is absent and must be reported; alpha's copy \
              satisfies beta's config, so through the root view this finding \
@@ -383,7 +381,7 @@ fn doctor_in_a_workweave_names_the_canonical_path_for_an_absent_file() {
     let report = rwv_in(&["doctor"], &ww);
     let expected = format!(
         "cargo-workspace managed file missing: {}; run rwv doctor --fix to regenerate",
-        repoweave::path_spelling::operator_path(&canonical)
+        canonical.display()
     );
     assert!(
         report.contains(&expected),
@@ -393,7 +391,7 @@ fn doctor_in_a_workweave_names_the_canonical_path_for_an_absent_file() {
     assert!(
         !report.contains(&format!(
             "managed file missing: {}",
-            repoweave::path_spelling::operator_path(&ww.join("Cargo.lock"))
+            ww.join("Cargo.lock").display()
         )),
         "doctor named the weave-root view, which the correct binding never reads.\n\
          got:\n{report}"

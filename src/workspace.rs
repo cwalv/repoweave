@@ -252,7 +252,7 @@ impl WorkweaveNameRecord {
                  but no entry in that project's workweave index records this directory, \
                  so rwv has no recorded name for it and will not take one from the \
                  directory name. This operation acts on that name.",
-                crate::path_spelling::operator_path(dir),
+                dir.display(),
                 project.as_str(),
             ),
         }
@@ -456,12 +456,9 @@ fn occupant_sentence(requested: &Path, listed: Option<&ListedName>) -> String {
         Some(listed) if Some(listed.as_str()) != asked => format!(
             "{} already exists — the filesystem lists it as `{listed}` and treats the \
              two spellings as one name",
-            crate::path_spelling::operator_path(requested)
+            requested.display()
         ),
-        _ => format!(
-            "{} already exists",
-            crate::path_spelling::operator_path(requested)
-        ),
+        _ => format!("{} already exists", requested.display()),
     }
 }
 
@@ -1581,7 +1578,7 @@ impl WorkspaceContext {
         if let Some(project) = self.active_project() {
             eprintln!(
                 "target: workspace {} · project {} (.rwv-active)",
-                crate::path_spelling::operator_path(self.primary_root.as_path()),
+                self.primary_root.as_path().display(),
                 project.as_str(),
             );
         }
@@ -1770,10 +1767,7 @@ impl WorkspaceContext {
         let active = self.active_project().cloned();
         match &self.checkout {
             Checkout::Primary { .. } => {
-                lines.push(format!(
-                    "Weave: {}",
-                    crate::path_spelling::operator_path(self.primary_root.as_path())
-                ));
+                lines.push(format!("Weave: {}", self.primary_root.as_path().display()));
                 if let Some(p) = &active {
                     lines.push(format!("Project: {}", p.as_str()));
                     let manifest_path =
@@ -1784,14 +1778,8 @@ impl WorkspaceContext {
                 }
             }
             Checkout::Workweave { name, dir, .. } => {
-                lines.push(format!(
-                    "Workweave: {}",
-                    crate::path_spelling::operator_path(dir.as_path())
-                ));
-                lines.push(format!(
-                    "Weave: {}",
-                    crate::path_spelling::operator_path(self.primary_root.as_path())
-                ));
+                lines.push(format!("Workweave: {}", dir.as_path().display()));
+                lines.push(format!("Weave: {}", self.primary_root.as_path().display()));
                 if let Some(p) = &active {
                     lines.push(format!("Project: {}", p.as_str()));
                     let manifest_path =

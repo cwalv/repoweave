@@ -361,10 +361,7 @@ pub(crate) fn build_command(
     resolution: Option<&Resolution>,
 ) -> Command {
     let mut cmd = plugin.command();
-    // The plugin gets its working directory in the spelling a shell would hold,
-    // never the verbatim `\\?\` form a recorded `-w` path can carry.
-    cmd.args(args)
-        .current_dir(dunce::simplified(invocation_dir));
+    cmd.args(args).current_dir(invocation_dir);
     // An inherited `PWD` names the shell's directory, not the one the plugin
     // starts in.
     #[cfg(unix)]
@@ -396,7 +393,7 @@ fn unknown_verb_error(verb: &str) -> anyhow::Error {
 fn exec_failure_error(verb: &str, plugin: &ToolProgram, err: std::io::Error) -> anyhow::Error {
     anyhow::anyhow!(
         "failed to exec `rwv-{verb}` ({}): {err:#}",
-        crate::path_spelling::operator_path(plugin.path()),
+        plugin.path().display(),
     )
 }
 
@@ -604,7 +601,7 @@ mod tests {
         let err = exec_failure_error("example", &plugin, io_err).to_string();
         assert!(err.contains("rwv-example"), "err: {err}");
         assert!(
-            err.contains(&crate::path_spelling::operator_path(plugin.path())),
+            err.contains(&plugin.path().display().to_string()),
             "err: {err}"
         );
         // io::Error's Display carries the errno-derived prose ("permission denied").
