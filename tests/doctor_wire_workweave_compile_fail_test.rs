@@ -19,9 +19,9 @@ fn missing_canonical_clone(workweave_expr: &str) -> String {
             let _ = (&project, &name);
             ViolationOutput::MissingCanonicalClone {{
                 path: String::new(),
-                absolute_path: String::new(),
+                absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new("/x")),
                 workweave: {workweave_expr},
-                canonical_path: String::new(),
+                canonical_path: repoweave::path_spelling::WirePath::of(std::path::Path::new("/x")),
             }}
         }}
         "#

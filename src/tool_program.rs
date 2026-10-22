@@ -151,7 +151,21 @@ mod tests {
 
         let program =
             ToolProgram::find_in("scripttool", &search(&[tmp.path()]), tmp.path()).unwrap();
-        let out = program.command().output().unwrap();
+        // A sibling test's fork can hold the just-written script open for
+        // writing until its exec, which the kernel reports as busy.
+        let out = (0..50)
+            .map(|_| program.command().output())
+            .find(|r| {
+                let busy = r
+                    .as_ref()
+                    .is_err_and(|e| e.kind() == std::io::ErrorKind::ExecutableFileBusy);
+                if busy {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                !busy
+            })
+            .expect("the script stops being busy")
+            .unwrap();
 
         assert!(out.status.success(), "{out:?}");
         assert!(
