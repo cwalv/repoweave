@@ -1712,7 +1712,7 @@ pub enum BranchDisciplineKind {
         /// The branch the canonical store is attached to.
         actual_branch: String,
         /// The live workweave the receipt says that ref belongs to.
-        workweave_name: String,
+        workweave: WorkweaveId,
     },
     /// (b) The canonical store is attached to a ref rwv recorded as
     /// belonging to a workweave that is **gone** — a leak.
@@ -4574,7 +4574,7 @@ struct RecordedRef {
     /// deleted workweave (or from a `--dir` placement the container scan
     /// cannot see, which stays open; that is why `None` alone never
     /// authorizes anything, only a warrant does).
-    live_workweave: Option<String>,
+    live_workweave: Option<WorkweaveId>,
 }
 
 /// One project's receipts, pre-filtered so per-store lookups can skip
@@ -4591,7 +4591,7 @@ struct RecordedProject {
     /// it unsound anyway.
     ///
     /// [`EphemeralRefName::mint`]: crate::vcs::EphemeralRefName::mint
-    live_ref_names: std::collections::HashMap<crate::vcs::RawRefName, String>,
+    live_ref_names: std::collections::HashMap<crate::vcs::RawRefName, WorkweaveId>,
 }
 
 /// The weave's ownership receipts, arranged for the
@@ -4642,7 +4642,13 @@ impl RecordedRefs {
             for workweave in live_workweave_names(ws_root, &name, dirs) {
                 if let Ok(workweave_name) = crate::manifest::WorkweaveName::new(&workweave) {
                     let minted = EphemeralRefName::mint(&name, &workweave_name);
-                    live_ref_names.insert(minted.to_raw(), workweave);
+                    live_ref_names.insert(
+                        minted.to_raw(),
+                        WorkweaveId {
+                            project: name.clone(),
+                            name: workweave_name,
+                        },
+                    );
                 }
             }
             projects.push(RecordedProject {
@@ -5151,12 +5157,10 @@ fn scan_canonical_stores(
                 // spelled, and no name shape is consulted.
                 if let Some(rec) = store_receipts.iter().find(|r| r.owned.is_attached_by(&a)) {
                     let sub_kind = match &rec.live_workweave {
-                        Some(workweave_name) => {
-                            BranchDisciplineKind::CanonicalHoldsLiveWorkweaveRef {
-                                actual_branch: rec.owned.to_string(),
-                                workweave_name: workweave_name.clone(),
-                            }
-                        }
+                        Some(workweave) => BranchDisciplineKind::CanonicalHoldsLiveWorkweaveRef {
+                            actual_branch: rec.owned.to_string(),
+                            workweave: workweave.clone(),
+                        },
                         None => BranchDisciplineKind::CanonicalHoldsLeakedRef {
                             actual_branch: rec.owned.to_string(),
                             project: rec.project.to_string(),
@@ -8356,7 +8360,7 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                         }
                         BranchDisciplineKind::CanonicalHoldsLiveWorkweaveRef {
                             actual_branch,
-                            workweave_name,
+                            workweave,
                         } => {
                             safe_to_fix = false;
                             format!(
@@ -8368,7 +8372,7 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                                  which of the two checkouts is the real one)",
                                 repo_path.display(),
                                 actual_branch,
-                                workweave_name
+                                workweave
                             )
                         }
                         BranchDisciplineKind::CanonicalHoldsLeakedRef {

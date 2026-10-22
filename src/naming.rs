@@ -411,6 +411,34 @@ impl fmt::Display for WorkweaveId {
     }
 }
 
+impl Serialize for WorkweaveId {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl schemars::JsonSchema for WorkweaveId {
+    fn schema_name() -> String {
+        "WorkweaveId".to_owned()
+    }
+
+    fn json_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+        schemars::schema::SchemaObject {
+            instance_type: Some(schemars::schema::InstanceType::String.into()),
+            metadata: Some(Box::new(schemars::schema::Metadata {
+                description: Some(
+                    "A workweave's identity: its project and its name there, as \
+                     `<project>--<name>`."
+                        .to_owned(),
+                ),
+                ..Default::default()
+            })),
+            ..Default::default()
+        }
+        .into()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The flat address, typed
 // ---------------------------------------------------------------------------

@@ -6,6 +6,14 @@ claim that nothing changed in them.
 
 ## Unreleased
 
+### Breaking: `canonical-holds-live-workweave-ref` names its workweave as `<project>--<name>`
+
+In `rwv doctor --json`, a `branch-discipline` /
+`canonical-holds-live-workweave-ref` finding carries `workweave`, the
+`<project>--<name>` identity other findings carry under that key; it carried
+`workweave_name` with the bare name, which two projects can share. The text
+output names the workweave the same way.
+
 ### Breaking: a commit a doctor finding cannot name is `null`, not `""`
 
 In `rwv doctor --json`, a `branch-discipline` / `detached` finding whose

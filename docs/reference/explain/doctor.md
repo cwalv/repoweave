@@ -635,16 +635,20 @@ Schema:
               "type": "object",
               "required": [
                 "actual_branch",
-                "workweave_name"
+                "workweave"
               ],
               "properties": {
                 "actual_branch": {
                   "description": "The branch the canonical store is attached to.",
                   "type": "string"
                 },
-                "workweave_name": {
+                "workweave": {
                   "description": "The live workweave the receipt says that ref belongs to.",
-                  "type": "string"
+                  "allOf": [
+                    {
+                      "$ref": "#/definitions/WorkweaveId"
+                    }
+                  ]
                 }
               }
             }
@@ -2949,6 +2953,10 @@ Schema:
           ]
         }
       ]
+    },
+    "WorkweaveId": {
+      "description": "A workweave's identity: its project and its name there, as `<project>--<name>`.",
+      "type": "string"
     },
     "WorkweaveTreeIntegrityKind": {
       "description": "Discriminator for `CheckViolation::WorkweaveTreeIntegrity` findings.",

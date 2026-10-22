@@ -666,7 +666,7 @@ pub fn corpus() -> Vec<CheckViolation> {
             repo_path: path("/ws/github/acme/repo"),
             sub_kind: BranchDisciplineKind::CanonicalHoldsLiveWorkweaveRef {
                 actual_branch: "proj--feat-a".into(),
-                workweave_name: "feat-a".into(),
+                workweave: workweave(),
             },
         },
         CheckViolation::BranchDiscipline {

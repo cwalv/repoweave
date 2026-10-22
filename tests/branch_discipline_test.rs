@@ -550,13 +550,10 @@ fn canonical_holding_recorded_ref_of_deleted_workweave_is_reported() {
     );
 }
 
-/// The canonical is attached to a ref recorded for a workweave
-/// that is **still on disk** — an I3 disjointness violation that only a
-/// moved or copied directory can produce. Report-only.
-#[test]
-fn canonical_holding_recorded_ref_of_live_workweave_is_reported() {
-    let tmp = common::tempdir().unwrap();
-    let ws = make_primary(tmp.path());
+/// A canonical store attached to the ref recorded for `myproj`'s workweave
+/// `feat-a`, whose directory is still on disk. Returns the primary.
+fn canonical_on_a_live_workweaves_ref(tmp: &Path) -> PathBuf {
+    let ws = make_primary(tmp);
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
 
@@ -568,6 +565,16 @@ fn canonical_holding_recorded_ref_of_live_workweave_is_reported() {
     // topology, so a directory was moved or copied.
     let ww_dir = workweaves_dir(&ws).join("myproj--feat-a");
     write_marker(&ww_dir, &ws, "myproj", &ws);
+    ws
+}
+
+/// The canonical is attached to a ref recorded for a workweave
+/// that is **still on disk** — an I3 disjointness violation that only a
+/// moved or copied directory can produce. Report-only.
+#[test]
+fn canonical_holding_recorded_ref_of_live_workweave_is_reported() {
+    let tmp = common::tempdir().unwrap();
+    let ws = canonical_on_a_live_workweaves_ref(tmp.path());
 
     let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -579,6 +586,34 @@ fn canonical_holding_recorded_ref_of_live_workweave_is_reported() {
     assert!(
         stdout.contains("which is still on disk"),
         "the report should distinguish arm 2 from arm 3; got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("recorded for workweave `myproj--feat-a`"),
+        "the workweave is named by its identity, project included; got:\n{stdout}"
+    );
+}
+
+#[test]
+fn canonical_holding_a_live_workweaves_ref_names_it_qualified_in_json() {
+    let tmp = common::tempdir().unwrap();
+    let ws = canonical_on_a_live_workweaves_ref(tmp.path());
+
+    let out = rwv()
+        .args(["doctor", "--json"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let finding = json["violations"]
+        .as_array()
+        .expect("violations is an array")
+        .iter()
+        .find_map(|v| v["sub_kind"].get("canonical-holds-live-workweave-ref"))
+        .unwrap_or_else(|| panic!("no canonical-holds-live-workweave-ref finding in {json}"));
+    assert_eq!(
+        finding["workweave"],
+        serde_json::json!("myproj--feat-a"),
+        "{finding}"
     );
 }
 
