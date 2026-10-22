@@ -2,6 +2,7 @@
 
 use crate::manifest::{Project, ProjectName, Role};
 use crate::op_state;
+use crate::parallel::OutputMode;
 use crate::path_spelling::WirePath;
 use crate::selector::RepoFilter;
 use crate::vcs::{vcs_for, CommitId, MidOperation, ResolvedRevisionId, Vcs};
@@ -233,7 +234,11 @@ fn project_names_for_ctx(ctx: &WorkspaceContext) -> Vec<ProjectName> {
 ///
 /// `ctx` is the already-resolved invocation context (with `--project` baked
 /// in when passed). Handlers must not re-resolve.
-pub fn run_status(ctx: &WorkspaceContext, json: bool, filter: &RepoFilter) -> anyhow::Result<()> {
+pub fn run_status(
+    ctx: &WorkspaceContext,
+    output: OutputMode,
+    filter: &RepoFilter,
+) -> anyhow::Result<()> {
     // When a specific project is named (via .rwv-active or --project), verify
     // it exists on disk before proceeding. When no project is active, the
     // no-active-project path in project_names_for_ctx falls back to listing
@@ -432,7 +437,7 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool, filter: &RepoFilter) -> an
 
     let op = op_state::resolve_to_owner(&workspace_dir)?;
 
-    if json {
+    if output.is_json() {
         let envelope = StatusJsonOutput {
             schema_url: STATUS_SCHEMA_URL.to_string(),
             repos: entries,

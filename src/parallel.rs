@@ -91,6 +91,28 @@ impl OutputMode {
     pub fn is_ndjson(self) -> bool {
         matches!(self, OutputMode::Ndjson)
     }
+
+    pub fn is_json(self) -> bool {
+        self != OutputMode::Text
+    }
+
+    /// The shape of the `--json` output, or `None` for text.
+    pub fn json_shape(self) -> Option<JsonShape> {
+        match self {
+            OutputMode::Text => None,
+            OutputMode::JsonEnvelope => Some(JsonShape::Envelope),
+            OutputMode::Ndjson => Some(JsonShape::Ndjson),
+        }
+    }
+}
+
+/// How `--json` output is shaped, for a runner that has no text mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JsonShape {
+    /// One pretty-printed envelope after the run completes.
+    Envelope,
+    /// One self-describing line per record, streamed as each completes.
+    Ndjson,
 }
 
 /// Output channel for per-repo progress lines.

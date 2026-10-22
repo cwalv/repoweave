@@ -12,14 +12,21 @@ fn the_harness_can_push_in_each_mode() {
     // Control: the calls the probes below break, spelled legally.
     let (compiled, stderr) = compile(
         r#"
+        use repoweave::parallel::OutputMode;
         use repoweave::push::{run_push, PushMode};
         use repoweave::selector::RepoFilter;
         use repoweave::vcs::{Force, PublishRef, Vcs};
         use repoweave::workspace::WorkspaceContext;
         use std::path::Path;
         pub fn push(ctx: &WorkspaceContext, filter: &RepoFilter) {
-            let _ = run_push(ctx, PushMode::DryRun, filter, 1, false);
-            let _ = run_push(ctx, PushMode::Publish(Force::FfOnly), filter, 1, false);
+            let _ = run_push(ctx, PushMode::DryRun, filter, 1, OutputMode::Text);
+            let _ = run_push(
+                ctx,
+                PushMode::Publish(Force::FfOnly),
+                filter,
+                1,
+                OutputMode::Text,
+            );
         }
         pub fn push_one(vcs: &dyn Vcs, repo: &Path, r: &PublishRef) {
             let _ = vcs.push_ref(repo, r, Force::FfOnly);

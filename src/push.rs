@@ -8,7 +8,7 @@
 use crate::manifest::{
     LockFile, Manifest, Project, ProjectName, RepoEntry, RepoPath, Role, VcsType,
 };
-use crate::parallel::{run_in_parallel, Reporter};
+use crate::parallel::{run_in_parallel, OutputMode, Reporter};
 use crate::refusal::RefusalKind;
 use crate::selector::RepoFilter;
 use crate::vcs::{project_vcs, vcs_for, Force, HeadAttachment, PublishRef, RawRevisionId, Vcs};
@@ -167,7 +167,7 @@ pub fn run_push(
     mode: PushMode,
     filter: &RepoFilter,
     jobs: usize,
-    json: bool,
+    output: OutputMode,
 ) -> anyhow::Result<()> {
     // 1. Workspace precondition — refuse from a workweave.
     if let Checkout::Workweave { name, dir, .. } = &ctx.checkout {
@@ -486,7 +486,6 @@ pub fn run_push(
     //    X" lines) is suppressed; the Reporter is always Serial/quiet so
     //    stdout stays clean for the JSON envelope or NDJSON records.
     let parallel = jobs > 1;
-    let ndjson = crate::parallel::OutputMode::resolve(json, jobs).is_ndjson();
     let write_lock: Mutex<()> = Mutex::new(());
 
     // Collect (path, abs_path, outcome) triples for the JSON path.
@@ -516,7 +515,7 @@ pub fn run_push(
     let plan_vcs: Vec<Box<dyn Vcs>> = plan_items.iter().map(|i| vcs_for(i.vcs_type)).collect();
 
     let raw_outcomes: Vec<PushOutcome> = run_in_parallel(&plan_items, jobs, |idx, item| {
-        let reporter = if json {
+        let reporter = if output.is_json() {
             // Under --json, suppress the text-mode chatter; records come out
             // via our own JSON/NDJSON emit after the loop. We use a silent
             // reporter so push_one's "rwv push: pushing X" lines don't
@@ -553,7 +552,7 @@ pub fn run_push(
     for (repo_path, _entry) in &default_skipped_repos {
         let path_str = repo_path.as_str().to_string();
         let abs_str = crate::path_spelling::WirePath::of(&primary_root.join(repo_path.as_path()));
-        if !json {
+        if output == OutputMode::Text {
             println!("rwv push: skipped {} (non-writable role)", path_str,);
         }
         skipped += 1;
@@ -561,7 +560,7 @@ pub fn run_push(
             path: path_str,
             absolute_path: abs_str,
         };
-        if ndjson {
+        if output.is_ndjson() {
             emit_ndjson_record(&write_lock, &wire);
         }
         json_outcomes.push(wire);
@@ -589,7 +588,7 @@ pub fn run_push(
             }
         };
 
-        if ndjson {
+        if output.is_ndjson() {
             // Stream each manifest-repo outcome immediately.
             emit_ndjson_record(&write_lock, &wire);
         }
@@ -597,7 +596,7 @@ pub fn run_push(
     }
 
     if !push_errors.is_empty() {
-        if !json {
+        if output == OutputMode::Text {
             eprintln!(
                 "rwv push: {}/{} member repo(s) failed; project repo not pushed:",
                 push_errors.len(),
@@ -610,7 +609,7 @@ pub fn run_push(
 
         // Under --json, emit whatever outcomes we have before bailing so the
         // caller gets machine-readable failure records.
-        if json && !ndjson {
+        if output == OutputMode::JsonEnvelope {
             let envelope = PushJsonOutput {
                 schema_url: PUSH_SCHEMA_URL.to_string(),
                 outcomes: json_outcomes,
@@ -628,7 +627,7 @@ pub fn run_push(
         );
     }
 
-    if !json {
+    if output == OutputMode::Text {
         if skipped > 0 {
             println!(
                 "rwv push: pushed {} member repo(s); {} skipped (non-writable role; pass --repo or --role to include)",
@@ -646,7 +645,7 @@ pub fn run_push(
     let project_path_str = project_rel_path(&project_name);
     let project_abs_str = crate::path_spelling::WirePath::of(&project_dir);
 
-    if !json {
+    if output == OutputMode::Text {
         println!(
             "rwv push: pushing project repo projects/{} ({} -> {})",
             project_name,
@@ -670,14 +669,14 @@ pub fn run_push(
         },
     };
 
-    if ndjson {
+    if output.is_ndjson() {
         emit_ndjson_record(&write_lock, &project_wire);
     }
     json_outcomes.push(project_wire);
 
     if let Err(e) = project_push_result {
         // Under --json (envelope mode), emit partial outcomes before bailing.
-        if json && !ndjson {
+        if output == OutputMode::JsonEnvelope {
             let envelope = PushJsonOutput {
                 schema_url: PUSH_SCHEMA_URL.to_string(),
                 outcomes: json_outcomes,
@@ -695,8 +694,8 @@ pub fn run_push(
     }
 
     // Emit JSON output for the success path.
-    if json {
-        if !ndjson {
+    if output.is_json() {
+        if output == OutputMode::JsonEnvelope {
             // Envelope mode: emit once at the end.
             let envelope = PushJsonOutput {
                 schema_url: PUSH_SCHEMA_URL.to_string(),

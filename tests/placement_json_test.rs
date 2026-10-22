@@ -81,9 +81,13 @@ fn init_repo(path: &Path) -> String {
 }
 
 fn entry(path: &str, url: &str) -> String {
+    entry_as(path, url, "owned")
+}
+
+fn entry_as(path: &str, url: &str, role: &str) -> String {
     format!(
         "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\n\
-         role = \"owned\"\n"
+         role = \"{role}\"\n"
     )
 }
 
@@ -294,6 +298,11 @@ fn seat_lacking_a_member(weave: &Weave) -> PathBuf {
 }
 
 fn seat_named_lacking_a_member(weave: &Weave, name: &str) -> PathBuf {
+    seat_lacking_a_member_as(weave, name, "owned")
+}
+
+/// [`seat_named_lacking_a_member`], the member held in `role`.
+fn seat_lacking_a_member_as(weave: &Weave, name: &str, role: &str) -> PathBuf {
     let seat = weave.seat(name);
     let extra = weave.primary.join(EXTRA);
     init_repo(&extra);
@@ -308,7 +317,7 @@ fn seat_named_lacking_a_member(weave: &Weave, name: &str) -> PathBuf {
         format!(
             "{}\n{}",
             entry(MEMBER, &member_url),
-            entry(EXTRA, &extra_url)
+            entry_as(EXTRA, &extra_url, role)
         ),
     )
     .unwrap();
@@ -370,6 +379,29 @@ fn fetch_in_a_seat_places_the_worktree_it_creates_in_the_envelope() {
         "the outcome names the clone the fetch aligned, not the seat's worktree:\n{context}"
     );
     assert_no_outcome_carries_files(outcomes, &context);
+}
+
+/// A `reference` member is fetched into a seat like any other, and
+/// `--no-reference` leaves it out of the seat as it leaves it out of the
+/// primary.
+#[test]
+fn fetch_in_a_seat_creates_a_reference_member_unless_no_reference_leaves_it_out() {
+    for (extra_args, created) in [(&[][..], true), (&["--no-reference"][..], false)] {
+        let weave = weave();
+        let seat = seat_lacking_a_member_as(&weave, "feat", "reference");
+        let args: Vec<&str> = ["fetch", "--json", "-j", "1"]
+            .into_iter()
+            .chain(extra_args.iter().copied())
+            .collect();
+
+        let doc = envelope(&seat, &args);
+
+        assert_eq!(
+            seat.join(EXTRA).exists(),
+            created,
+            "args {args:?}: the reference member's worktree in the seat\n{doc:#}"
+        );
+    }
 }
 
 #[test]

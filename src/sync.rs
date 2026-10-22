@@ -15,7 +15,7 @@ use crate::manifest::{
 use crate::op_state::{
     self, OpId, OpVerb, Override, Overrides, OwnerRecord, SavepointKey, SyncStrategy,
 };
-use crate::parallel::run_in_parallel;
+use crate::parallel::{run_in_parallel, JsonShape, OutputMode};
 use crate::path_spelling::CanonicalPath;
 use crate::placement::PlacementOutput;
 use crate::refusal::RefusalKind;
@@ -2857,7 +2857,7 @@ pub enum SyncRequest {
 }
 
 impl SyncRequest {
-    fn jobs(&self) -> usize {
+    pub(crate) fn jobs(&self) -> usize {
         match self {
             Self::Fresh { jobs, .. } => *jobs,
             Self::Continue { .. } => 1,
@@ -2870,12 +2870,24 @@ impl SyncRequest {
 /// `request.source` is required; there is no bare `rwv sync` that absorbs
 /// from the workweave's recorded parent. `<SOURCE>` is a required CLI
 /// argument and `rwv sync-to` is the verb that reads the parent marker.
-pub fn run_sync(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Result<()> {
-    let stdout_lock: Mutex<()> = Mutex::new(());
-    let handler = TextHandler {
-        stdout_lock: &stdout_lock,
-    };
-    run_machine(MachineVerb::Sync, ctx, request, &handler)
+///
+/// `output` is the mode the dispatcher resolved from `--json` and the
+/// request's worker count.
+pub fn run_sync(
+    ctx: &WorkspaceContext,
+    request: SyncRequest,
+    output: OutputMode,
+) -> anyhow::Result<()> {
+    match output.json_shape() {
+        Some(shape) => run_sync_json(ctx, request, shape),
+        None => {
+            let stdout_lock: Mutex<()> = Mutex::new(());
+            let handler = TextHandler {
+                stdout_lock: &stdout_lock,
+            };
+            run_machine(MachineVerb::Sync, ctx, request, &handler)
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3192,8 +3204,9 @@ fn run_preconditions_after_acquire(
     dest_project_dir: &Path,
     dest_workspace_dir: &Path,
     cli_path: &Path,
-    emit_text: bool,
+    handler: &dyn OutputHandler,
 ) -> anyhow::Result<PreconditionOutcome> {
+    let emit_text = handler.emit_text();
     // CWD project repo must not be mid-op.
     if let Some(op) = project_vcs.mid_op(cwd_project_dir) {
         crate::refuse!(
@@ -3205,7 +3218,7 @@ fn run_preconditions_after_acquire(
     // sync-to: --strategy=ff has special semantics (CWD must be strictly
     // ahead of target). Bail before any side effects on a refusal.
     if matches!(verb, MachineVerb::SyncTo) && strategy == SyncStrategy::Ff {
-        check_sync_to_ff_precondition(project_vcs, cwd_project_dir, dest_project_dir, emit_text)?;
+        check_sync_to_ff_precondition(project_vcs, cwd_project_dir, dest_project_dir)?;
     }
 
     // Pre-flight dirt scans: refuse before any mutation when
@@ -3617,7 +3630,7 @@ fn guard_and_mark<'a>(
 
     // Sibling-sync warning: only meaningful for plain sync.
     if matches!(verb, MachineVerb::Sync) {
-        warn_on_sibling_sync(cwd_ctx, &source_workspace_dir, emit_text);
+        warn_on_sibling_sync(cwd_ctx, &source_workspace_dir, handler);
     }
 
     // === Acquire op-state (atomic claim) ===
@@ -3699,7 +3712,7 @@ fn guard_and_mark<'a>(
         &dest_project_dir,
         &dest_workspace_dir,
         &cli_path,
-        emit_text,
+        handler,
     );
     let PreconditionOutcome {
         snapshot,
@@ -4236,7 +4249,11 @@ fn verbs_match(invoked: MachineVerb, recorded: MachineVerb) -> bool {
 /// Sibling-sync warning: only meaningful for plain `sync`. CWD is a workweave
 /// and source is another workweave that is NOT CWD's parent → crosses tree
 /// branches; warn (don't refuse — the operator may have a reason).
-fn warn_on_sibling_sync(cwd_ctx: &WorkspaceContext, source_workspace_dir: &Path, emit_text: bool) {
+fn warn_on_sibling_sync(
+    cwd_ctx: &WorkspaceContext,
+    source_workspace_dir: &Path,
+    handler: &dyn OutputHandler,
+) {
     if let Checkout::Workweave {
         dir: cwd_ww,
         parent: cwd_parent,
@@ -4249,7 +4266,7 @@ fn warn_on_sibling_sync(cwd_ctx: &WorkspaceContext, source_workspace_dir: &Path,
             Err(_) => return,
         };
         if let Checkout::Workweave { dir: source_ww, .. } = &source_ctx.checkout {
-            if cwd_ww != source_ww && cwd_parent != source_ww && emit_text {
+            if cwd_ww != source_ww && cwd_parent != source_ww && handler.emit_text() {
                 eprintln!(
                     "warning: syncing across workweave siblings ({} → {}); \
                      this skips the recorded parent (informational — proceeding).",
@@ -4269,7 +4286,6 @@ fn check_sync_to_ff_precondition(
     vcs: &dyn Vcs,
     cwd_project_dir: &Path,
     target_project_dir: &Path,
-    _emit_text: bool,
 ) -> anyhow::Result<()> {
     let cwd_tip = vcs
         .head_revision(cwd_project_dir)
@@ -5547,12 +5563,17 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     settle_members(
         &ctx.cwd_workspace_dir,
         &ctx.cwd_project_dir,
-        emit_text,
         &|vcs, member| vcs.resolve_savepoint(member, &ctx.savepoint_key()),
         Some(ctx.handler),
     );
 
     Ok(())
+}
+
+/// Whether settling speaks in text: a run with no handler, `rwv abort`, does,
+/// and one with a handler speaks as that handler does.
+fn settle_speaks(handler: Option<&dyn OutputHandler>) -> bool {
+    handler.is_none_or(|h| h.emit_text())
 }
 
 /// Settle every member checked out under `workspace` for the role its
@@ -5568,10 +5589,10 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 fn settle_members(
     workspace: &Path,
     project_dir: &Path,
-    emit_text: bool,
     moved_from: &dyn Fn(&dyn Vcs, &Path) -> Option<ResolvedRevisionId>,
     handler: Option<&dyn OutputHandler>,
 ) {
+    let emit_text = settle_speaks(handler);
     let Ok(manifest) = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME)) else {
         return;
     };
@@ -6032,7 +6053,6 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     settle_members(
         &ctx.dest_workspace_dir,
         &ctx.dest_project_dir,
-        emit_text,
         &|vcs, member| vcs.resolve_savepoint(member, &target_savepoint),
         Some(ctx.handler),
     );
@@ -6969,7 +6989,6 @@ fn restore_abort_workspace(
     settle_members(
         workspace_dir,
         project_dir,
-        true,
         &|vcs, member| {
             vcs.resolve_pre_abort_ref(member, &restore_key)
                 .map(|captured| captured.revision)
@@ -7283,17 +7302,18 @@ fn print_abort_noise_summary(summary: &AbortNoiseSummary) {
 /// can't even reach the per-repo loop, there are no per-repo outcomes to
 /// emit, so the structured channel has nothing to say.
 #[allow(clippy::too_many_arguments)]
-pub fn run_sync_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Result<()> {
+fn run_sync_json(
+    ctx: &WorkspaceContext,
+    request: SyncRequest,
+    shape: JsonShape,
+) -> anyhow::Result<()> {
     let records: Mutex<Vec<SyncOutcomeOutput>> = Mutex::new(Vec::new());
     let advisories: Mutex<Vec<AdvisoryOutput>> = Mutex::new(Vec::new());
     let placements: Mutex<Vec<PlacementOutput>> = Mutex::new(Vec::new());
     let members: Mutex<Vec<MemberOutput>> = Mutex::new(Vec::new());
     let complete = AtomicBool::new(false);
     let stdout_lock: Mutex<()> = Mutex::new(());
-    // This function is only reached when `--json` was passed, so `true` here
-    // is that flag — the resolved mode's only remaining variable is `jobs`.
-    let ndjson = crate::parallel::OutputMode::resolve(true, request.jobs()).is_ndjson();
-    let project_level_result = if ndjson {
+    let project_level_result = if shape == JsonShape::Ndjson {
         let handler = JsonNdjsonHandler {
             stdout_lock: &stdout_lock,
             records: &records,
@@ -7317,7 +7337,7 @@ pub fn run_sync_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Re
     let members = members.into_inner().unwrap_or_else(|e| e.into_inner());
 
     run_sync_json_impl(
-        ndjson,
+        shape,
         records,
         advisories,
         placements,
@@ -7370,7 +7390,7 @@ fn json_exit_tail(
 /// When false (sync's behavior), empty records propagates the error.
 #[allow(clippy::too_many_arguments)]
 fn run_sync_json_impl(
-    ndjson: bool,
+    shape: JsonShape,
     records: Vec<SyncOutcomeOutput>,
     advisories: Vec<AdvisoryOutput>,
     placements: Vec<PlacementOutput>,
@@ -7393,7 +7413,7 @@ fn run_sync_json_impl(
     // (NDJSON streamed each record as it arrived, so there's nothing
     // extra to write). Per the spec, NDJSON does NOT emit an
     // envelope wrapper around the stream.
-    if !ndjson {
+    if shape == JsonShape::Envelope {
         let payload = SyncJsonOutput {
             schema: schema_url.to_owned(),
             outcomes: records,
@@ -7436,12 +7456,21 @@ fn run_sync_json_impl(
 /// expressed as phases in the data-driven machine; `--continue` resumes at
 /// the recorded phase from either workspace.
 #[allow(clippy::too_many_arguments)]
-pub fn run_sync_to(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Result<()> {
-    let stdout_lock: Mutex<()> = Mutex::new(());
-    let handler = TextHandler {
-        stdout_lock: &stdout_lock,
-    };
-    run_machine(MachineVerb::SyncTo, ctx, request, &handler)
+pub fn run_sync_to(
+    ctx: &WorkspaceContext,
+    request: SyncRequest,
+    output: OutputMode,
+) -> anyhow::Result<()> {
+    match output.json_shape() {
+        Some(shape) => run_sync_to_json(ctx, request, shape),
+        None => {
+            let stdout_lock: Mutex<()> = Mutex::new(());
+            let handler = TextHandler {
+                stdout_lock: &stdout_lock,
+            };
+            run_machine(MachineVerb::SyncTo, ctx, request, &handler)
+        }
+    }
 }
 
 /// Execute `rwv sync-to <target> --json`.
@@ -7450,8 +7479,12 @@ pub fn run_sync_to(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Resu
 /// `source_workweave`, `target`, `retired`, per-outcome `step3_advance`, and
 /// `project_repo_advance`. These fields are absent from the plain
 /// `rwv sync --json` envelope ([`SyncJsonOutput`]).
-pub fn run_sync_to_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Result<()> {
-    let run = sync_to_json_run(ctx, request);
+fn run_sync_to_json(
+    ctx: &WorkspaceContext,
+    request: SyncRequest,
+    shape: JsonShape,
+) -> anyhow::Result<()> {
+    let run = sync_to_json_run(ctx, request, shape);
     if let Some(envelope) = &run.envelope {
         let out =
             serde_json::to_string_pretty(envelope).context("failed to serialize sync-to output")?;
@@ -7462,7 +7495,7 @@ pub fn run_sync_to_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow:
 
 /// What a `rwv sync-to --json` run produced, before any of it reaches stdout.
 ///
-/// [`run_sync_to_json`] is this plus a `println!` and the exit tail both JSON
+/// `run_sync_to_json` is this plus a `println!` and the exit tail both JSON
 /// emitters share. The split is what lets the envelope be read as a value: a
 /// caller that wants the machine's own answers does not have to capture fd 1,
 /// and does not lose the process to the failure exit.
@@ -7485,7 +7518,11 @@ pub struct SyncToJsonRun {
 /// delete returned. On a resumed op those differ from what the invocation
 /// carries — the op is owned by a workspace the caller need not be in, and its
 /// target is in the op record rather than in `request`.
-pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJsonRun {
+pub fn sync_to_json_run(
+    ctx: &WorkspaceContext,
+    request: SyncRequest,
+    shape: JsonShape,
+) -> SyncToJsonRun {
     let records: Mutex<Vec<SyncOutcomeOutput>> = Mutex::new(Vec::new());
     let placements: Mutex<Vec<PlacementOutput>> = Mutex::new(Vec::new());
     let members: Mutex<Vec<MemberOutput>> = Mutex::new(Vec::new());
@@ -7497,11 +7534,7 @@ pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJ
     let retired: Mutex<Option<WorkweaveName>> = Mutex::new(None);
     let resumed: Mutex<Option<op_state::OpPhase>> = Mutex::new(None);
     let stdout_lock: Mutex<()> = Mutex::new(());
-    // This function is only reached when `--json` was passed, so `true` here
-    // is that flag — the resolved mode's only remaining variable is `jobs`.
-    // A resumed op runs serially, so it always resolves to envelope mode.
-    let ndjson = crate::parallel::OutputMode::resolve(true, request.jobs()).is_ndjson();
-    let project_level_result = if ndjson {
+    let project_level_result = if shape == JsonShape::Ndjson {
         let handler = JsonNdjsonHandler {
             stdout_lock: &stdout_lock,
             records: &records,
@@ -7539,7 +7572,9 @@ pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJ
     // Nothing to describe when we never reached the per-repo loop (a
     // project-level precondition failure): the error is the whole story, and
     // the tail propagates it. A complete op is described however it exits.
-    let envelope = if ndjson || (records.is_empty() && project_level_result.is_err() && !complete) {
+    let envelope = if shape == JsonShape::Ndjson
+        || (records.is_empty() && project_level_result.is_err() && !complete)
+    {
         None
     } else {
         // Splice step3_advance into each per-outcome record.
@@ -7796,6 +7831,27 @@ mod tests {
     use crate::git::git_vcs;
     use crate::path_spelling::resolve;
     use crate::vcs::EphemeralRefName;
+
+    #[test]
+    fn settling_speaks_when_nothing_handles_the_run_and_when_the_handler_does() {
+        let stdout_lock: Mutex<()> = Mutex::new(());
+        let text = TextHandler {
+            stdout_lock: &stdout_lock,
+        };
+        let records = Mutex::new(Vec::new());
+        let ndjson = JsonNdjsonHandler {
+            stdout_lock: &stdout_lock,
+            records: &records,
+            schema_url: SYNC_RECORD_SCHEMA_URL,
+        };
+
+        assert!(settle_speaks(None), "`rwv abort` has no handler and speaks");
+        assert!(settle_speaks(Some(&text)));
+        assert!(
+            !settle_speaks(Some(&ndjson)),
+            "a JSON run keeps stdout JSON"
+        );
+    }
 
     // -----------------------------------------------------------------------
     // The parked-op decorator

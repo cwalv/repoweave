@@ -9,7 +9,7 @@
 use crate::cli::consent::DetachConsent;
 use crate::lock;
 use crate::manifest::{Project, ProjectName, RepoEntry, RepoPath};
-use crate::parallel::{run_in_parallel, run_subprocess_with_reporter, Reporter};
+use crate::parallel::{run_in_parallel, run_subprocess_with_reporter, OutputMode, Reporter};
 use crate::placement::PlacementOutput;
 use crate::selector::RepoFilter;
 use crate::vcs::{vcs_for, HeadAttachment, ResolvedRevisionId, Vcs, VcsError};
@@ -144,7 +144,7 @@ pub fn run_update(
     ctx: &WorkspaceContext,
     dirty: bool,
     commit: Option<lock::CommitMessage>,
-    json: bool,
+    output: OutputMode,
     filter: &RepoFilter,
     jobs: usize,
     detach_checkouts: Option<DetachConsent>,
@@ -169,7 +169,7 @@ pub fn run_update(
         workweave_dir.as_deref(),
         dirty,
         commit,
-        json,
+        output,
         filter,
         jobs,
         detach_checkouts,
@@ -207,7 +207,7 @@ fn update_for_project(
     workweave_dir: Option<&Path>,
     dirty: bool,
     commit: Option<lock::CommitMessage>,
-    json: bool,
+    output: OutputMode,
     filter: &RepoFilter,
     jobs: usize,
     detach_checkouts: Option<DetachConsent>,
@@ -252,7 +252,7 @@ fn update_for_project(
     let parallel = jobs > 1;
     // Under JSON mode we suppress text-mode prefix output so stdout only
     // carries structured data. Text mode uses the Reporter prefix as usual.
-    let use_reporter = !json;
+    let use_reporter = output == OutputMode::Text;
     let write_lock: Mutex<()> = Mutex::new(());
 
     let outcomes: Vec<RepoOutcome> = run_in_parallel(&work_items, jobs, |_idx, item| {
@@ -288,7 +288,6 @@ fn update_for_project(
 
     // Build JSON records if requested. We zip work_items with outcomes by
     // position (run_in_parallel preserves input order in its output).
-    let ndjson = crate::parallel::OutputMode::resolve(json, jobs).is_ndjson();
     let stdout_lock: Mutex<()> = Mutex::new(());
     let mut json_records: Vec<RepoUpdateRecord> = Vec::new();
     let mut placements: Vec<PlacementOutput> = Vec::new();
@@ -335,14 +334,14 @@ fn update_for_project(
             }
         };
 
-        if let (false, Some(files)) = (json, placed) {
+        if let (OutputMode::Text, Some(files)) = (output, placed) {
             println!("  {}: files {files}", record.path);
         }
         let placement =
             placed.map(|files| PlacementOutput::new(&item.repo_path, item.checkout.path(), files));
 
-        if json {
-            if ndjson {
+        if output.is_json() {
+            if output.is_ndjson() {
                 if let Some(placement) = &placement {
                     placement.stream(&stdout_lock);
                 }
@@ -364,7 +363,7 @@ fn update_for_project(
         }
     }
 
-    if !errors.is_empty() && !json {
+    if !errors.is_empty() && output == OutputMode::Text {
         eprintln!("rwv update: {} repo(s) failed to update:", errors.len());
         for msg in &errors {
             eprintln!("  - {msg}");
@@ -376,16 +375,16 @@ fn update_for_project(
         );
     }
 
-    if !json {
+    if output == OutputMode::Text {
         println!("rwv update: advanced {updated} repo(s)");
     }
 
     // Under JSON mode with failures: emit output first, then bail.
     // Under text mode with failures: already bailed above.
     // Under JSON mode without failures: fall through to lock write.
-    if json && !errors.is_empty() {
+    if output.is_json() && !errors.is_empty() {
         // Emit envelope (NDJSON already streamed above).
-        if !ndjson {
+        if output == OutputMode::JsonEnvelope {
             let envelope = UpdateJsonOutput {
                 schema_url: UPDATE_SCHEMA_URL.to_string(),
                 repos: json_records,
@@ -477,7 +476,7 @@ fn update_for_project(
 
     // Emit JSON envelope after lock write (so the lock is coherent before
     // consumers read the envelope). NDJSON was already streamed above.
-    if json && !ndjson {
+    if output == OutputMode::JsonEnvelope {
         let envelope = UpdateJsonOutput {
             schema_url: UPDATE_SCHEMA_URL.to_string(),
             repos: json_records,

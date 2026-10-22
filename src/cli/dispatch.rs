@@ -30,6 +30,7 @@ use crate::sync;
 use crate::update;
 
 use crate::manifest::{ProjectName, WorkweaveName};
+use crate::parallel::OutputMode;
 use crate::path_spelling::CanonicalPath;
 use crate::refusal::{refusal, RefusalKind};
 use crate::workspace::{acquire_origin_dir, WorkspaceContext};
@@ -780,10 +781,11 @@ pub fn run() -> anyhow::Result<()> {
             // Mint once from the parsed flag; the token threads down to
             // fetch_one, where it gates the realign-detach refusal.
             let detach_checkouts = consent::DetachConsent::from_flag(detach_checkouts);
-            let filter = selector.parse_filter()?;
             // The default resolves to min(nproc, 8), so --json without -j is
             // NDJSON on a multi-core host; the envelope needs an explicit -j 1.
             let jobs = crate::parallel::resolve_jobs(jobs);
+            let output = OutputMode::resolve(json, jobs);
+            let selection = fetch::MemberSelection::new(selector.parse_filter()?, no_reference);
             match source {
                 Some(src) => {
                     if project.is_some() {
@@ -803,11 +805,10 @@ pub fn run() -> anyhow::Result<()> {
                         &src,
                         origin_dir,
                         mode,
-                        no_reference,
+                        &selection,
                         detach_checkouts,
-                        &filter,
                         jobs,
-                        json,
+                        output,
                         activate::ActivateOptions { no_materialize },
                     )?;
                 }
@@ -840,11 +841,10 @@ pub fn run() -> anyhow::Result<()> {
                     fetch::run_fetch_in_place(
                         &ctx,
                         mode,
-                        no_reference,
+                        &selection,
                         detach_checkouts,
-                        &filter,
                         jobs,
-                        json,
+                        output,
                         activate::ActivateOptions { no_materialize },
                     )?;
                 }
@@ -976,7 +976,7 @@ pub fn run() -> anyhow::Result<()> {
                         }
                     }
                     Some(WorkweaveAction::Log { diff, json }) => {
-                        crate::workweave::workweave_log(&ctx, diff, json)?;
+                        crate::workweave::workweave_log(&ctx, diff, OutputMode::resolve(json, 1))?;
                     }
                     Some(WorkweaveAction::SetContainer { path }) => {
                         let recorded = crate::workweave_index::set_container(
@@ -1072,7 +1072,7 @@ pub fn run() -> anyhow::Result<()> {
             )?;
             refuse_symlinked_members_here(&ctx)?;
             let filter = selector.parse_filter()?;
-            status::run_status(&ctx, json, &filter)?;
+            status::run_status(&ctx, OutputMode::resolve(json, 1), &filter)?;
         }
         Some(Commands::Abort {
             abandon_foreign_tip,
@@ -1127,11 +1127,10 @@ pub fn run() -> anyhow::Result<()> {
                     jobs,
                 }
             };
-            if json {
-                sync::run_sync_json(&ctx, request)?;
-            } else {
-                sync::run_sync(&ctx, request)?;
-            }
+            // A resumed op runs serially, so `request.jobs()` is 1 and a
+            // resumed `--json` run is an envelope whatever `-j` said.
+            let output = OutputMode::resolve(json, request.jobs());
+            sync::run_sync(&ctx, request, output)?;
         }
         Some(Commands::SyncTo {
             target,
@@ -1200,11 +1199,8 @@ pub fn run() -> anyhow::Result<()> {
                     jobs,
                 }
             };
-            if json {
-                sync::run_sync_to_json(&ctx, request)?;
-            } else {
-                sync::run_sync_to(&ctx, request)?;
-            }
+            let output = OutputMode::resolve(json, request.jobs());
+            sync::run_sync_to(&ctx, request, output)?;
         }
         Some(Commands::Push {
             project,
@@ -1235,7 +1231,7 @@ pub fn run() -> anyhow::Result<()> {
                         .map_or(crate::vcs::Force::FfOnly, crate::vcs::Force::Overwrite),
                 )
             };
-            push::run_push(&ctx, mode, &filter, jobs, json)?;
+            push::run_push(&ctx, mode, &filter, jobs, OutputMode::resolve(json, jobs))?;
         }
         Some(Commands::Update {
             dirty,
@@ -1267,7 +1263,7 @@ pub fn run() -> anyhow::Result<()> {
                 &ctx,
                 dirty,
                 commit,
-                json,
+                OutputMode::resolve(json, jobs),
                 &filter,
                 jobs,
                 detach_checkouts,

@@ -154,20 +154,57 @@ fn resolve_source(source: &str) -> anyhow::Result<registry::CloneUrl> {
     Ok(registry::resolve_to_clone_info(&parsed)?.url)
 }
 
+/// Which members of a manifest a fetch acts on: the ones `--role` and `--repo`
+/// name, less the `reference`-role ones under `--no-reference`. Decided once,
+/// where the flags are parsed; every step of the fetch asks it.
+#[derive(Debug, Clone)]
+pub struct MemberSelection {
+    filter: RepoFilter,
+    skip_reference: bool,
+}
+
+impl MemberSelection {
+    pub fn new(filter: RepoFilter, no_reference: bool) -> Self {
+        Self {
+            filter,
+            skip_reference: no_reference,
+        }
+    }
+
+    /// Whether `--role` / `--repo` name this member, or name none at all.
+    fn names(&self, repo_path: &RepoPath, role: Role) -> bool {
+        self.filter.matches(repo_path, role)
+    }
+
+    /// Whether `--no-reference` opts this member out of the fetch.
+    fn leaves_out(&self, role: Role) -> bool {
+        self.skip_reference && role == Role::Reference
+    }
+
+    /// Whether the fetch acts on this member.
+    fn covers(&self, repo_path: &RepoPath, role: Role) -> bool {
+        self.names(repo_path, role) && !self.leaves_out(role)
+    }
+
+    /// Whether no `--role` or `--repo` narrows the fetch.
+    fn names_every_member(&self) -> bool {
+        self.filter.is_empty()
+    }
+}
+
 /// Validate that a lock file covers all repos in the manifest.
 ///
 /// Returns a list of repo paths present in the manifest but missing from the lock.
-/// When `no_reference` is set, `reference`-role repos are excluded from the
-/// check — the user has opted out of fetching them, so missing lock entries
-/// for them shouldn't fail `--frozen`.
+/// A member the selection leaves out is not checked — the user has opted out
+/// of fetching it, so a missing lock entry for it shouldn't fail `--frozen`.
 fn find_incomplete_repos(
     manifest: &Manifest,
     lock: &LockFile,
-    no_reference: bool,
+    selection: &MemberSelection,
 ) -> Vec<RepoPath> {
     manifest
         .iter_entries()
-        .filter(|(_, entry)| !(no_reference && entry.role == Role::Reference))
+        .filter(|(_, entry)| !selection.leaves_out(entry.role))
         .map(|(rp, _)| rp)
         .filter(|rp| !lock.contains_repo(rp))
         .cloned()
@@ -207,7 +244,7 @@ enum FetchOutcome {
 /// validating the lock, writing the lock at the end, auto-activate) all
 /// happen serially.
 ///
-/// When `json` is `true`:
+/// When `output` is a JSON mode:
 /// - `jobs == 1`: emits a single `{ "$schema": ..., "outcomes":
 ///   [...] }` envelope to stdout after all repos complete.
 /// - `jobs > 1`: streams one self-describing NDJSON line per repo to stdout
@@ -217,11 +254,10 @@ pub fn run_fetch(
     source: &str,
     workspace_root: &Path,
     mode: FetchMode,
-    no_reference: bool,
+    selection: &MemberSelection,
     detach_checkouts: Option<DetachConsent>,
-    filter: &RepoFilter,
     jobs: usize,
-    json: bool,
+    output: OutputMode,
     activation: ActivateOptions,
 ) -> anyhow::Result<()> {
     let project_vcs = project_vcs();
@@ -244,7 +280,7 @@ pub fn run_fetch(
     } else {
         // In JSON mode, project-level progress goes to stderr so stdout stays
         // JSON-only. In text mode it goes to stdout as before.
-        if json {
+        if output.is_json() {
             eprintln!("rwv fetch: cloning project '{}'", name);
         } else {
             println!("rwv fetch: cloning project '{}'", name);
@@ -278,18 +314,17 @@ pub fn run_fetch(
         &project_dir,
         workspace_root,
         mode,
-        no_reference,
+        selection,
         detach_checkouts,
-        filter,
         jobs,
-        json,
+        output,
         Some(activation),
         // Source-mode fetch runs before any WorkspaceContext is resolved; no
         // resolution block is available at this point.
         None,
     )?
     .envelope;
-    if OutputMode::resolve(json, jobs) == OutputMode::JsonEnvelope {
+    if output == OutputMode::JsonEnvelope {
         envelope.print()?;
     }
     Ok(())
@@ -330,11 +365,10 @@ pub fn run_fetch(
 pub fn run_fetch_in_place(
     ctx: &WorkspaceContext,
     mode: FetchMode,
-    no_reference: bool,
+    selection: &MemberSelection,
     detach_checkouts: Option<DetachConsent>,
-    filter: &RepoFilter,
     jobs: usize,
-    json: bool,
+    output: OutputMode,
     activation: ActivateOptions,
 ) -> anyhow::Result<()> {
     let invocation = ctx;
@@ -368,16 +402,14 @@ pub fn run_fetch_in_place(
         &project_dir,
         workspace_root,
         mode,
-        no_reference,
+        selection,
         detach_checkouts,
-        filter,
         jobs,
-        json,
+        output,
         None,
         ctx.resolution(),
     )?;
 
-    let output = OutputMode::resolve(json, jobs);
     let created = match &ctx.checkout {
         Checkout::Workweave {
             name: workweave,
@@ -389,8 +421,7 @@ pub fn run_fetch_in_place(
             &name,
             workweave.require(dir.as_path(), project)?,
             &project_dir,
-            no_reference,
-            filter,
+            selection,
             output,
             &mut envelope.placements,
         ),
@@ -460,8 +491,7 @@ fn materialize_workweave_members(
     project: &crate::manifest::ProjectName,
     workweave: &crate::manifest::WorkweaveName,
     project_dir: &Path,
-    no_reference: bool,
-    filter: &RepoFilter,
+    selection: &MemberSelection,
     output: OutputMode,
     placements: &mut Vec<PlacementOutput>,
 ) -> anyhow::Result<bool> {
@@ -474,8 +504,7 @@ fn materialize_workweave_members(
     let mut failures: Vec<String> = Vec::new();
     let mut created = false;
     for (repo_path, entry) in manifest.iter_entries() {
-        if !filter.matches(repo_path, entry.role) || (no_reference && entry.role == Role::Reference)
-        {
+        if !selection.covers(repo_path, entry.role) {
             continue;
         }
         let Some(pin) = lock.get_entry(repo_path) else {
@@ -556,11 +585,10 @@ fn fetch_project_repos(
     project_dir: &Path,
     workspace_root: &Path,
     mode: FetchMode,
-    no_reference: bool,
+    selection: &MemberSelection,
     detach_checkouts: Option<DetachConsent>,
-    filter: &RepoFilter,
     jobs: usize,
-    json: bool,
+    output: OutputMode,
     auto_activate: Option<ActivateOptions>,
     resolution: Option<Resolution>,
 ) -> anyhow::Result<FetchRun> {
@@ -593,7 +621,7 @@ fn fetch_project_repos(
                     ),
                 )
             })?;
-            let missing = find_incomplete_repos(&manifest, lock, no_reference);
+            let missing = find_incomplete_repos(&manifest, lock, selection);
             if !missing.is_empty() {
                 let names: Vec<&str> = missing.iter().map(|rp| rp.as_str()).collect();
                 crate::refuse!(
@@ -637,19 +665,17 @@ fn fetch_project_repos(
     // `src/selector.rs` for the grammar and union semantics.
     let work_items: Vec<(RepoPath, RepoEntry, Box<dyn Vcs>)> = manifest
         .iter_entries()
-        .filter(|(rp, entry)| filter.matches(rp, entry.role))
+        .filter(|(rp, entry)| selection.names(rp, entry.role))
         .map(|(rp, e)| (rp.clone(), e.clone(), vcs_for(e.vcs_type)))
         .collect();
 
     let parallel = jobs > 1;
     let write_lock: Mutex<()> = Mutex::new(());
 
-    let ndjson = crate::parallel::OutputMode::resolve(json, jobs).is_ndjson();
-
     let outcomes: Vec<(FetchOutcome, Option<crate::share::FilePlacement>, bool)> =
         run_in_parallel(&work_items, jobs, |_idx, item| {
             let (repo_path, entry, vcs) = item;
-            let reporter = if parallel && !json {
+            let reporter = if parallel && output == OutputMode::Text {
                 // Text parallel mode: use prefixed reporter.
                 Reporter::parallel(repo_path.as_str().to_string(), &write_lock)
             } else if parallel {
@@ -668,10 +694,10 @@ fn fetch_project_repos(
                 entry,
                 workspace_root,
                 existing_lock.as_ref(),
-                no_reference,
+                selection,
                 detach_checkouts,
                 &reporter,
-                json,
+                output,
             );
             let (outcome, files) = match outcome {
                 FetchOutcome::Ok { .. } => {
@@ -696,7 +722,7 @@ fn fetch_project_repos(
                 && before != vcs.head_revision(&member).ok();
 
             // NDJSON mode: emit one line per repo as soon as it finishes.
-            if ndjson {
+            if output.is_ndjson() {
                 if let Some(files) = files {
                     PlacementOutput::new(repo_path, &member, files).stream(&write_lock);
                 }
@@ -764,10 +790,10 @@ fn fetch_project_repos(
                 if let Some(rp) = add_to_lock {
                     added_to_lock.push(rp.clone());
                 }
-                if let (false, Some(files)) = (json, files) {
+                if let (OutputMode::Text, Some(files)) = (output, files) {
                     println!("rwv fetch: {repo_path}: files {files}");
                 }
-                if json && !ndjson {
+                if output == OutputMode::JsonEnvelope {
                     envelope_records.push(FetchOutcomeOutput {
                         path: repo_path.to_string(),
                         absolute_path: abs_path,
@@ -782,7 +808,7 @@ fn fetch_project_repos(
                 }
             }
             FetchOutcome::Skipped => {
-                if json && !ndjson {
+                if output == OutputMode::JsonEnvelope {
                     envelope_records.push(FetchOutcomeOutput {
                         path: repo_path.to_string(),
                         absolute_path: abs_path,
@@ -792,11 +818,11 @@ fn fetch_project_repos(
                 }
             }
             FetchOutcome::Failed { msg } => {
-                if !json {
+                if output == OutputMode::Text {
                     eprintln!("rwv fetch: error: {msg}");
                 }
                 errors.push(msg.clone());
-                if json && !ndjson {
+                if output == OutputMode::JsonEnvelope {
                     envelope_records.push(FetchOutcomeOutput {
                         path: repo_path.to_string(),
                         absolute_path: abs_path,
@@ -811,10 +837,10 @@ fn fetch_project_repos(
     // Summary (text mode only; JSON mode consumers check `status` fields).
     let total = succeeded + errors.len();
     if !errors.is_empty() {
-        if json {
+        if output.is_json() {
             // In JSON mode, emit the envelope/NDJSON before exiting so
             // consumers always get parseable output even on partial failure.
-            if !ndjson {
+            if output == OutputMode::JsonEnvelope {
                 let _ = envelope.print();
             }
             // NDJSON records were already streamed; nothing extra to emit.
@@ -838,7 +864,7 @@ fn fetch_project_repos(
         )
     }
 
-    if !json {
+    if output == OutputMode::Text {
         println!("rwv fetch: done ({succeeded} repo(s) ready)");
     }
 
@@ -852,22 +878,17 @@ fn fetch_project_repos(
     // the lock-write entirely under a filter: the filtered fetch is a
     // targeted-sync operation, not a lock-bumping one. Use `rwv update` or
     // unfiltered `rwv fetch` to refresh the lock.
-    if mode == FetchMode::Default && filter.is_empty() {
+    if mode == FetchMode::Default && selection.names_every_member() {
         let needs_bootstrap = existing_lock.is_none();
         let has_additions = !added_to_lock.is_empty();
 
         // generate_lock walks every entry in the manifest and runs
-        // `git rev-parse HEAD` against each on-disk repo. When --no-reference
-        // is set, reference repos were skipped above and their directories
-        // don't exist on disk — drop them from the manifest used for lock
-        // generation so we don't trip on the missing paths.
-        let lock_manifest = if no_reference {
-            let mut filtered = manifest.clone();
-            filtered.retain_repos(|_, entry| entry.role != Role::Reference);
-            std::borrow::Cow::Owned(filtered)
-        } else {
-            std::borrow::Cow::Borrowed(&manifest)
-        };
+        // `git rev-parse HEAD` against each on-disk repo. A member the
+        // selection leaves out was skipped above and its directory may not
+        // exist on disk — drop it from the manifest used for lock generation
+        // so we don't trip on the missing path.
+        let mut lock_manifest = manifest.clone();
+        lock_manifest.retain_repos(|_, entry| !selection.leaves_out(entry.role));
 
         if needs_bootstrap {
             // Snapshot the full set of manifest repos from disk.
@@ -912,7 +933,7 @@ fn fetch_project_repos(
             Some(active) => {
                 let skip = SkippedEffect::activation_while_active(&active, name);
                 // Route to stderr in JSON mode so stdout stays JSON-only.
-                if json {
+                if output.is_json() {
                     eprintln!("{}", skip.line());
                 } else {
                     println!("{}", skip.line());
@@ -1069,7 +1090,7 @@ fn realign_present_clone(
 /// Returns [`FetchOutcome`]. The caller threads `add_to_lock` into the
 /// post-join lock-write step and aggregates failures.
 ///
-/// When `json` is `true`, progress lines are emitted to stderr (via
+/// When `output` is a JSON mode, progress lines are emitted to stderr (via
 /// `reporter.err`) rather than stdout, so that stdout carries only
 /// machine-readable JSON output.
 #[allow(clippy::too_many_arguments)]
@@ -1079,21 +1100,21 @@ fn fetch_one(
     entry: &RepoEntry,
     workspace_root: &Path,
     existing_lock: Option<&LockFile>,
-    no_reference: bool,
+    selection: &MemberSelection,
     detach_checkouts: Option<DetachConsent>,
     reporter: &Reporter<'_>,
-    json: bool,
+    output: OutputMode,
 ) -> FetchOutcome {
     // Helper: route progress to stdout (text mode) or stderr (JSON mode).
     let emit = |msg: &str| {
-        if json {
+        if output.is_json() {
             reporter.err(msg);
         } else {
             reporter.out(msg);
         }
     };
 
-    if no_reference && entry.role == Role::Reference {
+    if selection.leaves_out(entry.role) {
         emit(&format!(
             "rwv fetch: skipping {} (role: reference)",
             repo_path.as_str()
@@ -1292,6 +1313,13 @@ mod tests {
         }
     }
 
+    fn selection(no_reference: bool) -> MemberSelection {
+        MemberSelection::new(
+            RepoFilter::parse(&[], &[]).expect("an empty filter parses"),
+            no_reference,
+        )
+    }
+
     fn make_lock_entry() -> crate::manifest::LockEntry {
         crate::manifest::LockEntry {
             vcs_type: crate::manifest::VcsType::Git,
@@ -1322,7 +1350,7 @@ mod tests {
         };
         lock.repositories.insert(primary, make_lock_entry());
 
-        let incomplete = find_incomplete_repos(&manifest, &lock, false);
+        let incomplete = find_incomplete_repos(&manifest, &lock, &selection(false));
         assert_eq!(incomplete, vec![reference]);
     }
 
@@ -1348,7 +1376,7 @@ mod tests {
         lock.repositories.insert(primary, make_lock_entry());
 
         // With no_reference=true, the missing reference entry is not flagged.
-        let incomplete = find_incomplete_repos(&manifest, &lock, true);
+        let incomplete = find_incomplete_repos(&manifest, &lock, &selection(true));
         assert!(incomplete.is_empty(), "expected empty, got {incomplete:?}");
     }
 

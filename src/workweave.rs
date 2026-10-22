@@ -3775,12 +3775,12 @@ fn missing_checkout_note(which: &str, path: &Path) -> String {
 /// All VCS specifics are delegated to the [`Vcs`] impl for each repo's
 /// `vcs_type` via `vcs_for`; this function stays VCS-agnostic.
 ///
-/// `cwd` must be inside a workweave. `diff` selects diff mode; `json` selects
-/// machine output.
+/// `cwd` must be inside a workweave. `diff` selects diff mode; a JSON `mode`
+/// selects machine output.
 pub fn workweave_log(
     ctx: &crate::workspace::WorkspaceContext,
     diff: bool,
-    json: bool,
+    mode: crate::parallel::OutputMode,
 ) -> anyhow::Result<()> {
     use crate::workspace::Checkout;
 
@@ -3981,7 +3981,7 @@ pub fn workweave_log(
         project_repo,
     };
 
-    if json {
+    if mode.is_json() {
         let out = serde_json::to_string_pretty(&output)
             .context("failed to serialize workweave log to JSON")?;
         println!("{out}");

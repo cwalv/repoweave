@@ -284,9 +284,11 @@ above are pinned by `tests/concurrency_boundaries_test.rs`.
 
 ## 5. The sync phase machine
 
-`sync` and `sync-to` are one machine. `src/sync.rs` exposes four public entry
-points — `run_sync`, `run_sync_json`, `run_sync_to`, `run_sync_to_json` — that all delegate to one private
-driver, `run_machine`.
+`sync` and `sync-to` are one machine. `src/sync.rs` exposes two verb entry
+points, `run_sync` and `run_sync_to`, each handed the `OutputMode` the
+dispatcher resolved. Text runs the machine under a text handler, and a JSON mode
+under the envelope or NDJSON one (`JsonShape`). Every route delegates to one
+private driver, `run_machine`.
 
 ### Shape
 
