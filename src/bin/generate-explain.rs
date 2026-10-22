@@ -1677,7 +1677,7 @@ fn check_vcs_seam_bypasses(src_dir: &Path) -> Vec<String> {
             .unwrap_or(&path)
             .to_string_lossy()
             .replace('\\', "/");
-        if rel == "git.rs" {
+        if rel == "git.rs" || rel.starts_with("git/") {
             continue;
         }
         let content = match std::fs::read_to_string(&path) {
@@ -5963,12 +5963,18 @@ mod tests {
         );
     }
 
-    /// `src/vcs.rs` resolves backends; `src/git.rs` is the seam itself.
+    /// `src/vcs.rs` resolves backends; `src/git.rs` and the modules under
+    /// `src/git/` are the seam itself.
     #[test]
     fn vcs_seam_check_allows_the_resolver_and_the_backend_module() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let src = tmp.path().join("src");
-        fs::create_dir_all(&src).unwrap();
+        fs::create_dir_all(src.join("git")).unwrap();
+        fs::write(
+            src.join("git/argv.rs"),
+            "fn new() { let _ = std::process::Command::new(\"git\"); }\n",
+        )
+        .unwrap();
         fs::write(
             src.join("vcs.rs"),
             "pub fn project_vcs() -> Box<dyn Vcs> { crate::git::git_vcs() }\n",

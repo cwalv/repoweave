@@ -18,36 +18,30 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-/// `GIT_*` environment variables that git itself sets for hooks (and that
-/// other tooling sometimes sets) which silently misdirect any subprocess
-/// `git` invocation if inherited.
-const GIT_ENV_VARS: &[&str] = &[
-    "GIT_DIR",
-    "GIT_WORK_TREE",
-    "GIT_INDEX_FILE",
-    "GIT_PREFIX",
-    "GIT_OBJECT_DIRECTORY",
-    "GIT_COMMON_DIR",
-    "GIT_NAMESPACE",
-    "GIT_CEILING_DIRECTORIES",
-    "GIT_DISCOVERY_ACROSS_FILESYSTEM",
-];
+mod argv;
 
-/// Build a `git` command with all inherited `GIT_*` environment variables
-/// stripped. rwv resolves its own paths via `WorkspaceContext`; inheriting
-/// these vars from the surrounding process (a `pre-push` hook, another git
-/// invocation, etc.) makes subprocess `git` operate on the wrong repo
-/// regardless of the `current_dir` we set.
+use argv::{Argv, GitArg, GitCommand, NotUtf8};
+
+/// A `git` command with all inherited `GIT_*` environment variables
+/// stripped.
 ///
 /// Private to this module, which is what keeps git's argv here: a frame
 /// elsewhere cannot assemble one, so `error[E0603]` answers "did anyone spell
 /// a git command outside the seam" without a text scan having to.
-fn git_command() -> Command {
-    let mut cmd = Command::new("git");
-    for var in GIT_ENV_VARS {
-        cmd.env_remove(var);
+fn git_command() -> GitCommand {
+    GitCommand::new()
+}
+
+impl From<NotUtf8> for VcsError {
+    fn from(e: NotUtf8) -> VcsError {
+        VcsError::Io {
+            ctx: format!("{} {} is not valid UTF-8", e.subject(), e.path().display()),
+            source: std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("non-utf8 {}", e.subject()),
+            ),
+        }
     }
-    cmd
 }
 
 /// [`git_command`] for a `#[cfg(test)]` module that drives a real repo to set
@@ -63,7 +57,7 @@ fn git_command() -> Command {
 /// the shipped binary — widening it cannot widen production's reach.
 #[cfg(test)]
 pub(crate) fn git_command_in_test() -> Command {
-    git_command()
+    git_command().into_command()
 }
 
 /// The two line-ending configurations a checkout meets in practice. A fixture
@@ -124,29 +118,6 @@ macro_rules! under_both_line_endings {
 }
 #[cfg(test)]
 pub(crate) use under_both_line_endings;
-
-/// The one conversion from a path to a `git` argument, and the reason it is
-/// one: git refuses an argument in the Windows `\\?\` extended-length
-/// spelling — `git worktree add //?/C:/…` fails outright — and a weave root
-/// read from a record can carry it, so the prefix comes off here.
-///
-/// `dunce::simplified` drops the prefix only where Windows itself accepts the
-/// short form — not over the legacy length limit, not a UNC share, not a
-/// reserved device name — and is the identity on every other platform, so a
-/// caller states no `cfg`.
-///
-/// `subject` names the path to the operator when it is not valid UTF-8.
-fn path_as_git_arg<'a>(path: &'a Path, subject: &str) -> Result<&'a str, VcsError> {
-    dunce::simplified(path)
-        .to_str()
-        .ok_or_else(|| VcsError::Io {
-            ctx: format!("{subject} {} is not valid UTF-8", path.display()),
-            source: std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!("non-utf8 {subject}"),
-            ),
-        })
-}
 
 /// The one remote name this backend clones to, resolves against, and
 /// pushes to.
@@ -385,8 +356,8 @@ pub fn read_committed_gitattributes(repo: &Path) -> Result<Option<String>, VcsEr
 /// so its bail message can direct the operator at `rwv doctor --fix` for
 /// migration rather than the generic "add the line" fix.
 pub fn has_committed_legacy_replay_exclusion(repo: &Path, path: &Path) -> Result<bool, VcsError> {
-    let path_str = path_as_git_arg(path, "replay-exclusion path")?;
-    let legacy = legacy_rwv_replay_exclusion_needle(path_str);
+    let path_arg = GitArg::from_path(path, "replay-exclusion path")?;
+    let legacy = legacy_rwv_replay_exclusion_needle(path_arg.as_str());
     let content = match read_committed_gitattributes(repo)? {
         Some(c) => c,
         None => return Ok(false),
@@ -694,7 +665,11 @@ pub fn index_tree_state(repo: &Path) -> IndexTreeState {
     if index_matches_head(repo) {
         return IndexTreeState::MatchesHead;
     }
-    let index_tree = match git_command().arg("write-tree").current_dir(repo).output() {
+    let index_tree = match git_command()
+        .args(["write-tree"])
+        .current_dir(repo)
+        .output()
+    {
         Ok(out) if out.status.success() => String::from_utf8(out.stdout)
             .unwrap_or_default()
             .trim()
@@ -723,7 +698,7 @@ pub fn index_tree_state(repo: &Path) -> IndexTreeState {
 
 /// Reset the index to HEAD, leaving the working tree and HEAD untouched.
 pub fn reset_index(repo: &Path) -> Result<(), VcsError> {
-    GitVcs::run(&["reset"], repo).map(|_| ())
+    GitVcs::run(["reset"], repo).map(|_| ())
 }
 
 /// Classify the working tree against HEAD and recent history.
@@ -815,7 +790,7 @@ pub fn working_tree_state(repo: &Path) -> WorkingTreeState {
 
 /// Every tracked path whose working-tree content differs from HEAD.
 pub fn paths_differing_from_head(repo: &Path) -> Result<Vec<String>, VcsError> {
-    let out = GitVcs::run_trimmed(&["diff-index", "--name-only", "HEAD"], repo)?;
+    let out = GitVcs::run_trimmed(["diff-index", "--name-only", "HEAD"], repo)?;
     Ok(out
         .lines()
         .map(str::trim)
@@ -856,7 +831,7 @@ pub fn fetch_all_prune_command(repo: &Path) -> Command {
     let mut cmd = git_command();
     cmd.args(["fetch", "--all", "--tags", "--prune"])
         .current_dir(repo);
-    cmd
+    cmd.into_command()
 }
 
 /// The only way to obtain a git backend from outside this module.
@@ -879,9 +854,10 @@ impl GitVcs {
     /// that can detect more specific failures (revision not found, branch
     /// already exists, ...) should match on the resulting `CommandFailed`
     /// stderr and remap.
-    fn run(args: &[&str], dir: &Path) -> Result<String, VcsError> {
+    fn run(args: impl Into<Argv>, dir: &Path) -> Result<String, VcsError> {
+        let args = args.into();
         let output = git_command()
-            .args(args)
+            .args(&args)
             .current_dir(dir)
             .output()
             .map_err(|e| VcsError::Io {
@@ -892,20 +868,20 @@ impl GitVcs {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
             return Err(VcsError::CommandFailed {
-                args: args.iter().map(|s| (*s).to_owned()).collect(),
+                args: args.into_words(),
                 repo: dir.to_path_buf(),
                 stderr,
             });
         }
 
         String::from_utf8(output.stdout).map_err(|_| VcsError::CommandFailed {
-            args: args.iter().map(|s| (*s).to_owned()).collect(),
+            args: args.into_words(),
             repo: dir.to_path_buf(),
             stderr: "git output not valid UTF-8".to_string(),
         })
     }
 
-    fn run_trimmed(args: &[&str], dir: &Path) -> Result<String, VcsError> {
+    fn run_trimmed(args: impl Into<Argv>, dir: &Path) -> Result<String, VcsError> {
         Self::run(args, dir).map(|s| s.trim().to_string())
     }
 }
@@ -919,11 +895,12 @@ const UNWRITTEN_REGISTRATION_POLL: std::time::Duration = std::time::Duration::fr
 impl GitVcs {
     /// [`GitVcs::run`] for a git command that reads the repo's worktree
     /// registrations before it changes anything.
-    fn run_awaiting_peers(args: &[&str], dir: &Path) -> Result<String, VcsError> {
-        Self::awaiting_peer_registration(dir, UNWRITTEN_REGISTRATION_WAIT, || Self::run(args, dir))
+    fn run_awaiting_peers(args: impl Into<Argv>, dir: &Path) -> Result<String, VcsError> {
+        let args = args.into();
+        Self::awaiting_peer_registration(dir, UNWRITTEN_REGISTRATION_WAIT, || Self::run(&args, dir))
     }
 
-    fn run_trimmed_awaiting_peers(args: &[&str], dir: &Path) -> Result<String, VcsError> {
+    fn run_trimmed_awaiting_peers(args: impl Into<Argv>, dir: &Path) -> Result<String, VcsError> {
         Self::run_awaiting_peers(args, dir).map(|s| s.trim().to_string())
     }
 
@@ -991,7 +968,7 @@ impl GitVcs {
     /// that is empty right now.
     fn unwritten_registration(dir: &Path) -> Option<PathBuf> {
         let common = Self::run_trimmed(
-            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            ["rev-parse", "--path-format=absolute", "--git-common-dir"],
             dir,
         )
         .ok()?;
@@ -1110,7 +1087,7 @@ impl GitVcs {
         }
 
         let arriving = Self::run(
-            &[
+            [
                 "diff",
                 "--name-only",
                 "--diff-filter=A",
@@ -1144,7 +1121,7 @@ impl GitVcs {
     fn rev_parse(repo: &Path, rev: &str) -> Result<CommitId, VcsError> {
         let deref = format!("{rev}^{{commit}}");
         let args = ["rev-parse", "--verify", &deref];
-        commit_id_printed(&Self::run_trimmed(&args, repo)?, &args, repo)
+        commit_id_printed(&Self::run_trimmed(args, repo)?, &args, repo)
     }
 
     /// Compute the merge-base (common ancestor) of `a` and `b` in `repo`.
@@ -1155,7 +1132,7 @@ impl GitVcs {
     /// shows phantom reversals of the work the parent gained in the meantime.
     fn merge_base(repo: &Path, a: &CommitId, b: &CommitId) -> Result<CommitId, VcsError> {
         let args = ["merge-base", a.as_str(), b.as_str()];
-        commit_id_printed(&Self::run_trimmed(&args, repo)?, &args, repo)
+        commit_id_printed(&Self::run_trimmed(args, repo)?, &args, repo)
     }
 
     /// List the commits reachable from `to` but not from `from` in `repo`,
@@ -1199,7 +1176,7 @@ impl GitVcs {
     /// workweave's unique work with no phantom reversals.
     fn diff_range(repo: &Path, from: &CommitId, to: &CommitId) -> Result<String, VcsError> {
         let range = format!("{from}..{to}");
-        Self::run_trimmed(&["diff", &range], repo)
+        Self::run_trimmed(["diff", &range], repo)
     }
 
     /// The directory to run ref-level git commands in for a canonical
@@ -1248,7 +1225,7 @@ impl GitVcs {
     /// the bisect with nothing to resume from. That is the state the
     /// detached-MOVE precondition exists to see.
     pub fn mid_op_state(repo: &Path) -> Option<MidOperation> {
-        let git_dir = match Self::run_trimmed(&["rev-parse", "--git-dir"], repo) {
+        let git_dir = match Self::run_trimmed(["rev-parse", "--git-dir"], repo) {
             Ok(s) => {
                 let p = std::path::PathBuf::from(&s);
                 if p.is_absolute() {
@@ -1291,7 +1268,7 @@ impl GitVcs {
         let fallback = "see in-flight rebase state for conflicting paths".to_owned();
 
         // Resolve the .git directory so we can locate rebase-merge/stopped-sha.
-        let git_dir = match Self::run_trimmed(&["rev-parse", "--git-dir"], repo) {
+        let git_dir = match Self::run_trimmed(["rev-parse", "--git-dir"], repo) {
             Ok(s) => {
                 let p = std::path::PathBuf::from(s.trim());
                 if p.is_absolute() {
@@ -1315,7 +1292,7 @@ impl GitVcs {
         };
         let short_sha = stopped.short();
 
-        let subject = match Self::run_trimmed(&["log", "-1", "--format=%s", stopped.as_str()], repo)
+        let subject = match Self::run_trimmed(["log", "-1", "--format=%s", stopped.as_str()], repo)
         {
             Ok(s) => s.trim().to_owned(),
             Err(_) => return format!("commit {short_sha}"),
@@ -1351,7 +1328,7 @@ impl GitVcs {
             return (commits, total);
         }
         let range = format!("{from}..{to}");
-        let total = Self::run_trimmed(&["rev-list", "--count", &range], repo)
+        let total = Self::run_trimmed(["rev-list", "--count", &range], repo)
             .ok()
             .and_then(|s| s.trim().parse::<usize>().ok())
             .unwrap_or(commits.len());
@@ -1367,14 +1344,14 @@ impl GitVcs {
     /// Returns `(0, 0)` on any git error.
     fn ahead_behind_impl(repo: &Path, savepoint: &CommitId, tip: &CommitId) -> (usize, usize) {
         let ahead = Self::run_trimmed(
-            &["rev-list", "--count", &format!("{savepoint}..{tip}")],
+            ["rev-list", "--count", &format!("{savepoint}..{tip}")],
             repo,
         )
         .ok()
         .and_then(|s| s.trim().parse::<usize>().ok())
         .unwrap_or(0);
         let behind = Self::run_trimmed(
-            &["rev-list", "--count", &format!("{tip}..{savepoint}")],
+            ["rev-list", "--count", &format!("{tip}..{savepoint}")],
             repo,
         )
         .ok()
@@ -1470,7 +1447,7 @@ impl Vcs for GitVcs {
             ctx: format!("failed to create directory {}", dest.display()),
             source: e,
         })?;
-        Self::run(&["init", "--initial-branch=main"], dest)?;
+        Self::run(["init", "--initial-branch=main"], dest)?;
         Ok(())
     }
 
@@ -1479,20 +1456,16 @@ impl Vcs for GitVcs {
             ctx: format!("failed to create directory {}", dest.display()),
             source: e,
         })?;
-        Self::run(&["init", "--bare", "--initial-branch=main"], dest)?;
+        Self::run(["init", "--bare", "--initial-branch=main"], dest)?;
         Ok(())
     }
 
     fn clone_repo(&self, url: &CloneUrl, dest: &Path) -> Result<(), VcsError> {
-        let dest_str = path_as_git_arg(dest, "destination path")?;
+        let dest = GitArg::from_path(dest, "destination path")?;
         Self::run(
-            &[
-                "clone",
-                "--origin",
-                GIT_DEFAULT_REMOTE_NAME,
-                url.as_str(),
-                dest_str,
-            ],
+            Argv::from(["clone", "--origin", GIT_DEFAULT_REMOTE_NAME])
+                .text(url.as_str())
+                .path(&dest),
             Path::new("."),
         )?;
         Ok(())
@@ -1516,7 +1489,7 @@ impl Vcs for GitVcs {
     }
 
     fn head_revision(&self, repo: &Path) -> Result<ResolvedRevisionId, VcsError> {
-        match Self::run_trimmed(&["rev-parse", "HEAD"], repo) {
+        match Self::run_trimmed(["rev-parse", "HEAD"], repo) {
             Err(VcsError::CommandFailed { stderr, .. })
                 if stderr.contains("ambiguous argument") =>
             {
@@ -1554,7 +1527,7 @@ impl Vcs for GitVcs {
     fn resolve_revision(&self, repo: &Path, rev: &str) -> Result<ResolvedRevisionId, VcsError> {
         let deref = format!("{rev}^{{commit}}");
         let args = ["rev-parse", "--verify", &deref];
-        match Self::run_trimmed(&args, repo) {
+        match Self::run_trimmed(args, repo) {
             Ok(canonical) => Ok(ResolvedRevisionId::from_canonical(
                 commit_id_printed(&canonical, &args, repo)?,
                 Some(rev.to_string()),
@@ -1570,8 +1543,11 @@ impl Vcs for GitVcs {
     }
 
     fn remove_worktree(&self, repo: &Path, worktree_path: &Path) -> Result<(), VcsError> {
-        let wt_str = path_as_git_arg(worktree_path, "worktree path")?;
-        Self::run_awaiting_peers(&["worktree", "remove", "--force", wt_str], repo)?;
+        let worktree = GitArg::from_path(worktree_path, "worktree path")?;
+        Self::run_awaiting_peers(
+            Argv::from(["worktree", "remove", "--force"]).path(&worktree),
+            repo,
+        )?;
         Ok(())
     }
 
@@ -1582,7 +1558,7 @@ impl Vcs for GitVcs {
         if !path.join(".git").exists() {
             return false;
         }
-        let Ok(top) = Self::run_trimmed(&["rev-parse", "--show-toplevel"], path) else {
+        let Ok(top) = Self::run_trimmed(["rev-parse", "--show-toplevel"], path) else {
             return false;
         };
         match (
@@ -1595,7 +1571,7 @@ impl Vcs for GitVcs {
     }
 
     fn list_worktrees(&self, repo: &Path) -> Result<Vec<PathBuf>, VcsError> {
-        let output = Self::run_trimmed_awaiting_peers(&["worktree", "list", "--porcelain"], repo)?;
+        let output = Self::run_trimmed_awaiting_peers(["worktree", "list", "--porcelain"], repo)?;
         let paths = output
             .lines()
             .filter_map(|line| line.strip_prefix("worktree "))
@@ -1648,14 +1624,16 @@ impl Vcs for GitVcs {
         path: &Path,
         captured: &[u8],
     ) -> Result<DiscardOutcome, VcsError> {
-        let arg = path_as_git_arg(path, "path")?;
+        let arg = GitArg::from_path(path, "path")?;
         let file = repo.join(path);
         if std::fs::read(&file).ok().as_deref() != Some(captured) {
             return Ok(DiscardOutcome::ChangedSinceCapture);
         }
         let columns: Vec<(u8, u8)> = Self::porcelain_status(repo, StatusReach::Untracked)?
             .into_iter()
-            .filter(|entry| entry.path == arg || entry.renamed_from.as_deref() == Some(arg))
+            .filter(|entry| {
+                entry.path == arg.as_str() || entry.renamed_from.as_deref() == Some(arg.as_str())
+            })
             .map(|entry| (entry.staged, entry.worktree))
             .collect();
         let delete_working_file = || {
@@ -1667,11 +1645,14 @@ impl Vcs for GitVcs {
         match columns.as_slice() {
             [] => {}
             [(b' ', b'M')] | [(b'M', b' ')] => {
-                Self::run(&["reset", "-q", "--", arg], repo)?;
-                Self::run(&["checkout-index", "-f", "-u", "--", arg], repo)?;
+                Self::run(Argv::from(["reset", "-q", "--"]).path(&arg), repo)?;
+                Self::run(
+                    Argv::from(["checkout-index", "-f", "-u", "--"]).path(&arg),
+                    repo,
+                )?;
             }
             [(b'A', b' ')] => {
-                Self::run(&["reset", "-q", "--", arg], repo)?;
+                Self::run(Argv::from(["reset", "-q", "--"]).path(&arg), repo)?;
                 delete_working_file()?;
             }
             [(b'?', b'?')] => delete_working_file()?,
@@ -1700,19 +1681,22 @@ impl Vcs for GitVcs {
             .collect())
     }
     fn commit(&self, repo: &Path, message: &str) -> Result<(), VcsError> {
-        Self::run(&["commit", "-m", message], repo).map(|_| ())
+        Self::run(["commit", "-m", message], repo).map(|_| ())
     }
     fn add_remote(&self, repo: &Path, url: &CloneUrl) -> Result<(), VcsError> {
         Self::run(
-            &["remote", "add", GIT_DEFAULT_REMOTE_NAME, url.as_str()],
+            ["remote", "add", GIT_DEFAULT_REMOTE_NAME, url.as_str()],
             repo,
         )
         .map(|_| ())
     }
 
     fn is_tracked(&self, repo: &Path, path: &Path) -> Result<bool, VcsError> {
-        let path = path_as_git_arg(path, "path")?;
-        match Self::run(&["ls-files", "--error-unmatch", path], repo) {
+        let path = GitArg::from_path(path, "path")?;
+        match Self::run(
+            Argv::from(["ls-files", "--error-unmatch"]).path(&path),
+            repo,
+        ) {
             Ok(_) => Ok(true),
             // `--error-unmatch` exits non-zero for every "no" this question
             // has: untracked, ignored, outside the repo, not a repo at all.
@@ -1730,22 +1714,22 @@ impl Vcs for GitVcs {
         {
             return Ok(false);
         }
-        let path = path_as_git_arg(path, "path")?;
+        let path = GitArg::from_path(path, "path")?;
         let listing = Self::run(
-            &["--literal-pathspecs", "ls-tree", "-z", "HEAD", "--", path],
+            Argv::from(["--literal-pathspecs", "ls-tree", "-z", "HEAD", "--"]).path(&path),
             repo,
         )?;
         let committed_blob = listing.split('\0').find_map(|record| {
             let (meta, name) = record.split_once('\t')?;
             let mut fields = meta.split(' ');
             let (mode, kind, oid) = (fields.next()?, fields.next()?, fields.next()?);
-            (name == path
+            (name == path.as_str()
                 && kind == "blob"
                 && FileMode::parse(mode).is_some_and(FileMode::is_regular_file))
             .then_some(oid)
         });
         Ok(match committed_blob {
-            Some(blob) => Self::unfiltered_hashes(repo, &[path])?
+            Some(blob) => Self::unfiltered_hashes(repo, &[path.as_str()])?
                 .first()
                 .is_some_and(|hash| hash == blob),
             None => false,
@@ -1763,7 +1747,7 @@ impl Vcs for GitVcs {
         // Among remaining tags, prefer release-shape tags (e.g., `v1.2.3`)
         // over arbitrary lightweight tags, so a workspace with both
         // `v9.9.9` and `tmp-foo` writes `v9.9.9`.
-        let output = Self::run_trimmed(&["tag", "--points-at", "HEAD"], repo)?;
+        let output = Self::run_trimmed(["tag", "--points-at", "HEAD"], repo)?;
         let candidates: Vec<&str> = output
             .lines()
             .map(str::trim)
@@ -1783,7 +1767,7 @@ impl Vcs for GitVcs {
     }
 
     fn worktree_prune(&self, repo: &Path) -> Result<(), VcsError> {
-        Self::run(&["worktree", "prune"], repo)?;
+        Self::run(["worktree", "prune"], repo)?;
         Ok(())
     }
 
@@ -1936,14 +1920,14 @@ impl Vcs for GitVcs {
     ) -> Result<Vec<String>, VcsError> {
         let fork_point_to_source = format!("{}...{}", base.id().as_str(), source.id().as_str());
         let changed_by_range = nul_terminated_fields(&Self::run(
-            &["diff", "--name-only", "-z", &fork_point_to_source],
+            ["diff", "--name-only", "-z", &fork_point_to_source],
             repo,
         )?);
         if changed_by_range.is_empty() {
             return Ok(Vec::new());
         }
         let not_reproduced: std::collections::BTreeSet<String> = nul_terminated_fields(&Self::run(
-            &[
+            [
                 "diff",
                 "--name-only",
                 "-z",
@@ -1984,7 +1968,7 @@ impl Vcs for GitVcs {
         to: &ResolvedRevisionId,
     ) -> Result<Vec<String>, VcsError> {
         Ok(nul_terminated_fields(&Self::run(
-            &[
+            [
                 "diff",
                 "--name-only",
                 "-z",
@@ -1997,9 +1981,9 @@ impl Vcs for GitVcs {
 
     fn set_replay_exclusion(&self, repo: &Path, path: &Path) -> Result<(), VcsError> {
         let attrs_path = repo.join(".gitattributes");
-        let path_str = path_as_git_arg(path, "replay-exclusion path")?;
-        let needle = rwv_replay_exclusion_needle(path_str);
-        let legacy_needle = legacy_rwv_replay_exclusion_needle(path_str);
+        let path_arg = GitArg::from_path(path, "replay-exclusion path")?;
+        let needle = rwv_replay_exclusion_needle(path_arg.as_str());
+        let legacy_needle = legacy_rwv_replay_exclusion_needle(path_arg.as_str());
 
         let existing = match std::fs::read_to_string(&attrs_path) {
             Ok(s) => s,
@@ -2085,9 +2069,9 @@ impl Vcs for GitVcs {
         path: &Path,
     ) -> Result<ReplayExclusionState, VcsError> {
         let attrs_path = repo.join(".gitattributes");
-        let path_str = path_as_git_arg(path, "replay-exclusion path")?;
-        let needle = rwv_replay_exclusion_needle(path_str);
-        let legacy_needle = legacy_rwv_replay_exclusion_needle(path_str);
+        let path_arg = GitArg::from_path(path, "replay-exclusion path")?;
+        let needle = rwv_replay_exclusion_needle(path_arg.as_str());
+        let legacy_needle = legacy_rwv_replay_exclusion_needle(path_arg.as_str());
 
         let contents = match std::fs::read_to_string(&attrs_path) {
             Ok(s) => s,
@@ -2117,8 +2101,8 @@ impl Vcs for GitVcs {
     }
 
     fn has_committed_replay_exclusion(&self, repo: &Path, path: &Path) -> Result<bool, VcsError> {
-        let path_str = path_as_git_arg(path, "replay-exclusion path")?;
-        let needle = rwv_replay_exclusion_needle(path_str);
+        let path_arg = GitArg::from_path(path, "replay-exclusion path")?;
+        let needle = rwv_replay_exclusion_needle(path_arg.as_str());
         let content = match read_committed_gitattributes(repo)? {
             Some(c) => c,
             None => return Ok(false),
@@ -2159,7 +2143,7 @@ impl Vcs for GitVcs {
     }
 
     fn hard_reset(&self, repo: &Path, to: &ResolvedRevisionId) -> Result<(), VcsError> {
-        Self::run(&["reset", "--hard", to.id().as_str()], repo)?;
+        Self::run(["reset", "--hard", to.id().as_str()], repo)?;
         Ok(())
     }
 
@@ -2198,7 +2182,7 @@ impl Vcs for GitVcs {
         to: &ResolvedRevisionId,
     ) -> Result<usize, VcsError> {
         let range = format!("{}..{}", from.id().as_str(), to.id().as_str());
-        let out = Self::run_trimmed(&["rev-list", "--count", &range], repo)?;
+        let out = Self::run_trimmed(["rev-list", "--count", &range], repo)?;
         Ok(out.trim().parse::<usize>().unwrap_or(0))
     }
 
@@ -2209,7 +2193,7 @@ impl Vcs for GitVcs {
     ) -> Result<ResolvedRevisionId, VcsError> {
         let head = self.head_revision(repo)?;
         let ref_name = savepoint_ref(key);
-        Self::run(&["update-ref", &ref_name, head.id().as_str()], repo)?;
+        Self::run(["update-ref", &ref_name, head.id().as_str()], repo)?;
         Ok(head)
     }
 
@@ -2223,13 +2207,13 @@ impl Vcs for GitVcs {
 
     fn resolve_savepoint(&self, repo: &Path, key: &SavepointKey) -> Option<ResolvedRevisionId> {
         let ref_name = savepoint_ref(key);
-        let out = Self::run_trimmed(&["rev-parse", &ref_name], repo).ok()?;
+        let out = Self::run_trimmed(["rev-parse", &ref_name], repo).ok()?;
         ResolvedRevisionId::from_rev_parse_output(&out)
     }
 
     fn drop_savepoint(&self, repo: &Path, key: &SavepointKey) {
         let ref_name = savepoint_ref(key);
-        let _ = Self::run(&["update-ref", "-d", &ref_name], repo);
+        let _ = Self::run(["update-ref", "-d", &ref_name], repo);
     }
 
     fn create_pre_abort_ref(
@@ -2257,7 +2241,7 @@ impl Vcs for GitVcs {
                 return Ok(existing);
             }
         }
-        Self::run(&["update-ref", &label, head.id().as_str()], repo)?;
+        Self::run(["update-ref", &label, head.id().as_str()], repo)?;
         Ok(PreAbortRef {
             label,
             revision: head,
@@ -2266,7 +2250,7 @@ impl Vcs for GitVcs {
 
     fn resolve_pre_abort_ref(&self, repo: &Path, key: &SavepointKey) -> Option<PreAbortRef> {
         let label = pre_abort_ref(key);
-        let canonical = Self::run_trimmed(&["rev-parse", &label], repo).ok()?;
+        let canonical = Self::run_trimmed(["rev-parse", &label], repo).ok()?;
         Some(PreAbortRef {
             revision: ResolvedRevisionId::from_rev_parse_output(&canonical)?,
             label,
@@ -2424,7 +2408,7 @@ impl Vcs for GitVcs {
             remote_tracking(branch.as_str()),
             local_branch(branch.as_str())
         );
-        let out = Self::run_trimmed(&["rev-list", "--count", &range], repo)?;
+        let out = Self::run_trimmed(["rev-list", "--count", &range], repo)?;
         Ok(out.trim().parse::<usize>().unwrap_or(0))
     }
 
@@ -2435,11 +2419,11 @@ impl Vcs for GitVcs {
         // surfaces at the subsequent operation (e.g. the ff merge in
         // sync-to step 3) which inspects the same objects. A source path git
         // could not name is the same shape of nothing-to-report.
-        let Ok(src_path) = path_as_git_arg(src_repo, "source repo path") else {
+        let Ok(src_path) = GitArg::from_path(src_repo, "source repo path") else {
             return;
         };
         let _ = git_command()
-            .args(["fetch", src_path, "HEAD"])
+            .args(Argv::from(["fetch"]).path(&src_path).text("HEAD"))
             .current_dir(dst_repo)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -2510,7 +2494,7 @@ impl Vcs for GitVcs {
     }
 
     fn refs_unreachable_from(&self, repo: &Path, other: &Path) -> Result<Vec<String>, VcsError> {
-        let listing = Self::run(&["for-each-ref", "--format=%(objectname) %(refname)"], repo)?;
+        let listing = Self::run(["for-each-ref", "--format=%(objectname) %(refname)"], repo)?;
         let mut tips: Vec<(String, String)> = listing
             .lines()
             .filter_map(|line| line.split_once(' '))
@@ -2533,10 +2517,8 @@ impl Vcs for GitVcs {
                 continue;
             }
             for &sha in batch {
-                let ahead = Self::run_trimmed(
-                    &["rev-list", "--max-count=1", sha, "--not", "--all"],
-                    other,
-                )?;
+                let ahead =
+                    Self::run_trimmed(["rev-list", "--max-count=1", sha, "--not", "--all"], other)?;
                 if !ahead.is_empty() {
                     unreached.insert(sha);
                 }
@@ -2565,7 +2547,7 @@ impl Vcs for GitVcs {
             return None;
         }
         let raw = Self::run_trimmed(
-            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            ["rev-parse", "--path-format=absolute", "--git-common-dir"],
             workspace,
         )
         .ok()?;
@@ -2585,7 +2567,7 @@ impl Vcs for GitVcs {
         //                         location); marks the record for pruning.
         // We collect the `worktree` path of every record that carries a
         // `prunable` line.
-        let output = Self::run_trimmed_awaiting_peers(&["worktree", "list", "--porcelain"], repo)?;
+        let output = Self::run_trimmed_awaiting_peers(["worktree", "list", "--porcelain"], repo)?;
         let mut stale: Vec<PathBuf> = Vec::new();
         let mut current_path: Option<PathBuf> = None;
         let mut current_prunable = false;
@@ -2619,7 +2601,7 @@ impl Vcs for GitVcs {
         // Same records as `list_stale_worktree_registrations`, read for the
         // other two lines: `branch <fullref>`, absent on a detached record,
         // and `prunable`, which disqualifies the registration.
-        let output = Self::run_trimmed_awaiting_peers(&["worktree", "list", "--porcelain"], repo)?;
+        let output = Self::run_trimmed_awaiting_peers(["worktree", "list", "--porcelain"], repo)?;
         let mut held: Vec<RawRefName> = Vec::new();
         let mut current_branch: Option<RawRefName> = None;
         let mut current_prunable = false;
@@ -2650,7 +2632,7 @@ impl Vcs for GitVcs {
 
     fn list_savepoints(&self, repo: &Path) -> Result<SavepointListing, VcsError> {
         let prefix = format!("{SAVEPOINT_NAMESPACE}/");
-        let output = Self::run_trimmed(&["for-each-ref", "--format=%(refname)", &prefix], repo)?;
+        let output = Self::run_trimmed(["for-each-ref", "--format=%(refname)", &prefix], repo)?;
         let mut listing = SavepointListing::default();
         for refname in output.lines().map(str::trim).filter(|l| !l.is_empty()) {
             match refname
@@ -2670,13 +2652,13 @@ impl Vcs for GitVcs {
         revision: &ResolvedRevisionId,
         file_path: &Path,
     ) -> Result<String, VcsError> {
-        let path_str = path_as_git_arg(file_path, "file path")?;
+        let file = GitArg::from_path(file_path, "file path")?;
         // `git show <rev>:<path>` prints the blob at the given revision.
         // Non-zero exit when the revision is missing or the file doesn't
         // exist at that revision; both surface as CommandFailed and the
         // caller can inspect stderr.
-        let rev_path = format!("{}:{}", revision.id().as_str(), path_str);
-        match Self::run(&["show", &rev_path], repo) {
+        let rev_path = format!("{}:{}", revision.id().as_str(), file.as_str());
+        match Self::run(["show", &rev_path], repo) {
             Ok(content) => Ok(content),
             Err(VcsError::CommandFailed { stderr, .. })
                 if is_revision_not_found(&stderr)
@@ -2760,7 +2742,7 @@ impl Vcs for GitVcs {
         // for the branch `main`, and that value is not a branch name — it
         // does not round-trip through `refs/heads/<name>`, so a witness
         // carrying it would report an existing branch as missing.
-        match Self::run_trimmed(&["symbolic-ref", "HEAD"], repo) {
+        match Self::run_trimmed(["symbolic-ref", "HEAD"], repo) {
             Ok(full) => {
                 let name = Self::local_branch_name_from_full_ref(full.trim(), repo)?;
                 // HEAD is symbolic. Whether the branch has commits is a
@@ -2768,7 +2750,7 @@ impl Vcs for GitVcs {
                 // branch, and `rev-parse HEAD` is what tells the two apart.
                 // (This is the check `head_revision` had to grow inline; it
                 // belongs here, where the question is actually asked.)
-                match Self::run(&["rev-parse", "--verify", "HEAD^{commit}"], repo) {
+                match Self::run(["rev-parse", "--verify", "HEAD^{commit}"], repo) {
                     Ok(_) => Ok(HeadObservation::Attached { name }),
                     Err(_) => Ok(HeadObservation::Unborn { name }),
                 }
@@ -2777,7 +2759,7 @@ impl Vcs for GitVcs {
                 // HEAD is not symbolic — or the ref database is unreadable.
                 // Resolving HEAD tells us which: a detached HEAD resolves,
                 // a broken refdb does not, and the latter is an error.
-                match Self::run_trimmed(&["rev-parse", "--verify", "HEAD^{commit}"], repo) {
+                match Self::run_trimmed(["rev-parse", "--verify", "HEAD^{commit}"], repo) {
                     Ok(sha) => match ResolvedRevisionId::from_rev_parse_output(&sha) {
                         Some(at) => Ok(HeadObservation::Detached { at }),
                         None => Err(VcsError::CommandFailed {
@@ -2830,7 +2812,7 @@ impl Vcs for GitVcs {
         name: &LocalRefName,
         at: &RawRevisionId,
     ) -> Result<ResolvedRevisionId, VcsError> {
-        let dest_str = path_as_git_arg(dest, "destination path")?;
+        let dest_arg = GitArg::from_path(dest, "destination path")?;
         // `--no-checkout`: the working tree is never materialized at the
         // remote tip. Cloning still writes the remote's default branch as a
         // local ref — git offers no way to decline that — but no working
@@ -2838,14 +2820,14 @@ impl Vcs for GitVcs {
         // MOVE against it. That last part is what matters: bootstrapping
         // from a lock behind origin must not require a rewind's consent.
         Self::run(
-            &[
+            Argv::from([
                 "clone",
                 "--origin",
                 GIT_DEFAULT_REMOTE_NAME,
                 "--no-checkout",
-                url.as_str(),
-                dest_str,
-            ],
+            ])
+            .text(url.as_str())
+            .path(&dest_arg),
             Path::new("."),
         )?;
         // Resolved in the new clone's own object store, so a pin origin has
@@ -2857,14 +2839,14 @@ impl Vcs for GitVcs {
         // terminator keeps a path-shaped `name` from being read as a
         // pathspec — the three misreads `attach_head_to` documents.
         Self::run(
-            &["checkout", "-B", name.as_str(), at.id().as_str(), "--"],
+            ["checkout", "-B", name.as_str(), at.id().as_str(), "--"],
             dest,
         )?;
         Ok(at)
     }
 
     fn set_detached_head(&self, repo: &Path, to: &ResolvedRevisionId) -> Result<(), VcsError> {
-        Self::run(&["checkout", "--detach", to.id().as_str()], repo)?;
+        Self::run(["checkout", "--detach", to.id().as_str()], repo)?;
         Ok(())
     }
 
@@ -2911,13 +2893,13 @@ impl Vcs for GitVcs {
                 ),
             });
         }
-        Self::run(&["checkout", "--no-guess", name.as_str(), "--"], repo)?;
+        Self::run(["checkout", "--no-guess", name.as_str(), "--"], repo)?;
         Ok(())
     }
 
     fn destroy_local_ref(&self, store: &Path, name: &RawRefName) -> Result<(), VcsError> {
         let store = Self::work_dir_for_store(store);
-        Self::run_awaiting_peers(&["branch", "-D", name.as_str()], &store)?;
+        Self::run_awaiting_peers(["branch", "-D", name.as_str()], &store)?;
         Ok(())
     }
 
@@ -2938,7 +2920,7 @@ impl Vcs for GitVcs {
         // Run from the store's work dir, not from the worktree whose HEAD is
         // on `from`: `git branch -m` updates the HEAD of every worktree that
         // pointed at the old name, wherever it is run.
-        Self::run(&["branch", "-m", from.as_str(), to.as_str()], &store)?;
+        Self::run(["branch", "-m", from.as_str(), to.as_str()], &store)?;
         Ok(())
     }
 
@@ -2961,7 +2943,7 @@ impl Vcs for GitVcs {
         }
         // No start point: the ref is born where HEAD already is, so the
         // working tree does not move.
-        Self::run(&["switch", "-c", name.as_str()], repo)?;
+        Self::run(["switch", "-c", name.as_str()], repo)?;
         Ok(())
     }
 
@@ -2985,7 +2967,7 @@ impl Vcs for GitVcs {
         if !self.is_repo(repo) {
             return Err(VcsError::NotARepo(repo.to_path_buf()));
         }
-        match Self::run_trimmed(&["symbolic-ref", &remote_tracking("HEAD")], repo) {
+        match Self::run_trimmed(["symbolic-ref", &remote_tracking("HEAD")], repo) {
             // No fallback: an unset or malformed symref is an absence, not
             // a guess. A caller that invents a name here trades an honest
             // refusal for a comparison against a fabrication.
@@ -3013,7 +2995,7 @@ impl Vcs for GitVcs {
         let remote = GIT_DEFAULT_REMOTE_NAME;
         let namespace = remote_tracking_namespace();
         let listing =
-            Self::run_trimmed(&["for-each-ref", "--format=%(refname)", &namespace], clone)?;
+            Self::run_trimmed(["for-each-ref", "--format=%(refname)", &namespace], clone)?;
         let branches: Vec<String> = listing
             .lines()
             .filter_map(|r| r.trim().strip_prefix(namespace.as_str()))
@@ -3069,7 +3051,7 @@ impl Vcs for GitVcs {
 
     fn list_local_branch_names(&self, repo: &Path) -> Result<Vec<RawRefName>, VcsError> {
         let output = Self::run_trimmed(
-            &[
+            [
                 "for-each-ref",
                 "--format=%(refname)",
                 LOCAL_BRANCH_NAMESPACE,
@@ -3125,7 +3107,7 @@ impl GitVcs {
         savepoint: &ResolvedRevisionId,
         outcome: VerifiedRestoreOutcome,
     ) -> Result<VerifiedRestoreOutcome, VcsError> {
-        Self::run(&["reset", "--hard", savepoint.id().as_str()], repo)?;
+        Self::run(["reset", "--hard", savepoint.id().as_str()], repo)?;
         self.drop_savepoint(repo, key);
         Ok(outcome)
     }
@@ -3234,7 +3216,7 @@ fn git_answers_population() -> bool {
     static ANSWERS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ANSWERS.get_or_init(|| {
         git_command()
-            .arg("version")
+            .args(["version"])
             .output()
             .ok()
             .filter(|out| out.status.success())
@@ -3461,7 +3443,7 @@ impl GitVcs {
         files: WorktreeFiles,
     ) -> Result<RefOrigin, VcsError> {
         let store = Self::work_dir_for_store(store);
-        let dest_str = path_as_git_arg(dest, "worktree path")?;
+        let dest_arg = GitArg::from_path(dest, "worktree path")?;
         let start = start_point.id().as_str();
         let branch = name.as_str();
         // `--no-checkout` runs no `post-checkout` hook, so a failure after
@@ -3488,7 +3470,7 @@ impl GitVcs {
             // retried with -b, destroying a ref on nothing but a name match
             // — a DESTROY needs a receipt and a warrant (R2, R3), and this
             // call holds neither, so it cannot be reached from here.
-            Self::run_awaiting_peers(&[add, &[dest_str, branch]].concat(), &store)
+            Self::run_awaiting_peers(Argv::from(add).path(&dest_arg).text(branch), &store)
                 .map_err(classify)?;
             return Ok(RefOrigin::Adopted);
         }
@@ -3505,21 +3487,26 @@ impl GitVcs {
         // the one that authored it.
         Self::awaiting_peer_registration(&store, UNWRITTEN_REGISTRATION_WAIT, || {
             let created = self.resolve_local_branch_tip(&store, name)?.is_some();
-            let args: &[&str] = if created {
-                &[dest_str, branch]
+            let argv = if created {
+                Argv::from(add).path(&dest_arg).text(branch)
             } else {
-                &["-b", branch, dest_str, start]
+                Argv::from(add)
+                    .text("-b")
+                    .text(branch)
+                    .path(&dest_arg)
+                    .text(start)
             };
-            Self::run(&[add, args].concat(), &store)
+            Self::run(argv, &store)
         })
         .map_err(classify)?;
         Ok(RefOrigin::Authored)
     }
 
     /// [`GitVcs::run`] with `input` on stdin.
-    fn run_with_stdin(args: &[&str], dir: &Path, input: &[u8]) -> Result<String, VcsError> {
+    fn run_with_stdin(args: impl Into<Argv>, dir: &Path, input: &[u8]) -> Result<String, VcsError> {
+        let args = args.into();
         let mut child = git_command()
-            .args(args)
+            .args(&args)
             .current_dir(dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -3541,7 +3528,7 @@ impl GitVcs {
         })?;
         if !output.status.success() {
             return Err(VcsError::CommandFailed {
-                args: args.iter().map(|s| (*s).to_owned()).collect(),
+                args: args.into_words(),
                 repo: dir.to_path_buf(),
                 stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
             });
@@ -3551,7 +3538,7 @@ impl GitVcs {
             source: e,
         })?;
         String::from_utf8(output.stdout).map_err(|_| VcsError::CommandFailed {
-            args: args.iter().map(|s| (*s).to_owned()).collect(),
+            args: args.into_words(),
             repo: dir.to_path_buf(),
             stderr: "git output not valid UTF-8".to_string(),
         })
@@ -3566,7 +3553,7 @@ impl GitVcs {
             return Ok(BTreeSet::new());
         }
         let input: String = ids.iter().map(|id| format!("{id}\n")).collect();
-        let report = Self::run_with_stdin(&["cat-file", "--batch-check"], repo, input.as_bytes())?;
+        let report = Self::run_with_stdin(["cat-file", "--batch-check"], repo, input.as_bytes())?;
         let missing: BTreeSet<&str> = report
             .lines()
             .filter_map(|line| line.strip_suffix(" missing"))
@@ -3579,7 +3566,7 @@ impl GitVcs {
     }
 
     fn index_entries(workspace: &Path) -> Result<Vec<IndexEntry>, VcsError> {
-        let listing = Self::run_with_stdin(&["ls-files", "--stage", "-z"], workspace, &[])?;
+        let listing = Self::run_with_stdin(["ls-files", "--stage", "-z"], workspace, &[])?;
         let malformed = |record: &str| VcsError::CommandFailed {
             args: vec!["ls-files".to_owned(), "--stage".to_owned(), "-z".to_owned()],
             repo: workspace.to_path_buf(),
@@ -3717,7 +3704,7 @@ impl GitVcs {
             .map(|p| format!("{}\n", as_stdin_path_line(p)))
             .collect();
         let args = ["hash-object", "--no-filters", "--stdin-paths"];
-        let hashes: Vec<String> = Self::run_with_stdin(&args, workspace, input.as_bytes())?
+        let hashes: Vec<String> = Self::run_with_stdin(args, workspace, input.as_bytes())?
             .lines()
             .map(str::to_owned)
             .collect();
@@ -3732,7 +3719,7 @@ impl GitVcs {
     }
 
     fn run_post_checkout_hook(workspace: &Path) -> Result<(), VcsError> {
-        let head = Self::run_trimmed(&["rev-parse", "--verify", "HEAD"], workspace)?;
+        let head = Self::run_trimmed(["rev-parse", "--verify", "HEAD"], workspace)?;
         let no_previous_head = "0".repeat(head.len());
         let args = [
             "hook",
@@ -3774,7 +3761,7 @@ impl WorkspacePopulation for GitVcs {
             self.add_worktree(store, dest, name, start_point, WorktreeFiles::Unwritten)?;
         // `--no-checkout` leaves no index; reading the tree into one is what
         // makes the workspace record its revision before any file exists.
-        Self::run(&["read-tree", "HEAD"], dest)?;
+        Self::run(["read-tree", "HEAD"], dest)?;
         Ok(ref_origin)
     }
 
@@ -3830,12 +3817,12 @@ impl WorkspacePopulation for GitVcs {
             .collect();
         if !missing.is_empty() {
             Self::run_with_stdin(
-                &["checkout-index", "-u", "-z", "--stdin"],
+                ["checkout-index", "-u", "-z", "--stdin"],
                 workspace,
                 &nul_terminated(missing.iter().map(String::as_str)),
             )?;
         }
-        Self::run(&["update-index", "-q", "--refresh"], workspace)?;
+        Self::run(["update-index", "-q", "--refresh"], workspace)?;
         Self::run_post_checkout_hook(workspace)
     }
 
@@ -3844,7 +3831,7 @@ impl WorkspacePopulation for GitVcs {
             return Ok(());
         }
         Self::run_with_stdin(
-            &["checkout-index", "-f", "-u", "-z", "--stdin"],
+            ["checkout-index", "-f", "-u", "-z", "--stdin"],
             workspace,
             &nul_terminated(paths.iter().map(String::as_str)),
         )
@@ -3893,7 +3880,7 @@ impl WorkspacePopulation for GitVcs {
         // on read; refusing every transport makes the absence the answer.
         source.is_dir()
             && Self::run(
-                &["-c", "protocol.allow=never", "cat-file", "-e", &commit],
+                ["-c", "protocol.allow=never", "cat-file", "-e", &commit],
                 &source,
             )
             .is_ok()
@@ -3925,26 +3912,24 @@ impl WorkspacePopulation for GitVcs {
                 source: e,
             })?;
         }
-        let repository_arg = path_as_git_arg(&repository, "submodule repository")?;
-        let source_arg = path_as_git_arg(&source, "module data")?;
-        let dest_arg = path_as_git_arg(&dest, "submodule path")?;
+        let repository_arg = GitArg::from_path(&repository, "submodule repository")?;
+        let source_arg = GitArg::from_path(&source, "module data")?;
+        let dest_arg = GitArg::from_path(&dest, "submodule path")?;
         // A path that names a repository is cloned by copying its objects
         // (as hard links where it can), never through a transport.
         Self::run(
-            &[
-                "clone",
-                "--quiet",
-                "--no-checkout",
-                "--separate-git-dir",
-                repository_arg,
-                source_arg,
-                dest_arg,
-            ],
+            Argv::from(["clone", "--quiet", "--no-checkout", "--separate-git-dir"])
+                .path(&repository_arg)
+                .path(&source_arg)
+                .path(&dest_arg),
             workspace,
         )?;
-        Self::run(&["config", "core.worktree", dest_arg], &dest)?;
         Self::run(
-            &[
+            Argv::from(["config", "core.worktree"]).path(&dest_arg),
+            &dest,
+        )?;
+        Self::run(
+            [
                 "update-ref",
                 "--no-deref",
                 "HEAD",
@@ -3952,7 +3937,7 @@ impl WorkspacePopulation for GitVcs {
             ],
             &dest,
         )?;
-        Self::run(&["read-tree", "HEAD"], &dest)?;
+        Self::run(["read-tree", "HEAD"], &dest)?;
         Ok(SubmoduleBirth::Born { source })
     }
 
@@ -3963,7 +3948,7 @@ impl WorkspacePopulation for GitVcs {
         source: &Path,
     ) -> Result<(), VcsError> {
         let remotes = match Self::run(
-            &["config", "--local", "-z", "--get-regexp", r"^remote\."],
+            ["config", "--local", "-z", "--get-regexp", r"^remote\."],
             source,
         ) {
             Ok(listing) => listing,
@@ -3973,10 +3958,10 @@ impl WorkspacePopulation for GitVcs {
             Err(e) => return Err(e),
         };
         let dest = workspace.join(&submodule.path);
-        Self::run(&["config", "--remove-section", "remote.origin"], &dest)?;
+        Self::run(["config", "--remove-section", "remote.origin"], &dest)?;
         for record in remotes.split_terminator('\0') {
             let (key, value) = record.split_once('\n').unwrap_or((record, ""));
-            Self::run(&["config", "--add", key, value], &dest)?;
+            Self::run(["config", "--add", key, value], &dest)?;
         }
         Ok(())
     }
@@ -4028,7 +4013,7 @@ impl GitVcs {
             return Ok(HashMap::new());
         }
         let listing = match Self::run(
-            &[
+            [
                 "config",
                 "--file",
                 ".gitmodules",
@@ -4064,7 +4049,7 @@ impl GitVcs {
     ) -> Result<PathBuf, VcsError> {
         let git_path = format!("modules/{}", submodule.name);
         Self::run_trimmed(
-            &[
+            [
                 "rev-parse",
                 "--path-format=absolute",
                 "--git-path",
@@ -5292,48 +5277,6 @@ mod merge_driver_vocabulary_tests {
 }
 
 #[cfg(test)]
-mod git_argument_path_tests {
-    //! What [`path_as_git_arg`] does to the extended-length prefix.
-    //!
-    //! The prefix exists only on Windows, so the assertion that matters is
-    //! compiled everywhere and executed on one platform — the advisory Windows
-    //! workflow is the only thing that runs it. The other direction is what
-    //! every platform can state, and it is the half that goes wrong if this
-    //! seam ever reaches for `canonicalize` instead: a path handed to git must
-    //! come back the path that was handed in, not a resolved one.
-
-    use super::*;
-
-    #[test]
-    fn a_path_with_no_extended_length_prefix_is_handed_over_unchanged() {
-        let absolute = if cfg!(windows) {
-            r"C:\weave\member"
-        } else {
-            "/weave/member"
-        };
-        assert_eq!(
-            path_as_git_arg(Path::new(absolute), "path").unwrap(),
-            absolute
-        );
-
-        let relative = "nested/entry";
-        assert_eq!(
-            path_as_git_arg(Path::new(relative), "path").unwrap(),
-            relative
-        );
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn a_drive_letter_path_loses_the_prefix_git_refuses() {
-        assert_eq!(
-            path_as_git_arg(Path::new(r"\\?\C:\weave\member"), "path").unwrap(),
-            r"C:\weave\member"
-        );
-    }
-}
-
-#[cfg(test)]
 mod population_tests {
     //! Each answer is checked against git's own view of the same files: what
     //! `ls-tree` lists, what `cat-file` holds, what `checkout-index` writes.
@@ -5455,7 +5398,7 @@ mod population_tests {
     /// works where the filesystem can make neither.
     fn commit_link_and_nested(repo: &Path) {
         let target =
-            GitVcs::run_with_stdin(&["hash-object", "-w", "--stdin"], repo, b"a.txt").unwrap();
+            GitVcs::run_with_stdin(["hash-object", "-w", "--stdin"], repo, b"a.txt").unwrap();
         let target = target.trim();
         git(
             repo,
@@ -6287,7 +6230,7 @@ mod peer_registration_tests {
 
         let started = std::time::Instant::now();
         let err = GitVcs::awaiting_peer_registration(&fx.store, Duration::from_millis(80), || {
-            GitVcs::run(&["worktree", "list", "--porcelain"], &fx.store)
+            GitVcs::run(["worktree", "list", "--porcelain"], &fx.store)
         })
         .expect_err("a registration nobody finishes stays a failure");
 
@@ -6310,7 +6253,7 @@ mod peer_registration_tests {
         let unrelated =
             GitVcs::awaiting_peer_registration(&fx.store, Duration::from_secs(5), || {
                 attempts.set(attempts.get() + 1);
-                GitVcs::run(&["rev-parse", "--verify", "no-such-ref"], &fx.store)
+                GitVcs::run(["rev-parse", "--verify", "no-such-ref"], &fx.store)
             });
         assert!(unrelated.is_err());
         assert_eq!(attempts.get(), 1);

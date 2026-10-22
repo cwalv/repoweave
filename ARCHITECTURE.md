@@ -464,7 +464,12 @@ outside `git.rs` spawns git or assembles its argv: `git_command` is private to
 the module, and the only `Command::new("git")` elsewhere in `src/` are two
 `#[cfg(test)]` fixtures in `sync.rs`. The remote name is held the same way — the
 constant is private and no trait method accepts one — so core can neither spell
-it nor be handed a parameter to spell it into. What is not mechanized is git
+it nor be handed a parameter to spell it into. Inside `git.rs`, a path reaches
+argv only as a `GitArg`: `git_command` returns a `GitCommand`
+(`src/git/argv.rs`) that keeps its `Command` private and takes arguments as an
+`Argv`, whose text slot refuses a `&Path` and whose path slot takes only a
+`GitArg`, which `GitArg::from_path` alone makes. What is not mechanized is a
+path turned into a `&str` by hand and given to a text slot, and git
 vocabulary in *operator text*: four message sites in core still write `origin`
 as a literal, three of them inside recovery advice that names a git command as
 well. The published contract for this seam, and that residue in full, is
