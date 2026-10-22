@@ -59,7 +59,7 @@ pub(crate) fn flush() -> io::Result<()> {
 /// closed pipe and panic, as they do, on any other failure.
 pub(crate) fn print(args: fmt::Arguments<'_>, newline: bool) {
     if let Err(e) = write(args, newline) {
-        panic!("failed printing to stdout: {e}");
+        panic!("failed printing to stdout: {e:#}");
     }
 }
 

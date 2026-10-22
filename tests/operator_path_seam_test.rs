@@ -913,6 +913,8 @@ const RENDER_MACROS: &[&str] = &[
     "anyhow!(",
     "eprintln!(",
     "println!(",
+    "out!(",
+    "outln!(",
     "write!(",
     "writeln!(",
     "panic!(",
