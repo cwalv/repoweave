@@ -16,7 +16,7 @@
 //! that *some* primary root exists while the caller wrote into a different
 //! one.
 //!
-//! Two halves, mirroring `root_identity_seal_test.rs`:
+//! Two halves:
 //!
 //! 1. **Compile probes.** The workweave arm has no way to select, and there
 //!    is no path-taking selection function to fall back to. Pinned by

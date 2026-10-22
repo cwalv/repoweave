@@ -120,7 +120,7 @@ src/workspace.rs	no-weave-root	-	1
 src/workspace.rs	occupied-bootstrap-dir	-	1
 src/workspace.rs	project-dir-missing	-	1
 src/workspace.rs	unregistered-workweave	-	1
-src/workspace.rs	weave-root-identity-conflict	-	1
+src/workspace/root_identity.rs	weave-root-identity-conflict	-	1
 src/workweave.rs	(untokened:UNCLASSIFIED)	-	1
 src/workweave.rs	(untokened:environment-passthrough)	-	1
 src/workweave.rs	(untokened:hook-input)	-	2

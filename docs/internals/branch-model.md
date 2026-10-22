@@ -1974,7 +1974,7 @@ landed — plus a seventh the implementation exposed.
    Legacy markers and indexes migrate along the path that already existed:
    "Markers written before `parent` was introduced (legacy markers) must be
    migrated with `rwv doctor --fix` before the workweave can be used" is the
-   rationale stated on `WorkweaveMarker` itself (`workspace.rs:1075-1077`)
+   rationale stated on `WorkweaveMarker` itself (`workspace/marker.rs`)
    `[V]` — the migration logic it names lives in `check.rs`, not
    `workspace.rs`: detection in `scan_for_legacy_workweave_markers`
    (`check.rs:1825-1874`) and the fix in `fix_legacy_workweave_marker`
