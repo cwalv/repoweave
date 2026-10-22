@@ -25,6 +25,17 @@ hold is now left out of the scan. The owned-digest ledger likewise recorded a
 path dependency at `a\b` under the same key as one at `a/b`; each now has its
 own.
 
+### `rwv add --adopt` refuses a directory name no member path can spell
+
+Adopting a clone whose path below the weave root passed through a directory
+name holding a `\` refused with `backslash-in-repo-path`, whose advice is to
+spell the path with `/`. A directory name that is not Unicode was read with a
+replacement character, so the adopt looked for a clone that is not there and
+refused with `no-clone-to-adopt`. Both now refuse with
+`unspellable-directory-name`, which names the directory and which of the two it
+is, and whose exit is to rename the directory and adopt the clone by its new
+path. rwv does not pick the new name.
+
 ### `rwv sync-to <target> --retire` counts the target it landed into
 
 A workweave landed into a target other than its recorded parent, by naming the

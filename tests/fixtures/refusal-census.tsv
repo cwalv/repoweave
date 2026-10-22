@@ -25,6 +25,7 @@ src/add_remove.rs	store-claims-unreadable	-	2
 src/add_remove.rs	store-still-claimed	-	1
 src/add_remove.rs	unknown-registry	-	1
 src/add_remove.rs	unresolvable-repo-source	tests/project_and_source_spelling_test.rs	1
+src/add_remove.rs	unspellable-directory-name	tests/adopt_unspellable_directory_name_test.rs	1
 src/add_remove.rs	unusable-creation-param	tests/refusal_arrival_test.rs	10
 src/bin/rwv-each/select.rs	(untokened:plugin)	-	5
 src/check.rs	repair-target-changed	-	5

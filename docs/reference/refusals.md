@@ -1245,6 +1245,25 @@ weave root: `rwv add --adopt <path>`. To fetch the members of a project already
 in this weave, drop the source: `rwv fetch --project <name>`. Otherwise give a
 full URL, or `owner/repo` shorthand for a supported registry.
 
+### `unspellable-directory-name`
+
+**Condition.** `rwv add --adopt <path>` names a clone whose position under the
+weave root passes through a directory name no member path can spell: one
+holding a `\`, which on Unix is an ordinary filename character, or one that is
+not valid Unicode. The refusal names the directory and which of the two it is.
+
+**Why.** The member path `--adopt` records is the clone's position under the
+weave root, written with `/` between names. A `\` read as a separator would
+record a different directory, and a member path is text, so a name that is not
+Unicode has no spelling in it. rwv does not rename the directory itself: any
+new name would be a guess.
+
+**Exits.** Rename the directory to a name without `\` that is valid Unicode,
+then run `rwv add --adopt` with the clone's new path. Nothing was written, so
+there is nothing to undo.
+
+**Where this sits.** [Formats](./formats.md) states the path grammar.
+
 ### `untracked-collision`
 
 **Condition.** Untracked files stand where the operation must write.

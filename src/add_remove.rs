@@ -3,7 +3,8 @@
 use crate::activate::{activate_intent_for, ActivateOptions, ActivationFailure, RestorePoint};
 use crate::integration_runner::missing_active_members;
 use crate::manifest::{
-    LockFile, Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role, Submodules, VcsType,
+    BelowError, LockFile, Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role, Submodules,
+    UnspellableLocation, VcsType,
 };
 use crate::path_spelling::{file_url_suggestion, CanonicalPath};
 use crate::refusal::{refusal, RefusalKind};
@@ -578,12 +579,18 @@ fn adopt_placement(
         Checkout::Workweave { dir, .. } => Some(dir),
         Checkout::Primary { .. } => None,
     };
-    let containing = [Some(primary), workweave]
+    let placed = [Some(primary), workweave]
         .into_iter()
         .flatten()
-        .filter(|root| root.contains(&named))
-        .max_by_key(|root| root.as_path().components().count());
-    let Some(root) = containing else {
+        .filter_map(
+            |root| match RepoPath::below(root.as_path(), named.as_path()) {
+                Ok(repo_path) => Some((root, Ok(repo_path))),
+                Err(BelowError::Unspellable(why)) => Some((root, Err(why))),
+                Err(BelowError::NotBelow) => None,
+            },
+        )
+        .max_by_key(|(root, _)| root.as_path().components().count());
+    let Some((root, spelled)) = placed else {
         let roots = match workweave {
             Some(ww) => format!(
                 "this workweave ('{}') or the primary weave ('{}')",
@@ -600,14 +607,18 @@ fn adopt_placement(
             named.as_path().display()
         );
     };
-    let member: Vec<String> = named
-        .as_path()
-        .strip_prefix(root.as_path())
-        .unwrap_or(Path::new(""))
-        .components()
-        .map(|c| c.as_os_str().to_string_lossy().into_owned())
-        .collect();
-    let repo_path = RepoPath::new(member.join("/"))?;
+    let repo_path = match spelled {
+        Ok(repo_path) => repo_path,
+        Err(UnspellableLocation::Rejected(e)) => return Err(e.into()),
+        Err(why @ (UnspellableLocation::Backslash(_) | UnspellableLocation::NotUnicode(_))) => {
+            crate::refuse!(
+                RefusalKind::UnspellableDirectoryName,
+                "rwv add --adopt: no member path can name '{}': {why}. Rename the directory, \
+                 then adopt the clone by its new path; rwv does not choose the name.",
+                named.as_path().display()
+            )
+        }
+    };
     let canonical = primary.as_path().join(repo_path.as_path());
     if let Some(ww) = workweave.filter(|ww| *ww == root) {
         let checkout = ww.as_path().join(repo_path.as_path());

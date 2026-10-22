@@ -76,6 +76,43 @@ impl fmt::Display for RepoPathError {
 
 impl std::error::Error for RepoPathError {}
 
+/// Why [`RepoPath::below`] names no member path for a location.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BelowError {
+    /// The location is not below the root, name by name.
+    NotBelow,
+    /// The location is below the root, and no member path spells it.
+    Unspellable(UnspellableLocation),
+}
+
+/// What keeps a location below a weave root from being a member path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UnspellableLocation {
+    /// One of its directory names holds a `\`: a character in a Unix
+    /// filename, and one no member path holds.
+    Backslash(String),
+    /// One of its directory names is not Unicode, and a member path is text.
+    NotUnicode(std::ffi::OsString),
+    /// Its names spell a path [`RepoPath::new`] refuses.
+    Rejected(RepoPathError),
+}
+
+impl fmt::Display for UnspellableLocation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Backslash(name) => write!(
+                f,
+                "the directory name '{name}' holds a `\\`, which no member path can hold"
+            ),
+            Self::NotUnicode(name) => write!(
+                f,
+                "the directory name {name:?} is not Unicode, and a member path is text"
+            ),
+            Self::Rejected(e) => write!(f, "{e:#}"),
+        }
+    }
+}
+
 /// Validate that a `RepoPath` string contains no backslashes.
 ///
 /// Returns `Err(RepoPathError)` when validation fails.
@@ -113,20 +150,29 @@ impl RepoPath {
     /// Each name is taken as the filesystem holds it. A `\` inside a Unix
     /// name stays in the name, so no member path holds it, rather than
     /// splitting it into two segments that name some other directory.
-    ///
-    /// `None` when `location` is not below `root`, or when a name on the way
-    /// is not Unicode, or is one no `RepoPath` holds.
-    pub fn below(root: &Path, location: &Path) -> Option<Self> {
-        let names = location
+    pub fn below(root: &Path, location: &Path) -> Result<Self, BelowError> {
+        let relative = location
             .strip_prefix(root)
-            .ok()?
-            .components()
-            .map(|component| match component {
-                std::path::Component::Normal(name) => name.to_str(),
-                _ => None,
-            })
-            .collect::<Option<Vec<_>>>()?;
-        Self::new(names.join("/")).ok()
+            .map_err(|_| BelowError::NotBelow)?;
+        let mut names = Vec::new();
+        for component in relative.components() {
+            let std::path::Component::Normal(name) = component else {
+                return Err(BelowError::NotBelow);
+            };
+            let Some(name) = name.to_str() else {
+                return Err(BelowError::Unspellable(UnspellableLocation::NotUnicode(
+                    name.to_owned(),
+                )));
+            };
+            if name.contains('\\') {
+                return Err(BelowError::Unspellable(UnspellableLocation::Backslash(
+                    name.to_owned(),
+                )));
+            }
+            names.push(name);
+        }
+        Self::new(names.join("/"))
+            .map_err(|e| BelowError::Unspellable(UnspellableLocation::Rejected(e)))
     }
 
     pub fn as_str(&self) -> &str {
@@ -2865,8 +2911,24 @@ role = "owned"
     fn a_location_below_the_root_is_named_by_its_names_joined_with_slashes() {
         let root = std::env::temp_dir().join("w");
         let location = root.join("github").join("o").join("r");
-        assert_eq!(RepoPath::below(&root, &location), Some(repo("github/o/r")));
-        assert_eq!(RepoPath::below(&location, &root), None);
+        assert_eq!(RepoPath::below(&root, &location), Ok(repo("github/o/r")));
+        assert_eq!(RepoPath::below(&location, &root), Err(BelowError::NotBelow));
+        assert_eq!(
+            RepoPath::below(&root, &root.join("a").join("..").join("b")),
+            Err(BelowError::NotBelow),
+            "a `..` on the way says nothing about where the location is"
+        );
+    }
+
+    #[test]
+    fn the_project_repos_key_is_refused_as_repo_path_new_refuses_it() {
+        let root = std::env::temp_dir().join("w");
+        assert_eq!(
+            RepoPath::below(&root, &root.join("(project)")),
+            Err(BelowError::Unspellable(UnspellableLocation::Rejected(
+                RepoPathError::ProjectRepo
+            )))
+        );
     }
 
     #[cfg(unix)]
@@ -2875,20 +2937,26 @@ role = "owned"
         let root = Path::new("/w");
         assert_eq!(
             RepoPath::below(root, Path::new("/w/github/o/a\\b")),
-            None,
+            Err(BelowError::Unspellable(UnspellableLocation::Backslash(
+                "a\\b".to_owned()
+            ))),
             "`a\\b` is one name on Unix; read as `a/b` it names another directory"
         );
     }
 
     #[cfg(unix)]
     #[test]
-    fn a_name_that_is_not_unicode_names_no_member() {
+    fn a_name_that_is_not_unicode_is_named_as_the_reason() {
         use std::os::unix::ffi::OsStrExt;
         let root = Path::new("/w");
-        let location = root
-            .join("github/o")
-            .join(std::ffi::OsStr::from_bytes(b"r\xff"));
-        assert_eq!(RepoPath::below(root, &location), None);
+        let name = std::ffi::OsStr::from_bytes(b"r\xff");
+        let location = root.join("github/o").join(name);
+        assert_eq!(
+            RepoPath::below(root, &location),
+            Err(BelowError::Unspellable(UnspellableLocation::NotUnicode(
+                name.to_owned()
+            )))
+        );
     }
 
     #[cfg(windows)]
@@ -2897,11 +2965,11 @@ role = "owned"
         let root = Path::new(r"C:\w");
         assert_eq!(
             RepoPath::below(root, Path::new(r"C:\w\github\o\r")),
-            Some(repo("github/o/r"))
+            Ok(repo("github/o/r"))
         );
         assert_eq!(
             RepoPath::below(root, Path::new(r"C:\w\github/o\r")),
-            Some(repo("github/o/r"))
+            Ok(repo("github/o/r"))
         );
     }
 

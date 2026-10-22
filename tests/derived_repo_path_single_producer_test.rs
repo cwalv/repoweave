@@ -1,10 +1,14 @@
 //! `registry.rs`'s `placement` is the only site that turns a clone source's
-//! identity into a `RepoPath`.
+//! identity into a `RepoPath`, and `RepoPath::below` the only one that turns
+//! a location on disk into one.
 //!
 //! Every other `RepoPath::new` call in `src/` takes the operator's raw
-//! argument, or a value already observed on disk, directly — never a value
-//! computed by mapping a registry, owner and repo through the canonical
-//! layout. The compiler cannot enforce this: `RepoPath::new` is a plain
+//! argument or the project repo's own path directly — never a value computed
+//! by mapping a registry, owner and repo through the canonical layout, and
+//! never a location's names joined by hand, which reads a `\` in a Unix name
+//! as a separator and a name that is not Unicode as some other name.
+//! `RepoPath::below` builds through `Self::new` inside manifest.rs, so it adds
+//! no site here. The compiler cannot enforce this: `RepoPath::new` is a plain
 //! constructor and takes whatever `String` a caller hands it, derived or not.
 //!
 //! **Why this is structural rather than behavioral.** The distinguishing
@@ -57,24 +61,20 @@ struct Allowed {
 const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "add_remove.rs",
-        count: 2,
-        justification: "One is the adopt verb's member path: the position, under \
-             the weave root that contains it, of a location the operator named on \
-             disk (an observed location). One is the removal verb's lookup key, \
-             matched against the manifest rather than asserted into it. The creation \
-             verb (`run_add_new`) reads `registry::placement(&plan.url)` instead, so \
-             its path is derived from the identity the registry's creation plan mints \
-             — inside registry.rs, where a derived path belongs. Neither remaining \
-             site maps a registry/owner/repo triple through the canonical layout the \
-             way `placement` does.",
+        count: 1,
+        justification: "The removal verb's lookup key, matched against the manifest \
+             rather than asserted into it. The adopt verb names its clone's location \
+             through `RepoPath::below`, and the creation verb (`run_add_new`) reads \
+             `registry::placement(&plan.url)`, so its path is derived inside \
+             registry.rs, where a derived path belongs.",
     },
     Allowed {
         file: "check.rs",
-        count: 3,
-        justification: "Two build the project repo's own path — not a manifest \
+        count: 2,
+        justification: "Both build the project repo's own path — not a manifest \
              member, and carrying no registry segment for `placement` to derive from. \
-             One is a lookup key compared against the known-repos set built from the \
-             manifest. None derives a layout from an identity.",
+             The branch-discipline scope names a checkout's location through \
+             `RepoPath::below`.",
     },
     Allowed {
         file: "manifest.rs",
@@ -142,9 +142,9 @@ fn no_undeclared_site_outside_registry_constructs_a_repo_path() {
 
     assert!(
         failures.is_empty(),
-        "a RepoPath outside {DERIVED_PRODUCER_MODULE} must be a lookup key or an \
-         observed location, never a path derived from an identity — route derivation \
-         through `registry::placement` instead.\n\n{}",
+        "a RepoPath outside {DERIVED_PRODUCER_MODULE} is a lookup key or the project \
+         repo's own path: a location on disk is named through `RepoPath::below`, and a \
+         path derived from an identity through `registry::placement`.\n\n{}",
         failures.join("\n\n")
     );
 }

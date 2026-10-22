@@ -252,6 +252,9 @@ pub enum RefusalKind {
     /// `--adopt` names a clone inside a workweave that is not a worktree of
     /// the primary's clone at the same member path.
     ForeignCloneInWorkweave,
+    /// `--adopt` names a clone below the weave root by a directory name no
+    /// member path can spell: one holding a `\`, or one that is not Unicode.
+    UnspellableDirectoryName,
     /// The project directory name is taken.
     ProjectDirOccupied,
     /// The name would nest a project inside a project.

@@ -30,7 +30,7 @@ impl Listing {
     /// The checkout at `checkout`, by the manifests on disk where it lives.
     pub(crate) fn of(checkout: &Path) -> Listing {
         for root in checkout.ancestors().skip(1) {
-            let Some(repo) = RepoPath::below(root, checkout) else {
+            let Ok(repo) = RepoPath::below(root, checkout) else {
                 return Listing::Unplaced;
             };
             let role_in = |project: &crate::manifest::ProjectName| {

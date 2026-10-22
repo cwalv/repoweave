@@ -773,7 +773,7 @@ fn repos_under_segment(root: &Path, segment: &str, vcs: &dyn Vcs) -> Vec<RepoPat
             if !vcs.is_repo(&repo_path) {
                 continue;
             }
-            repos.extend(RepoPath::below(root, &repo_path));
+            repos.extend(RepoPath::below(root, &repo_path).ok());
         }
     }
 

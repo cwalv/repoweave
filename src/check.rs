@@ -12,9 +12,7 @@ use crate::op_state::SavepointKey;
 use crate::path_spelling::{CanonicalPath, WirePath};
 use crate::refusal::{refusal, RefusalKind};
 use crate::vcs::{CommitId, RawRevisionId, ReplayExclusionState, ResolvedRevisionId};
-use crate::workspace::{
-    project_dir, project_rel_path, projects_dir, strip_projects_prefix, PointerContent, Resolution,
-};
+use crate::workspace::{project_dir, project_rel_path, projects_dir, PointerContent, Resolution};
 use anyhow::Context;
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -6591,31 +6589,14 @@ fn branch_discipline_path_in_scope(
         }
     }
 
-    if let Ok(rel_from_ws) = repo_path.strip_prefix(ws_root) {
-        // (b)/(c) path: under ws_root.
-        // Convert to forward-slash string and look up in known_repos.
-        let rel_str = rel_from_ws
-            .components()
-            .map(|c| c.as_os_str().to_string_lossy())
-            .collect::<Vec<_>>()
-            .join("/");
-        // The project repo is not a manifest member, so it is not in
-        // `known_repos`: `projects/<name>` is in scope exactly when `<name>`
-        // is the active project. Without this arm every project-repo finding
-        // would be filtered out of the default (project-scoped) run, which
-        // is the scope hole this arm closes.
-        if let Some(name) = strip_projects_prefix(Path::new(&rel_str)) {
-            return name.to_string_lossy() == active_project.as_str();
-        }
-        if let Ok(rp) = RepoPath::new(rel_str) {
-            return known_repos.contains(&rp);
-        }
-        false
-    } else {
-        // Path is neither under the workweave parent nor under ws_root.
-        // Shouldn't happen in practice; conservative: exclude.
-        false
+    // The project repo is not a manifest member, so it is not in
+    // `known_repos`: `projects/<name>` is in scope exactly when `<name>` is
+    // the active project. Without this arm every project-repo finding would
+    // be filtered out of the default (project-scoped) run.
+    if let Some(name) = crate::workspace::project_name_from_dir(ws_root, repo_path) {
+        return name == active_project.as_str();
     }
+    RepoPath::below(ws_root, repo_path).is_ok_and(|member| known_repos.contains(&member))
 }
 
 /// Apply the `rwv doctor --fix` deletion for safe-class stale ephemeral
@@ -11269,5 +11250,64 @@ mod verdict_tests {
         assert_eq!(Scope::from_all_flag(false), Scope::ActiveProject);
         assert_eq!(Repair::from_fix_flag(true), Repair::Apply);
         assert_eq!(Repair::from_fix_flag(false), Repair::Report);
+    }
+}
+
+#[cfg(test)]
+mod branch_discipline_scope_tests {
+    use super::*;
+
+    struct Weave {
+        _tmp: tempfile::TempDir,
+        root: PathBuf,
+    }
+
+    fn weave() -> Weave {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = crate::path_spelling::resolve(tmp.path())
+            .unwrap()
+            .join("ws");
+        std::fs::create_dir_all(root.join("projects")).unwrap();
+        Weave { _tmp: tmp, root }
+    }
+
+    fn in_scope(w: &Weave, location: &Path, active: &str, known: &[&str]) -> bool {
+        let known: BTreeSet<RepoPath> = known.iter().map(|k| RepoPath::new(*k).unwrap()).collect();
+        branch_discipline_path_in_scope(
+            location,
+            &w.root,
+            &ProjectName::new(active).unwrap(),
+            &known,
+        )
+    }
+
+    #[test]
+    fn a_nested_project_and_a_member_are_read_by_their_names() {
+        let w = weave();
+        let projects = w.root.join("projects");
+        let nested = projects.join("chatly").join("web-app");
+        assert!(in_scope(&w, &nested, "chatly/web-app", &[]));
+        assert!(!in_scope(
+            &w,
+            &projects.join("other"),
+            "chatly/web-app",
+            &[]
+        ));
+
+        let member = w.root.join("github").join("o").join("r");
+        assert!(in_scope(&w, &member, "chatly/web-app", &["github/o/r"]));
+        assert!(!in_scope(&w, &member, "chatly/web-app", &["github/o/s"]));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_name_that_is_not_unicode_is_no_member_whatever_its_lossy_reading() {
+        use std::os::unix::ffi::OsStrExt;
+        let w = weave();
+        let location = w
+            .root
+            .join("github/o")
+            .join(std::ffi::OsStr::from_bytes(b"r\xff"));
+        assert!(!in_scope(&w, &location, "web-app", &["github/o/r\u{FFFD}"]));
     }
 }
