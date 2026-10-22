@@ -22,12 +22,9 @@
 //!
 //! **Scope.** The five registers above. `RefusalKind` is parsed from its
 //! declaration in `src/refusal.rs`; `IssueKind`'s tags are what
-//! `IssueKindOutput` serializes, read from its committed schema; the VCS and
-//! sync kinds are `VcsErrorKind::ALL` and `SyncFailureKind::ALL`, the types
-//! whose serialization is the tag; and the doctor kinds are parsed from the
-//! body of the one function in `src/check.rs` that mints them, so every arm is
-//! in range whatever it is spelled like. A token built by concatenation is
-//! still invisible; one written as a constant is resolved.
+//! `IssueKindOutput` serializes, read from its committed schema; the doctor,
+//! VCS and sync kinds are `ViolationKind::ALL`, `VcsErrorKind::ALL` and
+//! `SyncFailureKind::ALL`, the types whose serialization is the tag.
 //!
 //! **A field value is not a condition.** `ConflictOp` serializes `rebase` /
 //! `merge` / `cherry-pick` into `--json`, but as the `op` field *inside* the
@@ -71,6 +68,7 @@
 mod common;
 
 use common::json_schema;
+use repoweave::check::ViolationKind;
 use repoweave::sync::SyncFailureKind;
 use repoweave::vcs::VcsErrorKind;
 use serde_json::Value;
@@ -180,96 +178,6 @@ fn source(file: &str) -> String {
         .unwrap_or_else(|e| panic!("src/{file} is readable: {e}"))
 }
 
-/// The body of the one function that mints a register's tokens, from its
-/// signature to the closing brace at the same indent.
-///
-/// Crude and keyed to how these three files are written — a minting function
-/// sits at four-space indent inside an `impl`, so `    }` ends it. A register
-/// that moves out of that shape yields nothing here, which
-/// [`the_register_walk_is_not_vacuous`] is what catches.
-fn minting_fn<'a>(source: &'a str, signature: &str) -> &'a str {
-    let from = source
-        .find(signature)
-        .unwrap_or_else(|| panic!("`{signature}` is declared"));
-    let body = &source[from..];
-    let end = body.find("\n    }").map_or(body.len(), |at| at + 6);
-    &body[..end]
-}
-
-/// The kebab-case tokens a minting function writes on its `=>` arms.
-///
-/// **Scoped to that function, and that is what makes it total.** An earlier
-/// version scanned the whole file and had to guess which `=> "literal"` arms
-/// were tokens; it guessed by requiring a hyphen, which silently dropped every
-/// single-word token a register published. Measured over the three files this
-/// reads, that heuristic was hiding `provenance` from the doctor register,
-/// `surfacing` from the issue register and `io` from the VCS register — three
-/// published tokens, none of them recorded anywhere as unwalked, with every
-/// assertion in this file green. Dropping the hyphen rule without narrowing the
-/// scope is not the fix either: over the same files it admits a `Severity`
-/// display arm and two arms of a `Display` impl, which are not tokens.
-///
-/// A token minted through a `Self::CONST` rather than written inline is
-/// resolved against the constant's own declaration — a register is free to name
-/// a token it also needs as a value, and a walk that reads only literals cannot
-/// see that arm at all.
-fn arm_tokens(source: &str, signature: &str) -> BTreeSet<String> {
-    let body = minting_fn(source, signature);
-    let mut out = BTreeSet::new();
-    for arm in body.split("=>").skip(1) {
-        let token = match arm.trim_start().strip_prefix('"') {
-            Some(rest) => match rest.find('"') {
-                Some(end) => rest[..end].to_owned(),
-                None => continue,
-            },
-            None => {
-                let Some(name) = arm
-                    .trim_start()
-                    .strip_prefix("Self::")
-                    .map(|r| {
-                        r.chars()
-                            .take_while(|c| {
-                                c.is_ascii_uppercase() || c.is_ascii_digit() || *c == '_'
-                            })
-                            .collect::<String>()
-                    })
-                    .filter(|n| !n.is_empty())
-                else {
-                    continue;
-                };
-                let decl = format!("const {name}: &'static str = \"");
-                let Some(at) = source.find(&decl) else {
-                    continue;
-                };
-                let rest = &source[at + decl.len()..];
-                match rest.find('"') {
-                    Some(end) => rest[..end].to_owned(),
-                    None => continue,
-                }
-            }
-        };
-        if !token.is_empty()
-            && token
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-        {
-            out.insert(token);
-        }
-    }
-    out
-}
-
-/// How many arms a minting function has, for comparison against how many
-/// tokens the walk recovered from it.
-///
-/// The pin a floor cannot be. A floor catches a register going dark wholesale;
-/// it cannot catch one going *partially* blind, which is the likelier drift and
-/// the one that reads green — the issue register's floor is well under its size,
-/// so it passed for as long as two of its arms were invisible.
-fn arm_count(source: &str, signature: &str) -> usize {
-    minting_fn(source, signature).matches("=>").count()
-}
-
 /// The tokens a `rename_all = "kebab-case"` enum publishes: its variant names
 /// kebabbed, **except** where an explicit `#[serde(rename = "…")]` overrides
 /// one.
@@ -360,13 +268,9 @@ fn kebab(name: &str) -> String {
     out
 }
 
-/// The hand-minted registers, each as the file that declares it and the
-/// signature of the one function that mints its tokens.
-const MINTED_REGISTERS: &[(&str, &str, &str)] = &[(
-    "doctor",
-    "check.rs",
-    "pub fn wire_kind(&self) -> &'static str {",
-)];
+fn doctor_tokens() -> BTreeSet<String> {
+    ViolationKind::ALL.iter().map(ToString::to_string).collect()
+}
 
 fn vcs_tokens() -> BTreeSet<String> {
     VcsErrorKind::ALL.iter().map(ToString::to_string).collect()
@@ -380,60 +284,24 @@ fn sync_failure_tokens() -> BTreeSet<String> {
 }
 
 fn registers() -> BTreeMap<&'static str, BTreeSet<String>> {
-    let mut out = BTreeMap::from([
+    BTreeMap::from([
         ("refusal", refusal_tokens()),
         ("issue", issue_tokens()),
         ("vcs", vcs_tokens()),
         ("sync", sync_failure_tokens()),
-    ]);
-    for (name, file, signature) in MINTED_REGISTERS {
-        out.insert(name, arm_tokens(&source(file), signature));
-    }
-    out
-}
-
-/// Every arm of a minting function yielded a token.
-///
-/// The direction a floor cannot assert. `arm_tokens` recovers what it can
-/// recognize, so a register that changes how one arm is spelled loses that
-/// token silently and every comparison downstream narrows by one — while the
-/// walk still returns plenty and the floor still passes. Comparing the count
-/// against the arms in range is what makes the walk total rather than merely
-/// non-empty.
-#[test]
-fn every_arm_of_every_minting_function_yields_a_token() {
-    for (name, file, signature) in MINTED_REGISTERS {
-        let source = source(file);
-        let arms = arm_count(&source, signature);
-        let tokens = arm_tokens(&source, signature);
-        assert!(
-            arms > 0,
-            "the {name} register's minting function was sliced to nothing"
-        );
-        assert_eq!(
-            tokens.len(),
-            arms,
-            "the {name} register's minting function in src/{file} has {arms} arms and the \
-             walk recovered {} tokens — an arm is spelled in a way the walk does not read, \
-             and everything this file asserts about that register is short by one:\n{tokens:#?}",
-            tokens.len()
-        );
-    }
+        ("doctor", doctor_tokens()),
+    ])
 }
 
 /// Every register is read and none of them came back empty or implausibly
 /// small. A parser that quietly stopped matching would make every assertion
 /// below vacuous while leaving them green.
 ///
-/// **What a floor does not do**, because the wrong answer here cost this file
-/// two published tokens: it catches a register going dark wholesale, not one
-/// going partially blind. A floor is by construction below the register's real
-/// size, so a walk that loses one arm — or four — still clears it. The
-/// partial case belongs to
-/// [`every_arm_of_every_minting_function_yields_a_token`], which compares the
-/// count against the arms actually in range; this floor is what stands behind
-/// `refusal`, whose parser reads an enum declaration rather than match arms and
-/// so has no arm count to compare against.
+/// **What a floor does not do**: it catches a register going dark wholesale,
+/// not one going partially blind, because it is by construction below the
+/// register's real size. It stands behind `refusal`, the one register still
+/// parsed from source; the others are types' `ALL`, held to their wire mirrors'
+/// schemas by [`the_kind_enums_list_exactly_the_tags_their_wire_mirrors_declare`].
 #[test]
 fn the_register_walk_is_not_vacuous() {
     let regs = registers();
@@ -542,6 +410,7 @@ fn an_op_name_is_not_also_a_condition_name() {
 fn the_kind_enums_list_exactly_the_tags_their_wire_mirrors_declare() {
     let mut vocabs = kebab_vocabularies();
     for (kinds, mirror) in [
+        (doctor_tokens(), "ViolationOutput"),
         (vcs_tokens(), "VcsErrorOutput"),
         (sync_failure_tokens(), "SyncFailureOutput"),
     ] {
@@ -745,14 +614,8 @@ fn every_published_token_is_servable_or_a_recorded_exception() {
 }
 
 /// True for a wire token this file treats as kebab-case: lowercase ASCII
-/// letters, digits and `-` only.
-///
-/// A property declared `rename_all = "snake_case"` still passes through here
-/// unfiltered when every one of its members happens to be one word (`ok`,
-/// `failed`) — snake_case and kebab-case coincide until a name needs a
-/// separator. What this excludes is a literal underscore surviving into a
-/// token, the same character class `arm_tokens` already holds every
-/// hand-parsed register to.
+/// letters, digits and `-` only. What this excludes is a literal underscore
+/// surviving into a token.
 fn is_kebab_token(s: &str) -> bool {
     !s.is_empty()
         && s.chars()

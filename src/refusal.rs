@@ -470,7 +470,7 @@ mod tests {
     }
 
     /// Where a refusal names a state doctor already names, the two spell it
-    /// the same. Compared against `wire_kind` rather than a literal: a literal
+    /// the same. Compared against `kind` rather than a literal: a literal
     /// agrees with whatever it was typed as, and the pair drifting apart is
     /// exactly the failure this exists to catch.
     #[test]
@@ -499,7 +499,7 @@ mod tests {
         ];
 
         for (kind, finding) in pairs {
-            assert_eq!(kind.token(), finding.wire_kind());
+            assert_eq!(kind.token(), finding.kind().to_string());
         }
     }
 

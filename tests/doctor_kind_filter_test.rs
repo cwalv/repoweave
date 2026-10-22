@@ -269,14 +269,19 @@ fn kind_filter_refuses_an_unknown_kind_naming_the_valid_set() {
     );
 }
 
-/// The register agreement behind the filter: `CheckViolation::wire_kind`
-/// must equal the `kind` tag serialization actually emits, for every corpus
-/// specimen — and every wire kind must be admissible by name.
+/// The register agreement behind the filter: `CheckViolation::kind` must equal
+/// the `kind` tag serialization actually emits, for every corpus specimen —
+/// every wire kind must be admissible by name, and the corpus must carry every
+/// kind `ViolationKind::ALL` lists.
 #[test]
-fn wire_kind_agrees_with_the_serialized_tag_for_the_whole_corpus() {
+fn a_violations_kind_is_the_tag_serialization_emits_for_the_whole_corpus() {
     use common::doctor_corpus::corpus;
-    use repoweave::check::{build_doctor_json, KindFilter};
-    use std::collections::HashMap;
+    use repoweave::check::{build_doctor_json, KindFilter, ViolationKind};
+    use std::collections::{BTreeSet, HashMap};
+
+    let sampled: BTreeSet<String> = corpus().iter().map(|v| v.kind().to_string()).collect();
+    let listed: BTreeSet<String> = ViolationKind::ALL.iter().map(ToString::to_string).collect();
+    assert_eq!(sampled, listed, "the corpus and ViolationKind::ALL differ");
 
     let valid: std::collections::BTreeSet<String> = KindFilter::valid_kinds().into_iter().collect();
     assert!(
@@ -287,7 +292,7 @@ fn wire_kind_agrees_with_the_serialized_tag_for_the_whole_corpus() {
     );
 
     for v in corpus() {
-        let declared = v.wire_kind().to_string();
+        let declared = v.kind().to_string();
         let doc = serde_json::to_value(build_doctor_json(
             vec![v],
             Vec::new(),
@@ -304,7 +309,7 @@ fn wire_kind_agrees_with_the_serialized_tag_for_the_whole_corpus() {
             .to_string();
         assert_eq!(
             declared, emitted,
-            "wire_kind must state the tag serialization emits"
+            "kind must state the tag serialization emits"
         );
         assert!(
             valid.contains(&declared),

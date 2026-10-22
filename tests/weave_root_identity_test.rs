@@ -946,7 +946,8 @@ fn each_marker_defect_refuses_under_the_token_doctor_publishes_for_it() {
             marker_path: PathBuf::from("/ws/.rwv-workweave"),
             primary: PathBuf::from("/ws"),
         }
-        .wire_kind()
+        .kind()
+        .to_string()
     );
 
     assert_eq!(

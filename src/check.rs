@@ -902,63 +902,176 @@ impl CheckViolation {
         }
     }
 
-    /// The `kind` tag this violation serializes under in `rwv doctor --json`.
-    ///
-    /// [`ViolationOutput`] mirrors this enum variant-for-variant and tags
-    /// with the kebab-cased variant name; this method states the same
-    /// mapping for the internal type, so a filter can ask a violation's
-    /// wire name without converting it. The agreement is pinned by a test
-    /// that serializes every corpus violation and compares the emitted tag
-    /// against this method — a variant added to one enum and not the other
-    /// already fails to compile in [`ViolationOutput::from_violation`].
-    pub fn wire_kind(&self) -> &'static str {
+    pub fn kind(&self) -> ViolationKind {
         match self {
-            CheckViolation::OrphanedClone { .. } => "orphaned-clone",
-            CheckViolation::UnknownSegmentClone { .. } => "unknown-segment-clone",
-            CheckViolation::DanglingReference { .. } => "dangling-reference",
-            CheckViolation::MemberPermissions { .. } => "member-permissions",
-            CheckViolation::RoleDisagreement { .. } => "role-disagreement",
-            CheckViolation::StaleLock { .. } => "stale-lock",
-            CheckViolation::IncompleteLock { .. } => "incomplete-lock",
-            CheckViolation::WorkweaveDrift { .. } => "workweave-drift",
-            CheckViolation::IndexDrift { .. } => "index-drift",
-            CheckViolation::WorkingTreeDrift { .. } => "working-tree-drift",
-            CheckViolation::MissingReplayExclusion { .. } => "missing-replay-exclusion",
-            CheckViolation::ReplayExclusionUnreadable { .. } => "replay-exclusion-unreadable",
-            CheckViolation::MissingMergeDriverConfig { .. } => "missing-merge-driver-config",
-            CheckViolation::MergeDriverConfigUnreadable { .. } => "merge-driver-config-unreadable",
-            CheckViolation::HeadUnreadable { .. } => "head-unreadable",
-            CheckViolation::ProjectsDirUnreadable { .. } => "projects-dir-unreadable",
-            CheckViolation::ProjectlessDir { .. } => "projectless-dir",
-            CheckViolation::UnnameableProject { .. } => "unnameable-project",
-            CheckViolation::UnresolvableLockEntry { .. } => "unresolvable-lock-entry",
-            CheckViolation::LockPinnedByName { .. } => "lock-pinned-by-name",
-            CheckViolation::LegacyManifestFormat { .. } => "legacy-manifest-format",
-            CheckViolation::DanglingActiveProject { .. } => "dangling-active-project",
-            CheckViolation::WeaveRootIdentityConflict { .. } => "weave-root-identity-conflict",
-            CheckViolation::LegacyWorkweaveMarker { .. } => "legacy-workweave-marker",
-            CheckViolation::LegacyWorkweaveIndex { .. } => "legacy-workweave-index",
-            CheckViolation::UnreadableOwnedState { .. } => "unreadable-owned-state",
-            CheckViolation::UnreadableWorkweaveIndex { .. } => "unreadable-workweave-index",
-            CheckViolation::UnparseableProject { .. } => "unparseable-project",
-            CheckViolation::WorkweaveTreeIntegrity { .. } => "workweave-tree-integrity",
-            CheckViolation::Provenance { .. } => "provenance",
-            CheckViolation::CloneTopology { .. } => "clone-topology",
-            CheckViolation::BranchDiscipline { .. } => "branch-discipline",
-            CheckViolation::StaleWorktreeRegistration { .. } => "stale-worktree-registration",
-            CheckViolation::StaleOpState { .. } => "stale-op-state",
-            CheckViolation::DeadOpLease { .. } => "dead-op-lease",
-            CheckViolation::DanglingRefReceipt { .. } => "dangling-ref-receipt",
-            CheckViolation::PreFlatRefReceipt { .. } => "pre-flat-ref-receipt",
-            CheckViolation::OrphanedSavepoint { .. } => "orphaned-savepoint",
-            CheckViolation::UnrecognizedSavepointRef { .. } => "unrecognized-savepoint-ref",
-            CheckViolation::ConfusableSiblings { .. } => "confusable-siblings",
-            CheckViolation::CargoVersionSkew { .. } => "cargo-version-skew",
-            CheckViolation::CargoPatchShadowing { .. } => "cargo-patch-shadowing",
-            CheckViolation::MissingCanonicalClone { .. } => "missing-canonical-clone",
-            CheckViolation::UninitializedSubmodule { .. } => "uninitialized-submodule",
-            CheckViolation::PhantomMergeDriver { .. } => "phantom-merge-driver",
+            CheckViolation::OrphanedClone { .. } => ViolationKind::OrphanedClone,
+            CheckViolation::UnknownSegmentClone { .. } => ViolationKind::UnknownSegmentClone,
+            CheckViolation::DanglingReference { .. } => ViolationKind::DanglingReference,
+            CheckViolation::MemberPermissions { .. } => ViolationKind::MemberPermissions,
+            CheckViolation::RoleDisagreement { .. } => ViolationKind::RoleDisagreement,
+            CheckViolation::StaleLock { .. } => ViolationKind::StaleLock,
+            CheckViolation::IncompleteLock { .. } => ViolationKind::IncompleteLock,
+            CheckViolation::WorkweaveDrift { .. } => ViolationKind::WorkweaveDrift,
+            CheckViolation::IndexDrift { .. } => ViolationKind::IndexDrift,
+            CheckViolation::WorkingTreeDrift { .. } => ViolationKind::WorkingTreeDrift,
+            CheckViolation::MissingReplayExclusion { .. } => ViolationKind::MissingReplayExclusion,
+            CheckViolation::ReplayExclusionUnreadable { .. } => {
+                ViolationKind::ReplayExclusionUnreadable
+            }
+            CheckViolation::MissingMergeDriverConfig { .. } => {
+                ViolationKind::MissingMergeDriverConfig
+            }
+            CheckViolation::MergeDriverConfigUnreadable { .. } => {
+                ViolationKind::MergeDriverConfigUnreadable
+            }
+            CheckViolation::HeadUnreadable { .. } => ViolationKind::HeadUnreadable,
+            CheckViolation::ProjectsDirUnreadable { .. } => ViolationKind::ProjectsDirUnreadable,
+            CheckViolation::ProjectlessDir { .. } => ViolationKind::ProjectlessDir,
+            CheckViolation::UnnameableProject { .. } => ViolationKind::UnnameableProject,
+            CheckViolation::UnresolvableLockEntry { .. } => ViolationKind::UnresolvableLockEntry,
+            CheckViolation::LockPinnedByName { .. } => ViolationKind::LockPinnedByName,
+            CheckViolation::LegacyManifestFormat { .. } => ViolationKind::LegacyManifestFormat,
+            CheckViolation::DanglingActiveProject { .. } => ViolationKind::DanglingActiveProject,
+            CheckViolation::WeaveRootIdentityConflict { .. } => {
+                ViolationKind::WeaveRootIdentityConflict
+            }
+            CheckViolation::LegacyWorkweaveMarker { .. } => ViolationKind::LegacyWorkweaveMarker,
+            CheckViolation::LegacyWorkweaveIndex { .. } => ViolationKind::LegacyWorkweaveIndex,
+            CheckViolation::UnreadableOwnedState { .. } => ViolationKind::UnreadableOwnedState,
+            CheckViolation::UnreadableWorkweaveIndex { .. } => {
+                ViolationKind::UnreadableWorkweaveIndex
+            }
+            CheckViolation::UnparseableProject { .. } => ViolationKind::UnparseableProject,
+            CheckViolation::WorkweaveTreeIntegrity { .. } => ViolationKind::WorkweaveTreeIntegrity,
+            CheckViolation::Provenance { .. } => ViolationKind::Provenance,
+            CheckViolation::CloneTopology { .. } => ViolationKind::CloneTopology,
+            CheckViolation::BranchDiscipline { .. } => ViolationKind::BranchDiscipline,
+            CheckViolation::StaleWorktreeRegistration { .. } => {
+                ViolationKind::StaleWorktreeRegistration
+            }
+            CheckViolation::StaleOpState { .. } => ViolationKind::StaleOpState,
+            CheckViolation::DeadOpLease { .. } => ViolationKind::DeadOpLease,
+            CheckViolation::DanglingRefReceipt { .. } => ViolationKind::DanglingRefReceipt,
+            CheckViolation::PreFlatRefReceipt { .. } => ViolationKind::PreFlatRefReceipt,
+            CheckViolation::OrphanedSavepoint { .. } => ViolationKind::OrphanedSavepoint,
+            CheckViolation::UnrecognizedSavepointRef { .. } => {
+                ViolationKind::UnrecognizedSavepointRef
+            }
+            CheckViolation::ConfusableSiblings { .. } => ViolationKind::ConfusableSiblings,
+            CheckViolation::CargoVersionSkew { .. } => ViolationKind::CargoVersionSkew,
+            CheckViolation::CargoPatchShadowing { .. } => ViolationKind::CargoPatchShadowing,
+            CheckViolation::MissingCanonicalClone { .. } => ViolationKind::MissingCanonicalClone,
+            CheckViolation::UninitializedSubmodule { .. } => ViolationKind::UninitializedSubmodule,
+            CheckViolation::PhantomMergeDriver { .. } => ViolationKind::PhantomMergeDriver,
         }
+    }
+}
+
+/// Which [`CheckViolation`] variant a finding is, as the `kind` it carries in
+/// `rwv doctor --json`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ViolationKind {
+    OrphanedClone,
+    UnknownSegmentClone,
+    DanglingReference,
+    MemberPermissions,
+    RoleDisagreement,
+    StaleLock,
+    IncompleteLock,
+    WorkweaveDrift,
+    IndexDrift,
+    WorkingTreeDrift,
+    MissingReplayExclusion,
+    ReplayExclusionUnreadable,
+    MissingMergeDriverConfig,
+    MergeDriverConfigUnreadable,
+    HeadUnreadable,
+    ProjectsDirUnreadable,
+    ProjectlessDir,
+    UnnameableProject,
+    UnresolvableLockEntry,
+    LockPinnedByName,
+    LegacyManifestFormat,
+    DanglingActiveProject,
+    WeaveRootIdentityConflict,
+    LegacyWorkweaveMarker,
+    LegacyWorkweaveIndex,
+    UnreadableOwnedState,
+    UnreadableWorkweaveIndex,
+    UnparseableProject,
+    WorkweaveTreeIntegrity,
+    Provenance,
+    CloneTopology,
+    BranchDiscipline,
+    StaleWorktreeRegistration,
+    StaleOpState,
+    DeadOpLease,
+    DanglingRefReceipt,
+    PreFlatRefReceipt,
+    OrphanedSavepoint,
+    UnrecognizedSavepointRef,
+    ConfusableSiblings,
+    CargoVersionSkew,
+    CargoPatchShadowing,
+    MissingCanonicalClone,
+    UninitializedSubmodule,
+    PhantomMergeDriver,
+}
+
+impl ViolationKind {
+    pub const ALL: [Self; 45] = [
+        Self::OrphanedClone,
+        Self::UnknownSegmentClone,
+        Self::DanglingReference,
+        Self::MemberPermissions,
+        Self::RoleDisagreement,
+        Self::StaleLock,
+        Self::IncompleteLock,
+        Self::WorkweaveDrift,
+        Self::IndexDrift,
+        Self::WorkingTreeDrift,
+        Self::MissingReplayExclusion,
+        Self::ReplayExclusionUnreadable,
+        Self::MissingMergeDriverConfig,
+        Self::MergeDriverConfigUnreadable,
+        Self::HeadUnreadable,
+        Self::ProjectsDirUnreadable,
+        Self::ProjectlessDir,
+        Self::UnnameableProject,
+        Self::UnresolvableLockEntry,
+        Self::LockPinnedByName,
+        Self::LegacyManifestFormat,
+        Self::DanglingActiveProject,
+        Self::WeaveRootIdentityConflict,
+        Self::LegacyWorkweaveMarker,
+        Self::LegacyWorkweaveIndex,
+        Self::UnreadableOwnedState,
+        Self::UnreadableWorkweaveIndex,
+        Self::UnparseableProject,
+        Self::WorkweaveTreeIntegrity,
+        Self::Provenance,
+        Self::CloneTopology,
+        Self::BranchDiscipline,
+        Self::StaleWorktreeRegistration,
+        Self::StaleOpState,
+        Self::DeadOpLease,
+        Self::DanglingRefReceipt,
+        Self::PreFlatRefReceipt,
+        Self::OrphanedSavepoint,
+        Self::UnrecognizedSavepointRef,
+        Self::ConfusableSiblings,
+        Self::CargoVersionSkew,
+        Self::CargoPatchShadowing,
+        Self::MissingCanonicalClone,
+        Self::UninitializedSubmodule,
+        Self::PhantomMergeDriver,
+    ];
+}
+
+impl std::fmt::Display for ViolationKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&crate::wire_token::wire_token(self))
     }
 }
 
@@ -1851,17 +1964,8 @@ pub struct LegacyRefAtTip {
 // which the internal type cannot supply alone. We mirror the variants here
 // and convert at serialize time via [`ViolationOutput::from_violation`].
 //
-// The kebab-case tag mapping:
-//     OrphanedClone       -> "orphaned-clone"
-//     UnknownSegmentClone -> "unknown-segment-clone"
-//     DanglingReference   -> "dangling-reference"
-//     StaleLock           -> "stale-lock"
-//     IncompleteLock      -> "incomplete-lock"
-//     WorkweaveDrift      -> "workweave-drift"  (sub-kind via `DriftKind`)
-//     IndexDrift          -> "index-drift"      (sub-kind via `IndexDriftKind`)
-//     WorkingTreeDrift    -> "working-tree-drift" (sub-kind via `WorkingTreeDriftKind`)
-//     MissingReplayExclusion -> "missing-replay-exclusion"
-//     MissingCanonicalClone  -> "missing-canonical-clone"
+// The tag is the kebab-cased variant name, and `ViolationKind` lists the same
+// names for the internal type.
 
 /// One violation as it appears in `rwv doctor --json` output.
 #[derive(Debug, Serialize, JsonSchema)]
@@ -9977,7 +10081,7 @@ impl KindFilter {
 
     /// Whether `v` belongs to one of the named kinds.
     fn admits(&self, v: &CheckViolation) -> bool {
-        self.kinds.contains(v.wire_kind())
+        self.kinds.contains(v.kind().to_string().as_str())
     }
 
     /// Whether `issue` belongs to one of the named kinds.
