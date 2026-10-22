@@ -289,7 +289,10 @@ but without the waived check.
 The diverged-commit check uses **both** the recorded parent and the primary
 weave as baselines: work counts as merged when it is reachable from either.
 This means a nested workweave's commits that have landed in the parent
-workweave (but not yet in primary) are not flagged as unmerged.
+workweave (but not yet in primary) are not flagged as unmerged. Retire's
+delete step adds a third baseline, the target its `sync-to` has just landed
+the workweave into, so `rwv sync-to <target> --retire` retires a workweave
+whose work is in a target other than its recorded parent.
 
 ## Lifecycle in one view
 

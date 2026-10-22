@@ -1743,7 +1743,8 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
                 // both are destroyed by the replace.
                 let mut paths =
                     collect_dirty_paths(project_vcs.as_ref(), &workweave_dir, project, &manifest);
-                let baselines = merge_baselines(&workweave_dir, &CanonicalPath::of(primary_root));
+                let baselines =
+                    merge_baselines(&workweave_dir, &CanonicalPath::of(primary_root), None);
                 paths.extend(collect_diverged_paths(
                     project_vcs.as_ref(),
                     &workweave_dir,
@@ -2597,19 +2598,33 @@ fn member_depth_checkouts(workweave_dir: &Path, manifest: &Manifest) -> Vec<Memb
 /// Merge baselines for a workweave: workspace roots whose lineage counts as
 /// "this work has landed". The recorded parent (the workspace the workweave
 /// was forked from, and the default sync-to target) comes first when the
-/// marker is readable and the path still exists; the primary weave root is
-/// always included. With stacked workweaves a child workweave's work lands
-/// in its parent workweave and may reach primary only after further
-/// sync-to hops — checking primary alone would refuse every child retire.
-fn merge_baselines(workweave_dir: &Path, ws_root: &CanonicalPath) -> Vec<PathBuf> {
-    let mut baselines: Vec<PathBuf> = Vec::new();
-    if let Ok(Some(marker)) = WorkweaveMarker::read(workweave_dir) {
-        if marker.parent().as_path().exists() && marker.parent() != ws_root {
-            baselines.push(marker.parent().as_path().to_path_buf());
+/// marker is readable and the path still exists; then `landed_into`, the
+/// workspace the op deleting this workweave has just synced it into; the
+/// primary weave root is always included, last. With stacked workweaves a
+/// child workweave's work lands in its parent workweave and may reach primary
+/// only after further sync-to hops — checking primary alone would refuse
+/// every child retire. Each workspace is listed once, however it is spelled.
+fn merge_baselines(
+    workweave_dir: &Path,
+    ws_root: &CanonicalPath,
+    landed_into: Option<&CanonicalPath>,
+) -> Vec<PathBuf> {
+    let parent = WorkweaveMarker::read(workweave_dir)
+        .ok()
+        .flatten()
+        .map(|marker| marker.parent().clone())
+        .filter(|parent| parent.as_path().exists());
+    let mut baselines: Vec<CanonicalPath> = Vec::new();
+    for held in parent.into_iter().chain(landed_into.cloned()) {
+        if held != *ws_root && !baselines.contains(&held) {
+            baselines.push(held);
         }
     }
-    baselines.push(ws_root.as_path().to_path_buf());
+    baselines.push(ws_root.clone());
     baselines
+        .into_iter()
+        .map(CanonicalPath::into_path_buf)
+        .collect()
 }
 
 /// Walk the workweave's repos and report those whose worktree HEAD holds
@@ -3189,7 +3204,7 @@ pub fn delete_workweave(
         &workweave_dir,
         discard_uncommitted,
         discard_unmerged,
-        OpGuard::Enforce,
+        Deleter::Operator,
     )
 }
 
@@ -3205,13 +3220,15 @@ pub fn delete_workweave(
 /// `delete_workweave_inner_at`.
 ///
 /// `--retire` has no waiver flag, so it holds neither consent: uncommitted or
-/// unmerged work refuses, which the retire phase's own refusals already
-/// guarantee before this runs.
+/// unmerged work refuses. `target` is the workspace the op has just synced the
+/// workweave into, so it holds that work whether or not it is the recorded
+/// parent.
 pub(crate) fn delete_workweave_for_retire(
     ws_root: &Path,
     project: &ProjectName,
     name: &WorkweaveName,
     workweave_dir: &Path,
+    target: &CanonicalPath,
 ) -> anyhow::Result<()> {
     delete_workweave_inner_at(
         ws_root,
@@ -3220,16 +3237,20 @@ pub(crate) fn delete_workweave_for_retire(
         workweave_dir,
         None,
         None,
-        OpGuard::HeldByRetiringOp,
+        Deleter::RetiringOp { target },
     )
 }
 
-/// Whether a delete refuses a workweave that carries an in-flight op record.
-enum OpGuard {
-    Enforce,
-    /// The op deleting the workweave holds its record there until its own
-    /// cleanup phase, after the delete.
-    HeldByRetiringOp,
+/// Who deletes a workweave: whether an in-flight op record refuses the delete,
+/// and which workspaces besides the recorded parent and the primary hold its
+/// work.
+enum Deleter<'a> {
+    /// `rwv workweave delete`, which an op record in the workweave refuses.
+    Operator,
+    /// The `sync-to --retire` op that has just synced the workweave into
+    /// `target`. It holds its record there until its own cleanup phase, after
+    /// the delete.
+    RetiringOp { target: &'a CanonicalPath },
 }
 
 /// Delete a workweave whose on-disk path is already known.
@@ -3250,7 +3271,7 @@ fn delete_workweave_inner_at(
     workweave_dir: &Path,
     discard_uncommitted: Option<DiscardUncommittedConsent>,
     discard_unmerged: Option<DiscardUnmergedConsent>,
-    op_guard: OpGuard,
+    deleter: Deleter<'_>,
 ) -> anyhow::Result<()> {
     let project_vcs = project_vcs();
     let manifest = load_manifest(ws_root, project)?;
@@ -3283,7 +3304,7 @@ fn delete_workweave_inner_at(
 
     // Refuse before the dirty/unmerged checks so a mid-op delete reports the
     // in-flight op. No override: `rwv abort` is the way to clear a stale record.
-    if workweave_dir.exists() && matches!(op_guard, OpGuard::Enforce) {
+    if workweave_dir.exists() && matches!(deleter, Deleter::Operator) {
         crate::op_state::check_no_op_in_progress(&[workweave_dir.as_path()])?;
     }
 
@@ -3303,9 +3324,14 @@ fn delete_workweave_inner_at(
     }
     // The baselines the per-ref `Merged` warrants are measured against, read
     // while the workweave's marker still exists (it names the parent). Work
-    // counts as merged when its recorded parent OR the primary weave contains
-    // it — nested workweaves land in their parent first.
-    let baselines = merge_baselines(&workweave_dir, &CanonicalPath::of(ws_root));
+    // counts as merged when its recorded parent, the primary weave, or the
+    // target a retiring op just synced it into contains it — nested
+    // workweaves land in their parent first.
+    let landed_into = match deleter {
+        Deleter::Operator => None,
+        Deleter::RetiringOp { target } => Some(target),
+    };
+    let baselines = merge_baselines(&workweave_dir, &CanonicalPath::of(ws_root), landed_into);
 
     // Committed-but-unmerged work is just as lost as uncommitted work:
     // the ephemeral-ref cleanup below destroys the only ref to those
@@ -4839,7 +4865,7 @@ mod tests {
             "precondition: the detoured spelling resolves to the primary"
         );
 
-        let baselines = merge_baselines(&workweave_dir, &CanonicalPath::of(&detoured));
+        let baselines = merge_baselines(&workweave_dir, &CanonicalPath::of(&detoured), None);
 
         assert_eq!(
             baselines,
@@ -4858,7 +4884,7 @@ mod tests {
         crate::symlink::create(tmp.path(), &link, crate::symlink::LinkTarget::Directory).unwrap();
         let symlinked = link.join(primary.file_name().unwrap());
 
-        let baselines = merge_baselines(&workweave_dir, &CanonicalPath::of(&symlinked));
+        let baselines = merge_baselines(&workweave_dir, &CanonicalPath::of(&symlinked), None);
 
         assert_eq!(
             baselines,
@@ -4869,12 +4895,39 @@ mod tests {
     }
 
     #[test]
+    fn merge_baselines_lists_a_retiring_op_s_target_once() {
+        let (tmp, primary, workweave_dir) = forked_from_primary();
+        let root = CanonicalPath::of(&primary);
+        assert_eq!(
+            merge_baselines(&workweave_dir, &root, Some(&root)),
+            merge_baselines(&workweave_dir, &root, None),
+            "a bare retire's target is the recorded parent, so it adds nothing"
+        );
+
+        let elsewhere = tmp.path().join("p2");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        let target = CanonicalPath::of(&elsewhere);
+        assert_eq!(
+            merge_baselines(&workweave_dir, &root, Some(&target)),
+            vec![target.as_path().to_path_buf(), root.as_path().to_path_buf()],
+        );
+
+        // Seen from a primary that is not the recorded parent, the parent is a
+        // baseline of its own; a target that is that parent is not a second one.
+        assert_eq!(
+            merge_baselines(&workweave_dir, &target, Some(&root)),
+            merge_baselines(&workweave_dir, &target, None),
+            "a target that is the recorded parent is listed once"
+        );
+    }
+
+    #[test]
     fn merge_baselines_keeps_a_parent_that_is_a_different_workspace() {
         let (tmp, _primary, workweave_dir) = forked_from_primary();
         let elsewhere = tmp.path().join("other");
         std::fs::create_dir_all(&elsewhere).unwrap();
 
-        let baselines = merge_baselines(&workweave_dir, &CanonicalPath::of(&elsewhere));
+        let baselines = merge_baselines(&workweave_dir, &CanonicalPath::of(&elsewhere), None);
 
         assert_eq!(
             baselines.len(),

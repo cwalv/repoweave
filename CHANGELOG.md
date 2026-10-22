@@ -15,6 +15,16 @@ removed it, and switching to another project left one in a subdirectory
 behind. On Unix the link is now recognized under the name it was declared
 with.
 
+### `rwv sync-to <target> --retire` counts the target it landed into
+
+A workweave landed into a target other than its recorded parent, by naming the
+target, could not be retired that way. `rwv sync-to <target> --retire`
+completed the landing, then refused with `unmerged-commits` because its delete
+counted only the recorded parent and the primary as holding the work, and the
+op stayed parked at the retire phase until `rwv abort`. The delete now also
+counts the target the op has just synced into. A bare `rwv sync-to --retire`,
+whose target is the recorded parent, behaves as before.
+
 ### `cargo-patch-shadowing` reads the project's own weave-level patches
 
 `rwv doctor` read the weave-level `[patch]` tables for `cargo-patch-shadowing`

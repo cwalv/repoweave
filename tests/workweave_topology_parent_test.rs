@@ -441,6 +441,77 @@ fn retire_adopts_children() {
     assert!(!wwa.root.exists(), "wwa retired");
 }
 
+/// A workweave forked from one workspace and landed into another it names
+/// explicitly. `a` is forked from `p1`, so neither its recorded parent nor the
+/// primary holds what it lands in `p2`; the retire that follows the landing
+/// must count `p2` as holding it.
+fn fork_and_land_in_a_named_target(main: &MainWorkspace) -> (Workweave, Workweave) {
+    let p1 = create_workweave(main, "p1", None);
+    let p2 = create_workweave(main, "p2", None);
+    let a = create_workweave(main, "a", Some(&p1.root));
+
+    commit_file(&a.manifest_repo, "a.txt", "from a\n", "a: add a.txt");
+    rwv_lock_commit(&a.root);
+    rwv()
+        .args(["sync-to", &p2.root.to_string_lossy(), "--strategy=ff"])
+        .current_dir(&a.root)
+        .assert()
+        .success();
+    (a, p2)
+}
+
+fn retire_into(a: &Workweave, target: &Workweave) -> std::process::Output {
+    rwv()
+        .args(["sync-to", &target.root.to_string_lossy(), "--retire"])
+        .current_dir(&a.root)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn retire_counts_the_named_target_it_landed_into() {
+    let tmp = common::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+    let (a, p2) = fork_and_land_in_a_named_target(&main);
+
+    let out = retire_into(&a, &p2);
+    assert!(
+        out.status.success(),
+        "the retire must count the target it just synced into:\n{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!a.root.exists(), "a retired");
+}
+
+/// The target holds only what it holds: work in a checkout the target lacks
+/// still refuses, and the member it does hold is not listed.
+#[test]
+fn retire_into_a_named_target_refuses_what_that_target_lacks() {
+    let tmp = common::tempdir().unwrap();
+    let main = make_main_workspace(tmp.path());
+    let (a, p2) = fork_and_land_in_a_named_target(&main);
+    init_repo(&a.root.join("github/org/extra"));
+
+    let out = retire_into(&a, &p2);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{stderr}");
+    let routes: Vec<&str> = stderr
+        .lines()
+        .filter_map(|l| l.strip_prefix("rwv explain "))
+        .collect();
+    assert_eq!(routes, vec!["unmerged-commits"], "{stderr}");
+    assert!(
+        stderr.contains("github/org/extra (not a manifest member)"),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains(&format!("  {MANIFEST_REPO_PATH}")),
+        "the target holds the member, so it is not unmerged: {stderr}"
+    );
+    assert!(a.root.exists(), "a refused retire leaves the workweave");
+}
+
 // ===========================================================================
 // 2. dangling-parent doctor --fix
 // ===========================================================================

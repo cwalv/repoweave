@@ -1163,7 +1163,9 @@ refuses names that *do* dispatch.
 
 **Condition.** A workweave being deleted holds commits contained in neither its
 recorded parent nor the primary weave, and `--discard-unmerged-commits` was
-not given. As for `uncommitted-work`, every checkout under the workweave
+not given. When `rwv sync-to <target> --retire` deletes it, the target that op
+has just synced it into counts too, whether or not it is the recorded parent.
+As for `uncommitted-work`, every checkout under the workweave
 counts; one the manifest does not name is listed with the suffix `(not a
 manifest member)`, and is reported even when no baseline holds that repo at
 all.

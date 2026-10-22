@@ -6371,6 +6371,7 @@ fn retire_workweave_after_sync_to(
         project,
         workweave_name,
         workweave_dir,
+        &CanonicalPath::of(target_workspace_dir),
     )
     .context("--retire: workweave delete failed")?;
 
