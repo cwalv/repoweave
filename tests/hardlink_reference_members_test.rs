@@ -19,9 +19,13 @@ const OWNED: &str = "github/org/own";
 const PROJECT: &str = "app";
 const FILES: &[&str] = &["README", "src/a.txt", "src/b.txt"];
 
+/// A repository holding [`FILES`], whose checkouts write them as committed:
+/// where a checkout converts line endings no file is shared, and every test
+/// here is about a shared file.
 fn init_repo(path: &Path) -> String {
     std::fs::create_dir_all(path.join("src")).unwrap();
     common::git_in(path, &["init", "-b", "main"]);
+    common::LineEndings::Verbatim.pin(path);
     for file in FILES {
         std::fs::write(path.join(file), format!("{file}\n")).unwrap();
     }

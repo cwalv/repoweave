@@ -6,33 +6,10 @@ use std::path::{Path, PathBuf};
 
 mod common;
 
+use common::LineEndings;
+
 const MEMBER: &str = "github/org/reference";
 const PROJECT: &str = "app";
-
-/// How the member's checkouts write line endings, pinned in its own config
-/// so the global config of the machine running the test cannot choose.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LineEndings {
-    /// `core.autocrlf=false` and `core.eol=lf`: text checks out as committed.
-    Verbatim,
-    /// `core.autocrlf=true`, Git for Windows' default: text checks out with
-    /// CRLF line endings, so no text file can be placed from elsewhere.
-    Converted,
-}
-
-impl LineEndings {
-    fn pin(self, repo: &Path) {
-        match self {
-            Self::Verbatim => {
-                common::git_in(repo, &["config", "core.autocrlf", "false"]);
-                common::git_in(repo, &["config", "core.eol", "lf"]);
-            }
-            Self::Converted => {
-                common::git_in(repo, &["config", "core.autocrlf", "true"]);
-            }
-        }
-    }
-}
 
 fn init_repo(path: &Path) -> String {
     std::fs::create_dir_all(path).unwrap();

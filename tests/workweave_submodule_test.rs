@@ -17,6 +17,8 @@ use repoweave::workweave::scan_uninitialized_submodules;
 
 mod common;
 
+use common::LineEndings;
+
 const PROJECT: &str = "proj";
 const MEMBER: &str = "github/org/app";
 const SUB: &str = "libs/sub";
@@ -58,12 +60,14 @@ impl Trap {
 }
 
 /// `git` with `protocol.file.allow=always`, which `git submodule add` from a
-/// local path needs and the code under test must never rely on.
-fn git_allowing_file_protocol(dir: &Path, args: &[&str]) {
+/// local path needs and the code under test must never rely on, and with
+/// `config`.
+fn git_allowing_file_protocol(dir: &Path, config: &[(&str, &str)], args: &[&str]) {
+    let settings: Vec<(&str, &str)> = std::iter::once(("protocol.file.allow", "always"))
+        .chain(config.iter().copied())
+        .collect();
     let output = common::git()
-        .env("GIT_CONFIG_COUNT", "2")
-        .env("GIT_CONFIG_KEY_1", "protocol.file.allow")
-        .env("GIT_CONFIG_VALUE_1", "always")
+        .envs(common::git_config_env(&settings))
         .env("GIT_AUTHOR_NAME", "Test")
         .env("GIT_AUTHOR_EMAIL", "test@test.com")
         .env("GIT_COMMITTER_NAME", "Test")
@@ -108,11 +112,18 @@ struct Weave {
     _tmp: tempfile::TempDir,
     primary: PathBuf,
     trap: Trap,
+    /// Over the machine's own config for every checkout the fixture and its
+    /// seats make, and for every git run through [`Weave::git`].
+    config: &'static [(&'static str, &'static str)],
 }
 
 impl Weave {
     fn canonical(&self) -> PathBuf {
         self.primary.join(MEMBER)
+    }
+
+    fn git(&self, dir: impl AsRef<Path>, args: &[&str]) -> String {
+        common::git_in_configured(dir, self.config, args)
     }
 
     fn module_store(&self) -> PathBuf {
@@ -130,6 +141,7 @@ impl Weave {
     /// Create seat `name`; returns its root and create's stderr.
     fn seat(&self, name: &str) -> (PathBuf, String) {
         let output = common::rwv()
+            .envs(common::git_config_env(self.config))
             .args(["workweave", PROJECT, "create", name])
             .current_dir(&self.primary)
             .output()
@@ -141,6 +153,7 @@ impl Weave {
 
     fn findings(&self) -> Vec<serde_json::Value> {
         let output = common::rwv()
+            .envs(common::git_config_env(self.config))
             .args(["doctor", "--json"])
             .current_dir(&self.primary)
             .output()
@@ -177,6 +190,21 @@ fn rwv(args: &[&str], cwd: &Path) -> String {
 /// `extra_entry_line` under its entry; the member records [`SUB`], which
 /// records [`NESTED`].
 fn weave(role: &str, extra_entry_line: &str, store: Store) -> Weave {
+    configured_weave(role, extra_entry_line, store, &[])
+}
+
+/// [`weave`], with every checkout the fixture and its seats make writing
+/// line endings as `endings` says, whatever the machine's config.
+fn weave_checked_out(role: &str, endings: LineEndings) -> Weave {
+    configured_weave(role, "", Store::Complete, endings.settings())
+}
+
+fn configured_weave(
+    role: &str,
+    extra_entry_line: &str,
+    store: Store,
+    config: &'static [(&'static str, &'static str)],
+) -> Weave {
     let tmp = common::tempdir().unwrap();
     let trap = Trap::new();
     let upstream = tmp.path().join("upstream");
@@ -187,6 +215,7 @@ fn weave(role: &str, extra_entry_line: &str, store: Store) -> Weave {
     common::git_in(&sub_up, &["config", "uploadpack.allowFilter", "true"]);
     git_allowing_file_protocol(
         &sub_up,
+        config,
         &["submodule", "add", &common::file_url(&deep_up), "deep"],
     );
     common::git_in(&sub_up, &["commit", "-m", "add deep"]);
@@ -196,11 +225,13 @@ fn weave(role: &str, extra_entry_line: &str, store: Store) -> Weave {
     init_repo(&canonical, &["README"]);
     git_allowing_file_protocol(
         &canonical,
+        config,
         &["submodule", "add", &common::file_url(&sub_up), SUB],
     );
     common::git_in(&canonical, &["commit", "-m", "add sub"]);
     git_allowing_file_protocol(
         &canonical,
+        config,
         &["submodule", "update", "--init", "--recursive"],
     );
 
@@ -210,6 +241,7 @@ fn weave(role: &str, extra_entry_line: &str, store: Store) -> Weave {
         let partial = tmp.path().join("partial.git");
         git_allowing_file_protocol(
             tmp.path(),
+            config,
             &[
                 "clone",
                 "--bare",
@@ -281,6 +313,7 @@ fn weave(role: &str, extra_entry_line: &str, store: Store) -> Weave {
         _tmp: tmp,
         primary,
         trap,
+        config,
     }
 }
 
@@ -319,15 +352,15 @@ fn assert_checked_out(weave: &Weave, member: &Path, role: &str) {
         "the nested submodule should be checked out too"
     );
     assert_eq!(
-        common::git_in(member.join(SUB), &["rev-parse", "HEAD"]),
-        common::git_in(member, &["rev-parse", &format!("HEAD:{SUB}")]),
+        weave.git(member.join(SUB), &["rev-parse", "HEAD"]),
+        weave.git(member, &["rev-parse", &format!("HEAD:{SUB}")]),
     );
     assert_eq!(
-        common::git_in(member, &["status", "--porcelain"]),
+        weave.git(member, &["status", "--porcelain"]),
         "",
         "the member should read clean, submodules included"
     );
-    let store = common::git_in(
+    let store = weave.git(
         member.join(SUB),
         &["rev-parse", "--path-format=absolute", "--git-common-dir"],
     );
@@ -337,7 +370,7 @@ fn assert_checked_out(weave: &Weave, member: &Path, role: &str) {
         "the submodule must have a repository of its own, not the canonical clone's"
     );
     assert_eq!(
-        common::git_in(member.join(SUB), &["config", "remote.origin.url"]),
+        weave.git(member.join(SUB), &["config", "remote.origin.url"]),
         format!("{}/sub", weave.trap.url),
     );
     #[cfg(unix)]
@@ -371,32 +404,71 @@ fn remove_member(weave: &Weave, seat: &Path) {
     );
 }
 
+/// `(reflinked, hardlinked, written)` from create's line for [`SUB`].
+fn sub_placement(stderr: &str) -> (usize, usize, usize) {
+    let line = stderr
+        .lines()
+        .find(|l| l.contains(&format!("{MEMBER}/{SUB}: submodule checked out")))
+        .unwrap_or_else(|| panic!("create should report the submodule:\n{stderr}"));
+    let count = |mode: &str| -> usize {
+        line.split(['(', ','])
+            .find_map(|part| part.trim().strip_suffix(mode)?.trim().parse().ok())
+            .unwrap_or_else(|| panic!("no {mode} count in: {line}"))
+    };
+    (count("reflinked"), count("hardlinked"), count("written)"))
+}
+
+/// Every path the submodule's index records, gitlinks included.
+fn sub_tracked(weave: &Weave, member: &Path) -> usize {
+    weave.git(member.join(SUB), &["ls-files"]).lines().count()
+}
+
+/// Fixture check: the submodule's files in `member` are on disk as `endings`
+/// writes them, so the arm under test is the one its name says.
+fn assert_written_as(member: &Path, endings: LineEndings) {
+    let path = member.join(SUB).join(SUB_FILES[0]);
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(
+        bytes.ends_with(b"\r\n"),
+        endings == LineEndings::Converted,
+        "{} is not written as {endings:?} writes it: {bytes:?}",
+        path.display()
+    );
+}
+
 #[test]
 fn workweave_create_checks_out_submodules_from_local_data_in_each_role() {
-    for role in ["owned", "reference"] {
-        let weave = weave(role, "", Store::Complete);
-        let store_config = std::fs::read(weave.module_store().join("config")).unwrap();
+    for endings in [LineEndings::Verbatim, LineEndings::Converted] {
+        for role in ["owned", "reference"] {
+            let weave = weave_checked_out(role, endings);
+            let store_config = std::fs::read(weave.module_store().join("config")).unwrap();
 
-        let (seat, stderr) = weave.seat("one");
+            let (seat, stderr) = weave.seat("one");
 
-        assert_checked_out(&weave, &seat.join(MEMBER), role);
-        let line = stderr
-            .lines()
-            .find(|l| l.contains(&format!("{MEMBER}/{SUB}: submodule checked out")))
-            .unwrap_or_else(|| panic!("create should report the submodule:\n{stderr}"));
-        if reflinks(&seat) {
-            assert!(
-                line.contains(&format!("{} reflinked", SUB_FILES.len() + 1)),
-                "every file, .gitmodules included, is cloned from the canonical checkout: {line}"
+            assert_checked_out(&weave, &seat.join(MEMBER), role);
+            assert_written_as(&seat.join(MEMBER), endings);
+            let (reflinked, hardlinked, written) = sub_placement(&stderr);
+            match endings {
+                LineEndings::Verbatim if reflinks(&seat) => assert_eq!(
+                    reflinked,
+                    SUB_FILES.len() + 1,
+                    "every file, .gitmodules included, is cloned from the canonical checkout"
+                ),
+                LineEndings::Verbatim => {}
+                LineEndings::Converted => assert_eq!(
+                    (reflinked, hardlinked, written),
+                    (0, 0, sub_tracked(&weave, &seat.join(MEMBER))),
+                    "a checkout that converts line endings writes every file, as {role}"
+                ),
+            }
+            assert_eq!(
+                std::fs::read(weave.module_store().join("config")).unwrap(),
+                store_config,
+                "the canonical clone's copy is read, never written"
             );
+            assert!(weave.findings().is_empty(), "{:?}", weave.findings());
+            weave.trap.assert_untouched();
         }
-        assert_eq!(
-            std::fs::read(weave.module_store().join("config")).unwrap(),
-            store_config,
-            "the canonical clone's copy is read, never written"
-        );
-        assert!(weave.findings().is_empty(), "{:?}", weave.findings());
-        weave.trap.assert_untouched();
     }
 }
 
@@ -584,29 +656,30 @@ fn a_partial_copy_is_never_asked_for_contents_it_lacks() {
 
 #[test]
 fn a_second_seat_places_submodule_files_from_the_first() {
-    let weave = weave("reference", "", Store::Complete);
-    let (one, _) = weave.seat("one");
-    let (two, stderr) = weave.seat("two");
+    for endings in [LineEndings::Verbatim, LineEndings::Converted] {
+        let weave = weave_checked_out("reference", endings);
+        let (one, _) = weave.seat("one");
+        let (two, stderr) = weave.seat("two");
 
-    assert_checked_out(&weave, &two.join(MEMBER), "reference");
-    let line = stderr
-        .lines()
-        .find(|l| l.contains(&format!("{MEMBER}/{SUB}: submodule checked out")))
-        .unwrap_or_else(|| panic!("create should report the submodule:\n{stderr}"));
-    if cfg!(target_os = "linux") {
-        let count = |mode: &str| -> usize {
-            line.split(['(', ','])
-                .find_map(|part| part.trim().strip_suffix(mode)?.trim().parse().ok())
-                .unwrap_or(0)
-        };
-        assert_eq!(
-            count("reflinked") + count("hardlinked"),
-            SUB_FILES.len() + 1,
-            "every file is cloned, or linked to a read-only reference copy: {line}"
-        );
+        assert_checked_out(&weave, &two.join(MEMBER), "reference");
+        assert_written_as(&two.join(MEMBER), endings);
+        let (reflinked, hardlinked, written) = sub_placement(&stderr);
+        match endings {
+            LineEndings::Verbatim if cfg!(target_os = "linux") => assert_eq!(
+                reflinked + hardlinked,
+                SUB_FILES.len() + 1,
+                "every file is cloned, or linked to a read-only reference copy"
+            ),
+            LineEndings::Verbatim => {}
+            LineEndings::Converted => assert_eq!(
+                (reflinked, hardlinked, written),
+                (0, 0, sub_tracked(&weave, &two.join(MEMBER))),
+                "a checkout that converts line endings writes every file"
+            ),
+        }
+        assert!(one.join(MEMBER).join(SUB).join(SUB_FILES[0]).is_file());
+        weave.trap.assert_untouched();
     }
-    assert!(one.join(MEMBER).join(SUB).join(SUB_FILES[0]).is_file());
-    weave.trap.assert_untouched();
 }
 
 #[test]

@@ -1,12 +1,14 @@
 //! `rwv workweave create` reports, for each member, how its tracked files
 //! reached the seat: cloned from a workspace that already holds them, or
-//! written by the VCS. Which one depends on whether the filesystem can clone,
-//! and a filesystem declared able to must show clones rather than pass on a
-//! fallback.
+//! written by the VCS. Which one depends on whether the filesystem can clone
+//! and whether a checkout converts line endings, and a filesystem declared
+//! able to clone must show clones rather than pass on a fallback.
 
 use std::path::{Path, PathBuf};
 
 mod common;
+
+use common::LineEndings;
 
 const MEMBERS: &[(&str, &str)] = &[
     ("github/acme/lib", "owned"),
@@ -20,8 +22,8 @@ fn git_init_with_commit(dir: &Path) {
 }
 
 /// A primary with one project holding [`MEMBERS`], each with three tracked
-/// files.
-fn weave(tmp: &Path) -> PathBuf {
+/// files and checked out under `endings`.
+fn weave(tmp: &Path, endings: LineEndings) -> PathBuf {
     let ws = tmp.join("ws");
     let mut manifest = String::new();
     for (repo, role) in MEMBERS {
@@ -35,6 +37,7 @@ fn weave(tmp: &Path) -> PathBuf {
             std::fs::write(clone.join(file), body).unwrap();
         }
         git_init_with_commit(&clone);
+        endings.pin(&clone);
         manifest.push_str(&format!(
             "[repositories.\"{repo}\"]\ntype = \"git\"\nurl = \"https://example.com/{repo}.git\"\n\
              version = \"main\"\nrole = \"{role}\"\n\n"
@@ -83,10 +86,9 @@ fn counts_for(stderr: &str, repo: &str) -> (usize, usize, usize) {
     (numbers[0], numbers[1], numbers[2])
 }
 
-#[test]
-fn create_reports_how_each_members_files_were_placed() {
+fn create_reports_how_each_members_files_were_placed(endings: LineEndings) {
     let tmp = common::tempdir().unwrap();
-    let ws = weave(tmp.path());
+    let ws = weave(tmp.path(), endings);
 
     let output = common::rwv()
         .args(["workweave", "web-app", "create", "agent-1"])
@@ -101,17 +103,35 @@ fn create_reports_how_each_members_files_were_placed() {
         let member = seat.join(repo);
         let tracked = common::git_in(&member, &["ls-files"]).lines().count();
         assert_eq!(common::git_in(&member, &["status", "--porcelain"]), "");
+        let readme = std::fs::read(member.join("README")).unwrap();
+        assert_eq!(
+            readme.ends_with(b"\r\n"),
+            endings == LineEndings::Converted,
+            "fixture check: {repo}'s README is not written as {endings:?} writes it"
+        );
         let (reflinked, hardlinked, written) = counts_for(&stderr, repo);
         assert_eq!(hardlinked, 0);
-        match declared_to_clone(tmp.path()) {
-            Some(true) => assert_eq!(
+        match (endings, declared_to_clone(tmp.path())) {
+            (LineEndings::Converted, _) | (_, Some(false)) => {
+                assert_eq!((reflinked, written), (0, tracked), "{repo}, {endings:?}")
+            }
+            (LineEndings::Verbatim, Some(true)) => assert_eq!(
                 (reflinked, written),
                 (tracked, 0),
                 "{repo}: declared able to clone, on {}",
                 std::env::consts::OS
             ),
-            Some(false) => assert_eq!((reflinked, written), (0, tracked), "{repo}"),
-            None => assert_eq!(reflinked + written, tracked, "{repo}"),
+            (LineEndings::Verbatim, None) => assert_eq!(reflinked + written, tracked, "{repo}"),
         }
     }
+}
+
+#[test]
+fn create_reports_how_each_members_files_were_placed_when_checkouts_write_them_as_committed() {
+    create_reports_how_each_members_files_were_placed(LineEndings::Verbatim);
+}
+
+#[test]
+fn create_reports_how_each_members_files_were_placed_when_checkouts_convert_line_endings() {
+    create_reports_how_each_members_files_were_placed(LineEndings::Converted);
 }

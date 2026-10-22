@@ -358,10 +358,55 @@ pub fn git() -> Command {
     // `init.defaultBranch = main` set globally. Injecting via
     // `GIT_CONFIG_*` env vars (see git-config(1)) stacks on top of any
     // existing config without touching files.
-    cmd.env("GIT_CONFIG_COUNT", "1");
-    cmd.env("GIT_CONFIG_KEY_0", "init.defaultBranch");
-    cmd.env("GIT_CONFIG_VALUE_0", "main");
+    cmd.envs(git_config_env(&[]));
     cmd
+}
+
+/// The `GIT_CONFIG_*` environment setting `init.defaultBranch=main` and then
+/// each of `settings` for every git a command runs, rwv's included.
+///
+/// Config given this way outranks every config file, so it also reaches a
+/// repository the command creates, which a pin in a repository's own config
+/// cannot.
+pub fn git_config_env(settings: &[(&str, &str)]) -> Vec<(String, String)> {
+    let all: Vec<(&str, &str)> = std::iter::once(("init.defaultBranch", "main"))
+        .chain(settings.iter().copied())
+        .collect();
+    let mut env = vec![("GIT_CONFIG_COUNT".to_owned(), all.len().to_string())];
+    for (i, (key, value)) in all.iter().enumerate() {
+        env.push((format!("GIT_CONFIG_KEY_{i}"), (*key).to_owned()));
+        env.push((format!("GIT_CONFIG_VALUE_{i}"), (*value).to_owned()));
+    }
+    env
+}
+
+/// The two line-ending configurations a checkout meets in practice, for a
+/// fixture to pin so that the config of the machine running it cannot choose.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineEndings {
+    /// `core.autocrlf=false` and `core.eol=lf`: text checks out as committed.
+    Verbatim,
+    /// `core.autocrlf=true`, Git for Windows' default: text checks out with
+    /// CRLF line endings.
+    Converted,
+}
+
+impl LineEndings {
+    pub fn settings(self) -> &'static [(&'static str, &'static str)] {
+        match self {
+            Self::Verbatim => &[("core.autocrlf", "false"), ("core.eol", "lf")],
+            Self::Converted => &[("core.autocrlf", "true")],
+        }
+    }
+
+    /// Pin in `repo`'s own config, which every worktree of it shares. A
+    /// repository cloned from it does not inherit the pin; [`git_config_env`]
+    /// over [`LineEndings::settings`] reaches one.
+    pub fn pin(self, repo: &std::path::Path) {
+        for (key, value) in self.settings() {
+            git_in(repo, &["config", key, value]);
+        }
+    }
 }
 
 /// Run `git args` in `dir`, panic on a non-zero exit, and hand back trimmed
@@ -378,8 +423,18 @@ pub fn git() -> Command {
 /// file's own `git` and `git_out`, one of which set the identity and the other
 /// of which did not.
 pub fn git_in(dir: impl AsRef<std::path::Path>, args: &[&str]) -> String {
+    git_in_configured(dir, &[], args)
+}
+
+/// [`git_in`], with each of `settings` given as [`git_config_env`] gives it.
+pub fn git_in_configured(
+    dir: impl AsRef<std::path::Path>,
+    settings: &[(&str, &str)],
+    args: &[&str],
+) -> String {
     let dir = dir.as_ref();
     let out = git()
+        .envs(git_config_env(settings))
         .args(args)
         .current_dir(dir)
         .env("GIT_AUTHOR_NAME", "Test")
@@ -822,9 +877,7 @@ pub fn rwv() -> assert_cmd::Command {
     // to git internally and those subprocesses inherit this env, so any
     // `git init` rwv runs on behalf of a test gets `main` as the default
     // branch regardless of CI runner config.
-    cmd.env("GIT_CONFIG_COUNT", "1");
-    cmd.env("GIT_CONFIG_KEY_0", "init.defaultBranch");
-    cmd.env("GIT_CONFIG_VALUE_0", "main");
+    cmd.envs(git_config_env(&[]));
     cmd
 }
 
@@ -847,9 +900,7 @@ pub fn rwv_std() -> Command {
     for var in GIT_ENV_VARS {
         cmd.env_remove(var);
     }
-    cmd.env("GIT_CONFIG_COUNT", "1");
-    cmd.env("GIT_CONFIG_KEY_0", "init.defaultBranch");
-    cmd.env("GIT_CONFIG_VALUE_0", "main");
+    cmd.envs(git_config_env(&[]));
     cmd
 }
 
