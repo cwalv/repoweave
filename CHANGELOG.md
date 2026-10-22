@@ -6,6 +6,14 @@ claim that nothing changed in them.
 
 ## Unreleased
 
+### On Windows, `rwv explain` and `rwv prime` print LF line endings
+
+The pages `rwv explain` and `rwv prime` print are built into the binary. The
+Windows build was made from a checkout under Git for Windows' default
+`core.autocrlf=true`, so it carried those pages with CRLF line endings while
+the rest of rwv's output used LF. The repository's files now check out with LF
+on every platform, so these commands print the same bytes everywhere.
+
 ### The documentation site publishes releases only, each at its own address
 
 The site at https://cwalv.github.io/repoweave/ was rebuilt from the main branch
