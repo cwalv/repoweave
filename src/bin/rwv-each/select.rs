@@ -5,10 +5,12 @@ use std::process::{Command, Stdio};
 use anyhow::{bail, Context};
 use serde::Deserialize;
 
+use crate::wire::Role;
+
 #[derive(Debug, Clone)]
 pub struct Repo {
     pub path: String,
-    pub role: String,
+    pub role: Role,
     pub dir: PathBuf,
     pub present: bool,
 }
@@ -70,12 +72,27 @@ struct StatusEnvelope {
 #[derive(Debug, Deserialize)]
 struct StatusRepo {
     path: String,
-    role: String,
+    role: Role,
     absolute_path: PathBuf,
-    relation: String,
+    relation: Relation,
 }
 
-pub const REFERENCE_ROLE: &str = "reference";
+/// How a checkout stands against its lock, as `rwv status --json` spells it.
+/// Only `missing` changes what this plugin does, but the set is closed so that
+/// a token it does not know is output it refuses to read rather than a repo it
+/// reads as present.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+enum Relation {
+    Ok,
+    Ahead,
+    Behind,
+    Diverged,
+    NoLock,
+    Unknown,
+    Missing,
+    Unreachable,
+}
 
 pub fn select(
     rwv: &OsStr,
@@ -111,9 +128,9 @@ pub fn select(
 fn apply_default_scope(repos: Vec<StatusRepo>, default_scope: bool) -> Vec<Repo> {
     repos
         .into_iter()
-        .filter(|r| !default_scope || r.role != REFERENCE_ROLE)
+        .filter(|r| !default_scope || r.role != Role::Reference)
         .map(|r| Repo {
-            present: r.relation != "missing",
+            present: r.relation != Relation::Missing,
             path: r.path,
             role: r.role,
             dir: r.absolute_path,
@@ -124,7 +141,9 @@ fn apply_default_scope(repos: Vec<StatusRepo>, default_scope: bool) -> Vec<Repo>
 fn nothing_matched(roles: &[String], selectors: &[String]) -> String {
     if roles.is_empty() && selectors.is_empty() {
         return format!(
-            "no repo to run in: with no --role or --repo, every repo except role {REFERENCE_ROLE} runs, and this project has none; pass --role {REFERENCE_ROLE} to include reference repos"
+            "no repo to run in: with no --role or --repo, every repo except role {reference} runs, and this project has none; pass --role {reference} to include reference repos",
+            reference = Role::Reference
+
         );
     }
     let named: Vec<String> = roles
@@ -139,21 +158,27 @@ fn nothing_matched(roles: &[String], selectors: &[String]) -> String {
 mod tests {
     use super::*;
 
-    fn status_repo(path: &str, role: &str, relation: &str) -> StatusRepo {
+    fn status_repo(path: &str, role: Role, relation: Relation) -> StatusRepo {
         StatusRepo {
             path: path.into(),
-            role: role.into(),
+            role,
             absolute_path: PathBuf::from("/ws").join(path),
-            relation: relation.into(),
+            relation,
         }
+    }
+
+    fn status_json(role: &str, relation: &str) -> String {
+        format!(
+            r#"{{"repos": [{{"path": "a", "role": "{role}", "absolute_path": "/ws/a", "relation": "{relation}"}}]}}"#
+        )
     }
 
     #[test]
     fn the_default_scope_drops_reference_repos_and_selectors_do_not() {
         let repos = || {
             vec![
-                status_repo("a", "owned", "ok"),
-                status_repo("b", "reference", "ok"),
+                status_repo("a", Role::Owned, Relation::Ok),
+                status_repo("b", Role::Reference, Relation::Ok),
             ]
         };
         let paths = |rs: Vec<Repo>| rs.into_iter().map(|r| r.path).collect::<Vec<_>>();
@@ -165,13 +190,49 @@ mod tests {
     fn a_missing_checkout_is_not_present() {
         let repos = apply_default_scope(
             vec![
-                status_repo("a", "owned", "missing"),
-                status_repo("b", "owned", "behind"),
+                status_repo("a", Role::Owned, Relation::Missing),
+                status_repo("b", Role::Owned, Relation::Behind),
             ],
             true,
         );
         assert!(!repos[0].present);
         assert!(repos[1].present);
+    }
+
+    #[test]
+    fn every_role_and_relation_status_reports_is_read() {
+        for role in ["owned", "fork", "dependency", "reference"] {
+            for relation in [
+                "ok",
+                "ahead",
+                "behind",
+                "diverged",
+                "no-lock",
+                "unknown",
+                "missing",
+                "unreachable",
+            ] {
+                let status: StatusEnvelope = serde_json::from_str(&status_json(role, relation))
+                    .unwrap_or_else(|e| {
+                        panic!("{role} {relation} was refused: {e}");
+                    });
+                assert_eq!(status.repos.len(), 1);
+            }
+        }
+    }
+
+    #[test]
+    fn a_token_the_plugin_does_not_know_is_output_it_refuses_to_read() {
+        for (role, relation, unknown) in [
+            ("owned", "elsewhere", "elsewhere"),
+            ("owned", "no_lock", "no_lock"),
+            ("primary", "ok", "primary"),
+            ("Owned", "ok", "Owned"),
+        ] {
+            let err = serde_json::from_str::<StatusEnvelope>(&status_json(role, relation))
+                .expect_err("an unknown token is not a status");
+            assert!(err.to_string().contains(unknown), "{err}");
+        }
     }
 
     #[test]

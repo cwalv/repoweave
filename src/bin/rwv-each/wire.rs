@@ -1,5 +1,27 @@
 use schemars::JsonSchema;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+
+// The plugin reaches rwv only through its `--json` output, so this set is its
+// own closed copy of rwv's roles: a role it does not name is output it cannot
+// read.
+/// A repo's role.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum Role {
+    Owned,
+    Fork,
+    Dependency,
+    Reference,
+}
+
+impl std::fmt::Display for Role {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match serde_json::to_value(self) {
+            Ok(serde_json::Value::String(token)) => f.write_str(&token),
+            other => panic!("a fieldless enum must serialize to a string, got {other:?}"),
+        }
+    }
+}
 
 /// The envelope `rwv each --json -j 1` prints once every repo is done:
 /// `{ "$schema": "<url>", "outcomes": [<Outcome>, ...] }`, in manifest order.
@@ -25,7 +47,7 @@ pub struct EachNdjsonRecord<'a> {
 pub struct Outcome {
     /// The repo's manifest path.
     pub path: String,
-    pub role: String,
+    pub role: Role,
     pub status: EachOutcomeStatus,
     /// The command's exit code. Absent when it did not run, could not be
     /// started, or was ended by a signal.

@@ -289,11 +289,12 @@ pub fn summary(outcomes: &[&Outcome], interrupted: bool) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::wire::Role;
 
     fn outcome(path: &str, status: EachOutcomeStatus, exit_code: Option<i32>) -> Outcome {
         Outcome {
             path: path.into(),
-            role: "owned".into(),
+            role: Role::Owned,
             status,
             exit_code,
             signal: None,

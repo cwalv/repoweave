@@ -1149,6 +1149,8 @@ fn placement_record_corpus() -> Vec<(&'static str, Value)> {
 
 fn each_outcomes() -> Vec<(&'static str, each_wire::Outcome)> {
     use each_wire::EachOutcomeStatus as S;
+    use each_wire::Role as R;
+    let roles = [R::Owned, R::Fork, R::Dependency, R::Reference];
     [
         ("ok", S::Ok, Some(0), None, Some(12)),
         ("failed-exit", S::Failed, Some(3), None, Some(40)),
@@ -1159,12 +1161,13 @@ fn each_outcomes() -> Vec<(&'static str, each_wire::Outcome)> {
         ("not-present", S::NotPresent, None, None, None),
     ]
     .into_iter()
-    .map(|(label, status, exit_code, signal, duration_ms)| {
+    .enumerate()
+    .map(|(i, (label, status, exit_code, signal, duration_ms))| {
         (
             label,
             each_wire::Outcome {
                 path: "github/org/app".into(),
-                role: "owned".into(),
+                role: roles[i % roles.len()],
                 status,
                 exit_code,
                 signal,

@@ -37,7 +37,7 @@
       "type": "string"
     },
     "role": {
-      "type": "string"
+      "$ref": "#/definitions/Role"
     },
     "signal": {
       "description": "The signal that ended the command (Unix only).",
@@ -97,6 +97,16 @@
             "not-present"
           ]
         }
+      ]
+    },
+    "Role": {
+      "description": "A repo's role.",
+      "type": "string",
+      "enum": [
+        "owned",
+        "fork",
+        "dependency",
+        "reference"
       ]
     }
   }

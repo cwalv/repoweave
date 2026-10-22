@@ -88,7 +88,7 @@ impl CommandSpec {
         };
         command
             .env("RWV_REPO", &repo.path)
-            .env("RWV_REPO_ROLE", &repo.role)
+            .env("RWV_REPO_ROLE", repo.role.to_string())
             .env("RWV_REPO_PATH", &repo.dir);
         command
     }
@@ -141,7 +141,7 @@ impl Finished {
         Self {
             outcome: Outcome {
                 path: repo.path.clone(),
-                role: repo.role.clone(),
+                role: repo.role,
                 status,
                 exit_code: None,
                 signal: None,
@@ -337,7 +337,7 @@ impl Runner<'_> {
         Finished {
             outcome: Outcome {
                 path: repo.path.clone(),
-                role: repo.role.clone(),
+                role: repo.role,
                 status: outcome_status,
                 exit_code: status.as_ref().and_then(ExitStatus::code),
                 signal: status.as_ref().and_then(tree::exit_signal),
