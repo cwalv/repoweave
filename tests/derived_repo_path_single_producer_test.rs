@@ -77,6 +77,14 @@ const ALLOWLIST: &[Allowed] = &[
              manifest. None derives a layout from an identity.",
     },
     Allowed {
+        file: "manifest.rs",
+        count: 1,
+        justification: "A lookup key: the text of a per-repo key read back from an \
+             op record, or typed at a flag, which names a repo that is matched \
+             against the tip tables and the manifest rather than asserted into either. \
+             Nothing is derived from an identity.",
+    },
+    Allowed {
         file: "settle.rs",
         count: 1,
         justification: "An observed location: the path of a checkout already on \

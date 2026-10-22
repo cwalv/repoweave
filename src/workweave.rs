@@ -32,7 +32,7 @@ use crate::cli::consent::{
     DiscardUncommittedConsent, DiscardUnmergedConsent, ReplaceExistingConsent,
 };
 use crate::manifest::{
-    project_repo_key, LockFile, Manifest, ProjectName, RepoPath, Role, Submodules, WorkweaveId,
+    LockFile, Manifest, ProjectName, RepoKey, RepoPath, Role, Submodules, WorkweaveId,
     WorkweaveName,
 };
 use crate::path_spelling::resolve;
@@ -3702,8 +3702,9 @@ pub struct WorkweaveLogCommit {
 /// Per-repo entry in a `workweave log [--diff]` result.
 #[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub struct WorkweaveLogRepo {
-    /// Manifest-relative repo path (e.g. `github/org/lib`).
-    pub path: String,
+    /// The repo: its manifest-relative path (e.g. `github/org/lib`), or
+    /// `(project)` for the project repo.
+    pub path: RepoKey,
     /// This workweave checkout's HEAD, if readable.
     pub head: Option<CommitId>,
     /// The recorded parent's tip for THIS repo — the HEAD of the parent's
@@ -3743,7 +3744,7 @@ pub struct WorkweaveLogOutput {
     pub repos: Vec<WorkweaveLogRepo>,
     /// Log result for the project repo (`projects/<project>/.git`). Omitted
     /// when the project repo's working tree is not found. Carries
-    /// `project_repo_key` in its `path` field, matching the convention sync-to
+    /// `RepoKey::Project` in its `path` field, matching the convention sync-to
     /// uses for `project_repo_advance`. Separate keyed field (not a peer in
     /// `repos[]`) to mirror the sync-to JSON representation.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3894,7 +3895,7 @@ pub fn workweave_log(
         }
 
         repos.push(WorkweaveLogRepo {
-            path: repo_path.to_string(),
+            path: RepoKey::Member(repo_path.clone()),
             head: head.map(|r| r.id().clone()),
             parent_tip: parent_tip.map(|r| r.id().clone()),
             unique_commits,
@@ -3964,7 +3965,7 @@ pub fn workweave_log(
         }
 
         Some(WorkweaveLogRepo {
-            path: project_repo_key().to_string(),
+            path: RepoKey::Project,
             head: head.map(|r| r.id().clone()),
             parent_tip: parent_tip.map(|r| r.id().clone()),
             unique_commits,

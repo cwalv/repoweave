@@ -1016,6 +1016,62 @@ fn abandon_foreign_tip_restores_and_leaves_the_abandoned_tip_reachable() {
     );
 }
 
+/// A shell completes a path typed from the workspace root as `./<path>/`, and
+/// a Windows shell separates it with `\\`. All of those name the repo abort
+/// prints, so consent given in any of them restores it.
+#[test]
+fn abandon_foreign_tip_reads_a_completed_path_in_either_separator() {
+    for (n, spelling) in [
+        "./github/chatly/server/",
+        ".\\github\\chatly\\server\\",
+        "github\\chatly\\server",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let tmp = common::tempdir().unwrap();
+        let ws = make_fixture(tmp.path(), "primary");
+        let op_id = format!("20991231T00003{n}Z");
+
+        let server_savepoint = common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]);
+        make_commit(&ws.server_dir, "foreign.txt", "foreign\n", "foreign: agent");
+        plant_savepoint(&ws.server_dir, &op_id, &server_savepoint);
+
+        let project_savepoint = common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]);
+        plant_savepoint(&ws.project_dir, &op_id, &project_savepoint);
+        plant_owner_record(&ws.root, &op_id, "relock", &[]);
+
+        rwv()
+            .arg("abort")
+            .arg(format!("--abandon-foreign-tip={spelling}"))
+            .current_dir(&ws.root)
+            .assert()
+            .success();
+
+        assert_eq!(
+            common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]),
+            server_savepoint,
+            "`{spelling}` must name the server repo"
+        );
+    }
+}
+
+/// A value that names no repo is refused where the operator typed it, not
+/// dropped on the way to a consent that covers nothing.
+#[test]
+fn abandon_foreign_tip_refuses_a_value_naming_no_repo() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_fixture(tmp.path(), "primary");
+
+    rwv()
+        .arg("abort")
+        .arg("--abandon-foreign-tip=./")
+        .current_dir(&ws.root)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--abandon-foreign-tip"));
+}
+
 /// Per-repo means per-repo: consent naming one repo must not reach another
 /// whose tip is foreign in exactly the same way. The unnamed repo keeps its
 /// tip, abort still fails, and op-state is still retained.

@@ -878,6 +878,19 @@ workweave whose repos are not comparable to the source's.
 **Exits.** Make an initial commit in the named repo, or remove it from the
 manifest if it does not belong.
 
+### `reserved-repo-path`
+
+**Condition.** A repo path is `(project)`.
+
+**Why.** `(project)` is how the project repo is named wherever a repo is a key:
+in an operation's recorded tips, in `--json` records, and in the output of
+`rwv abort`. A member at that path could not be told from the project repo.
+
+**Exits.** Choose another path for the member. This is a validation refusal —
+nothing was written, so there is nothing to undo.
+
+**Where this sits.** [Formats](./formats.md) states the path grammar.
+
 ### `resume-contradicts-record`
 
 **Condition.** `--continue` arguments disagree with the recorded operation.

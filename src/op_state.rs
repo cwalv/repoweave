@@ -80,7 +80,7 @@
 //! Both files live at the workspace root (same directory as `.rwv-active`).
 
 use crate::durable_file::CreateNewError;
-use crate::manifest::ProjectName;
+use crate::manifest::{ProjectName, RepoKey};
 use crate::refusal::RefusalKind;
 use crate::vcs::CommitId;
 use crate::wire_token::wire_token;
@@ -366,10 +366,10 @@ impl std::fmt::Display for OpPhase {
 pub enum PhaseTips {
     /// Replay-phase intent table (`advanced_tips`). Empty before replay entry;
     /// extended/overwritten as repos advance; consumed by `abort`.
-    Replay(BTreeMap<String, CommitId>),
+    Replay(BTreeMap<RepoKey, CommitId>),
     /// Converged table (`converged_tips`) written at relock completion.
     /// Consumed by advance-target and abort's HEAD check.
-    Converged(BTreeMap<String, CommitId>),
+    Converged(BTreeMap<RepoKey, CommitId>),
 }
 
 impl Default for PhaseTips {
@@ -385,7 +385,7 @@ impl PhaseTips {
     /// Readers that want the journal entry for a repo during replay use this;
     /// it yields `None` after [`PhaseTips::converge`], by which point the
     /// replay table no longer exists.
-    pub fn advanced(&self) -> Option<&BTreeMap<String, CommitId>> {
+    pub fn advanced(&self) -> Option<&BTreeMap<RepoKey, CommitId>> {
         match self {
             Self::Replay(m) => Some(m),
             Self::Converged(_) => None,
@@ -393,7 +393,7 @@ impl PhaseTips {
     }
 
     /// The converged table, or `None` while still in the replay half.
-    pub fn converged(&self) -> Option<&BTreeMap<String, CommitId>> {
+    pub fn converged(&self) -> Option<&BTreeMap<RepoKey, CommitId>> {
         match self {
             Self::Converged(m) => Some(m),
             Self::Replay(_) => None,
@@ -404,7 +404,7 @@ impl PhaseTips {
     ///
     /// Returns `None` if the record has already converged — replay-phase
     /// writes after convergence are a logic error and the type refuses them.
-    pub fn advanced_mut(&mut self) -> Option<&mut BTreeMap<String, CommitId>> {
+    pub fn advanced_mut(&mut self) -> Option<&mut BTreeMap<RepoKey, CommitId>> {
         match self {
             Self::Replay(m) => Some(m),
             Self::Converged(_) => None,
@@ -417,7 +417,7 @@ impl PhaseTips {
     /// converging discards the replay table and installs `converged` in one
     /// move, so a record can never hold both. Idempotent re-convergence (a
     /// `--continue` re-running relock) simply replaces the converged table.
-    pub fn converge(&mut self, converged: BTreeMap<String, CommitId>) {
+    pub fn converge(&mut self, converged: BTreeMap<RepoKey, CommitId>) {
         *self = Self::Converged(converged);
     }
 }
@@ -553,8 +553,8 @@ struct WireOwnerRecord {
     target: PathBuf,
     retire: bool,
     phase: OpPhase,
-    advanced_tips: BTreeMap<String, CommitId>,
-    converged_tips: BTreeMap<String, CommitId>,
+    advanced_tips: BTreeMap<RepoKey, CommitId>,
+    converged_tips: BTreeMap<RepoKey, CommitId>,
     overrides: Vec<Override>,
     started_at: String,
 }
@@ -1434,6 +1434,10 @@ mod tests {
         CommitId::parse(&hex.to_string().repeat(40)).unwrap()
     }
 
+    fn member(path: &str) -> RepoKey {
+        RepoKey::Member(crate::manifest::RepoPath::new(path).unwrap())
+    }
+
     fn test_project() -> ProjectName {
         ProjectName::new("web-app").expect("valid project name")
     }
@@ -1450,6 +1454,41 @@ mod tests {
     // -----------------------------------------------------------------------
     // OpId and SavepointKey
     // -----------------------------------------------------------------------
+
+    #[test]
+    fn a_record_with_both_kinds_of_tip_key_is_rewritten_byte_for_byte() {
+        let tip = |c: char| c.to_string().repeat(40);
+        let record = format!(
+            r#"{{
+  "id": "1779769917405921588",
+  "verb": "sync-to",
+  "strategy": "rebase",
+  "project": "web-app",
+  "source": "/abs/path/src",
+  "target": "/abs/path/tgt",
+  "retire": false,
+  "phase": "replay",
+  "advanced_tips": {{
+    "(project)": "{d}",
+    "github/acme/api": "{a}",
+    "github/acme/web": "{b}"
+  }},
+  "converged_tips": {{}},
+  "overrides": [],
+  "started_at": "2026-06-10T21:14:03Z"
+}}"#,
+            a = tip('a'),
+            b = tip('b'),
+            d = tip('d'),
+        );
+
+        let read: OwnerRecord = serde_json::from_str(&record).unwrap();
+        let advanced = read.tips.advanced().unwrap();
+        assert_eq!(advanced.len(), 3);
+        assert!(advanced.contains_key(&RepoKey::Project));
+        assert!(advanced.contains_key(&member("github/acme/api")));
+        assert_eq!(serde_json::to_string_pretty(&read).unwrap(), record);
+    }
 
     #[test]
     fn an_op_id_refuses_what_no_op_id_can_be() {
@@ -1620,14 +1659,17 @@ mod tests {
             PathBuf::from("/cwd/ws"),
         );
         let advanced = record.tips.advanced_mut().unwrap();
-        advanced.insert("github/foo/bar".to_owned(), tip('a'));
-        advanced.insert("(project)".to_owned(), tip('d'));
+        advanced.insert(member("github/foo/bar"), tip('a'));
+        advanced.insert(RepoKey::Project, tip('d'));
         write_owner(dir, &record).unwrap();
         let read_back = read_owner(dir).unwrap().unwrap();
         let advanced = read_back.tips.advanced().expect("still in replay half");
         assert_eq!(advanced.len(), 2);
-        assert_eq!(advanced.get("github/foo/bar").cloned(), Some(tip('a')),);
-        assert_eq!(advanced.get("(project)").cloned(), Some(tip('d')),);
+        assert_eq!(
+            advanced.get(&member("github/foo/bar")).cloned(),
+            Some(tip('a')),
+        );
+        assert_eq!(advanced.get(&RepoKey::Project).cloned(), Some(tip('d')),);
         // No converged table while in the replay half.
         assert!(read_back.tips.converged().is_none());
     }
@@ -1840,12 +1882,12 @@ mod tests {
         let mut tips = PhaseTips::default();
         tips.advanced_mut()
             .unwrap()
-            .insert("github/foo/bar".to_owned(), tip('a'));
+            .insert(member("github/foo/bar"), tip('a'));
         assert!(tips.advanced().is_some());
         assert!(tips.converged().is_none());
 
         let mut converged = BTreeMap::new();
-        converged.insert("github/foo/bar".to_owned(), tip('c'));
+        converged.insert(member("github/foo/bar"), tip('c'));
         tips.converge(converged);
 
         // After the swap the replay table is gone — replay-phase reads/writes
@@ -1854,14 +1896,14 @@ mod tests {
         assert!(tips.advanced_mut().is_none());
         assert_eq!(
             tips.converged()
-                .and_then(|m| m.get("github/foo/bar"))
+                .and_then(|m| m.get(&member("github/foo/bar")))
                 .cloned(),
             Some(tip('c')),
         );
 
         // Re-convergence (idempotent --continue replay) just replaces the table.
         let mut again = BTreeMap::new();
-        again.insert("(project)".to_owned(), tip('e'));
+        again.insert(RepoKey::Project, tip('e'));
         tips.converge(again);
         assert!(tips.advanced().is_none());
         assert_eq!(tips.converged().map(BTreeMap::len), Some(1));
@@ -1887,10 +1929,10 @@ mod tests {
             .tips
             .advanced_mut()
             .unwrap()
-            .insert("github/foo/bar".to_owned(), tip('a'));
+            .insert(member("github/foo/bar"), tip('a'));
         let mut converged = BTreeMap::new();
-        converged.insert("github/foo/bar".to_owned(), tip('c'));
-        converged.insert("(project)".to_owned(), tip('d'));
+        converged.insert(member("github/foo/bar"), tip('c'));
+        converged.insert(RepoKey::Project, tip('d'));
         record.tips.converge(converged);
         record.phase = OpPhase::Relock;
 
@@ -1911,7 +1953,10 @@ mod tests {
         assert!(read_back.tips.advanced().is_none());
         let converged = read_back.tips.converged().expect("converged half");
         assert_eq!(converged.len(), 2);
-        assert_eq!(converged.get("github/foo/bar").cloned(), Some(tip('c')),);
+        assert_eq!(
+            converged.get(&member("github/foo/bar")).cloned(),
+            Some(tip('c')),
+        );
     }
 
     #[test]

@@ -42,6 +42,9 @@
 //! name two categorically different consequences — losing the name your
 //! commits hang off, versus moving which name they hang off — so they mint
 //! two tokens, not one `ChangeAttachmentConsent`.
+
+use crate::manifest::RepoKey;
+
 /// Proof that the operator consented to leaving a checkout on no
 /// branch. Minted from `--detach-checkouts`.
 ///
@@ -350,7 +353,7 @@ pub enum DriftConsent {
 /// mint from, and the empty set — the operator passing nothing — covers
 /// nothing rather than everything.
 #[derive(Debug, Clone, Default)]
-pub struct AbandonForeignTipConsent(std::collections::BTreeSet<String>);
+pub struct AbandonForeignTipConsent(std::collections::BTreeSet<RepoKey>);
 
 impl AbandonForeignTipConsent {
     // No `granted()`: see [`AdoptDetachedConsent`]. The tests that
@@ -361,32 +364,18 @@ impl AbandonForeignTipConsent {
     /// per occurrence of the flag. `pub(in crate::cli)`: see
     /// [`DetachConsent::from_flag`]'s doc comment.
     ///
-    /// Each value is read as a repo key in the spelling abort's own
-    /// per-repo output uses: a manifest repo's workspace-relative path,
-    /// or `(project)` for the project repo. Shell completion routinely
-    /// appends a separator and prefixes `./` on a path typed from the
-    /// workspace root, so both are stripped before matching — an
-    /// operator who pasted the path abort printed and let the shell
-    /// complete it means the same repo either way.
-    pub(in crate::cli) fn from_flag(abandon_foreign_tip: &[String]) -> Self {
-        Self(
-            abandon_foreign_tip
-                .iter()
-                .map(|raw| {
-                    raw.trim()
-                        .trim_start_matches("./")
-                        .trim_end_matches('/')
-                        .to_string()
-                })
-                .collect(),
-        )
+    /// Each value is a [`RepoKey`] as the operator typed it, which already
+    /// reads a completed path, a `./` prefix and a Windows separator as the
+    /// repo abort's own per-repo output names.
+    pub(in crate::cli) fn from_flag(abandon_foreign_tip: &[RepoKey]) -> Self {
+        Self(abandon_foreign_tip.iter().cloned().collect())
     }
 
     /// Whether the operator named this repo. `repo_key` is the same key
     /// abort's per-repo maps use, so a `sync-to` op consults it once per
     /// side: consent is given for a repo, and both workspaces' copies of
     /// that repo are covered by it.
-    pub fn covers(&self, repo_key: &str) -> bool {
+    pub fn covers(&self, repo_key: &RepoKey) -> bool {
         self.0.contains(repo_key)
     }
 }

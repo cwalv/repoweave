@@ -221,6 +221,8 @@ pub enum RefusalKind {
     MalformedRepoPath,
     /// A repo path spells `\`.
     BackslashInRepoPath,
+    /// A repo path spells the project repo's key, `(project)`.
+    ReservedRepoPath,
     /// `--provider` names a registry rwv does not have.
     UnknownRegistry,
     /// `--provider` is not `registry/owner`.
@@ -410,6 +412,7 @@ fn repo_path_kind(e: &crate::manifest::RepoPathError) -> RefusalKind {
     use crate::manifest::RepoPathError as E;
     match e {
         E::Backslash(_) => RefusalKind::BackslashInRepoPath,
+        E::ProjectRepo => RefusalKind::ReservedRepoPath,
     }
 }
 
@@ -680,5 +683,8 @@ mod tests {
 
         let back = anyhow::Error::new(RepoPathError::Backslash("a\\b".into()));
         assert_eq!(kind_of(&back), Some(RefusalKind::BackslashInRepoPath));
+
+        let reserved = anyhow::Error::new(RepoPathError::ProjectRepo);
+        assert_eq!(kind_of(&reserved), Some(RefusalKind::ReservedRepoPath));
     }
 }

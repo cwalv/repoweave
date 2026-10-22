@@ -51,6 +51,9 @@ pub enum RepoPathError {
     /// `RepoPath` values must use forward-slash (`/`) separators. On Windows,
     /// normalize with [`str::replace`] before calling `RepoPath::new`.
     Backslash(String),
+    /// The path is the spelling of the project repo's [`RepoKey`], which
+    /// names no member.
+    ProjectRepo,
 }
 
 impl fmt::Display for RepoPathError {
@@ -60,6 +63,10 @@ impl fmt::Display for RepoPathError {
                 f,
                 "backslash not allowed in RepoPath '{s}'; \
                  use forward slash (e.g. `github/acme/server` not `github\\acme\\server`)"
+            ),
+            Self::ProjectRepo => write!(
+                f,
+                "`{PROJECT_REPO_SPELLING}` names the project repo, so no member can live at that path"
             ),
         }
     }
@@ -75,6 +82,8 @@ impl std::error::Error for RepoPathError {}
 fn validate_repo_path(s: &str) -> Result<(), RepoPathError> {
     if s.contains('\\') {
         Err(RepoPathError::Backslash(s.to_owned()))
+    } else if s == PROJECT_REPO_SPELLING {
+        Err(RepoPathError::ProjectRepo)
     } else {
         Ok(())
     }
@@ -121,18 +130,118 @@ impl<'de> serde::Deserialize<'de> for RepoPath {
     }
 }
 
-/// The one member of the repo-path keyspace that is not a [`RepoPath`]: the
-/// project repo, which every per-repo map and JSON record keys alongside the
-/// manifest's own repos.
-const PROJECT_REPO_KEY: &str = "(project)";
+/// How the project repo is written wherever a [`RepoKey`] is: in op-state
+/// tip tables, in `--json` records, in the text an operator reads.
+const PROJECT_REPO_SPELLING: &str = "(project)";
 
-/// The key standing for the project repo where a [`RepoPath`] would sit.
+/// Which repo a per-repo map entry or record is about: a member of the
+/// manifest, or the project repo, which is no member.
 ///
-/// The parenthesized spelling cannot collide with a `RepoPath`, which is a
-/// relative directory path. Borrowed rather than owned: most sites are map
-/// lookups, which want a `&str`.
-pub(crate) fn project_repo_key() -> &'static str {
-    PROJECT_REPO_KEY
+/// The project repo used to stand in the member keyspace as a string no
+/// `RepoPath` could be, so every map keyed by one carried a sentinel and every
+/// reader compared against it. Here the two are different variants, and the
+/// sentinel is written in this type's text form only.
+///
+/// The text form is the member's path, or `(project)`. It is what op-state and
+/// `--json` have always held, so [`Ord`] orders by it and the records keep
+/// their bytes. [`serde::Deserialize`] reads exactly that form and nothing
+/// looser; [`FromStr`] is the operator's spelling and normalizes it.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum RepoKey {
+    /// The project repo, `projects/<name>`.
+    Project,
+    /// A manifest repo.
+    Member(RepoPath),
+}
+
+impl RepoKey {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Project => PROJECT_REPO_SPELLING,
+            Self::Member(path) => path.as_str(),
+        }
+    }
+
+    fn from_record_text(text: &str) -> Result<Self, RepoPathError> {
+        if text == PROJECT_REPO_SPELLING {
+            Ok(Self::Project)
+        } else {
+            RepoPath::new(text).map(Self::Member)
+        }
+    }
+}
+
+impl PartialOrd for RepoKey {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for RepoKey {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.as_str().cmp(other.as_str())
+    }
+}
+
+impl fmt::Display for RepoKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl Serialize for RepoKey {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for RepoKey {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        Self::from_record_text(&text).map_err(serde::de::Error::custom)
+    }
+}
+
+impl schemars::JsonSchema for RepoKey {
+    fn schema_name() -> String {
+        String::schema_name()
+    }
+
+    fn json_schema(generator: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+        String::json_schema(generator)
+    }
+}
+
+/// Text that names no repo.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepoKeyError;
+
+impl fmt::Display for RepoKeyError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "a repo is named by its workspace-relative path, or `{PROJECT_REPO_SPELLING}` for the \
+             project repo; got nothing"
+        )
+    }
+}
+
+impl std::error::Error for RepoKeyError {}
+
+impl FromStr for RepoKey {
+    type Err = RepoKeyError;
+
+    /// A repo as an operator types it. A shell's completion routinely prefixes
+    /// `./` and appends a separator, and a Windows shell writes the separators
+    /// as `\`; all of that names the same repo as the bare path.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let slashed = s.trim().replace('\\', "/");
+        let bare = slashed.trim_start_matches("./").trim_end_matches('/');
+        if bare.is_empty() {
+            return Err(RepoKeyError);
+        }
+        Self::from_record_text(bare).map_err(|_| RepoKeyError)
+    }
 }
 
 pub use crate::naming::{
@@ -1914,6 +2023,101 @@ mod tests {
     use crate::vcs::ResolvedRevisionId;
 
     // ========================================================================
+    // RepoKey
+    // ========================================================================
+
+    fn member(path: &str) -> RepoKey {
+        RepoKey::Member(RepoPath::new(path).unwrap())
+    }
+
+    #[test]
+    fn a_repo_key_is_the_text_op_state_and_json_have_always_held() {
+        assert_eq!(RepoKey::Project.to_string(), "(project)");
+        assert_eq!(member("github/o/r").to_string(), "github/o/r");
+        assert_eq!(
+            serde_json::to_string(&RepoKey::Project).unwrap(),
+            "\"(project)\""
+        );
+        assert_eq!(
+            serde_json::to_string(&member("github/o/r")).unwrap(),
+            "\"github/o/r\""
+        );
+    }
+
+    #[test]
+    fn a_map_keyed_by_repo_keys_serializes_in_the_order_of_the_text() {
+        let mut tips = BTreeMap::new();
+        tips.insert(member("github/zeta/z"), 3);
+        tips.insert(RepoKey::Project, 1);
+        tips.insert(member("github/alpha/a"), 2);
+        tips.insert(member("!odd/path"), 0);
+
+        let by_text: BTreeMap<String, i32> =
+            tips.iter().map(|(k, v)| (k.to_string(), *v)).collect();
+        assert_eq!(
+            serde_json::to_string(&tips).unwrap(),
+            serde_json::to_string(&by_text).unwrap(),
+            "the ordering of the keys is the ordering of their text, so the records keep their bytes"
+        );
+    }
+
+    #[test]
+    fn a_record_key_is_read_as_written_and_nothing_looser() {
+        assert_eq!(
+            serde_json::from_str::<RepoKey>("\"(project)\"").unwrap(),
+            RepoKey::Project
+        );
+        assert_eq!(
+            serde_json::from_str::<RepoKey>("\"github/o/r\"").unwrap(),
+            member("github/o/r")
+        );
+        assert_eq!(
+            serde_json::from_str::<RepoKey>("\"./github/o/r\"").unwrap(),
+            member("./github/o/r"),
+            "reading a record does not normalize its key the way an operator's spelling is"
+        );
+        assert!(serde_json::from_str::<RepoKey>("\"github\\\\o\\\\r\"").is_err());
+    }
+
+    #[test]
+    fn the_project_spelling_is_no_member_path() {
+        assert_eq!(
+            RepoPath::new("(project)").unwrap_err(),
+            RepoPathError::ProjectRepo
+        );
+    }
+
+    #[test]
+    fn an_operator_spelling_of_a_repo_is_normalized() {
+        for spelling in [
+            "github/o/r",
+            "./github/o/r/",
+            ".\\github\\o\\r\\",
+            "github\\o\\r",
+            "  ./github/o/r  ",
+        ] {
+            assert_eq!(
+                spelling.parse::<RepoKey>().unwrap(),
+                member("github/o/r"),
+                "{spelling:?}"
+            );
+        }
+        assert_eq!("(project)".parse::<RepoKey>().unwrap(), RepoKey::Project);
+        assert_eq!(" (project) ".parse::<RepoKey>().unwrap(), RepoKey::Project);
+    }
+
+    #[test]
+    fn an_operator_spelling_that_names_nothing_is_refused() {
+        for spelling in ["", "  ", "./", "/", ".\\", "\\"] {
+            assert_eq!(
+                spelling.parse::<RepoKey>(),
+                Err(RepoKeyError),
+                "{spelling:?}"
+            );
+        }
+    }
+
+    // ========================================================================
     // IntegrationConfig — new transparent mapping API
     // ========================================================================
 
@@ -2579,7 +2783,9 @@ role = "owned"
     fn repo_path_error_backslash_carries_input() {
         let input = "github\\acme\\server";
         let err = RepoPath::new(input).unwrap_err();
-        let RepoPathError::Backslash(s) = &err;
+        let RepoPathError::Backslash(s) = &err else {
+            panic!("expected Backslash, got {err:?}");
+        };
         assert_eq!(
             s, input,
             "Backslash variant should carry the original input string"

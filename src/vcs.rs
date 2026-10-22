@@ -2824,8 +2824,8 @@ pub trait Vcs: Send + Sync {
     /// replay). `recorded_converged_tip` is the SHA the owner record's
     /// `converged_tips` map holds for this repo (relock-completed), or
     /// `None` when the op crashed before relock recorded any converged tips.
-    /// The caller derives the key (e.g. the repo's path relative to the
-    /// workspace root, or `"(project)"` for the project repo).
+    /// The caller looks the repo up in the tip tables by its
+    /// [`RepoKey`](crate::manifest::RepoKey).
     ///
     /// For git: when restoring, runs
     /// `git reset --hard refs/rwv/pre-op/<key>` and drops the savepoint,

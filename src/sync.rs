@@ -9,7 +9,7 @@ use crate::integration_runner::enabled_integrations;
 use crate::integrations::builtin_integrations;
 use crate::lock::{commit_lock_file_with_message, generate_lock};
 use crate::manifest::{
-    project_repo_key, IntegrationConfig, LockFile, Manifest, Project, ProjectName, RepoPath,
+    IntegrationConfig, LockFile, Manifest, Project, ProjectName, RepoKey, RepoPath,
     ResolvedLockFile, WorkweaveName, WorkweaveNameError,
 };
 use crate::op_state::{
@@ -1064,9 +1064,11 @@ fn entry_tip(
     repo_path: &RepoPath,
     verdicts: &ReplayVerdicts,
     target: &ResolvedRevisionId,
-) -> Option<(String, CommitId)> {
+) -> Option<(RepoKey, CommitId)> {
     match verdicts.containment {
-        Some(Containment::Behind(_)) => Some((repo_path.as_str().to_owned(), target.id().clone())),
+        Some(Containment::Behind(_)) => {
+            Some((RepoKey::Member(repo_path.clone()), target.id().clone()))
+        }
         _ => None,
     }
 }
@@ -2279,13 +2281,13 @@ pub trait OutputHandler: Send + Sync {
     /// Record a step-3 (advance-target) fast-forward for one repo or the
     /// project repo. Called iff the branch pointer actually moved.
     ///
-    /// `path` matches the key used in `record` (manifest-relative repo path,
-    /// or `project_repo_key` for the project repo).
+    /// `repo` is the repo that moved: a member, which `record` named by its
+    /// manifest-relative path, or the project repo.
     /// `from_sha` is the target's tip before the FF; `to_sha` is after.
     ///
     /// Default implementation is a no-op — suitable for text-mode and
     /// plain-sync JSON handlers that do not need step-3 SHAs.
-    fn record_step3_advance(&self, _path: &str, _from_sha: &str, _to_sha: &str) {}
+    fn record_step3_advance(&self, _repo: &RepoKey, _from_sha: &str, _to_sha: &str) {}
 
     /// Record how one checkout's files were placed when the op created or
     /// moved it. A checkout of the target is not the one its repo's record
@@ -2531,16 +2533,15 @@ impl OutputHandler for JsonNdjsonHandler<'_> {
         );
     }
 
-    fn record_step3_advance(&self, path: &str, from_sha: &str, to_sha: &str) {
+    fn record_step3_advance(&self, repo: &RepoKey, from_sha: &str, to_sha: &str) {
         let (from_sha, to_sha) = (from_sha.to_owned(), to_sha.to_owned());
-        let advance = if path == project_repo_key() {
-            AdvanceOutput::ProjectRepoAdvance { from_sha, to_sha }
-        } else {
-            AdvanceOutput::Step3Advance {
-                path: path.to_owned(),
+        let advance = match repo {
+            RepoKey::Project => AdvanceOutput::ProjectRepoAdvance { from_sha, to_sha },
+            RepoKey::Member(path) => AdvanceOutput::Step3Advance {
+                path: path.to_string(),
                 from_sha,
                 to_sha,
-            }
+            },
         };
         stream_ndjson_line(
             self.stdout_lock,
@@ -2563,11 +2564,12 @@ impl OutputHandler for JsonNdjsonHandler<'_> {
 /// Text chatter is suppressed (`emit_text` returns `false`).
 pub struct JsonEnvelopeSyncToHandler<'a> {
     records: &'a Mutex<Vec<SyncOutcomeOutput>>,
-    /// Per-repo step-3 advance records keyed by the repo path string (same
-    /// key as `record`'s `path` argument, or `project_repo_key` for the
-    /// project repo). Only populated when the target's branch pointer actually
-    /// moved.
+    /// Per-member step-3 advance records keyed by the repo path string
+    /// `record` was given. Only populated when the target's branch pointer
+    /// actually moved.
     step3_advances: &'a Mutex<std::collections::HashMap<String, Step3AdvanceOutput>>,
+    /// The project repo's step-3 advance, when its branch pointer moved.
+    project_repo_advance: &'a Mutex<Option<Step3AdvanceOutput>>,
     /// The machine's coordinates for this op, `None` until it has a context.
     coordinates: &'a Mutex<Option<OpCoordinates>>,
     /// The workweave retire deleted, `None` when retire did not delete one.
@@ -2625,16 +2627,27 @@ impl OutputHandler for JsonEnvelopeSyncToHandler<'_> {
         guard.push(out);
     }
 
-    fn record_step3_advance(&self, path: &str, from_sha: &str, to_sha: &str) {
+    fn record_step3_advance(&self, repo: &RepoKey, from_sha: &str, to_sha: &str) {
         let advance = Step3AdvanceOutput {
             from_sha: from_sha.to_owned(),
             to_sha: to_sha.to_owned(),
         };
-        let mut guard = self
-            .step3_advances
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        guard.insert(path.to_owned(), advance);
+        match repo {
+            RepoKey::Project => {
+                let mut guard = self
+                    .project_repo_advance
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                *guard = Some(advance);
+            }
+            RepoKey::Member(path) => {
+                let mut guard = self
+                    .step3_advances
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                guard.insert(path.to_string(), advance);
+            }
+        }
     }
 
     fn record_placement(&self, placement: PlacementOutput) {
@@ -4341,7 +4354,7 @@ fn check_dirty_target_preflight(
     target_project_dir: &Path,
     target_path: &Path,
 ) -> anyhow::Result<()> {
-    let mut dirty: Vec<String> = Vec::new();
+    let mut dirty: Vec<RepoKey> = Vec::new();
     for (repo_path, entry) in cwd_project.manifest.iter_entries() {
         let target_repo = target_workspace_dir.join(repo_path.as_path());
         if target_repo.exists() {
@@ -4349,7 +4362,7 @@ fn check_dirty_target_preflight(
                 .tracked_dirty_file_names(&target_repo)
                 .unwrap_or_else(|_| vec!["(status unreadable)".to_string()]);
             if !tracked.is_empty() {
-                dirty.push(repo_path.to_string());
+                dirty.push(RepoKey::Member(repo_path.clone()));
             }
         }
     }
@@ -4357,7 +4370,7 @@ fn check_dirty_target_preflight(
         .tracked_dirty_file_names(target_project_dir)
         .unwrap_or_else(|_| vec!["(status unreadable)".to_string()]);
     if !project_tracked.is_empty() {
-        dirty.push(project_repo_key().to_string());
+        dirty.push(RepoKey::Project);
     }
     if !dirty.is_empty() {
         crate::refuse!(
@@ -4367,7 +4380,11 @@ fn check_dirty_target_preflight(
              \n\
              advance-target fast-forwards the target's worktrees over this work. Commit or \
              stash in the target ({}), then re-run.",
-            dirty.join("\n  "),
+            dirty
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n  "),
             target_path.display(),
         );
     }
@@ -4417,7 +4434,7 @@ fn check_detached_target_preflight(
         }
     }
     if let Some(state) = unattached(project_vcs, target_project_dir) {
-        detached.push(format!("(project) ({state})"));
+        detached.push(format!("{} ({state})", RepoKey::Project));
     }
     if !detached.is_empty() {
         crate::refuse!(
@@ -4541,7 +4558,7 @@ fn check_dirty_preflight_sync(
     cwd_project_dir: &Path,
 ) -> anyhow::Result<()> {
     let mut user_dirt: Vec<String> = Vec::new();
-    let mut unreadable: Vec<String> = Vec::new();
+    let mut unreadable: Vec<RepoKey> = Vec::new();
 
     for (repo_path, entry) in cwd_project.manifest.iter_entries() {
         let repo = cwd_workspace_dir.join(repo_path.as_path());
@@ -4560,7 +4577,7 @@ fn check_dirty_preflight_sync(
             // Unreadable status → fail closed rather than silently rebasing
             // over an unknown state, but don't prescribe commit/stash for
             // changes we cannot enumerate.
-            Err(_) => unreadable.push(repo_path.to_string()),
+            Err(_) => unreadable.push(RepoKey::Member(repo_path.clone())),
         }
     }
 
@@ -4576,12 +4593,13 @@ fn check_dirty_preflight_sync(
                 .map(|p| p.as_str())
                 .collect::<Vec<_>>()
                 .join(", ");
-            if let Some(label) = classify_sync_dirt(cwd_project_dir, format!("(project): {files}"))
+            if let Some(label) =
+                classify_sync_dirt(cwd_project_dir, format!("{}: {files}", RepoKey::Project))
             {
                 user_dirt.push(label);
             }
         }
-        Err(_) => unreadable.push(project_repo_key().to_string()),
+        Err(_) => unreadable.push(RepoKey::Project),
     }
 
     if user_dirt.is_empty() && unreadable.is_empty() {
@@ -4616,7 +4634,11 @@ fn check_dirty_preflight_sync(
              \n\
              Refusing to sync over unknown state. Inspect these repos manually \
              (`git -C <repo> status`), then re-run.\n",
-            unreadable.join("\n  "),
+            unreadable
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n  "),
         ));
     }
     msg.push_str(
@@ -4694,7 +4716,7 @@ fn check_dirty_source_preflight(
             .map(|p| p.as_str())
             .collect::<Vec<_>>()
             .join(", ");
-        dirty.push(format!("(project): {files}"));
+        dirty.push(format!("{}: {files}", RepoKey::Project));
     }
 
     if !dirty.is_empty() {
@@ -5241,7 +5263,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             .ok_or_else(|| {
                 anyhow::anyhow!("internal: advanced_tips write after convergence post Phase 1'")
             })?
-            .insert(project_repo_key().to_owned(), project_tip.id().clone());
+            .insert(RepoKey::Project, project_tip.id().clone());
         op_state::write_owner(&ctx.owner_workspace_dir, &owner)
             .context("failed to write advanced_tips after Phase 1'")?;
     }
@@ -5405,7 +5427,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 
     // === advanced_tips write 1: pre-write planned targets for genuine ff-movers ===
     {
-        let entry_tips: std::collections::BTreeMap<String, CommitId> = sync_tasks
+        let entry_tips: std::collections::BTreeMap<RepoKey, CommitId> = sync_tasks
             .iter()
             .filter_map(|task| entry_tip(&task.repo_path, &task.verdicts, &task.target))
             .collect();
@@ -5475,13 +5497,13 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     // Must precede the any_failure bail so partially-advanced repos are captured
     // even when the overall fan-out fails.
     {
-        let post_join_tips: Vec<(String, CommitId)> = sync_tasks
+        let post_join_tips: Vec<(RepoKey, CommitId)> = sync_tasks
             .iter()
             .zip(task_results.iter())
             .filter_map(|(task, (_, head_opt))| {
                 head_opt
                     .as_ref()
-                    .map(|h| (task.repo_path.as_str().to_owned(), h.clone()))
+                    .map(|h| (RepoKey::Member(task.repo_path.clone()), h.clone()))
             })
             .collect();
         if !post_join_tips.is_empty() {
@@ -5840,7 +5862,7 @@ fn record_converged_tips(ctx: &OpContext<'_>, cwd_project: &Project) -> anyhow::
     let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?
         .ok_or_else(|| anyhow::anyhow!("internal: owner record missing during relock"))?;
     // Build the converged table from post-replay HEADs...
-    let mut converged: std::collections::BTreeMap<String, CommitId> =
+    let mut converged: std::collections::BTreeMap<RepoKey, CommitId> =
         std::collections::BTreeMap::new();
     for (repo_path, entry) in cwd_project.manifest.iter_entries() {
         let abs = ctx.cwd_workspace_dir.join(repo_path.as_path());
@@ -5848,11 +5870,11 @@ fn record_converged_tips(ctx: &OpContext<'_>, cwd_project: &Project) -> anyhow::
             continue;
         }
         if let Ok(rev) = vcs_for(entry.vcs_type).head_revision(&abs) {
-            converged.insert(repo_path.as_str().to_owned(), rev.id().clone());
+            converged.insert(RepoKey::Member(repo_path.clone()), rev.id().clone());
         }
     }
     if let Ok(rev) = ctx.project_vcs.head_revision(&ctx.cwd_project_dir) {
-        converged.insert(project_repo_key().to_owned(), rev.id().clone());
+        converged.insert(RepoKey::Project, rev.id().clone());
     }
     // ...then swap atomically: `PhaseTips::converge` discards the replay-phase
     // advanced_tips and installs converged_tips in one move, so they land in the
@@ -5963,7 +5985,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 // Record step-3 advance iff the branch pointer actually moved.
                 if advance.onto.is_some() {
                     ctx.handler.record_step3_advance(
-                        repo_path.as_str(),
+                        &RepoKey::Member(repo_path.clone()),
                         advance.from.id().as_str(),
                         cwd_tip.id().as_str(),
                     );
@@ -5986,7 +6008,10 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     // target lacks, so the un-advanced lock stays true about them.
     if any_ff_failure {
         if emit_text {
-            eprintln!("  (project): not advanced — a member repo did not land (see above)");
+            eprintln!(
+                "  {}: not advanced — a member repo did not land (see above)",
+                RepoKey::Project
+            );
         }
         crate::refuse!(
             RefusalKind::OpParked,
@@ -6013,14 +6038,15 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         Ok(advance) => {
             if emit_text {
                 println!(
-                    "  (project): {}",
+                    "  {}: {}",
+                    RepoKey::Project,
                     ff_advance_line(&advance, &cwd_project_tip)
                 );
             }
             // Record step-3 advance for the project repo iff it actually moved.
             if advance.onto.is_some() {
                 ctx.handler.record_step3_advance(
-                    project_repo_key(),
+                    &RepoKey::Project,
                     advance.from.id().as_str(),
                     cwd_project_tip.id().as_str(),
                 );
@@ -6028,7 +6054,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         }
         Err(e) => {
             if emit_text {
-                eprintln!("  (project): ff-advance failed: {e:#}");
+                eprintln!("  {}: ff-advance failed: {e:#}", RepoKey::Project);
             }
             crate::refuse!(
                 RefusalKind::OpParked,
@@ -6167,9 +6193,9 @@ fn delivered_changes(vcs: &dyn Vcs, repo: &Path, key: &SavepointKey) -> Option<V
 /// contain. A delivery that moves only the lock moves no manifest and would
 /// otherwise land silently.
 struct MaterializedInputHit {
-    /// Display key for the text note: [`project_repo_key`] for the project
-    /// manifest, the member's manifest-relative repo path otherwise.
-    repo_key: String,
+    /// The repo the input lives in: the project repo for the project manifest
+    /// and lock, the member otherwise.
+    repo_key: RepoKey,
     /// The input file's name within that repo (e.g. `Cargo.toml`).
     file: String,
     /// The same hit as a workspace-relative path, for the `--json` surface.
@@ -6223,7 +6249,7 @@ fn delivered_materialized_input_hits(ctx: &OpContext<'_>) -> Vec<MaterializedInp
         for file in [Manifest::FILE_NAME, crate::manifest::LockFile::FILE_NAME] {
             if changed.iter().any(|p| p == file) {
                 hits.push(MaterializedInputHit {
-                    repo_key: project_repo_key().to_owned(),
+                    repo_key: RepoKey::Project,
                     file: file.to_owned(),
                     workspace_path: format!("{}/{file}", project_rel_path(&ctx.cwd_project_name),),
                 });
@@ -6244,7 +6270,7 @@ fn delivered_materialized_input_hits(ctx: &OpContext<'_>) -> Vec<MaterializedInp
             .filter(|p| member_inputs.contains(p.as_str()))
         {
             hits.push(MaterializedInputHit {
-                repo_key: repo_path.to_string(),
+                repo_key: RepoKey::Member(repo_path.clone()),
                 file: file.clone(),
                 workspace_path: format!("{repo_path}/{file}"),
             });
@@ -6682,7 +6708,10 @@ fn regenerate_lock_phase3(
     if !commit_lock_file_with_message(vcs, cwd_project_dir, &message)? {
         return Ok(None);
     }
-    eprintln!("  (project): re-locked after sync from {source_workspace_name}");
+    eprintln!(
+        "  {}: re-locked after sync from {source_workspace_name}",
+        RepoKey::Project
+    );
     Ok(Some(new_lock))
 }
 
@@ -6925,7 +6954,7 @@ pub fn run_abort(
 ///
 /// The op's tip table is phase-scoped (`PhaseTips`): `advanced_tips` during
 /// replay, `converged_tips` after relock, keyed by repo path for member repos
-/// and by `project_repo_key` for the project repo. The replay journal applies
+/// and by `RepoKey::Project` for the project repo. The replay journal applies
 /// to the replay side only; converged tips apply to both, because
 /// advance-target lands the target on them.
 #[allow(clippy::too_many_arguments)]
@@ -6949,31 +6978,30 @@ fn restore_abort_workspace(
     let restore_key = side.savepoint_key(op_id);
 
     let project_vcs = project_vcs();
-    let project_key = project_repo_key();
     let repos = project
         .manifest
         .iter_entries()
         .map(|(repo_path, entry)| {
             (
-                repo_path.as_str(),
+                RepoKey::Member(repo_path.clone()),
                 vcs_for(entry.vcs_type),
                 workspace_dir.join(repo_path.as_path()),
             )
         })
         .filter(|(_, _, abs)| abs.exists())
         .chain(std::iter::once((
-            project_key,
+            RepoKey::Project,
             project_vcs,
             project_dir.to_path_buf(),
         )));
     for (repo_key, vcs, abs) in repos {
-        let consented = abandon.covers(repo_key);
+        let consented = abandon.covers(&repo_key);
         match abort_one_repo(
             vcs.as_ref(),
             &abs,
             &restore_key,
-            advanced_tips.get(repo_key),
-            converged_tips.get(repo_key),
+            advanced_tips.get(&repo_key),
+            converged_tips.get(&repo_key),
             consented,
         ) {
             Ok(outcome) => report_abort_outcome(
@@ -7517,6 +7545,7 @@ pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJ
     let complete = AtomicBool::new(false);
     let step3_advances: Mutex<std::collections::HashMap<String, Step3AdvanceOutput>> =
         Mutex::new(std::collections::HashMap::new());
+    let project_repo_advance: Mutex<Option<Step3AdvanceOutput>> = Mutex::new(None);
     let coordinates: Mutex<Option<OpCoordinates>> = Mutex::new(None);
     let retired: Mutex<Option<WorkweaveName>> = Mutex::new(None);
     let resumed: Mutex<Option<op_state::OpPhase>> = Mutex::new(None);
@@ -7536,6 +7565,7 @@ pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJ
         let handler = JsonEnvelopeSyncToHandler {
             records: &records,
             step3_advances: &step3_advances,
+            project_repo_advance: &project_repo_advance,
             coordinates: &coordinates,
             retired: &retired,
             resumed: &resumed,
@@ -7584,7 +7614,9 @@ pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJ
             }
         }
 
-        let project_repo_advance = step3_map.remove(project_repo_key());
+        let project_repo_advance = project_repo_advance
+            .into_inner()
+            .unwrap_or_else(|e| e.into_inner());
 
         // The machine records its coordinates before its first phase, and
         // every record above is written by a phase. Nothing here means the op
@@ -8049,7 +8081,7 @@ mod tests {
                 &entry_verdicts(Some(Containment::Behind(2))),
                 &target
             ),
-            Some(("github/acme/server".to_owned(), target.id().clone()))
+            Some((RepoKey::Member(repo.clone()), target.id().clone()))
         );
         for containment in [
             None,
