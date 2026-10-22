@@ -85,26 +85,11 @@ const ALLOWLIST: &[Allowed] = &[
              Nothing is derived from an identity.",
     },
     Allowed {
-        file: "settle.rs",
-        count: 1,
-        justification: "An observed location: the path of a checkout already on \
-             disk, taken relative to the workspace root found above it, and looked \
-             up in that workspace's manifests to read the roles they give that \
-             checkout. Nothing is derived from an identity.",
-    },
-    Allowed {
         file: "role.rs",
         count: 1,
         justification: "The role verb's lookup key: the operator's typed path is \
              matched against the manifest, and a path it does not list is refused \
              rather than asserted into it.",
-    },
-    Allowed {
-        file: "workspace.rs",
-        count: 1,
-        justification: "The disk scan reports where a checkout already sits — an \
-             observed location read off the filesystem, not a path computed from an \
-             identity.",
     },
 ];
 
@@ -211,7 +196,7 @@ fn an_undeclared_site_is_reported() {
 #[test]
 fn the_scan_reaches_its_known_corpus() {
     let lines = src_scan::production_lines();
-    for file in ["add_remove.rs", "check.rs", "workspace.rs", "registry.rs"] {
+    for file in ["add_remove.rs", "check.rs", "manifest.rs", "registry.rs"] {
         assert!(
             lines.iter().any(|l| l.file == file),
             "the scan yielded no production lines for {file}; its walk is broken, \

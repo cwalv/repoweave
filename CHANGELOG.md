@@ -15,6 +15,16 @@ removed it, and switching to another project left one in a subdirectory
 behind. On Unix the link is now recognized under the name it was declared
 with.
 
+### A `\` in a checkout's directory name is part of the name on Unix
+
+On Unix, `\` is an ordinary character in a filename, but the scan that finds
+checkouts at member depth read a clone at `github/owner/a\b` as
+`github/owner/a/b`, a directory that is not there, and read a name that is not
+Unicode with a replacement character. A clone whose name no member path can
+hold is now left out of the scan. The owned-digest ledger likewise recorded a
+path dependency at `a\b` under the same key as one at `a/b`; each now has its
+own.
+
 ### `rwv sync-to <target> --retire` counts the target it landed into
 
 A workweave landed into a target other than its recorded parent, by naming the

@@ -745,6 +745,9 @@ fn registry_segments_and_unparseable(root: &Path) -> (std::collections::BTreeSet
 
 /// VCS repos directly under `root/{segment}/{owner}/{repo}`, filtered by
 /// `vcs.is_repo()` and returned as paths relative to `root`.
+///
+/// A repo whose path no [`RepoPath`] can hold — a name that is not Unicode,
+/// or a `\` inside a Unix name — is left out: no manifest can list it.
 fn repos_under_segment(root: &Path, segment: &str, vcs: &dyn Vcs) -> Vec<RepoPath> {
     let mut repos = Vec::new();
 
@@ -770,17 +773,7 @@ fn repos_under_segment(root: &Path, segment: &str, vcs: &dyn Vcs) -> Vec<RepoPat
             if !vcs.is_repo(&repo_path) {
                 continue;
             }
-            if let Ok(rel) = repo_path.strip_prefix(root) {
-                // Normalize to forward slashes before constructing a RepoPath
-                // so the invariant holds on all platforms. On Windows,
-                // Path::to_string_lossy() produces backslashes; replace them
-                // here at the OS boundary before the validated constructor runs.
-                let fwd = rel.to_string_lossy().replace('\\', "/");
-                repos.push(
-                    RepoPath::new(fwd)
-                        .expect("path after backslash-to-slash normalization cannot fail"),
-                );
-            }
+            repos.extend(RepoPath::below(root, &repo_path));
         }
     }
 

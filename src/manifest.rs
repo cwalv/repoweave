@@ -49,8 +49,9 @@ pub struct RepoPath(String);
 pub enum RepoPathError {
     /// The path contains a backslash (`\`).
     ///
-    /// `RepoPath` values must use forward-slash (`/`) separators. On Windows,
-    /// normalize with [`str::replace`] before calling `RepoPath::new`.
+    /// `RepoPath` values must use forward-slash (`/`) separators. A location
+    /// on disk takes its `RepoPath` from [`RepoPath::below`], which reads the
+    /// separators the host writes.
     Backslash(String),
     /// The path is the spelling of the project repo's [`RepoKey`], which
     /// names no member.
@@ -104,6 +105,28 @@ impl RepoPath {
         let s = s.into();
         validate_repo_path(&s)?;
         Ok(Self(s))
+    }
+
+    /// The member path naming `location`, a place on disk below `root`: its
+    /// names from `root` down, joined with `/`.
+    ///
+    /// Each name is taken as the filesystem holds it. A `\` inside a Unix
+    /// name stays in the name, so no member path holds it, rather than
+    /// splitting it into two segments that name some other directory.
+    ///
+    /// `None` when `location` is not below `root`, or when a name on the way
+    /// is not Unicode, or is one no `RepoPath` holds.
+    pub fn below(root: &Path, location: &Path) -> Option<Self> {
+        let names = location
+            .strip_prefix(root)
+            .ok()?
+            .components()
+            .map(|component| match component {
+                std::path::Component::Normal(name) => name.to_str(),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Self::new(names.join("/")).ok()
     }
 
     pub fn as_str(&self) -> &str {
@@ -2827,6 +2850,58 @@ role = "owned"
         assert!(
             msg.contains(input),
             "Display should include the offending path '{input}', got: {msg}"
+        );
+    }
+
+    // ========================================================================
+    // RepoPath::below — a location on disk named by its names
+    // ========================================================================
+
+    fn repo(text: &str) -> RepoPath {
+        RepoPath::new(text).unwrap()
+    }
+
+    #[test]
+    fn a_location_below_the_root_is_named_by_its_names_joined_with_slashes() {
+        let root = std::env::temp_dir().join("w");
+        let location = root.join("github").join("o").join("r");
+        assert_eq!(RepoPath::below(&root, &location), Some(repo("github/o/r")));
+        assert_eq!(RepoPath::below(&location, &root), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_backslash_in_a_unix_name_stays_part_of_the_name() {
+        let root = Path::new("/w");
+        assert_eq!(
+            RepoPath::below(root, Path::new("/w/github/o/a\\b")),
+            None,
+            "`a\\b` is one name on Unix; read as `a/b` it names another directory"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_name_that_is_not_unicode_names_no_member() {
+        use std::os::unix::ffi::OsStrExt;
+        let root = Path::new("/w");
+        let location = root
+            .join("github/o")
+            .join(std::ffi::OsStr::from_bytes(b"r\xff"));
+        assert_eq!(RepoPath::below(root, &location), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_windows_location_is_split_on_the_separators_the_host_writes() {
+        let root = Path::new(r"C:\w");
+        assert_eq!(
+            RepoPath::below(root, Path::new(r"C:\w\github\o\r")),
+            Some(repo("github/o/r"))
+        );
+        assert_eq!(
+            RepoPath::below(root, Path::new(r"C:\w\github/o\r")),
+            Some(repo("github/o/r"))
         );
     }
 

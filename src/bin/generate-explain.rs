@@ -97,7 +97,7 @@ use repoweave::check::DoctorJsonOutput;
 use repoweave::cli::Cli;
 use repoweave::explain;
 use repoweave::fetch::{FetchJsonOutput, FetchOutcomeNdjsonRecord, FETCH_RECORD_SCHEMA_URL};
-use repoweave::path_spelling::CanonicalPath;
+use repoweave::path_spelling::{weave_relative, CanonicalPath};
 use repoweave::placement::{PlacementNdjsonRecord, PLACEMENT_RECORD_SCHEMA_URL};
 use repoweave::plugins::envelope_vars;
 use repoweave::push::{
@@ -1672,11 +1672,7 @@ fn check_vcs_seam_bypasses(src_dir: &Path) -> Vec<String> {
     let mut errors: Vec<String> = Vec::new();
 
     for path in collect_rs_files(src_dir) {
-        let rel = path
-            .strip_prefix(src_dir)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .replace('\\', "/");
+        let rel = weave_relative(path.strip_prefix(src_dir).unwrap_or(&path));
         if rel == "git.rs" || rel.starts_with("git/") {
             continue;
         }

@@ -35,13 +35,13 @@
 //! identical story and can port by calling the same three helpers.
 
 use crate::integration::{Issue, IssueKind, IssueSource, Severity};
-use crate::path_spelling::CanonicalPath;
+use crate::path_spelling::{weave_relative, wire_path, CanonicalPath};
 use crate::refusal::RefusalKind;
 use crate::state_file::{StateFile, StatePath};
 use crate::workweave_index;
 use anyhow::Context;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 /// File name of the rwv-owned digest state file, written in the same
 /// directory as the generated files it records.
@@ -698,50 +698,34 @@ fn collect_path_deps(
     }
 }
 
-/// A stable workspace-relative string spelling of `target`. Paths inside
-/// `workspace_root` render without a `..` prefix (using forward slashes);
-/// paths outside are spelled with the leading `..` segments that get from
-/// `workspace_root` to `target`. Always forward-slash for cross-platform
-/// determinism (matches the rest of the ledger's key format).
+/// The ledger key of `target_canon`: its path from the workspace root as rwv
+/// spells a path inside a weave, climbing with a leading `..` per level when
+/// it lies outside; its wire spelling when no ancestor of the root holds it.
+///
+/// The canonical root is tried first, so a symlinked workspace root does not
+/// spell its own segments twice.
 fn workspace_relative_key(ws_root_canon: &Path, ws_root_raw: &Path, target_canon: &Path) -> String {
-    // Prefer the canonicalized workspace root for stripping, so a symlinked
-    // workspace root does not double-render its own segments.
     if let Ok(rel) = target_canon.strip_prefix(ws_root_canon) {
-        return rel.to_string_lossy().replace('\\', "/");
+        return weave_relative(rel);
     }
     if let Ok(rel) = target_canon.strip_prefix(ws_root_raw) {
-        return rel.to_string_lossy().replace('\\', "/");
+        return weave_relative(rel);
     }
-    // Not under the workspace root — compute a `../..` spelling.
-    let up = ws_root_canon
+    let climbed = ws_root_canon
         .ancestors()
         .enumerate()
         .find_map(|(depth, ancestor)| {
-            target_canon
-                .strip_prefix(ancestor)
-                .ok()
-                .map(|rel| (depth, rel))
+            let rel = target_canon.strip_prefix(ancestor).ok()?;
+            Some(
+                std::iter::repeat_n(Component::ParentDir, depth)
+                    .chain(rel.components())
+                    .collect::<PathBuf>(),
+            )
         });
-    if let Some((depth, rel)) = up {
-        let mut s = String::new();
-        for i in 0..depth {
-            if i > 0 {
-                s.push('/');
-            }
-            s.push_str("..");
-        }
-        let rel_str = rel.to_string_lossy().replace('\\', "/");
-        if !rel_str.is_empty() {
-            if !s.is_empty() {
-                s.push('/');
-            }
-            s.push_str(&rel_str);
-        }
-        return s;
+    match climbed {
+        Some(rel) => weave_relative(&rel),
+        None => wire_path(target_canon),
     }
-    // Truly disjoint (different filesystem root, e.g.). Fall back to the
-    // absolute path; still deterministic, just less pretty.
-    target_canon.to_string_lossy().replace('\\', "/")
 }
 
 /// Drop `file_name`'s entry from `dir`'s state file, leaving the other
@@ -983,6 +967,38 @@ pub fn fully_owned_digest_mismatch_issue(name: &str, path: &Path) -> Issue {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    fn key(root: &str, target: &str) -> String {
+        workspace_relative_key(Path::new(root), Path::new(root), Path::new(target))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_backslash_in_a_unix_name_stays_part_of_the_ledger_key() {
+        assert_eq!(
+            key("/w/ws", "/w/ws/crates/a\\b/Cargo.toml"),
+            "crates/a\\b/Cargo.toml"
+        );
+        assert_ne!(
+            key("/w/ws", "/w/ws/crates/a\\b/Cargo.toml"),
+            key("/w/ws", "/w/ws/crates/a/b/Cargo.toml"),
+            "`a\\b` and `a/b` are two directories, so two keys"
+        );
+        assert_eq!(key("/w/ws", "/w/x\\y/Cargo.toml"), "../x\\y/Cargo.toml");
+        assert_eq!(key("/w/ws", "/y/Cargo.toml"), "../../y/Cargo.toml");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_windows_ledger_key_is_slash_separated_inside_beside_and_across_drives() {
+        assert_eq!(
+            key(r"C:\w\ws", r"C:\w\ws\crates\a\Cargo.toml"),
+            "crates/a/Cargo.toml"
+        );
+        assert_eq!(key(r"C:\w\ws", r"C:\w\x\Cargo.toml"), "../x/Cargo.toml");
+        assert_eq!(key(r"C:\w\ws", r"C:\y\Cargo.toml"), "../../y/Cargo.toml");
+        assert_eq!(key(r"C:\w\ws", r"D:\x\Cargo.toml"), "D:/x/Cargo.toml");
+    }
 
     #[test]
     fn check_without_state_file_is_not_recorded() {
