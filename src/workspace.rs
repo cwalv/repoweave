@@ -414,6 +414,9 @@ pub fn warn_confusable_project_siblings(root: &Path, project: &ProjectName) {
 // Minting a directory whose final component is an identity
 // ---------------------------------------------------------------------------
 
+mod listed_name;
+pub use listed_name::ListedName;
+
 /// What already occupies a path an identity was about to be minted at.
 #[derive(Debug, Clone)]
 pub struct DirOccupant {
@@ -422,7 +425,7 @@ pub struct DirOccupant {
     /// always the name that was asked for. `None` when the parent cannot be
     /// read or no entry matches — the collision is real either way, and
     /// nothing more precise can be said about it.
-    listed: Option<String>,
+    listed: Option<ListedName>,
 }
 
 impl DirOccupant {
@@ -434,7 +437,7 @@ impl DirOccupant {
     /// a folding filesystem the operator asked for one spelling and something
     /// spelled another way answered.
     pub fn describe(&self) -> String {
-        occupant_sentence(&self.requested, self.listed.as_deref())
+        occupant_sentence(&self.requested, self.listed.as_ref())
     }
 }
 
@@ -442,15 +445,15 @@ impl DirOccupant {
 /// attempting a create — `git clone` mints some identity directories, and a
 /// pre-check is all rwv has there.
 pub fn describe_existing(dir: &Path) -> String {
-    occupant_sentence(dir, listed_occupant(dir).as_deref())
+    occupant_sentence(dir, listed_occupant(dir).as_ref())
 }
 
 /// One home for the sentence, so every refusal that names an occupant names it
 /// the same way.
-fn occupant_sentence(requested: &Path, listed: Option<&str>) -> String {
+fn occupant_sentence(requested: &Path, listed: Option<&ListedName>) -> String {
     let asked = requested.file_name().and_then(|n| n.to_str());
     match listed {
-        Some(listed) if Some(listed) != asked => format!(
+        Some(listed) if Some(listed.as_str()) != asked => format!(
             "{} already exists — the filesystem lists it as `{listed}` and treats the \
              two spellings as one name",
             crate::path_spelling::operator_path(requested)
@@ -468,10 +471,10 @@ fn occupant_sentence(requested: &Path, listed: Option<&str>) -> String {
 ///
 /// `None` when nothing is there, or when the spelling on disk is the one that
 /// was asked for.
-pub fn diverged_occupant(dir: &Path) -> Option<String> {
+pub fn diverged_occupant(dir: &Path) -> Option<ListedName> {
     let asked = dir.file_name().and_then(|n| n.to_str())?;
     let listed = listed_occupant(dir)?;
-    (listed != asked).then_some(listed)
+    (listed.as_str() != asked).then_some(listed)
 }
 
 /// Outcome of [`create_identity_dir`].
@@ -481,18 +484,14 @@ pub enum MintedDir {
     Occupied(DirOccupant),
 }
 
-/// The name the parent directory lists for whatever occupies `dir`.
-///
-/// Not `canonicalize`: on a folding filesystem it echoes back the spelling it
-/// was asked with rather than the one on disk, so it can never report the
-/// divergence. The parent's own listing carries true spellings, and
-/// filesystem identity is what says which entry answered.
-fn listed_occupant(dir: &Path) -> Option<String> {
+/// The name the parent directory lists for whatever occupies `dir`; filesystem
+/// identity says which entry answered.
+fn listed_occupant(dir: &Path) -> Option<ListedName> {
     let parent = dir.parent()?;
     std::fs::read_dir(parent).ok()?.flatten().find_map(|entry| {
         CanonicalPath::of(&entry.path())
             .same_directory(dir)
-            .then(|| entry.file_name().to_string_lossy().into_owned())
+            .then(|| ListedName::of(&entry))
     })
 }
 

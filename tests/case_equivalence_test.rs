@@ -45,7 +45,7 @@ use std::path::{Path, PathBuf};
 
 mod common;
 
-use common::src_scan::production_lines;
+use common::compile_probe::{assert_fails_with, compile};
 
 fn rwv() -> Command {
     common::rwv()
@@ -401,42 +401,53 @@ fn workweave_reuse_refuses_to_adopt_a_case_twin_directory() {
 
 /// The occupant is named from the parent's listing, not from `canonicalize` —
 /// which on a folding filesystem echoes back the spelling it was asked with
-/// and so can never report the divergence.
+/// and so can never report the divergence. A `ListedName` is built only from
+/// a listing entry, so no other spelling can name the occupant.
 ///
-/// A source pin because the divergence is unreachable on this host: with no
-/// folding, the listed name always equals the requested one, so no fixture can
-/// tell the two mechanisms apart by their output.
+/// Held by the compiler because the divergence is unreachable on this host:
+/// with no folding, the listed name always equals the requested one, so no
+/// fixture can tell the two mechanisms apart by their output.
 #[test]
-fn occupant_naming_reads_the_listing_and_not_a_canonicalized_echo() {
-    let lines = production_lines();
-    let start = lines
-        .iter()
-        .position(|l| l.file == "workspace.rs" && l.text.contains("fn listed_occupant("))
-        .expect("the occupant lookup must exist");
-    let mut body = Vec::new();
-    for line in &lines[start..] {
-        body.push(line.text.clone());
-        if line.text == "}" && body.len() > 1 {
-            break;
+fn an_occupant_s_name_comes_only_from_a_directory_listing() {
+    let (compiled, stderr) = compile(
+        r#"
+        use repoweave::workspace::ListedName;
+        use std::path::Path;
+        pub fn listed(parent: &Path) -> Vec<ListedName> {
+            std::fs::read_dir(parent)
+                .unwrap()
+                .flatten()
+                .map(|entry| ListedName::of(&entry))
+                .collect()
         }
-    }
-    let body = body.join("\n");
-    assert!(
-        body.ends_with('}') && body.lines().count() >= 3,
-        "the slicer must yield a whole body: {body}"
+        "#,
     );
-    assert!(
-        body.contains("read_dir("),
-        "the occupant must come from the parent's listing: {body}"
+    assert!(compiled, "control snippet must compile; got:\n{stderr}");
+
+    assert_fails_with(
+        "E0423",
+        "a canonicalized echo cannot become a listed name",
+        r#"
+        use repoweave::workspace::ListedName;
+        use std::path::Path;
+        pub fn echoed(dir: &Path) -> ListedName {
+            let echo = std::fs::canonicalize(dir).unwrap();
+            ListedName(echo.file_name().unwrap().to_string_lossy().into_owned())
+        }
+        "#,
     );
-    assert!(
-        !body.contains("canonicalize"),
-        "canonicalize echoes the queried spelling on a folding filesystem: {body}"
+    assert_fails_with(
+        "E0277",
+        "a listed name has no conversion from text",
+        r#"
+        use repoweave::workspace::ListedName;
+        pub fn spelled(name: String) -> ListedName {
+            name.into()
+        }
+        "#,
     );
 }
 
-/// With the spellings in agreement there is no divergence to report — the
-/// ordinary case, and the one this host can actually produce.
 #[test]
 fn an_agreeing_spelling_is_not_reported_as_divergence() {
     let tmp = common::tempdir().unwrap();
