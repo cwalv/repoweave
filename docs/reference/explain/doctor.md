@@ -839,7 +839,11 @@ Schema:
               "properties": {
                 "store_path": {
                   "description": "Absolute path of the standalone canonical store under `.workweaves/`.",
-                  "type": "string"
+                  "allOf": [
+                    {
+                      "$ref": "#/definitions/WirePath"
+                    }
+                  ]
                 }
               }
             }
@@ -862,11 +866,19 @@ Schema:
               "properties": {
                 "other_store_path": {
                   "description": "Absolute path of a representative store one of the workweave checkouts actually uses (the one this weave clone is disconnected from).",
-                  "type": "string"
+                  "allOf": [
+                    {
+                      "$ref": "#/definitions/WirePath"
+                    }
+                  ]
                 },
                 "weave_store_path": {
                   "description": "Absolute path of the canonical store at the weave slot (the \"disconnected\" one).",
-                  "type": "string"
+                  "allOf": [
+                    {
+                      "$ref": "#/definitions/WirePath"
+                    }
+                  ]
                 }
               }
             }
@@ -889,11 +901,19 @@ Schema:
               "properties": {
                 "actual_store_path": {
                   "description": "Absolute path of the canonical store this workweave checkout is actually linked into.",
-                  "type": "string"
+                  "allOf": [
+                    {
+                      "$ref": "#/definitions/WirePath"
+                    }
+                  ]
                 },
                 "expected_store_path": {
                   "description": "Absolute path of the canonical store this workweave checkout should be linked into (`<weave>/<repo_path>/.git`).",
-                  "type": "string"
+                  "allOf": [
+                    {
+                      "$ref": "#/definitions/WirePath"
+                    }
+                  ]
                 }
               }
             }
@@ -915,7 +935,11 @@ Schema:
               "properties": {
                 "actual_store_path": {
                   "description": "Absolute path of the canonical store this slot is linked into.",
-                  "type": "string"
+                  "allOf": [
+                    {
+                      "$ref": "#/definitions/WirePath"
+                    }
+                  ]
                 }
               }
             }
@@ -1115,7 +1139,7 @@ Schema:
       }
     },
     "MarkerDefect": {
-      "description": "Why a `.rwv-workweave` file cannot witness the identity it claims.\n\n`Legacy` covers every YAML marker `WorkweaveMarker::migrate_legacy` can repair: `primary:` and a valid `project:` both present, with or without the `parent:` field that became required before the format changed (it backfills from `primary`). A YAML marker missing either — no `primary:` to backfill from, or no `project:` `migrate_legacy` can construct a `crate::manifest::ProjectName` from — is `Unreadable` instead: a defect naming a repair nothing performs is worse than one that names none.\n\n`Serialize`/`JsonSchema` so `check::WeaveRootIdentityConflictKind` can carry a defect straight into a doctor finding's wire shape — the same value `require_exclusive` refuses on, not a re-description of it.",
+      "description": "Why a `.rwv-workweave` file cannot witness the identity it claims.\n\n`Legacy` covers every YAML marker `WorkweaveMarker::migrate_legacy` can repair: `primary:` and a valid `project:` both present, with or without the `parent:` field that became required before the format changed (it backfills from `primary`). A YAML marker missing either — no `primary:` to backfill from, or no `project:` `migrate_legacy` can construct a `crate::manifest::ProjectName` from — is `Unreadable` instead: a defect naming a repair nothing performs is worse than one that names none.\n\n`Serialize`/`JsonSchema` so `check::WeaveRootIdentityConflictKind` can carry a defect into a doctor finding's wire shape — the same value `require_exclusive` refuses on, its path respelled by `Self::into_wire`, not a re-description of it.",
       "oneOf": [
         {
           "type": "string",
@@ -1136,7 +1160,7 @@ Schema:
               ],
               "properties": {
                 "primary": {
-                  "type": "string"
+                  "$ref": "#/definitions/WirePath"
                 }
               }
             }
@@ -1186,7 +1210,11 @@ Schema:
         },
         "path": {
           "description": "The managed file holding the incompatible value.",
-          "type": "string"
+          "allOf": [
+            {
+              "$ref": "#/definitions/WirePath"
+            }
+          ]
         },
         "required": {
           "description": "The strongest value the members require.",
@@ -1270,7 +1298,11 @@ Schema:
         },
         "path": {
           "description": "Absolute path of this binary on disk, carrying its real file name.",
-          "type": "string"
+          "allOf": [
+            {
+              "$ref": "#/definitions/WirePath"
+            }
+          ]
         },
         "shadowed": {
           "description": "`true` when another binary with the same name will be executed instead: one earlier in `PATH`, or on Windows one in the same directory whose extension comes earlier in `PATHEXT`. This binary is unreachable via `rwv <name>` until the shadowing copy is removed.",
@@ -1278,9 +1310,13 @@ Schema:
         },
         "shadowed_by": {
           "description": "Absolute path of the binary that shadows this one. Present iff `shadowed` is `true`.",
-          "type": [
-            "string",
-            "null"
+          "anyOf": [
+            {
+              "$ref": "#/definitions/WirePath"
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       }
@@ -1477,8 +1513,12 @@ Schema:
           "type": "string"
         },
         "workspace": {
-          "description": "Primary weave root, in the wire spelling.\n\nA `String` and not a `PathBuf` so the spelling is decided at construction rather than by serde: this is a published absolute path and it owes programs the composable form, which `crate::path_spelling::wire_path` is the only producer of.",
-          "type": "string"
+          "description": "Primary weave root.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/WirePath"
+            }
+          ]
         },
         "workweave": {
           "description": "Workweave identity (`<project>--<name>`), as the primary-side registry records it.\n\nAbsent at the primary, and absent for a workweave whose directory no registry entry names — identity is by record, so an unregistered workweave has no identity to report and rwv will not spell one from the directory name. Those two absences are told apart by `workweave_unregistered`, not by this field.",
@@ -1565,7 +1605,7 @@ Schema:
           ],
           "properties": {
             "absolute_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "kind": {
               "type": "string",
@@ -1587,7 +1627,7 @@ Schema:
           ],
           "properties": {
             "absolute_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "kind": {
               "type": "string",
@@ -1610,7 +1650,7 @@ Schema:
           ],
           "properties": {
             "absolute_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "kind": {
               "type": "string",
@@ -1637,7 +1677,7 @@ Schema:
           ],
           "properties": {
             "absolute_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "files": {
               "description": "How many tracked regular files disagree with the member's role.",
@@ -1676,7 +1716,7 @@ Schema:
           ],
           "properties": {
             "absolute_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "kind": {
               "type": "string",
@@ -1708,7 +1748,7 @@ Schema:
           ],
           "properties": {
             "absolute_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "actual": {
               "type": "string"
@@ -1740,7 +1780,7 @@ Schema:
           ],
           "properties": {
             "absolute_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "kind": {
               "type": "string",
@@ -1766,7 +1806,7 @@ Schema:
           ],
           "properties": {
             "absolute_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "kind": {
               "type": "string",
@@ -1799,7 +1839,7 @@ Schema:
           ],
           "properties": {
             "absolute_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "kind": {
               "type": "string",
@@ -1832,7 +1872,7 @@ Schema:
           ],
           "properties": {
             "absolute_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "kind": {
               "type": "string",
@@ -1957,7 +1997,7 @@ Schema:
           ],
           "properties": {
             "absolute_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "error": {
               "type": "string"
@@ -1991,7 +2031,7 @@ Schema:
               ]
             },
             "path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             }
           }
         },
@@ -2003,7 +2043,7 @@ Schema:
           ],
           "properties": {
             "absolute_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "kind": {
               "type": "string",
@@ -2023,7 +2063,7 @@ Schema:
           ],
           "properties": {
             "absolute_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "derived": {
               "type": "string"
@@ -2049,7 +2089,7 @@ Schema:
           ],
           "properties": {
             "absolute_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "kind": {
               "type": "string",
@@ -2076,7 +2116,7 @@ Schema:
           ],
           "properties": {
             "absolute_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "kind": {
               "type": "string",
@@ -2111,7 +2151,7 @@ Schema:
               ]
             },
             "legacy_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "project": {
               "type": "string"
@@ -2133,7 +2173,7 @@ Schema:
               ]
             },
             "missing_dir": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "project": {
               "type": "string"
@@ -2163,7 +2203,11 @@ Schema:
             },
             "root": {
               "description": "Absolute path of the weave root carrying both identity files.",
-              "type": "string"
+              "allOf": [
+                {
+                  "$ref": "#/definitions/WirePath"
+                }
+              ]
             },
             "sub_kind": {
               "$ref": "#/definitions/WeaveRootIdentityConflictKind"
@@ -2185,10 +2229,10 @@ Schema:
               ]
             },
             "marker_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "primary": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             }
           }
         },
@@ -2201,7 +2245,7 @@ Schema:
           ],
           "properties": {
             "index_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "kind": {
               "type": "string",
@@ -2240,7 +2284,7 @@ Schema:
               "type": "string"
             },
             "state_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             }
           }
         },
@@ -2257,7 +2301,7 @@ Schema:
               "type": "string"
             },
             "index_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "kind": {
               "type": "string",
@@ -2286,7 +2330,7 @@ Schema:
               ]
             },
             "manifest_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "message": {
               "description": "Free-form display string of the parse error. Named `message` (not `error`) to signal this is display text, not a typed discriminant.",
@@ -2321,7 +2365,11 @@ Schema:
             },
             "workweave_dir": {
               "description": "Absolute path to the workweave directory (or its marker file for file-level findings).",
-              "type": "string"
+              "allOf": [
+                {
+                  "$ref": "#/definitions/WirePath"
+                }
+              ]
             }
           }
         },
@@ -2337,7 +2385,11 @@ Schema:
           "properties": {
             "absolute_path": {
               "description": "Absolute path to the affected repo on disk.",
-              "type": "string"
+              "allOf": [
+                {
+                  "$ref": "#/definitions/WirePath"
+                }
+              ]
             },
             "kind": {
               "type": "string",
@@ -2374,7 +2426,11 @@ Schema:
           "properties": {
             "absolute_path": {
               "description": "Absolute path of the offending workspace (canonical slot or workweave checkout, per sub-kind semantics).",
-              "type": "string"
+              "allOf": [
+                {
+                  "$ref": "#/definitions/WirePath"
+                }
+              ]
             },
             "kind": {
               "type": "string",
@@ -2412,7 +2468,11 @@ Schema:
             },
             "repo_path": {
               "description": "Absolute path to the repo checkout where the violation was found (workweave checkout for (a), canonical clone for (b)/(c)).",
-              "type": "string"
+              "allOf": [
+                {
+                  "$ref": "#/definitions/WirePath"
+                }
+              ]
             },
             "sub_kind": {
               "description": "Discriminator for the specific branch-discipline anomaly.",
@@ -2434,7 +2494,7 @@ Schema:
           ],
           "properties": {
             "absolute_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "kind": {
               "type": "string",
@@ -2444,7 +2504,11 @@ Schema:
             },
             "missing_path": {
               "description": "Absolute path of the missing worktree directory.",
-              "type": "string"
+              "allOf": [
+                {
+                  "$ref": "#/definitions/WirePath"
+                }
+              ]
             },
             "path": {
               "type": "string"
@@ -2487,7 +2551,11 @@ Schema:
             },
             "workspace_dir": {
               "description": "Absolute path to the workspace dir that holds the `.rwv-op` file.",
-              "type": "string"
+              "allOf": [
+                {
+                  "$ref": "#/definitions/WirePath"
+                }
+              ]
             }
           }
         },
@@ -2520,7 +2588,11 @@ Schema:
             },
             "recorded_owner": {
               "description": "Owner workspace the lease pointed at.",
-              "type": "string"
+              "allOf": [
+                {
+                  "$ref": "#/definitions/WirePath"
+                }
+              ]
             },
             "sub_kind": {
               "description": "Discriminator for the specific dead-lease shape.",
@@ -2532,7 +2604,11 @@ Schema:
             },
             "workspace_dir": {
               "description": "Absolute path to the workspace dir holding the dangling lease.",
-              "type": "string"
+              "allOf": [
+                {
+                  "$ref": "#/definitions/WirePath"
+                }
+              ]
             }
           }
         },
@@ -2561,7 +2637,11 @@ Schema:
             },
             "store_path": {
               "description": "Absolute path of the canonical store the receipt is keyed to.",
-              "type": "string"
+              "allOf": [
+                {
+                  "$ref": "#/definitions/WirePath"
+                }
+              ]
             }
           }
         },
@@ -2591,7 +2671,11 @@ Schema:
             },
             "store_path": {
               "description": "Absolute path of the canonical store the receipt is keyed to.",
-              "type": "string"
+              "allOf": [
+                {
+                  "$ref": "#/definitions/WirePath"
+                }
+              ]
             }
           }
         },
@@ -2606,7 +2690,7 @@ Schema:
           ],
           "properties": {
             "absolute_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "kind": {
               "type": "string",
@@ -2649,7 +2733,7 @@ Schema:
           ],
           "properties": {
             "absolute_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "kind": {
               "type": "string",
@@ -2753,7 +2837,11 @@ Schema:
             },
             "member_config": {
               "description": "Member-level `.cargo/config.toml` that wins per cargo's closest-config-wins-per-key shadowing.",
-              "type": "string"
+              "allOf": [
+                {
+                  "$ref": "#/definitions/WirePath"
+                }
+              ]
             },
             "registry": {
               "description": "Registry sub-table name (e.g. `crates-io`).",
@@ -2761,7 +2849,11 @@ Schema:
             },
             "weave_config": {
               "description": "Weave-level file (Cargo.toml or .cargo/config.toml) that carries the shadowed patch entry.",
-              "type": "string"
+              "allOf": [
+                {
+                  "$ref": "#/definitions/WirePath"
+                }
+              ]
             }
           }
         },
@@ -2778,11 +2870,19 @@ Schema:
           "properties": {
             "absolute_path": {
               "description": "Absolute path of the worktree checkout in the workweave.",
-              "type": "string"
+              "allOf": [
+                {
+                  "$ref": "#/definitions/WirePath"
+                }
+              ]
             },
             "canonical_path": {
               "description": "Absolute path of the canonical clone directory that is absent.",
-              "type": "string"
+              "allOf": [
+                {
+                  "$ref": "#/definitions/WirePath"
+                }
+              ]
             },
             "kind": {
               "type": "string",
@@ -2814,7 +2914,11 @@ Schema:
           "properties": {
             "absolute_path": {
               "description": "Absolute path to the repo worktree that has uninitialized submodules.",
-              "type": "string"
+              "allOf": [
+                {
+                  "$ref": "#/definitions/WirePath"
+                }
+              ]
             },
             "empty_paths": {
               "description": "Submodule paths (relative to the repo root) that are empty on disk.",
@@ -2855,7 +2959,11 @@ Schema:
           "properties": {
             "absolute_path": {
               "description": "Absolute path to that repo on disk.",
-              "type": "string"
+              "allOf": [
+                {
+                  "$ref": "#/definitions/WirePath"
+                }
+              ]
             },
             "driver": {
               "description": "The `rwv-`-prefixed driver name that resolves to nothing.",
@@ -2933,7 +3041,11 @@ Schema:
                 },
                 "marker_path": {
                   "description": "Absolute path to the `.rwv-workweave` file.",
-                  "type": "string"
+                  "allOf": [
+                    {
+                      "$ref": "#/definitions/WirePath"
+                    }
+                  ]
                 }
               }
             }
@@ -2963,6 +3075,10 @@ Schema:
           "additionalProperties": false
         }
       ]
+    },
+    "WirePath": {
+      "description": "Absolute path, `/`-separated on every platform.",
+      "type": "string"
     },
     "WorkingTreeDriftKind": {
       "description": "How stale working-tree files should be treated.",
@@ -3001,7 +3117,11 @@ Schema:
               "properties": {
                 "parent_path": {
                   "description": "The missing parent path recorded in the marker.",
-                  "type": "string"
+                  "allOf": [
+                    {
+                      "$ref": "#/definitions/WirePath"
+                    }
+                  ]
                 }
               }
             }
@@ -3052,7 +3172,11 @@ Schema:
               "properties": {
                 "marker_primary": {
                   "description": "The primary path recorded in the marker (unresolved).",
-                  "type": "string"
+                  "allOf": [
+                    {
+                      "$ref": "#/definitions/WirePath"
+                    }
+                  ]
                 }
               }
             }
@@ -3074,7 +3198,11 @@ Schema:
               "properties": {
                 "marker_primary": {
                   "description": "The other workspace's primary path (resolved).",
-                  "type": "string"
+                  "allOf": [
+                    {
+                      "$ref": "#/definitions/WirePath"
+                    }
+                  ]
                 }
               }
             }
@@ -3107,7 +3235,11 @@ Schema:
                 },
                 "recorded_path": {
                   "description": "The recorded absolute path (which no longer round-trips).",
-                  "type": "string"
+                  "allOf": [
+                    {
+                      "$ref": "#/definitions/WirePath"
+                    }
+                  ]
                 },
                 "workweave_name": {
                   "description": "The recorded name of the workweave.",
@@ -3161,7 +3293,11 @@ Schema:
               "properties": {
                 "index_path": {
                   "description": "Path to the tracked index file.",
-                  "type": "string"
+                  "allOf": [
+                    {
+                      "$ref": "#/definitions/WirePath"
+                    }
+                  ]
                 },
                 "project": {
                   "description": "Project whose index is committed.",

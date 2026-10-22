@@ -144,19 +144,23 @@
         },
         "owner": {
           "description": "Workspace holding the full op record (`.rwv-op`) — the workspace `--continue`/`abort` must run from. Equal to the reporting workspace unless this workspace only holds a lease.",
-          "type": "string"
+          "allOf": [
+            {
+              "$ref": "#/definitions/WirePath"
+            }
+          ]
         },
         "phase": {
           "$ref": "#/definitions/OpPhase"
         },
         "source": {
-          "type": "string"
+          "$ref": "#/definitions/WirePath"
         },
         "started_at": {
           "type": "string"
         },
         "target": {
-          "type": "string"
+          "$ref": "#/definitions/WirePath"
         },
         "verb": {
           "$ref": "#/definitions/OpVerb"
@@ -210,7 +214,11 @@
       "properties": {
         "path": {
           "description": "Recorded parent workspace path (from the `.rwv-workweave` marker).",
-          "type": "string"
+          "allOf": [
+            {
+              "$ref": "#/definitions/WirePath"
+            }
+          ]
         },
         "tip": {
           "description": "This repo's HEAD in the parent's checkout, if resolvable.",
@@ -239,7 +247,7 @@
       ],
       "properties": {
         "absolute_path": {
-          "type": "string"
+          "$ref": "#/definitions/WirePath"
         },
         "branch": {
           "type": [
@@ -314,8 +322,12 @@
           "type": "string"
         },
         "workspace": {
-          "description": "Primary weave root, in the wire spelling.\n\nA `String` and not a `PathBuf` so the spelling is decided at construction rather than by serde: this is a published absolute path and it owes programs the composable form, which [`crate::path_spelling::wire_path`] is the only producer of.",
-          "type": "string"
+          "description": "Primary weave root.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/WirePath"
+            }
+          ]
         },
         "workweave": {
           "description": "Workweave identity (`<project>--<name>`), as the primary-side registry records it.\n\nAbsent at the primary, and absent for a workweave whose directory no registry entry names — identity is by record, so an unregistered workweave has no identity to report and rwv will not spell one from the directory name. Those two absences are told apart by `workweave_unregistered`, not by this field.",
@@ -362,6 +374,10 @@
           ]
         }
       ]
+    },
+    "WirePath": {
+      "description": "Absolute path, `/`-separated on every platform.",
+      "type": "string"
     }
   }
 }
