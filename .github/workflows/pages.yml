@@ -57,8 +57,15 @@ jobs:
         with:
           tool: mdbook-mermaid@0.17.0
 
+      - name: Read the site's address
+        id: pages
+        uses: actions/configure-pages@v5
+
       - name: Build every release's book
-        run: python scripts/assemble-docs-site.py --repo . --out "${{ runner.temp }}/site"
+        run: >-
+          python scripts/assemble-docs-site.py --repo .
+          --site-path "${{ steps.pages.outputs.base_path }}/"
+          --out "${{ runner.temp }}/site"
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

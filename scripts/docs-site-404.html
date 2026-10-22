@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Page not found · repoweave</title>
+<style>
+  body {
+    font-family: system-ui, sans-serif;
+    max-width: 40rem;
+    margin: 4rem auto;
+    padding: 0 1rem;
+    line-height: 1.5;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { background: #1d1f21; color: #c5c8c6; }
+    a { color: #81a2be; }
+  }
+</style>
+</head>
+<body>
+<h1>Page not found</h1>
+<p>There is no page at this address. <a id="home" href="">Open the documentation</a>.</p>
+<script>
+// scripts/assemble-docs-site.py replaces the next line with the site's root
+// path, its default version, and every published version.
+const site = SITE_CONFIG;
+(() => {
+  const home = document.getElementById("home");
+  if (!location.pathname.startsWith(site.root)) {
+    home.href = site.root;
+    return;
+  }
+  const rest = location.pathname.slice(site.root.length);
+  const first = rest.split("/")[0];
+  if (site.versions.includes(first)) {
+    home.href = `${site.root}${first}/`;
+    home.textContent = `Open the ${first} documentation`;
+    return;
+  }
+  const { search, hash } = location;
+  const target = `${site.root}${site.default}/${rest}${search}${hash}`;
+  home.href = target;
+  location.replace(target);
+})();
+</script>
+</body>
+</html>

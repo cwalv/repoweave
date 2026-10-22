@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Assemble the documentation site from this repository's release tags.
 
-Usage: assemble-docs-site.py --repo <git checkout> --out <new directory>
+Usage: assemble-docs-site.py --repo <git checkout> --site-path <path> --out <new directory>
 
 Every tag matching v* is a release, and must spell v<MAJOR>.<MINOR>.<PATCH>
 with an optional -<PRERELEASE>. Each one's book is built from that tag's own
@@ -9,12 +9,16 @@ tree into <out>/<tag>/, with a version selector added to its pages. The site
 root gets:
 
   index.html     a redirect to the default version
+  404.html       a redirect from any address with no version in it to the same
+                 address in the default version; under a version, not found
   versions.json  every version, highest first, and which one is the default
   install.sh     the default version's docs/install.sh, byte for byte
 
-The default version is the highest stable version by semver precedence. The
-checked-out tree is never read, so the commit this runs from shapes the site's
-machinery but none of its content.
+The default version is the highest stable version by semver precedence.
+--site-path is the URL path the site root is served at, such as /repoweave/;
+a 404 page is served at whatever address was missing, so it cannot find the
+site root relative to itself. The checked-out tree is never read, so the
+commit this runs from shapes the site's machinery but none of its content.
 
 Needs Python 3.11+, git, and mdbook and mdbook-mermaid on PATH.
 """
@@ -33,6 +37,8 @@ from pathlib import Path
 
 SELECTOR_SOURCE = Path(__file__).resolve().with_name("docs-site-version-selector.js")
 SELECTOR_IN_BOOK = "version-selector.js"
+NOT_FOUND_TEMPLATE = Path(__file__).resolve().with_name("docs-site-404.html")
+NOT_FOUND_CONFIG = "SITE_CONFIG"
 
 _IDENTIFIER = r"(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
 RELEASE_TAG = re.compile(
@@ -174,7 +180,17 @@ def redirect_page(tag: str) -> str:
 """
 
 
-def assemble(repo: Path, out: Path) -> None:
+def not_found_page(site_path: str, default: Release, releases: list[Release]) -> str:
+    template = NOT_FOUND_TEMPLATE.read_text(encoding="utf-8")
+    if template.count(NOT_FOUND_CONFIG) != 1:
+        raise Refusal(f"{NOT_FOUND_TEMPLATE} must spell {NOT_FOUND_CONFIG} exactly once")
+    config = {"root": site_path, "default": default.tag, "versions": [r.tag for r in releases]}
+    return template.replace(NOT_FOUND_CONFIG, json.dumps(config).replace("<", "\\u003c"))
+
+
+def assemble(repo: Path, site_path: str, out: Path) -> None:
+    if not (site_path.startswith("/") and site_path.endswith("/")):
+        raise Refusal(f"--site-path {site_path!r} must start and end with /, such as /repoweave/")
     if out.exists():
         raise Refusal(
             f"{out} already exists; the site is built into a new directory, "
@@ -183,6 +199,7 @@ def assemble(repo: Path, out: Path) -> None:
     git = Git(repo)
     releases = release_tags(git)
     default = default_release(releases)
+    not_found = not_found_page(site_path, default, releases)
     try:
         install_sh = git("cat-file", "blob", f"refs/tags/{default.tag}:docs/install.sh")
     except Refusal as e:
@@ -207,6 +224,7 @@ def assemble(repo: Path, out: Path) -> None:
     }
     (out / "versions.json").write_text(json.dumps(index, indent=2) + "\n", encoding="utf-8")
     (out / "index.html").write_text(redirect_page(default.tag), encoding="utf-8")
+    (out / "404.html").write_text(not_found, encoding="utf-8")
     (out / "install.sh").write_bytes(install_sh)
     print(f"site root -> {default.tag}", file=sys.stderr)
 
@@ -214,11 +232,12 @@ def assemble(repo: Path, out: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--repo", required=True, type=Path)
+    parser.add_argument("--site-path", required=True)
     parser.add_argument("--out", required=True, type=Path)
     args = parser.parse_args()
     try:
-        assemble(args.repo.resolve(), args.out.resolve())
-    except Refusal as e:
+        assemble(args.repo.resolve(), args.site_path, args.out.resolve())
+    except (Refusal, OSError) as e:
         print(f"assemble-docs-site: {e}", file=sys.stderr)
         return 1
     return 0

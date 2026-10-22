@@ -11,10 +11,10 @@ claim that nothing changed in them.
 The site at https://cwalv.github.io/repoweave/ was rebuilt from the main branch
 on every push, so it could describe behavior no installable release has. It is
 now built from release tags alone, after each release. Every release's
-documentation stays at `/vX.Y.Z/`, every page has a selector for switching
-versions, and the site root opens the highest stable release. `/install.sh` is
-that release's installer. Pages at the earlier unversioned addresses, such as
-`/tutorial.html`, are gone; open them under a version instead.
+documentation stays at `/vX.Y.Z/`, and every page has a selector for switching
+versions. An address with no version in it, the site root included, opens the
+same page in the highest stable release: `/tutorial.html` opens
+`/vX.Y.Z/tutorial.html`. `/install.sh` is that release's installer.
 
 ### A `\` in a surfaced name is part of the name on Unix
 

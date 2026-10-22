@@ -285,7 +285,10 @@ fn what_is_deployed_is_the_assemblers_output() {
     };
     let out = assemble
         .split_once("--out ")
-        .map(|(_, rest)| rest.trim().trim_matches('"'))
+        .map(|(_, rest)| match rest.trim_start().strip_prefix('"') {
+            Some(quoted) => quoted.split('"').next().unwrap(),
+            None => rest.split_whitespace().next().unwrap_or_default(),
+        })
         .unwrap_or_else(|| panic!("{ASSEMBLER} is run without --out: {assemble}"));
 
     let uploads: Vec<&str> = build

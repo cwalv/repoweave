@@ -22,6 +22,7 @@ mod common;
 
 const ASSEMBLER: &str = "scripts/assemble-docs-site.py";
 const SELECTOR: &str = "scripts/docs-site-version-selector.js";
+const SITE_PATH: &str = "/repoweave/";
 
 const MDBOOK: &str = r#"#!/bin/sh
 set -eu
@@ -193,6 +194,7 @@ impl Site {
             .arg(member_root().join(ASSEMBLER))
             .arg("--repo")
             .arg(repo)
+            .args(["--site-path", SITE_PATH])
             .arg("--out")
             .arg(&self.out)
             .env("PATH", path)
@@ -295,7 +297,7 @@ fn only_release_tags_are_published_each_from_its_own_tree() {
     let expected: BTreeSet<String> = RELEASES
         .iter()
         .copied()
-        .chain(["index.html", "versions.json", "install.sh"])
+        .chain(["index.html", "404.html", "versions.json", "install.sh"])
         .map(str::to_owned)
         .collect();
     assert_eq!(
@@ -476,4 +478,172 @@ fn an_existing_output_directory_is_refused() {
         "the refused run wrote into {}",
         site.out.display()
     );
+}
+
+/// Runs the 404 page's script under node with only what it touches stubbed:
+/// `location`, and the one link it fills in.
+const NOT_FOUND_DRIVER: &str = r#"
+const vm = require("vm");
+const { script, url } = JSON.parse(require("fs").readFileSync(0, "utf8"));
+const u = new URL(url);
+const home = { href: "", textContent: "" };
+let redirect = null;
+vm.runInNewContext(script, {
+  location: {
+    pathname: u.pathname,
+    search: u.search,
+    hash: u.hash,
+    replace: (target) => { redirect = String(target); },
+  },
+  document: { getElementById: (id) => (id === "home" ? home : null) },
+});
+process.stdout.write(JSON.stringify({ redirect, home: home.href }));
+"#;
+
+const ORIGIN: &str = "https://docs.test";
+
+#[derive(Debug, PartialEq)]
+enum Visit {
+    Page(String),
+    NotFound { at: String, home: String },
+}
+
+impl Site {
+    fn not_found_script(&self) -> String {
+        let page = self.read("404.html");
+        let start = page.find("<script>").expect("404.html has a script") + "<script>".len();
+        let end = page[start..].find("</script>").unwrap() + start;
+        page[start..end].to_owned()
+    }
+
+    /// Open `path` the way Pages serves it: a file under the site root is a
+    /// page, and any other address gets the root 404.html, whose redirects are
+    /// followed. Returns the redirects taken and where they ended.
+    fn visit(&self, path: &str) -> (Vec<String>, Visit) {
+        let script = self.not_found_script();
+        let mut hops: Vec<String> = Vec::new();
+        let mut at = path.to_owned();
+        for _ in 0..4 {
+            let file_path = at.split(['?', '#']).next().unwrap();
+            if let Some(rel) = file_path.strip_prefix(SITE_PATH) {
+                let file = self.out.join(rel);
+                if file.is_file() || file.join("index.html").is_file() {
+                    return (hops, Visit::Page(rel.to_owned()));
+                }
+            }
+            let input = serde_json::json!({ "script": script, "url": format!("{ORIGIN}{at}") });
+            let mut node = Command::new("node")
+                .args(["-e", NOT_FOUND_DRIVER])
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            use std::io::Write;
+            node.stdin
+                .take()
+                .unwrap()
+                .write_all(input.to_string().as_bytes())
+                .unwrap();
+            let out = node.wait_with_output().unwrap();
+            assert!(
+                out.status.success(),
+                "the 404 script failed at {at}:\n{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let served: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+            match served["redirect"].as_str() {
+                Some(target) => {
+                    assert_eq!(
+                        served["home"], target,
+                        "the 404 page links where it redirects"
+                    );
+                    hops.push(target.to_owned());
+                    at = target.to_owned();
+                }
+                None => {
+                    let home = served["home"].as_str().unwrap().to_owned();
+                    return (hops, Visit::NotFound { at, home });
+                }
+            }
+        }
+        panic!("{path} is still redirecting after {hops:?}");
+    }
+}
+
+#[test]
+fn an_address_with_no_version_opens_the_default_version_and_a_versioned_one_never_redirects() {
+    if !python_with_tomllib() || common::skip_without_tool("node") {
+        return;
+    }
+    let site = site(None);
+    site.assembled();
+
+    assert_eq!(
+        site.visit("/repoweave/docs/page.md?q=1#usage"),
+        (
+            vec!["/repoweave/v0.10.0/docs/page.md?q=1#usage".to_owned()],
+            Visit::Page("v0.10.0/docs/page.md".to_owned())
+        ),
+        "an address with no version opens the same address in the default version, \
+         query and fragment kept"
+    );
+    assert_eq!(
+        site.visit("/repoweave/v0.9.0/missing.html"),
+        (
+            vec![],
+            Visit::NotFound {
+                at: "/repoweave/v0.9.0/missing.html".to_owned(),
+                home: "/repoweave/v0.9.0/".to_owned(),
+            }
+        ),
+        "a missing page under a version is not found there, with a link to that version"
+    );
+    assert_eq!(
+        site.visit("/repoweave/missing.html"),
+        (
+            vec!["/repoweave/v0.10.0/missing.html".to_owned()],
+            Visit::NotFound {
+                at: "/repoweave/v0.10.0/missing.html".to_owned(),
+                home: "/repoweave/v0.10.0/".to_owned(),
+            }
+        ),
+        "a page the default version lacks ends on not found after one redirect"
+    );
+    assert_eq!(
+        site.visit("/elsewhere/page.html"),
+        (
+            vec![],
+            Visit::NotFound {
+                at: "/elsewhere/page.html".to_owned(),
+                home: SITE_PATH.to_owned(),
+            }
+        ),
+        "an address outside the site root is not redirected"
+    );
+}
+
+#[test]
+fn a_site_path_that_is_not_slash_delimited_is_refused() {
+    if !python_with_tomllib() {
+        return;
+    }
+    let site = site(None);
+    for bad in ["/repoweave", "repoweave/", ""] {
+        let out = Command::new("python3")
+            .arg(member_root().join(ASSEMBLER))
+            .arg("--repo")
+            .arg(&site.repo)
+            .args(["--site-path", bad])
+            .arg("--out")
+            .arg(&site.out)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            !out.status.success() && stderr.contains("must start and end with /"),
+            "--site-path {bad:?}: exit {:?}, stderr:\n{stderr}",
+            out.status.code()
+        );
+    }
 }
