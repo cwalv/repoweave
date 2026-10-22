@@ -545,6 +545,34 @@ fn joblog_has_a_header_and_one_line_per_repo() {
     }
 }
 
+/// The plan line and the joblog's `Command` column quote the command the way
+/// POSIX `sh` reads words, on every platform.
+#[test]
+fn the_plan_and_the_joblog_show_the_command_posix_quoted() {
+    const COMMAND: &[&str] = &["git", "config", "each.note", "two words, $HOME's"];
+    let shown = r#"git config each.note 'two words, $HOME'\''s'"#;
+    let w = Weave::standard();
+
+    let plan = stdout(&w.each(&args_then(&["--dry-run", "--"], COMMAND)));
+    assert!(
+        plan.contains(&format!("{APP}: would run `{shown}` in ")),
+        "{plan}"
+    );
+
+    let log = w.ws.join("job.log");
+    let mut args = vec!["-j", "1", "--joblog", log.to_str().unwrap(), "--"];
+    args.extend(COMMAND);
+    let out = w.each(&args);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let text = std::fs::read_to_string(&log).unwrap();
+    let commands: Vec<&str> = text
+        .lines()
+        .skip(1)
+        .map(|l| l.split('\t').nth(6).unwrap())
+        .collect();
+    assert_eq!(commands, [shown, shown], "{text}");
+}
+
 #[test]
 fn results_writes_each_repos_output_and_outcome_and_leaves_other_repos_alone() {
     let w = Weave::standard();

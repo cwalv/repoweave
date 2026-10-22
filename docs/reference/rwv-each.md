@@ -43,7 +43,7 @@ A selection that matches no repo is an error naming the selectors that matched n
 | `--shell STRING` | Run STRING with `sh -c` (Unix) or `cmd /C` (Windows). Without it the command is executed directly and every argument is passed as a value — no shell, no word splitting, no expansion |
 | `--fail-fast` | Start no new repo after the first one that does not succeed; repos already running finish. Repos never started are reported `not run`. Without it every selected repo runs |
 | `--timeout DURATION` | Kill a repo's whole process tree once its command has run this long; the repo counts as failed (`timed-out`). DURATION is seconds, or numbers suffixed `s`, `m`, `h`, `d` (`90`, `1m30s`, `2h`). Unbounded by default |
-| `--dry-run` | Print each selected repo and the command that would run there; run nothing; exit 0 |
+| `--dry-run` | Print each selected repo and the command that would run there, [quoted for reading](#how-a-command-is-shown); run nothing; exit 0 |
 
 The command runs with the repo's checkout as its working directory. Each command gets these variables on top of the environment `rwv each` itself received:
 
@@ -97,6 +97,10 @@ Seq	Repo	Starttime	JobRuntime	Exitval	Signal	Command
 ```
 
 `Seq` is the repo's position in the selection, from 1. `Starttime` is Unix seconds and `JobRuntime` seconds, both with millisecond precision. `Exitval` is `-1` when the command left no exit code. Repos that never started have no line. FILE is replaced if it exists; writing the joblog to stdout is not supported, since stdout carries the commands' output.
+
+### How a command is shown
+
+A `--dry-run` line and the joblog's `Command` column show the command for reading, quoted the way POSIX `sh` reads words on every platform, Windows included: a word a shell would split or expand is wrapped in single quotes, and a `'` inside it is written `'\''`. `rwv each ./build.sh 'two words' '$HOME'` shows as `./build.sh 'two words' '$HOME'`. The program is shown as you spelled it, not as the path it was found at. A `--shell` STRING is shown exactly as given.
 
 ### `--results DIR`
 
