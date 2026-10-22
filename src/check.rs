@@ -13,7 +13,7 @@ use crate::path_spelling::{CanonicalPath, WirePath};
 use crate::refusal::{refusal, RefusalKind};
 use crate::vcs::{CommitId, RawRevisionId, ReplayExclusionState, ResolvedRevisionId};
 use crate::workspace::{
-    project_dir, project_rel_path, projects_dir, strip_projects_prefix, Resolution,
+    project_dir, project_rel_path, projects_dir, strip_projects_prefix, PointerContent, Resolution,
 };
 use anyhow::Context;
 use schemars::JsonSchema;
@@ -225,6 +225,17 @@ pub enum CheckViolation {
         project: ProjectName,
         /// The `projects/` directory that does not exist on disk.
         missing_dir: PathBuf,
+    },
+
+    /// The primary's `.rwv-active` is empty, unreadable, or holds text that is
+    /// not a project name. A verb that falls through to the pointer refuses on
+    /// it. Auto-fixable: the file selects nothing, so removing it loses
+    /// nothing.
+    UnreadableActiveProject {
+        /// The `.rwv-active` file.
+        path: PathBuf,
+        /// What is wrong with what it holds.
+        detail: String,
     },
 
     /// A weave root carries BOTH `.rwv-active` and `.rwv-workweave`.
@@ -742,6 +753,7 @@ impl CheckViolation {
 
             CheckViolation::MissingMergeDriverConfig { .. }
             | CheckViolation::DanglingActiveProject { .. }
+            | CheckViolation::UnreadableActiveProject { .. }
             | CheckViolation::LegacyWorkweaveMarker { .. }
             | CheckViolation::LegacyWorkweaveIndex { .. }
             | CheckViolation::StaleWorktreeRegistration { .. }
@@ -852,6 +864,7 @@ impl CheckViolation {
             | CheckViolation::UnresolvableLockEntry { .. }
             | CheckViolation::LegacyManifestFormat { .. }
             | CheckViolation::DanglingActiveProject { .. }
+            | CheckViolation::UnreadableActiveProject { .. }
             | CheckViolation::WeaveRootIdentityConflict { .. }
             | CheckViolation::UnreadableWorkweaveIndex { .. }
             | CheckViolation::UnparseableProject { .. }
@@ -934,6 +947,9 @@ impl CheckViolation {
             CheckViolation::LockPinnedByName { .. } => ViolationKind::LockPinnedByName,
             CheckViolation::LegacyManifestFormat { .. } => ViolationKind::LegacyManifestFormat,
             CheckViolation::DanglingActiveProject { .. } => ViolationKind::DanglingActiveProject,
+            CheckViolation::UnreadableActiveProject { .. } => {
+                ViolationKind::UnreadableActiveProject
+            }
             CheckViolation::WeaveRootIdentityConflict { .. } => {
                 ViolationKind::WeaveRootIdentityConflict
             }
@@ -996,6 +1012,7 @@ pub enum ViolationKind {
     LockPinnedByName,
     LegacyManifestFormat,
     DanglingActiveProject,
+    UnreadableActiveProject,
     WeaveRootIdentityConflict,
     LegacyWorkweaveMarker,
     LegacyWorkweaveIndex,
@@ -1022,7 +1039,7 @@ pub enum ViolationKind {
 }
 
 impl ViolationKind {
-    pub const ALL: [Self; 45] = [
+    pub const ALL: [Self; 46] = [
         Self::OrphanedClone,
         Self::UnknownSegmentClone,
         Self::DanglingReference,
@@ -1045,6 +1062,7 @@ impl ViolationKind {
         Self::LockPinnedByName,
         Self::LegacyManifestFormat,
         Self::DanglingActiveProject,
+        Self::UnreadableActiveProject,
         Self::WeaveRootIdentityConflict,
         Self::LegacyWorkweaveMarker,
         Self::LegacyWorkweaveIndex,
@@ -2194,6 +2212,12 @@ pub enum ViolationOutput {
         project: ProjectName,
         missing_dir: WirePath,
     },
+    UnreadableActiveProject {
+        /// Absolute path of the `.rwv-active` file.
+        path: WirePath,
+        /// What is wrong with what it holds.
+        detail: String,
+    },
     WeaveRootIdentityConflict {
         /// Absolute path of the weave root carrying both identity files.
         root: WirePath,
@@ -2624,6 +2648,12 @@ impl ViolationOutput {
                 project: project.clone(),
                 missing_dir: WirePath::of(&missing_dir),
             },
+            CheckViolation::UnreadableActiveProject { path, detail } => {
+                Self::UnreadableActiveProject {
+                    path: WirePath::of(&path),
+                    detail: detail.clone(),
+                }
+            }
             CheckViolation::WeaveRootIdentityConflict {
                 root,
                 pointer_project,
@@ -3632,6 +3662,20 @@ fn scan_weave_root_identity(primary_root: &Path, active_path: &Path) -> Vec<Chec
     violations
 }
 
+/// What the primary root's `.rwv-active` holds, read by the observation
+/// resolution reads. `None` when there is no pointer, or when the root carries
+/// a marker and [`scan_weave_root_identity`] owns the report.
+fn primary_pointer(primary: &Path) -> Option<crate::workspace::PointerContent> {
+    use crate::workspace::{observe_root, ActivePointer, RootObservation};
+    match observe_root(primary)? {
+        RootObservation::Primary {
+            pointer: ActivePointer::Present(content),
+            ..
+        } => Some(content),
+        _ => None,
+    }
+}
+
 /// Classify one candidate root: `None` when it is not carrying both files.
 ///
 /// `observe_root` is the same reader `resolve` consumes, so this and
@@ -3650,12 +3694,12 @@ fn classify_weave_root_identity(
         RootObservation::MarkerUnverifiable {
             marker_path,
             defect,
-            pointer: ActivePointer::Present(pointer_project),
+            pointer: ActivePointer::Present(pointer),
             ..
         } => {
             return Some(CheckViolation::WeaveRootIdentityConflict {
                 root: root.to_path_buf(),
-                pointer_project,
+                pointer_project: pointer.named_project().cloned(),
                 sub_kind: WeaveRootIdentityConflictKind::MarkerUnverifiable {
                     marker_path,
                     defect,
@@ -3664,7 +3708,7 @@ fn classify_weave_root_identity(
         }
         RootObservation::Disputed {
             marker, pointer, ..
-        } => (pointer, marker),
+        } => (pointer.named_project().cloned(), marker),
         _ => return None,
     };
 
@@ -8103,6 +8147,11 @@ impl CheckViolation {
                 project,
                 missing_dir.display()
             ),
+            CheckViolation::UnreadableActiveProject { path, detail } => format!(
+                "{} names no project rwv can select ({detail}); run \
+                 `rwv activate <project>` to select one, or `rwv doctor --fix` to remove the file",
+                path.display()
+            ),
             CheckViolation::WeaveRootIdentityConflict {
                 root,
                 pointer_project,
@@ -9282,14 +9331,13 @@ fn apply_workspace_repairs(
     adopt_detached: Option<crate::cli::consent::AdoptDetachedConsent>,
     fix_errors: &mut Vec<String>,
 ) {
-    use crate::workspace::read_active_project;
-
     let vcs = world.vcs.as_ref();
     let project_scope = world.project_scope();
 
-    if let Some(active_name) = read_active_project(ctx.primary_path()) {
-        let project_dir = project_dir(ctx.primary_path(), &active_name);
-        if !project_dir.is_dir() {
+    match primary_pointer(ctx.primary_path()) {
+        Some(PointerContent::Selects(active_name))
+            if !project_dir(ctx.primary_path(), &active_name).is_dir() =>
+        {
             match crate::workspace::clear_active_project(ctx.primary_path()) {
                 Ok(()) => outln!(
                     "[fixed] core: cleared `.rwv-active` (was pointing at missing project `{}`)",
@@ -9301,6 +9349,19 @@ fn apply_workspace_repairs(
                 )),
             }
         }
+        Some(PointerContent::Unreadable { path, .. }) => {
+            match crate::workspace::clear_active_project(ctx.primary_path()) {
+                Ok(()) => outln!(
+                    "[fixed] core: removed {} (it named no project rwv can select)",
+                    path.display()
+                ),
+                Err(e) => fix_errors.push(format!(
+                    "unreadable-active-project fix failed for {}: {e:#}",
+                    path.display()
+                )),
+            }
+        }
+        Some(PointerContent::Selects(_)) | None => {}
     }
 
     // Only the registered-workweave arm is repairable — see
@@ -10742,9 +10803,8 @@ fn collect_doctor_violations(
     violations.extend(leftovers);
     violations.extend(scan_locks_pinned_by_name(&input.projects));
 
-    {
-        use crate::workspace::read_active_project;
-        if let Some(active_name) = read_active_project(ctx.primary_path()) {
+    match primary_pointer(ctx.primary_path()) {
+        Some(PointerContent::Selects(active_name)) => {
             let project_dir = project_dir(ctx.primary_path(), &active_name);
             if !project_dir.is_dir() {
                 violations.push(CheckViolation::DanglingActiveProject {
@@ -10753,6 +10813,10 @@ fn collect_doctor_violations(
                 });
             }
         }
+        Some(PointerContent::Unreadable { path, detail }) => {
+            violations.push(CheckViolation::UnreadableActiveProject { path, detail });
+        }
+        None => {}
     }
 
     violations.extend(scan_weave_root_identity(

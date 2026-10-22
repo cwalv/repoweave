@@ -437,16 +437,20 @@ const ALLOWLIST: &[Allowed] = &[
         file: "workspace.rs",
         pattern: "remove_file",
         count: 1,
-        callers: &[("clear_active_project", 2)],
+        callers: &[("clear_active_project", 3)],
         justification: "clear_active_project: the one site that removes the \
             .rwv-active pointer (rwv-internal state). Unconditional here by \
             design — the pointer's owner cannot know which caller's \
             precondition applies, so each caller establishes its own in \
             FRONT of the call, and the entry an auditor reads is this one \
             regardless of how many callers there are. \
-            Both current callers are doctor --fix arms. \
+            Every current caller is a doctor --fix arm. \
             (1) dangling pointer: the named project's directory \
             is gone, so the pointer selects nothing that exists. \
+            (3) unreadable pointer: the file is empty, unreadable, or holds \
+            text that is not a project name. rwv never writes such a file and \
+            no verb acts on it — each refuses instead — so it selects nothing \
+            and its removal discards no selection. \
             (2) weave-root identity conflict: the precondition \
             is evidence the tree does not contain. \
             classify_weave_root_identity emits the fixable RegisteredWorkweave \

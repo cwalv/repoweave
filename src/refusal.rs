@@ -197,6 +197,9 @@ pub enum RefusalKind {
     /// `.rwv-active` names a project directory that is not on disk. Shared
     /// with the finding.
     DanglingActiveProject,
+    /// `.rwv-active` is empty, unreadable, or holds text that is not a project
+    /// name. Shared with the finding.
+    UnreadableActiveProject,
     /// A `.rwv-workweave-index` written before ownership receipts existed.
     /// Shared with the finding.
     LegacyWorkweaveIndex,

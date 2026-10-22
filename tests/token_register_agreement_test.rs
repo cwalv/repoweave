@@ -98,6 +98,11 @@ const INTENDED_REUSE: &[(&str, &[&str], &str)] = &[
         "the active-project pointer names a project that is not there",
     ),
     (
+        "unreadable-active-project",
+        &["doctor", "refusal"],
+        "the active-project pointer holds no project name",
+    ),
+    (
         "dead-op-lease",
         &["doctor", "refusal"],
         "an op-state lease outlived the process that took it",

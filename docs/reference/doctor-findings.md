@@ -68,6 +68,7 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`merge-driver-config-unreadable`](#merge-driver-config-unreadable) | Warning | Report-only |
 | [`phantom-merge-driver`](#phantom-merge-driver) | Warning | Report-only |
 | [`dangling-active-project`](#dangling-active-project) | Error | Auto-fixable |
+| [`unreadable-active-project`](#unreadable-active-project) | Error | Auto-fixable |
 | [`weave-root-identity-conflict`](#weave-root-identity-conflict) / `registered-workweave` | Error | Auto-fixable |
 | [`weave-root-identity-conflict`](#weave-root-identity-conflict) / `marker-unverifiable`, `unwitnessed` | Error | Report-only |
 | [`legacy-workweave-marker`](#legacy-workweave-marker) | Warning | Auto-fixable |
@@ -456,6 +457,20 @@ nothing will ever define.
 project would fail with a confusing downstream error.
 
 **What to do:** `rwv doctor --fix` clears the pointer.
+
+### `unreadable-active-project`
+
+**Error. Auto-fixable.** `.rwv-active` is empty, cannot be read, or holds text
+that is not a project name. rwv never writes such a file, so it selects
+nothing: a verb that would take its project from the pointer refuses with this
+token rather than act as if no project were selected, and a bootstrap
+`rwv fetch` into a directory holding one refuses before it clones. `rwv doctor`
+runs with no project selected, so it can report the file. Verbs that do not
+select a project (`rwv activate`, `abort`, `resolve`, `-w` addressing) are not
+affected, and neither is a verb given `--project`.
+
+**What to do:** `rwv activate <project>` replaces the file with a selection, or
+`rwv doctor --fix` removes it.
 
 ### `weave-root-identity-conflict`
 

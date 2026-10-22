@@ -1,7 +1,5 @@
 use repoweave::manifest::{ProjectName, WorkweaveId, WorkweaveName};
-use repoweave::workspace::{
-    observe_root, read_active_project, workweave_name_in, PrimaryIdentity, WeaveRootIdentity,
-};
+use repoweave::workspace::{observe_root, workweave_name_in, PrimaryIdentity, WeaveRootIdentity};
 
 mod common;
 
@@ -137,31 +135,6 @@ fn round_trip_single_char_components() {
 }
 
 // ============================================================================
-// read_active_project — reads .rwv-active file
-// ============================================================================
-
-#[test]
-fn read_active_project_returns_none_when_no_file() {
-    let tmp = common::tempdir().unwrap();
-    assert!(read_active_project(tmp.path()).is_none());
-}
-
-#[test]
-fn read_active_project_returns_name_from_file() {
-    let tmp = common::tempdir().unwrap();
-    std::fs::write(tmp.path().join(".rwv-active"), "my-project\n").unwrap();
-    let project = read_active_project(tmp.path()).expect("should read project name");
-    assert_eq!(project.as_str(), "my-project");
-}
-
-#[test]
-fn read_active_project_returns_none_for_empty_file() {
-    let tmp = common::tempdir().unwrap();
-    std::fs::write(tmp.path().join(".rwv-active"), "").unwrap();
-    assert!(read_active_project(tmp.path()).is_none());
-}
-
-// ============================================================================
 // PrimaryIdentity::select_project — writes .rwv-active file
 // ============================================================================
 
@@ -198,6 +171,5 @@ fn select_project_round_trips_with_read() {
     let root = primary_root(tmp.path());
     let project = ProjectName::new("mobile-app").unwrap();
     witness(&root).select_project(&project).unwrap();
-    let result = read_active_project(&root).expect("should read back");
-    assert_eq!(result, project);
+    assert_eq!(witness(&root).pointer().named_project(), Some(&project));
 }

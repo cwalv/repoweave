@@ -14,6 +14,18 @@ active project's files. For any other project the finding compared its members
 against the active project's patches. It now reads `projects/<project>/`, and
 `weave_config` names that file, as the derived-patch precheck already did.
 
+### A `.rwv-active` that names no project refuses
+
+A `.rwv-active` that was empty, unreadable, or held text that is not a project
+name read as "no project selected", so a verb that takes its project from the
+pointer acted on that guess. It now refuses with `unreadable-active-project`,
+naming the file and the repair: `rwv activate <project>` replaces it, and
+`rwv doctor --fix` removes it. `rwv doctor` reports it under the same token. A
+bootstrap `rwv fetch <source>` into a directory holding one refuses before it
+clones, where it used to activate over it. `rwv activate`, `abort`, `resolve`
+and `-w` addressing no longer read the pointer at all, and a verb given
+`--project` does not consult it.
+
 ### `rwv doctor` text names a commit by its 12-character abbreviation
 
 `rwv doctor` and `rwv doctor --locked` printed full 40-character commit ids

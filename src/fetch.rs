@@ -266,6 +266,11 @@ pub fn run_fetch(
     let name = crate::manifest::ProjectName::new(registry::repo_name_from_source(url.as_str()))?;
     let projects_dir = projects_dir(workspace_root);
     std::fs::create_dir_all(&projects_dir).context("failed to create projects/ directory")?;
+    if let Some(crate::workspace::RootObservation::Primary { pointer, .. }) =
+        crate::workspace::observe_root(workspace_root)
+    {
+        pointer.selection()?;
+    }
     let project_dir = crate::workspace::project_dir(workspace_root, &name);
     if project_dir.exists() {
         crate::refuse!(
@@ -922,7 +927,12 @@ fn fetch_project_repos(
     // Activation is not part of lock coverage: `--frozen` and a filter both
     // still activate the project a first fetch created.
     if let Some(activation) = auto_activate {
-        match crate::workspace::read_active_project(workspace_root) {
+        let ctx = crate::workspace::WorkspaceContext::resolve_unbound(workspace_root)?;
+        let active = match ctx.primary_identity() {
+            Some(primary) => primary.pointer().selection()?.cloned(),
+            None => None,
+        };
+        match active {
             Some(active) => {
                 let skip = SkippedEffect::activation_while_active(&active, name);
                 // Route to stderr in JSON mode so stdout stays JSON-only.
@@ -934,12 +944,6 @@ fn fetch_project_repos(
                 envelope.skipped.push(skip);
             }
             None => {
-                // Resolve the freshly-bootstrapped workspace to build the
-                // context activate now takes. This is a first-resolution of
-                // the newly-created workspace, not a re-resolution of the
-                // invocation context.
-                let ctx =
-                    crate::workspace::WorkspaceContext::resolve_invocation(workspace_root, None)?;
                 envelope
                     .skipped
                     .extend(crate::activate::activate_with_options(

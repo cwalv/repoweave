@@ -1950,6 +1950,34 @@
         {
           "type": "object",
           "required": [
+            "detail",
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "detail": {
+              "description": "What is wrong with what it holds.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "unreadable-active-project"
+              ]
+            },
+            "path": {
+              "description": "Absolute path of the `.rwv-active` file.",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/WirePath"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
             "kind",
             "root",
             "sub_kind"

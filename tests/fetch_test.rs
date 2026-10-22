@@ -569,10 +569,10 @@ fn fetch_default_auto_activates_project() {
 // ============================================================================
 // Bootstrap auto-activate vs. a pre-existing `.rwv-active` pointer
 //
-// `read_active_project` treats a present-but-empty, whitespace-only, or
-// invalid-name pointer the same as an absent one (`None`), so a bootstrap
-// fetch must auto-activate over all three the same way it does over no file
-// at all, and skip only when the pointer already names a project.
+// A pointer naming a project skips the auto-activate. One that is empty,
+// whitespace-only, or not a project name selects nothing a verb may act on,
+// so the bootstrap refuses before it clones anything rather than reading it
+// as no selection.
 // ============================================================================
 
 /// Set up a project source with one dependency repo and an empty workspace
@@ -623,57 +623,33 @@ fn setup_bootstrap_source(tmp: &Path) -> (PathBuf, String) {
 }
 
 #[test]
-fn fetch_bootstrap_auto_activates_over_empty_active_pointer() {
-    let tmp = common::tempdir().unwrap();
-    let (workspace, source) = setup_bootstrap_source(tmp.path());
-    std::fs::write(workspace.join(".rwv-active"), "").unwrap();
+fn fetch_bootstrap_refuses_over_a_pointer_that_holds_no_project_name() {
+    for content in ["", "  \n  \n", "-not-a-valid-name\n"] {
+        let tmp = common::tempdir().unwrap();
+        let (workspace, source) = setup_bootstrap_source(tmp.path());
+        std::fs::write(workspace.join(".rwv-active"), content).unwrap();
 
-    rwv()
-        .args(["fetch", &source, "--allow-non-empty-dir"])
-        .current_dir(&workspace)
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("skipping auto-activate").not());
-
-    let active_content = std::fs::read_to_string(workspace.join(".rwv-active")).unwrap();
-    assert_eq!(active_content.trim(), "project");
-}
-
-#[test]
-fn fetch_bootstrap_auto_activates_over_whitespace_only_active_pointer() {
-    let tmp = common::tempdir().unwrap();
-    let (workspace, source) = setup_bootstrap_source(tmp.path());
-    std::fs::write(workspace.join(".rwv-active"), "  \n  \n").unwrap();
-
-    rwv()
-        .args(["fetch", &source, "--allow-non-empty-dir"])
-        .current_dir(&workspace)
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("skipping auto-activate").not());
-
-    let active_content = std::fs::read_to_string(workspace.join(".rwv-active")).unwrap();
-    assert_eq!(active_content.trim(), "project");
-}
-
-#[test]
-fn fetch_bootstrap_auto_activates_over_invalid_name_active_pointer() {
-    let tmp = common::tempdir().unwrap();
-    let (workspace, source) = setup_bootstrap_source(tmp.path());
-    // Leading `-` fails `ProjectName::new` (ambiguous against the `--` that
-    // joins project to workweave), so this is a present pointer that still
-    // reads as no active project.
-    std::fs::write(workspace.join(".rwv-active"), "-not-a-valid-name\n").unwrap();
-
-    rwv()
-        .args(["fetch", &source, "--allow-non-empty-dir"])
-        .current_dir(&workspace)
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("skipping auto-activate").not());
-
-    let active_content = std::fs::read_to_string(workspace.join(".rwv-active")).unwrap();
-    assert_eq!(active_content.trim(), "project");
+        let out = rwv()
+            .args(["fetch", &source, "--allow-non-empty-dir"])
+            .current_dir(&workspace)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{content:?}: {stderr}");
+        assert!(
+            stderr.contains("unreadable-active-project") && stderr.contains("rwv activate"),
+            "{content:?}: {stderr}"
+        );
+        assert!(
+            !workspace.join("projects").join("project").exists(),
+            "{content:?}: the refusal comes before the project is cloned"
+        );
+        assert_eq!(
+            std::fs::read_to_string(workspace.join(".rwv-active")).unwrap(),
+            content,
+            "the pointer is left for the operator to repair"
+        );
+    }
 }
 
 #[test]

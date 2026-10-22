@@ -1410,6 +1410,10 @@ fn repair_bindings() -> Vec<(&'static str, Binding)> {
             Findings(&["dangling-active-project"]),
         ),
         (
+            "it named no project rwv can select",
+            Findings(&["unreadable-active-project"]),
+        ),
+        (
             "deleted `.rwv-active` at",
             Findings(&["weave-root-identity-conflict/registered-workweave"]),
         ),

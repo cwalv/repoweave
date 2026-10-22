@@ -180,7 +180,7 @@ All durable rwv state is files. There is no database and no cache directory.
 |---|---|---|---|
 | `rwv.toml` | — | `projects/<name>/` | Committed intent: membership, roles, per-integration config. |
 | `rwv.lock` | — | `projects/<name>/` | Committed intent: the revision each member is pinned to. |
-| `.rwv-active` | `ACTIVE_PROJECT_FILE`, `src/workspace.rs` | weave root | Which project the primary root currently presents. Ambient default. |
+| `.rwv-active` | `ACTIVE_PROJECT_FILE`, `src/workspace.rs` | weave root | Which project the primary root currently presents. Ambient default. Read only by `observe_root`, through the private `read_active_pointer`; a file naming no project refuses where a verb would select by it (`unreadable-active-project`). |
 | `.rwv-workweave` | `WORKWEAVE_MARKER_FILE`, `src/workspace.rs` | each workweave root | A workweave's only identity file: `{primary, project, parent}`. Self-describing without the index. |
 | `.rwv-workweave-index` | `INDEX_FILENAME`, `src/workweave_index.rs` | `projects/<project>/` | The primary's inverse view: container path, name→path map, and `RefRegistry` receipts. |
 | `.rwv-op` | `OP_STATE_FILE`, `src/op_state.rs` | a weave root | The owner record of an in-flight multi-repo operation. §5. |

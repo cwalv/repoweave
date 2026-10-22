@@ -175,7 +175,7 @@ web-app
 
 `.rwv-active` is the **single source of truth** for the active project within a workspace. There is no CWD-based override; `cd projects/<name>/` does not switch projects.
 
-Updated by `rwv activate <project>`, by `rwv init`, and by the `rwv fetch` that activates a project when none is. Action verbs (`rwv lock`, `rwv add`, `rwv sync`) read it; pass `--project <name>` for a one-shot override without changing the file. A verb that writes into its project, run from inside `projects/<other>/` while the file names a different project, refuses (`cwd-in-inactive-project`) rather than act on the one the file names.
+Updated by `rwv activate <project>`, by `rwv init`, and by the `rwv fetch` that activates a project when none is. A file that is empty or holds anything but a project name selects nothing: a verb that reads it refuses (`unreadable-active-project`) instead of acting as if no project were selected. Action verbs (`rwv lock`, `rwv add`, `rwv sync`) read it; pass `--project <name>` for a one-shot override without changing the file. A verb that writes into its project, run from inside `projects/<other>/` while the file names a different project, refuses (`cwd-in-inactive-project`) rather than act on the one the file names.
 
 ## `.rwv-workweave` — workweave marker
 

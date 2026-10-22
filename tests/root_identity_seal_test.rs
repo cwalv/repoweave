@@ -67,11 +67,10 @@ fn the_primary_arm_cannot_be_assembled_from_a_pointer() {
         "E0451",
         "the primary arm is projected from an observation, not declared",
         r#"
-        use repoweave::manifest::ProjectName;
-        use repoweave::workspace::{PrimaryIdentity, WeaveRootIdentity};
+        use repoweave::workspace::{ActivePointer, PrimaryIdentity, WeaveRootIdentity};
         use std::path::PathBuf;
-        pub fn forge(root: PathBuf, selection: Option<ProjectName>) -> WeaveRootIdentity {
-            WeaveRootIdentity::Primary(PrimaryIdentity { root, selection })
+        pub fn forge(root: PathBuf, pointer: ActivePointer) -> WeaveRootIdentity {
+            WeaveRootIdentity::Primary(PrimaryIdentity { root, pointer })
         }
         "#,
     );

@@ -1,7 +1,7 @@
 //! The identity payloads' fields are private to this module, so
 //! [`RootObservation::require_exclusive`] is their one producer.
 
-use super::{RootObservation, WorkweaveMarker, ACTIVE_PROJECT_FILE};
+use super::{ActivePointer, RootObservation, WorkweaveMarker, ACTIVE_PROJECT_FILE};
 use crate::manifest::ProjectName;
 use crate::refusal::RefusalKind;
 use anyhow::Context;
@@ -14,10 +14,10 @@ impl RootObservation {
             RootObservation::Workweave { marker } => {
                 Ok(WeaveRootIdentity::Workweave(WorkweaveIdentity { marker }))
             }
-            RootObservation::Primary { root, selection } => {
+            RootObservation::Primary { root, pointer } => {
                 Ok(WeaveRootIdentity::Primary(PrimaryIdentity {
                     root,
-                    selection,
+                    pointer,
                 }))
             }
             RootObservation::Disputed { root, .. } => crate::refuse!(
@@ -75,12 +75,13 @@ impl WorkweaveIdentity {
 #[derive(Debug, Clone)]
 pub struct PrimaryIdentity {
     root: PathBuf,
-    selection: Option<ProjectName>,
+    pointer: ActivePointer,
 }
 
 impl PrimaryIdentity {
-    pub fn selection(&self) -> Option<&ProjectName> {
-        self.selection.as_ref()
+    /// The `.rwv-active` this root carried when it was observed.
+    pub fn pointer(&self) -> &ActivePointer {
+        &self.pointer
     }
 
     /// Write the `.rwv-active` pointer — project SELECTION, and rwv's sole

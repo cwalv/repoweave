@@ -1675,6 +1675,10 @@ mod doctor_json {
             project: String,
             missing_dir: String,
         },
+        UnreadableActiveProject {
+            path: String,
+            detail: String,
+        },
         WeaveRootIdentityConflict {
             root: String,
             pointer_project: Option<String>,

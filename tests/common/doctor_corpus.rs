@@ -155,6 +155,7 @@ pub fn case_token(v: &CheckViolation) -> String {
         CheckViolation::LockPinnedByName { .. } => "lock-pinned-by-name".into(),
         CheckViolation::LegacyManifestFormat { .. } => "legacy-manifest-format".into(),
         CheckViolation::DanglingActiveProject { .. } => "dangling-active-project".into(),
+        CheckViolation::UnreadableActiveProject { .. } => "unreadable-active-project".into(),
         CheckViolation::WeaveRootIdentityConflict { sub_kind, .. } => match sub_kind {
             WeaveRootIdentityConflictKind::RegisteredWorkweave { .. } => {
                 "weave-root-identity-conflict/registered-workweave".into()
@@ -426,6 +427,10 @@ pub fn corpus() -> Vec<CheckViolation> {
         CheckViolation::DanglingActiveProject {
             project: project(),
             missing_dir: path("/ws/projects/proj"),
+        },
+        CheckViolation::UnreadableActiveProject {
+            path: path("/ws/.rwv-active"),
+            detail: "the file is empty".into(),
         },
         CheckViolation::WeaveRootIdentityConflict {
             root: path("/ws"),

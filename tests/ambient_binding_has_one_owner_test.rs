@@ -16,12 +16,13 @@
 //!     point that may consult the pointer. Owned by `workspace.rs`, which
 //!     defines it, `cli/dispatch.rs`, which is the boundary, and the three
 //!     bootstrap sites that resolve a workspace they just created.
-//!   - `read_active_project` — the pointer accessor. Owned by `workspace.rs`
-//!     plus the two verbs whose subject IS the pointer: `check.rs` (doctor
-//!     reports and repairs a dangling one) and `fetch.rs` (bootstrap).
+//!   - the pointer reader, `read_active_pointer`. It is private to
+//!     `workspace.rs` and `observe_root` is its one caller, so every other
+//!     module reads the pointer off a `RootObservation` and reads it as
+//!     resolution does. The compiler holds that; the probe below pins it.
 //!   - a path *assembled* to the pointer file — `join(".rwv-active")` — which
-//!     reads it without going through the accessor and so is invisible to the
-//!     needle above. No production line does this today; the check is a proven
+//!     reads it without going through the reader, which privacy cannot stop.
+//!     No production line does this today; the check is a proven
 //!     negative, and the seeded test is what keeps the zero meaningful.
 //!     Merely naming the file is not a read: `check.rs` says `.rwv-active`
 //!     throughout, because a doctor finding that repairs the file has to name
@@ -52,11 +53,11 @@
 
 mod common;
 
+use common::compile_probe::assert_fails_with;
 use common::src_scan::{production_lines, SourceLine};
 
-/// The resolution chain, its accessor, and the file both are about.
+/// The resolution chain, and the file it is about.
 const CHAIN: &str = "resolve_invocation";
-const ACCESSOR: &str = "read_active_project";
 const POINTER_FILE: &str = ".rwv-active";
 
 /// Files that may run the resolution chain: its definition, the dispatch
@@ -68,10 +69,6 @@ const CHAIN_OWNERS: &[&str] = &[
     "fetch.rs",
     "workweave.rs",
 ];
-
-/// Files that may read the pointer directly: its owner, plus the two verbs
-/// whose subject is the pointer rather than the work done through it.
-const ACCESSOR_OWNERS: &[&str] = &["workspace.rs", "check.rs", "fetch.rs"];
 
 fn sites<'a>(lines: &'a [SourceLine], needle: &str) -> Vec<&'a SourceLine> {
     lines.iter().filter(|l| l.text.contains(needle)).collect()
@@ -121,24 +118,17 @@ fn the_resolution_chain_runs_only_at_the_dispatch_boundary() {
 }
 
 #[test]
-fn the_pointer_is_read_only_by_its_owner_and_the_verbs_about_it() {
-    let lines = production_lines();
-    let found = sites(&lines, ACCESSOR);
-    assert!(
-        !found.is_empty(),
-        "`{ACCESSOR}` was not found anywhere under src/; the accessor has to \
-         exist for this boundary to mean anything"
-    );
-
-    let strays = strays(&lines, ACCESSOR, ACCESSOR_OWNERS);
-    assert!(
-        strays.is_empty(),
-        "`{ACCESSOR}` reads ambient state that decides nothing after the \
-         invocation. Owners: {ACCESSOR_OWNERS:?}. Found: {strays:?}"
+fn the_pointer_reader_is_private_to_resolution() {
+    assert_fails_with(
+        "E0603",
+        "the pointer is read off a RootObservation, not by its reader",
+        r#"
+        use repoweave::workspace::read_active_pointer;
+        "#,
     );
 }
 
-/// The accessor is `pub`, so a caller can always bypass it by joining the
+/// The reader is private, but a caller can always bypass it by joining the
 /// filename itself. No production line does — the owner reaches the file
 /// through its own private constant — and this keeps it that way.
 ///
@@ -153,8 +143,8 @@ fn nothing_assembles_a_path_to_the_pointer_by_hand() {
     assert!(
         hand_rolled.is_empty(),
         "a path to `{POINTER_FILE}` assembled at the call site reads the \
-         pointer without going through `{ACCESSOR}`, so neither that needle nor \
-         a reviewer looking for it would see the read. Go through the accessor. \
+         pointer without going through `observe_root`, so neither the compiler nor \
+         a reviewer looking for it would see the read. Go through the observation. \
          Found: {hand_rolled:?}"
     );
 }
@@ -179,8 +169,7 @@ fn a_chain_call_in_op_code_is_what_this_reports() {
         line: 1,
         text: text.to_string(),
     };
-    let corpus =
-        vec![
+    let corpus = vec![
         planted(
             "workspace.rs",
             "    pub fn resolve_invocation(cwd: &Path, project_flag: Option<ProjectName>)",
@@ -197,8 +186,6 @@ fn a_chain_call_in_op_code_is_what_this_reports() {
             "sync.rs",
             "        let ctx = WorkspaceContext::resolve_for_project(&dir, &cwd_project_name)?;",
         ),
-        planted("check.rs", "    if let Some(a) = read_active_project(root) {"),
-        planted("sync.rs", "    let p = read_active_project(root);"),
         planted(
             "check.rs",
             "        \"{}: carries both `.rwv-active` (which {pointer}) and \\",
@@ -220,18 +207,6 @@ fn a_chain_call_in_op_code_is_what_this_reports() {
         !chain_strays[0].contains("resolve_for_project"),
         "the bound resolution is the shape this scan is asking for and must \
          never be reported: {chain_strays:?}"
-    );
-
-    let accessor_strays = strays(&corpus, ACCESSOR, ACCESSOR_OWNERS);
-    assert_eq!(
-        accessor_strays.len(),
-        1,
-        "the seeded pointer read outside an owner must be reported, and \
-         check.rs's must not; got {accessor_strays:?}"
-    );
-    assert!(
-        accessor_strays[0].contains("sync.rs"),
-        "the reported pointer read must be the seeded one: {accessor_strays:?}"
     );
 
     let hand_rolled = hand_rolled_pointer_paths(&corpus);

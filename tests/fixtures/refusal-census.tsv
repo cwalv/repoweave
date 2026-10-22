@@ -119,6 +119,7 @@ src/workspace.rs	no-active-project	tests/project_and_source_spelling_test.rs	3
 src/workspace.rs	no-weave-root	-	1
 src/workspace.rs	occupied-bootstrap-dir	-	1
 src/workspace.rs	project-dir-missing	-	1
+src/workspace.rs	unreadable-active-project	tests/unreadable_active_project_test.rs	1
 src/workspace.rs	unregistered-workweave	-	1
 src/workspace/root_identity.rs	weave-root-identity-conflict	-	1
 src/workweave.rs	(untokened:UNCLASSIFIED)	-	1

@@ -180,13 +180,12 @@ fn resolve_workweave_flag(
 
     // Find the primary workspace root from the workspace_origin path (from -C
     // or process cwd). The registry lives on the primary; look up from there.
-    let primary_ctx =
-        WorkspaceContext::resolve_invocation(workspace_origin, None).with_context(|| {
-            format!(
-                "'-w {raw}': could not locate a workspace from {}",
-                workspace_origin.display()
-            )
-        })?;
+    let primary_ctx = WorkspaceContext::resolve_unbound(workspace_origin).with_context(|| {
+        format!(
+            "'-w {raw}': could not locate a workspace from {}",
+            workspace_origin.display()
+        )
+    })?;
     let primary_root = primary_ctx.primary_path().to_path_buf();
 
     let recorded = crate::workweave::registered_workweaves(&primary_root);
@@ -311,9 +310,10 @@ fn bind_project_scoped(
     Ok(with_target_surfaced(ctx, use_workweave_flag))
 }
 
-/// [`resolve_project_scoped`] for `doctor` and `status`, the two verbs that
-/// report on a weave root carrying both identity files instead of refusing to
-/// act through it.
+/// [`resolve_project_scoped`] for `status`, which reports on a weave root
+/// carrying both identity files instead of refusing to act through it.
+/// `doctor` tolerates that and more, through
+/// [`WorkspaceContext::resolve_for_doctor`].
 ///
 /// Reachable only by naming it: every other project-scoped verb resolves
 /// through [`resolve_project_scoped`] and refuses.
@@ -697,7 +697,9 @@ pub fn run() -> anyhow::Result<()> {
             project,
             no_materialize,
         }) => {
-            let ctx = WorkspaceContext::resolve_invocation(origin_dir, None)?;
+            // Unbound: activation replaces the pointer and never reads it, so
+            // it is also the repair for one that does not hold a project name.
+            let ctx = WorkspaceContext::resolve_unbound(origin_dir)?;
             activate::activate_with_options(
                 &ProjectName::new(project)?,
                 &ctx,
@@ -731,7 +733,7 @@ pub fn run() -> anyhow::Result<()> {
             prime::prime(ctx.as_ref(), no_suppress)?;
         }
         Some(Commands::Resolve) => {
-            let ctx = WorkspaceContext::resolve_invocation(origin_dir, None)?;
+            let ctx = WorkspaceContext::resolve_unbound(origin_dir)?;
             outln!("{}", crate::path_spelling::operator_path(ctx.active_path()));
         }
         Some(Commands::Add {
@@ -1007,11 +1009,10 @@ pub fn run() -> anyhow::Result<()> {
             project,
         }) => {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
-            let ctx = resolve_project_scoped_tolerating_disputed_root(
-                origin_dir,
-                project_override,
+            let ctx = with_target_surfaced(
+                WorkspaceContext::resolve_for_doctor(origin_dir, project_override)?,
                 use_workweave_flag,
-            )?;
+            );
             // Minted here — the CLI boundary is the only place that knows
             // the operator asked. `run_check` gates the detached canonical
             // store's reattach on it; without the flag `--fix` reports the
@@ -1080,7 +1081,7 @@ pub fn run() -> anyhow::Result<()> {
         Some(Commands::Abort {
             abandon_foreign_tip,
         }) => {
-            let ctx = WorkspaceContext::resolve_invocation(origin_dir, None)?;
+            let ctx = WorkspaceContext::resolve_unbound(origin_dir)?;
             sync::run_abort(
                 &ctx,
                 &crate::cli::consent::AbandonForeignTipConsent::from_flag(&abandon_foreign_tip),

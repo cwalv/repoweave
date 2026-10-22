@@ -3,7 +3,7 @@
 //!
 //! `.rwv-active` and `.rwv-workweave` are answered for by `workspace.rs`:
 //! `observe_root` and `WorkweaveMarker::path_in` build the paths,
-//! `read_active_project` and `clear_active_project` read and remove the
+//! `read_active_pointer` and `clear_active_project` read and remove the
 //! pointer. Both constants are module-private, so the compiler refuses a
 //! foreign module that names one — but it has nothing to say about
 //! `root.join(".rwv-active")`, which is how the sprawl arrived in the first

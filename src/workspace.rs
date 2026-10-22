@@ -653,23 +653,31 @@ pub(crate) const ACTIVE_PROJECT_FILE: &str = ".rwv-active";
 /// The marker file naming the project a **workweave** root belongs to.
 pub(crate) const WORKWEAVE_MARKER_FILE: &str = ".rwv-workweave";
 
-/// Read the active project from the `.rwv-active` file in the workspace root.
+/// What `root`'s `.rwv-active` holds.
 ///
-/// Returns `None` if the file does not exist or is empty.
-///
-/// This reads the **pointer specifically**, not "the project this root
-/// presents" — [`RootObservation::presented_project`] is that question, and
-/// answers it for either kind of root. Reach for this one only where the
-/// pointer file itself is the subject (doctor's stale-pointer check,
-/// `deactivate`'s removal).
-pub fn read_active_project(root: &Path) -> Option<ProjectName> {
+/// [`observe_root`] is the one caller, so every verb reads the pointer as
+/// resolution does.
+fn read_active_pointer(root: &Path) -> ActivePointer {
     let path = root.join(ACTIVE_PROJECT_FILE);
-    let content = std::fs::read_to_string(&path).ok()?;
+    let unreadable = |detail: String| {
+        ActivePointer::Present(PointerContent::Unreadable {
+            path: path.clone(),
+            detail,
+        })
+    };
+    let content = match std::fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return ActivePointer::Absent,
+        Err(e) => return unreadable(format!("the file cannot be read: {e:#}")),
+    };
     let trimmed = content.trim();
     if trimmed.is_empty() {
-        return None;
+        return unreadable("the file is empty".to_owned());
     }
-    ProjectName::new(trimmed).ok()
+    match ProjectName::new(trimmed) {
+        Ok(name) => ActivePointer::Present(PointerContent::Selects(name)),
+        Err(e) => unreadable(format!("{e:#}")),
+    }
 }
 
 /// Remove the `.rwv-active` pointer at `root`, leaving the root selecting no
@@ -685,15 +693,6 @@ pub fn clear_active_project(root: &Path) -> anyhow::Result<()> {
             Err(e).with_context(|| format!("failed to remove {}", path.display()))
         }
         _ => Ok(()),
-    }
-}
-
-/// Whether `root` carries the `.rwv-active` pointer, and what it names.
-fn observe_active_pointer(root: &Path) -> ActivePointer {
-    if root.join(ACTIVE_PROJECT_FILE).exists() {
-        ActivePointer::Present(read_active_project(root))
-    } else {
-        ActivePointer::Absent
     }
 }
 
@@ -1205,8 +1204,13 @@ enum ProjectBinding {
     /// outranking it.
     Bound(ProjectName),
     /// Nothing supplied. The chain falls through to the root's own identity
-    /// file; this is the only binding under which the pointer decides.
+    /// file; this and [`Self::AmbientIfReadable`] are the only bindings under
+    /// which the pointer decides.
     Ambient,
+    /// `Ambient` for `doctor`, whose subject includes the pointer itself: one
+    /// naming a project decides, and one that does not decides nothing and is
+    /// left for doctor to report rather than refused.
+    AmbientIfReadable,
     /// No project, and no fall-through. A primary root resolves without one.
     Unbound,
 }
@@ -1230,7 +1234,7 @@ impl RootSite {
             WeaveRootIdentity::Workweave(identity) => {
                 self.by_marker(identity.into_marker(), binding)
             }
-            WeaveRootIdentity::Primary(identity) => Ok(self.by_pointer(identity, binding)),
+            WeaveRootIdentity::Primary(identity) => self.by_pointer(identity, binding),
         }
     }
 
@@ -1272,9 +1276,9 @@ impl RootSite {
                 }
                 (p, ProjectProvenance::Marker)
             }
-            ProjectBinding::Ambient | ProjectBinding::Unbound => {
-                (marker.project().clone(), ProjectProvenance::Marker)
-            }
+            ProjectBinding::Ambient
+            | ProjectBinding::AmbientIfReadable
+            | ProjectBinding::Unbound => (marker.project().clone(), ProjectProvenance::Marker),
         };
         Ok(WorkspaceContext {
             cwd_project_hint: detect_project(&self.cwd, marker.primary().as_path()),
@@ -1295,23 +1299,29 @@ impl RootSite {
     /// else. Neither pointer nor override leaves both unset — the caller uses
     /// [`WorkspaceContext::require_active_project`] to surface the corrective
     /// error.
-    fn by_pointer(self, identity: PrimaryIdentity, binding: ProjectBinding) -> WorkspaceContext {
+    fn by_pointer(
+        self,
+        identity: PrimaryIdentity,
+        binding: ProjectBinding,
+    ) -> anyhow::Result<WorkspaceContext> {
+        let from_pointer = |pointed: Option<&ProjectName>| match pointed {
+            Some(p) => (Some(p.clone()), Some(ProjectProvenance::ActiveFile)),
+            None => (None, None),
+        };
         let (project, provenance) = match binding {
             ProjectBinding::Flag(p) => (Some(p), Some(ProjectProvenance::Flag)),
             ProjectBinding::Bound(p) => (Some(p), Some(ProjectProvenance::Bound)),
-            ProjectBinding::Ambient => match identity.selection().cloned() {
-                Some(p) => (Some(p), Some(ProjectProvenance::ActiveFile)),
-                None => (None, None),
-            },
+            ProjectBinding::Ambient => from_pointer(identity.pointer().selection()?),
+            ProjectBinding::AmbientIfReadable => from_pointer(identity.pointer().named_project()),
             ProjectBinding::Unbound => (None, None),
         };
-        WorkspaceContext {
+        Ok(WorkspaceContext {
             cwd_project_hint: detect_project(&self.cwd, self.dir.as_path()),
             primary_root: self.dir,
             primary_identity: Some(identity),
             checkout: Checkout::Primary { project },
             project_provenance: provenance,
-        }
+        })
     }
 }
 
@@ -1379,8 +1389,26 @@ impl WorkspaceContext {
         cwd: &Path,
         project_flag: Option<ProjectName>,
     ) -> anyhow::Result<Self> {
+        Self::tolerating_disputed_root(cwd, ProjectBinding::for_invocation(project_flag))
+    }
+
+    /// [`Self::resolve_invocation_tolerating_disputed_root`] for `doctor`,
+    /// which also proceeds past a `.rwv-active` that does not hold a project
+    /// name, with no project selected. Refusing would withhold the report that
+    /// names the file and the repair that removes it.
+    pub fn resolve_for_doctor(
+        cwd: &Path,
+        project_flag: Option<ProjectName>,
+    ) -> anyhow::Result<Self> {
+        let binding = match project_flag {
+            Some(p) => ProjectBinding::Flag(p),
+            None => ProjectBinding::AmbientIfReadable,
+        };
+        Self::tolerating_disputed_root(cwd, binding)
+    }
+
+    fn tolerating_disputed_root(cwd: &Path, binding: ProjectBinding) -> anyhow::Result<Self> {
         let (site, observation) = walk_to_weave_root(cwd)?;
-        let binding = ProjectBinding::for_invocation(project_flag);
         match observation {
             RootObservation::Disputed { marker, .. } => site.by_marker(marker, binding),
             settled => site.by_identity(settled.require_exclusive()?, binding),
@@ -2267,14 +2295,67 @@ pub(crate) fn unmigratable_marker_detail(dir: &Path) -> Option<String> {
 
 /// The `.rwv-active` pointer as a root carries it.
 ///
-/// Presence and content are separate facts. An empty pointer names no project
-/// and is still a present file — still a second copy of an identity the marker
-/// beside it already states — so a reader answering only "which project" would
-/// lose the state doctor reports on.
-#[derive(Debug)]
+/// Presence and content are separate facts. A pointer that names no project is
+/// still a present file — still a second copy of an identity the marker beside
+/// it already states — so a reader answering only "which project" would lose
+/// the state doctor reports on.
+#[derive(Debug, Clone)]
 pub enum ActivePointer {
     Absent,
-    Present(Option<ProjectName>),
+    Present(PointerContent),
+}
+
+/// What a present `.rwv-active` holds.
+#[derive(Debug, Clone)]
+pub enum PointerContent {
+    Selects(ProjectName),
+    /// Empty, unreadable, or text that is not a project name. rwv writes none
+    /// of these, so the file states nothing a verb may act on.
+    Unreadable {
+        path: PathBuf,
+        detail: String,
+    },
+}
+
+impl ActivePointer {
+    /// The project the pointer selects, `None` when there is no pointer.
+    ///
+    /// A pointer that does not hold a project name refuses, naming the file
+    /// and the repair: read as no selection, it would hand a verb that falls
+    /// through to the pointer the wrong answer without a word.
+    pub fn selection(&self) -> anyhow::Result<Option<&ProjectName>> {
+        match self {
+            ActivePointer::Absent => Ok(None),
+            ActivePointer::Present(PointerContent::Selects(project)) => Ok(Some(project)),
+            ActivePointer::Present(PointerContent::Unreadable { path, detail }) => {
+                crate::refuse!(
+                    RefusalKind::UnreadableActiveProject,
+                    "{} names no project rwv can select ({detail}). Run \
+                     `rwv activate <project>` to select a project, or `rwv doctor --fix` to \
+                     remove the file.",
+                    path.display()
+                )
+            }
+        }
+    }
+
+    /// The project the pointer names, for a reader that reports what the file
+    /// says rather than acting on it.
+    pub fn named_project(&self) -> Option<&ProjectName> {
+        match self {
+            ActivePointer::Present(content) => content.named_project(),
+            ActivePointer::Absent => None,
+        }
+    }
+}
+
+impl PointerContent {
+    pub fn named_project(&self) -> Option<&ProjectName> {
+        match self {
+            PointerContent::Selects(project) => Some(project),
+            PointerContent::Unreadable { .. } => None,
+        }
+    }
 }
 
 /// The identity evidence one directory carries.
@@ -2286,11 +2367,11 @@ pub enum ActivePointer {
 pub enum RootObservation {
     /// The marker alone, and its `primary:` verifies as a workspace root.
     Workweave { marker: WorkweaveMarker },
-    /// Workspace-shaped, no marker. `selection` is the `.rwv-active` pointer,
-    /// which a primary root may legitimately be without.
+    /// Workspace-shaped, no marker. A primary root may legitimately be
+    /// without the `.rwv-active` pointer.
     Primary {
         root: PathBuf,
-        selection: Option<ProjectName>,
+        pointer: ActivePointer,
     },
     /// Both files present, marker verified. The pointer is duplicate identity
     /// no writer produces — a hygiene violation, not an ambiguity, since the
@@ -2298,7 +2379,7 @@ pub enum RootObservation {
     Disputed {
         root: PathBuf,
         marker: WorkweaveMarker,
-        pointer: Option<ProjectName>,
+        pointer: PointerContent,
     },
     /// A marker that cannot witness what it claims. A containment walk must
     /// stop here rather than reading the tree's structural shape instead: the
@@ -2334,7 +2415,7 @@ pub fn observe_root(dir: &Path) -> Option<RootObservation> {
             marker_path,
             defect,
             project_hint,
-            pointer: observe_active_pointer(dir),
+            pointer: read_active_pointer(dir),
         },
         MarkerPresence::Usable(marker) => {
             if !is_workspace_root(marker.primary().as_path()) {
@@ -2344,10 +2425,10 @@ pub fn observe_root(dir: &Path) -> Option<RootObservation> {
                     defect: MarkerDefect::DanglingPrimary {
                         primary: marker.primary().as_path().to_path_buf(),
                     },
-                    pointer: observe_active_pointer(dir),
+                    pointer: read_active_pointer(dir),
                 }
             } else {
-                match observe_active_pointer(dir) {
+                match read_active_pointer(dir) {
                     ActivePointer::Present(pointer) => RootObservation::Disputed {
                         root: dir.to_path_buf(),
                         pointer,
@@ -2363,7 +2444,7 @@ pub fn observe_root(dir: &Path) -> Option<RootObservation> {
             }
             RootObservation::Primary {
                 root: dir.to_path_buf(),
-                selection: read_active_project(dir),
+                pointer: read_active_pointer(dir),
             }
         }
     };
@@ -2381,7 +2462,7 @@ impl RootObservation {
     pub fn presented_project(&self) -> Option<&ProjectName> {
         match self {
             RootObservation::Workweave { marker } => Some(marker.project()),
-            RootObservation::Primary { selection, .. } => selection.as_ref(),
+            RootObservation::Primary { pointer, .. } => pointer.named_project(),
             RootObservation::Disputed { marker, .. } => Some(marker.project()),
             RootObservation::MarkerUnverifiable { project_hint, .. } => project_hint.as_ref(),
         }
@@ -2788,48 +2869,77 @@ mod tests {
     }
 
     // ========================================================================
-    // read_active_project
+    // read_active_pointer
     // ========================================================================
 
-    #[test]
-    fn read_active_project_returns_none_when_file_missing() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = make_workspace(tmp.path(), "ws");
-        assert!(read_active_project(&root).is_none());
+    fn named(root: &Path) -> Option<ProjectName> {
+        read_active_pointer(root).named_project().cloned()
+    }
+
+    fn unreadable_detail(root: &Path) -> String {
+        match read_active_pointer(root) {
+            ActivePointer::Present(PointerContent::Unreadable { path, detail }) => {
+                assert_eq!(path, root.join(ACTIVE_PROJECT_FILE));
+                detail
+            }
+            other => panic!("expected an unreadable pointer, got {other:?}"),
+        }
     }
 
     #[test]
-    fn read_active_project_returns_none_when_file_empty() {
+    fn a_missing_pointer_is_absent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = make_workspace(tmp.path(), "ws");
+        assert!(matches!(read_active_pointer(&root), ActivePointer::Absent));
+    }
+
+    #[test]
+    fn an_empty_pointer_is_unreadable() {
         let tmp = tempfile::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         std::fs::write(root.join(".rwv-active"), "").unwrap();
-        assert!(read_active_project(&root).is_none());
+        assert_eq!(unreadable_detail(&root), "the file is empty");
+        std::fs::write(root.join(".rwv-active"), "  \n  \n").unwrap();
+        assert_eq!(unreadable_detail(&root), "the file is empty");
     }
 
     #[test]
-    fn read_active_project_returns_none_when_file_whitespace_only() {
+    fn a_pointer_holding_no_project_name_is_unreadable() {
         let tmp = tempfile::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
-        std::fs::write(root.join(".rwv-active"), "  \n  \n").unwrap();
-        assert!(read_active_project(&root).is_none());
+        std::fs::write(root.join(".rwv-active"), "-not-a-valid-name\n").unwrap();
+        let detail = unreadable_detail(&root);
+        assert!(detail.contains("-not-a-valid-name"), "{detail}");
     }
 
     #[test]
-    fn read_active_project_returns_project_name_when_present() {
+    fn a_pointer_naming_a_project_selects_it() {
         let tmp = tempfile::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
-        let project = read_active_project(&root).expect("should return project");
-        assert_eq!(project.as_str(), "web-app");
+        assert_eq!(named(&root).unwrap().as_str(), "web-app");
+        std::fs::write(root.join(".rwv-active"), "  my-project  \n").unwrap();
+        assert_eq!(named(&root).unwrap().as_str(), "my-project");
     }
 
     #[test]
-    fn read_active_project_trims_whitespace() {
+    fn selecting_through_an_unreadable_pointer_refuses_naming_the_file_and_the_repairs() {
         let tmp = tempfile::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
-        std::fs::write(root.join(".rwv-active"), "  my-project  \n").unwrap();
-        let project = read_active_project(&root).expect("should return project");
-        assert_eq!(project.as_str(), "my-project");
+        std::fs::write(root.join(".rwv-active"), "two words\n").unwrap();
+        let err = read_active_pointer(&root).selection().unwrap_err();
+        assert_eq!(
+            crate::refusal::kind_of(&err),
+            Some(RefusalKind::UnreadableActiveProject)
+        );
+        let msg = format!("{err:#}");
+        for needle in [
+            root.join(".rwv-active").display().to_string(),
+            "rwv activate <project>".to_owned(),
+            "rwv doctor --fix".to_owned(),
+        ] {
+            assert!(msg.contains(&needle), "missing `{needle}`: {msg}");
+        }
     }
 
     // ========================================================================
@@ -2867,8 +2977,7 @@ mod tests {
             .select_project(&ProjectName::new("new-project").unwrap())
             .unwrap();
 
-        let project = read_active_project(&root).expect("should return project");
-        assert_eq!(project.as_str(), "new-project");
+        assert_eq!(named(&root).unwrap().as_str(), "new-project");
     }
 
     #[test]
@@ -2878,8 +2987,7 @@ mod tests {
         let project = ProjectName::new("mobile-app").unwrap();
         witness(&root).select_project(&project).unwrap();
 
-        let read_back = read_active_project(&root).expect("should return project");
-        assert_eq!(read_back, project);
+        assert_eq!(named(&root), Some(project));
     }
 
     /// The witness writes to the root it was observed at, not to a root the
@@ -4814,9 +4922,12 @@ mod tests {
         match observe(&root) {
             RootObservation::Primary {
                 root: observed,
-                selection,
+                pointer,
             } => {
-                assert_eq!(selection.as_ref().map(ProjectName::as_str), Some("web-app"));
+                assert_eq!(
+                    pointer.named_project().map(ProjectName::as_str),
+                    Some("web-app")
+                );
                 assert_eq!(observed, root);
             }
             other => panic!("expected Primary, got {other:?}"),
@@ -4829,7 +4940,9 @@ mod tests {
         let root = make_workspace(tmp.path(), "ws");
 
         match observe(&root) {
-            RootObservation::Primary { selection, .. } => assert!(selection.is_none()),
+            RootObservation::Primary { pointer, .. } => {
+                assert!(matches!(pointer, ActivePointer::Absent))
+            }
             other => panic!("expected Primary, got {other:?}"),
         }
     }
@@ -4849,7 +4962,10 @@ mod tests {
             } => {
                 assert_eq!(root, weave_dir);
                 assert_eq!(marker.project().as_str(), "myproject");
-                assert_eq!(pointer.as_ref().map(ProjectName::as_str), Some("myproject"));
+                assert_eq!(
+                    pointer.named_project().map(ProjectName::as_str),
+                    Some("myproject")
+                );
             }
             other => panic!("expected Disputed, got {other:?}"),
         }
@@ -4866,7 +4982,9 @@ mod tests {
         std::fs::write(weave_dir.join(ACTIVE_PROJECT_FILE), "\n").unwrap();
 
         match observe(&weave_dir) {
-            RootObservation::Disputed { pointer, .. } => assert!(pointer.is_none()),
+            RootObservation::Disputed { pointer, .. } => {
+                assert!(matches!(pointer, PointerContent::Unreadable { .. }))
+            }
             other => panic!("expected Disputed, got {other:?}"),
         }
     }
@@ -5178,7 +5296,10 @@ mod tests {
         }
         match observe(&primary).require_exclusive().unwrap() {
             WeaveRootIdentity::Primary(root) => {
-                assert_eq!(root.selection().map(ProjectName::as_str), Some("web-app"));
+                assert_eq!(
+                    root.pointer().named_project().map(ProjectName::as_str),
+                    Some("web-app")
+                );
             }
             other => panic!("expected the primary arm, got {other:?}"),
         }

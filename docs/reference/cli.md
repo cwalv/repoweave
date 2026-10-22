@@ -591,6 +591,14 @@ lists every token, and a condition `rwv doctor` also reports keeps its entry on
 
   `rwv doctor` reports the same condition under that same token and, under `--fix`, clears the file — one token, one entry, whichever surface you met it on.
 
+- **Unreadable pointer** (`unreadable-active-project`) — `.rwv-active` is empty, cannot be read, or holds text that is not a project name:
+
+  ```
+  Error: /work/weave/.rwv-active names no project rwv can select (the file is empty). Run `rwv activate <project>` to select a project, or `rwv doctor --fix` to remove the file.
+  ```
+
+  The refusal is not read as "no project selected". `rwv doctor` reports the same condition under that token and, under `--fix`, removes the file; `rwv activate <project>` replaces it.
+
 ### Which verbs are project-scoped
 
 | Category | Verbs | Resolution behavior |

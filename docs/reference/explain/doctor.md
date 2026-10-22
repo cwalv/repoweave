@@ -92,8 +92,8 @@ parents, a scope only primary can name.
 retraction, the ref-ownership registry migration, the canonical-store
 migration and reattach arms, safe-class stale-branch deletion, the
 workweave-registry prune and adopt arms, the dangling-parent re-point, the
-dangling-active-project clear, and the weave-root-identity-conflict clear all
-act on state the workspace holds in exactly one place, so they take the
+dangling-active-project and unreadable-active-project clears, and the
+weave-root-identity-conflict clear all act on state the workspace holds in exactly one place, so they take the
 primary path unconditionally — from primary and from any workweave alike.
 This is not an oversight in the weave-scoping above; there is nothing
 weave-local for them to bind to:
@@ -197,7 +197,7 @@ severity. Under `--json`, output is the envelope:
 ```
 
 The `$schema` URL points to the committed schema artifact. Variants are
-discriminated by the `kind` tag — `branch-discipline`, `cargo-patch-shadowing`, `cargo-version-skew`, `clone-topology`, `confusable-siblings`, `dangling-active-project`, `dangling-ref-receipt`, `dangling-reference`, `dead-op-lease`, `head-unreadable`, `incomplete-lock`, `index-drift`, `legacy-manifest-format`, `legacy-workweave-index`, `legacy-workweave-marker`, `lock-pinned-by-name`, `member-permissions`, `merge-driver-config-unreadable`, `missing-canonical-clone`, `missing-merge-driver-config`, `missing-replay-exclusion`, `orphaned-clone`, `orphaned-savepoint`, `phantom-merge-driver`, `pre-flat-ref-receipt`, `projectless-dir`, `projects-dir-unreadable`, `provenance`, `replay-exclusion-unreadable`, `role-disagreement`, `stale-lock`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unknown-segment-clone`, `unnameable-project`, `unparseable-project`, `unreadable-owned-state`, `unreadable-workweave-index`, `unrecognized-savepoint-ref`, `unresolvable-lock-entry`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
+discriminated by the `kind` tag — `branch-discipline`, `cargo-patch-shadowing`, `cargo-version-skew`, `clone-topology`, `confusable-siblings`, `dangling-active-project`, `dangling-ref-receipt`, `dangling-reference`, `dead-op-lease`, `head-unreadable`, `incomplete-lock`, `index-drift`, `legacy-manifest-format`, `legacy-workweave-index`, `legacy-workweave-marker`, `lock-pinned-by-name`, `member-permissions`, `merge-driver-config-unreadable`, `missing-canonical-clone`, `missing-merge-driver-config`, `missing-replay-exclusion`, `orphaned-clone`, `orphaned-savepoint`, `phantom-merge-driver`, `pre-flat-ref-receipt`, `projectless-dir`, `projects-dir-unreadable`, `provenance`, `replay-exclusion-unreadable`, `role-disagreement`, `stale-lock`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unknown-segment-clone`, `unnameable-project`, `unparseable-project`, `unreadable-active-project`, `unreadable-owned-state`, `unreadable-workweave-index`, `unrecognized-savepoint-ref`, `unresolvable-lock-entry`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
 Every per-repo variant carries `path` (manifest-relative) and
 `absolute_path` (fully resolved). Variants with subkinds
 (`branch-discipline`, `clone-topology`, `dead-op-lease`, `index-drift`, `member-permissions`, `missing-replay-exclusion`, `orphaned-savepoint`, `provenance`, `uninitialized-submodule`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
@@ -2177,6 +2177,34 @@ Schema:
             },
             "project": {
               "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "detail",
+            "kind",
+            "path"
+          ],
+          "properties": {
+            "detail": {
+              "description": "What is wrong with what it holds.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "unreadable-active-project"
+              ]
+            },
+            "path": {
+              "description": "Absolute path of the `.rwv-active` file.",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/WirePath"
+                }
+              ]
             }
           }
         },
