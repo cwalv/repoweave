@@ -139,3 +139,27 @@ fn setup_claude_still_registers_its_hooks() {
         "no hook registered:\n{written}"
     );
 }
+
+/// Only a closed pipe is the reader's choice. A full disk is not, and a
+/// verb that cannot say what it did must not exit as though it had.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_write_that_fails_for_another_reason_is_still_an_error() {
+    for args in [["status", "--json"], ["explain", "doctor"]] {
+        let weave = Weave::new(false);
+        let full = std::fs::OpenOptions::new()
+            .write(true)
+            .open("/dev/full")
+            .expect("/dev/full exists on linux");
+        let mut cmd = weave.command(&args);
+        cmd.stdout(full).stderr(Stdio::piped()).stdin(Stdio::null());
+        let out = cmd.output().expect("rwv runs");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "`rwv {}` exited 0", args.join(" "));
+        assert!(
+            stderr.contains("No space left on device"),
+            "`rwv {}`:\n{stderr}",
+            args.join(" ")
+        );
+    }
+}
