@@ -322,6 +322,37 @@ fn an_interrupt_to_the_whole_job_leaves_rwv_waiting_for_the_plugin_status() {
     );
 }
 
+/// rwv outlives the interrupt by handling it, which exec does not pass on: a
+/// plugin that takes no interrupt action of its own still dies of one, and rwv
+/// reports how it died.
+#[test]
+fn a_plugin_that_takes_no_interrupt_action_dies_of_the_jobs_interrupt() {
+    let plugin_dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let ready = plugin_dir.path().join("ready");
+    let plugin = plugin_dir
+        .path()
+        .join(format!("rwv-linger{}", std::env::consts::EXE_SUFFIX));
+    fs::hard_link(common::job::helper_exe(), &plugin)
+        .expect("the plugin is this test binary under a plugin's name");
+    let mut cmd = common::rwv_std();
+    cmd.arg("linger")
+        .args(common::job::helper_args())
+        .current_dir(tmp_cwd())
+        .env("PATH", prepend_path(plugin_dir.path()))
+        .stdout(std::process::Stdio::null());
+    common::job::linger(&mut cmd, &ready);
+    let mut child = common::job::as_foreground_job(&mut cmd).spawn().unwrap();
+    let lingering = common::job::recorded_pid(&ready, std::time::Duration::from_secs(20));
+    common::job::interrupt_foreground_job(&child);
+    let status = common::job::wait_job(&mut child, common::job::JOB_BOUND)
+        .unwrap_or_else(|e| panic!("the interrupt did not end the plugin: {e}"));
+    common::job::wait_dead(lingering);
+    #[cfg(unix)]
+    assert_eq!(status.code(), Some(128 + 2), "rwv exited with {status:?}");
+    #[cfg(windows)]
+    assert_ne!(status.code(), Some(0), "rwv exited with {status:?}");
+}
+
 /// A job that never ends fails its test once its bound passes, with rwv and
 /// the plugin both gone, instead of holding the suite until CI cancels it.
 #[test]

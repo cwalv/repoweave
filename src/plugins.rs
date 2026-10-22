@@ -431,10 +431,10 @@ pub fn dispatch_external(
     let plugin = find_plugin(verb).ok_or_else(|| unknown_verb_error(verb))?;
 
     let mut cmd = build_command(&plugin, args, invocation_dir, resolution);
+    leave_interrupts_to_the_plugin();
     let mut child = cmd
         .spawn()
         .map_err(|e| exec_failure_error(verb, &plugin, e))?;
-    leave_interrupts_to_the_plugin();
 
     // Wait; propagate. `wait()` inherits the child's I/O, so stdout/stderr
     // stream directly through this process without buffering.
@@ -469,24 +469,34 @@ pub fn dispatch_external(
 /// A terminal interrupt reaches the plugin and this process alike, the two
 /// being one foreground job. Left at its default this process would exit at
 /// once — handing the prompt back while the plugin is still winding down, and
-/// discarding the status the plugin then exits with. Called only once the
-/// plugin has started, so the plugin keeps the default disposition; this is
-/// what `system(3)` does while it waits, and for the same reason. Ignored, not
-/// blocked: a disposition holds for every thread of this process, a signal
-/// mask only for the thread that sets it.
+/// discarding the status the plugin then exits with.
+///
+/// Called before the spawn, so no interrupt can find this process between the
+/// plugin starting and the disposition changing. A handler that does nothing,
+/// not `SIG_IGN`: exec resets a handled signal to its default and keeps an
+/// ignored one ignored, so the plugin starts with the default disposition
+/// only because this one is handled. A disposition, unlike a signal mask,
+/// holds for every thread of this process.
 #[cfg(unix)]
 fn leave_interrupts_to_the_plugin() {
-    use nix::sys::signal::{signal, SigHandler, Signal};
+    use nix::sys::signal::{sigaction, SaFlags, SigAction, SigHandler, SigSet, Signal};
+    extern "C" fn outlive_the_interrupt(_: std::ffi::c_int) {}
+    let action = SigAction::new(
+        SigHandler::Handler(outlive_the_interrupt),
+        SaFlags::SA_RESTART,
+        SigSet::empty(),
+    );
     for interrupt in [Signal::SIGINT, Signal::SIGQUIT] {
-        // SAFETY: `SigIgn` installs no handler, so no code runs on delivery.
-        let _ = unsafe { signal(interrupt, SigHandler::SigIgn) };
+        // SAFETY: the handler touches nothing, so it is async-signal-safe.
+        let _ = unsafe { sigaction(interrupt, &action) };
     }
 }
 
 /// The Windows console delivers Ctrl-C to every process attached to it; a
 /// handler that returns without acting keeps this one alive until the plugin
-/// exits. A handler routine, unlike ignoring Ctrl-C outright, is not
-/// inherited by processes started later.
+/// exits. Called before the spawn for the reason the Unix one is. A handler
+/// routine, unlike ignoring Ctrl-C outright, is not inherited by processes
+/// started later.
 #[cfg(windows)]
 fn leave_interrupts_to_the_plugin() {
     let _ = ctrlc::set_handler(|| {});

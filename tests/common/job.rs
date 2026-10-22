@@ -51,6 +51,9 @@ const TREE_LEAF: &str = "tree-leaf";
 /// [`HOLD_EXIT`].
 const HOLD: &str = "hold";
 pub const HOLD_EXIT: i32 = 7;
+/// A process that writes its pid into the file [`linger`] names, then sleeps
+/// past any job's bound with every interrupt at its default disposition.
+const LINGER: &str = "linger";
 
 pub fn helper_exe() -> PathBuf {
     std::env::current_exe().expect("this test binary's own path")
@@ -68,6 +71,7 @@ pub fn serve() {
         TREE_ROOT => tree_root(),
         TREE_LEAF => tree_leaf(),
         HOLD => hold_until_interrupted(),
+        LINGER => linger_with_default_interrupts(),
         #[cfg(windows)]
         CONSOLE_INTERRUPTER => interrupt_console(),
         #[cfg(windows)]
@@ -80,6 +84,21 @@ pub fn serve() {
 /// [`HOLD`] process, marking `ready` once it can take an interrupt.
 pub fn hold(cmd: &mut Command, ready: &Path) {
     cmd.env(ROLE, HOLD).env(READY, ready);
+}
+
+/// The environment that makes a [`helper_args`] run of this binary a
+/// [`LINGER`] process, marking `ready` once it is running.
+pub fn linger(cmd: &mut Command, ready: &Path) {
+    cmd.env(ROLE, LINGER).env(READY, ready);
+}
+
+fn linger_with_default_interrupts() {
+    std::fs::write(
+        std::env::var_os(READY).expect("a linger names its ready file"),
+        format!("{}\n", std::process::id()),
+    )
+    .expect("the ready file is written");
+    std::thread::sleep(JOB_BOUND * 2);
 }
 
 fn tree_root() {
