@@ -16,6 +16,9 @@
 # run's terminal line names the stages it ran, so a log naming less than the
 # seven default stages is never mistaken for a full gate.
 #
+# Both test stages run the suite with TMPDIR behind a symlink, the geometry
+# macOS's temp root has, on every host that can make one.
+#
 # Exits non-zero on the first failure. The windows stage is the one
 # exception: ci-checks.yml's windows-check job already owns Windows compile
 # and lint truth authoritatively, so a contributor without the target
@@ -90,6 +93,33 @@ header() {
     printf '\n==> %s\n' "$1"
 }
 
+# Runs a command with TMPDIR behind a symlink, made inside the TMPDIR this
+# script was handed so fixtures stay on that filesystem. rwv records and
+# prints resolved paths, and macOS's TMPDIR is under /var, a symlink to
+# /private/var: a test comparing a path rwv reports with one spelled from the
+# raw temp root is red there and green wherever the temp dir is a real
+# directory. Under the link every host has that geometry, and link/ and real/
+# share no substring, so a `contains` cannot collapse the two spellings the way
+# /var inside /private/var does. Git Bash's `ln -s` copies rather than links
+# unless MSYS asks for native symlinks and Windows grants the right to make
+# one, so a host that made no link runs without it and says so.
+with_symlinked_tmpdir() {
+    local base gate_tmp status=0
+    base="${TMPDIR:-/tmp}"
+    gate_tmp="$(mktemp -d "${base%/}/rwv-gate-tmp.XXXXXX")"
+    mkdir "$gate_tmp/real"
+    if ln -s "$gate_tmp/real" "$gate_tmp/link" 2>/dev/null && [ -L "$gate_tmp/link" ]; then
+        printf 'TMPDIR=%s (a symlink to %s)\n' "$gate_tmp/link" "$gate_tmp/real"
+        TMPDIR="$gate_tmp/link" "$@" || status=$?
+    else
+        printf 'NOTICE: this host made no symlink, so TMPDIR is not behind one: a test comparing a path rwv resolved with one spelled from the raw temp root is unchecked here\n' >&2
+        "$@" || status=$?
+    fi
+    chmod -R u+rwx "$gate_tmp" 2>/dev/null || true
+    rm -rf "$gate_tmp" || printf 'warning: could not remove %s\n' "$gate_tmp" >&2
+    return "$status"
+}
+
 if run_stage check; then
     header "cargo check"
     cargo check
@@ -114,7 +144,7 @@ if run_stage test; then
     # --no-fail-fast: without it cargo stops at the first failing binary and
     # every later one goes unrun rather than green — this is what makes the
     # red list a list.
-    cargo test --release --no-fail-fast
+    with_symlinked_tmpdir cargo test --release --no-fail-fast
 fi
 
 if run_stage test-autocrlf; then
@@ -154,7 +184,7 @@ if run_stage test-autocrlf; then
     trap restore_autocrlf_checkout EXIT
     export GIT_CONFIG_SYSTEM="$autocrlf_config"
     recheckout_tree
-    cargo test --release --no-fail-fast
+    with_symlinked_tmpdir cargo test --release --no-fail-fast
     restore_autocrlf_checkout
     trap - EXIT
 fi

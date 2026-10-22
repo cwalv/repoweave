@@ -9,7 +9,9 @@
 //! ci-checks.yml's windows-check job already owns Windows compile and lint
 //! truth authoritatively; a subset run's terminal line names the stages that ran,
 //! so it can never be mistaken for a full gate by a reader holding only the
-//! log; and the windows-wine stage runs only when named.
+//! log; the windows-wine stage runs only when named; and every `cargo test`
+//! it runs sees `TMPDIR` behind a symlink made inside the one it was handed,
+//! except on a host that cannot make one, which says so.
 //!
 //! Every test drives the real script as a subprocess with a stub `cargo` and
 //! `rustup` on `PATH` (and, for the wine stage's wiring, a stub
@@ -654,4 +656,189 @@ fn test_autocrlf_stage_restores_lf_when_cargo_fails() {
     );
     assert_eq!(after, b"one\ntwo\n", "trap path left the docs file CRLF");
     assert_eq!(status, "", "tree not clean after the failed stage");
+}
+
+const STUB_CARGO_RECORDING_TMPDIR: &str = "#!/bin/sh\n\
+if [ -L \"$TMPDIR\" ]; then kind=link; target=$(readlink \"$TMPDIR\"); else kind=dir; target=; fi\n\
+printf '%s\\t%s\\t%s\\t%s\\n' \"$*\" \"$kind\" \"$TMPDIR\" \"$target\" >> \"$CI_LOCAL_TEST_TMPDIR_LOG\"\n\
+exit \"${CI_LOCAL_TEST_CARGO_EXIT:-0}\"\n";
+
+/// What one stub `cargo` invocation saw of `$TMPDIR`.
+struct SeenTmpdir {
+    argv: String,
+    is_link: bool,
+    tmpdir: PathBuf,
+    link_target: PathBuf,
+}
+
+/// Runs the script over `cwd` with `handed` as its `TMPDIR` and a stub
+/// `cargo` recording, for every invocation, its argv and the `TMPDIR` it was
+/// given. `extra_stub` adds further stubs beside it.
+fn run_recording_tmpdir(
+    cwd: &Path,
+    handed: &Path,
+    args: &[&str],
+    cargo_exit: &str,
+    extra_stub: &[(&str, &str)],
+) -> (Vec<SeenTmpdir>, Output) {
+    let stub = stub_bin_dir();
+    std::fs::write(stub.path().join("cargo"), STUB_CARGO_RECORDING_TMPDIR).unwrap();
+    for (name, body) in extra_stub {
+        let path = stub.path().join(name);
+        std::fs::write(&path, body).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let log_dir = common::tempdir().expect("tempdir");
+    let log = log_dir.path().join("seen");
+    let out = run_ci_local(
+        cwd,
+        stub.path(),
+        args,
+        &[
+            ("TMPDIR", handed.to_str().unwrap()),
+            ("CI_LOCAL_TEST_TMPDIR_LOG", log.to_str().unwrap()),
+            ("CI_LOCAL_TEST_CARGO_EXIT", cargo_exit),
+            ("GIT_CONFIG_GLOBAL", "/dev/null"),
+        ],
+    );
+    let seen = std::fs::read_to_string(&log)
+        .unwrap_or_default()
+        .lines()
+        .map(|line| {
+            let fields: Vec<&str> = line.split('\t').collect();
+            assert_eq!(fields.len(), 4, "unparseable stub record {line:?}");
+            SeenTmpdir {
+                argv: fields[0].to_owned(),
+                is_link: fields[1] == "link",
+                tmpdir: PathBuf::from(fields[2]),
+                link_target: PathBuf::from(fields[3]),
+            }
+        })
+        .collect();
+    (seen, out)
+}
+
+fn entries(dir: &Path) -> Vec<String> {
+    std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect()
+}
+
+/// Every `cargo test` the script runs sees `TMPDIR` as a symlink, made inside
+/// the `TMPDIR` the script was handed and pointing at a directory beside it,
+/// and nothing of it is left once the stage is done.
+///
+/// The population is read from the runs rather than listed: the default run
+/// and the opt-in `test-autocrlf` stage, each of which is asserted to have
+/// run `cargo test` exactly once, so a stage that stopped running the suite
+/// fails here rather than leaving nothing to check.
+#[test]
+fn every_cargo_test_runs_with_tmpdir_behind_a_symlink_inside_the_handed_one() {
+    for args in [&[][..], &["--stages=test-autocrlf"][..]] {
+        let fixture = fixture_repo();
+        let handed = common::tempdir().expect("tempdir");
+        let (seen, out) = run_recording_tmpdir(fixture.path(), handed.path(), args, "0", &[]);
+        assert!(out.status.success(), "{args:?}: {}", stderr_of(&out));
+
+        let tests: Vec<&SeenTmpdir> = seen
+            .iter()
+            .filter(|s| s.argv.split(' ').next() == Some("test"))
+            .collect();
+        assert_eq!(
+            tests.len(),
+            1,
+            "{args:?}: expected one `cargo test`; the stub saw {:?}",
+            seen.iter().map(|s| &s.argv).collect::<Vec<_>>()
+        );
+        let test = tests[0];
+        assert!(
+            test.is_link,
+            "{args:?}: `cargo {}` ran with TMPDIR={} not behind a symlink",
+            test.argv,
+            test.tmpdir.display()
+        );
+        let gate_dir = test.tmpdir.parent().unwrap();
+        assert_eq!(
+            gate_dir.parent(),
+            Some(handed.path()),
+            "{args:?}: the link must sit one directory inside the handed TMPDIR, \
+             on its filesystem; got {}",
+            test.tmpdir.display()
+        );
+        assert_eq!(
+            test.link_target,
+            gate_dir.join("real"),
+            "{args:?}: the link must point at the directory beside it"
+        );
+        assert!(
+            entries(handed.path()).is_empty(),
+            "{args:?}: the stage left {:?} in the handed TMPDIR",
+            entries(handed.path())
+        );
+    }
+}
+
+/// A red suite under the link is the run's own status, and the link's
+/// directory is still removed.
+#[test]
+fn a_red_cargo_test_under_the_link_is_the_runs_status_and_leaves_nothing_behind() {
+    let fixture = fixture_repo();
+    let handed = common::tempdir().expect("tempdir");
+    let (seen, out) =
+        run_recording_tmpdir(fixture.path(), handed.path(), &["--stages=test"], "3", &[]);
+    assert_eq!(
+        out.status.code(),
+        Some(3),
+        "cargo's status must be the run's: {}",
+        stdout_of(&out)
+    );
+    assert!(
+        seen.len() == 1 && seen[0].is_link,
+        "the red run must still have been under the link"
+    );
+    assert!(
+        !stdout_of(&out).contains("All checks passed"),
+        "{}",
+        stdout_of(&out)
+    );
+    assert!(
+        entries(handed.path()).is_empty(),
+        "the red stage left {:?} in the handed TMPDIR",
+        entries(handed.path())
+    );
+}
+
+/// An `ln -s` that copies instead of linking, as Git Bash's does unless MSYS
+/// asks for native symlinks, leaves the suite running under the handed
+/// `TMPDIR` with a notice saying the comparison it would have checked is not.
+#[test]
+fn a_host_that_makes_no_symlink_runs_the_suite_under_the_handed_tmpdir_and_says_so() {
+    const COPYING_LN: &str = "#!/bin/sh\nshift\ncp -R \"$1\" \"$2\"\n";
+    let fixture = fixture_repo();
+    let handed = common::tempdir().expect("tempdir");
+    let (seen, out) = run_recording_tmpdir(
+        fixture.path(),
+        handed.path(),
+        &["--stages=test"],
+        "0",
+        &[("ln", COPYING_LN)],
+    );
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert!(
+        stderr_of(&out).contains("NOTICE: this host made no symlink"),
+        "the fallback must announce itself: {}",
+        stderr_of(&out)
+    );
+    assert!(
+        seen.len() == 1 && !seen[0].is_link && seen[0].tmpdir == handed.path(),
+        "the suite must run under the handed TMPDIR; the stub saw {}",
+        seen.first()
+            .map_or("nothing".into(), |s| s.tmpdir.display().to_string())
+    );
+    assert!(
+        entries(handed.path()).is_empty(),
+        "the fallback left {:?} in the handed TMPDIR",
+        entries(handed.path())
+    );
 }

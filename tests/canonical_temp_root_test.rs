@@ -40,7 +40,14 @@
 //! comment filter is line-leading `//` only, so a constructor named in a
 //! block or trailing comment reads as a call: a false finding, not a miss.
 //!
-//! Reproduce the macOS geometry on any platform:
+//! The behavioral half is `scripts/ci-local.sh`, which runs its test stages
+//! with `$TMPDIR` behind a symlink. There a raw root reddens any test that
+//! compares a path built from it, however the root was spelled, and the link
+//! and its target share no substring, so a `contains` does not collapse them.
+//! A host that cannot make the symlink runs those stages without it, and says
+//! so; this scan reads the source the same on every host.
+//!
+//! The same geometry for a bare `cargo test`:
 //!
 //! ```sh
 //! mkdir -p $T/real && ln -s $T/real $T/link
