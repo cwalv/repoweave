@@ -44,8 +44,8 @@ use crate::vcs::{
     RawRefName, ResolvedRevisionId, Vcs, VcsError,
 };
 use crate::workspace::{
-    project_dir, project_rel_dir, project_rel_path, weave_dir_name, workweave_name_in,
-    CanonicalPath, WorkweaveMarker,
+    project_dir, project_rel_dir, project_rel_path, workweave_name_in, CanonicalPath,
+    WorkweaveMarker,
 };
 use crate::workweave_index;
 use crate::workweave_index::RefRegistry;
@@ -238,14 +238,17 @@ pub fn workweave_name_for_path(
 /// Recorded, not validated: whether the matched entry still round-trips
 /// through its marker is [`resolve_registered_workweave`]'s question, asked
 /// once a pair is in hand.
-pub fn registered_workweaves(primary_root: &Path) -> Vec<(ProjectName, WorkweaveName)> {
+pub fn registered_workweaves(primary_root: &Path) -> Vec<WorkweaveId> {
     let mut out = Vec::new();
     for project in crate::workspace::discover_projects(primary_root) {
         let Ok(Some(index)) = workweave_index::read(primary_root, &project) else {
             continue;
         };
         for name in index.workweaves.into_keys() {
-            out.push((project.clone(), name));
+            out.push(WorkweaveId {
+                project: project.clone(),
+                name,
+            });
         }
     }
     out.sort();
@@ -1124,7 +1127,13 @@ pub(crate) fn materialize_member(
         &mut registry,
         &canonical,
         &dest,
-        &EphemeralRefName::mint(project, workweave),
+        &EphemeralRefName::mint(
+            &WorkweaveId {
+                project: project.clone(),
+                name: workweave.clone(),
+            }
+            .flat(),
+        ),
         start.clone(),
         WorktreeFiles::Shared(&Filesystem, role),
     )
@@ -1650,6 +1659,11 @@ pub fn create_workweave(
     let project_vcs = project_vcs();
     let manifest = load_manifest(source_root, project)?;
     refuse_symlinked_members(source_root, project)?;
+    let flat = WorkweaveId {
+        project: project.clone(),
+        name: name.clone(),
+    }
+    .flat();
     // Placement is authoritative here (create direction): either the caller
     // named an explicit path (recorded verbatim) or the recorded container
     // provides the default. The registry entry is written after the marker
@@ -1658,7 +1672,7 @@ pub fn create_workweave(
         Some(p) => p.to_path_buf(),
         None => {
             let container = workweave_container(primary_root, project)?;
-            container.join(weave_dir_name(project, name))
+            container.join(&flat)
         }
     };
 
@@ -1687,7 +1701,7 @@ pub fn create_workweave(
                 name = name.as_str(),
                 recorded = recorded.display(),
                 requested = workweave_dir.display(),
-                branch = EphemeralRefName::mint(project, name),
+                branch = EphemeralRefName::mint(&flat),
             );
         }
     }
@@ -1895,11 +1909,11 @@ pub fn create_workweave(
         project,
     );
 
-    // The one ephemeral name this create uses, in every store it touches.
-    // Flat: `{project}--{workweave}`, minted from two inputs, with nothing
-    // observed feeding in. Two repos of one workweave live in
-    // different object stores, so one name per store is enough.
-    let ephemeral = EphemeralRefName::mint(project, name);
+    // The one ephemeral name this create uses, in every store it touches,
+    // minted from the identity with nothing observed feeding in. Two repos of
+    // one workweave live in different object stores, so one name per store is
+    // enough.
+    let ephemeral = EphemeralRefName::mint(&flat);
     let mut registry = RefRegistry::for_project(primary_root, project);
 
     let mut errors: Vec<String> = Vec::new();
@@ -3237,7 +3251,13 @@ fn delete_workweave_inner_at(
     let project_vcs = project_vcs();
     let manifest = load_manifest(ws_root, project)?;
     let workweave_dir = workweave_dir.to_path_buf();
-    let ephemeral = EphemeralRefName::mint(project, name);
+    let ephemeral = EphemeralRefName::mint(
+        &WorkweaveId {
+            project: project.clone(),
+            name: name.clone(),
+        }
+        .flat(),
+    );
     let mut registry = RefRegistry::for_project(ws_root, project);
 
     refuse_symlinked_members(&workweave_dir, project)?;
@@ -4230,7 +4250,13 @@ mod tests {
     fn rollback_destroys_a_ref_this_create_authored_and_retracts_its_receipt() {
         let (_tmp, primary, project, store) = weave();
         let mut registry = RefRegistry::for_project(&primary, &project);
-        let name = EphemeralRefName::mint(&project, &WorkweaveName::new("ww").unwrap());
+        let name = EphemeralRefName::mint(
+            &crate::manifest::WorkweaveId {
+                project: project.clone(),
+                name: WorkweaveName::new("ww").unwrap(),
+            }
+            .flat(),
+        );
         let at = git_vcs().head_revision(&store).unwrap();
         let owned = registry.record_created(&store, name.clone(), at).unwrap();
 
@@ -4264,7 +4290,13 @@ mod tests {
     fn rollback_leaves_an_adopted_ref_alone() {
         let (_tmp, primary, project, store) = weave();
         let mut registry = RefRegistry::for_project(&primary, &project);
-        let name = EphemeralRefName::mint(&project, &WorkweaveName::new("ww").unwrap());
+        let name = EphemeralRefName::mint(
+            &crate::manifest::WorkweaveId {
+                project: project.clone(),
+                name: WorkweaveName::new("ww").unwrap(),
+            }
+            .flat(),
+        );
 
         // A branch that was already there, carrying a commit of its own.
         git(&store, &["checkout", "-b", &name.to_string()]);
@@ -4309,7 +4341,13 @@ mod tests {
     fn rollback_reports_a_ref_that_moved_instead_of_destroying_it() {
         let (_tmp, primary, project, store) = weave();
         let mut registry = RefRegistry::for_project(&primary, &project);
-        let name = EphemeralRefName::mint(&project, &WorkweaveName::new("ww").unwrap());
+        let name = EphemeralRefName::mint(
+            &crate::manifest::WorkweaveId {
+                project: project.clone(),
+                name: WorkweaveName::new("ww").unwrap(),
+            }
+            .flat(),
+        );
         let at = git_vcs().head_revision(&store).unwrap();
         let owned = registry.record_created(&store, name.clone(), at).unwrap();
 
@@ -4549,7 +4587,13 @@ mod tests {
     fn a_ref_born_inside_the_window_is_adopted_and_its_receipt_retracted() {
         let (_tmp, primary, project, store) = fake_weave();
         let mut registry = RefRegistry::for_project(&primary, &project);
-        let ephemeral = EphemeralRefName::mint(&project, &WorkweaveName::new("ww").unwrap());
+        let ephemeral = EphemeralRefName::mint(
+            &crate::manifest::WorkweaveId {
+                project: project.clone(),
+                name: WorkweaveName::new("ww").unwrap(),
+            }
+            .flat(),
+        );
         let raw = ephemeral.to_raw();
 
         let fake = FakeVcs::new();
@@ -4595,7 +4639,13 @@ mod tests {
     fn the_same_ref_standing_before_classification_refuses_instead() {
         let (_tmp, primary, project, store) = fake_weave();
         let mut registry = RefRegistry::for_project(&primary, &project);
-        let ephemeral = EphemeralRefName::mint(&project, &WorkweaveName::new("ww").unwrap());
+        let ephemeral = EphemeralRefName::mint(
+            &crate::manifest::WorkweaveId {
+                project: project.clone(),
+                name: WorkweaveName::new("ww").unwrap(),
+            }
+            .flat(),
+        );
         let raw = ephemeral.to_raw();
 
         let fake = FakeVcs::new();
@@ -4633,7 +4683,13 @@ mod tests {
     fn a_birth_that_failed_keeps_its_receipt() {
         let (_tmp, primary, project, store) = fake_weave();
         let mut registry = RefRegistry::for_project(&primary, &project);
-        let ephemeral = EphemeralRefName::mint(&project, &WorkweaveName::new("ww").unwrap());
+        let ephemeral = EphemeralRefName::mint(
+            &crate::manifest::WorkweaveId {
+                project: project.clone(),
+                name: WorkweaveName::new("ww").unwrap(),
+            }
+            .flat(),
+        );
         let raw = ephemeral.to_raw();
 
         let fake = FakeVcs::new();
@@ -4669,7 +4725,13 @@ mod tests {
     fn a_destroy_that_failed_leaves_the_receipt_standing() {
         let (_tmp, primary, project, store) = fake_weave();
         let mut registry = RefRegistry::for_project(&primary, &project);
-        let ephemeral = EphemeralRefName::mint(&project, &WorkweaveName::new("ww").unwrap());
+        let ephemeral = EphemeralRefName::mint(
+            &crate::manifest::WorkweaveId {
+                project: project.clone(),
+                name: WorkweaveName::new("ww").unwrap(),
+            }
+            .flat(),
+        );
         let raw = ephemeral.to_raw();
         registry
             .record_created(&store, ephemeral.clone(), fake_rev('a'))
@@ -4704,7 +4766,13 @@ mod tests {
     fn a_destroy_that_succeeded_retracts_the_receipt() {
         let (_tmp, primary, project, store) = fake_weave();
         let mut registry = RefRegistry::for_project(&primary, &project);
-        let ephemeral = EphemeralRefName::mint(&project, &WorkweaveName::new("ww").unwrap());
+        let ephemeral = EphemeralRefName::mint(
+            &crate::manifest::WorkweaveId {
+                project: project.clone(),
+                name: WorkweaveName::new("ww").unwrap(),
+            }
+            .flat(),
+        );
         let raw = ephemeral.to_raw();
         registry
             .record_created(&store, ephemeral.clone(), fake_rev('a'))

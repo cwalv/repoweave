@@ -20,7 +20,7 @@
 //!      for. The last test reads the syscalls.
 
 use repoweave::git::git_vcs;
-use repoweave::manifest::{ProjectName, WorkweaveName};
+use repoweave::manifest::{ProjectName, WorkweaveId, WorkweaveName};
 use repoweave::vcs::{DeletionWarrant, EphemeralRefName, RawRefName, ResolvedRevisionId};
 use repoweave::workweave_index::RefRegistry;
 use std::path::{Path, PathBuf};
@@ -64,7 +64,13 @@ fn commit(repo: &Path, file: &str) -> ResolvedRevisionId {
 }
 
 fn ephemeral(project: &ProjectName, workweave: &str) -> EphemeralRefName {
-    EphemeralRefName::mint(project, &WorkweaveName::new(workweave).unwrap())
+    EphemeralRefName::mint(
+        &WorkweaveId {
+            project: project.clone(),
+            name: WorkweaveName::new(workweave).unwrap(),
+        }
+        .flat(),
+    )
 }
 
 // ---------------------------------------------------------------------------

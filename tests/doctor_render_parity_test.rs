@@ -54,7 +54,7 @@ use common::doctor_corpus::{case_token, corpus, issue_corpus, issue_kind_token, 
 use common::src_scan;
 use repoweave::check::{build_doctor_json, violations_to_issues, CheckViolation};
 use repoweave::integration::{Issue, IssueKind};
-use repoweave::manifest::{ProjectName, WorkweaveName};
+use repoweave::manifest::{ProjectName, WorkweaveId, WorkweaveName};
 use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
@@ -527,7 +527,13 @@ fn a_pre_flat_receipt_reaches_both_the_report_and_the_wire_format() {
     git_in(&["branch", "myproj--ghost/main", "main"]);
 
     let proj = ProjectName::new("myproj").unwrap();
-    let flat = EphemeralRefName::mint(&proj, &WorkweaveName::new("ghost").unwrap());
+    let flat = EphemeralRefName::mint(
+        &WorkweaveId {
+            project: proj.clone(),
+            name: WorkweaveName::new("ghost").unwrap(),
+        }
+        .flat(),
+    );
     let observed = RawRefName::new("myproj--ghost/main");
     let legacy = LegacyEphemeralRefName::claim(&flat, &observed).unwrap();
     let tip = git_vcs()

@@ -13,7 +13,7 @@
 //! arguments, and a test crate cannot mint their consent tokens.
 
 use repoweave::git::{git_vcs, restore_paths_from_head};
-use repoweave::manifest::{ProjectName, WorkweaveName};
+use repoweave::manifest::{ProjectName, WorkweaveId, WorkweaveName};
 use repoweave::vcs::{
     ContentIdentity, DerivedContentPolicy, EphemeralRefName, RawRefName, ResolvedRevisionId,
     TrackedFile, TrackingRef, Vcs, WorkspacePopulation,
@@ -92,7 +92,13 @@ impl Weave {
         let receipt = RefRegistry::for_project(&self.primary, &project)
             .record_created(
                 &self.store,
-                EphemeralRefName::mint(&project, &WorkweaveName::new(name).unwrap()),
+                EphemeralRefName::mint(
+                    &WorkweaveId {
+                        project: project.clone(),
+                        name: WorkweaveName::new(name).unwrap(),
+                    }
+                    .flat(),
+                ),
                 at.clone(),
             )
             .unwrap();

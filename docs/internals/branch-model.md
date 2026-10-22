@@ -418,9 +418,9 @@ the test is what keeps it from coming back.
   glob and parser both working at depth 9-180 and failing at ~181 with a raw
   `fatal: cannot lock ref` `[S]`.
   **Fixed by deletion of the question** (§3.5). There is one derivation left,
-  `EphemeralRefName::mint(project, workweave)` (`vcs.rs:962-964`), total and
-  two-argument, called from `workweave.rs:1439`, `sync.rs:1276`, and
-  `add_remove.rs:94` `[V]`. `sync.rs:1261-1264` now carries a comment stating
+  `EphemeralRefName::mint(&FlatAddress)`, total, and fed only by
+  `WorkweaveId::flat` — the rendering of the (project, workweave) identity
+  that also names the workweave's directory. `sync.rs:1261-1264` now carries a comment stating
   that the manifest's tracking branch is the START POINT and that the NAME
   comes from `mint`, which is what the retracted "mirrors create_workweave's
   naming" claim used to obscure `[V]`. Recursion, the `detached-<12sha>`
@@ -2109,7 +2109,7 @@ not wait for this design:
     `sync.rs:1261-1264` now states the invariant directly — the manifest's
     tracking branch is the START POINT and only that, while the NAME comes
     from `EphemeralRefName::mint`, the same call `create_workweave` and `rwv
-    add` make from the same two inputs `[V]`. It formerly carried an explicit
+    add` make from the same identity `[V]`. It formerly carried an explicit
     retraction of the old claim; that sentence was removed with the rest of
     the tree's what-this-used-to-say prose, which is the house rule
     (`CLAUDE.md`) and not a regression: the invariant it was contrasting

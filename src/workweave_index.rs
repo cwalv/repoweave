@@ -597,7 +597,8 @@ pub fn lookup_raw(
 /// use std::path::Path;
 /// let project = ProjectName::new("p").unwrap();
 /// let mut registry = RefRegistry::for_project(Path::new("/ws"), &project);
-/// let name = EphemeralRefName::mint(&project, &WorkweaveName::new("ww").unwrap());
+/// let id = repoweave::manifest::WorkweaveId { project: project.clone(), name: WorkweaveName::new("ww").unwrap() };
+/// let name = EphemeralRefName::mint(&id.flat());
 /// let at = ResolvedRevisionId::from(CommitId::parse(&"a".repeat(40)).unwrap());
 /// let _ = registry.record_created(Path::new("/ws/store"), name, at);
 /// ```
@@ -1116,7 +1117,13 @@ mod tests {
     }
 
     fn ephemeral(project: &ProjectName, workweave: &str) -> EphemeralRefName {
-        EphemeralRefName::mint(project, &WorkweaveName::new(workweave).unwrap())
+        EphemeralRefName::mint(
+            &crate::manifest::WorkweaveId {
+                project: project.clone(),
+                name: WorkweaveName::new(workweave).unwrap(),
+            }
+            .flat(),
+        )
     }
 
     /// A finished write holds the claim only while it runs. Left behind, it

@@ -26,7 +26,7 @@
 //! [`acquire_origin_dir`], and everything downstream would still work.
 
 use crate::integration_runner::IntegrationContextBase;
-use crate::manifest::{Manifest, ProjectName, RepoPath, WorkweaveName};
+use crate::manifest::{Manifest, ProjectName, RepoPath, WorkweaveId, WorkweaveName};
 use crate::path_spelling::{native_relative, resolve};
 use crate::refusal::RefusalKind;
 use crate::registry::builtin_registry_names;
@@ -1856,7 +1856,16 @@ impl WorkspaceContext {
         let (workweave, workweave_unregistered) = match &self.checkout {
             Checkout::Primary { .. } => (None, false),
             Checkout::Workweave { name, project, .. } => match name.recorded() {
-                Some(name) => (Some(weave_dir_name(project, name)), false),
+                Some(name) => (
+                    Some(
+                        WorkweaveId {
+                            project: project.clone(),
+                            name: name.clone(),
+                        }
+                        .to_string(),
+                    ),
+                    false,
+                ),
                 None => (None, true),
             },
         };
@@ -1967,7 +1976,7 @@ pub enum AdvisoryKindOutput {
 // `crate::naming`, which nothing in the crate sits below. These stay
 // reachable here because every caller of a weave directory name is a caller
 // about workspace layout.
-pub use crate::naming::{flat_project_segment, weave_dir_name, workweave_name_in};
+pub use crate::naming::workweave_name_in;
 
 // ---------------------------------------------------------------------------
 // WorkweaveMarker — `.rwv-workweave` marker file

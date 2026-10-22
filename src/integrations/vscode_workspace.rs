@@ -250,6 +250,12 @@ fn read_prev_rwv_excludes(obj: &serde_json::Map<String, serde_json::Value>) -> H
     }
 }
 
+/// The `.code-workspace` file for a project, named by its one-segment
+/// rendering: `Display` on the project spells its `/` and would name a path.
+fn workspace_file_name(project: &crate::naming::FlatProjectName) -> String {
+    format!("{project}.code-workspace")
+}
+
 /// Merge the `settings.files.exclude` map for a vscode .code-workspace file.
 ///
 /// rwv owns only the *derived* exclude keys (dotfiles sentinel,
@@ -430,10 +436,7 @@ impl Integration for VscodeWorkspace {
             Ok(cfg) => cfg,
             Err(issue) => return Ok(vec![issue]),
         };
-        let filename = format!(
-            "{}.code-workspace",
-            crate::workspace::flat_project_segment(ctx.project)
-        );
+        let filename = workspace_file_name(&ctx.project.flat());
         let filepath = ctx.output_dir.join(&filename);
 
         // Parse the existing file, bailing loudly on malformed content (fix #4).
@@ -536,10 +539,7 @@ impl Integration for VscodeWorkspace {
             return Ok(vec![issue]);
         }
 
-        let filename = format!(
-            "{}.code-workspace",
-            crate::workspace::flat_project_segment(ctx.project)
-        );
+        let filename = workspace_file_name(&ctx.project.flat());
         let filepath = ctx.output_dir.join(&filename);
 
         let mut issues = Vec::new();
@@ -586,10 +586,7 @@ impl Integration for VscodeWorkspace {
             Ok(cfg) => cfg,
             Err(issue) => return Ok(vec![issue]),
         };
-        let filename = format!(
-            "{}.code-workspace",
-            crate::workspace::flat_project_segment(ctx.project)
-        );
+        let filename = workspace_file_name(&ctx.project.flat());
         let filepath = ctx.output_dir.join(&filename);
 
         // ── MISSING ────────────────────────────────────────────────────────
@@ -669,10 +666,7 @@ impl Integration for VscodeWorkspace {
     /// The project's `.code-workspace`, when it carries the `rwv.generated`
     /// marker `strip_workspace_file` keys on.
     fn owned_paths_on_disk(&self, ctx: &IntegrationContext) -> Vec<OwnedPath> {
-        let name = format!(
-            "{}.code-workspace",
-            crate::workspace::flat_project_segment(ctx.project)
-        );
+        let name = workspace_file_name(&ctx.project.flat());
         if holds_owned_region::<JsonDoc<RwvGeneratedMarker>>(&ctx.output_dir.join(&name), &[]) {
             vec![OwnedPath::MarkedRegion(name)]
         } else {
@@ -690,9 +684,8 @@ impl Integration for VscodeWorkspace {
     /// It MUST NOT appear in `generated_files()` — that would mark it
     /// gitignore-eligible and whole-deletable.
     fn managed_files(&self, ctx: &IntegrationContext) -> Vec<SurfacedFile> {
-        vec![SurfacedFile::written_at_source(format!(
-            "{}.code-workspace",
-            crate::workspace::flat_project_segment(ctx.project)
+        vec![SurfacedFile::written_at_source(workspace_file_name(
+            &ctx.project.flat(),
         ))]
     }
 }

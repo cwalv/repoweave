@@ -3047,7 +3047,12 @@ fn nested_workweave_findings(ws_root: &Path, dir: &Path) -> Vec<CheckViolation> 
             sub_kind: WorkweaveTreeIntegrityKind::NestedWorkweaveDir {
                 project: marker.project().clone(),
                 workweave_name: name.clone(),
-                expected_dir_name: crate::workspace::weave_dir_name(marker.project(), &name),
+                expected_dir_name: WorkweaveId {
+                    project: marker.project().clone(),
+                    name: name.clone(),
+                }
+                .flat()
+                .to_string(),
             },
         });
     }
@@ -3825,12 +3830,16 @@ pub fn scan_workweave_tree_integrity(
                     .flatten();
             match recorded {
                 Some(name) => {
-                    let expected_dir = crate::workspace::weave_dir_name(marker.project(), &name);
-                    if basename != expected_dir {
+                    let expected_dir = WorkweaveId {
+                        project: marker.project().clone(),
+                        name: name.clone(),
+                    }
+                    .flat();
+                    if basename != expected_dir.as_str() {
                         violations.push(CheckViolation::WorkweaveTreeIntegrity {
                             workweave_dir: dir.clone(),
                             sub_kind: WorkweaveTreeIntegrityKind::MisnamedDir {
-                                expected_dir_name: Some(expected_dir.clone()),
+                                expected_dir_name: Some(expected_dir.to_string()),
                                 detail: format!(
                                     "the marker records project `{}` and the name the registry \
                                      records for this path is `{name}`, so the records expect \
@@ -4742,14 +4751,11 @@ impl RecordedRefs {
                 .get_or_insert_with(|| crate::workweave::list_workweave_dirs(ws_root));
             let mut live_ref_names = std::collections::HashMap::new();
             for workweave in live_workweave_names(ws_root, &name, dirs) {
-                let minted = EphemeralRefName::mint(&name, &workweave);
-                live_ref_names.insert(
-                    minted.to_raw(),
-                    WorkweaveId {
-                        project: name.clone(),
-                        name: workweave,
-                    },
-                );
+                let id = WorkweaveId {
+                    project: name.clone(),
+                    name: workweave,
+                };
+                live_ref_names.insert(EphemeralRefName::mint(&id.flat()).to_raw(), id);
             }
             projects.push(RecordedProject {
                 name,
@@ -4915,7 +4921,7 @@ fn scan_workweave_repo_branches(
 ) {
     use crate::vcs::{EphemeralRefName, HeadAttachment};
 
-    let flat = EphemeralRefName::mint(&workweave.project, &workweave.name);
+    let flat = EphemeralRefName::mint(&workweave.flat());
     let expected_ref = flat.to_string();
 
     for abs in workweave_checkouts(vcs, workweave_dir, &workweave.project) {
@@ -5442,7 +5448,7 @@ fn live_minted_ref_names(ws_root: &Path) -> Vec<crate::vcs::EphemeralRefName> {
     // workweave, and treating its live ref as an orphan is the direction
     // that turns a real branch into a "leftover".
     for (id, _) in crate::workweave::list_workweave_dirs(ws_root) {
-        out.push(EphemeralRefName::mint(&id.project, &id.name));
+        out.push(EphemeralRefName::mint(&id.flat()));
     }
     // The indexes, which are the only record of a `--dir` placement outside
     // every container. Consulted only for entries whose directory
@@ -5451,7 +5457,11 @@ fn live_minted_ref_names(ws_root: &Path) -> Vec<crate::vcs::EphemeralRefName> {
         if let Ok(Some(index)) = crate::workweave_index::read(ws_root, &project) {
             for (name, path) in &index.workweaves {
                 if path.is_dir() {
-                    out.push(EphemeralRefName::mint(&project, name));
+                    let id = WorkweaveId {
+                        project: project.clone(),
+                        name: name.clone(),
+                    };
+                    out.push(EphemeralRefName::mint(&id.flat()));
                 }
             }
         }
@@ -6684,7 +6694,7 @@ pub fn fix_branch_model_migration(
             continue;
         }
 
-        let flat = EphemeralRefName::mint(&workweave.project, &workweave.name);
+        let flat = EphemeralRefName::mint(&workweave.flat());
         let mut registry = RefRegistry::for_project(ws_root, &workweave.project);
 
         for abs in workweave_checkouts(vcs, &workweave_dir, &workweave.project) {

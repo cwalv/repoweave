@@ -302,18 +302,31 @@ fn a_receipt_alone_is_not_enough_to_delete() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn an_ephemeral_name_takes_exactly_two_inputs() {
-    // Three sites derived the third component, from three different
-    // sources, one of them wrong. The disagreement is not resolved here;
-    // it is deleted.
-    assert_fails_with(
-        "E0061",
-        "no third component",
+fn an_ephemeral_name_is_minted_from_an_identity_s_flat_address() {
+    // Control for the probes below: the one way in compiles.
+    let (compiled, stderr) = compile(
         r#"
-        use repoweave::manifest::{ProjectName, WorkweaveName};
+        use repoweave::manifest::{ProjectName, WorkweaveId, WorkweaveName};
         use repoweave::vcs::EphemeralRefName;
-        pub fn mint(p: &ProjectName, w: &WorkweaveName) -> EphemeralRefName {
-            EphemeralRefName::mint(p, w, "main")
+        pub fn mint(project: ProjectName, name: WorkweaveName) -> EphemeralRefName {
+            EphemeralRefName::mint(&WorkweaveId { project, name }.flat())
+        }
+        "#,
+    );
+    assert!(compiled, "control snippet must compile; got:\n{stderr}");
+}
+
+#[test]
+fn an_ephemeral_name_cannot_be_minted_from_text() {
+    // Three sites once derived a third component from three different
+    // sources. A name minted from text is that shape again.
+    assert_fails_with(
+        "E0308",
+        "the ephemeral name is the identity's flat address, not a string",
+        r#"
+        use repoweave::vcs::EphemeralRefName;
+        pub fn mint(flat: &str) -> EphemeralRefName {
+            EphemeralRefName::mint(flat)
         }
         "#,
     );
@@ -325,10 +338,33 @@ fn an_ephemeral_name_cannot_be_derived_from_an_observed_attachment() {
         "E0308",
         "a minted name never comes from what a checkout happens to be on",
         r#"
-        use repoweave::manifest::ProjectName;
         use repoweave::vcs::{AttachedRef, EphemeralRefName};
-        pub fn mint(p: &ProjectName, a: &AttachedRef) -> EphemeralRefName {
-            EphemeralRefName::mint(p, a)
+        pub fn mint(a: &AttachedRef) -> EphemeralRefName {
+            EphemeralRefName::mint(a)
+        }
+        "#,
+    );
+}
+
+#[test]
+fn a_flat_address_cannot_be_built_from_text() {
+    assert_fails_with(
+        "E0423",
+        "WorkweaveId::flat is the only producer of a FlatAddress",
+        r#"
+        use repoweave::naming::FlatAddress;
+        pub fn forge(s: String) -> FlatAddress {
+            FlatAddress(s)
+        }
+        "#,
+    );
+    assert_fails_with(
+        "E0277",
+        "a FlatAddress has no From<String>",
+        r#"
+        use repoweave::naming::FlatAddress;
+        pub fn forge(s: String) -> FlatAddress {
+            s.into()
         }
         "#,
     );

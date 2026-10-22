@@ -15,9 +15,9 @@
 //! `-w` address, and the `.code-workspace` filename.
 
 use assert_cmd::Command;
-use repoweave::manifest::{ProjectName, WorkweaveName};
+use repoweave::manifest::{ProjectName, WorkweaveId, WorkweaveName};
 use repoweave::naming::resolve_flat_address;
-use repoweave::workspace::{weave_dir_name, workweave_name_in};
+use repoweave::workspace::workweave_name_in;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -25,6 +25,17 @@ mod common;
 
 fn rwv() -> Command {
     common::rwv()
+}
+
+fn id(project: &ProjectName, workweave: &WorkweaveName) -> WorkweaveId {
+    WorkweaveId {
+        project: project.clone(),
+        name: workweave.clone(),
+    }
+}
+
+fn weave_dir_name(project: &ProjectName, workweave: &WorkweaveName) -> String {
+    id(project, workweave).flat().to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -144,13 +155,17 @@ fn the_rendered_directory_name_is_injective_over_the_namespace() {
 fn every_rendered_name_round_trips_through_the_seams_that_recover_it() {
     let projects = valid_projects();
     let workweaves = valid_workweaves();
-    let recorded: Vec<(ProjectName, WorkweaveName)> = projects
+    let recorded: Vec<WorkweaveId> = projects
         .iter()
-        .flat_map(|p| workweaves.iter().map(move |w| (p.clone(), w.clone())))
+        .flat_map(|p| workweaves.iter().map(move |w| id(p, w)))
         .collect();
 
     let mut checked = 0usize;
-    for (project, workweave) in &recorded {
+    for WorkweaveId {
+        project,
+        name: workweave,
+    } in &recorded
+    {
         let rendered = weave_dir_name(project, workweave);
         assert_eq!(
             workweave_name_in(project, &rendered).as_ref(),
@@ -162,12 +177,16 @@ fn every_rendered_name_round_trips_through_the_seams_that_recover_it() {
     assert!(checked > 400, "only {checked} round-trips exercised");
 
     let mut resolved = 0usize;
-    for (project, workweave) in recorded.iter().step_by(37) {
+    for WorkweaveId {
+        project,
+        name: workweave,
+    } in recorded.iter().step_by(37)
+    {
         let rendered = weave_dir_name(project, workweave);
         let matches = resolve_flat_address(&rendered, &recorded);
         assert_eq!(
             matches,
-            vec![(project.clone(), workweave.clone())],
+            vec![id(project, workweave)],
             "`{rendered}` must resolve to the one pair that rendered it"
         );
         resolved += 1;
@@ -177,7 +196,7 @@ fn every_rendered_name_round_trips_through_the_seams_that_recover_it() {
         recorded
             .iter()
             .step_by(37)
-            .any(|(p, _)| p.as_str().contains('/')),
+            .any(|recorded| recorded.project.as_str().contains('/')),
         "the sample must reach a multi-segment project, or the encoding is \
          never resolved through"
     );
@@ -217,10 +236,10 @@ fn the_unmintable_plus_and_the_resolution_hold_together() {
 
     let nested = ProjectName::new("chatly/web-app").unwrap();
     let wtest = WorkweaveName::new("wtest").unwrap();
-    let recorded = vec![(nested.clone(), wtest.clone())];
+    let recorded = vec![id(&nested, &wtest)];
     assert_eq!(
         resolve_flat_address("chatly+web-app--wtest", &recorded),
-        vec![(nested, wtest)],
+        vec![id(&nested, &wtest)],
         "`+` in the project half must resolve as the segment separator"
     );
 }

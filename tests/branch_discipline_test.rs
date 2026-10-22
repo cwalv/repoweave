@@ -33,7 +33,7 @@
 //! like the tree-integrity tests).
 
 use repoweave::git::git_vcs;
-use repoweave::manifest::{ProjectName, WorkweaveName};
+use repoweave::manifest::{ProjectName, WorkweaveId, WorkweaveName};
 use repoweave::vcs::{EphemeralRefName, LegacyEphemeralRefName, RawRefName};
 use repoweave::workweave_index::RefRegistry;
 use std::path::{Path, PathBuf};
@@ -197,7 +197,13 @@ fn record_receipt(primary: &Path, project: &str, workweave: &str, store: &Path) 
 
     match workweave.split_once('/') {
         None => {
-            let name = EphemeralRefName::mint(&project, &WorkweaveName::new(workweave).unwrap());
+            let name = EphemeralRefName::mint(
+                &WorkweaveId {
+                    project: project.clone(),
+                    name: WorkweaveName::new(workweave).unwrap(),
+                }
+                .flat(),
+            );
             let tip = git_vcs()
                 .resolve_local_branch_tip(store, &name.to_raw())
                 .expect("store is readable")
@@ -209,8 +215,13 @@ fn record_receipt(primary: &Path, project: &str, workweave: &str, store: &Path) 
                 .expect("receipt should record");
         }
         Some((live_workweave, _remainder)) => {
-            let flat =
-                EphemeralRefName::mint(&project, &WorkweaveName::new(live_workweave).unwrap());
+            let flat = EphemeralRefName::mint(
+                &WorkweaveId {
+                    project: project.clone(),
+                    name: WorkweaveName::new(live_workweave).unwrap(),
+                }
+                .flat(),
+            );
             let observed = RawRefName::new(format!("{}--{workweave}", project.as_str()));
             let legacy = LegacyEphemeralRefName::claim(&flat, &observed)
                 .expect("fixture: `workweave` must be `<live>/<remainder>` shaped");
@@ -233,7 +244,13 @@ fn record_dangling_receipt(primary: &Path, project: &str, workweave: &str, store
     make_project(primary, project);
     let project = ProjectName::new(project).unwrap();
     let mut registry = RefRegistry::for_project(primary, &project);
-    let name = EphemeralRefName::mint(&project, &WorkweaveName::new(workweave).unwrap());
+    let name = EphemeralRefName::mint(
+        &WorkweaveId {
+            project: project.clone(),
+            name: WorkweaveName::new(workweave).unwrap(),
+        }
+        .flat(),
+    );
     // Any resolvable revision works as the recorded tip: the receipt names a
     // ref that is not there, so nothing ever compares against it.
     let head = git_vcs().head_revision(store).expect("store has a HEAD");
@@ -2078,7 +2095,13 @@ fn migration_replays_a_crash_between_the_receipt_and_the_rename() {
         registry
             .record_created(
                 &canonical,
-                EphemeralRefName::mint(&project, &WorkweaveName::new("feat-a").unwrap()),
+                EphemeralRefName::mint(
+                    &WorkweaveId {
+                        project: project.clone(),
+                        name: WorkweaveName::new("feat-a").unwrap(),
+                    }
+                    .flat(),
+                ),
                 at,
             )
             .expect("receipt records");

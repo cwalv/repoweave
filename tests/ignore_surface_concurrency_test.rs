@@ -30,7 +30,7 @@
 
 mod common;
 
-use repoweave::manifest::{ProjectName, WorkweaveName};
+use repoweave::manifest::{ProjectName, WorkweaveId, WorkweaveName};
 use repoweave::owned_state::stamp_owned_digest;
 use repoweave::vcs::{EphemeralRefName, ResolvedRevisionId};
 use repoweave::workweave_index::RefRegistry;
@@ -77,7 +77,13 @@ fn hygiene_appends_extend_the_surface_in_place_and_keep_a_peers_line() {
     registry
         .record_created(
             &store,
-            EphemeralRefName::mint(&project, &WorkweaveName::new("seat").expect("name")),
+            EphemeralRefName::mint(
+                &WorkweaveId {
+                    project: project.clone(),
+                    name: WorkweaveName::new("seat").expect("name"),
+                }
+                .flat(),
+            ),
             ResolvedRevisionId::from_canonical(
                 repoweave::vcs::CommitId::parse(&"a".repeat(40)).unwrap(),
                 None,

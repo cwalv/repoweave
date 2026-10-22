@@ -1,11 +1,11 @@
 //! Pins the prohibition this test enforces: `+`, the character a project
 //! name's `/` is written as when the name is rendered as one path segment, is
 //! spelled only in `naming.rs`. Everywhere else routes through
-//! `encode_segment`, `decode_segment`, `flat_project_segment`, or the
-//! validator that rejects a name already containing one.
+//! `ProjectName::flat`, `decode_segment`, or the validator that rejects a
+//! name already containing one.
 //!
 //! **The two directions no longer have the same standing, and the needles do
-//! not say so.** `flat_project_segment` has live production callers; nothing
+//! not say so.** `ProjectName::flat` has live production callers; nothing
 //! outside `naming.rs` reads a `+` back as a `/`, because a caller recovering
 //! an identity from a rendering resolves it against what is recorded rather
 //! than decoding it. `decode_segment` survives as the documented inverse and
@@ -95,7 +95,7 @@ fn no_module_outside_the_owner_spells_the_segment_escape() {
     assert!(
         hits.is_empty(),
         "the `+` segment escape must be spelled only in src/{OWNER} — encode \
-         via encode_segment or flat_project_segment, decode via decode_segment, \
+         via ProjectName::flat, decode via decode_segment, \
          and test for it via spells_segment_escape. A \
          second site writing or reading the escape can disagree with the \
          validators about which names are representable, and the flat address \

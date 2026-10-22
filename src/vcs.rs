@@ -7,7 +7,7 @@ use crate::cli::consent::{
     AdoptDetachedConsent, DetachConsent, DiscardLocalCommitsConsent, DiscardUnmergedConsent,
     ForcePushConsent, ReattachConsent,
 };
-use crate::manifest::{ProjectName, WorkweaveName};
+use crate::naming::FlatAddress;
 use crate::op_state::SavepointKey;
 use crate::registry::CloneUrl;
 use crate::wire_token::{parse_wire_token, wire_token};
@@ -1166,30 +1166,32 @@ impl fmt::Display for LocalRefName {
 
 /// Notion (2a): the ephemeral branch name a create **requests**.
 ///
-/// [`EphemeralRefName::mint`] is total and takes exactly two inputs — a
-/// project and a workweave. There is no third component: the three
-/// derivation sites in the tree disagreed about what it should be, no
-/// consumer read it, and it was deleted rather than a winner picked.
-/// Nothing observed can be fed in, so a name can never be derived from the
-/// branch a checkout happens to be on.
+/// [`EphemeralRefName::mint`] is total and takes one input, the workweave's
+/// [`FlatAddress`]: the rendering of its (project, workweave) identity. There
+/// is no third component: the three derivation sites in the tree disagreed
+/// about what it should be, no consumer read it, and it was deleted rather
+/// than a winner picked. Nothing observed can be fed in — a `FlatAddress`
+/// has one producer, [`crate::naming::WorkweaveId::flat`] — so a name can never be derived
+/// from the branch a checkout happens to be on.
 ///
 /// Requesting a name is not owning one. Only a persisted receipt makes a
 /// ref rwv's to destroy ([`OwnedRef`], R2), which is why this type has no
 /// path to one that does not go through the registry.
 ///
-/// `mint` itself performs no validation and cannot fail: [`ProjectName::new`]
-/// and [`WorkweaveName::new`] already reject anything that would make two
+/// `mint` itself performs no validation and cannot fail:
+/// [`crate::manifest::ProjectName::new`] and
+/// [`crate::manifest::WorkweaveName::new`] already reject anything that would make two
 /// distinct (project, workweave) pairs mint the same name, or that would
 /// make the result read as [`LegacyEphemeralRefName`]'s segmented shape.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct EphemeralRefName(String);
 
 impl EphemeralRefName {
-    /// Mint the ephemeral name for `project`'s `workweave`.
+    /// Mint the ephemeral name for the workweave `flat` renders.
     ///
-    /// Total: no third input, no failure, no read of the current ref.
-    pub fn mint(project: &ProjectName, workweave: &WorkweaveName) -> Self {
-        Self(crate::naming::weave_dir_name(project, workweave))
+    /// Total: no other input, no failure, no read of the current ref.
+    pub fn mint(flat: &FlatAddress) -> Self {
+        Self(flat.as_str().to_owned())
     }
 
     /// The requested name at the parse boundary, for the receipt store to

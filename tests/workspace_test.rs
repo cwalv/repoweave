@@ -1,14 +1,22 @@
-use repoweave::manifest::{ProjectName, WorkweaveName};
+use repoweave::manifest::{ProjectName, WorkweaveId, WorkweaveName};
 use repoweave::workspace::{
-    observe_root, read_active_project, weave_dir_name, workweave_name_in, PrimaryIdentity,
-    WeaveRootIdentity,
+    observe_root, read_active_project, workweave_name_in, PrimaryIdentity, WeaveRootIdentity,
 };
 
 mod common;
 
 // ============================================================================
-// weave_dir_name — generates "{primary}--{workweave}" directory names (legacy convention)
+// WorkweaveId::flat — the "{project}--{workweave}" directory name
 // ============================================================================
+
+fn weave_dir_name(project: &ProjectName, workweave: &WorkweaveName) -> String {
+    WorkweaveId {
+        project: project.clone(),
+        name: workweave.clone(),
+    }
+    .flat()
+    .to_string()
+}
 
 #[test]
 fn weave_dir_name_simple() {
@@ -109,7 +117,7 @@ fn a_name_half_that_spells_the_separator_is_rejected() {
 }
 
 // ============================================================================
-// Round-trip: weave_dir_name -> workweave_name_in
+// Round-trip: WorkweaveId::flat -> workweave_name_in
 // ============================================================================
 
 #[test]

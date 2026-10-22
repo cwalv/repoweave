@@ -1,7 +1,7 @@
 //! Pins the prohibition this test enforces: `--` is not spelled as
 //! the `<project>--<name>` workweave separator anywhere outside
-//! `naming.rs`. Everywhere else routes through `join_flat`,
-//! `weave_dir_name`, `split_at_weave_separator`, `workweave_name_in`, or
+//! `naming.rs`. Everywhere else routes through `WorkweaveId::flat`,
+//! `split_at_weave_separator`, `workweave_name_in`, or
 //! `resolve_flat_address`.
 //!
 //! The `+` half of the same grammar is pinned by
@@ -100,7 +100,7 @@ fn no_module_outside_the_owner_spells_the_weave_separator() {
     assert!(
         format_hits.is_empty() && split_hits.is_empty(),
         "the `<project>--<name>` workweave separator must be spelled only \
-         in src/{OWNER} — mint via join_flat or weave_dir_name, split via \
+         in src/{OWNER} — mint via WorkweaveId::flat, split via \
          split_at_weave_separator, and read an identity back via \
          workweave_name_in or resolve_flat_address. \
          format-join hits: {format_hits:#?}, split hits: {split_hits:#?}"

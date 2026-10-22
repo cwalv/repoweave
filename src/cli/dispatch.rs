@@ -75,10 +75,12 @@ fn resolve_cwd_override(raw: &str) -> anyhow::Result<PathBuf> {
 /// missing its encoding.
 fn flat_spelling_of(raw: &str) -> Option<String> {
     let (project, name) = crate::naming::split_at_weave_separator(raw)?;
-    let project = ProjectName::new(project).ok()?;
-    let name = WorkweaveName::new(name).ok()?;
-    let flat = crate::workspace::weave_dir_name(&project, &name);
-    crate::naming::has_flat_address_shape(&flat).then_some(flat)
+    let id = crate::manifest::WorkweaveId {
+        project: ProjectName::new(project).ok()?,
+        name: WorkweaveName::new(name).ok()?,
+    };
+    let flat = id.flat();
+    crate::naming::has_flat_address_shape(flat.as_str()).then(|| flat.to_string())
 }
 
 /// Resolve the workweave directory for a `-w <project>--<name>` argument.
@@ -186,13 +188,13 @@ fn resolve_workweave_flag(
     let recorded = crate::workweave::registered_workweaves(&primary_root);
     let matched = crate::naming::resolve_flat_address(raw, &recorded);
 
-    let (project, name) = match matched.as_slice() {
-        [pair] => pair,
+    let crate::manifest::WorkweaveId { project, name } = match matched.as_slice() {
+        [id] => id,
         [] => return Err(no_such_workweave(raw, &recorded)),
         ambiguous => {
             let spelled = ambiguous
                 .iter()
-                .map(|(project, name)| format!("  project `{}`, workweave `{}`", project, name))
+                .map(|id| format!("  project `{}`, workweave `{}`", id.project, id.name))
                 .collect::<Vec<_>>()
                 .join("\n");
             crate::refuse!(
@@ -235,7 +237,7 @@ fn resolve_workweave_flag(
 /// is what makes a mistyped project half legible — it is listed beside the
 /// spellings that would have worked, where reading the project out of the
 /// string could only report that the typo was not a valid project name.
-fn no_such_workweave(raw: &str, recorded: &[(ProjectName, WorkweaveName)]) -> anyhow::Error {
+fn no_such_workweave(raw: &str, recorded: &[crate::manifest::WorkweaveId]) -> anyhow::Error {
     if recorded.is_empty() {
         return crate::refusal::refusal(
             RefusalKind::NoSuchWorkweave,
@@ -248,7 +250,7 @@ fn no_such_workweave(raw: &str, recorded: &[(ProjectName, WorkweaveName)]) -> an
     }
     let known = recorded
         .iter()
-        .map(|(project, name)| crate::workspace::weave_dir_name(project, name))
+        .map(|id| id.flat().to_string())
         .collect::<Vec<_>>()
         .join("\n  ");
     crate::refusal::refusal(

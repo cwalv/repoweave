@@ -23,7 +23,7 @@
 //! `tests/branch_model_compile_fail_test.rs`.
 
 use repoweave::git::git_vcs;
-use repoweave::manifest::{ProjectName, WorkweaveName};
+use repoweave::manifest::{ProjectName, WorkweaveId, WorkweaveName};
 use repoweave::op_state::SavepointKey;
 use repoweave::vcs::{
     EphemeralRefName, HeadAttachment, MidOperation, RawRefName, RefNameError, ResolvedRevisionId,
@@ -572,10 +572,13 @@ fn tracking_ref_projections_are_named_not_implicit() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn ephemeral_names_are_flat_and_derived_from_exactly_two_inputs() {
+fn ephemeral_names_are_flat_and_derived_from_the_identity_alone() {
     let name = EphemeralRefName::mint(
-        &ProjectName::new("foundations").unwrap(),
-        &WorkweaveName::new("fix-42").unwrap(),
+        &WorkweaveId {
+            project: ProjectName::new("foundations").unwrap(),
+            name: WorkweaveName::new("fix-42").unwrap(),
+        }
+        .flat(),
     );
     assert_eq!(name.to_string(), "foundations--fix-42");
     assert_eq!(name.to_raw().as_str(), "foundations--fix-42");
@@ -587,16 +590,17 @@ fn ephemeral_names_are_flat_and_derived_from_exactly_two_inputs() {
 }
 
 #[test]
-fn mint_and_weave_dir_name_agree() {
-    // The workweave directory and its ephemeral branch are named by the
-    // same convention, minted from two independent call sites
-    // (`EphemeralRefName::mint`, `workspace::weave_dir_name`). Pinned so a
-    // future edit to either cannot reintroduce two spellings of one name.
-    let project = ProjectName::new("foundations").unwrap();
-    let workweave = WorkweaveName::new("fix-42").unwrap();
+fn the_ephemeral_name_spells_the_directory_name() {
+    // The workweave directory and its ephemeral branch are both named by the
+    // identity's flat address. Pinned so `mint` cannot start transforming it
+    // and give one workweave two spellings.
+    let id = WorkweaveId {
+        project: ProjectName::new("chatly/web-app").unwrap(),
+        name: WorkweaveName::new("fix-42").unwrap(),
+    };
     assert_eq!(
-        EphemeralRefName::mint(&project, &workweave).to_string(),
-        repoweave::workspace::weave_dir_name(&project, &workweave),
+        EphemeralRefName::mint(&id.flat()).to_string(),
+        id.flat().as_str()
     );
 }
 

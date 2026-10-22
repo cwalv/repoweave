@@ -8464,7 +8464,13 @@ mod tests {
         registry
             .record_created(
                 &store,
-                EphemeralRefName::mint(&project, &WorkweaveName::new("hotfix").unwrap()),
+                EphemeralRefName::mint(
+                    &crate::manifest::WorkweaveId {
+                        project: project.clone(),
+                        name: WorkweaveName::new("hotfix").unwrap(),
+                    }
+                    .flat(),
+                ),
                 at,
             )
             .unwrap();
@@ -8631,7 +8637,13 @@ mod tests {
         registry
             .record_created(
                 &store,
-                EphemeralRefName::mint(&project, &WorkweaveName::new("feat").unwrap()),
+                EphemeralRefName::mint(
+                    &crate::manifest::WorkweaveId {
+                        project: project.clone(),
+                        name: WorkweaveName::new("feat").unwrap(),
+                    }
+                    .flat(),
+                ),
                 at,
             )
             .unwrap();
@@ -8694,7 +8706,13 @@ mod tests {
         crate::workweave_index::RefRegistry::for_project(ctx.primary_path(), &project)
             .record_created(
                 &store,
-                EphemeralRefName::mint(&project, &WorkweaveName::new("feat").unwrap()),
+                EphemeralRefName::mint(
+                    &crate::manifest::WorkweaveId {
+                        project: project.clone(),
+                        name: WorkweaveName::new("feat").unwrap(),
+                    }
+                    .flat(),
+                ),
                 at,
             )
             .unwrap();

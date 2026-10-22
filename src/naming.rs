@@ -29,7 +29,7 @@
 //!
 //! # Nothing reads a flat name back into an identity
 //!
-//! There is no inverse of [`weave_dir_name`] taking a string alone, and the
+//! There is no inverse of [`WorkweaveId::flat`] taking a string alone, and the
 //! absence is the design. A caller holding the project — a `.rwv-workweave`
 //! marker, a registry entry — recovers the name half exactly with
 //! [`workweave_name_in`], because the split point is that project's own
@@ -56,17 +56,15 @@ pub fn split_at_weave_separator(s: &str) -> Option<(&str, &str)> {
     s.split_once("--")
 }
 
-/// Join an already-encoded project segment to a workweave name.
-pub fn join_flat(project_segment: &str, workweave: &str) -> String {
+fn join_flat(project_segment: &str, workweave: &str) -> String {
     format!("{project_segment}--{workweave}")
 }
 
-/// Write `/` as `+`, rendering a possibly-nested name as one segment.
-pub fn encode_segment(s: &str) -> String {
+fn encode_segment(s: &str) -> String {
     s.replace('/', "+")
 }
 
-/// The inverse of [`encode_segment`].
+/// The inverse of the `/`-to-`+` rendering [`ProjectName::flat`] writes.
 ///
 /// No production caller reads a rendering back this way — one that holds the
 /// project strips it, and one that holds only a typed address resolves it. Its
@@ -78,7 +76,7 @@ pub fn decode_segment(s: &str) -> String {
     s.replace('+', "/")
 }
 
-/// Would `s` be ambiguous against the separator [`join_flat`] writes?
+/// Would `s` be ambiguous against the separator a flat address is joined with?
 ///
 /// A leading or trailing `-` counts: joined to a neighbor it produces a
 /// third `-` run that splits at a different offset than the one intended.
@@ -89,7 +87,7 @@ pub fn collides_with_separator(s: &str) -> bool {
     split_at_weave_separator(s).is_some() || s.starts_with('-') || s.ends_with('-')
 }
 
-/// Does `s` spell the character [`encode_segment`] writes for `/`?
+/// Does `s` spell the character a flat rendering writes for `/`?
 pub fn spells_segment_escape(s: &str) -> bool {
     s.contains('+')
 }
@@ -228,10 +226,10 @@ pub struct ProjectName(String);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProjectNameError {
     /// Contains `--`, or starts/ends with `-`: any of these could be
-    /// confused with the `--` [`join_flat`] joins project to workweave with,
+    /// confused with the `--` [`WorkweaveId::flat`] joins project to workweave with,
     /// letting two distinct (project, workweave) pairs render the same name.
     AmbiguousDelimiter(String),
-    /// Contains `+`, which [`encode_segment`] writes in place of `/` when it
+    /// Contains `+`, which [`ProjectName::flat`] writes in place of `/` when it
     /// renders this name as one path segment. A `+` in the name itself would
     /// decode back as a segment boundary the name never had, so two distinct
     /// projects could render the same segment.
@@ -282,6 +280,16 @@ impl ProjectName {
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// This name as one path segment, `/` written as `+`.
+    ///
+    /// A project name may be `/`-segmented, and the projects tree nests to
+    /// match. A `.code-workspace` filename or the project half of a flat
+    /// address needs one segment instead; `Display` renders the `/` through
+    /// and makes each of those a path.
+    pub fn flat(&self) -> FlatProjectName {
+        FlatProjectName(encode_segment(&self.0))
     }
 }
 
@@ -423,9 +431,17 @@ pub struct WorkweaveId {
     pub name: WorkweaveName,
 }
 
+impl WorkweaveId {
+    /// This identity as one path segment: a workweave directory's name, the
+    /// `-w` address, an ephemeral ref's name.
+    pub fn flat(&self) -> FlatAddress {
+        FlatAddress(join_flat(self.project.flat().as_str(), self.name.as_str()))
+    }
+}
+
 impl fmt::Display for WorkweaveId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&weave_dir_name(&self.project, &self.name))
+        f.write_str(self.flat().as_str())
     }
 }
 
@@ -461,26 +477,45 @@ impl schemars::JsonSchema for WorkweaveId {
 // The flat address, typed
 // ---------------------------------------------------------------------------
 
-/// Render a project name as one path segment, writing `/` as `+`.
-///
-/// A project name may be `/`-segmented, and the projects tree nests to match.
-/// Everything downstream of this function needs one segment instead: a
-/// workweave directory name, the `-w` address, a ref component, a
-/// `.code-workspace` filename. Rendering the `/` through unchanged makes each
-/// of those a path — a nested directory, an address `-w` refuses, a ref
-/// directory git will not also let be a ref file.
-pub fn flat_project_segment(project: &ProjectName) -> String {
-    encode_segment(project.as_str())
+/// A [`ProjectName`] as one path segment. [`ProjectName::flat`] is the only
+/// producer.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FlatProjectName(String);
+
+impl FlatProjectName {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
-/// Build a workweave directory name using the `{project}--{name}` convention,
-/// with the project half rendered as one segment.
-///
-/// Workweaves are keyed by the project they're created for so that the directory
-/// layout makes the project explicit and `<project>--<name>` is stable across
-/// fork sources.
-pub fn weave_dir_name(project: &ProjectName, workweave_name: &WorkweaveName) -> String {
-    join_flat(&flat_project_segment(project), workweave_name.as_str())
+impl fmt::Display for FlatProjectName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// A [`WorkweaveId`] as one path segment, `<project>--<name>` with the project
+/// flat. [`WorkweaveId::flat`] is the only producer, so a consumer that takes
+/// one cannot be handed a project's own `/`-spelled name.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FlatAddress(String);
+
+impl FlatAddress {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for FlatAddress {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl AsRef<std::path::Path> for FlatAddress {
+    fn as_ref(&self) -> &std::path::Path {
+        std::path::Path::new(&self.0)
+    }
 }
 
 /// The workweave name half of `dir_name`, for a caller that already knows
@@ -520,28 +555,25 @@ pub fn weave_dir_name(project: &ProjectName, workweave_name: &WorkweaveName) -> 
 /// }
 /// ```
 pub fn workweave_name_in(project: &ProjectName, dir_name: &str) -> Option<WorkweaveName> {
-    let prefix = join_flat(&flat_project_segment(project), "");
+    let prefix = join_flat(project.flat().as_str(), "");
     WorkweaveName::new(dir_name.strip_prefix(&prefix)?).ok()
 }
 
-/// Every recorded `(project, workweave)` pair that renders `address`.
+/// Every recorded identity that renders `address`.
 ///
 /// This is how a `-w` address becomes an identity: rwv renders what it has
 /// recorded and keeps the pairs that match, so an address nothing recorded
 /// resolves to nothing instead of minting a project name out of a string an
 /// operator typed.
 ///
-/// More than one match is a rendering collision — two recorded pairs spelled
+/// More than one match is a rendering collision — two recorded identities spelled
 /// alike. [`ProjectName::new`] and [`WorkweaveName::new`] make that unreachable
 /// today, which is why the caller reports it rather than choosing: picking one
 /// would be picking which of two live workweaves an operator meant.
-pub fn resolve_flat_address(
-    address: &str,
-    recorded: &[(ProjectName, WorkweaveName)],
-) -> Vec<(ProjectName, WorkweaveName)> {
+pub fn resolve_flat_address(address: &str, recorded: &[WorkweaveId]) -> Vec<WorkweaveId> {
     recorded
         .iter()
-        .filter(|(project, name)| weave_dir_name(project, name) == address)
+        .filter(|id| id.flat().as_str() == address)
         .cloned()
         .collect()
 }
@@ -644,6 +676,10 @@ mod tests {
         WorkweaveName::new(s).expect("fixture workweave name must validate")
     }
 
+    fn id(project: ProjectName, name: WorkweaveName) -> WorkweaveId {
+        WorkweaveId { project, name }
+    }
+
     #[test]
     fn the_name_half_is_taken_at_the_projects_own_length_not_the_first_separator() {
         let nested = project("chatly/web-app");
@@ -671,12 +707,12 @@ mod tests {
     #[test]
     fn an_address_resolves_to_the_recorded_pair_that_renders_it() {
         let recorded = vec![
-            (project("chatly/web-app"), workweave("wtest")),
-            (project("chatly"), workweave("wtest")),
+            id(project("chatly/web-app"), workweave("wtest")),
+            id(project("chatly"), workweave("wtest")),
         ];
         assert_eq!(
             resolve_flat_address("chatly+web-app--wtest", &recorded),
-            vec![(project("chatly/web-app"), workweave("wtest"))]
+            vec![id(project("chatly/web-app"), workweave("wtest"))]
         );
         assert!(resolve_flat_address("chatly+web-app--other", &recorded).is_empty());
         assert!(resolve_flat_address("no-separator", &recorded).is_empty());
@@ -694,10 +730,10 @@ mod tests {
     fn two_pairs_that_render_alike_both_come_back() {
         assert!(ProjectName::new("a+b").is_err());
         let recorded = vec![
-            (project("a/b"), workweave("seat")),
-            (ProjectName("a+b".to_owned()), workweave("seat")),
+            id(project("a/b"), workweave("seat")),
+            id(ProjectName("a+b".to_owned()), workweave("seat")),
         ];
-        assert_eq!(weave_dir_name(&recorded[0].0, &recorded[0].1), "a+b--seat");
+        assert_eq!(recorded[0].flat().as_str(), "a+b--seat");
         assert_eq!(resolve_flat_address("a+b--seat", &recorded).len(), 2);
     }
 

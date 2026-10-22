@@ -943,7 +943,13 @@ pub fn run_remove(
             name, dir, project, ..
         } if delete => Some((
             project,
-            EphemeralRefName::mint(project, name.require(dir, project)?),
+            EphemeralRefName::mint(
+                &crate::manifest::WorkweaveId {
+                    project: project.clone(),
+                    name: name.require(dir, project)?.clone(),
+                }
+                .flat(),
+            ),
         )),
         _ => None,
     };

@@ -76,7 +76,13 @@ fn receipt_child() {
 
     let project = ProjectName::new(PROJECT).expect("project name");
     let mut registry = RefRegistry::for_project(Path::new(&root), &project);
-    let minted = EphemeralRefName::mint(&project, &WorkweaveName::new(&name).expect("ww name"));
+    let minted = EphemeralRefName::mint(
+        &repoweave::manifest::WorkweaveId {
+            project: project.clone(),
+            name: WorkweaveName::new(&name).expect("ww name"),
+        }
+        .flat(),
+    );
     let at = ResolvedRevisionId::from_canonical(
         repoweave::vcs::CommitId::parse(&"a".repeat(40)).unwrap(),
         None,
