@@ -52,7 +52,11 @@ fn workflow_files() -> Vec<String> {
 
 fn keys(node: &YamlOwned) -> BTreeSet<String> {
     node.as_mapping()
-        .map(|m| m.keys().filter_map(|k| k.as_str().map(str::to_owned)).collect())
+        .map(|m| {
+            m.keys()
+                .filter_map(|k| k.as_str().map(str::to_owned))
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -91,7 +95,11 @@ fn needs(job: &YamlOwned) -> Vec<String> {
         Some(n) if n.as_str().is_some() => vec![n.as_str().unwrap().to_owned()],
         Some(n) => n
             .as_sequence()
-            .map(|s| s.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
+            .map(|s| {
+                s.iter()
+                    .filter_map(|v| v.as_str().map(str::to_owned))
+                    .collect()
+            })
             .unwrap_or_default(),
         None => Vec::new(),
     }
@@ -164,14 +172,24 @@ fn event(
 #[test]
 fn the_build_runs_for_a_successful_release_tag_push_or_a_dispatch_and_for_no_other_run() {
     let pages = load(PAGES);
-    let condition = str_at(job(&pages, "build"), &["if"])
-        .expect("pages.yml's build job carries an `if:`; without one every completed Release run deploys");
+    let condition = str_at(job(&pages, "build"), &["if"]).expect(
+        "pages.yml's build job carries an `if:`; without one every completed Release run deploys",
+    );
 
     let release = |conclusion, trigger, head_branch| {
-        event("workflow_run", Some(conclusion), Some(trigger), Some(head_branch))
+        event(
+            "workflow_run",
+            Some(conclusion),
+            Some(trigger),
+            Some(head_branch),
+        )
     };
     let cases: &[(&str, BTreeMap<String, String>, bool)] = &[
-        ("a dispatch", event("workflow_dispatch", None, None, None), true),
+        (
+            "a dispatch",
+            event("workflow_dispatch", None, None, None),
+            true,
+        ),
         (
             "a release tag push that succeeded",
             release("success", "push", "v0.25.0"),
@@ -207,15 +225,19 @@ fn the_build_runs_for_a_successful_release_tag_push_or_a_dispatch_and_for_no_oth
             release("success", "push", "vendor-bump"),
             false,
         ),
+        (
+            "a pushed ref with a dot that does not start with v",
+            release("success", "push", "release-1.2"),
+            false,
+        ),
     ];
 
     let wrong: Vec<String> = cases
         .iter()
         .filter_map(|(label, context, expected)| {
             let ran = truthy(&evaluate(condition, context));
-            (ran != *expected).then(|| {
-                format!("{label}: build {}", if ran { "runs" } else { "is skipped" })
-            })
+            (ran != *expected)
+                .then(|| format!("{label}: build {}", if ran { "runs" } else { "is skipped" }))
         })
         .collect();
     assert!(
@@ -268,9 +290,7 @@ fn what_is_deployed_is_the_assemblers_output() {
 
     let uploads: Vec<&str> = build
         .iter()
-        .filter(|s| {
-            str_at(s, &["uses"]).map(action_name) == Some("actions/upload-pages-artifact")
-        })
+        .filter(|s| str_at(s, &["uses"]).map(action_name) == Some("actions/upload-pages-artifact"))
         .map(|s| str_at(s, &["with", "path"]).expect("upload-pages-artifact names a path"))
         .collect();
     assert_eq!(
@@ -387,7 +407,11 @@ fn tokenize(expression: &str) -> Vec<Token> {
             let op = ["==", "!=", "&&", "||"]
                 .into_iter()
                 .find(|op| *op == two)
-                .or_else(|| ["(", ")", ",", "!"].into_iter().find(|op| op.starts_with(c)))
+                .or_else(|| {
+                    ["(", ")", ",", "!"]
+                        .into_iter()
+                        .find(|op| op.starts_with(c))
+                })
                 .unwrap_or_else(|| {
                     panic!("this reader does not know `{c}` in `{expression}`; extend it")
                 });

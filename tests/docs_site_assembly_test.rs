@@ -51,7 +51,9 @@ fn python_with_tomllib() -> bool {
         .status()
         .unwrap();
     if !tomllib.success() {
-        common::report_skip("python3 has no tomllib (needs 3.11+), which the assembler reads book.toml with");
+        common::report_skip(
+            "python3 has no tomllib (needs 3.11+), which the assembler reads book.toml with",
+        );
         return false;
     }
     true
@@ -144,15 +146,26 @@ fn site(failing: Option<&str>) -> Site {
     release("v0.9.0", "2026-01-01T00:00:00Z", false);
     release("v0.10.0", "2026-02-01T00:00:00Z", true);
     release("v1.0.0-rc.1", "2026-03-01T00:00:00Z", true);
-    git(&repo, "2026-04-01T00:00:00Z", &["switch", "-q", "-c", "maint-0.9", "v0.9.0"]);
+    git(
+        &repo,
+        "2026-04-01T00:00:00Z",
+        &["switch", "-q", "-c", "maint-0.9", "v0.9.0"],
+    );
     release("v0.9.1", "2026-04-01T00:00:00Z", false);
     git(&repo, "2026-04-01T00:00:00Z", &["switch", "-q", "main"]);
 
     commit_book(&repo, "untagged", "2026-05-01T00:00:00Z", true, false);
-    git(&repo, "2026-05-01T00:00:00Z", &["tag", "tests/fixtures/go/x/v1.0.0"]);
+    git(
+        &repo,
+        "2026-05-01T00:00:00Z",
+        &["tag", "tests/fixtures/go/x/v1.0.0"],
+    );
     git(&repo, "2026-05-01T00:00:00Z", &["tag", "release-candidate"]);
     write(&repo.join("docs/page.md"), &page("the working tree"));
-    write(&repo.join("docs/install.sh"), &install_script("the working tree"));
+    write(
+        &repo.join("docs/install.sh"),
+        &install_script("the working tree"),
+    );
     write(&repo.join("docs/extra.md"), "an untracked page\n");
 
     let tools = tmp.path().join("tools");
@@ -172,11 +185,9 @@ fn site(failing: Option<&str>) -> Site {
 
 impl Site {
     fn assemble_from(&self, repo: &Path) -> Output {
-        let path = std::env::join_paths(
-            std::iter::once(self.tools.clone()).chain(std::env::split_paths(
-                &std::env::var_os("PATH").unwrap_or_default(),
-            )),
-        )
+        let path = std::env::join_paths(std::iter::once(self.tools.clone()).chain(
+            std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()),
+        ))
         .unwrap();
         Command::new("python3")
             .arg(member_root().join(ASSEMBLER))
@@ -287,7 +298,10 @@ fn only_release_tags_are_published_each_from_its_own_tree() {
         .chain(["index.html", "versions.json", "install.sh"])
         .map(str::to_owned)
         .collect();
-    assert_eq!(entries, expected, "the site root holds one directory per release tag");
+    assert_eq!(
+        entries, expected,
+        "the site root holds one directory per release tag"
+    );
 
     for tag in RELEASES {
         assert_eq!(site.read(&format!("{tag}/docs/page.md")), page(tag));
@@ -387,7 +401,11 @@ fn a_v_tag_that_is_not_a_release_version_is_refused() {
             "tag {bad} should be refused by name; exit {:?}, stderr:\n{stderr}",
             out.status.code()
         );
-        assert!(!site.out.exists(), "a refused tag set wrote {}", site.out.display());
+        assert!(
+            !site.out.exists(),
+            "a refused tag set wrote {}",
+            site.out.display()
+        );
         git(&site.repo, "2026-06-01T00:00:00Z", &["tag", "-d", bad]);
     }
 }
