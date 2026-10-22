@@ -36,7 +36,38 @@ use repoweave::manifest::{ProjectName, RepoPath, Role, WorkweaveId, WorkweaveNam
 use repoweave::op_state::{OpVerb, SavepointKey};
 use repoweave::vcs::{RawRevisionId, ResolvedRevisionId};
 use repoweave::workspace::MarkerDefect;
-use std::path::PathBuf;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+/// The `--json` document a run holding exactly `violations` and `issues`
+/// would print.
+///
+/// Assembled here from the per-record renderers and the shared envelope type,
+/// because the report renderer takes only what the findings pipeline builds:
+/// a test can hand it no corpus. The envelope is the one `rwv doctor --json`
+/// serializes, so its bytes are still the wire's.
+pub fn wire_document(
+    violations: Vec<CheckViolation>,
+    issues: Vec<Issue>,
+    workspace_dir: &Path,
+    workweave_dirs: &HashMap<WorkweaveId, PathBuf>,
+    resolution: Option<repoweave::workspace::Resolution>,
+    plugins: Vec<repoweave::plugins::PluginRecord>,
+    advisories: Vec<repoweave::workspace::AdvisoryOutput>,
+) -> repoweave::check::DoctorJsonOutput {
+    use repoweave::check::{IssueOutput, ViolationOutput, DOCTOR_SCHEMA_URL};
+    repoweave::check::DoctorJsonOutput {
+        schema_url: DOCTOR_SCHEMA_URL.to_owned(),
+        violations: violations
+            .into_iter()
+            .map(|v| ViolationOutput::from_violation(v, workspace_dir, workweave_dirs))
+            .collect(),
+        issues: issues.into_iter().map(IssueOutput::from_issue).collect(),
+        advisories,
+        plugins,
+        resolution,
+    }
+}
 
 pub fn project() -> ProjectName {
     ProjectName::new("proj").unwrap()

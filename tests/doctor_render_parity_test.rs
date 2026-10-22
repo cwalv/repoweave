@@ -14,11 +14,17 @@
 //! integration raised:
 //!
 //!   1. **A renderer drops a kind it was handed.** [`corpus`] holds one sample
-//!      per `(kind, sub-kind)` pair the enum can take; both renderers must
-//!      produce output for each, save an explicit by-design list.
+//!      per `(kind, sub-kind)` pair the enum can take; both per-record
+//!      renderers (`CheckViolation::into_text_issue` and
+//!      `ViolationOutput::from_violation`) must produce output for each, save
+//!      an explicit by-design list.
 //!   2. **A collector is never called on one path.** The reachability walk
 //!      below re-derives the call graph from the source and requires every
 //!      violation-producing scan to sit under the one collection pipeline.
+//!      What the walk cannot see, a report renderer handed findings some other
+//!      collection produced, does not compile: both take only
+//!      `DoctorFindings`, which that pipeline alone builds
+//!      (`tests/doctor_findings_seal_test.rs`).
 //!   3. The reported bug, end to end, over the binary.
 //!   4. Kind 1 on the `Issue` channel: every [`IssueKind`] must arrive on the
 //!      wire under the tag `IssueKind::tag` mints.
@@ -52,7 +58,7 @@ mod common;
 
 use common::doctor_corpus::{case_token, corpus, issue_corpus, issue_kind_token, path, workweave};
 use common::src_scan;
-use repoweave::check::{build_doctor_json, violations_to_issues, CheckViolation};
+use repoweave::check::CheckViolation;
 use repoweave::integration::{Issue, IssueKind};
 use repoweave::manifest::{ProjectName, WorkweaveId, WorkweaveName};
 use std::collections::HashMap;
@@ -71,7 +77,7 @@ use std::collections::HashMap;
 const JSON_ONLY_BY_DESIGN: &[&str] = &["workweave-tree-integrity/foreign-primary-other-workspace"];
 
 fn renders_as_text(v: CheckViolation) -> bool {
-    !violations_to_issues(vec![v]).is_empty()
+    v.into_text_issue().is_some()
 }
 
 fn renders_as_json(v: CheckViolation) -> bool {
@@ -79,7 +85,7 @@ fn renders_as_json(v: CheckViolation) -> bool {
     workweave_dirs.insert(workweave(), path("/ws/.workweaves/proj--feat-a"));
     // Serialized rather than field-accessed: parity is a claim about the two
     // rendered surfaces, so this side must read the emitted JSON.
-    let doc = serde_json::to_value(build_doctor_json(
+    let doc = serde_json::to_value(common::doctor_corpus::wire_document(
         vec![v],
         Vec::new(),
         &path("/ws"),
@@ -593,7 +599,7 @@ fn a_pre_flat_receipt_reaches_both_the_report_and_the_wire_format() {
 
 /// The tags `--json` produces for `issues`, one sample per [`IssueKind`].
 fn rendered_issue_tags(issues: Vec<Issue>) -> Vec<String> {
-    let doc = serde_json::to_value(build_doctor_json(
+    let doc = serde_json::to_value(common::doctor_corpus::wire_document(
         Vec::new(),
         issues,
         &path("/ws"),
@@ -662,7 +668,7 @@ fn the_issue_channel_check_reports_a_renderer_that_drops_a_kind() {
 fn a_member_incompatibility_arrives_as_fields_rather_than_a_sentence() {
     // The one kind carrying an observation. A consumer must not have to parse
     // the four facts back out of the English the same finding also renders.
-    let doc = serde_json::to_value(build_doctor_json(
+    let doc = serde_json::to_value(common::doctor_corpus::wire_document(
         Vec::new(),
         issue_corpus(),
         &path("/ws"),

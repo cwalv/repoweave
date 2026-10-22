@@ -276,7 +276,7 @@ fn kind_filter_refuses_an_unknown_kind_naming_the_valid_set() {
 #[test]
 fn a_violations_kind_is_the_tag_serialization_emits_for_the_whole_corpus() {
     use common::doctor_corpus::corpus;
-    use repoweave::check::{build_doctor_json, KindFilter, ViolationKind};
+    use repoweave::check::{KindFilter, ViolationKind};
     use std::collections::{BTreeSet, HashMap};
 
     let sampled: BTreeSet<String> = corpus().iter().map(|v| v.kind().to_string()).collect();
@@ -293,7 +293,7 @@ fn a_violations_kind_is_the_tag_serialization_emits_for_the_whole_corpus() {
 
     for v in corpus() {
         let declared = v.kind().to_string();
-        let doc = serde_json::to_value(build_doctor_json(
+        let doc = serde_json::to_value(common::doctor_corpus::wire_document(
             vec![v],
             Vec::new(),
             Path::new("/ws"),

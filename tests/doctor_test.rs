@@ -1044,8 +1044,8 @@ mod doctor_json {
     use super::*;
     use common::doctor_corpus::{case_token, corpus};
     use repoweave::check::{
-        build_doctor_json, CheckViolation, DriftKind, IndexDriftKind, ReplayExclusionKind,
-        ViolationOutput, WorkingTreeDriftKind, DOCTOR_SCHEMA_URL,
+        CheckViolation, DriftKind, IndexDriftKind, ReplayExclusionKind, ViolationOutput,
+        WorkingTreeDriftKind, DOCTOR_SCHEMA_URL,
     };
     use repoweave::manifest::{ProjectName, RepoPath, WorkweaveId, WorkweaveName};
     use repoweave::vcs::ResolvedRevisionId;
@@ -1512,7 +1512,7 @@ mod doctor_json {
 
         // Serialized, not field-accessed: the assertions below are about the
         // bytes an operator receives, not about the struct that produced them.
-        let payload = serde_json::to_value(build_doctor_json(
+        let payload = serde_json::to_value(common::doctor_corpus::wire_document(
             violations,
             Vec::new(),
             &ws,
@@ -1795,7 +1795,7 @@ mod doctor_json {
         let violations = corpus();
         let expected_len = violations.len();
 
-        let payload = serde_json::to_value(build_doctor_json(
+        let payload = serde_json::to_value(common::doctor_corpus::wire_document(
             violations,
             Vec::new(),
             &ws,

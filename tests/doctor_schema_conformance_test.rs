@@ -31,8 +31,8 @@
 //!     alone passes against a stale artifact the runtime still happens to fit.
 
 use repoweave::check::{
-    build_doctor_json, CheckViolation, DriftKind, IndexDriftKind, WeaveRootIdentityConflictKind,
-    WorkingTreeDriftKind, DOCTOR_SCHEMA_URL,
+    CheckViolation, DriftKind, IndexDriftKind, WeaveRootIdentityConflictKind, WorkingTreeDriftKind,
+    DOCTOR_SCHEMA_URL,
 };
 use repoweave::integration::{Issue, IssueKind, IssueSource, Severity};
 use repoweave::integration::{MemberIncompatibility, Observed};
@@ -201,7 +201,7 @@ fn emit(
 ) -> Value {
     let mut workweave_dirs = HashMap::new();
     workweave_dirs.insert(workweave(), PathBuf::from("/ws/.workweaves/proj--feat-a"));
-    serde_json::to_value(build_doctor_json(
+    serde_json::to_value(common::doctor_corpus::wire_document(
         violations,
         issues,
         Path::new("/ws"),

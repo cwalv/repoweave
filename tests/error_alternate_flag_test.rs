@@ -48,7 +48,7 @@ struct Exception {
 const EXCEPTIONS: &[Exception] = &[
     Exception {
         file: "check.rs",
-        function: "itemized_violations_to_issues",
+        function: "into_text_issue",
         count: 8,
         reason: "each `error` is a `String` field of a `CheckViolation`, rendered from \
                  the error where the violation was built",

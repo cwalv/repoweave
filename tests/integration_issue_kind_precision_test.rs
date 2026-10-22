@@ -21,7 +21,6 @@
 //! published behavior, stated on the findings page under "Finding your entry"
 //! — so `--json` is the whole of the kind surface.
 
-use repoweave::check::build_doctor_json;
 use repoweave::integration::Integration;
 use repoweave::integration_runner::{
     build_detection_cache, run_activations, run_checks, run_verifications, IntegrationContextBase,
@@ -46,7 +45,7 @@ fn write(root: &Path, relative: &str, content: &str) {
 /// A kind carrying fields serializes as a single-key object; both shapes are
 /// read here so a variant that grows fields does not silently drop out.
 fn issue_records(issues: Vec<repoweave::integration::Issue>) -> Vec<(String, bool)> {
-    let payload = serde_json::to_value(build_doctor_json(
+    let payload = serde_json::to_value(common::doctor_corpus::wire_document(
         Vec::new(),
         issues,
         Path::new("/ws"),

@@ -29,13 +29,15 @@
 //! settings, since `skip_serializing_if` makes them different wire shapes.
 //!
 //! **`doctor` is the exception, and it is the gap in that property.** Its
-//! documents come from `build_doctor_json`, so a new field on
-//! `DoctorJsonOutput` — or on `ViolationOutput`, which that function also mints
-//! — leaves this file compiling. Such a field is sampled at whatever the
-//! builder yields from the inputs below, which for an `Option` is plausibly the
-//! absent shape and nothing else. Calling the production builder is what makes
-//! doctor's envelope a real emission rather than a test's guess at one, so the
-//! exchange is deliberate; it is not free.
+//! report renderer takes only what the findings pipeline builds, so its
+//! documents come from `common::doctor_corpus::wire_document`, which writes the
+//! `DoctorJsonOutput` literal itself and mints each record through the
+//! production `ViolationOutput::from_violation`. A new field on
+//! `ViolationOutput` leaves this file compiling, sampled at whatever that
+//! renderer yields from the inputs below, which for an `Option` is plausibly
+//! the absent shape and nothing else. Minting the records in production code
+//! is what makes them real emissions rather than a test's guess at them, so
+//! the exchange is deliberate; it is not free.
 //!
 //! [`every_corpus_carries_every_envelope_field_its_schema_declares`] narrows
 //! that exception to nested fields: a new *envelope* field on any verb,
@@ -68,7 +70,7 @@
 mod common;
 
 use common::json_schema;
-use repoweave::check::{build_doctor_json, CheckViolation, DOCTOR_SCHEMA_URL};
+use repoweave::check::{CheckViolation, DOCTOR_SCHEMA_URL};
 use repoweave::fetch::{
     FetchJsonOutput, FetchOutcomeNdjsonRecord, FetchOutcomeOutput, FetchOutcomeStatus,
     FETCH_RECORD_SCHEMA_URL, FETCH_SCHEMA_URL,
@@ -351,7 +353,7 @@ fn doctor_corpus() -> Vec<(&'static str, Value)> {
     violations.extend(extra_violations);
     let mut issues = common::doctor_corpus::issue_corpus();
     issues.extend(extra_issues);
-    let populated = serde_json::to_value(build_doctor_json(
+    let populated = serde_json::to_value(common::doctor_corpus::wire_document(
         violations,
         issues,
         &common::doctor_corpus::path("/ws"),
@@ -361,7 +363,7 @@ fn doctor_corpus() -> Vec<(&'static str, Value)> {
         advisories(),
     ))
     .expect("doctor payload serializes");
-    let empty = serde_json::to_value(build_doctor_json(
+    let empty = serde_json::to_value(common::doctor_corpus::wire_document(
         Vec::new(),
         Vec::new(),
         &common::doctor_corpus::path("/ws"),

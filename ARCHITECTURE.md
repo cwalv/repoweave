@@ -605,9 +605,10 @@ negotiation, no minimum-version check, and no capability handshake.
 **There is no shared output envelope.** Each `--json`-capable verb owns its own
 top-level struct — `StatusJsonOutput` (`src/status.rs`), `FetchJsonOutput`
 (`src/fetch.rs`), `UpdateJsonOutput` (`src/update.rs`), `PushJsonOutput`
-(`src/push.rs`), `SyncJsonOutput` (`src/sync.rs`), `SyncToJsonOutput` — each pinning its own schema URL. `rwv doctor` has no library struct
-at all; it builds a `serde_json::Value` in `build_doctor_json`
-(`src/check.rs`).
+(`src/push.rs`), `SyncJsonOutput` (`src/sync.rs`), `SyncToJsonOutput`, and
+`DoctorJsonOutput` (`src/check.rs`) — each pinning its own schema URL. Both
+of `rwv doctor`'s report renderers, the text report and `build_doctor_json`,
+take only the `DoctorFindings` its findings pipeline returns.
 
 What *is* shared is `Resolution` (`src/workspace.rs`): every envelope
 carries it, and it is the same value the plugin envelope projects (§6.4). Under

@@ -7718,7 +7718,7 @@ impl CollapsedClass {
 /// (`CollapsedClass`); everything else renders itemized. The collapse is a
 /// TEXT-report shape only — `--json` is built straight from
 /// `CheckViolation` and carries every record.
-pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
+fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
     use crate::integration::Severity;
     let mut counts: std::collections::BTreeMap<CollapsedClass, (usize, Severity)> =
         std::collections::BTreeMap::new();
@@ -7750,278 +7750,285 @@ pub fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
 fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
     violations
         .into_iter()
-        .filter_map(|v| {
-            // A foreign-primary marker that resolves to a different, valid
-            // workspace is expected under a shared workweave container and
-            // not this workspace's problem; every sibling weave's doctor
-            // would otherwise repeat the same finding about every other
-            // sibling. `--json` still carries it: `ViolationOutput` is built
-            // straight from `CheckViolation`, not through this function.
-            if matches!(
-                &v,
-                CheckViolation::WorkweaveTreeIntegrity {
-                    sub_kind: WorkweaveTreeIntegrityKind::ForeignPrimaryOtherWorkspace { .. },
-                    ..
-                }
-            ) {
-                return None;
+        .filter_map(CheckViolation::into_text_issue)
+        .collect()
+}
+
+impl CheckViolation {
+    /// This finding as its own line of the text report, or `None` for the one
+    /// kind only `--json` carries.
+    pub fn into_text_issue(self) -> Option<Issue> {
+        let v = self;
+        // A foreign-primary marker that resolves to a different, valid
+        // workspace is expected under a shared workweave container and
+        // not this workspace's problem; every sibling weave's doctor
+        // would otherwise repeat the same finding about every other
+        // sibling. `--json` still carries it: `ViolationOutput` is built
+        // straight from `CheckViolation`, not through this function.
+        if matches!(
+            &v,
+            CheckViolation::WorkweaveTreeIntegrity {
+                sub_kind: WorkweaveTreeIntegrityKind::ForeignPrimaryOtherWorkspace { .. },
+                ..
             }
-            // safe_to_fix defaults to true; live-class branch-discipline
-            // findings override to false so `doctor --fix` leaves them alone.
-            let mut safe_to_fix = true;
-            let severity = v.severity();
-            let message = match v {
-                CheckViolation::ConfusableSiblings {
-                    parent,
-                    first,
-                    second,
-                } => crate::workspace::confusable_warning(
-                    &crate::workspace::ConfusableSiblings {
-                        parent: parent.clone(),
-                        first: first.clone(),
-                        second: second.clone(),
-                    },
-                ),
-                CheckViolation::OrphanedClone { path } => format!(
-                    "orphaned clone: {path} — not listed in any project's rwv.toml; \
+        ) {
+            return None;
+        }
+        // safe_to_fix defaults to true; live-class branch-discipline
+        // findings override to false so `doctor --fix` leaves them alone.
+        let mut safe_to_fix = true;
+        let severity = v.severity();
+        let message = match v {
+            CheckViolation::ConfusableSiblings {
+                parent,
+                first,
+                second,
+            } => crate::workspace::confusable_warning(&crate::workspace::ConfusableSiblings {
+                parent: parent.clone(),
+                first: first.clone(),
+                second: second.clone(),
+            }),
+            CheckViolation::OrphanedClone { path } => format!(
+                "orphaned clone: {path} — not listed in any project's rwv.toml; \
                      run `rwv add <url>` to register it, or remove the directory manually"
-                ),
-                CheckViolation::UnknownSegmentClone { path } => format!(
-                    "unknown-segment clone: {path} — sits under a top-level directory no \
+            ),
+            CheckViolation::UnknownSegmentClone { path } => format!(
+                "unknown-segment clone: {path} — sits under a top-level directory no \
                      built-in registry and no project's rwv.toml names, so no scan compares \
                      it against anything; to register it, move it to the path its remote's \
                      URL places it at under the primary weave root, unless it already sits \
                      there, and run `rwv add --adopt` with that path; or remove the directory \
                      manually"
-                ),
-                // `rwv fetch` (no SOURCE) re-clones missing manifest
-                // members of the active project — the settled repair verb
-                // for dangling references. See fetch::run_fetch_in_place.
-                // `doctor --fix` intentionally does NOT auto-clone: network
-                // side effects stay behind an explicit verb.
-                CheckViolation::DanglingReference { project, repo } => format!(
-                    "dangling reference in {project}: {repo} — \
+            ),
+            // `rwv fetch` (no SOURCE) re-clones missing manifest
+            // members of the active project — the settled repair verb
+            // for dangling references. See fetch::run_fetch_in_place.
+            // `doctor --fix` intentionally does NOT auto-clone: network
+            // side effects stay behind an explicit verb.
+            CheckViolation::DanglingReference { project, repo } => format!(
+                "dangling reference in {project}: {repo} — \
                      listed in rwv.toml but not cloned on disk; \
                      run `rwv fetch` from the workspace to re-materialize \
                      missing manifest members, then re-run `rwv doctor` to verify"
-                ),
-                CheckViolation::MemberPermissions {
-                    workweave,
-                    repo,
-                    kind,
-                    files,
-                } => {
-                    let location = match workweave {
-                        Some(ww) => format!("{ww}/{repo}"),
-                        None => format!("{repo}"),
-                    };
-                    let detail = match kind {
-                        PermissionsKind::WritableReference => format!(
-                            "{files} tracked file(s) of reference member {location} are \
+            ),
+            CheckViolation::MemberPermissions {
+                workweave,
+                repo,
+                kind,
+                files,
+            } => {
+                let location = match workweave {
+                    Some(ww) => format!("{ww}/{repo}"),
+                    None => format!("{repo}"),
+                };
+                let detail = match kind {
+                    PermissionsKind::WritableReference => format!(
+                        "{files} tracked file(s) of reference member {location} are \
                              writable; `rwv doctor --fix` removes their write bits"
-                        ),
-                        PermissionsKind::ReadOnlyMember => format!(
-                            "{files} tracked file(s) of {location} are read-only, though it \
+                    ),
+                    PermissionsKind::ReadOnlyMember => format!(
+                        "{files} tracked file(s) of {location} are read-only, though it \
                              is not a reference member; `rwv doctor --fix` restores the \
                              owner's write bit, first giving a file shared with another \
                              workspace a private copy"
-                        ),
-                    };
-                    format!("member permissions: {detail}")
-                }
-                CheckViolation::RoleDisagreement { repo, roles } => format!(
-                    "role disagreement: {repo} — the projects listing this clone declare \
+                    ),
+                };
+                format!("member permissions: {detail}")
+            }
+            CheckViolation::RoleDisagreement { repo, roles } => format!(
+                "role disagreement: {repo} — the projects listing this clone declare \
                      different roles ({}); a clone several projects share is read-only \
                      only when every one of them declares `reference`, so its files stay \
                      writable; give every project the same role with \
                      `rwv role --project <name> {repo} <role>`",
-                    roles
-                        .iter()
-                        .map(|(project, role)| format!("{project}: {role}"))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ),
-                CheckViolation::StaleLock {
-                    project,
-                    repo,
-                    locked,
-                    actual,
-                } => format!(
-                    "stale lock in {project}: {repo} locked={} actual={}; \
+                roles
+                    .iter()
+                    .map(|(project, role)| format!("{project}: {role}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            CheckViolation::StaleLock {
+                project,
+                repo,
+                locked,
+                actual,
+            } => format!(
+                "stale lock in {project}: {repo} locked={} actual={}; \
                      run `rwv lock` to re-snapshot current HEAD SHAs",
-                    locked.short_display(),
-                    actual.short_display(),
-                ),
-                CheckViolation::IncompleteLock { project, repo } => format!(
-                    "incomplete lock in {project}: {repo} has no rwv.lock entry; \
+                locked.short_display(),
+                actual.short_display(),
+            ),
+            CheckViolation::IncompleteLock { project, repo } => format!(
+                "incomplete lock in {project}: {repo} has no rwv.lock entry; \
                      run `rwv lock` to add it"
-                ),
-                CheckViolation::WorkweaveDrift {
-                    workweave,
-                    kind,
-                    repo,
-                } => {
-                    let (kind_str, hint) = match kind {
-                        DriftKind::Missing => (
-                            "missing worktree",
-                            " — the canonical clone holds the revision rwv.lock pins; \
+            ),
+            CheckViolation::WorkweaveDrift {
+                workweave,
+                kind,
+                repo,
+            } => {
+                let (kind_str, hint) = match kind {
+                    DriftKind::Missing => (
+                        "missing worktree",
+                        " — the canonical clone holds the revision rwv.lock pins; \
                              `rwv doctor --fix` creates the worktree there",
-                        ),
-                        DriftKind::MissingUnfetched => (
-                            "missing worktree",
-                            " — the canonical clone does not hold the revision rwv.lock \
+                    ),
+                    DriftKind::MissingUnfetched => (
+                        "missing worktree",
+                        " — the canonical clone does not hold the revision rwv.lock \
                              pins; `rwv fetch` run in that workweave clones a canonical \
                              clone that is not on disk and creates the worktree, while one \
                              on disk needs the revision fetched into it before \
                              `rwv doctor --fix` can",
-                        ),
-                        DriftKind::Symlink => (
-                            "symlink instead of a worktree at",
-                            " — rwv no longer operates on a symlinked member; \
+                    ),
+                    DriftKind::Symlink => (
+                        "symlink instead of a worktree at",
+                        " — rwv no longer operates on a symlinked member; \
                              `rwv doctor --fix` replaces the link with a worktree at the \
                              revision rwv.lock pins, leaving what it points at untouched",
-                        ),
-                        DriftKind::SymlinkUnfetched => (
-                            "symlink instead of a worktree at",
-                            " — rwv no longer operates on a symlinked member, and the \
+                    ),
+                    DriftKind::SymlinkUnfetched => (
+                        "symlink instead of a worktree at",
+                        " — rwv no longer operates on a symlinked member, and the \
                              canonical clone does not hold the revision rwv.lock pins; \
                              `rwv fetch` run in that workweave clones a canonical clone that \
                              is not on disk and replaces the link with a worktree, while one \
                              on disk needs the revision fetched into it before \
                              `rwv doctor --fix` can",
-                        ),
-                        DriftKind::Extra => (
-                            "leftover checkout of",
-                            " — rwv.lock still names it and rwv.toml no longer does; \
+                    ),
+                    DriftKind::Extra => (
+                        "leftover checkout of",
+                        " — rwv.lock still names it and rwv.toml no longer does; \
                              `rwv remove <path> --delete` deletes the checkout, and \
                              `rwv add <url>` keeps it as a member",
-                        ),
-                    };
-                    format!(
-                        "workweave drift in {}: {kind_str} {repo}{hint}",
-                        workweave
-                            .as_ref()
-                            .map_or_else(|| "the primary".to_owned(), WorkweaveId::to_string)
-                    )
-                }
-                CheckViolation::IndexDrift {
-                    workweave,
-                    repo,
-                    kind,
-                } => {
-                    let location = match workweave {
-                        Some(ww) => format!("{ww}/{repo}"),
-                        None => format!("{repo}"),
-                    };
-                    let detail = match kind {
-                        IndexDriftKind::SafeToFix => {
-                            "index stale (run `rwv doctor --fix` to reset)"
-                        }
-                        IndexDriftKind::LiveStaged => {
-                            "index has live staged changes (commit or stash first; \
-                             not auto-fixed)"
-                        }
-                    };
-                    format!("{location}: {detail}")
-                }
-                CheckViolation::MissingReplayExclusion { project, sub_kind } => match sub_kind {
-                    ReplayExclusionKind::Absent => format!(
-                        "{project}: project repo missing `rwv.lock merge=rwv-ours` in .gitattributes \
-                         (run `rwv doctor --fix` to add)"
                     ),
-                    ReplayExclusionKind::LegacySpelling => format!(
-                        "{project}: project repo has legacy `rwv.lock merge=ours` in .gitattributes; \
+                };
+                format!(
+                    "workweave drift in {}: {kind_str} {repo}{hint}",
+                    workweave
+                        .as_ref()
+                        .map_or_else(|| "the primary".to_owned(), WorkweaveId::to_string)
+                )
+            }
+            CheckViolation::IndexDrift {
+                workweave,
+                repo,
+                kind,
+            } => {
+                let location = match workweave {
+                    Some(ww) => format!("{ww}/{repo}"),
+                    None => format!("{repo}"),
+                };
+                let detail = match kind {
+                    IndexDriftKind::SafeToFix => "index stale (run `rwv doctor --fix` to reset)",
+                    IndexDriftKind::LiveStaged => {
+                        "index has live staged changes (commit or stash first; \
+                             not auto-fixed)"
+                    }
+                };
+                format!("{location}: {detail}")
+            }
+            CheckViolation::MissingReplayExclusion { project, sub_kind } => match sub_kind {
+                ReplayExclusionKind::Absent => format!(
+                    "{project}: project repo missing `rwv.lock merge=rwv-ours` in .gitattributes \
+                         (run `rwv doctor --fix` to add)"
+                ),
+                ReplayExclusionKind::LegacySpelling => format!(
+                    "{project}: project repo has legacy `rwv.lock merge=ours` in .gitattributes; \
                          the driver was renamed to close a global-config collision hazard \
                          (run `rwv doctor --fix` to migrate to `rwv.lock merge=rwv-ours` \
                          and commit)"
-                    ),
-                    ReplayExclusionKind::LegacyAlongsideCurrent => format!(
-                        "{project}: project repo has both `rwv.lock merge=rwv-ours` and legacy \
+                ),
+                ReplayExclusionKind::LegacyAlongsideCurrent => format!(
+                    "{project}: project repo has both `rwv.lock merge=rwv-ours` and legacy \
                          `rwv.lock merge=ours` in .gitattributes; git picks between them by \
                          reading order, and the legacy name binds to any `merge.ours.driver` \
                          a global git config defines (run `rwv doctor --fix` to drop the \
                          legacy line and commit)"
-                    ),
-                },
-                CheckViolation::ReplayExclusionUnreadable { project, error } => format!(
-                    "{project}: failed to read .gitattributes for replay-exclusion check: {error}"
                 ),
-                CheckViolation::MissingMergeDriverConfig {
-                    project,
-                    config_key,
-                } => format!(
-                    "{project}: project repo missing `{config_key}` config \
+            },
+            CheckViolation::ReplayExclusionUnreadable { project, error } => format!(
+                "{project}: failed to read .gitattributes for replay-exclusion check: {error}"
+            ),
+            CheckViolation::MissingMergeDriverConfig {
+                project,
+                config_key,
+            } => format!(
+                "{project}: project repo missing `{config_key}` config \
                      (defines the `rwv-ours` merge driver used by bare \
                      `git rebase --continue`; run `rwv doctor --fix` to plant)"
-                ),
-                CheckViolation::MergeDriverConfigUnreadable {
-                    project,
-                    config_key,
-                    error,
-                } => format!("{project}: failed to read `{config_key}` config: {error}"),
-                CheckViolation::HeadUnreadable { repo, error } => format!("{repo}: HEAD unreadable ({error})"),
-                CheckViolation::ProjectsDirUnreadable { path, error } => format!(
-                    "{}: projects directory unreadable ({error}); every project under it \
+            ),
+            CheckViolation::MergeDriverConfigUnreadable {
+                project,
+                config_key,
+                error,
+            } => format!("{project}: failed to read `{config_key}` config: {error}"),
+            CheckViolation::HeadUnreadable { repo, error } => {
+                format!("{repo}: HEAD unreadable ({error})")
+            }
+            CheckViolation::ProjectsDirUnreadable { path, error } => format!(
+                "{}: projects directory unreadable ({error}); every project under it \
                      is invisible to this scan",
-                    path.display()
-                ),
-                CheckViolation::ProjectlessDir { dir } => format!(
-                    "{}: directory under projects/ holds no {} at any depth, so it is \
+                path.display()
+            ),
+            CheckViolation::ProjectlessDir { dir } => format!(
+                "{}: directory under projects/ holds no {} at any depth, so it is \
                      not a project and rwv lists nothing for it; write a {} there \
                      (`[repositories]` alone is enough) or remove the directory",
-                    dir.display(),
-                    Manifest::FILE_NAME,
-                    Manifest::FILE_NAME,
-                ),
-                CheckViolation::UnnameableProject {
-                    dir,
-                    derived,
-                    error,
-                } => format!(
-                    "{}: holds a {} but `{derived}` is not a usable project name \
+                dir.display(),
+                Manifest::FILE_NAME,
+                Manifest::FILE_NAME,
+            ),
+            CheckViolation::UnnameableProject {
+                dir,
+                derived,
+                error,
+            } => format!(
+                "{}: holds a {} but `{derived}` is not a usable project name \
                      ({error}), so no verb can address it; rename the directory to a \
                      name rwv accepts",
-                    dir.display(),
-                    Manifest::FILE_NAME,
-                ),
-                CheckViolation::UnresolvableLockEntry { project, repo } => format!(
-                    "{project}: lock references unknown revision for {repo}; \
+                dir.display(),
+                Manifest::FILE_NAME,
+            ),
+            CheckViolation::UnresolvableLockEntry { project, repo } => format!(
+                "{project}: lock references unknown revision for {repo}; \
                      run `rwv lock` or fetch"
-                ),
-                CheckViolation::LockPinnedByName {
-                    project,
-                    repo,
-                    version,
-                } => format!(
-                    "{project}: {}",
-                    crate::lock::pinned_by_name_warning(&repo, &version)
-                ),
-                CheckViolation::LegacyManifestFormat {
-                    project,
-                    legacy_path,
-                } => format!(
-                    "{project}: {}",
-                    Manifest::legacy_format_refusal(legacy_path.as_path())
-                ),
-                CheckViolation::LegacyWorkweaveMarker { marker_path, .. } => format!(
-                    "{} is a legacy (YAML) workweave marker; \
+            ),
+            CheckViolation::LockPinnedByName {
+                project,
+                repo,
+                version,
+            } => format!(
+                "{project}: {}",
+                crate::lock::pinned_by_name_warning(&repo, &version)
+            ),
+            CheckViolation::LegacyManifestFormat {
+                project,
+                legacy_path,
+            } => format!(
+                "{project}: {}",
+                Manifest::legacy_format_refusal(legacy_path.as_path())
+            ),
+            CheckViolation::LegacyWorkweaveMarker { marker_path, .. } => format!(
+                "{} is a legacy (YAML) workweave marker; \
                      run `rwv doctor --fix` to migrate",
-                    marker_path.display()
-                ),
-                CheckViolation::LegacyWorkweaveIndex { index_path, .. } => format!(
-                    "{} is a legacy workweave index written before ref-ownership \
+                marker_path.display()
+            ),
+            CheckViolation::LegacyWorkweaveIndex { index_path, .. } => format!(
+                "{} is a legacy workweave index written before ref-ownership \
                      receipts existed (no `receipts` field), so rwv can neither \
                      record nor destroy an ephemeral ref for this project; run \
                      `rwv doctor --fix` to add the field — it is the precondition \
                      for every other arm of the migration",
-                    index_path.display()
-                ),
-                CheckViolation::UnreadableOwnedState {
-                    project,
-                    state_path,
-                    error,
-                    active,
-                } => if active {
+                index_path.display()
+            ),
+            CheckViolation::UnreadableOwnedState {
+                project,
+                state_path,
+                error,
+                active,
+            } => {
+                if active {
                     format!(
                         "{}: rwv's record of the generations it accepted does not \
                          parse ({error}); until it is rebuilt, the managed-file \
@@ -8045,428 +8052,429 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                          {project}`; the repair runs there",
                         state_path.display()
                     )
-                },
-                CheckViolation::UnreadableWorkweaveIndex {
-                    project,
-                    index_path,
-                    error,
-                } => format!(
-                    "{}: workweave index does not parse ({error}); the recorded \
+                }
+            }
+            CheckViolation::UnreadableWorkweaveIndex {
+                project,
+                index_path,
+                error,
+            } => format!(
+                "{}: workweave index does not parse ({error}); the recorded \
                      workweaves and ownership receipts for project `{project}` are \
                      unevaluated, and every `rwv doctor --fix` arm that writes this \
                      file fails until it parses — repair or delete the file, then \
                      re-run `rwv doctor --fix` to re-adopt the workweaves on disk",
-                    index_path.display()
-                ),
-                // Relayed, not narrated: the loader states which file failed
-                // and what to do about it, and this arm cannot know either.
-                CheckViolation::UnparseableProject {
-                    project, message, ..
-                } => format!("{project}: {message}"),
-                CheckViolation::WorkingTreeDrift {
-                    workweave,
-                    repo,
-                    kind,
-                } => {
-                    let location = match workweave {
-                        Some(ww) => format!("{ww}/{repo}"),
-                        None => format!("{repo}"),
-                    };
-                    let detail = match kind {
-                        WorkingTreeDriftKind::SafeToFix => {
-                            "working tree stale (run `rwv doctor --fix` to restore)"
-                        }
-                        WorkingTreeDriftKind::LiveEdits => {
-                            "working tree has live edits (commit or stash first; \
+                index_path.display()
+            ),
+            // Relayed, not narrated: the loader states which file failed
+            // and what to do about it, and this arm cannot know either.
+            CheckViolation::UnparseableProject {
+                project, message, ..
+            } => format!("{project}: {message}"),
+            CheckViolation::WorkingTreeDrift {
+                workweave,
+                repo,
+                kind,
+            } => {
+                let location = match workweave {
+                    Some(ww) => format!("{ww}/{repo}"),
+                    None => format!("{repo}"),
+                };
+                let detail = match kind {
+                    WorkingTreeDriftKind::SafeToFix => {
+                        "working tree stale (run `rwv doctor --fix` to restore)"
+                    }
+                    WorkingTreeDriftKind::LiveEdits => {
+                        "working tree has live edits (commit or stash first; \
                              not auto-fixed)"
-                        }
-                    };
-                    format!("{location}: {detail}")
-                }
-                CheckViolation::DanglingActiveProject {
-                    project,
-                    missing_dir,
-                } => format!(
-                    "active project `{}` is set in `.rwv-active` but `{}` does not exist; \
+                    }
+                };
+                format!("{location}: {detail}")
+            }
+            CheckViolation::DanglingActiveProject {
+                project,
+                missing_dir,
+            } => format!(
+                "active project `{}` is set in `.rwv-active` but `{}` does not exist; \
                      run `rwv activate <existing-project>` or remove `.rwv-active`",
-                    project,
-                    missing_dir.display()
-                ),
-                CheckViolation::WeaveRootIdentityConflict {
-                    root,
-                    pointer_project,
-                    sub_kind,
-                } => {
-                    let pointer = match &pointer_project {
-                        Some(p) => format!("names `{p}`"),
-                        None => "is empty".to_string(),
-                    };
-                    let msg = match &sub_kind {
-                        WeaveRootIdentityConflictKind::RegisteredWorkweave {
-                            project,
-                            workweave_name,
-                        } => format!(
-                            "{}: carries both `.rwv-active` (which {pointer}) and \
+                project,
+                missing_dir.display()
+            ),
+            CheckViolation::WeaveRootIdentityConflict {
+                root,
+                pointer_project,
+                sub_kind,
+            } => {
+                let pointer = match &pointer_project {
+                    Some(p) => format!("names `{p}`"),
+                    None => "is empty".to_string(),
+                };
+                let msg = match &sub_kind {
+                    WeaveRootIdentityConflictKind::RegisteredWorkweave {
+                        project,
+                        workweave_name,
+                    } => format!(
+                        "{}: carries both `.rwv-active` (which {pointer}) and \
                              `.rwv-workweave`; the two are mutually exclusive. This directory \
                              is recorded as workweave `{workweave_name}` of project \
                              `{project}`, so the marker is authoritative and the pointer is \
                              an unread duplicate; run `rwv doctor --fix` to delete \
                              `.rwv-active` here (the marker is left alone)",
-                            crate::path_spelling::operator_path(&root)
-                        ),
-                        WeaveRootIdentityConflictKind::MarkerUnverifiable {
-                            marker_path,
-                            defect,
-                        } => format!(
-                            "{}: carries both `.rwv-active` (which {pointer}) and \
+                        crate::path_spelling::operator_path(&root)
+                    ),
+                    WeaveRootIdentityConflictKind::MarkerUnverifiable {
+                        marker_path,
+                        defect,
+                    } => format!(
+                        "{}: carries both `.rwv-active` (which {pointer}) and \
                              `.rwv-workweave`; the two are mutually exclusive. {} \
                              `--fix` does not touch the pointer until the marker is repaired",
-                            crate::path_spelling::operator_path(&root),
-                            defect.refusal(marker_path)
-                        ),
-                        WeaveRootIdentityConflictKind::Unwitnessed { detail } => format!(
-                            "{}: carries both `.rwv-active` (which {pointer}) and \
+                        crate::path_spelling::operator_path(&root),
+                        defect.refusal(marker_path)
+                    ),
+                    WeaveRootIdentityConflictKind::Unwitnessed { detail } => format!(
+                        "{}: carries both `.rwv-active` (which {pointer}) and \
                              `.rwv-workweave`; the two are mutually exclusive. {detail} \
                              Nothing outside this directory says which file is the stray, so \
                              `--fix` does not touch either — delete the one you know to be \
                              wrong by hand",
-                            crate::path_spelling::operator_path(&root)
-                        ),
-                    };
-                    msg
-                }
-                CheckViolation::WorkweaveTreeIntegrity {
-                    workweave_dir,
-                    sub_kind,
-                } => {
-                    let msg = match &sub_kind {
-                        WorkweaveTreeIntegrityKind::DanglingParent { parent_path } => format!(
-                            "{}: marker `parent` points to `{}` which does not exist; \
+                        crate::path_spelling::operator_path(&root)
+                    ),
+                };
+                msg
+            }
+            CheckViolation::WorkweaveTreeIntegrity {
+                workweave_dir,
+                sub_kind,
+            } => {
+                let msg = match &sub_kind {
+                    WorkweaveTreeIntegrityKind::DanglingParent { parent_path } => format!(
+                        "{}: marker `parent` points to `{}` which does not exist; \
                              run `rwv doctor --fix` to re-point parent to primary",
-                            crate::path_spelling::operator_path(&workweave_dir),
-                            crate::path_spelling::operator_path(parent_path)
-                        ),
-                        WorkweaveTreeIntegrityKind::ParentChainAnomaly { detail } => format!(
-                            "{}: workweave parent-chain anomaly: {}",
-                            crate::path_spelling::operator_path(&workweave_dir),
-                            detail
-                        ),
-                        WorkweaveTreeIntegrityKind::UnregisteredDir => format!(
-                            "{}: directory under workweaves parent has no `.rwv-workweave` marker",
-                            crate::path_spelling::operator_path(&workweave_dir)
-                        ),
-                        WorkweaveTreeIntegrityKind::ForeignPrimary { marker_primary } => format!(
-                            "{}: marker `primary` (`{}`) does not match this workspace; \
+                        crate::path_spelling::operator_path(&workweave_dir),
+                        crate::path_spelling::operator_path(parent_path)
+                    ),
+                    WorkweaveTreeIntegrityKind::ParentChainAnomaly { detail } => format!(
+                        "{}: workweave parent-chain anomaly: {}",
+                        crate::path_spelling::operator_path(&workweave_dir),
+                        detail
+                    ),
+                    WorkweaveTreeIntegrityKind::UnregisteredDir => format!(
+                        "{}: directory under workweaves parent has no `.rwv-workweave` marker",
+                        crate::path_spelling::operator_path(&workweave_dir)
+                    ),
+                    WorkweaveTreeIntegrityKind::ForeignPrimary { marker_primary } => format!(
+                        "{}: marker `primary` (`{}`) does not match this workspace; \
                              this workweave may have been copied from another machine",
-                            crate::path_spelling::operator_path(&workweave_dir),
-                            crate::path_spelling::operator_path(marker_primary)
-                        ),
-                        WorkweaveTreeIntegrityKind::ForeignPrimaryOtherWorkspace {
-                            marker_primary,
-                        } => format!(
+                        crate::path_spelling::operator_path(&workweave_dir),
+                        crate::path_spelling::operator_path(marker_primary)
+                    ),
+                    WorkweaveTreeIntegrityKind::ForeignPrimaryOtherWorkspace { marker_primary } => {
+                        format!(
                             "{}: belongs to workspace `{}`; not this workspace's to manage",
                             crate::path_spelling::operator_path(&workweave_dir),
                             crate::path_spelling::operator_path(marker_primary)
-                        ),
-                        WorkweaveTreeIntegrityKind::StaleRegistryEntry {
-                            project,
-                            workweave_name,
-                            recorded_path,
-                            reason,
-                        } => format!(
-                            "workweave-index: stale entry `{}` in project `{}` \
+                        )
+                    }
+                    WorkweaveTreeIntegrityKind::StaleRegistryEntry {
+                        project,
+                        workweave_name,
+                        recorded_path,
+                        reason,
+                    } => format!(
+                        "workweave-index: stale entry `{}` in project `{}` \
                              (recorded at `{}`): {reason}; run `rwv doctor --fix` \
                              to prune",
-                            workweave_name,
-                            project,
-                            crate::path_spelling::operator_path(recorded_path)
-                        ),
-                        WorkweaveTreeIntegrityKind::UnregisteredWorkweave {
-                            project,
-                            workweave_name,
-                        } => format!(
-                            "{}: workweave `{}` for project `{}` is present on \
+                        workweave_name,
+                        project,
+                        crate::path_spelling::operator_path(recorded_path)
+                    ),
+                    WorkweaveTreeIntegrityKind::UnregisteredWorkweave {
+                        project,
+                        workweave_name,
+                    } => format!(
+                        "{}: workweave `{}` for project `{}` is present on \
                              disk but not recorded in `.rwv-workweave-index`; \
                              run `rwv doctor --fix` to adopt it",
-                            crate::path_spelling::operator_path(&workweave_dir),
-                            workweave_name,
-                            project
-                        ),
-                        WorkweaveTreeIntegrityKind::TrackedIndex {
-                            project,
-                            index_path,
-                        } => format!(
-                            "{}: `.rwv-workweave-index` for project `{}` is \
+                        crate::path_spelling::operator_path(&workweave_dir),
+                        workweave_name,
+                        project
+                    ),
+                    WorkweaveTreeIntegrityKind::TrackedIndex {
+                        project,
+                        index_path,
+                    } => format!(
+                        "{}: `.rwv-workweave-index` for project `{}` is \
                              tracked by the project repo; the index is \
                              machine-local — run `git -C {} rm --cached \
                              .rwv-workweave-index` and commit the removal. rwv \
                              excludes the index through the project repo's \
                              `.git/info/exclude`, so it needs no `.gitignore` entry",
-                            crate::path_spelling::operator_path(index_path),
-                            project,
-                            crate::path_spelling::operator_path(
-                                index_path.parent().unwrap_or(index_path)
-                            )
-                        ),
-                        WorkweaveTreeIntegrityKind::UnreadableMarker { detail } => detail.clone(),
-                        WorkweaveTreeIntegrityKind::NestedWorkweaveDir {
-                            project,
-                            workweave_name,
-                            expected_dir_name,
-                        } => format!(
-                            "{}: workweave `{workweave_name}` for project `{project}` sits \
+                        crate::path_spelling::operator_path(index_path),
+                        project,
+                        crate::path_spelling::operator_path(
+                            index_path.parent().unwrap_or(index_path)
+                        )
+                    ),
+                    WorkweaveTreeIntegrityKind::UnreadableMarker { detail } => detail.clone(),
+                    WorkweaveTreeIntegrityKind::NestedWorkweaveDir {
+                        project,
+                        workweave_name,
+                        expected_dir_name,
+                    } => format!(
+                        "{}: workweave `{workweave_name}` for project `{project}` sits \
                              below its container instead of in it, from the era when a \
                              multi-segment project name rendered its `/` into the directory \
                              name; rwv now spells this workweave `{expected_dir_name}`. \
                              Retire this workweave and create it again — rwv does not rename \
                              a live workweave into place, and moving it by hand strands the \
                              worktrees inside it",
-                            crate::path_spelling::operator_path(&workweave_dir),
-                        ),
-                        WorkweaveTreeIntegrityKind::MisnamedDir {
-                            expected_dir_name,
-                            detail,
-                        } => match expected_dir_name {
-                            Some(expected) => format!(
-                                "{}: workweave directory name disagrees with its records — \
+                        crate::path_spelling::operator_path(&workweave_dir),
+                    ),
+                    WorkweaveTreeIntegrityKind::MisnamedDir {
+                        expected_dir_name,
+                        detail,
+                    } => match expected_dir_name {
+                        Some(expected) => format!(
+                            "{}: workweave directory name disagrees with its records — \
                                  {detail}. Rename the directory to `{expected}` to restore \
                                  the recorded identity",
-                                crate::path_spelling::operator_path(&workweave_dir),
-                            ),
-                            None => format!(
-                                "{}: workweave directory name disagrees with its records — \
+                            crate::path_spelling::operator_path(&workweave_dir),
+                        ),
+                        None => format!(
+                            "{}: workweave directory name disagrees with its records — \
                                  {detail}. Rename it to the `<project>--<name>` you intend, \
                                  or remove the directory",
-                                crate::path_spelling::operator_path(&workweave_dir),
-                            ),
-                        },
-                    };
-                    msg
-                }
-                CheckViolation::Provenance {
-                    project,
-                    repo,
-                    sub_kind,
-                } => match sub_kind {
-                    ProvenanceKind::OriginUrlMismatch {
-                        manifest_url,
-                        actual_url,
-                        is_reference_role,
-                    } => {
-                        let suffix = if is_reference_role {
-                            " (note: reference-role repos may intentionally use a different \
+                            crate::path_spelling::operator_path(&workweave_dir),
+                        ),
+                    },
+                };
+                msg
+            }
+            CheckViolation::Provenance {
+                project,
+                repo,
+                sub_kind,
+            } => match sub_kind {
+                ProvenanceKind::OriginUrlMismatch {
+                    manifest_url,
+                    actual_url,
+                    is_reference_role,
+                } => {
+                    let suffix = if is_reference_role {
+                        " (note: reference-role repos may intentionally use a different \
                              remote — verify before re-pointing)"
-                        } else {
-                            ""
-                        };
-                        format!(
-                            "{project}: {repo}: origin URL mismatch — manifest has \
+                    } else {
+                        ""
+                    };
+                    format!(
+                        "{project}: {repo}: origin URL mismatch — manifest has \
                              `{manifest_url}`, clone has `{actual_url}`; pushes may target \
                              the wrong remote (report-only; update the manifest or \
                              re-point the remote to converge){suffix}",
-                        )
-                    }
-                    ProvenanceKind::RelativeRemote {
-                        path,
-                        remote,
-                        manifest_remote,
-                    } => format!(
-                        "{project}: {repo}: the clone records its `{remote}` remote as the \
+                    )
+                }
+                ProvenanceKind::RelativeRemote {
+                    path,
+                    remote,
+                    manifest_remote,
+                } => format!(
+                    "{project}: {repo}: the clone records its `{remote}` remote as the \
                          relative path `{path}`, which git reads from each checkout's own \
                          directory, so the member's workweave checkouts reach other remotes \
                          than this one (report-only; record an absolute URL: `git -C {repo} \
                          remote set-url {remote} {url}`)",
-                        url = manifest_remote.as_deref().unwrap_or("<url>"),
-                    ),
-                    ProvenanceKind::UnresolvableUrl { manifest_url } => format!(
-                        "{project}: {repo}: url `{manifest_url}` is neither a URL nor registry \
+                    url = manifest_remote.as_deref().unwrap_or("<url>"),
+                ),
+                ProvenanceKind::UnresolvableUrl { manifest_url } => format!(
+                    "{project}: {repo}: url `{manifest_url}` is neither a URL nor registry \
                          shorthand, so it names no remote and no clone of the member can be \
                          made (report-only; write it in rwv.toml as a URL, `{file_url}` for a \
                          local remote)",
-                        file_url = crate::path_spelling::file_url_suggestion(&manifest_url),
-                    ),
-                    ProvenanceKind::LockShaUnreachable { sha } => format!(
-                        "{project}: {repo}: lock pins SHA {} which is absent from \
+                    file_url = crate::path_spelling::file_url_suggestion(&manifest_url),
+                ),
+                ProvenanceKind::LockShaUnreachable { sha } => format!(
+                    "{project}: {repo}: lock pins SHA {} which is absent from \
                          the local object store; the canonical store is missing the pinned \
                          revision — refresh it from its remote (fetch, not sync)",
-                        crate::vcs::short_revision(&sha),
-                    ),
-                    ProvenanceKind::PlacementDisagreement { expected_path } => format!(
-                        "{project}: {repo}: recorded at `{repo}`, but its URL places at \
+                    crate::vcs::short_revision(&sha),
+                ),
+                ProvenanceKind::PlacementDisagreement { expected_path } => format!(
+                    "{project}: {repo}: recorded at `{repo}`, but its URL places at \
                          `{expected_path}` under the canonical layout (report-only; to \
                          converge, move the checkout to `{expected_path}` unless it is already \
                          there, re-key the entry in rwv.toml from `{repo}` to \
                          `{expected_path}`, and run `rwv lock` — a `reference` or `fork` role \
                          exempts this comparison)",
-                    ),
-                },
-                CheckViolation::CloneTopology {
-                    workspace_path,
-                    repo,
-                    sub_kind,
-                } => {
-                    // All clone-topology violations are tier-0 (object-store
-                    // identity wrong). Repair is an object-store migration —
-                    // out of scope of --fix per the alpha guideline. Severity
-                    // is Error because every higher-tier check silently
-                    // operates on incoherent input under these violations.
-                    let msg = match &sub_kind {
-                        CloneTopologyKind::StandaloneInWorkweave { store_path } => format!(
-                            "clone-topology: standalone clone of `{repo}` lives in a workweave \
+                ),
+            },
+            CheckViolation::CloneTopology {
+                workspace_path,
+                repo,
+                sub_kind,
+            } => {
+                // All clone-topology violations are tier-0 (object-store
+                // identity wrong). Repair is an object-store migration —
+                // out of scope of --fix per the alpha guideline. Severity
+                // is Error because every higher-tier check silently
+                // operates on incoherent input under these violations.
+                let msg = match &sub_kind {
+                    CloneTopologyKind::StandaloneInWorkweave { store_path } => format!(
+                        "clone-topology: standalone clone of `{repo}` lives in a workweave \
                              ({}); the canonical store should be at `<weave>/{repo}` not under \
                              `.workweaves/` (`rwv doctor --fix` replaces it with a worktree of \
                              the canonical clone unless it holds commits, files or worktrees \
                              the canonical clone lacks)",
-                            store_path.display(),
-                        ),
-                        CloneTopologyKind::DisconnectedWeaveClone {
-                            weave_store_path,
-                            other_store_path,
-                        } => format!(
-                            "clone-topology: weave-path clone of `{repo}` at {} is disconnected \
+                        store_path.display(),
+                    ),
+                    CloneTopologyKind::DisconnectedWeaveClone {
+                        weave_store_path,
+                        other_store_path,
+                    } => format!(
+                        "clone-topology: weave-path clone of `{repo}` at {} is disconnected \
                              — workweave checkouts of this repo use a different canonical store \
                              ({}); the weave clone publishes an unread object DAG \
                              (report-only; repair requires object-store re-parenting)",
-                            weave_store_path.display(),
-                            other_store_path.display(),
-                        ),
-                        CloneTopologyKind::WrongParentWorktree {
-                            expected_store_path,
-                            actual_store_path,
-                        } => format!(
-                            "clone-topology: workweave checkout of `{repo}` at {} is linked into \
+                        weave_store_path.display(),
+                        other_store_path.display(),
+                    ),
+                    CloneTopologyKind::WrongParentWorktree {
+                        expected_store_path,
+                        actual_store_path,
+                    } => format!(
+                        "clone-topology: workweave checkout of `{repo}` at {} is linked into \
                              {} instead of the weave canonical {}; cross-DAG merged-checks \
                              silently answer `no` \
                              (report-only; repair requires object-store re-parenting)",
-                            workspace_path.display(),
-                            actual_store_path.display(),
-                            expected_store_path.display(),
-                        ),
-                        CloneTopologyKind::WeaveCloneIsWorktree { actual_store_path } => format!(
-                            "clone-topology: weave-path slot for `{repo}` at {} is itself a \
+                        workspace_path.display(),
+                        actual_store_path.display(),
+                        expected_store_path.display(),
+                    ),
+                    CloneTopologyKind::WeaveCloneIsWorktree { actual_store_path } => format!(
+                        "clone-topology: weave-path slot for `{repo}` at {} is itself a \
                              linked worktree of {}; the canonical store has migrated out of \
                              the manifest slot (report-only; repair requires object-store \
                              re-parenting — re-clone into the canonical slot)",
-                            workspace_path.display(),
-                            actual_store_path.display(),
-                        ),
-                    };
-                    msg
-                }
-                CheckViolation::BranchDiscipline {
-                    repo_path,
-                    sub_kind,
-                } => {
-                    let msg = match &sub_kind {
-                        BranchDisciplineKind::SharedBranch {
-                            actual_branch,
-                            expected_ref,
-                            recorded_ref,
-                        } => format!(
-                            "{}: workweave checkout is on shared-branch `{}` (expected its \
+                        workspace_path.display(),
+                        actual_store_path.display(),
+                    ),
+                };
+                msg
+            }
+            CheckViolation::BranchDiscipline {
+                repo_path,
+                sub_kind,
+            } => {
+                let msg = match &sub_kind {
+                    BranchDisciplineKind::SharedBranch {
+                        actual_branch,
+                        expected_ref,
+                        recorded_ref,
+                    } => format!(
+                        "{}: workweave checkout is on shared-branch `{}` (expected its \
                              ephemeral branch `{}`); manual `git switch` inside a \
                              workweave breaks the I3 branch-ownership invariant — \
                              {} (report-only; no rwv --fix path)",
-                            repo_path.display(),
-                            actual_branch,
-                            expected_ref,
-                            reattach_advice(recorded_ref.as_deref(), expected_ref)
-                        ),
-                        BranchDisciplineKind::ForeignEphemeral {
-                            actual_branch,
-                            expected_ref,
-                            recorded_ref,
-                        } => format!(
-                            "{}: workweave checkout is on `{}`, a ref rwv recorded for a \
+                        repo_path.display(),
+                        actual_branch,
+                        expected_ref,
+                        reattach_advice(recorded_ref.as_deref(), expected_ref)
+                    ),
+                    BranchDisciplineKind::ForeignEphemeral {
+                        actual_branch,
+                        expected_ref,
+                        recorded_ref,
+                    } => format!(
+                        "{}: workweave checkout is on `{}`, a ref rwv recorded for a \
                              different workweave (expected its ephemeral branch `{}`); \
                              {} (report-only; no rwv --fix path)",
-                            repo_path.display(),
-                            actual_branch,
-                            expected_ref,
-                            reattach_advice(recorded_ref.as_deref(), expected_ref)
-                        ),
-                        BranchDisciplineKind::Detached {
-                            expected_ref,
-                            recorded_ref,
-                            at_sha,
-                            legacy_branch,
-                        } => match legacy_branch {
-                            // Both tips, side by side, and the two
-                            // remediations in order: reattach first, adopt
-                            // second.
-                            Some(legacy) => {
-                                safe_to_fix = false;
-                                let relation = if legacy.strands_commits {
-                                    "a commit HEAD does not carry"
-                                } else {
-                                    "an ancestor of HEAD"
-                                };
-                                let stranding = if legacy.strands_commits {
-                                    format!(
-                                        ". THAT STRANDS the commits on `{}`: adopting gives \
+                        repo_path.display(),
+                        actual_branch,
+                        expected_ref,
+                        reattach_advice(recorded_ref.as_deref(), expected_ref)
+                    ),
+                    BranchDisciplineKind::Detached {
+                        expected_ref,
+                        recorded_ref,
+                        at_sha,
+                        legacy_branch,
+                    } => match legacy_branch {
+                        // Both tips, side by side, and the two
+                        // remediations in order: reattach first, adopt
+                        // second.
+                        Some(legacy) => {
+                            safe_to_fix = false;
+                            let relation = if legacy.strands_commits {
+                                "a commit HEAD does not carry"
+                            } else {
+                                "an ancestor of HEAD"
+                            };
+                            let stranding = if legacy.strands_commits {
+                                format!(
+                                    ". THAT STRANDS the commits on `{}`: adopting gives \
                                          its name up, and they stay reachable only through \
                                          the reflog",
-                                        legacy.branch
-                                    )
-                                } else {
-                                    String::new()
-                                };
-                                let sits_at = match &legacy.tip_sha {
-                                    Some(tip) => format!("sits at {} ({relation})", tip.short()),
-                                    None => "names no commit".to_owned(),
-                                };
-                                format!(
-                                    "{}: workweave checkout is detached at {} while its \
+                                    legacy.branch
+                                )
+                            } else {
+                                String::new()
+                            };
+                            let sits_at = match &legacy.tip_sha {
+                                Some(tip) => format!("sits at {} ({relation})", tip.short()),
+                                None => "names no commit".to_owned(),
+                            };
+                            format!(
+                                "{}: workweave checkout is detached at {} while its \
                                      pre-flat branch `{}` {}. Reattach to it \
                                      (`git switch {}`) and re-run `rwv doctor --fix`, which \
                                      renames it to `{}`; or run `rwv doctor --fix \
                                      --adopt-detached-checkouts` to mint `{}` here at {} \
                                      instead{}",
-                                    repo_path.display(),
-                                    at_sha.short(),
-                                    legacy.branch,
-                                    sits_at,
-                                    legacy.branch,
-                                    expected_ref,
-                                    expected_ref,
-                                    at_sha.short(),
-                                    stranding,
-                                )
-                            }
-                            None => format!(
-                                "{}: workweave checkout is in detached-HEAD state at {} \
+                                repo_path.display(),
+                                at_sha.short(),
+                                legacy.branch,
+                                sits_at,
+                                legacy.branch,
+                                expected_ref,
+                                expected_ref,
+                                at_sha.short(),
+                                stranding,
+                            )
+                        }
+                        None => format!(
+                            "{}: workweave checkout is in detached-HEAD state at {} \
                                  (expected its ephemeral branch `{}`); {} — or run \
                                  `rwv doctor --fix --adopt-detached-checkouts` to mint \
                                  `{}` here at {}",
-                                repo_path.display(),
-                                at_sha.short(),
-                                expected_ref,
-                                reattach_advice(recorded_ref.as_deref(), expected_ref),
-                                expected_ref,
-                                at_sha.short(),
-                            ),
-                        },
-                        // The fully automatic migration case.
-                        BranchDisciplineKind::UnmigratedEphemeralBranch {
-                            actual_branch,
+                            repo_path.display(),
+                            at_sha.short(),
                             expected_ref,
-                        } => format!(
-                            "{}: workweave checkout is on `{}`, the pre-flat \
+                            reattach_advice(recorded_ref.as_deref(), expected_ref),
+                            expected_ref,
+                            at_sha.short(),
+                        ),
+                    },
+                    // The fully automatic migration case.
+                    BranchDisciplineKind::UnmigratedEphemeralBranch {
+                        actual_branch,
+                        expected_ref,
+                    } => format!(
+                        "{}: workweave checkout is on `{}`, the pre-flat \
                              `<project>--<workweave>/<segment>` shape rwv no longer \
                              mints; `rwv doctor --fix` records an ownership receipt \
                              for it and renames it to `{}` — a rename preserves the \
                              tip, so no commit moves",
-                            repo_path.display(),
-                            actual_branch,
-                            expected_ref,
-                        ),
-                        BranchDisciplineKind::BlockedEphemeralNamespace {
-                            expected_ref,
-                            blocking_refs,
-                        } => {
-                            safe_to_fix = false;
-                            format!(
-                                "{}: {} refs share workweave namespace `{}` ({}), and git \
+                        repo_path.display(),
+                        actual_branch,
+                        expected_ref,
+                    ),
+                    BranchDisciplineKind::BlockedEphemeralNamespace {
+                        expected_ref,
+                        blocking_refs,
+                    } => {
+                        safe_to_fix = false;
+                        format!(
+                            "{}: {} refs share workweave namespace `{}` ({}), and git \
                                  cannot create the ref `{}` while any ref exists under \
                                  `{}/`. The branch-model migration skips this pair rather \
                                  than recording an ownership receipt for a rename that \
@@ -8475,185 +8483,185 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                                  the others belong, is not rwv's call to make — leave at \
                                  most one ref under `{}/`, then re-run `rwv doctor --fix` \
                                  to migrate it",
-                                repo_path.display(),
-                                blocking_refs.len(),
-                                expected_ref,
-                                blocking_refs
-                                    .iter()
-                                    .map(|r| format!("`{r}`"))
-                                    .collect::<Vec<_>>()
-                                    .join(", "),
-                                expected_ref,
-                                expected_ref,
-                                expected_ref,
-                            )
-                        }
-                        BranchDisciplineKind::BlockedDetachedNamespace {
+                            repo_path.display(),
+                            blocking_refs.len(),
                             expected_ref,
-                            at_sha,
-                            blocking_refs,
-                        } => {
-                            safe_to_fix = false;
-                            format!(
-                                "{}: workweave checkout is detached at {} while {} refs \
+                            blocking_refs
+                                .iter()
+                                .map(|r| format!("`{r}`"))
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                            expected_ref,
+                            expected_ref,
+                            expected_ref,
+                        )
+                    }
+                    BranchDisciplineKind::BlockedDetachedNamespace {
+                        expected_ref,
+                        at_sha,
+                        blocking_refs,
+                    } => {
+                        safe_to_fix = false;
+                        format!(
+                            "{}: workweave checkout is detached at {} while {} refs \
                                  share its namespace `{}` ({}). git cannot create `{}` \
                                  while any ref exists under `{}/`, so \
                                  `--adopt-detached-checkouts` cannot run. Leave at most \
                                  one ref under `{}/`, then re-run `rwv doctor` to get the \
                                  ordinary detached-HEAD finding with a remedy that will \
                                  actually run",
-                                repo_path.display(),
-                                at_sha.short(),
-                                blocking_refs.len(),
-                                expected_ref,
-                                blocking_refs
-                                    .iter()
-                                    .map(|r| format!("`{r}`"))
-                                    .collect::<Vec<_>>()
-                                    .join(", "),
-                                expected_ref,
-                                expected_ref,
-                                expected_ref,
-                            )
-                        }
-                        BranchDisciplineKind::DetachedOffEphemeralBranch {
+                            repo_path.display(),
+                            at_sha.short(),
+                            blocking_refs.len(),
                             expected_ref,
-                            at_sha,
-                            branch_tip,
-                        } => {
-                            safe_to_fix = false;
-                            let moves = if at_sha == branch_tip {
-                                " without moving the working tree".to_owned()
-                            } else {
-                                format!(
-                                    ", checking out {} in place of {}",
-                                    branch_tip.short(),
-                                    at_sha.short()
-                                )
-                            };
+                            blocking_refs
+                                .iter()
+                                .map(|r| format!("`{r}`"))
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                            expected_ref,
+                            expected_ref,
+                            expected_ref,
+                        )
+                    }
+                    BranchDisciplineKind::DetachedOffEphemeralBranch {
+                        expected_ref,
+                        at_sha,
+                        branch_tip,
+                    } => {
+                        safe_to_fix = false;
+                        let moves = if at_sha == branch_tip {
+                            " without moving the working tree".to_owned()
+                        } else {
                             format!(
-                                "{}: workweave checkout is in detached-HEAD state at {} \
+                                ", checking out {} in place of {}",
+                                branch_tip.short(),
+                                at_sha.short()
+                            )
+                        };
+                        format!(
+                            "{}: workweave checkout is in detached-HEAD state at {} \
                                  while its ephemeral branch `{}` stands at {}; \
                                  `git switch {}` reattaches it{} (report-only; \
                                  `--adopt-detached-checkouts` mints the branch only where \
                                  none exists)",
-                                repo_path.display(),
-                                at_sha.short(),
-                                expected_ref,
-                                branch_tip.short(),
-                                expected_ref,
-                                moves,
-                            )
-                        }
-                        BranchDisciplineKind::UnrecordedEphemeralBranch { branch } => format!(
-                            "{}: branch `{}` is this workweave's ephemeral ref but rwv \
+                            repo_path.display(),
+                            at_sha.short(),
+                            expected_ref,
+                            branch_tip.short(),
+                            expected_ref,
+                            moves,
+                        )
+                    }
+                    BranchDisciplineKind::UnrecordedEphemeralBranch { branch } => format!(
+                        "{}: branch `{}` is this workweave's ephemeral ref but rwv \
                              holds no ownership receipt for it. rwv deletes a branch \
                              only against a receipt it recorded, never on the strength \
                              of the name, so this one is not rwv's to delete and \
                              `rwv workweave delete` will leave it behind; \
                              `rwv doctor --fix` adopts it at its current tip",
-                            repo_path.display(),
-                            branch,
-                        ),
-                        BranchDisciplineKind::UnbornCheckout { branch } => {
-                            safe_to_fix = false;
-                            format!(
-                                "{}: workweave checkout is on branch `{}`, which has no \
+                        repo_path.display(),
+                        branch,
+                    ),
+                    BranchDisciplineKind::UnbornCheckout { branch } => {
+                        safe_to_fix = false;
+                        format!(
+                            "{}: workweave checkout is on branch `{}`, which has no \
                                  commits yet — there is no revision to record an ownership \
                                  receipt against, so the branch-model migration has nothing \
                                  to adopt here. Make an initial commit, then re-run \
                                  `rwv doctor --fix`",
-                                repo_path.display(),
-                                branch,
-                            )
-                        }
-                        BranchDisciplineKind::CanonicalHoldsLiveWorkweaveRef {
-                            actual_branch,
-                            workweave,
-                        } => {
-                            safe_to_fix = false;
-                            format!(
-                                "{}: canonical store is checked out on `{}`, a ref rwv \
+                            repo_path.display(),
+                            branch,
+                        )
+                    }
+                    BranchDisciplineKind::CanonicalHoldsLiveWorkweaveRef {
+                        actual_branch,
+                        workweave,
+                    } => {
+                        safe_to_fix = false;
+                        format!(
+                            "{}: canonical store is checked out on `{}`, a ref rwv \
                                  recorded for workweave `{}` — which is still on disk. git \
                                  forbids one branch being checked out twice in the same \
                                  store, so this directory was moved or copied \
                                  (report-only; no rwv --fix path — nothing here can tell \
                                  which of the two checkouts is the real one)",
-                                repo_path.display(),
-                                actual_branch,
-                                workweave
-                            )
-                        }
-                        BranchDisciplineKind::CanonicalHoldsLeakedRef {
+                            repo_path.display(),
                             actual_branch,
-                            project,
-                        } => {
-                            safe_to_fix = false;
-                            format!(
-                                "{}: canonical store is checked out on `{}`, a ref rwv \
+                            workweave
+                        )
+                    }
+                    BranchDisciplineKind::CanonicalHoldsLeakedRef {
+                        actual_branch,
+                        project,
+                    } => {
+                        safe_to_fix = false;
+                        format!(
+                            "{}: canonical store is checked out on `{}`, a ref rwv \
                                  recorded for project `{}` whose workweave is gone — a \
                                  leak. `--fix` cannot reclaim it while this store's own \
                                  HEAD is on it (a branch a worktree uses cannot be \
                                  deleted); `git switch <tracking-branch>` first, then \
                                  re-run `rwv doctor --fix`",
-                                repo_path.display(),
-                                actual_branch,
-                                project
-                            )
-                        }
-                        BranchDisciplineKind::CanonicalDetached {
-                            at_sha,
-                            counterpart,
-                            reattachable,
-                        } => match (counterpart, reattachable) {
-                            (Some(name), true) => format!(
-                                "{}: canonical store is in detached-HEAD state at {}; its \
+                            repo_path.display(),
+                            actual_branch,
+                            project
+                        )
+                    }
+                    BranchDisciplineKind::CanonicalDetached {
+                        at_sha,
+                        counterpart,
+                        reattachable,
+                    } => match (counterpart, reattachable) {
+                        (Some(name), true) => format!(
+                            "{}: canonical store is in detached-HEAD state at {}; its \
                                  tracking counterpart `{}` exists and points at the same \
                                  commit — `rwv doctor --fix --reattach-checkouts` will \
                                  reattach it, or `git switch {}` by hand",
-                                repo_path.display(),
-                                at_sha.short(),
-                                name,
-                                name
-                            ),
-                            (Some(name), false) => format!(
-                                "{}: canonical store is in detached-HEAD state at {}; its \
+                            repo_path.display(),
+                            at_sha.short(),
+                            name,
+                            name
+                        ),
+                        (Some(name), false) => format!(
+                            "{}: canonical store is in detached-HEAD state at {}; its \
                                  tracking counterpart `{}` does not exist or points \
                                  elsewhere, so reattaching would move your working state \
                                  onto a different commit — reconcile `{}` with {} \
                                  yourself, then `git switch {}` \
                                  (report-only; --reattach-checkouts will not fire here)",
-                                repo_path.display(),
-                                at_sha.short(),
-                                name,
-                                name,
-                                at_sha.short(),
-                                name
-                            ),
-                            (None, _) => format!(
-                                "{}: canonical store is in detached-HEAD state at {}; no \
+                            repo_path.display(),
+                            at_sha.short(),
+                            name,
+                            name,
+                            at_sha.short(),
+                            name
+                        ),
+                        (None, _) => format!(
+                            "{}: canonical store is in detached-HEAD state at {}; no \
                                  tracking declaration resolves for this repo, so rwv \
                                  cannot name a branch to reattach to \
                                  (report-only; `git switch <branch>` by hand)",
-                                repo_path.display(),
-                                at_sha.short()
-                            ),
-                        },
-                        BranchDisciplineKind::StaleEphemeralBranchSafe { branch, project } => {
-                            format!(
-                                "{}: leaked ephemeral branch `{}`, recorded by project `{}` \
+                            repo_path.display(),
+                            at_sha.short()
+                        ),
+                    },
+                    BranchDisciplineKind::StaleEphemeralBranchSafe { branch, project } => {
+                        format!(
+                            "{}: leaked ephemeral branch `{}`, recorded by project `{}` \
                                  for a workweave that is gone (safe class — rwv holds an \
                                  ownership receipt for it and its tip is reachable from the \
                                  store's tip; `rwv doctor --fix` will delete it)",
-                                repo_path.display(),
-                                branch,
-                                project
-                            )
-                        }
-                        BranchDisciplineKind::StaleEphemeralBranchUnowned { branch } => {
-                            safe_to_fix = false;
-                            format!(
-                                "{}: branch `{}` carries the pre-flat \
+                            repo_path.display(),
+                            branch,
+                            project
+                        )
+                    }
+                    BranchDisciplineKind::StaleEphemeralBranchUnowned { branch } => {
+                        safe_to_fix = false;
+                        format!(
+                            "{}: branch `{}` carries the pre-flat \
                                  `<project>--<workweave>/<segment>` shape and no workweave \
                                  on disk claims that namespace, but rwv holds no ownership \
                                  receipt for it. Ownership is by record, never by name \
@@ -8661,71 +8669,71 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                                  does not guess which workweave a stray ref belonged to. \
                                  `--fix` will never touch it; remove it by hand if it \
                                  is yours to remove",
-                                repo_path.display(),
-                                branch
-                            )
-                        }
-                        BranchDisciplineKind::StaleEphemeralBranchLive {
-                            branch,
-                            project,
-                            tip_sha,
-                        } => {
-                            // Live-class: tip carries commits not reachable
-                            // from the primary; `doctor --fix` must not touch
-                            // it. Mark the issue accordingly so the integration
-                            // runner's user-held-issues partition leaves it
-                            // alone.
-                            safe_to_fix = false;
-                            format!(
-                                "{}: leaked ephemeral branch `{}`, recorded by project `{}` \
+                            repo_path.display(),
+                            branch
+                        )
+                    }
+                    BranchDisciplineKind::StaleEphemeralBranchLive {
+                        branch,
+                        project,
+                        tip_sha,
+                    } => {
+                        // Live-class: tip carries commits not reachable
+                        // from the primary; `doctor --fix` must not touch
+                        // it. Mark the issue accordingly so the integration
+                        // runner's user-held-issues partition leaves it
+                        // alone.
+                        safe_to_fix = false;
+                        format!(
+                            "{}: leaked ephemeral branch `{}`, recorded by project `{}` \
                                  for a workweave that is gone, carries unique commits at \
                                  tip `{}` (live class — `--fix` will not touch this; \
                                  recover or delete by hand)",
-                                repo_path.display(),
-                                branch,
-                                project,
-                                tip_sha.short()
-                            )
-                        }
-                    };
-                    msg
-                }
-                CheckViolation::StaleWorktreeRegistration {
-                    workweave,
-                    repo,
-                    missing_path,
-                } => {
-                    let location = match workweave {
-                        Some(ww) => format!("{ww}/{repo}"),
-                        None => format!("{repo}"),
-                    };
-                    format!(
-                        "{location}: stale-worktree-registration: missing path \
+                            repo_path.display(),
+                            branch,
+                            project,
+                            tip_sha.short()
+                        )
+                    }
+                };
+                msg
+            }
+            CheckViolation::StaleWorktreeRegistration {
+                workweave,
+                repo,
+                missing_path,
+            } => {
+                let location = match workweave {
+                    Some(ww) => format!("{ww}/{repo}"),
+                    None => format!("{repo}"),
+                };
+                format!(
+                    "{location}: stale-worktree-registration: missing path \
                          {} (run `rwv doctor --fix` to prune)",
-                        missing_path.display()
-                    )
-                }
-                CheckViolation::DanglingRefReceipt {
-                    project,
-                    store_path,
-                    ref_name,
-                } => format!(
-                    "{}: project `{}` holds an ownership receipt for `{}` but no such \
+                    missing_path.display()
+                )
+            }
+            CheckViolation::DanglingRefReceipt {
+                project,
+                store_path,
+                ref_name,
+            } => format!(
+                "{}: project `{}` holds an ownership receipt for `{}` but no such \
                      ref is there — the benign residue of a crash between the receipt \
                      write and the ref creation. rwv writes the receipt first on \
                      purpose, so a crash leaves a receipt with no ref rather than a \
                      ref rwv could never destroy. It authorizes nothing; run \
                      `rwv doctor --fix` to retract it",
-                    store_path.display(),
-                    project,
-                    ref_name
-                ),
-                CheckViolation::PreFlatRefReceipt {
-                    project,
-                    store_path,
-                    ref_name,
-                } => format!(
-                    "{}: project `{}` holds an ownership receipt for `{}`, whose name \
+                store_path.display(),
+                project,
+                ref_name
+            ),
+            CheckViolation::PreFlatRefReceipt {
+                project,
+                store_path,
+                ref_name,
+            } => format!(
+                "{}: project `{}` holds an ownership receipt for `{}`, whose name \
                      carries a `/` segment — no workweave on disk mints that name, so \
                      rwv cannot have created the ref under the flat scheme. Left \
                      recorded, the canonical-store scan reads the branch as a leak \
@@ -8733,206 +8741,205 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                      retract the receipt: that drops the record only — the branch is \
                      not touched, and afterwards it is unowned, which `--fix` never \
                      deletes",
-                    store_path.display(),
-                    project,
-                    ref_name
-                ),
-                CheckViolation::StaleOpState {
-                    workspace_dir,
-                    verb,
-                    started_at,
-                } => format!(
-                    "{}/.rwv-op: stale-op-state present (started_at={started_at}); \
+                store_path.display(),
+                project,
+                ref_name
+            ),
+            CheckViolation::StaleOpState {
+                workspace_dir,
+                verb,
+                started_at,
+            } => format!(
+                "{}/.rwv-op: stale-op-state present (started_at={started_at}); \
                      resume with `{resume}` or roll back with `rwv abort`. \
                      Never auto-fixed — another terminal may be mid-conflict-resolution.",
-                    workspace_dir.display(),
-                    resume = crate::op_state::resume_command(verb),
-                ),
-                CheckViolation::DeadOpLease {
-                    workspace_dir,
-                    op_id,
-                    recorded_owner,
-                    sub_kind,
-                    created_at,
-                } => {
-                    let cause = match &sub_kind {
-                        DeadOpLeaseKind::OwnerRecordAbsent => format!(
-                            "recorded owner workspace {} has no `.rwv-op` file",
-                            recorded_owner.display()
-                        ),
-                        DeadOpLeaseKind::OwnerOpIdMismatch { owner_op_id } => format!(
-                            "recorded owner workspace {} holds a different op \
+                workspace_dir.display(),
+                resume = crate::op_state::resume_command(verb),
+            ),
+            CheckViolation::DeadOpLease {
+                workspace_dir,
+                op_id,
+                recorded_owner,
+                sub_kind,
+                created_at,
+            } => {
+                let cause = match &sub_kind {
+                    DeadOpLeaseKind::OwnerRecordAbsent => format!(
+                        "recorded owner workspace {} has no `.rwv-op` file",
+                        recorded_owner.display()
+                    ),
+                    DeadOpLeaseKind::OwnerOpIdMismatch { owner_op_id } => format!(
+                        "recorded owner workspace {} holds a different op \
                              (owner op_id={owner_op_id}, lease op_id={op_id})",
-                            recorded_owner.display()
-                        ),
-                    };
-                    // Surface lease age as observability-only context, matching
-                    // the StaleOpState pattern (RFC3339 raw + humanized elapsed).
-                    // Never used as a decision input — classification is structural.
-                    let age_str = match created_at.as_deref() {
-                        Some(ts) => format!(
-                            " (created_at={ts}, age={})",
-                            crate::op_state::elapsed_since(ts)
-                        ),
-                        None => String::new(),
-                    };
-                    format!(
-                        "{}/.rwv-op-lease: dead-op-lease op_id={op_id}{age_str} — {cause}; \
+                        recorded_owner.display()
+                    ),
+                };
+                // Surface lease age as observability-only context, matching
+                // the StaleOpState pattern (RFC3339 raw + humanized elapsed).
+                // Never used as a decision input — classification is structural.
+                let age_str = match created_at.as_deref() {
+                    Some(ts) => format!(
+                        " (created_at={ts}, age={})",
+                        crate::op_state::elapsed_since(ts)
+                    ),
+                    None => String::new(),
+                };
+                format!(
+                    "{}/.rwv-op-lease: dead-op-lease op_id={op_id}{age_str} — {cause}; \
                          safe to auto-fix with `rwv doctor --fix` (removes the lease file).",
-                        workspace_dir.display()
-                    )
-                }
-                CheckViolation::OrphanedSavepoint {
-                    workweave,
-                    repo,
-                    key,
-                    sub_kind,
-                } => {
-                    let location = match workweave {
-                        Some(ww) => format!("{ww}/{repo}"),
-                        None => format!("{repo}"),
-                    };
-                    let detail = match sub_kind {
-                        OrphanedSavepointKind::Redundant => {
-                            "orphaned-savepoint (redundant — tip reachable from HEAD; \
+                    workspace_dir.display()
+                )
+            }
+            CheckViolation::OrphanedSavepoint {
+                workweave,
+                repo,
+                key,
+                sub_kind,
+            } => {
+                let location = match workweave {
+                    Some(ww) => format!("{ww}/{repo}"),
+                    None => format!("{repo}"),
+                };
+                let detail = match sub_kind {
+                    OrphanedSavepointKind::Redundant => {
+                        "orphaned-savepoint (redundant — tip reachable from HEAD; \
                              run `rwv doctor --fix` to drop)"
-                        }
-                        OrphanedSavepointKind::Live => {
-                            "orphaned-savepoint (last pointer to unreachable commits; \
+                    }
+                    OrphanedSavepointKind::Live => {
+                        "orphaned-savepoint (last pointer to unreachable commits; \
                              keep — recover or delete by hand with `git branch <name> <sha>`)"
-                        }
-                    };
-                    format!("{location}: {detail} op_id={key}")
-                }
-                CheckViolation::UnrecognizedSavepointRef {
-                    workweave,
-                    repo,
-                    ref_name,
-                } => {
-                    let location = match workweave {
-                        Some(ww) => format!("{ww}/{repo}"),
-                        None => format!("{repo}"),
-                    };
-                    format!(
-                        "{location}: unrecognized-savepoint-ref {ref_name} — it sits in the \
+                    }
+                };
+                format!("{location}: {detail} op_id={key}")
+            }
+            CheckViolation::UnrecognizedSavepointRef {
+                workweave,
+                repo,
+                ref_name,
+            } => {
+                let location = match workweave {
+                    Some(ww) => format!("{ww}/{repo}"),
+                    None => format!("{repo}"),
+                };
+                format!(
+                    "{location}: unrecognized-savepoint-ref {ref_name} — it sits in the \
                          savepoint namespace but no op id names it, so rwv did not file it. \
                          Never auto-fixed: what it points at is unknown. Inspect it, and \
                          delete it by hand with `git update-ref -d {ref_name}` once nothing \
                          needs it."
-                    )
-                }
-                CheckViolation::CargoVersionSkew {
-                    crate_name,
-                    occurrences,
-                } => {
-                    // Report-not-mandate: skew is informational.
-                    // Warning severity so doctor's exit stays 0 by default;
-                    // safe_to_fix is true only in the trivial sense that
-                    // there's nothing for --fix to do (rwv cannot mandate
-                    // versions in sovereign repos) — leaving it true keeps
-                    // the finding out of the not-safe-to-fix "user held"
-                    // bucket meant for pen-holding conflicts.
-                    let mut msg = format!(
-                        "cargo version skew: `{crate_name}` required at differing versions across \
+                )
+            }
+            CheckViolation::CargoVersionSkew {
+                crate_name,
+                occurrences,
+            } => {
+                // Report-not-mandate: skew is informational.
+                // Warning severity so doctor's exit stays 0 by default;
+                // safe_to_fix is true only in the trivial sense that
+                // there's nothing for --fix to do (rwv cannot mandate
+                // versions in sovereign repos) — leaving it true keeps
+                // the finding out of the not-safe-to-fix "user held"
+                // bucket meant for pen-holding conflicts.
+                let mut msg = format!(
+                    "cargo version skew: `{crate_name}` required at differing versions across \
                          members (report-only — rwv cannot mandate versions in sovereign repos)"
-                    );
-                    for occ in &occurrences {
-                        msg.push_str(&format!("\n  - {}: {}", occ.member, occ.requirement));
-                    }
-                    msg
+                );
+                for occ in &occurrences {
+                    msg.push_str(&format!("\n  - {}: {}", occ.member, occ.requirement));
                 }
-                CheckViolation::CargoPatchShadowing {
-                    weave_config,
-                    member_config,
-                    registry,
-                    crate_name,
-                } => {
-                    // Report-only precheck: cargo's closest-config-wins per-key
-                    // shadowing means the member config silently defeats the
-                    // weave-level entry. Cargo does not warn; its version-
-                    // mismatch diagnostic actively misleads (blames
-                    // crates.io). This finding is what agents/scripts key on
-                    // before generating derived patches.
-                    format!(
-                        "cargo patch shadowing: `[patch.{registry}].{crate_name}` in {} \
+                msg
+            }
+            CheckViolation::CargoPatchShadowing {
+                weave_config,
+                member_config,
+                registry,
+                crate_name,
+            } => {
+                // Report-only precheck: cargo's closest-config-wins per-key
+                // shadowing means the member config silently defeats the
+                // weave-level entry. Cargo does not warn; its version-
+                // mismatch diagnostic actively misleads (blames
+                // crates.io). This finding is what agents/scripts key on
+                // before generating derived patches.
+                format!(
+                    "cargo patch shadowing: `[patch.{registry}].{crate_name}` in {} \
                          silently defeats the weave-level entry in {} \
                          (cargo merges .cargo/config.toml closest-wins per key, with no \
                          warning when a patch is inert)",
-                        member_config.display(),
-                        weave_config.display(),
-                    )
-                }
-                CheckViolation::MissingCanonicalClone {
-                    workweave,
-                    repo,
-                    canonical_path,
-                } => {
-                    // The canonical clone for this repo is gone; the worktree
-                    // cannot be classified. Do NOT advise commit/stash — the
-                    // git layer is broken and commands will fail anyway. Point
-                    // at the same manual re-clone repair as DanglingReference.
-                    safe_to_fix = false;
-                    format!(
-                        "{workweave}/{repo}: canonical clone for `{repo}` is absent \
+                    member_config.display(),
+                    weave_config.display(),
+                )
+            }
+            CheckViolation::MissingCanonicalClone {
+                workweave,
+                repo,
+                canonical_path,
+            } => {
+                // The canonical clone for this repo is gone; the worktree
+                // cannot be classified. Do NOT advise commit/stash — the
+                // git layer is broken and commands will fail anyway. Point
+                // at the same manual re-clone repair as DanglingReference.
+                safe_to_fix = false;
+                format!(
+                    "{workweave}/{repo}: canonical clone for `{repo}` is absent \
                          (expected at {}) — this worktree cannot be classified; \
                          run `rwv fetch` from the weave root to \
                          re-materialize it, then re-run `rwv doctor` to verify",
-                        canonical_path.display()
-                    )
-                }
-                CheckViolation::UninitializedSubmodule {
-                    workweave,
-                    repo,
-                    sub_kind,
-                    empty_paths,
-                } => {
-                    let remedy = match sub_kind {
-                        SubmoduleCommitKind::Fetched => {
-                            "`rwv doctor --fix` checks them out from the canonical clone's \
+                    canonical_path.display()
+                )
+            }
+            CheckViolation::UninitializedSubmodule {
+                workweave,
+                repo,
+                sub_kind,
+                empty_paths,
+            } => {
+                let remedy = match sub_kind {
+                    SubmoduleCommitKind::Fetched => {
+                        "`rwv doctor --fix` checks them out from the canonical clone's \
                              copies"
-                                .to_owned()
-                        }
-                        SubmoduleCommitKind::Unfetched => format!(
-                            "their recorded commits are not in the canonical clone's copies; \
+                            .to_owned()
+                    }
+                    SubmoduleCommitKind::Unfetched => format!(
+                        "their recorded commits are not in the canonical clone's copies; \
                              fetch them there (`git -C {repo} submodule update --init` at the \
                              primary), then run `rwv doctor --fix`"
-                        ),
-                    };
-                    format!(
-                        "{workweave}/{repo}: submodules not initialized — \
+                    ),
+                };
+                format!(
+                    "{workweave}/{repo}: submodules not initialized — \
                          {n} submodule path(s) are empty on disk: {paths}; {remedy}",
-                        n = empty_paths.len(),
-                        paths = empty_paths.join(", "),
-                    )
-                }
-                CheckViolation::PhantomMergeDriver {
-                    repo,
-                    pattern,
-                    driver,
-                } => {
-                    // No fix: `rwv-ours` is a guess at what the operator meant,
-                    // and deleting the line is a guess that they meant nothing.
-                    safe_to_fix = false;
-                    format!(
-                        "{repo}: .gitattributes assigns merge driver `{driver}` to \
+                    n = empty_paths.len(),
+                    paths = empty_paths.join(", "),
+                )
+            }
+            CheckViolation::PhantomMergeDriver {
+                repo,
+                pattern,
+                driver,
+            } => {
+                // No fix: `rwv-ours` is a guess at what the operator meant,
+                // and deleting the line is a guess that they meant nothing.
+                safe_to_fix = false;
+                format!(
+                    "{repo}: .gitattributes assigns merge driver `{driver}` to \
                          `{pattern}`, but rwv defines no driver by that name — the \
                          `rwv-` prefix is rwv's, so nothing else defines it either \
                          and the line silently does nothing (git falls back to a \
                          textual merge). Use `merge={defined}` for a derived path \
                          whose target-side copy should win, or drop the line",
-                        defined = crate::git::RWV_MERGE_DRIVER_NAME,
-                    )
-                }
-            };
-            Some(Issue {
-                kind: IssueKind::CoreFinding,
-                source: IssueSource::Core,
-                severity,
-                message,
-                safe_to_fix,
-            })
+                    defined = crate::git::RWV_MERGE_DRIVER_NAME,
+                )
+            }
+        };
+        Some(Issue {
+            kind: IssueKind::CoreFinding,
+            source: IssueSource::Core,
+            severity,
+            message,
+            safe_to_fix,
         })
-        .collect()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -10332,25 +10339,25 @@ pub fn run_check(
         apply_workspace_repairs(ctx, &world, reattach, adopt_detached, &mut fix_errors);
     }
 
-    let DoctorFindings {
-        violations,
-        repo_locations,
-        ..
-    } = collect_doctor_violations(ctx, &world, ScanProgress::Heartbeat);
+    let mut findings = collect_doctor_violations(ctx, &world, ScanProgress::Heartbeat);
 
-    let violations = if fix {
-        let violations =
-            apply_finding_repairs(ctx, &world, violations, &repo_locations, &mut fix_errors);
-        repair_member_permissions(
+    if fix {
+        let violations = std::mem::take(&mut findings.violations);
+        let violations = apply_finding_repairs(
+            ctx,
+            &world,
+            violations,
+            &findings.repo_locations,
+            &mut fix_errors,
+        );
+        findings.violations = repair_member_permissions(
             ctx,
             &world.input.projects,
             world.project_scope(),
             violations,
             &mut fix_errors,
-        )
-    } else {
-        violations
-    };
+        );
+    }
 
     // Read before `violations` moves into rendering. A violation holds
     // the health floor back only while rwv itself could repair it: every
@@ -10363,43 +10370,19 @@ pub fn run_check(
     // on those makes such a weave permanently floorless. Error-severity
     // findings, converted violations included, block through
     // `has_errors` below.
-    let violations_all_report_only = violations
+    let violations_all_report_only = findings
+        .violations
         .iter()
         .all(|v| matches!(v.fix_disposition(), FixDisposition::ReportOnly));
 
-    let mut all_issues = match kind_filter {
-        // The filtered view is the drill-down: the named kinds render
-        // ITEMIZED, bypassing the per-class count collapse — `--kind` is
-        // what replaces `--json | jq` for triage, so it must show the
-        // records, not the count line that pointed here. Integration
-        // issues join below, by their own kind.
-        Some(filter) => itemized_violations_to_issues(
-            violations
-                .into_iter()
-                .filter(|v| filter.admits(v))
-                .collect(),
-        ),
-        None => violations_to_issues(violations),
+    let issue_repair = match kind_filter {
+        Some(_) => Repair::Report,
+        None => repair,
     };
-
-    for msg in fix_errors {
-        all_issues.push(Issue {
-            kind: IssueKind::CoreFinding,
-            source: IssueSource::Core,
-            severity: Severity::Error,
-            message: msg,
-            safe_to_fix: true,
-        });
-    }
-
-    match kind_filter {
-        None => all_issues.extend(collect_doctor_issues(&world, repair)),
-        Some(filter) => all_issues.extend(
-            collect_doctor_issues(&world, Repair::Report)
-                .into_iter()
-                .filter(|issue| filter.admits_issue(issue)),
-        ),
-    }
+    let findings = findings
+        .with_issues(collect_doctor_issues(&world, issue_repair))
+        .admitting(kind_filter);
+    let all_issues = text_report(findings, fix_errors);
 
     for issue in &all_issues {
         let prefix = match issue.severity {
@@ -10433,26 +10416,28 @@ pub fn run_check(
     Ok(verdict)
 }
 
-/// Build the payload for `rwv doctor --json` from a vector of violations and
-/// the resolved workspace context. Extracted from [`run_check_json`] so tests
-/// can drive the serialization shape without reaching for a real workspace on
-/// disk.
+/// The payload for `rwv doctor --json`: every finding the run holds, one
+/// record each, with the resolved workspace context beside them.
 pub fn build_doctor_json(
-    violations: Vec<CheckViolation>,
-    issues: Vec<Issue>,
+    findings: DoctorFindings,
     workspace_dir: &Path,
-    workweave_dirs: &std::collections::HashMap<WorkweaveId, std::path::PathBuf>,
     resolution: Option<Resolution>,
     plugins: Vec<crate::plugins::PluginRecord>,
     advisories: Vec<crate::workspace::AdvisoryOutput>,
 ) -> DoctorJsonOutput {
+    let workweave_dirs = &findings.workweave_dirs;
     DoctorJsonOutput {
         schema_url: DOCTOR_SCHEMA_URL.to_owned(),
-        violations: violations
+        violations: findings
+            .violations
             .into_iter()
             .map(|v| ViolationOutput::from_violation(v, workspace_dir, workweave_dirs))
             .collect(),
-        issues: issues.into_iter().map(IssueOutput::from_issue).collect(),
+        issues: findings
+            .issues
+            .into_iter()
+            .map(IssueOutput::from_issue)
+            .collect(),
         advisories,
         plugins,
         resolution,
@@ -10639,15 +10624,65 @@ enum ScanProgress {
     Heartbeat,
 }
 
-/// What one pass of [`collect_doctor_violations`] found.
+/// What one `rwv doctor` run found, in the scope it ran under and through the
+/// kind filter it was given: the only input either renderer takes.
+///
+/// Its fields are private, so nothing outside this module can build one or
+/// change what it holds; a renderer cannot be handed findings some other
+/// collection produced.
 ///
 /// `repo_locations` resolves a `(workweave, repo)` pair from a violation back
 /// to the worktree it was observed in, which is what the text renderer's
 /// `--fix` arms need to act on a finding they did not scan for themselves.
-struct DoctorFindings {
+pub struct DoctorFindings {
     violations: Vec<CheckViolation>,
+    issues: Vec<Issue>,
+    filtered: bool,
     workweave_dirs: std::collections::HashMap<WorkweaveId, std::path::PathBuf>,
     repo_locations: std::collections::HashMap<(Option<WorkweaveId>, RepoPath), std::path::PathBuf>,
+}
+
+impl DoctorFindings {
+    fn with_issues(mut self, issues: Vec<Issue>) -> Self {
+        self.issues.extend(issues);
+        self
+    }
+
+    /// Narrowed to what `kind_filter` admits, on both channels. Each record
+    /// that survives is unchanged.
+    fn admitting(mut self, kind_filter: Option<&KindFilter>) -> Self {
+        if let Some(filter) = kind_filter {
+            self.violations.retain(|v| filter.admits(v));
+            self.issues.retain(|issue| filter.admits_issue(issue));
+            self.filtered = true;
+        }
+        self
+    }
+}
+
+/// The text report's lines for `findings`: its violations, collapsed by class
+/// unless a kind filter narrowed them, then `fix_errors`, then its issues.
+///
+/// The filtered view is the drill-down: the admitted kinds render itemized,
+/// bypassing the per-class count collapse, because `--kind` is what replaces
+/// `--json | jq` for triage and must show the records, not the count line
+/// that pointed there.
+fn text_report(findings: DoctorFindings, fix_errors: Vec<String>) -> Vec<Issue> {
+    use crate::integration::Severity;
+    let mut lines = if findings.filtered {
+        itemized_violations_to_issues(findings.violations)
+    } else {
+        violations_to_issues(findings.violations)
+    };
+    lines.extend(fix_errors.into_iter().map(|message| Issue {
+        kind: IssueKind::CoreFinding,
+        source: IssueSource::Core,
+        severity: Severity::Error,
+        message,
+        safe_to_fix: true,
+    }));
+    lines.extend(findings.issues);
+    lines
 }
 
 /// The one place `rwv doctor` decides which scans run.
@@ -11073,6 +11108,8 @@ fn collect_doctor_violations(
 
     DoctorFindings {
         violations,
+        issues: Vec::new(),
+        filtered: false,
         workweave_dirs,
         repo_locations,
     }
@@ -11102,32 +11139,16 @@ pub fn run_check_json(
     // weave state; the floor records from the operator's text-mode run.
     crate::health_floor::enforce(ctx.primary_path())?;
     let world = load_doctor_world(ctx, scope)?;
-    let DoctorFindings {
-        violations,
-        workweave_dirs,
-        ..
-    } = collect_doctor_violations(ctx, &world, ScanProgress::Silent);
-    // Filtering selects a SUBSET of the records — each surviving record is
-    // byte-identical to its unfiltered self, so consumers reading
-    // `violations[]` (the per-class baseline capture among them) see the
-    // same shapes whether or not a filter is active.
-    let violations: Vec<CheckViolation> = match kind_filter {
-        Some(filter) => violations
-            .into_iter()
-            .filter(|v| filter.admits(v))
-            .collect(),
-        None => violations,
-    };
-    let issues: Vec<Issue> = collect_doctor_issues(&world, Repair::Report)
-        .into_iter()
-        .filter(|issue| kind_filter.is_none_or(|filter| filter.admits_issue(issue)))
-        .collect();
+    let findings = collect_doctor_violations(ctx, &world, ScanProgress::Silent)
+        .with_issues(collect_doctor_issues(&world, Repair::Report))
+        .admitting(kind_filter);
     let verdict = doctor_verdict(
         kind_filter,
-        violations
+        findings
+            .violations
             .iter()
             .map(CheckViolation::severity)
-            .chain(issues.iter().map(|issue| issue.severity)),
+            .chain(findings.issues.iter().map(|issue| issue.severity)),
     );
     // Discover `rwv-*` executables on PATH for the inventory. This is
     // reporting only — the presence or absence of plugins never affects the
@@ -11138,10 +11159,8 @@ pub fn run_check_json(
         .map(stale_generation_advisory)
         .collect();
     let payload = build_doctor_json(
-        violations,
-        issues,
+        findings,
         &world.workspace_dir,
-        &workweave_dirs,
         ctx.resolution(),
         plugins,
         advisories,
