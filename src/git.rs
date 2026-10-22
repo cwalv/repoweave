@@ -910,6 +910,99 @@ impl GitVcs {
     }
 }
 
+/// How long a git command that died on a peer's unfinished worktree
+/// registration is retried before its failure is believed.
+const UNWRITTEN_REGISTRATION_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
+const UNWRITTEN_REGISTRATION_POLL: std::time::Duration = std::time::Duration::from_millis(10);
+
+impl GitVcs {
+    /// [`GitVcs::run`] for a git command that reads the repo's worktree
+    /// registrations before it changes anything.
+    fn run_awaiting_peers(args: &[&str], dir: &Path) -> Result<String, VcsError> {
+        Self::awaiting_peer_registration(dir, UNWRITTEN_REGISTRATION_WAIT, || Self::run(args, dir))
+    }
+
+    fn run_trimmed_awaiting_peers(args: &[&str], dir: &Path) -> Result<String, VcsError> {
+        Self::run_awaiting_peers(args, dir).map(|s| s.trim().to_string())
+    }
+
+    /// Run `attempt` again for up to `wait` while it fails because a peer's
+    /// `git worktree add` has not finished its registration.
+    ///
+    /// `git worktree add` creates the new worktree's registration under the
+    /// shared repo and writes its `commondir` a moment later, in two steps. A
+    /// git command that enumerates the repo's worktrees in between reads the
+    /// file empty and dies naming it. The writer finishes in microseconds on a
+    /// local disk and in milliseconds where file operations are slow, so while
+    /// a registration under the repo has an empty `commondir` the failure is
+    /// the peer's, not the repo's. The state is what is checked, not git's
+    /// wording, which is translated.
+    ///
+    /// Only an `attempt` that has changed nothing when it dies can be run
+    /// again as it was.
+    fn awaiting_peer_registration<T>(
+        dir: &Path,
+        wait: std::time::Duration,
+        mut attempt: impl FnMut() -> Result<T, VcsError>,
+    ) -> Result<T, VcsError> {
+        let deadline = std::time::Instant::now() + wait;
+        let mut looked_clean = false;
+        loop {
+            match attempt() {
+                Err(VcsError::CommandFailed { args, repo, stderr })
+                    if stderr.contains("commondir") =>
+                {
+                    let Some(unwritten) = Self::unwritten_registration(dir) else {
+                        // The writer may have finished between the failure
+                        // and this look, so a clean look earns one more
+                        // attempt; two in a row, with no unfinished
+                        // registration seen between them, are believed.
+                        if !std::mem::replace(&mut looked_clean, true) {
+                            continue;
+                        }
+                        return Err(VcsError::CommandFailed { args, repo, stderr });
+                    };
+                    looked_clean = false;
+                    if std::time::Instant::now() < deadline {
+                        std::thread::sleep(UNWRITTEN_REGISTRATION_POLL);
+                        continue;
+                    }
+                    return Err(VcsError::CommandFailed {
+                        args,
+                        repo,
+                        stderr: format!(
+                            "{}\n{} has been empty for {}s: the `git worktree add` that was \
+                             writing it stopped before finishing, and git cannot list this \
+                             repository's worktrees until that registration is completed or \
+                             removed",
+                            stderr.trim_end(),
+                            unwritten.display(),
+                            wait.as_secs_f64()
+                        ),
+                    });
+                }
+                result => return result,
+            }
+        }
+    }
+
+    /// The `commondir` of a worktree registration under the repo `dir` is in
+    /// that is empty right now.
+    fn unwritten_registration(dir: &Path) -> Option<PathBuf> {
+        let common = Self::run_trimmed(
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            dir,
+        )
+        .ok()?;
+        std::fs::read_dir(Path::new(&common).join("worktrees"))
+            .ok()?
+            .flatten()
+            .map(|registration| registration.path().join("commondir"))
+            .find(|commondir| std::fs::metadata(commondir).is_ok_and(|m| m.len() == 0))
+    }
+}
+
 impl GitVcs {
     /// Re-mint a failed `worktree add` as [`VcsError::HookRejected`] when git
     /// left `dest` registered as a worktree.
@@ -1478,7 +1571,7 @@ impl Vcs for GitVcs {
 
     fn remove_worktree(&self, repo: &Path, worktree_path: &Path) -> Result<(), VcsError> {
         let wt_str = path_as_git_arg(worktree_path, "worktree path")?;
-        Self::run(&["worktree", "remove", "--force", wt_str], repo)?;
+        Self::run_awaiting_peers(&["worktree", "remove", "--force", wt_str], repo)?;
         Ok(())
     }
 
@@ -1502,7 +1595,7 @@ impl Vcs for GitVcs {
     }
 
     fn list_worktrees(&self, repo: &Path) -> Result<Vec<PathBuf>, VcsError> {
-        let output = Self::run_trimmed(&["worktree", "list", "--porcelain"], repo)?;
+        let output = Self::run_trimmed_awaiting_peers(&["worktree", "list", "--porcelain"], repo)?;
         let paths = output
             .lines()
             .filter_map(|line| line.strip_prefix("worktree "))
@@ -2492,7 +2585,7 @@ impl Vcs for GitVcs {
         //                         location); marks the record for pruning.
         // We collect the `worktree` path of every record that carries a
         // `prunable` line.
-        let output = Self::run_trimmed(&["worktree", "list", "--porcelain"], repo)?;
+        let output = Self::run_trimmed_awaiting_peers(&["worktree", "list", "--porcelain"], repo)?;
         let mut stale: Vec<PathBuf> = Vec::new();
         let mut current_path: Option<PathBuf> = None;
         let mut current_prunable = false;
@@ -2526,7 +2619,7 @@ impl Vcs for GitVcs {
         // Same records as `list_stale_worktree_registrations`, read for the
         // other two lines: `branch <fullref>`, absent on a detached record,
         // and `prunable`, which disqualifies the registration.
-        let output = Self::run_trimmed(&["worktree", "list", "--porcelain"], repo)?;
+        let output = Self::run_trimmed_awaiting_peers(&["worktree", "list", "--porcelain"], repo)?;
         let mut held: Vec<RawRefName> = Vec::new();
         let mut current_branch: Option<RawRefName> = None;
         let mut current_prunable = false;
@@ -2824,7 +2917,7 @@ impl Vcs for GitVcs {
 
     fn destroy_local_ref(&self, store: &Path, name: &RawRefName) -> Result<(), VcsError> {
         let store = Self::work_dir_for_store(store);
-        Self::run(&["branch", "-D", name.as_str()], &store)?;
+        Self::run_awaiting_peers(&["branch", "-D", name.as_str()], &store)?;
         Ok(())
     }
 
@@ -3395,7 +3488,8 @@ impl GitVcs {
             // retried with -b, destroying a ref on nothing but a name match
             // — a DESTROY needs a receipt and a warrant (R2, R3), and this
             // call holds neither, so it cannot be reached from here.
-            Self::run(&[add, &[dest_str, branch]].concat(), &store).map_err(classify)?;
+            Self::run_awaiting_peers(&[add, &[dest_str, branch]].concat(), &store)
+                .map_err(classify)?;
             return Ok(RefOrigin::Adopted);
         }
         // AUTHOR. If this fails after git has already written the ref (a
@@ -3404,7 +3498,21 @@ impl GitVcs {
         // call, so what remains is a recorded ref with no worktree, which
         // doctor can reconcile. Deleting it here would be an unwarranted
         // DESTROY, which is the failure mode this path exists to remove.
-        Self::run(&[add, &["-b", branch, dest_str, start]].concat(), &store).map_err(classify)?;
+        //
+        // git creates the branch before it reads the registrations, so an
+        // attempt that dies on a peer's has already authored it: the next one
+        // checks the branch out instead of creating it, and the call is still
+        // the one that authored it.
+        Self::awaiting_peer_registration(&store, UNWRITTEN_REGISTRATION_WAIT, || {
+            let created = self.resolve_local_branch_tip(&store, name)?.is_some();
+            let args: &[&str] = if created {
+                &[dest_str, branch]
+            } else {
+                &["-b", branch, dest_str, start]
+            };
+            Self::run(&[add, args].concat(), &store)
+        })
+        .map_err(classify)?;
         Ok(RefOrigin::Authored)
     }
 
@@ -5994,4 +6102,248 @@ mod population_tests {
         finishing_writes_only_what_is_missing_and_leaves_a_checkout,
         checking_out_a_path_replaces_it_and_leaves_what_shared_it_alone,
     );
+}
+
+#[cfg(test)]
+mod peer_registration_tests {
+    //! `git worktree add` creates the new worktree's registration under the
+    //! shared repo and writes its `commondir` a moment later. A git command
+    //! that enumerates the repo's worktrees in between reads the file empty
+    //! and dies with "failed to read .../commondir". The window is
+    //! microseconds, so these tests hold it open: a registration whose
+    //! `commondir` is truncated, and a thread that finishes it later.
+
+    use super::*;
+    use std::time::Duration;
+
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let out = git_command_in_test()
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("run git");
+        assert!(
+            out.status.success(),
+            "git {args:?} failed in {}: {}",
+            dir.display(),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap().trim().to_owned()
+    }
+
+    /// A repo on `main` holding two registered worktrees, `other` and `peer`.
+    struct Fixture {
+        _tmp: tempfile::TempDir,
+        store: PathBuf,
+        base: String,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let tmp = tempfile::tempdir().unwrap();
+            let store = tmp.path().join("store");
+            std::fs::create_dir(&store).unwrap();
+            git(&store, &["init", "-b", "main"]);
+            git(&store, &["config", "user.email", "t@t"]);
+            git(&store, &["config", "user.name", "T"]);
+            git(&store, &["commit", "--allow-empty", "-m", "one"]);
+            for name in ["other", "peer"] {
+                let path = tmp.path().join(name);
+                git(
+                    &store,
+                    &["worktree", "add", "-b", name, path.to_str().unwrap()],
+                );
+            }
+            let base = git(&store, &["rev-parse", "HEAD"]);
+            Self {
+                _tmp: tmp,
+                store,
+                base,
+            }
+        }
+
+        fn path(&self, name: &str) -> PathBuf {
+            self._tmp.path().join(name)
+        }
+
+        fn commondir_of_peer(&self) -> PathBuf {
+            self.store.join(".git/worktrees/peer/commondir")
+        }
+
+        /// Leave `peer`'s registration as `git worktree add` does for a
+        /// moment: created, `commondir` empty. The returned thread finishes it
+        /// after `after`.
+        fn leave_peer_unwritten(&self, after: Duration) -> std::thread::JoinHandle<()> {
+            let commondir = self.commondir_of_peer();
+            let written = std::fs::read(&commondir).unwrap();
+            std::fs::write(&commondir, b"").unwrap();
+            std::thread::spawn(move || {
+                std::thread::sleep(after);
+                std::fs::write(&commondir, written).unwrap();
+            })
+        }
+    }
+
+    const LATER: Duration = Duration::from_millis(200);
+
+    #[test]
+    fn listing_worktrees_waits_for_a_peer_to_finish_its_registration() {
+        let fx = Fixture::new();
+        let finishing = fx.leave_peer_unwritten(LATER);
+
+        let listed = GitVcs.list_worktrees(&fx.store);
+        finishing.join().unwrap();
+
+        let listed = listed.expect("the peer finished within the wait");
+        assert_eq!(listed.len(), 3, "{listed:?}");
+    }
+
+    #[test]
+    fn removing_a_worktree_waits_for_a_peer_to_finish_its_registration() {
+        let fx = Fixture::new();
+        let finishing = fx.leave_peer_unwritten(LATER);
+
+        let removed = GitVcs.remove_worktree(&fx.store, &fx.path("other"));
+        finishing.join().unwrap();
+
+        removed.expect("the peer finished within the wait");
+        assert!(!fx.path("other").exists());
+    }
+
+    #[test]
+    fn destroying_a_branch_waits_for_a_peer_to_finish_its_registration() {
+        let fx = Fixture::new();
+        git(&fx.store, &["branch", "spare"]);
+        let finishing = fx.leave_peer_unwritten(LATER);
+
+        let destroyed = GitVcs.destroy_local_ref(&fx.store, &RawRefName::new("spare"));
+        finishing.join().unwrap();
+
+        destroyed.expect("the peer finished within the wait");
+        assert!(GitVcs
+            .resolve_local_branch_tip(&fx.store, &RawRefName::new("spare"))
+            .unwrap()
+            .is_none());
+    }
+
+    /// git creates the branch before it reads the registrations, so the
+    /// attempt that dies has already authored it; the call is still the one
+    /// that authored it, and the worktree ends on it.
+    /// Peers that keep starting registrations while a command keeps losing to
+    /// them: a failure the look finds clean is asked again, and only two in a
+    /// row with nothing unfinished seen between are believed.
+    #[test]
+    fn clean_looks_count_only_while_nothing_unfinished_was_seen_between_them() {
+        let fx = Fixture::new();
+        let commondir = fx.commondir_of_peer();
+        let written = std::fs::read(&commondir).unwrap();
+        let attempts = std::cell::Cell::new(0);
+        let lost = || VcsError::CommandFailed {
+            args: vec!["worktree".to_owned(), "list".to_owned()],
+            repo: fx.store.clone(),
+            stderr: "fatal: failed to read x/commondir: Success".to_owned(),
+        };
+
+        let outcome = GitVcs::awaiting_peer_registration(&fx.store, Duration::from_secs(5), || {
+            attempts.set(attempts.get() + 1);
+            match attempts.get() {
+                // Lost to a peer still writing, then the peer finishes.
+                1 | 3 => {
+                    std::fs::write(&commondir, b"").unwrap();
+                    Err(lost())
+                }
+                2 | 4 => {
+                    std::fs::write(&commondir, &written).unwrap();
+                    Err(lost())
+                }
+                _ => Ok(()),
+            }
+        });
+
+        outcome.expect("each clean look was separated from the next by an unfinished one");
+        assert_eq!(attempts.get(), 5);
+    }
+
+    #[test]
+    fn creating_a_worktree_on_a_new_branch_still_authors_it_after_waiting() {
+        let fx = Fixture::new();
+        let start = GitVcs.head_revision(&fx.store).unwrap();
+        let finishing = fx.leave_peer_unwritten(LATER);
+
+        let dest = fx.path("new");
+        let origin =
+            GitVcs.materialize_worktree_on_ref(&fx.store, &dest, &RawRefName::new("p--w"), &start);
+        finishing.join().unwrap();
+
+        assert_eq!(origin.unwrap(), RefOrigin::Authored);
+        assert_eq!(git(&dest, &["rev-parse", "HEAD"]), fx.base);
+        assert_eq!(git(&dest, &["symbolic-ref", "--short", "HEAD"]), "p--w");
+    }
+
+    #[test]
+    fn a_registration_that_stays_unwritten_fails_with_gits_error_naming_the_file() {
+        let fx = Fixture::new();
+        std::fs::write(fx.commondir_of_peer(), b"").unwrap();
+
+        let started = std::time::Instant::now();
+        let err = GitVcs::awaiting_peer_registration(&fx.store, Duration::from_millis(80), || {
+            GitVcs::run(&["worktree", "list", "--porcelain"], &fx.store)
+        })
+        .expect_err("a registration nobody finishes stays a failure");
+
+        assert!(started.elapsed() >= Duration::from_millis(80));
+        let VcsError::CommandFailed { stderr, .. } = err else {
+            panic!("expected git's own failure, got {err:?}");
+        };
+        assert!(stderr.starts_with("fatal: failed to read"), "{stderr}");
+        assert!(
+            stderr.contains(&fx.commondir_of_peer().display().to_string()),
+            "the file that stayed empty is named: {stderr}"
+        );
+    }
+
+    #[test]
+    fn a_failure_that_is_not_an_unwritten_registration_is_not_waited_on() {
+        let fx = Fixture::new();
+        let attempts = std::cell::Cell::new(0);
+
+        let unrelated =
+            GitVcs::awaiting_peer_registration(&fx.store, Duration::from_secs(5), || {
+                attempts.set(attempts.get() + 1);
+                GitVcs::run(&["rev-parse", "--verify", "no-such-ref"], &fx.store)
+            });
+        assert!(unrelated.is_err());
+        assert_eq!(attempts.get(), 1);
+
+        // Naming `commondir` is not enough: a registration must be empty. With
+        // none, the writer may only have finished since the failure, so the
+        // attempt is made once more and then the failure stands.
+        attempts.set(0);
+        let named = GitVcs::awaiting_peer_registration(&fx.store, Duration::from_secs(5), || {
+            attempts.set(attempts.get() + 1);
+            Err::<(), _>(VcsError::CommandFailed {
+                args: vec!["worktree".to_owned(), "list".to_owned()],
+                repo: fx.store.clone(),
+                stderr: "fatal: failed to read x/commondir: No such file".to_owned(),
+            })
+        });
+        assert!(named.is_err());
+        assert_eq!(attempts.get(), 2);
+    }
+
+    #[test]
+    fn creating_a_worktree_on_an_existing_branch_still_adopts_it_after_waiting() {
+        let fx = Fixture::new();
+        let start = GitVcs.head_revision(&fx.store).unwrap();
+        git(&fx.store, &["branch", "p--w"]);
+        let finishing = fx.leave_peer_unwritten(LATER);
+
+        let dest = fx.path("new");
+        let origin =
+            GitVcs.materialize_worktree_on_ref(&fx.store, &dest, &RawRefName::new("p--w"), &start);
+        finishing.join().unwrap();
+
+        assert_eq!(origin.unwrap(), RefOrigin::Adopted);
+        assert_eq!(git(&dest, &["symbolic-ref", "--short", "HEAD"]), "p--w");
+    }
 }
