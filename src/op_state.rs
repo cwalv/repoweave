@@ -1456,14 +1456,21 @@ mod tests {
     #[test]
     fn a_record_with_both_kinds_of_tip_key_is_rewritten_byte_for_byte() {
         let tip = |c: char| c.to_string().repeat(40);
+        let tmp = tempfile::tempdir().unwrap();
+        let place = |name: &str| {
+            let dir = tmp.path().join(name);
+            std::fs::create_dir(&dir).unwrap();
+            serde_json::to_string(&crate::path_spelling::resolve(&dir).unwrap()).unwrap()
+        };
+        let (source, target) = (place("src"), place("tgt"));
         let record = format!(
             r#"{{
   "id": "1779769917405921588",
   "verb": "sync-to",
   "strategy": "rebase",
   "project": "web-app",
-  "source": "/abs/path/src",
-  "target": "/abs/path/tgt",
+  "source": {source},
+  "target": {target},
   "retire": false,
   "phase": "replay",
   "advanced_tips": {{

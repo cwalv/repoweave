@@ -3148,12 +3148,21 @@ mod tests {
         assert!(result.is_none());
     }
 
+    /// A directory that exists under `root`, named the one way a resolved
+    /// path is: what a record this program wrote holds, and what reading it
+    /// back must answer with.
+    fn resolved_dir(root: &Path, relative: &str) -> PathBuf {
+        let dir = root.join(relative);
+        std::fs::create_dir_all(&dir).unwrap();
+        resolve(&dir).unwrap()
+    }
+
     #[test]
     fn workweave_marker_parent_round_trips() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-        let primary = PathBuf::from("/home/user/weaveroot/primary");
-        let parent = PathBuf::from("/home/user/weaveroot/.workweaves/primary--ww1");
+        let primary = resolved_dir(dir, "weaveroot/primary");
+        let parent = resolved_dir(dir, "weaveroot/.workweaves/primary--ww1");
         let marker = WorkweaveMarker::new(&primary, ProjectName::new("p").unwrap(), &parent);
         marker.write(dir).unwrap();
 
@@ -3198,17 +3207,18 @@ mod tests {
     fn workweave_marker_parent_is_written_as_a_bare_string() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-        WorkweaveMarker::new(
-            Path::new("/home/user/primary"),
-            ProjectName::new("p").unwrap(),
-            Path::new("/home/user/parent"),
-        )
-        .write(dir)
-        .unwrap();
+        let primary = resolved_dir(dir, "primary");
+        let parent = resolved_dir(dir, "parent");
+        WorkweaveMarker::new(&primary, ProjectName::new("p").unwrap(), &parent)
+            .write(dir)
+            .unwrap();
 
-        let written = std::fs::read_to_string(dir.join(".rwv-workweave")).unwrap();
-        assert!(
-            written.contains(r#""parent": "/home/user/parent""#),
+        let written: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join(".rwv-workweave")).unwrap())
+                .unwrap();
+        assert_eq!(
+            written["parent"],
+            serde_json::Value::String(parent.to_str().unwrap().to_owned()),
             "got: {written}"
         );
     }
@@ -3282,9 +3292,11 @@ mod tests {
         // like any other, refused at read and convertible by migrate_legacy.
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-        let yaml = "primary: /home/user/primary\n\
-                    project: p\n\
-                    parent: /home/user/primary\n";
+        let primary = resolved_dir(dir, "primary");
+        let yaml = format!(
+            "primary: {primary}\nproject: p\nparent: {primary}\n",
+            primary = primary.display()
+        );
         std::fs::write(dir.join(".rwv-workweave"), yaml).unwrap();
 
         let result = WorkweaveMarker::read(dir);
@@ -3305,7 +3317,7 @@ mod tests {
         let migrated = WorkweaveMarker::read(dir)
             .expect("migrated marker must parse")
             .expect("migrated marker must be present");
-        assert_eq!(migrated.parent().as_path(), Path::new("/home/user/primary"));
+        assert_eq!(migrated.parent().as_path(), primary);
     }
 
     #[test]
@@ -3316,9 +3328,13 @@ mod tests {
         // rather than get overwritten with primary.
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-        let yaml = "primary: /home/user/primary\n\
-                    project: p\n\
-                    parent: /home/user/.workweaves/primary--ww1\n";
+        let primary = resolved_dir(dir, "primary");
+        let parent = resolved_dir(dir, ".workweaves/primary--ww1");
+        let yaml = format!(
+            "primary: {}\nproject: p\nparent: {}\n",
+            primary.display(),
+            parent.display()
+        );
         std::fs::write(dir.join(".rwv-workweave"), yaml).unwrap();
 
         assert!(WorkweaveMarker::migrate_legacy(dir).unwrap());
@@ -3326,13 +3342,10 @@ mod tests {
         let marker = WorkweaveMarker::read(dir).unwrap().unwrap();
         assert_eq!(
             marker.parent().as_path(),
-            Path::new("/home/user/.workweaves/primary--ww1"),
+            parent,
             "explicit parent must survive migration"
         );
-        assert_eq!(
-            marker.primary(),
-            &CanonicalPath::of(Path::new("/home/user/primary"))
-        );
+        assert_eq!(marker.primary(), &CanonicalPath::of(&primary));
     }
 
     #[test]
