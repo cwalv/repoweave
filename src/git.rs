@@ -972,7 +972,8 @@ impl GitVcs {
             dir,
         )
         .ok()?;
-        std::fs::read_dir(Path::new(&common).join("worktrees"))
+        let common = CanonicalPath::of(Path::new(&common));
+        std::fs::read_dir(common.as_path().join("worktrees"))
             .ok()?
             .flatten()
             .map(|registration| registration.path().join("commondir"))
@@ -6057,6 +6058,7 @@ mod peer_registration_tests {
     //! `commondir` is truncated, and a thread that finishes it later.
 
     use super::*;
+    use crate::path_spelling::resolve;
     use std::time::Duration;
 
     fn git(dir: &Path, args: &[&str]) -> String {
@@ -6110,7 +6112,21 @@ mod peer_registration_tests {
         }
 
         fn commondir_of_peer(&self) -> PathBuf {
-            self.store.join(".git/worktrees/peer/commondir")
+            self.store
+                .join(".git")
+                .join("worktrees")
+                .join("peer")
+                .join("commondir")
+        }
+
+        /// How rwv names that file: under git's common directory, in the one
+        /// spelling a resolved path has.
+        fn named_commondir_of_peer(&self) -> PathBuf {
+            resolve(&self.store.join(".git"))
+                .unwrap()
+                .join("worktrees")
+                .join("peer")
+                .join("commondir")
         }
 
         /// Leave `peer`'s registration as `git worktree add` does for a
@@ -6240,7 +6256,7 @@ mod peer_registration_tests {
         };
         assert!(stderr.starts_with("fatal: failed to read"), "{stderr}");
         assert!(
-            stderr.contains(&fx.commondir_of_peer().display().to_string()),
+            stderr.contains(&fx.named_commondir_of_peer().display().to_string()),
             "the file that stayed empty is named: {stderr}"
         );
     }
