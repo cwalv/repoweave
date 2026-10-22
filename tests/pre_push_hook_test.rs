@@ -237,7 +237,7 @@ fn run_hook(cwd: &Path, stdin: &str) -> std::process::Output {
 
 /// What one `scripts/ci-local.sh` run invokes `cargo` for: once per default
 /// stage, and twice for the windows stage, which checks and lints.
-const CARGO_RUNS_PER_GATE: usize = 8;
+const CARGO_RUNS_PER_GATE: usize = 9;
 
 fn stub_cargo_count(out: &std::process::Output) -> usize {
     String::from_utf8_lossy(&out.stdout)

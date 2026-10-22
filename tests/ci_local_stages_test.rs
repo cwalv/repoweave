@@ -1,7 +1,7 @@
 //! `scripts/ci-local.sh` is the one script CI, the release gate, the
 //! pre-push hook and every contributor run. This pins its `--stages`
-//! selector: the no-flag invocation still runs all seven default stages,
-//! in the same order, with the same header text and the same terminal line;
+//! selector: the no-flag invocation still runs every default stage, in the
+//! same order, with the same header text and the same terminal line;
 //! `--stages=drift` isolates the regenerate-and-diff block, exiting non-zero
 //! and naming the remedy when regeneration disagrees with the committed
 //! tree; the windows stage skips loudly, printing the install command,
@@ -9,9 +9,11 @@
 //! ci-checks.yml's windows-check job already owns Windows compile and lint
 //! truth authoritatively; a subset run's terminal line names the stages that ran,
 //! so it can never be mistaken for a full gate by a reader holding only the
-//! log; the windows-wine stage runs only when named; and every `cargo test`
-//! it runs sees `TMPDIR` behind a symlink made inside the one it was handed,
-//! except on a host that cannot make one, which says so.
+//! log; the windows-wine stage runs only when named; the ambient-autocrlf
+//! stage runs the suite under a system config that converts line endings and
+//! leaves the tree as it found it; and every `cargo test` it runs sees
+//! `TMPDIR` behind a symlink made inside the one it was handed, except on a
+//! host that cannot make one, which says so.
 //!
 //! Every test drives the real script as a subprocess with a stub `cargo` and
 //! `rustup` on `PATH` (and, for the wine stage's wiring, a stub
@@ -113,6 +115,10 @@ fn run_script(
     cmd.env_remove("CI_LOCAL_TEST_DRIFT_FILE");
     cmd.env_remove("CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED");
     cmd.env_remove("CI_LOCAL_TEST_WINE_EXIT");
+    // The ambient-autocrlf stage sets this for the suite running this test;
+    // inherited, it would read as the script setting it for a stage that
+    // does not.
+    cmd.env_remove("GIT_CONFIG_SYSTEM");
     for (k, v) in extra_env {
         cmd.env(k, v);
     }
@@ -137,11 +143,15 @@ fn stderr_of(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
+const AMBIENT_AUTOCRLF_HEADER: &str = "==> cargo test --release --no-fail-fast \
+     (ambient core.autocrlf=true, as Git for Windows installs it)";
+
 const HEADERS_IN_ORDER: &[&str] = &[
     "==> cargo check",
     "==> cargo check --locked --all-targets --target x86_64-pc-windows-msvc",
     "==> cargo clippy --locked --all-targets --target x86_64-pc-windows-msvc -- -D warnings",
     "==> cargo test --release --no-fail-fast",
+    AMBIENT_AUTOCRLF_HEADER,
     "==> cargo clippy --all-targets -- -D warnings",
     "==> cargo doc --no-deps --document-private-items (rustdoc warnings deny)",
     "==> cargo fmt --all -- --check",
@@ -218,7 +228,7 @@ fn assert_cargo_headers_agree_with_invocations(stdout: &str) {
 /// `assert_eq!` has nothing to object to. Only the comparison count catches
 /// the drop.
 #[test]
-#[should_panic(expected = "expected 7 header/invocation comparisons")]
+#[should_panic(expected = "expected 8 header/invocation comparisons")]
 fn header_invocation_floor_catches_a_header_the_position_scan_never_finds() {
     let stdout = "\n==> cargo check\nSTUB_CARGO: check\n\
 \n==> cargo check --locked --all-targets --target x86_64-pc-windows-msvc\nSTUB_CARGO: check --locked --all-targets --target x86_64-pc-windows-msvc\n\
@@ -231,7 +241,7 @@ fn header_invocation_floor_catches_a_header_the_position_scan_never_finds() {
 }
 
 #[test]
-fn default_run_executes_all_seven_stages_in_order() {
+fn default_run_executes_every_default_stage_in_order() {
     let fixture = fixture_repo();
     let stub = stub_bin_dir();
     let out = run_ci_local(fixture.path(), stub.path(), &[], &[]);
@@ -309,7 +319,7 @@ fn stages_flag_drift_only_skips_every_other_stage() {
 }
 
 /// The regression this suite exists to catch: a subset run's terminal line
-/// must not be the same string a full run prints. `default_run_executes_all_seven_stages_in_order`
+/// must not be the same string a full run prints. `default_run_executes_every_default_stage_in_order`
 /// pins the full-run line as exactly `All checks passed.`; this pins that no
 /// subset invocation ever produces that same line, so a log holding only the
 /// terminal output can always tell the two apart.
@@ -338,20 +348,20 @@ fn subset_run_terminal_line_never_equals_the_full_run_line() {
 /// it should get the plain line a no-flag invocation gets, not a stages-list
 /// line that would (falsely) suggest something was left out.
 #[test]
-fn stages_flag_naming_all_seven_explicitly_gets_the_full_run_line() {
+fn stages_flag_naming_every_default_stage_explicitly_gets_the_full_run_line() {
     let fixture = fixture_repo();
     let stub = stub_bin_dir();
     let out = run_ci_local(
         fixture.path(),
         stub.path(),
-        &["--stages=drift,fmt,doc,clippy,test,windows,check"],
+        &["--stages=drift,fmt,doc,clippy,test-ambient-autocrlf,test,windows,check"],
         &[("CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED", "1")],
     );
     assert!(out.status.success(), "{}", stderr_of(&out));
     let stdout = stdout_of(&out);
     assert!(
         stdout.trim_end().ends_with("All checks passed."),
-        "naming all seven stages should print the full-run line:\n{stdout}"
+        "naming every default stage should print the full-run line:\n{stdout}"
     );
     assert_eq!(
         stdout.matches("STUB_CARGO:").count(),
@@ -539,8 +549,9 @@ fn a_red_wine_stage_fails_the_run() {
     assert!(!stdout_of(&out).contains("All checks passed"));
 }
 
-/// Seven stages ran, so a count would call this the full gate; one of the
-/// seven is the opt-in stage standing in for a default one that never ran.
+/// As many stages ran as a full gate has, so a count would call this the full
+/// gate; one of them is the opt-in stage standing in for a default one that
+/// never ran.
 #[test]
 fn the_wine_stage_cannot_stand_in_for_a_default_stage_on_the_terminal_line() {
     let fixture = fixture_repo();
@@ -550,14 +561,14 @@ fn the_wine_stage_cannot_stand_in_for_a_default_stage_on_the_terminal_line() {
         &ci_local,
         fixture.path(),
         stub.path(),
-        &["--stages=check,windows,test,clippy,doc,fmt,windows-wine"],
+        &["--stages=check,windows,test,test-ambient-autocrlf,clippy,doc,fmt,windows-wine"],
         &[("CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED", "1")],
     );
     assert!(out.status.success(), "{}", stderr_of(&out));
     let stdout = stdout_of(&out);
     assert_eq!(
         stdout.trim_end().lines().last().unwrap_or(""),
-        "All checks passed (stages: check,windows,test,clippy,doc,fmt,windows-wine).",
+        "All checks passed (stages: check,windows,test,test-ambient-autocrlf,clippy,doc,fmt,windows-wine).",
         "{stdout}"
     );
 }
@@ -588,74 +599,142 @@ fn wine_stage_refuses_with_the_install_command_when_the_target_is_missing() {
     );
 }
 
-const STUB_CARGO_PROBING_DOC: &str = "#!/bin/sh\n\
-cp docs/note.md \"$CI_LOCAL_TEST_PROBE\"\n\
-sleep 1\n\
-git status --porcelain > /dev/null\n\
-exit \"$CI_LOCAL_TEST_CARGO_EXIT\"\n";
+const STUB_CARGO_RECORDING_GIT_CONFIG: &str = "#!/bin/sh\n\
+autocrlf=$(git config --get core.autocrlf || echo unset)\n\
+printf '%s\\t%s\\t%s\\n' \"$*\" \"${GIT_CONFIG_SYSTEM:-unset}\" \"$autocrlf\" >> \"$CI_LOCAL_TEST_GIT_CONFIG_LOG\"\n\
+exit \"${CI_LOCAL_TEST_CARGO_EXIT:-0}\"\n";
 
-/// Runs the test-autocrlf stage over a fixture whose tracked `docs/note.md`
-/// is committed LF, with a stub `cargo` that copies that file aside when the
-/// stage runs it. Returns the bytes the stage's cargo saw, the bytes left on
-/// disk afterward, and `git status --porcelain` afterward. Blind spot: the
-/// stage's real `cargo test` is never run, and the fixture holds one text file.
-/// The stub sleeps and refreshes the index so the entries are no longer
-/// racily clean when the restore runs, as they are after any real test run;
-/// without that a no-op restore still rewrites the file.
-fn run_test_autocrlf_stage(cargo_exit: &str) -> (Vec<u8>, Vec<u8>, String, Output) {
-    let fixture = common::tempdir().expect("tempdir");
-    let root = fixture.path();
-    std::fs::create_dir_all(root.join("docs")).unwrap();
-    std::fs::write(root.join("docs/note.md"), "one\ntwo\n").unwrap();
-    common::git_in(root, &["init", "-q", "--initial-branch=main"]);
-    common::git_in(root, &["add", "-A"]);
-    common::git_in(root, &["commit", "-q", "-m", "init"]);
+/// What one stub `cargo test` saw of git's config.
+struct SeenGitConfig {
+    argv: String,
+    /// `GIT_CONFIG_SYSTEM`, or `None` where it was unset.
+    system: Option<PathBuf>,
+    /// `core.autocrlf` as git read it in the run's working directory.
+    autocrlf: String,
+}
 
+/// Runs the script over `cwd` with a stub `cargo` recording, for every
+/// `cargo test`, its argv, `GIT_CONFIG_SYSTEM`, and the `core.autocrlf` git
+/// reads there. The host's global config is emptied for the run; its system
+/// config still reaches a stage that sets none, so only the ambient stage's
+/// `core.autocrlf` is one a test can assert on.
+fn run_recording_git_config(
+    cwd: &Path,
+    args: &[&str],
+    cargo_exit: &str,
+) -> (Vec<SeenGitConfig>, Output) {
     let stub = stub_bin_dir();
-    std::fs::write(stub.path().join("cargo"), STUB_CARGO_PROBING_DOC).unwrap();
-    let probe = common::tempdir().expect("tempdir");
-    let probe_file = probe.path().join("seen");
+    std::fs::write(stub.path().join("cargo"), STUB_CARGO_RECORDING_GIT_CONFIG).unwrap();
+    let log_dir = common::tempdir().expect("tempdir");
+    let log = log_dir.path().join("seen");
     let out = run_ci_local(
-        root,
+        cwd,
         stub.path(),
-        &["--stages=test-autocrlf"],
+        args,
         &[
-            ("CI_LOCAL_TEST_PROBE", probe_file.to_str().unwrap()),
+            ("CI_LOCAL_TEST_GIT_CONFIG_LOG", log.to_str().unwrap()),
             ("CI_LOCAL_TEST_CARGO_EXIT", cargo_exit),
             ("GIT_CONFIG_GLOBAL", "/dev/null"),
         ],
     );
-    let seen = std::fs::read(&probe_file).unwrap_or_default();
-    let after = std::fs::read(root.join("docs/note.md")).unwrap();
-    let status = common::git_in(root, &["status", "--porcelain"]);
-    (seen, after, status, out)
+    let seen = std::fs::read_to_string(&log)
+        .unwrap_or_default()
+        .lines()
+        .map(|line| {
+            let fields: Vec<&str> = line.split('\t').collect();
+            assert_eq!(fields.len(), 3, "unparseable stub record {line:?}");
+            SeenGitConfig {
+                argv: fields[0].to_owned(),
+                system: (fields[1] != "unset").then(|| PathBuf::from(fields[1])),
+                autocrlf: fields[2].to_owned(),
+            }
+        })
+        .filter(|seen| seen.argv.split(' ').next() == Some("test"))
+        .collect();
+    (seen, out)
 }
 
+/// The default run's second `cargo test` reads `core.autocrlf=true` from a
+/// system config of the stage's own, which is gone once it is done; the first
+/// is given none.
 #[test]
-fn test_autocrlf_stage_runs_cargo_over_crlf_files_and_restores_lf_on_success() {
-    let (seen, after, status, out) = run_test_autocrlf_stage("0");
+fn the_ambient_autocrlf_stage_runs_the_suite_under_a_system_config_that_converts() {
+    let fixture = fixture_repo();
+    let (seen, out) = run_recording_git_config(fixture.path(), &[], "0");
     assert!(out.status.success(), "{}", stderr_of(&out));
+    let [plain, ambient] = &seen[..] else {
+        panic!(
+            "expected two `cargo test` runs; the stub saw {:?}",
+            seen.iter().map(|s| &s.argv).collect::<Vec<_>>()
+        );
+    };
     assert_eq!(
-        seen, b"one\r\ntwo\r\n",
-        "tracked docs file was not CRLF under the stage"
+        plain.system, None,
+        "the test stage must not set a system config"
     );
+    let system = ambient
+        .system
+        .as_ref()
+        .expect("the ambient-autocrlf stage must set GIT_CONFIG_SYSTEM");
     assert_eq!(
-        after, b"one\ntwo\n",
-        "tracked docs file was not restored to LF"
+        ambient.autocrlf, "true",
+        "git under the ambient-autocrlf stage must read core.autocrlf=true"
     );
-    assert_eq!(status, "", "tree not clean after the stage");
+    assert!(
+        !system.exists(),
+        "the stage left its system config at {}",
+        system.display()
+    );
 }
 
+/// The stage only reads the tree, so it runs over uncommitted work and
+/// leaves it as it was.
 #[test]
-fn test_autocrlf_stage_restores_lf_when_cargo_fails() {
-    let (seen, after, status, out) = run_test_autocrlf_stage("1");
-    assert!(!out.status.success(), "{}", stdout_of(&out));
+fn the_ambient_autocrlf_stage_runs_over_a_dirty_tree_and_leaves_it_alone() {
+    let fixture = fixture_repo();
+    let tracked = fixture
+        .path()
+        .join("docs/reference/explain/placeholder.txt");
+    std::fs::write(&tracked, "edited\n").unwrap();
+    std::fs::write(fixture.path().join("untracked.txt"), "new\n").unwrap();
+    let before = common::git_in(fixture.path(), &["status", "--porcelain"]);
+
+    let (seen, out) =
+        run_recording_git_config(fixture.path(), &["--stages=test-ambient-autocrlf"], "0");
+
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert_eq!(seen.len(), 1, "the stage must run the suite once");
+    assert_eq!(std::fs::read_to_string(&tracked).unwrap(), "edited\n");
     assert_eq!(
-        seen, b"one\r\ntwo\r\n",
-        "tracked docs file was not CRLF under the stage"
+        common::git_in(fixture.path(), &["status", "--porcelain"]),
+        before,
+        "the stage changed the working tree"
     );
-    assert_eq!(after, b"one\ntwo\n", "trap path left the docs file CRLF");
-    assert_eq!(status, "", "tree not clean after the failed stage");
+}
+
+/// A red suite under the ambient config is the run's status, and the
+/// stage's system config is still removed.
+#[test]
+fn a_red_suite_under_the_ambient_config_is_the_runs_status_and_leaves_no_config() {
+    let fixture = fixture_repo();
+    let (seen, out) =
+        run_recording_git_config(fixture.path(), &["--stages=test-ambient-autocrlf"], "3");
+    assert_eq!(
+        out.status.code(),
+        Some(3),
+        "cargo's status must be the run's: {}",
+        stdout_of(&out)
+    );
+    assert!(!stdout_of(&out).contains("All checks passed"));
+    let system = seen[0]
+        .system
+        .as_ref()
+        .expect("the stage must set GIT_CONFIG_SYSTEM");
+    assert!(
+        !system.exists(),
+        "the red stage left its system config at {}",
+        system.display()
+    );
 }
 
 const STUB_CARGO_RECORDING_TMPDIR: &str = "#!/bin/sh\n\
@@ -729,32 +808,31 @@ fn entries(dir: &Path) -> Vec<String> {
 /// the `TMPDIR` the script was handed and pointing at a directory beside it,
 /// and nothing of it is left once the stage is done.
 ///
-/// The population is read from the runs rather than listed: the default run
-/// and the opt-in `test-autocrlf` stage, each of which is asserted to have
-/// run `cargo test` exactly once, so a stage that stopped running the suite
-/// fails here rather than leaving nothing to check.
+/// The population is read from the runs rather than listed: the default run,
+/// asserted to have run `cargo test` once per test stage, so a stage that
+/// stopped running the suite fails here rather than leaving nothing to check.
 #[test]
 fn every_cargo_test_runs_with_tmpdir_behind_a_symlink_inside_the_handed_one() {
-    for args in [&[][..], &["--stages=test-autocrlf"][..]] {
-        let fixture = fixture_repo();
-        let handed = common::tempdir().expect("tempdir");
-        let (seen, out) = run_recording_tmpdir(fixture.path(), handed.path(), args, "0", &[]);
-        assert!(out.status.success(), "{args:?}: {}", stderr_of(&out));
+    let test_stages = ["test", "test-ambient-autocrlf"];
+    let fixture = fixture_repo();
+    let handed = common::tempdir().expect("tempdir");
+    let (seen, out) = run_recording_tmpdir(fixture.path(), handed.path(), &[], "0", &[]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
 
-        let tests: Vec<&SeenTmpdir> = seen
-            .iter()
-            .filter(|s| s.argv.split(' ').next() == Some("test"))
-            .collect();
-        assert_eq!(
-            tests.len(),
-            1,
-            "{args:?}: expected one `cargo test`; the stub saw {:?}",
-            seen.iter().map(|s| &s.argv).collect::<Vec<_>>()
-        );
-        let test = tests[0];
+    let tests: Vec<&SeenTmpdir> = seen
+        .iter()
+        .filter(|s| s.argv.split(' ').next() == Some("test"))
+        .collect();
+    assert_eq!(
+        tests.len(),
+        test_stages.len(),
+        "expected one `cargo test` per test stage {test_stages:?}; the stub saw {:?}",
+        seen.iter().map(|s| &s.argv).collect::<Vec<_>>()
+    );
+    for (stage, test) in test_stages.iter().zip(tests) {
         assert!(
             test.is_link,
-            "{args:?}: `cargo {}` ran with TMPDIR={} not behind a symlink",
+            "{stage:?}: `cargo {}` ran with TMPDIR={} not behind a symlink",
             test.argv,
             test.tmpdir.display()
         );
@@ -762,18 +840,18 @@ fn every_cargo_test_runs_with_tmpdir_behind_a_symlink_inside_the_handed_one() {
         assert_eq!(
             gate_dir.parent(),
             Some(handed.path()),
-            "{args:?}: the link must sit one directory inside the handed TMPDIR, \
+            "{stage:?}: the link must sit one directory inside the handed TMPDIR, \
              on its filesystem; got {}",
             test.tmpdir.display()
         );
         assert_eq!(
             test.link_target,
             gate_dir.join("real"),
-            "{args:?}: the link must point at the directory beside it"
+            "{stage:?}: the link must point at the directory beside it"
         );
         assert!(
             entries(handed.path()).is_empty(),
-            "{args:?}: the stage left {:?} in the handed TMPDIR",
+            "{stage:?}: the stage left {:?} in the handed TMPDIR",
             entries(handed.path())
         );
     }

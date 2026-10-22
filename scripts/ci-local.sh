@@ -4,7 +4,7 @@
 # and contributors running checks locally. Anything that diverges between local
 # and CI belongs here so it stays in sync.
 #
-# Usage: scripts/ci-local.sh [--stages=check,windows,test,clippy,doc,fmt,drift,test-autocrlf,windows-wine]
+# Usage: scripts/ci-local.sh [--stages=check,windows,test,test-ambient-autocrlf,clippy,doc,fmt,drift,windows-wine]
 #
 # With no --stages, runs all stages in the order above but the last — this is
 # what CI, the release gate and the pre-push hook invoke. windows-wine runs
@@ -13,36 +13,31 @@
 # --stages selects a subset, in that same fixed order, regardless of the order
 # named on the command line; re-gating an integration tip between landings
 # wants --stages=drift alone, without paying for a full build first. A subset
-# run's terminal line names the stages it ran, so a log naming less than the
-# seven default stages is never mistaken for a full gate.
+# run's terminal line names the stages it ran, so a log naming less than every
+# default stage is never mistaken for a full gate.
 #
 # Both test stages run the suite with TMPDIR behind a symlink, the geometry
 # macOS's temp root has, on every host that can make one.
+#
+# test-ambient-autocrlf runs the suite a second time under a system-tier
+# core.autocrlf=true, which Git for Windows' installer sets, so every git a
+# test runs converts line endings on checkout unless its fixture pins its own
+# config. Which fixtures that reddens turns on the filesystem — whether it
+# clones, links, or neither — so the stage runs on every host rather than on
+# one. This repository's own files are not re-checked out for it:
+# .gitattributes keeps them LF under any config, and
+# tests/repo_line_endings_test.rs holds that.
 #
 # Exits non-zero on the first failure. The windows stage is the one
 # exception: ci-checks.yml's windows-check job already owns Windows compile
 # and lint truth authoritatively, so a contributor without the target
 # installed gets a loud skip there, not a red gate for a check CI runs
 # regardless.
-#
-# test-autocrlf is a further stage, outside the seven above and never run
-# unless named explicitly (--stages=test-autocrlf): it runs the test stage
-# under a throwaway GIT_CONFIG_SYSTEM with core.autocrlf=true — the tier Git
-# for Windows' installer sets it at, ahead of anyone's identity, which is why
-# every git repo a test creates at runtime inherits it there regardless of
-# what HOME that test points at. First it empties the index and resets the
-# tree to HEAD under the same setting, rewriting every tracked text file to
-# CRLF the way a Windows checkout of this repo would (paths .gitattributes
-# pins to eol=lf stay LF), then does the same under the ordinary config
-# afterward either way, leaving every tracked text file LF and
-# `git status --porcelain` empty. It refuses on a dirty tree rather than
-# running: the reset it needs discards uncommitted changes with no record of
-# what they were, where every other stage here only reads the tree.
 
 set -euo pipefail
 
-ALL_STAGES=(check windows test clippy doc fmt drift)
-OPT_IN_STAGES=(test-autocrlf windows-wine)
+ALL_STAGES=(check windows test test-ambient-autocrlf clippy doc fmt drift)
+OPT_IN_STAGES=(windows-wine)
 KNOWN_STAGES=("${ALL_STAGES[@]}" "${OPT_IN_STAGES[@]}")
 
 join_by_comma() {
@@ -147,46 +142,18 @@ if run_stage test; then
     with_symlinked_tmpdir cargo test --release --no-fail-fast
 fi
 
-if run_stage test-autocrlf; then
-    header "cargo test --release --no-fail-fast (core.autocrlf=true, simulating a Windows checkout)"
-    # The reset below discards uncommitted changes with no way to get
-    # them back, so this stage insists on a clean tree rather than risk
-    # being the thing that did that.
-    if [ -n "$(git status --porcelain)" ]; then
-        printf 'test-autocrlf refuses to run: working tree is not clean (git status --porcelain is non-empty). Commit or stash first — this stage re-checks out the whole tree and a dirty one would be discarded.\n' >&2
-        exit 1
-    fi
-    # GIT_CONFIG_SYSTEM, not GIT_CONFIG_GLOBAL: the system tier is what Git
-    # for Windows' installer sets core.autocrlf=true at, and it sits below
-    # anyone's identity rather than replacing it, so a test that sandboxes
-    # its own HOME to set up a git identity or an autocrlf matrix of its own
-    # (several do) keeps that identity exactly as it would on the real
-    # ambient environment this stage otherwise matches — only the system
-    # tier changes, system config having nothing in it here to lose.
-    autocrlf_config="$(mktemp)"
-    printf '[core]\n\tautocrlf = true\n' > "$autocrlf_config"
-    # `git checkout -- .` would do nothing here: a clean tree is stat-clean
-    # against the index, so no file is rewritten and the line endings stay as
-    # they were. Emptying the index first forces every tracked file out again.
-    recheckout_tree() {
-        git read-tree --empty
-        git reset --hard -q
-    }
-    restore_autocrlf_checkout() {
-        unset GIT_CONFIG_SYSTEM
-        recheckout_tree
-        rm -f "$autocrlf_config"
-    }
-    # The trap is the path back on the `set -e` exit a failing test
-    # triggers; the explicit call after a passing run is what lets a later
-    # stage, if one was named alongside this one, see the tree back at its
-    # ordinary LF checkout instead of the CRLF one this stage needs.
-    trap restore_autocrlf_checkout EXIT
-    export GIT_CONFIG_SYSTEM="$autocrlf_config"
-    recheckout_tree
-    with_symlinked_tmpdir cargo test --release --no-fail-fast
-    restore_autocrlf_checkout
-    trap - EXIT
+if run_stage test-ambient-autocrlf; then
+    header "cargo test --release --no-fail-fast (ambient core.autocrlf=true, as Git for Windows installs it)"
+    # GIT_CONFIG_SYSTEM, not GIT_CONFIG_GLOBAL: the system tier is where Git
+    # for Windows' installer sets it, below anyone's identity rather than in
+    # place of it, so a test that sandboxes its own HOME for an identity or a
+    # line-ending matrix of its own keeps both, as it would on Windows.
+    ambient_config="$(mktemp)"
+    printf '[core]\n\tautocrlf = true\n' > "$ambient_config"
+    ambient_status=0
+    with_symlinked_tmpdir env GIT_CONFIG_SYSTEM="$ambient_config" cargo test --release --no-fail-fast || ambient_status=$?
+    rm -f "$ambient_config"
+    [ "$ambient_status" -eq 0 ] || exit "$ambient_status"
 fi
 
 if run_stage clippy; then
