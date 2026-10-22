@@ -185,21 +185,25 @@ fn site(failing: Option<&str>) -> Site {
 }
 
 impl Site {
-    fn assemble_from(&self, repo: &Path) -> Output {
+    fn assembler(&self, repo: &Path) -> Command {
         let path = std::env::join_paths(std::iter::once(self.tools.clone()).chain(
             std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()),
         ))
         .unwrap();
-        Command::new("python3")
+        let mut command = Command::new("python3");
+        command
             .arg(member_root().join(ASSEMBLER))
             .arg("--repo")
             .arg(repo)
             .args(["--site-path", SITE_PATH])
             .arg("--out")
             .arg(&self.out)
-            .env("PATH", path)
-            .output()
-            .unwrap()
+            .env("PATH", path);
+        command
+    }
+
+    fn assemble_from(&self, repo: &Path) -> Output {
+        self.assembler(repo).output().unwrap()
     }
 
     fn assemble(&self) -> Output {
@@ -343,6 +347,55 @@ fn the_root_install_script_is_the_default_releases_byte_for_byte() {
     let site = site(None);
     site.assembled();
     assert_eq!(site.read("install.sh"), install_script("v0.10.0"));
+}
+
+/// Git for Windows installs `core.autocrlf=true`, under which a checkout
+/// writes text with CRLF line endings. A site assembled on such a host
+/// publishes what each tag records, not that host's rendering of it.
+#[test]
+fn a_host_that_converts_line_endings_on_checkout_publishes_each_tags_own_bytes() {
+    if !python_with_tomllib() {
+        return;
+    }
+    let site = site(None);
+    let converting = site.repo.with_file_name("converting.gitconfig");
+    write(&converting, "[core]\n\tautocrlf = true\n");
+    let rendered = common::git()
+        .args(["cat-file", "--filters", "v0.9.0:docs/page.md"])
+        .current_dir(&site.repo)
+        .env("GIT_CONFIG_GLOBAL", &converting)
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&rendered.stdout),
+        page("v0.9.0").replace('\n', "\r\n"),
+        "fixture check: a checkout under this config does not convert, so the \
+         assembly below cannot tell a pinned export from an unpinned one"
+    );
+
+    let out = site
+        .assembler(&site.repo)
+        .env("GIT_CONFIG_GLOBAL", &converting)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "the assembler failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    for tag in RELEASES {
+        for (file, recorded) in [
+            ("docs/page.md", page(tag)),
+            ("docs/install.sh", install_script(tag)),
+        ] {
+            let published = std::fs::read(site.out.join(tag).join(file)).unwrap();
+            assert_eq!(
+                String::from_utf8_lossy(&published),
+                recorded,
+                "{tag}/{file} should hold the bytes {tag} records"
+            );
+        }
+    }
 }
 
 #[test]

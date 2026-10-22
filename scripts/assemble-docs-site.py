@@ -136,7 +136,19 @@ def release_tags(git: Git) -> list[Release]:
 def export_tree(git: Git, release: Release, dest: Path, scratch: Path) -> None:
     index = {"GIT_INDEX_FILE": str(scratch / f"{release.tag}.index")}
     git("read-tree", f"refs/tags/{release.tag}^{{tree}}", env=index)
-    git("checkout-index", "--all", f"--prefix={dest.as_posix()}/", env=index)
+    # checkout-index converts line endings as the host's core.autocrlf and
+    # core.eol direct (Git for Windows sets autocrlf=true); pinned, only the
+    # tag's own attributes decide what is published.
+    git(
+        "-c",
+        "core.autocrlf=false",
+        "-c",
+        "core.eol=lf",
+        "checkout-index",
+        "--all",
+        f"--prefix={dest.as_posix()}/",
+        env=index,
+    )
 
 
 def run(argv: list[str], env: dict | None = None) -> None:
