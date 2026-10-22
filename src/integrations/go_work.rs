@@ -66,6 +66,7 @@ use crate::integrations::merge::{
 };
 use crate::manifest::GoWorkConfig;
 use crate::path_spelling::resolve;
+use crate::tool_program::ToolProgram;
 use anyhow::Context;
 use std::path::Path;
 
@@ -83,15 +84,20 @@ std::thread_local! {
     static FORCE_GOWORK_FALLBACK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-fn go_on_path() -> bool {
+fn go_program() -> Option<ToolProgram> {
     #[cfg(test)]
     {
         let forced = FORCE_GOWORK_FALLBACK.with(|f| f.get());
         if forced {
-            return false;
+            return None;
         }
     }
-    which::which(GoWork::TOOL.name()).is_ok()
+    ToolProgram::of(GoWork::TOOL)
+}
+
+#[cfg(test)]
+fn go_on_path() -> bool {
+    go_program().is_some()
 }
 
 // ---------------------------------------------------------------------------
@@ -181,8 +187,9 @@ impl Integration for GoWork {
             .clone()
             .or_else(|| max_go_version(&paths, ctx.workspace_root));
 
-        if go_on_path() {
+        if let Some(go) = go_program() {
             activate_via_go_tool(
+                &go,
                 &go_work_path,
                 &paths,
                 go_version_override.as_deref(),
@@ -413,13 +420,12 @@ impl GoWork {
 // ---------------------------------------------------------------------------
 
 fn activate_via_go_tool(
+    go: &ToolProgram,
     go_work_path: &Path,
     new_paths: &[impl AsRef<str>],
     go_version: Option<&str>,
     workspace_root: &Path,
 ) -> anyhow::Result<()> {
-    use std::process::Command;
-
     // Strategy: run all `go work` commands from workspace_root without setting
     // GOWORK.  This makes `go` operate on a go.work at workspace_root (which
     // it finds by walking up, or creates fresh).  Paths stored in go.work are
@@ -459,7 +465,8 @@ fn activate_via_go_tool(
 
     // Initialize go.work at workspace_root if needed.
     if !work_tmp.exists() {
-        let status = Command::new(GoWork::TOOL.name())
+        let status = go
+            .command()
             .args(["work", "init"])
             .current_dir(super::subprocess_cwd(workspace_root))
             .status()?;
@@ -469,7 +476,8 @@ fn activate_via_go_tool(
     }
 
     if let (Some(ver), true) = (go_version, go_line_absent) {
-        let status = Command::new(GoWork::TOOL.name())
+        let status = go
+            .command()
             .args(["work", "edit", &format!("-go={ver}")])
             .current_dir(super::subprocess_cwd(workspace_root))
             .status()?;
@@ -501,7 +509,8 @@ fn activate_via_go_tool(
     // Add all new paths (relative to workspace_root).
     for p in new_paths {
         let use_path = format!("./{}", p.as_ref());
-        let status = Command::new(GoWork::TOOL.name())
+        let status = go
+            .command()
             .args(["work", "use", &use_path])
             .current_dir(super::subprocess_cwd(workspace_root))
             .status()?;
@@ -519,7 +528,8 @@ fn activate_via_go_tool(
         .collect();
     for old in current_uses {
         if !new_set.contains(&old) {
-            let status = Command::new(GoWork::TOOL.name())
+            let status = go
+                .command()
                 .args(["work", "edit", &format!("-dropuse={old}")])
                 .current_dir(super::subprocess_cwd(workspace_root))
                 .status()?;

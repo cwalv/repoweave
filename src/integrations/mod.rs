@@ -9,6 +9,7 @@ pub mod uv_workspace;
 pub mod vscode_workspace;
 
 use crate::integration::Integration;
+use crate::tool_program::ToolProgram;
 
 pub use cargo_workspace::CargoWorkspace;
 pub use gita::Gita;
@@ -40,7 +41,7 @@ pub(crate) fn tool_missing_issue<I: crate::integration::DrivesTool>(
     integration: &I,
     consequence: &str,
 ) -> Option<crate::integration::Issue> {
-    if which::which(I::TOOL.name()).is_ok() {
+    if ToolProgram::of(I::TOOL).is_some() {
         return None;
     }
     Some(crate::integration::Issue {
@@ -50,17 +51,6 @@ pub(crate) fn tool_missing_issue<I: crate::integration::DrivesTool>(
         kind: crate::integration::IssueKind::ToolMissing,
         safe_to_fix: true,
     })
-}
-
-/// The spelling `CreateProcess` can execute: the npm-family tools install
-/// `.cmd` shims on Windows, and `std::process::Command` routes a script
-/// through the interpreter only when the program name spells its extension.
-pub(crate) fn node_tool(name: &str) -> String {
-    if cfg!(windows) {
-        format!("{name}.cmd")
-    } else {
-        name.to_string()
-    }
 }
 
 /// The working directory an ecosystem tool can stand in: the Windows
@@ -76,7 +66,7 @@ pub(crate) fn subprocess_cwd(root: &std::path::Path) -> &std::path::Path {
 }
 
 /// Run an install hook's tool from the weave root `root`, or `Ok(None)` without
-/// spawning anything when `program` is not on `PATH`.
+/// spawning anything when `tool` is not on `PATH`.
 ///
 /// The lookup comes first because a spawn error cannot say which input was
 /// missing: a working directory that does not exist fails with the same
@@ -86,15 +76,16 @@ pub(crate) fn subprocess_cwd(root: &std::path::Path) -> &std::path::Path {
 /// own stdout to a machine — `--json`, or the bare path `workweave create
 /// --hook-mode` prints for the agent runtime that reads it.
 pub(crate) fn run_install_tool(
-    program: &str,
+    tool: crate::integration::Tool,
     args: &[&str],
     root: &std::path::Path,
 ) -> anyhow::Result<Option<std::process::ExitStatus>> {
     use anyhow::Context;
-    if which::which(program).is_err() {
+    let Some(program) = ToolProgram::of(tool) else {
         return Ok(None);
-    }
-    std::process::Command::new(program)
+    };
+    program
+        .command()
         .args(args)
         .current_dir(subprocess_cwd(root))
         .stdout(std::io::stderr())

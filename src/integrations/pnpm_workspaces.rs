@@ -202,11 +202,7 @@ impl Integration for PnpmWorkspaces {
         // `rwv lock` previously and used `--lockfile-only` for that
         // reason. Run from workspace_root for the same reason npm does —
         // that's where the symlinks make member paths resolve correctly.
-        let Some(status) = super::run_install_tool(
-            &super::node_tool(Self::TOOL.name()),
-            &["install"],
-            ctx.workspace_root,
-        )?
+        let Some(status) = super::run_install_tool(Self::TOOL, &["install"], ctx.workspace_root)?
         else {
             return Ok(HookOutcome::ToolMissing(MissingTool::of::<Self>()));
         };

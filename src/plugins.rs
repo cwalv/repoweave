@@ -83,9 +83,10 @@
 //! uses them as arguments:
 //! `rwv -C "$RWV_WORKSPACE" status --json --project "$RWV_PROJECT"`.
 //!
-//! The seam for envelope injection is [`build_command`] — all spawn paths
+//! The seam for envelope injection is `build_command` — all spawn paths
 //! go through it. Do not construct the child command inline.
 
+use crate::tool_program::ToolProgram;
 use crate::workspace::Resolution;
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
@@ -103,7 +104,7 @@ use std::process::Command;
 ///
 /// This function is the single source of truth for which names are in the
 /// envelope and how each [`Resolution`] field maps to them. Both the spawn
-/// path ([`build_command`]) and tests use this function so a change to the
+/// path (`build_command`) and tests use this function so a change to the
 /// variable set is automatically reflected in both.
 pub fn envelope_vars(resolution: Option<&Resolution>) -> Vec<(&'static str, String)> {
     let mut vars: Vec<(&'static str, String)> = Vec::new();
@@ -353,13 +354,13 @@ pub fn external_commands_help_section(paths_override: Option<&OsStr>) -> Option<
 ///
 /// All spawn paths must go through this function. Do not construct the child
 /// command inline.
-pub fn build_command(
-    binary: &std::path::Path,
+pub(crate) fn build_command(
+    plugin: &ToolProgram,
     args: &[OsString],
     invocation_dir: &std::path::Path,
     resolution: Option<&Resolution>,
 ) -> Command {
-    let mut cmd = Command::new(binary);
+    let mut cmd = plugin.command();
     // The plugin gets its working directory in the spelling a shell would hold,
     // never the verbatim `\\?\` form a recorded `-w` path can carry.
     cmd.args(args)
@@ -392,10 +393,10 @@ fn unknown_verb_error(verb: &str) -> anyhow::Error {
 /// Report an exec failure — a `rwv-<verb>` binary was found on `$PATH` but
 /// could not be spawned. The OS error (permission denied, ENOEXEC, etc.)
 /// is preserved so operators can diagnose without a second attempt.
-fn exec_failure_error(verb: &str, binary: &std::path::Path, err: std::io::Error) -> anyhow::Error {
+fn exec_failure_error(verb: &str, plugin: &ToolProgram, err: std::io::Error) -> anyhow::Error {
     anyhow::anyhow!(
         "failed to exec `rwv-{verb}` ({}): {err:#}",
-        binary.display(),
+        crate::path_spelling::operator_path(plugin.path()),
     )
 }
 
@@ -406,13 +407,8 @@ fn exec_failure_error(verb: &str, binary: &std::path::Path, err: std::io::Error)
 /// `None` — the caller reports "unknown verb" which is the correct
 /// user-visible outcome (from the operator's perspective the binary is
 /// not reachable).
-fn find_plugin(verb: &str) -> Option<PathBuf> {
-    let name = format!("rwv-{verb}");
-    // A relative `PATH` entry yields a relative path, which the spawn would
-    // read against the child's working directory rather than this process's.
-    which::which(&name)
-        .ok()
-        .and_then(|found| std::path::absolute(found).ok())
+fn find_plugin(verb: &str) -> Option<ToolProgram> {
+    ToolProgram::find(&format!("rwv-{verb}"))
 }
 
 /// Dispatch an external subcommand: locate `rwv-<verb>`, spawn it with
@@ -421,7 +417,7 @@ fn find_plugin(verb: &str) -> Option<PathBuf> {
 /// for the two rwv-side failure modes documented on the module.
 ///
 /// `resolution` is the resolved workspace context; it is projected into the
-/// `RWV_*` env-var envelope via [`build_command`]. Pass `None` when the cwd
+/// `RWV_*` env-var envelope via `build_command`. Pass `None` when the cwd
 /// walk found no workspace (soft fallthrough — `RWV_VERSION` is still set).
 ///
 /// Signal death (Unix): mirrored to `128 + N` and reported on stderr. Exit
@@ -432,19 +428,19 @@ pub fn dispatch_external(
     invocation_dir: &std::path::Path,
     resolution: Option<&Resolution>,
 ) -> anyhow::Result<std::convert::Infallible> {
-    let binary = find_plugin(verb).ok_or_else(|| unknown_verb_error(verb))?;
+    let plugin = find_plugin(verb).ok_or_else(|| unknown_verb_error(verb))?;
 
-    let mut cmd = build_command(&binary, args, invocation_dir, resolution);
+    let mut cmd = build_command(&plugin, args, invocation_dir, resolution);
     let mut child = cmd
         .spawn()
-        .map_err(|e| exec_failure_error(verb, &binary, e))?;
+        .map_err(|e| exec_failure_error(verb, &plugin, e))?;
     leave_interrupts_to_the_plugin();
 
     // Wait; propagate. `wait()` inherits the child's I/O, so stdout/stderr
     // stream directly through this process without buffering.
     let status = child
         .wait()
-        .map_err(|e| exec_failure_error(verb, &binary, e))?;
+        .map_err(|e| exec_failure_error(verb, &plugin, e))?;
 
     if let Some(code) = status.code() {
         std::process::exit(code);
@@ -503,10 +499,11 @@ mod tests {
 
     #[test]
     fn build_command_sets_program_and_args() {
-        let binary = std::path::Path::new("/tmp/rwv-example");
+        let tmp = tempfile::tempdir().unwrap();
+        let plugin = installed_plugin(tmp.path(), "rwv-example");
         let args: Vec<OsString> = vec!["--flag".into(), "value".into(), "--".into(), "-x".into()];
-        let cmd = build_command(binary, &args, std::path::Path::new("/tmp"), None);
-        assert_eq!(cmd.get_program(), std::ffi::OsStr::new("/tmp/rwv-example"));
+        let cmd = build_command(&plugin, &args, std::path::Path::new("/tmp"), None);
+        assert_eq!(cmd.get_program(), plugin.path().as_os_str());
         let got_args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
         assert_eq!(
             got_args,
@@ -592,10 +589,14 @@ mod tests {
     #[test]
     fn exec_failure_error_carries_errno_prose() {
         let io_err = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
-        let err = exec_failure_error("example", std::path::Path::new("/opt/rwv-example"), io_err)
-            .to_string();
+        let tmp = tempfile::tempdir().unwrap();
+        let plugin = installed_plugin(tmp.path(), "rwv-example");
+        let err = exec_failure_error("example", &plugin, io_err).to_string();
         assert!(err.contains("rwv-example"), "err: {err}");
-        assert!(err.contains("/opt/rwv-example"), "err: {err}");
+        assert!(
+            err.contains(&crate::path_spelling::operator_path(plugin.path())),
+            "err: {err}"
+        );
         // io::Error's Display carries the errno-derived prose ("permission denied").
         assert!(
             err.to_lowercase().contains("permission denied"),
@@ -633,6 +634,12 @@ mod tests {
             fs::write(&p, "@echo hi\r\n").unwrap();
             p
         }
+    }
+
+    /// A plugin installed in `dir` and found there, the way dispatch finds one.
+    fn installed_plugin(dir: &std::path::Path, name: &str) -> ToolProgram {
+        make_executable(dir, name);
+        ToolProgram::find_in(name, dir.as_os_str(), dir).expect("the plugin is on its own PATH")
     }
 
     /// Create a file at `dir/<name>` the host would not execute: mode 0o644

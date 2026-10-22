@@ -6,6 +6,16 @@ claim that nothing changed in them.
 
 ## Unreleased
 
+### Install hooks run the file `PATH` finds
+
+On Windows a hook looked for `npm.cmd` or `pnpm.cmd` by name, so a tool
+installed as an `.exe` (the standalone `pnpm` installer ships one) was reported
+as `tool-missing` and its hook skipped. A hook now looks the tool up the way the
+shell does, honoring `PATHEXT`, and runs the file it found, `.exe` or `.cmd`.
+That file is also the one a relative `PATH` entry names from the directory you
+ran `rwv` in: the hook used to read the entry again from the weave root, find
+nothing, and fail the activation over an installed tool.
+
 ### Project and workweave names are checked where they arrive
 
 `rwv fetch <source>` refuses a source whose repository name is not a legal

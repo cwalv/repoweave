@@ -101,8 +101,10 @@ defense, never the only report.
   deserializes them into. The default, empty, means only `enabled` parses.
 - **`activate_hook`** — run install commands (`npm install`, `uv sync`,
   `cargo fetch`) after the config files are in place. Run the tool through
-  `run_install_tool` (`src/integrations/mod.rs`), which returns `None` when
-  the program is not on `PATH`; return
+  `run_install_tool` (`src/integrations/mod.rs`), which looks it up once as a
+  `ToolProgram` (`src/tool_program.rs`: the `PATH` lookup, honoring `PATHEXT`
+  on Windows, whose absolute answer is also what is spawned) and returns
+  `None` when the program is not on `PATH`; return
   `HookOutcome::ToolMissing(MissingTool::of::<Self>())` for that, and the
   runner reports it as a `tool-missing` warning while the other
   integrations' hooks still run. Only an integration that implements

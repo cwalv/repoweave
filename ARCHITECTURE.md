@@ -114,6 +114,7 @@ module), `fetch`, `init`, `push`, `status`, `sync`, `update`, `prime`, `setup`,
 | `integrations/` | Eight built-in implementors plus `merge.rs`, the managed-file merge engine they share. |
 | `integration_runner` (`src/integration_runner.rs`, 867) | The lifecycle driver: enablement, error containment, and the six entry points that call the trait. |
 | `plugins` (`src/plugins.rs`, 759) | External-subcommand discovery and dispatch. §6.4. |
+| `tool_program` (`src/tool_program.rs`) | `ToolProgram`: one `PATH` lookup, absolutized, that the install hooks, go-work and plugin dispatch spawn from. `rwv each` has its own, because that binary never names the library. |
 | `parallel` (`src/parallel.rs`, 676) | Bounded per-repo fan-out for the network-bound verbs. |
 | `share` (`src/share.rs`) | Placing a member's tracked files from the repository's other workspaces by reflink or hardlink, with byte-exact verification and repair. [`docs/internals/member-population.md`](docs/internals/member-population.md). |
 | `settle` (`src/settle.rs`) | The permissions a member's tracked files hold for its role, and re-sharing after a member moves. Same document. |

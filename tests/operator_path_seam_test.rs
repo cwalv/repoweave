@@ -212,6 +212,13 @@ const ROUTED: &[Routed] = &[
         prints: "`rwv resolve` — the whole of its stdout",
     },
     Routed {
+        file: "plugins.rs",
+        scope: "",
+        needle: r#""failed to exec `rwv-{verb}` ({}): {err:#}","#,
+        renders: 1,
+        prints: "a plugin that was found on PATH but could not be spawned",
+    },
+    Routed {
         file: "integrations/merge.rs",
         scope: "",
         needle: r#""{name} managed file present but unmarked: {}; \"#,

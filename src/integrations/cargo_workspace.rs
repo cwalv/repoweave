@@ -168,6 +168,7 @@ use crate::owned_state::{
     OwnedDigestCheck,
 };
 use crate::path_spelling::resolve;
+use crate::tool_program::ToolProgram;
 use anyhow::Context;
 use semver::{Version, VersionReq};
 use std::collections::{BTreeMap, BTreeSet};
@@ -918,8 +919,7 @@ impl Integration for CargoWorkspace {
         // Before the generator runs, not after it returns: an input that moves
         // while cargo is resolving is exactly what the record must not absorb.
         let inputs = ObservedInputs::observe(ctx.output_dir, ctx.project, ctx.workspace_root);
-        let Some(status) =
-            super::run_install_tool(Self::TOOL.name(), &[subcommand], ctx.workspace_root)?
+        let Some(status) = super::run_install_tool(Self::TOOL, &[subcommand], ctx.workspace_root)?
         else {
             return Ok(HookOutcome::ToolMissing(MissingTool::of::<Self>()));
         };
@@ -2343,7 +2343,7 @@ impl CargoWorkspace {
     fn detected_wrapper(cfg: &CargoWorkspaceConfig) -> Option<String> {
         cfg.rustc_wrapper
             .as_ref()
-            .filter(|name| which::which(name.as_str()).is_ok())
+            .filter(|name| ToolProgram::find(name).is_some())
             .cloned()
     }
 

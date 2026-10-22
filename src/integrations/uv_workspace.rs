@@ -571,8 +571,7 @@ impl Integration for UvWorkspace {
         // Runs from workspace_root for the same reason as the other ecosystem
         // hooks (activation symlinks are in place there so uv sees the
         // workspace the user sees).
-        let Some(status) =
-            super::run_install_tool(Self::TOOL.name(), &["sync"], ctx.workspace_root)?
+        let Some(status) = super::run_install_tool(Self::TOOL, &["sync"], ctx.workspace_root)?
         else {
             return Ok(HookOutcome::ToolMissing(MissingTool::of::<Self>()));
         };

@@ -276,11 +276,7 @@ impl Integration for NpmWorkspaces {
         // Run from workspace_root: the symlink at the root points at the
         // canonical package.json in output_dir, and workspace member
         // paths are resolved relative to the symlink location.
-        let Some(status) = super::run_install_tool(
-            &super::node_tool(Self::TOOL.name()),
-            &["install"],
-            ctx.workspace_root,
-        )?
+        let Some(status) = super::run_install_tool(Self::TOOL, &["install"], ctx.workspace_root)?
         else {
             return Ok(HookOutcome::ToolMissing(MissingTool::of::<Self>()));
         };
