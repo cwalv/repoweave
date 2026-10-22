@@ -1050,6 +1050,27 @@ struct ReplayVerdicts {
     source_position: Option<Containment>,
 }
 
+/// The tip a repo's replay lands on, when that is knowable before it moves:
+/// a genuine fast-forward, whose verdict is `Behind`. Written to the op record
+/// at replay entry so abort can attribute the repo the instant it advances.
+///
+/// A function of the task's data and nothing else: it holds no `Vcs`, so it
+/// cannot ask the filesystem again after the verdict was taken.
+///
+/// `Equal` and `Ahead` land nothing: the savepoint already attributes the
+/// no-op, and recording an unreached target for an already-ahead repo is
+/// forgeable. A `Diverged` repo's fresh rebased tip is captured after the join.
+fn entry_tip(
+    repo_path: &RepoPath,
+    verdicts: &ReplayVerdicts,
+    target: &ResolvedRevisionId,
+) -> Option<(String, CommitId)> {
+    match verdicts.containment {
+        Some(Containment::Behind(_)) => Some((repo_path.as_str().to_owned(), target.id().clone())),
+        _ => None,
+    }
+}
+
 /// `verdicts.containment` is HEAD's verdict against `target`, read by the
 /// caller at replay entry — the same value the op record's intent write
 /// consumed, so a commit landing here between the two makes the strategy fail
@@ -5383,20 +5404,10 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     }
 
     // === advanced_tips write 1: pre-write planned targets for genuine ff-movers ===
-    //
-    // A repo whose entry verdict is `Behind` is a genuine fast-forward and its
-    // landing tip is knowable now.  Pre-write target → advanced_tips so abort
-    // can attribute the repo the instant it is advanced, with no window.
-    //
-    // `Equal` (NoOp) and `Ahead` (AlreadyAhead) are skipped — savepoint already
-    // attributes the no-op case, and recording an unreached target for an
-    // already-ahead repo is forgeable.  `Diverged` repos are skipped here; their
-    // fresh rebased tip is captured post-join (write 3).
     {
         let entry_tips: std::collections::BTreeMap<String, CommitId> = sync_tasks
             .iter()
-            .filter(|task| matches!(task.verdicts.containment, Some(Containment::Behind(_))))
-            .map(|task| (task.repo_path.as_str().to_owned(), task.target.id().clone()))
+            .filter_map(|task| entry_tip(&task.repo_path, &task.verdicts, &task.target))
             .collect();
         if !entry_tips.is_empty() {
             let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?.ok_or_else(|| {
@@ -8014,6 +8025,51 @@ mod tests {
             !line.contains("diverge"),
             "containment is not divergence; got: {line}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // The entry tip is a function of the task's data and nothing else
+    // -----------------------------------------------------------------------
+
+    fn entry_verdicts(containment: Option<Containment>) -> ReplayVerdicts {
+        ReplayVerdicts {
+            baseline: ReplayBaseline::SourceCommittedTip,
+            containment,
+            source_position: None,
+        }
+    }
+
+    #[test]
+    fn only_a_fast_forward_has_an_entry_tip() {
+        let repo = RepoPath::new("github/acme/server").unwrap();
+        let target = ResolvedRevisionId::from_canonical(
+            crate::vcs::CommitId::parse("00000000000000000000000000000000000000a1").unwrap(),
+            None,
+        );
+
+        assert_eq!(
+            entry_tip(
+                &repo,
+                &entry_verdicts(Some(Containment::Behind(2))),
+                &target
+            ),
+            Some(("github/acme/server".to_owned(), target.id().clone()))
+        );
+        for containment in [
+            None,
+            Some(Containment::Equal),
+            Some(Containment::Ahead(1)),
+            Some(Containment::Diverged {
+                ahead: 1,
+                behind: 1,
+            }),
+        ] {
+            assert_eq!(
+                entry_tip(&repo, &entry_verdicts(containment), &target),
+                None,
+                "{containment:?} lands on no tip knowable before the move"
+            );
+        }
     }
 
     // -----------------------------------------------------------------------
