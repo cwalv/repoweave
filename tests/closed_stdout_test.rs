@@ -40,31 +40,30 @@ struct Weave {
 }
 
 impl Weave {
-    /// One project with one member, whose checkout is present unless `missing`.
+    /// One project with two members, whose checkouts are present unless `missing`.
     fn new(missing: bool) -> Self {
         let tmp = common::tempdir().unwrap();
         let ws = tmp.path().join("ws");
-        let origin = tmp.path().join("origin");
-        std::fs::create_dir_all(&origin).unwrap();
-        common::git_in(&origin, &["init", "-q", "--initial-branch=main"]);
-        common::git_in(&origin, &["commit", "-q", "--allow-empty", "-m", "init"]);
-
-        let member = ws.join("github/org/app");
-        if !missing {
-            std::fs::create_dir_all(&member).unwrap();
-            common::git_in(&member, &["init", "-q", "--initial-branch=main"]);
-            common::git_in(&member, &["commit", "-q", "--allow-empty", "-m", "init"]);
+        let mut manifest = String::new();
+        for name in ["app", "lib"] {
+            let origin = tmp.path().join("origin").join(name);
+            std::fs::create_dir_all(&origin).unwrap();
+            common::git_in(&origin, &["init", "-q", "--initial-branch=main"]);
+            common::git_in(&origin, &["commit", "-q", "--allow-empty", "-m", "init"]);
+            if !missing {
+                let member = ws.join("github/org").join(name);
+                std::fs::create_dir_all(&member).unwrap();
+                common::git_in(&member, &["init", "-q", "--initial-branch=main"]);
+                common::git_in(&member, &["commit", "-q", "--allow-empty", "-m", "init"]);
+            }
+            manifest.push_str(&format!(
+                "[repositories.\"github/org/{name}\"]\ntype = \"git\"\nurl = \"{}\"\nversion = \"main\"\nrole = \"owned\"\n\n",
+                common::file_url(&origin)
+            ));
         }
         let project = ws.join("projects/demo");
         std::fs::create_dir_all(&project).unwrap();
-        std::fs::write(
-            project.join("rwv.toml"),
-            format!(
-                "[repositories.\"github/org/app\"]\ntype = \"git\"\nurl = \"{}\"\nversion = \"main\"\nrole = \"owned\"\n",
-                common::file_url(if missing { &origin } else { &member })
-            ),
-        )
-        .unwrap();
+        std::fs::write(project.join("rwv.toml"), manifest).unwrap();
         std::fs::write(ws.join(".rwv-active"), "demo\n").unwrap();
         Self { _tmp: tmp, ws }
     }
@@ -115,8 +114,27 @@ fn fetch_still_clones_the_missing_member() {
     let out = closed_stdout(weave.command(&["fetch"]));
     assert_quiet("fetch", &out);
     assert!(
-        Path::new(&weave.ws).join("github/org/app/.git").exists(),
-        "fetch stopped before cloning"
+        ["app", "lib"].iter().all(|m| Path::new(&weave.ws)
+            .join("github/org")
+            .join(m)
+            .join(".git")
+            .exists()),
+        "fetch stopped before cloning every member"
+    );
+}
+
+#[test]
+fn fetch_streaming_its_records_still_clones_the_missing_member() {
+    let weave = Weave::new(true);
+    let out = closed_stdout(weave.command(&["fetch", "--json", "-j", "2"]));
+    assert_quiet("fetch --json -j 2", &out);
+    assert!(
+        ["app", "lib"].iter().all(|m| Path::new(&weave.ws)
+            .join("github/org")
+            .join(m)
+            .join(".git")
+            .exists()),
+        "fetch stopped before cloning every member"
     );
 }
 
