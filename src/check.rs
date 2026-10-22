@@ -10,6 +10,7 @@ use crate::manifest::{
 };
 use crate::op_state::SavepointKey;
 use crate::path_spelling::resolve;
+use crate::path_spelling::WirePath;
 use crate::refusal::{refusal, RefusalKind};
 use crate::vcs::{CommitId, RawRevisionId, ReplayExclusionState, ResolvedRevisionId};
 use crate::workspace::{
@@ -246,7 +247,7 @@ pub enum CheckViolation {
         /// present file and still a conflict.
         pointer_project: Option<ProjectName>,
         /// Whether anything outside the tree settles its identity.
-        sub_kind: WeaveRootIdentityConflictKind,
+        sub_kind: WeaveRootIdentityConflictKind<PathBuf>,
     },
 
     /// A `.rwv-workweave` marker file this build cannot use as-is: YAML
@@ -360,7 +361,7 @@ pub enum CheckViolation {
         /// file-level violations).
         workweave_dir: PathBuf,
         /// Discriminator for the specific anomaly detected.
-        sub_kind: WorkweaveTreeIntegrityKind,
+        sub_kind: WorkweaveTreeIntegrityKind<PathBuf>,
     },
 
     /// A provenance violation: a clone's remote URL diverges from the manifest
@@ -397,7 +398,7 @@ pub enum CheckViolation {
         /// Manifest-relative repo path involved in the violation.
         repo: RepoPath,
         /// Discriminator for the specific topology violation.
-        sub_kind: CloneTopologyKind,
+        sub_kind: CloneTopologyKind<PathBuf>,
     },
     /// Branch-discipline violations enforcing the I3 invariant from the
     /// `clone-topology` joint: every workweave repo checkout sits on a
@@ -1248,7 +1249,8 @@ pub enum WorkingTreeDriftKind {
 /// pointers unfixable.
 #[derive(Debug, Serialize, JsonSchema, Clone)]
 #[serde(rename_all = "kebab-case")]
-pub enum WeaveRootIdentityConflictKind {
+#[schemars(rename = "WeaveRootIdentityConflictKind")]
+pub enum WeaveRootIdentityConflictKind<P> {
     /// The marker names THIS workspace's primary, and that primary's registry
     /// for the marker's project records THIS exact directory. External
     /// evidence settles it: the tree is a workweave, so `.rwv-active` is the
@@ -1273,10 +1275,9 @@ pub enum WeaveRootIdentityConflictKind {
     /// clearing a pointer whose redundancy the marker cannot yet vouch for.
     MarkerUnverifiable {
         /// Absolute path to the `.rwv-workweave` file.
-        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
-        marker_path: PathBuf,
+        marker_path: P,
         /// Why the marker cannot witness its own claim.
-        defect: crate::workspace::MarkerDefect,
+        defect: crate::workspace::MarkerDefect<P>,
     },
     /// The marker is readable and verifies, but names a different primary,
     /// or names this primary with no registry entry pointing back at this
@@ -1294,10 +1295,33 @@ pub enum WeaveRootIdentityConflictKind {
     },
 }
 
+impl WeaveRootIdentityConflictKind<PathBuf> {
+    pub fn into_wire(self) -> WeaveRootIdentityConflictKind<WirePath> {
+        match self {
+            Self::RegisteredWorkweave {
+                project,
+                workweave_name,
+            } => WeaveRootIdentityConflictKind::RegisteredWorkweave {
+                project,
+                workweave_name,
+            },
+            Self::MarkerUnverifiable {
+                marker_path,
+                defect,
+            } => WeaveRootIdentityConflictKind::MarkerUnverifiable {
+                marker_path: WirePath::of(&marker_path),
+                defect: defect.into_wire(),
+            },
+            Self::Unwitnessed { detail } => WeaveRootIdentityConflictKind::Unwitnessed { detail },
+        }
+    }
+}
+
 /// Discriminator for [`CheckViolation::WorkweaveTreeIntegrity`] findings.
 #[derive(Debug, Serialize, JsonSchema, Clone)]
 #[serde(rename_all = "kebab-case")]
-pub enum WorkweaveTreeIntegrityKind {
+#[schemars(rename = "WorkweaveTreeIntegrityKind")]
+pub enum WorkweaveTreeIntegrityKind<P> {
     /// The marker's `parent:` path no longer exists on disk. The workweave's
     /// parent was retired or deleted out-of-band (a crash mid-adopt, or a
     /// hand-deletion) while this child remained. Bare `rwv sync-to` would
@@ -1307,8 +1331,7 @@ pub enum WorkweaveTreeIntegrityKind {
     /// parent is destroyed, so this only arises off the happy path.
     DanglingParent {
         /// The missing parent path recorded in the marker.
-        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
-        parent_path: PathBuf,
+        parent_path: P,
     },
     /// A parent-chain anomaly: cycle, parent==self, or the parent marker's
     /// project differs from this workweave's project. Cannot arise from
@@ -1330,8 +1353,7 @@ pub enum WorkweaveTreeIntegrityKind {
     /// absolute path. Report-only.
     ForeignPrimary {
         /// The primary path recorded in the marker (unresolved).
-        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
-        marker_primary: PathBuf,
+        marker_primary: P,
     },
     /// The marker's `primary:` path does not match this workspace, but
     /// resolves to a different, valid weave root — the normal shape
@@ -1341,8 +1363,7 @@ pub enum WorkweaveTreeIntegrityKind {
     /// sibling. Still enumerated under `--json`.
     ForeignPrimaryOtherWorkspace {
         /// The other workspace's primary path (resolved).
-        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
-        marker_primary: PathBuf,
+        marker_primary: P,
     },
     /// A registered workweave entry whose recorded path is not a valid
     /// workweave (missing directory, missing marker, or marker validation
@@ -1358,8 +1379,7 @@ pub enum WorkweaveTreeIntegrityKind {
         /// The recorded name of the workweave.
         workweave_name: WorkweaveName,
         /// The recorded absolute path (which no longer round-trips).
-        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
-        recorded_path: PathBuf,
+        recorded_path: P,
         /// Human-readable reason the entry failed validation.
         reason: String,
     },
@@ -1388,8 +1408,7 @@ pub enum WorkweaveTreeIntegrityKind {
         /// Project whose index is committed.
         project: ProjectName,
         /// Path to the tracked index file.
-        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
-        index_path: PathBuf,
+        index_path: P,
     },
     /// A `.rwv-workweave` marker that parses as neither current JSON nor a
     /// `migrate_legacy`-repairable legacy shape — YAML with no `primary:`
@@ -1455,6 +1474,69 @@ pub enum WorkweaveTreeIntegrityKind {
         /// What disagrees: which half, and with which record.
         detail: String,
     },
+}
+
+impl WorkweaveTreeIntegrityKind<PathBuf> {
+    pub fn into_wire(self) -> WorkweaveTreeIntegrityKind<WirePath> {
+        use WorkweaveTreeIntegrityKind as Wire;
+        match self {
+            Self::DanglingParent { parent_path } => Wire::DanglingParent {
+                parent_path: WirePath::of(&parent_path),
+            },
+            Self::ParentChainAnomaly { detail } => Wire::ParentChainAnomaly { detail },
+            Self::UnregisteredDir => Wire::UnregisteredDir,
+            Self::ForeignPrimary { marker_primary } => Wire::ForeignPrimary {
+                marker_primary: WirePath::of(&marker_primary),
+            },
+            Self::ForeignPrimaryOtherWorkspace { marker_primary } => {
+                Wire::ForeignPrimaryOtherWorkspace {
+                    marker_primary: WirePath::of(&marker_primary),
+                }
+            }
+            Self::StaleRegistryEntry {
+                project,
+                workweave_name,
+                recorded_path,
+                reason,
+            } => Wire::StaleRegistryEntry {
+                project,
+                workweave_name,
+                recorded_path: WirePath::of(&recorded_path),
+                reason,
+            },
+            Self::UnregisteredWorkweave {
+                project,
+                workweave_name,
+            } => Wire::UnregisteredWorkweave {
+                project,
+                workweave_name,
+            },
+            Self::TrackedIndex {
+                project,
+                index_path,
+            } => Wire::TrackedIndex {
+                project,
+                index_path: WirePath::of(&index_path),
+            },
+            Self::UnreadableMarker { detail } => Wire::UnreadableMarker { detail },
+            Self::NestedWorkweaveDir {
+                project,
+                workweave_name,
+                expected_dir_name,
+            } => Wire::NestedWorkweaveDir {
+                project,
+                workweave_name,
+                expected_dir_name,
+            },
+            Self::MisnamedDir {
+                expected_dir_name,
+                detail,
+            } => Wire::MisnamedDir {
+                expected_dir_name,
+                detail,
+            },
+        }
+    }
 }
 
 /// Discriminator for [`CheckViolation::Provenance`] findings.
@@ -1536,7 +1618,8 @@ pub enum ProvenanceKind {
 /// way the on-disk shape diverges from that spec.
 #[derive(Debug, Serialize, JsonSchema, Clone)]
 #[serde(rename_all = "kebab-case")]
-pub enum CloneTopologyKind {
+#[schemars(rename = "CloneTopologyKind")]
+pub enum CloneTopologyKind<P> {
     /// A full clone (its own canonical store) is hosted under `.workweaves/`
     /// instead of at the manifest's canonical slot. The inverted-primary
     /// case: the canonical store has migrated into one workweave and other
@@ -1553,8 +1636,7 @@ pub enum CloneTopologyKind {
     StandaloneInWorkweave {
         /// Absolute path of the standalone canonical store under
         /// `.workweaves/`.
-        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
-        store_path: PathBuf,
+        store_path: P,
     },
     /// The workspace at `<weave>/<repo_path>` is a full clone (its
     /// canonical store sits under itself), but one or more of this weave's
@@ -1564,13 +1646,11 @@ pub enum CloneTopologyKind {
     DisconnectedWeaveClone {
         /// Absolute path of the canonical store at the weave slot (the
         /// "disconnected" one).
-        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
-        weave_store_path: PathBuf,
+        weave_store_path: P,
         /// Absolute path of a representative store one of the workweave
         /// checkouts actually uses (the one this weave clone is
         /// disconnected from).
-        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
-        other_store_path: PathBuf,
+        other_store_path: P,
     },
     /// A linked worktree under `.workweaves/<workweave>/<repo_path>` whose
     /// canonical store is not the weave canonical at `<weave>/<repo_path>`.
@@ -1580,12 +1660,10 @@ pub enum CloneTopologyKind {
     WrongParentWorktree {
         /// Absolute path of the canonical store this workweave checkout
         /// should be linked into (`<weave>/<repo_path>/.git`).
-        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
-        expected_store_path: PathBuf,
+        expected_store_path: P,
         /// Absolute path of the canonical store this workweave checkout
         /// is actually linked into.
-        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
-        actual_store_path: PathBuf,
+        actual_store_path: P,
     },
     /// The weave path `<weave>/<repo_path>` itself is a linked worktree of
     /// some other clone — full inversion: there is no canonical store at
@@ -1593,9 +1671,36 @@ pub enum CloneTopologyKind {
     /// whichever clone hosts the actual store.
     WeaveCloneIsWorktree {
         /// Absolute path of the canonical store this slot is linked into.
-        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
-        actual_store_path: PathBuf,
+        actual_store_path: P,
     },
+}
+
+impl CloneTopologyKind<PathBuf> {
+    pub fn into_wire(self) -> CloneTopologyKind<WirePath> {
+        use CloneTopologyKind as Wire;
+        match self {
+            Self::StandaloneInWorkweave { store_path } => Wire::StandaloneInWorkweave {
+                store_path: WirePath::of(&store_path),
+            },
+            Self::DisconnectedWeaveClone {
+                weave_store_path,
+                other_store_path,
+            } => Wire::DisconnectedWeaveClone {
+                weave_store_path: WirePath::of(&weave_store_path),
+                other_store_path: WirePath::of(&other_store_path),
+            },
+            Self::WrongParentWorktree {
+                expected_store_path,
+                actual_store_path,
+            } => Wire::WrongParentWorktree {
+                expected_store_path: WirePath::of(&expected_store_path),
+                actual_store_path: WirePath::of(&actual_store_path),
+            },
+            Self::WeaveCloneIsWorktree { actual_store_path } => Wire::WeaveCloneIsWorktree {
+                actual_store_path: WirePath::of(&actual_store_path),
+            },
+        }
+    }
 }
 /// Discriminator for [`CheckViolation::BranchDiscipline`] findings.
 ///
@@ -1971,20 +2076,20 @@ pub struct LegacyRefAtTip {
 pub enum ViolationOutput {
     OrphanedClone {
         path: String,
-        absolute_path: String,
+        absolute_path: WirePath,
     },
     UnknownSegmentClone {
         path: String,
-        absolute_path: String,
+        absolute_path: WirePath,
     },
     DanglingReference {
         path: String,
-        absolute_path: String,
+        absolute_path: WirePath,
         project: ProjectName,
     },
     MemberPermissions {
         path: String,
-        absolute_path: String,
+        absolute_path: WirePath,
         /// The workweave's identity, `<project>--<name>`; `None` for the primary weave.
         workweave: Option<WorkweaveId>,
         #[serde(rename = "sub_kind")]
@@ -1994,25 +2099,25 @@ pub enum ViolationOutput {
     },
     RoleDisagreement {
         path: String,
-        absolute_path: String,
+        absolute_path: WirePath,
         /// Every project listing the clone, with the role it declares.
         roles: Vec<ProjectRoleOutput>,
     },
     StaleLock {
         path: String,
-        absolute_path: String,
+        absolute_path: WirePath,
         project: ProjectName,
         locked: String,
         actual: String,
     },
     IncompleteLock {
         path: String,
-        absolute_path: String,
+        absolute_path: WirePath,
         project: ProjectName,
     },
     WorkweaveDrift {
         path: String,
-        absolute_path: String,
+        absolute_path: WirePath,
         /// The workweave's identity, `<project>--<name>`; `None` for the canonical clone in the
         /// primary weave.
         workweave: Option<WorkweaveId>,
@@ -2021,7 +2126,7 @@ pub enum ViolationOutput {
     },
     IndexDrift {
         path: String,
-        absolute_path: String,
+        absolute_path: WirePath,
         /// The workweave's identity, `<project>--<name>`; `None` for the primary weave.
         workweave: Option<WorkweaveId>,
         #[serde(rename = "sub_kind")]
@@ -2029,7 +2134,7 @@ pub enum ViolationOutput {
     },
     WorkingTreeDrift {
         path: String,
-        absolute_path: String,
+        absolute_path: WirePath,
         /// The workweave's identity, `<project>--<name>`; `None` for the primary weave.
         workweave: Option<WorkweaveId>,
         #[serde(rename = "sub_kind")]
@@ -2055,72 +2160,72 @@ pub enum ViolationOutput {
     },
     HeadUnreadable {
         path: String,
-        absolute_path: String,
+        absolute_path: WirePath,
         error: String,
     },
     ProjectsDirUnreadable {
-        path: String,
+        path: WirePath,
         error: String,
     },
     ProjectlessDir {
-        absolute_path: String,
+        absolute_path: WirePath,
     },
     UnnameableProject {
-        absolute_path: String,
+        absolute_path: WirePath,
         derived: String,
         error: String,
     },
     UnresolvableLockEntry {
         path: String,
-        absolute_path: String,
+        absolute_path: WirePath,
         project: ProjectName,
     },
     LockPinnedByName {
         path: String,
-        absolute_path: String,
+        absolute_path: WirePath,
         project: ProjectName,
         /// The tag or branch name the lock entry holds.
         version: String,
     },
     LegacyManifestFormat {
         project: ProjectName,
-        legacy_path: String,
+        legacy_path: WirePath,
     },
     DanglingActiveProject {
         project: ProjectName,
-        missing_dir: String,
+        missing_dir: WirePath,
     },
     WeaveRootIdentityConflict {
         /// Absolute path of the weave root carrying both identity files.
-        root: String,
+        root: WirePath,
         /// The project named by `.rwv-active`; absent when that file is
         /// empty or unreadable.
         pointer_project: Option<String>,
         #[serde(rename = "sub_kind")]
-        sub_kind: WeaveRootIdentityConflictKind,
+        sub_kind: WeaveRootIdentityConflictKind<WirePath>,
     },
     LegacyWorkweaveMarker {
-        marker_path: String,
-        primary: String,
+        marker_path: WirePath,
+        primary: WirePath,
     },
     LegacyWorkweaveIndex {
         project: ProjectName,
-        index_path: String,
+        index_path: WirePath,
     },
     UnreadableOwnedState {
         project: ProjectName,
-        state_path: String,
+        state_path: WirePath,
         error: String,
         active: bool,
     },
     UnreadableWorkweaveIndex {
         project: ProjectName,
-        index_path: String,
+        index_path: WirePath,
         error: String,
     },
     UnparseableProject {
         project: ProjectName,
-        manifest_path: String,
+        manifest_path: WirePath,
         /// Free-form display string of the parse error. Named `message`
         /// (not `error`) to signal this is display text, not a typed discriminant.
         message: String,
@@ -2128,16 +2233,16 @@ pub enum ViolationOutput {
     WorkweaveTreeIntegrity {
         /// Absolute path to the workweave directory (or its marker file for
         /// file-level findings).
-        workweave_dir: String,
+        workweave_dir: WirePath,
         /// Discriminator for the specific anomaly detected.
         #[serde(rename = "sub_kind")]
-        sub_kind: WorkweaveTreeIntegrityKind,
+        sub_kind: WorkweaveTreeIntegrityKind<WirePath>,
     },
     Provenance {
         /// Manifest-relative path to the affected repo.
         path: String,
         /// Absolute path to the affected repo on disk.
-        absolute_path: String,
+        absolute_path: WirePath,
         /// Project the affected repo belongs to.
         project: ProjectName,
         /// Discriminator for the specific provenance anomaly.
@@ -2149,30 +2254,30 @@ pub enum ViolationOutput {
         path: String,
         /// Absolute path of the offending workspace (canonical slot or
         /// workweave checkout, per sub-kind semantics).
-        absolute_path: String,
+        absolute_path: WirePath,
         /// Discriminator for the specific topology anomaly.
         #[serde(rename = "sub_kind")]
-        sub_kind: CloneTopologyKind,
+        sub_kind: CloneTopologyKind<WirePath>,
     },
     BranchDiscipline {
         /// Absolute path to the repo checkout where the violation was
         /// found (workweave checkout for (a), canonical clone for (b)/(c)).
-        repo_path: String,
+        repo_path: WirePath,
         /// Discriminator for the specific branch-discipline anomaly.
         #[serde(rename = "sub_kind")]
         sub_kind: BranchDisciplineKind,
     },
     StaleWorktreeRegistration {
         path: String,
-        absolute_path: String,
+        absolute_path: WirePath,
         /// The workweave's identity, `<project>--<name>`; `None` for the primary weave.
         workweave: Option<WorkweaveId>,
         /// Absolute path of the missing worktree directory.
-        missing_path: String,
+        missing_path: WirePath,
     },
     StaleOpState {
         /// Absolute path to the workspace dir that holds the `.rwv-op` file.
-        workspace_dir: String,
+        workspace_dir: WirePath,
         /// The verb that started the stalled op — the one `--continue`
         /// resumes it under.
         verb: crate::op_state::OpVerb,
@@ -2181,11 +2286,11 @@ pub enum ViolationOutput {
     },
     DeadOpLease {
         /// Absolute path to the workspace dir holding the dangling lease.
-        workspace_dir: String,
+        workspace_dir: WirePath,
         /// Op id recorded in the lease.
         op_id: String,
         /// Owner workspace the lease pointed at.
-        recorded_owner: String,
+        recorded_owner: WirePath,
         /// Discriminator for the specific dead-lease shape.
         #[serde(rename = "sub_kind")]
         sub_kind: DeadOpLeaseKind,
@@ -2198,7 +2303,7 @@ pub enum ViolationOutput {
         /// The project whose registry holds the receipt.
         project: ProjectName,
         /// Absolute path of the canonical store the receipt is keyed to.
-        store_path: String,
+        store_path: WirePath,
         /// The recorded ref name that does not exist in that store.
         ref_name: String,
     },
@@ -2207,13 +2312,13 @@ pub enum ViolationOutput {
         /// The project whose registry holds the receipt.
         project: ProjectName,
         /// Absolute path of the canonical store the receipt is keyed to.
-        store_path: String,
+        store_path: WirePath,
         /// The recorded ref name that carries a `/` segment.
         ref_name: String,
     },
     OrphanedSavepoint {
         path: String,
-        absolute_path: String,
+        absolute_path: WirePath,
         /// The workweave's identity, `<project>--<name>`; `None` for the primary weave.
         workweave: Option<WorkweaveId>,
         /// Opaque op-id from the savepoint ref's trailing path component.
@@ -2226,7 +2331,7 @@ pub enum ViolationOutput {
     /// file it, so `--fix` never drops it.
     UnrecognizedSavepointRef {
         path: String,
-        absolute_path: String,
+        absolute_path: WirePath,
         /// The workweave's identity, `<project>--<name>`; `None` for the primary weave.
         workweave: Option<WorkweaveId>,
         /// The reference, spelled as the VCS spells it.
@@ -2252,10 +2357,10 @@ pub enum ViolationOutput {
     CargoPatchShadowing {
         /// Weave-level file (Cargo.toml or .cargo/config.toml) that
         /// carries the shadowed patch entry.
-        weave_config: String,
+        weave_config: WirePath,
         /// Member-level `.cargo/config.toml` that wins per cargo's
         /// closest-config-wins-per-key shadowing.
-        member_config: String,
+        member_config: WirePath,
         /// Registry sub-table name (e.g. `crates-io`).
         registry: String,
         /// The specific crate name whose key collides.
@@ -2267,17 +2372,17 @@ pub enum ViolationOutput {
         /// [`CheckViolation::MissingCanonicalClone::repo`]).
         path: String,
         /// Absolute path of the worktree checkout in the workweave.
-        absolute_path: String,
+        absolute_path: WirePath,
         /// The workweave's identity, `<project>--<name>`.
         workweave: WorkweaveId,
         /// Absolute path of the canonical clone directory that is absent.
-        canonical_path: String,
+        canonical_path: WirePath,
     },
 
     /// See [`CheckViolation::UninitializedSubmodule`].
     UninitializedSubmodule {
         /// Absolute path to the repo worktree that has uninitialized submodules.
-        absolute_path: String,
+        absolute_path: WirePath,
         /// Manifest-relative path to the repo.
         path: String,
         /// The workweave's identity, `<project>--<name>`.
@@ -2293,7 +2398,7 @@ pub enum ViolationOutput {
         /// Manifest-relative path to the repo carrying the `.gitattributes`.
         path: String,
         /// Absolute path to that repo on disk.
-        absolute_path: String,
+        absolute_path: WirePath,
         /// The path pattern the offending line assigns the driver to.
         pattern: String,
         /// The `rwv-`-prefixed driver name that resolves to nothing.
@@ -2330,21 +2435,21 @@ impl ViolationOutput {
         workspace_dir: &Path,
         workweave_dirs: &std::collections::HashMap<WorkweaveId, std::path::PathBuf>,
     ) -> Self {
-        fn abs(workspace_dir: &Path, repo: &RepoPath) -> String {
-            crate::path_spelling::wire_path(&workspace_dir.join(repo.as_path()))
+        fn abs(workspace_dir: &Path, repo: &RepoPath) -> WirePath {
+            WirePath::of(&workspace_dir.join(repo.as_path()))
         }
         fn abs_in(
             workweave: &Option<WorkweaveId>,
             workspace_dir: &Path,
             workweave_dirs: &std::collections::HashMap<WorkweaveId, std::path::PathBuf>,
             repo: &RepoPath,
-        ) -> String {
+        ) -> WirePath {
             let root = workweave
                 .as_ref()
                 .and_then(|ww| workweave_dirs.get(ww))
                 .map(std::path::PathBuf::as_path)
                 .unwrap_or(workspace_dir);
-            crate::path_spelling::wire_path(&root.join(repo.as_path()))
+            WirePath::of(&root.join(repo.as_path()))
         }
 
         match violation {
@@ -2474,18 +2579,18 @@ impl ViolationOutput {
                 error,
             },
             CheckViolation::ProjectsDirUnreadable { path, error } => Self::ProjectsDirUnreadable {
-                path: crate::path_spelling::wire_path(&path),
+                path: WirePath::of(&path),
                 error,
             },
             CheckViolation::ProjectlessDir { dir } => Self::ProjectlessDir {
-                absolute_path: crate::path_spelling::wire_path(&dir),
+                absolute_path: WirePath::of(&dir),
             },
             CheckViolation::UnnameableProject {
                 dir,
                 derived,
                 error,
             } => Self::UnnameableProject {
-                absolute_path: crate::path_spelling::wire_path(&dir),
+                absolute_path: WirePath::of(&dir),
                 derived,
                 error,
             },
@@ -2511,37 +2616,37 @@ impl ViolationOutput {
                 legacy_path,
             } => Self::LegacyManifestFormat {
                 project: project.clone(),
-                legacy_path: crate::path_spelling::wire_path(&legacy_path),
+                legacy_path: WirePath::of(&legacy_path),
             },
             CheckViolation::DanglingActiveProject {
                 project,
                 missing_dir,
             } => Self::DanglingActiveProject {
                 project: project.clone(),
-                missing_dir: crate::path_spelling::wire_path(&missing_dir),
+                missing_dir: WirePath::of(&missing_dir),
             },
             CheckViolation::WeaveRootIdentityConflict {
                 root,
                 pointer_project,
                 sub_kind,
             } => Self::WeaveRootIdentityConflict {
-                root: crate::path_spelling::wire_path(&root),
+                root: WirePath::of(&root),
                 pointer_project: pointer_project.map(|p| p.to_string()),
-                sub_kind,
+                sub_kind: sub_kind.into_wire(),
             },
             CheckViolation::LegacyWorkweaveMarker {
                 marker_path,
                 primary,
             } => Self::LegacyWorkweaveMarker {
-                marker_path: crate::path_spelling::wire_path(&marker_path),
-                primary: crate::path_spelling::wire_path(&primary),
+                marker_path: WirePath::of(&marker_path),
+                primary: WirePath::of(&primary),
             },
             CheckViolation::LegacyWorkweaveIndex {
                 project,
                 index_path,
             } => Self::LegacyWorkweaveIndex {
                 project: project.clone(),
-                index_path: crate::path_spelling::wire_path(&index_path),
+                index_path: WirePath::of(&index_path),
             },
             CheckViolation::UnreadableOwnedState {
                 project,
@@ -2550,7 +2655,7 @@ impl ViolationOutput {
                 active,
             } => Self::UnreadableOwnedState {
                 project: project.clone(),
-                state_path: crate::path_spelling::wire_path(&state_path),
+                state_path: WirePath::of(&state_path),
                 error,
                 active,
             },
@@ -2560,7 +2665,7 @@ impl ViolationOutput {
                 error,
             } => Self::UnreadableWorkweaveIndex {
                 project: project.clone(),
-                index_path: crate::path_spelling::wire_path(&index_path),
+                index_path: WirePath::of(&index_path),
                 error,
             },
             CheckViolation::UnparseableProject {
@@ -2569,15 +2674,15 @@ impl ViolationOutput {
                 message,
             } => Self::UnparseableProject {
                 project: project.clone(),
-                manifest_path: crate::path_spelling::wire_path(&manifest_path),
+                manifest_path: WirePath::of(&manifest_path),
                 message,
             },
             CheckViolation::WorkweaveTreeIntegrity {
                 workweave_dir,
                 sub_kind,
             } => Self::WorkweaveTreeIntegrity {
-                workweave_dir: crate::path_spelling::wire_path(&workweave_dir),
-                sub_kind,
+                workweave_dir: WirePath::of(&workweave_dir),
+                sub_kind: sub_kind.into_wire(),
             },
             CheckViolation::Provenance {
                 project,
@@ -2594,15 +2699,15 @@ impl ViolationOutput {
                 repo,
                 sub_kind,
             } => Self::CloneTopology {
-                absolute_path: crate::path_spelling::wire_path(&workspace_path),
+                absolute_path: WirePath::of(&workspace_path),
                 path: repo.to_string(),
-                sub_kind,
+                sub_kind: sub_kind.into_wire(),
             },
             CheckViolation::BranchDiscipline {
                 repo_path,
                 sub_kind,
             } => Self::BranchDiscipline {
-                repo_path: crate::path_spelling::wire_path(&repo_path),
+                repo_path: WirePath::of(&repo_path),
                 sub_kind,
             },
             CheckViolation::StaleWorktreeRegistration {
@@ -2613,14 +2718,14 @@ impl ViolationOutput {
                 absolute_path: abs_in(&workweave, workspace_dir, workweave_dirs, &repo),
                 path: repo.to_string(),
                 workweave: workweave.clone(),
-                missing_path: crate::path_spelling::wire_path(&missing_path),
+                missing_path: WirePath::of(&missing_path),
             },
             CheckViolation::StaleOpState {
                 workspace_dir: ws_dir,
                 verb,
                 started_at,
             } => Self::StaleOpState {
-                workspace_dir: crate::path_spelling::wire_path(&ws_dir),
+                workspace_dir: WirePath::of(&ws_dir),
                 verb,
                 started_at,
             },
@@ -2631,9 +2736,9 @@ impl ViolationOutput {
                 sub_kind,
                 created_at,
             } => Self::DeadOpLease {
-                workspace_dir: crate::path_spelling::wire_path(&ws_dir),
+                workspace_dir: WirePath::of(&ws_dir),
                 op_id,
-                recorded_owner: crate::path_spelling::wire_path(&recorded_owner),
+                recorded_owner: WirePath::of(&recorded_owner),
                 sub_kind,
                 created_at,
             },
@@ -2643,7 +2748,7 @@ impl ViolationOutput {
                 ref_name,
             } => Self::DanglingRefReceipt {
                 project: project.clone(),
-                store_path: crate::path_spelling::wire_path(&store_path),
+                store_path: WirePath::of(&store_path),
                 ref_name,
             },
             CheckViolation::PreFlatRefReceipt {
@@ -2652,7 +2757,7 @@ impl ViolationOutput {
                 ref_name,
             } => Self::PreFlatRefReceipt {
                 project: project.clone(),
-                store_path: crate::path_spelling::wire_path(&store_path),
+                store_path: WirePath::of(&store_path),
                 ref_name,
             },
             CheckViolation::OrphanedSavepoint {
@@ -2696,8 +2801,8 @@ impl ViolationOutput {
                 registry,
                 crate_name,
             } => Self::CargoPatchShadowing {
-                weave_config: crate::path_spelling::wire_path(&weave_config),
-                member_config: crate::path_spelling::wire_path(&member_config),
+                weave_config: WirePath::of(&weave_config),
+                member_config: WirePath::of(&member_config),
                 registry,
                 crate_name,
             },
@@ -2711,10 +2816,10 @@ impl ViolationOutput {
                     .cloned()
                     .unwrap_or_else(|| workspace_dir.to_path_buf());
                 Self::MissingCanonicalClone {
-                    absolute_path: crate::path_spelling::wire_path(&ww_dir.join(repo.as_path())),
+                    absolute_path: WirePath::of(&ww_dir.join(repo.as_path())),
                     path: repo.to_string(),
                     workweave: workweave.clone(),
-                    canonical_path: crate::path_spelling::wire_path(&canonical_path),
+                    canonical_path: WirePath::of(&canonical_path),
                 }
             }
             CheckViolation::UninitializedSubmodule {
@@ -2724,7 +2829,7 @@ impl ViolationOutput {
                 empty_paths,
             } => {
                 let ww_dir = workweave_dirs.get(&workweave);
-                let absolute_path = crate::path_spelling::wire_path(
+                let absolute_path = WirePath::of(
                     &ww_dir
                         .unwrap_or(&workspace_dir.to_path_buf())
                         .join(repo.as_path()),
@@ -2795,7 +2900,7 @@ pub enum IssueKindOutput {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct MemberIncompatibilityOutput {
     /// The managed file holding the incompatible value.
-    pub path: String,
+    pub path: WirePath,
     /// Display form of the `DefaultOnly` key.
     pub key: String,
     /// The value currently on disk.
@@ -2818,7 +2923,7 @@ impl IssueKindOutput {
             IssueKind::MalformedSettings => Self::MalformedSettings,
             IssueKind::MemberIncompatibility(observation) => {
                 Self::MemberIncompatibility(MemberIncompatibilityOutput {
-                    path: observation.path().to_string_lossy().into_owned(),
+                    path: WirePath::of(observation.path()),
                     key: observation.key().to_owned(),
                     on_disk: observation.on_disk().to_owned(),
                     required: observation.required().to_owned(),

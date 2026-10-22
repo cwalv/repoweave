@@ -34,13 +34,17 @@ fn fetch_json_envelope_round_trips() {
         outcomes: vec![
             FetchOutcomeOutput {
                 path: "github/org/alpha".into(),
-                absolute_path: "/abs/github/org/alpha".into(),
+                absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new(
+                    "/abs/github/org/alpha",
+                )),
                 status: FetchOutcomeStatus::Ok,
                 message: None,
             },
             FetchOutcomeOutput {
                 path: "github/org/beta".into(),
-                absolute_path: "/abs/github/org/beta".into(),
+                absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new(
+                    "/abs/github/org/beta",
+                )),
                 status: FetchOutcomeStatus::Skipped,
                 message: Some("skipped github/org/beta".into()),
             },
@@ -88,7 +92,9 @@ fn fetch_json_envelope_round_trips() {
 fn fetch_outcome_failed_serializes() {
     let record = FetchOutcomeOutput {
         path: "github/org/repo".into(),
-        absolute_path: "/abs/github/org/repo".into(),
+        absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new(
+            "/abs/github/org/repo",
+        )),
         status: FetchOutcomeStatus::Failed,
         message: Some("clone failed: connection refused".into()),
     };
@@ -103,7 +109,9 @@ fn fetch_outcome_failed_serializes() {
 fn fetch_ndjson_record_embeds_schema_and_flattens_outcome() {
     let outcome = FetchOutcomeOutput {
         path: "github/org/repo".into(),
-        absolute_path: "/abs/github/org/repo".into(),
+        absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new(
+            "/abs/github/org/repo",
+        )),
         status: FetchOutcomeStatus::Ok,
         message: None,
     };

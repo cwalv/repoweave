@@ -1844,7 +1844,7 @@ impl WorkspaceContext {
     /// independently computed.
     pub fn resolution(&self) -> Option<Resolution> {
         let project = self.active_project()?;
-        let workspace = crate::path_spelling::wire_path(&self.primary_root);
+        let workspace = crate::path_spelling::WirePath::of(&self.primary_root);
         let (workweave, workweave_unregistered) = match &self.checkout {
             Checkout::Primary { .. } => (None, false),
             Checkout::Workweave { name, project, .. } => match name.recorded() {
@@ -1898,13 +1898,8 @@ impl WorkspaceContext {
 /// never independently computed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Resolution {
-    /// Primary weave root, in the wire spelling.
-    ///
-    /// A `String` and not a `PathBuf` so the spelling is decided at
-    /// construction rather than by serde: this is a published absolute path
-    /// and it owes programs the composable form, which
-    /// [`crate::path_spelling::wire_path`] is the only producer of.
-    pub workspace: String,
+    /// Primary weave root.
+    pub workspace: crate::path_spelling::WirePath,
     /// Workweave identity (`<project>--<name>`), as the primary-side registry
     /// records it.
     ///
@@ -2178,22 +2173,29 @@ impl WorkweaveMarker {
 /// naming a repair nothing performs is worse than one that names none.
 ///
 /// `Serialize`/`JsonSchema` so `check::WeaveRootIdentityConflictKind` can
-/// carry a defect straight into a doctor finding's wire shape — the same
-/// value `require_exclusive` refuses on, not a re-description of it.
+/// carry a defect into a doctor finding's wire shape — the same value
+/// `require_exclusive` refuses on, its path respelled by [`Self::into_wire`],
+/// not a re-description of it.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
-pub enum MarkerDefect {
-    DanglingPrimary {
-        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
-        primary: PathBuf,
-    },
+#[schemars(rename = "MarkerDefect")]
+pub enum MarkerDefect<P> {
+    DanglingPrimary { primary: P },
     Legacy,
-    Unreadable {
-        detail: String,
-    },
+    Unreadable { detail: String },
 }
 
-impl MarkerDefect {
+impl MarkerDefect<PathBuf> {
+    pub fn into_wire(self) -> MarkerDefect<crate::path_spelling::WirePath> {
+        match self {
+            MarkerDefect::DanglingPrimary { primary } => MarkerDefect::DanglingPrimary {
+                primary: crate::path_spelling::WirePath::of(&primary),
+            },
+            MarkerDefect::Legacy => MarkerDefect::Legacy,
+            MarkerDefect::Unreadable { detail } => MarkerDefect::Unreadable { detail },
+        }
+    }
+
     /// The condition each arm names, for the refusals built from
     /// [`Self::refusal`].
     ///
@@ -2243,7 +2245,7 @@ enum MarkerPresence {
     Absent,
     Usable(WorkweaveMarker),
     Defective {
-        defect: MarkerDefect,
+        defect: MarkerDefect<PathBuf>,
         project_hint: Option<ProjectName>,
         primary_hint: Option<PathBuf>,
     },
@@ -2436,7 +2438,7 @@ pub enum RootObservation {
     /// that test.
     MarkerUnverifiable {
         marker_path: PathBuf,
-        defect: MarkerDefect,
+        defect: MarkerDefect<PathBuf>,
         project_hint: Option<ProjectName>,
         pointer: ActivePointer,
     },
@@ -4704,14 +4706,14 @@ mod tests {
 
         assert_eq!(
             res.workspace,
-            crate::path_spelling::wire_path(&resolve(&root).unwrap()),
+            crate::path_spelling::WirePath::of(&resolve(&root).unwrap()),
             "the published root is the wire mint of the resolved root, not the \
              resolved root as this host holds it"
         );
         assert!(
-            !res.workspace.starts_with(VERBATIM_PREFIX),
+            !res.workspace.as_str().starts_with(VERBATIM_PREFIX),
             "an internal spelling reached a published field: {}",
-            res.workspace
+            res.workspace.as_str()
         );
         assert_eq!(res.project.as_str(), "myproject");
         assert!(
@@ -4771,16 +4773,16 @@ mod tests {
         assert_eq!(res.project.as_str(), "myproject");
         assert_eq!(
             res.workspace,
-            crate::path_spelling::wire_path(
+            crate::path_spelling::WirePath::of(
                 &resolve(&resolve(&weave_dir).unwrap().parent().unwrap().join("ws")).unwrap()
             ),
             "the workspace a workweave publishes is the primary root in the \
              wire spelling"
         );
         assert!(
-            !res.workspace.starts_with(VERBATIM_PREFIX),
+            !res.workspace.as_str().starts_with(VERBATIM_PREFIX),
             "an internal spelling reached a published field: {}",
-            res.workspace
+            res.workspace.as_str()
         );
     }
 
@@ -4957,7 +4959,7 @@ mod tests {
     #[test]
     fn the_representable_states_serialize_byte_for_byte_as_before() {
         let primary = Resolution {
-            workspace: "/ws".to_owned(),
+            workspace: crate::path_spelling::WirePath::of(std::path::Path::new("/ws")),
             workweave: None,
             workweave_unregistered: false,
             project: ProjectName::new("myproject").unwrap(),
@@ -4968,7 +4970,7 @@ mod tests {
         );
 
         let registered = Resolution {
-            workspace: "/ws".to_owned(),
+            workspace: crate::path_spelling::WirePath::of(std::path::Path::new("/ws")),
             workweave: Some("myproject--feat".to_owned()),
             workweave_unregistered: false,
             project: ProjectName::new("myproject").unwrap(),
@@ -4979,7 +4981,7 @@ mod tests {
         );
 
         let unregistered = Resolution {
-            workspace: "/ws".to_owned(),
+            workspace: crate::path_spelling::WirePath::of(std::path::Path::new("/ws")),
             workweave: None,
             workweave_unregistered: true,
             project: ProjectName::new("myproject").unwrap(),
@@ -5374,7 +5376,7 @@ mod tests {
     /// Every `MarkerDefect`, with a match that stops compiling when a variant
     /// is added. A new defect that nobody adds here is a defect the refusal
     /// test below would never see.
-    fn all_marker_defects() -> Vec<MarkerDefect> {
+    fn all_marker_defects() -> Vec<MarkerDefect<PathBuf>> {
         let all = vec![
             MarkerDefect::DanglingPrimary {
                 primary: PathBuf::from("/nowhere"),

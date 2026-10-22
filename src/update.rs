@@ -57,7 +57,7 @@ pub struct RepoUpdateRecord {
     /// Manifest-relative path.
     pub path: String,
     /// Fully resolved absolute path.
-    pub absolute_path: String,
+    pub absolute_path: crate::path_spelling::WirePath,
     /// Branch name from the manifest `version:` field.
     pub branch: String,
     /// Outcome discriminant.
@@ -293,7 +293,7 @@ fn update_for_project(
 
     for (item, outcome) in work_items.iter().zip(outcomes) {
         let branch = item.entry.version.to_string();
-        let abs_str = crate::path_spelling::wire_path(item.checkout.path());
+        let abs_str = crate::path_spelling::WirePath::of(item.checkout.path());
 
         let old_sha = item.old.as_ref().map(|r| r.display_str().to_owned());
         let mut placed = None;

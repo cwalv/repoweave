@@ -45,7 +45,7 @@ pub const FETCH_RECORD_SCHEMA_URL: &str = crate::schema_url::schema_url!("fetch-
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct FetchOutcomeOutput {
     pub path: String,
-    pub absolute_path: String,
+    pub absolute_path: crate::path_spelling::WirePath,
     pub status: FetchOutcomeStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
@@ -700,7 +700,7 @@ fn fetch_project_repos(
                 if let Some(files) = files {
                     PlacementOutput::new(repo_path, &member, files).stream(&write_lock);
                 }
-                let abs_path = crate::path_spelling::wire_path(&member);
+                let abs_path = crate::path_spelling::WirePath::of(&member);
                 let record = match &outcome {
                     FetchOutcome::Ok { .. } => FetchOutcomeOutput {
                         path: repo_path.to_string(),
@@ -757,7 +757,7 @@ fn fetch_project_repos(
     let moved_or_created = outcomes.iter().any(|(_, _, moved)| *moved);
     for ((outcome, files, _), (repo_path, _entry, _vcs)) in outcomes.iter().zip(work_items.iter()) {
         let member = workspace_root.join(repo_path.as_path());
-        let abs_path = crate::path_spelling::wire_path(&member);
+        let abs_path = crate::path_spelling::WirePath::of(&member);
         match outcome {
             FetchOutcome::Ok { add_to_lock } => {
                 succeeded += 1;

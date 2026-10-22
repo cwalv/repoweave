@@ -16,7 +16,11 @@
     },
     "absolute_path": {
       "description": "Fully resolved absolute path.",
-      "type": "string"
+      "allOf": [
+        {
+          "$ref": "#/definitions/WirePath"
+        }
+      ]
     },
     "branch": {
       "description": "Branch name from the manifest `version:` field.",
@@ -82,6 +86,10 @@
           ]
         }
       ]
+    },
+    "WirePath": {
+      "description": "Absolute path, `/`-separated on every platform.",
+      "type": "string"
     }
   }
 }

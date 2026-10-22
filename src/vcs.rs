@@ -642,38 +642,31 @@ impl VcsError {
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum VcsErrorOutput {
     NotARepo {
-        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
-        path: PathBuf,
+        path: crate::path_spelling::WirePath,
     },
     RevisionNotFound {
-        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
-        repo: PathBuf,
+        repo: crate::path_spelling::WirePath,
         rev: String,
     },
     RebaseConflict {
-        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
-        repo: PathBuf,
+        repo: crate::path_spelling::WirePath,
         op: ConflictOp,
     },
     StaleRefWitness {
-        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
-        repo: PathBuf,
+        repo: crate::path_spelling::WirePath,
         expected: String,
         observed: String,
     },
     MidOperation {
-        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
-        repo: PathBuf,
+        repo: crate::path_spelling::WirePath,
         operation: MidOperation,
     },
     HookRejected {
-        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
-        repo: PathBuf,
+        repo: crate::path_spelling::WirePath,
         stderr: String,
     },
     UntrackedCollision {
-        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
-        repo: PathBuf,
+        repo: crate::path_spelling::WirePath,
         paths: Vec<String>,
     },
     Io {
@@ -686,8 +679,7 @@ pub enum VcsErrorOutput {
     },
     CommandFailed {
         args: Vec<String>,
-        #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
-        repo: PathBuf,
+        repo: crate::path_spelling::WirePath,
         stderr: String,
     },
 }
@@ -695,13 +687,15 @@ pub enum VcsErrorOutput {
 impl From<&VcsError> for VcsErrorOutput {
     fn from(e: &VcsError) -> Self {
         match e {
-            VcsError::NotARepo(p) => Self::NotARepo { path: p.clone() },
+            VcsError::NotARepo(p) => Self::NotARepo {
+                path: crate::path_spelling::WirePath::of(p),
+            },
             VcsError::RevisionNotFound { repo, rev } => Self::RevisionNotFound {
-                repo: repo.clone(),
+                repo: crate::path_spelling::WirePath::of(repo),
                 rev: rev.clone(),
             },
             VcsError::RebaseConflict { repo, op } => Self::RebaseConflict {
-                repo: repo.clone(),
+                repo: crate::path_spelling::WirePath::of(repo),
                 op: *op,
             },
             VcsError::StaleRefWitness {
@@ -709,20 +703,20 @@ impl From<&VcsError> for VcsErrorOutput {
                 expected,
                 observed,
             } => Self::StaleRefWitness {
-                repo: repo.clone(),
+                repo: crate::path_spelling::WirePath::of(repo),
                 expected: expected.clone(),
                 observed: observed.clone(),
             },
             VcsError::MidOperation { repo, operation } => Self::MidOperation {
-                repo: repo.clone(),
+                repo: crate::path_spelling::WirePath::of(repo),
                 operation: *operation,
             },
             VcsError::HookRejected { repo, stderr } => Self::HookRejected {
-                repo: repo.clone(),
+                repo: crate::path_spelling::WirePath::of(repo),
                 stderr: stderr.clone(),
             },
             VcsError::UntrackedCollision { repo, paths } => Self::UntrackedCollision {
-                repo: repo.clone(),
+                repo: crate::path_spelling::WirePath::of(repo),
                 paths: paths.clone(),
             },
             VcsError::Io { ctx, source } => Self::Io {
@@ -731,7 +725,7 @@ impl From<&VcsError> for VcsErrorOutput {
             },
             VcsError::CommandFailed { args, repo, stderr } => Self::CommandFailed {
                 args: args.clone(),
-                repo: repo.clone(),
+                repo: crate::path_spelling::WirePath::of(repo),
                 stderr: stderr.clone(),
             },
         }

@@ -2,13 +2,14 @@
 
 use crate::manifest::{Project, ProjectName, Role};
 use crate::op_state;
+use crate::path_spelling::WirePath;
 use crate::selector::RepoFilter;
 use crate::vcs::{vcs_for, CommitId, MidOperation, ResolvedRevisionId, Vcs};
 use crate::workspace::{project_dir, Checkout, Resolution, WorkspaceContext};
 use anyhow::Context;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Schema URL for `rwv status --json` output. Pins to the committed artifact
 /// under `docs/reference/schemas/status.json`. Emitted as the top-level
@@ -52,25 +53,22 @@ pub struct OpStatus {
     /// Workspace holding the full op record (`.rwv-op`) — the workspace
     /// `--continue`/`abort` must run from. Equal to the reporting workspace
     /// unless this workspace only holds a lease.
-    #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
-    pub owner: PathBuf,
-    #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
-    pub source: PathBuf,
-    #[serde(serialize_with = "crate::path_spelling::serialize_wire_path")]
-    pub target: PathBuf,
+    pub owner: WirePath,
+    pub source: WirePath,
+    pub target: WirePath,
     pub overrides: Vec<op_state::Override>,
 }
 
-impl From<op_state::ResolvedOwner> for OpStatus {
-    fn from(resolved: op_state::ResolvedOwner) -> Self {
+impl From<&op_state::ResolvedOwner> for OpStatus {
+    fn from(resolved: &op_state::ResolvedOwner) -> Self {
         Self {
             id: resolved.record.id.to_string(),
             verb: resolved.record.verb,
-            phase: resolved.record.phase,
-            started_at: resolved.record.started_at,
-            owner: resolved.owner_workspace,
-            source: resolved.record.source,
-            target: resolved.record.target,
+            phase: resolved.record.phase.clone(),
+            started_at: resolved.record.started_at.clone(),
+            owner: WirePath::of(&resolved.owner_workspace),
+            source: WirePath::of(&resolved.record.source),
+            target: WirePath::of(&resolved.record.target),
             overrides: resolved.record.overrides.iter().collect(),
         }
     }
@@ -132,7 +130,7 @@ impl std::fmt::Display for LockRelation {
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ParentInfo {
     /// Recorded parent workspace path (from the `.rwv-workweave` marker).
-    pub path: String,
+    pub path: WirePath,
     /// This repo's HEAD in the parent's checkout, if resolvable.
     pub tip: Option<CommitId>,
 }
@@ -152,7 +150,7 @@ pub struct RepoStatus {
     pub role: Role,
     pub url: String,
     pub project: ProjectName,
-    pub absolute_path: String,
+    pub absolute_path: WirePath,
     /// Recorded parent (path + per-repo parent tip) when CWD is a workweave;
     /// `None` in the primary weave (no marker, hence no recorded parent).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -330,9 +328,9 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool, filter: &RepoFilter) -> an
                     role: entry.role,
                     url: entry.url.to_string(),
                     project: pname.clone(),
-                    absolute_path: crate::path_spelling::wire_path(&repo_abs),
+                    absolute_path: WirePath::of(&repo_abs),
                     parent: recorded_parent.as_ref().map(|parent_path| ParentInfo {
-                        path: parent_path.to_string_lossy().to_string(),
+                        path: WirePath::of(parent_path),
                         tip: None,
                     }),
                 });
@@ -362,7 +360,7 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool, filter: &RepoFilter) -> an
                         .ok()
                         .map(|r| r.id().clone());
                     ParentInfo {
-                        path: parent_path.to_string_lossy().to_string(),
+                        path: WirePath::of(parent_path),
                         tip: parent_tip,
                     }
                 });
@@ -378,7 +376,7 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool, filter: &RepoFilter) -> an
                     role: entry.role,
                     url: entry.url.to_string(),
                     project: pname.clone(),
-                    absolute_path: crate::path_spelling::wire_path(&repo_abs),
+                    absolute_path: WirePath::of(&repo_abs),
                     parent,
                 });
                 continue;
@@ -407,7 +405,7 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool, filter: &RepoFilter) -> an
                     .ok()
                     .map(|r| r.id().clone());
                 ParentInfo {
-                    path: parent_path.to_string_lossy().to_string(),
+                    path: WirePath::of(parent_path),
                     tip: parent_tip,
                 }
             });
@@ -426,20 +424,20 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool, filter: &RepoFilter) -> an
                 role: entry.role,
                 url: entry.url.to_string(),
                 project: pname.clone(),
-                absolute_path: crate::path_spelling::wire_path(&repo_abs),
+                absolute_path: WirePath::of(&repo_abs),
                 parent,
             });
         }
     }
 
-    let op = op_state::resolve_to_owner(&workspace_dir)?.map(OpStatus::from);
+    let op = op_state::resolve_to_owner(&workspace_dir)?;
 
     if json {
         let envelope = StatusJsonOutput {
             schema_url: STATUS_SCHEMA_URL.to_string(),
             repos: entries,
             resolution: ctx.resolution(),
-            op,
+            op: op.as_ref().map(OpStatus::from),
         };
         let out = serde_json::to_string_pretty(&envelope)
             .context("failed to serialize status to JSON")?;
@@ -463,18 +461,18 @@ pub fn run_status(ctx: &WorkspaceContext, json: bool, filter: &RepoFilter) -> an
 /// or leases an in-flight op: the same fact the in-flight refusal names
 /// (verb, phase, age, owner dir, op id, both remedies), disclosed without an
 /// operator having to attempt a mutation first to see it.
-fn print_op_header(op: &OpStatus) {
+fn print_op_header(op: &op_state::ResolvedOwner) {
     println!(
         "{verb} in progress (op {id}, mid `{phase}`, started {elapsed} ago) at {owner}",
-        verb = op.verb,
-        id = op.id,
-        phase = op.phase,
-        elapsed = op_state::elapsed_since(&op.started_at),
-        owner = crate::path_spelling::operator_path(&op.owner),
+        verb = op.record.verb,
+        id = op.record.id,
+        phase = op.record.phase,
+        elapsed = op_state::elapsed_since(&op.record.started_at),
+        owner = crate::path_spelling::operator_path(&op.owner_workspace),
     );
     println!(
         "  resume with `{resume}`, or `rwv abort` to discard",
-        resume = op_state::resume_command(op.verb),
+        resume = op_state::resume_command(op.record.verb),
     );
 }
 
@@ -565,7 +563,9 @@ mod tests {
                 role: Role::Owned,
                 url: "https://example.com/repo.git".into(),
                 project: ProjectName::new("demo").unwrap(),
-                absolute_path: "/abs/github/org/repo".into(),
+                absolute_path: crate::path_spelling::WirePath::of(std::path::Path::new(
+                    "/abs/github/org/repo",
+                )),
                 parent: None,
             }],
             resolution: None,
@@ -620,9 +620,9 @@ mod tests {
                 verb: op_state::OpVerb::Sync,
                 phase: op_state::OpPhase::Replay,
                 started_at: "2026-06-10T21:14:03Z".into(),
-                owner: "/abs/ws/target".into(),
-                source: "/abs/ws/source".into(),
-                target: "/abs/ws/target".into(),
+                owner: crate::path_spelling::WirePath::of(std::path::Path::new("/abs/ws/target")),
+                source: crate::path_spelling::WirePath::of(std::path::Path::new("/abs/ws/source")),
+                target: crate::path_spelling::WirePath::of(std::path::Path::new("/abs/ws/target")),
                 overrides: vec![op_state::Override::AllowStaleLock],
             }),
         };
@@ -663,12 +663,16 @@ mod tests {
                 role: Role::Owned,
                 url: "https://example.com/repo.git".into(),
                 project: ProjectName::new("demo").unwrap(),
-                absolute_path: "/abs/github/org/repo".into(),
+                absolute_path: crate::path_spelling::WirePath::of(std::path::Path::new(
+                    "/abs/github/org/repo",
+                )),
                 parent: Some(ParentInfo {
                     // A STACKED parent path: the recorded parent is itself a
                     // workweave, NOT primary. basename(parent)/main would be
                     // wrong here — the field pins the real path instead.
-                    path: "/abs/.workweaves/demo--wwa".into(),
+                    path: crate::path_spelling::WirePath::of(std::path::Path::new(
+                        "/abs/.workweaves/demo--wwa",
+                    )),
                     tip: Some(CommitId::parse("cafef00d00000000000000000000000000000000").unwrap()),
                 }),
             }],
@@ -692,7 +696,7 @@ mod tests {
             .parent
             .as_ref()
             .expect("parent present after round-trip");
-        assert_eq!(parent.path, "/abs/.workweaves/demo--wwa");
+        assert_eq!(parent.path.as_str(), "/abs/.workweaves/demo--wwa");
         assert_eq!(
             parent.tip.as_ref().map(CommitId::as_str),
             Some("cafef00d00000000000000000000000000000000")

@@ -320,7 +320,11 @@ Schema:
     },
     "target": {
       "description": "Absolute path of the target workspace that step-3 fast-forwarded, as the machine resolved it.",
-      "type": "string"
+      "allOf": [
+        {
+          "$ref": "#/definitions/WirePath"
+        }
+      ]
     }
   },
   "definitions": {
@@ -503,7 +507,7 @@ Schema:
           ],
           "properties": {
             "absolute_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "kind": {
               "type": "string",
@@ -526,7 +530,7 @@ Schema:
           ],
           "properties": {
             "absolute_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "kind": {
               "type": "string",
@@ -550,7 +554,7 @@ Schema:
           ],
           "properties": {
             "absolute_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "kind": {
               "type": "string",
@@ -630,7 +634,11 @@ Schema:
       "properties": {
         "absolute_path": {
           "description": "The checkout whose files were placed.",
-          "type": "string"
+          "allOf": [
+            {
+              "$ref": "#/definitions/WirePath"
+            }
+          ]
         },
         "files": {
           "description": "How many files were cloned, linked or written.",
@@ -667,8 +675,12 @@ Schema:
           "type": "string"
         },
         "workspace": {
-          "description": "Primary weave root, in the wire spelling.\n\nA `String` and not a `PathBuf` so the spelling is decided at construction rather than by serde: this is a published absolute path and it owes programs the composable form, which `crate::path_spelling::wire_path` is the only producer of.",
-          "type": "string"
+          "description": "Primary weave root.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/WirePath"
+            }
+          ]
         },
         "workweave": {
           "description": "Workweave identity (`<project>--<name>`), as the primary-side registry records it.\n\nAbsent at the primary, and absent for a workweave whose directory no registry entry names — identity is by record, so an unregistered workweave has no identity to report and rwv will not spell one from the directory name. Those two absences are told apart by `workweave_unregistered`, not by this field.",
@@ -793,7 +805,7 @@ Schema:
           ],
           "properties": {
             "absolute_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "containment": {
               "description": "How this checkout stood against the source when the strategy ran. The `kind` says what the strategy did; this says what it was up against — `behind` is a fast-forward, `diverged` is a rebase.",
@@ -845,7 +857,7 @@ Schema:
           ],
           "properties": {
             "absolute_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "commits_ahead": {
               "type": "integer",
@@ -905,7 +917,7 @@ Schema:
           ],
           "properties": {
             "absolute_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "containment": {
               "description": "How this checkout stood against the source, and which read of the source it was equal to.",
@@ -950,7 +962,7 @@ Schema:
           ],
           "properties": {
             "absolute_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "containment": {
               "description": "How this checkout stood against the source when the strategy ran. `failure.message` renders this in prose; branch on this instead. Absent where the outcome was decided before any pair was read.",
@@ -1007,7 +1019,7 @@ Schema:
               ]
             },
             "path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             }
           }
         },
@@ -1026,7 +1038,7 @@ Schema:
               ]
             },
             "repo": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "rev": {
               "type": "string"
@@ -1051,7 +1063,7 @@ Schema:
               "$ref": "#/definitions/ConflictOp"
             },
             "repo": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             }
           }
         },
@@ -1077,7 +1089,7 @@ Schema:
               "type": "string"
             },
             "repo": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             }
           }
         },
@@ -1099,7 +1111,7 @@ Schema:
               "$ref": "#/definitions/MidOperation"
             },
             "repo": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             }
           }
         },
@@ -1118,7 +1130,7 @@ Schema:
               ]
             },
             "repo": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "stderr": {
               "type": "string"
@@ -1146,7 +1158,7 @@ Schema:
               }
             },
             "repo": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             }
           }
         },
@@ -1195,7 +1207,7 @@ Schema:
               ]
             },
             "repo": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "stderr": {
               "type": "string"
@@ -1203,6 +1215,10 @@ Schema:
           }
         }
       ]
+    },
+    "WirePath": {
+      "description": "Absolute path, `/`-separated on every platform.",
+      "type": "string"
     }
   }
 }

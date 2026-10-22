@@ -41,6 +41,16 @@ absolute Windows path in the verbatim spelling (`\\?\C:\x`) arrives as `C:\x`.
 A refused `rwv add --adopt` names its re-run with the absolute path the argument
 was read as.
 
+### Every absolute path in `--json` is `/`-separated, and the schemas say so
+
+On Windows, four `--json` paths reached the output in the host's spelling,
+backslashes and all: a member's `absolute_path` in `rwv sync` and `rwv sync-to`,
+the project repo's `absolute_path` in `rwv push`, the parent `path` in
+`rwv status`, and the managed file's `path` in a `member-incompatibility` issue
+from `rwv doctor`. They are now spelled as every other published path is:
+absolute, `/`-separated on every platform. The published schemas describe each
+such field as a `WirePath` with that spelling. Unix output is unchanged.
+
 ### Breaking: `canonical-holds-live-workweave-ref` names its workweave as `<project>--<name>`
 
 In `rwv doctor --json`, a `branch-discipline` /

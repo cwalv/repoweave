@@ -14,7 +14,7 @@
       "type": "string"
     },
     "absolute_path": {
-      "type": "string"
+      "$ref": "#/definitions/WirePath"
     },
     "message": {
       "type": [
@@ -38,6 +38,10 @@
         "skipped",
         "failed"
       ]
+    },
+    "WirePath": {
+      "description": "Absolute path, `/`-separated on every platform.",
+      "type": "string"
     }
   }
 }

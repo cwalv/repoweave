@@ -542,7 +542,7 @@ pub struct Step3AdvanceOutput {
 pub enum SyncOutcomeOutput {
     Converged {
         path: String,
-        absolute_path: String,
+        absolute_path: crate::path_spelling::WirePath,
         /// Step-3 fast-forward advance for this repo; present only in
         /// `rwv sync-to --json` output when step 3 advanced this repo.
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -562,7 +562,7 @@ pub enum SyncOutcomeOutput {
     },
     AlreadyAhead {
         path: String,
-        absolute_path: String,
+        absolute_path: crate::path_spelling::WirePath,
         commits_ahead: usize,
         /// Step-3 fast-forward advance for this repo; present only in
         /// `rwv sync-to --json` output when step 3 advanced this repo.
@@ -581,7 +581,7 @@ pub enum SyncOutcomeOutput {
     },
     NoOp {
         path: String,
-        absolute_path: String,
+        absolute_path: crate::path_spelling::WirePath,
         /// Step-3 fast-forward advance for this repo; present only in
         /// `rwv sync-to --json` output when step 3 advanced this repo.
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -593,7 +593,7 @@ pub enum SyncOutcomeOutput {
     },
     Failed {
         path: String,
-        absolute_path: String,
+        absolute_path: crate::path_spelling::WirePath,
         failure: SyncFailureOutput,
         /// Step-3 fast-forward advance for this repo; present only in
         /// `rwv sync-to --json` output when step 3 advanced this repo.
@@ -614,7 +614,7 @@ impl SyncOutcomeOutput {
     /// the text line and this record then describe one observation of the pair.
     pub fn from_outcome(
         path: String,
-        absolute_path: String,
+        absolute_path: crate::path_spelling::WirePath,
         outcome: &RepoSyncOutcome,
         containment: Option<ContainmentOutput>,
     ) -> Self {
@@ -732,7 +732,7 @@ pub struct SyncToJsonOutput {
     pub source_workweave: Option<String>,
     /// Absolute path of the target workspace that step-3 fast-forwarded, as
     /// the machine resolved it.
-    pub target: String,
+    pub target: crate::path_spelling::WirePath,
     /// True iff retire deleted the workweave. False when `--retire` was not
     /// passed, when retire refused, and when retire was skipped (the op is
     /// rooted in the primary weave, where there is no workweave to delete).
@@ -809,17 +809,23 @@ pub struct SyncOutcomeNdjsonRecord<'a> {
 pub enum MemberOutput {
     /// The source's lock does not name this member and the manifest replay
     /// produced does, so its checkout stays.
-    Kept { path: String, absolute_path: String },
+    Kept {
+        path: String,
+        absolute_path: crate::path_spelling::WirePath,
+    },
     /// The replayed manifest no longer names this member, and its checkout
     /// was removed.
-    Pruned { path: String, absolute_path: String },
+    Pruned {
+        path: String,
+        absolute_path: crate::path_spelling::WirePath,
+    },
     /// The replayed manifest no longer names this member, but removing its
     /// checkout was refused. The checkout is still on disk, and once the op
     /// relocks no manifest or lock names it. The op runs to completion and
     /// then exits 1.
     PruneRefused {
         path: String,
-        absolute_path: String,
+        absolute_path: crate::path_spelling::WirePath,
         /// The refusal token, resolvable with `rwv explain <token>`. Absent
         /// when the removal failed without a classified refusal.
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -834,21 +840,21 @@ impl MemberOutput {
     fn kept(repo_path: &RepoPath, checkout: &Path) -> Self {
         Self::Kept {
             path: repo_path.to_string(),
-            absolute_path: crate::path_spelling::wire_path(checkout),
+            absolute_path: crate::path_spelling::WirePath::of(checkout),
         }
     }
 
     fn pruned(repo_path: &RepoPath, checkout: &Path) -> Self {
         Self::Pruned {
             path: repo_path.to_string(),
-            absolute_path: crate::path_spelling::wire_path(checkout),
+            absolute_path: crate::path_spelling::WirePath::of(checkout),
         }
     }
 
     fn prune_refused(repo_path: &RepoPath, checkout: &Path, error: &anyhow::Error) -> Self {
         Self::PruneRefused {
             path: repo_path.to_string(),
-            absolute_path: crate::path_spelling::wire_path(checkout),
+            absolute_path: crate::path_spelling::WirePath::of(checkout),
             refusal: crate::refusal::kind_of(error).map(RefusalKind::token),
             message: format!("{error:#}"),
         }
@@ -2229,7 +2235,7 @@ pub trait OutputHandler: Send + Sync {
     fn record(
         &self,
         path: &str,
-        abs_path: &str,
+        abs_path: &Path,
         outcome: &RepoSyncOutcome,
         containment: Option<ContainmentOutput>,
     );
@@ -2348,7 +2354,7 @@ impl OutputHandler for TextHandler<'_> {
     fn record(
         &self,
         path: &str,
-        _abs_path: &str,
+        _abs_path: &Path,
         outcome: &RepoSyncOutcome,
         _containment: Option<ContainmentOutput>,
     ) {
@@ -2400,13 +2406,13 @@ impl OutputHandler for JsonEnvelopeHandler<'_> {
     fn record(
         &self,
         path: &str,
-        abs_path: &str,
+        abs_path: &Path,
         outcome: &RepoSyncOutcome,
         containment: Option<ContainmentOutput>,
     ) {
         let out = SyncOutcomeOutput::from_outcome(
             path.to_owned(),
-            abs_path.to_owned(),
+            crate::path_spelling::WirePath::of(abs_path),
             outcome,
             containment,
         );
@@ -2458,13 +2464,13 @@ impl OutputHandler for JsonNdjsonHandler<'_> {
     fn record(
         &self,
         path: &str,
-        abs_path: &str,
+        abs_path: &Path,
         outcome: &RepoSyncOutcome,
         containment: Option<ContainmentOutput>,
     ) {
         let out = SyncOutcomeOutput::from_outcome(
             path.to_owned(),
-            abs_path.to_owned(),
+            crate::path_spelling::WirePath::of(abs_path),
             outcome,
             containment,
         );
@@ -2573,13 +2579,13 @@ impl OutputHandler for JsonEnvelopeSyncToHandler<'_> {
     fn record(
         &self,
         path: &str,
-        abs_path: &str,
+        abs_path: &Path,
         outcome: &RepoSyncOutcome,
         containment: Option<ContainmentOutput>,
     ) {
         let out = SyncOutcomeOutput::from_outcome(
             path.to_owned(),
-            abs_path.to_owned(),
+            crate::path_spelling::WirePath::of(abs_path),
             outcome,
             containment,
         );
@@ -5334,8 +5340,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                     ),
                     cause: None,
                 });
-                ctx.handler
-                    .record(repo_path.as_str(), &abs.to_string_lossy(), &outcome, None);
+                ctx.handler.record(repo_path.as_str(), &abs, &outcome, None);
                 continue;
             }
         };
@@ -5358,8 +5363,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                     error: format!("{e:#}"),
                     cause: Some(e),
                 });
-                ctx.handler
-                    .record(repo_path.as_str(), &abs.to_string_lossy(), &outcome, None);
+                ctx.handler.record(repo_path.as_str(), &abs, &outcome, None);
                 continue;
             }
         };
@@ -5442,7 +5446,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             }
             ctx.handler.record(
                 task.repo_path.as_str(),
-                &task.abs.to_string_lossy(),
+                &task.abs,
                 &outcome,
                 ContainmentOutput::observed(task.verdicts.containment, task.verdicts.baseline),
             );
@@ -7584,7 +7588,7 @@ pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJ
         coordinates.map(|coordinates| SyncToJsonOutput {
             schema: SYNC_TO_JSON_SCHEMA_URL.to_owned(),
             source_workweave: coordinates.source_workweave,
-            target: crate::path_spelling::wire_path(&coordinates.target),
+            target: crate::path_spelling::WirePath::of(&coordinates.target),
             retired: retired.is_some(),
             resumed,
             outcomes,
@@ -9651,7 +9655,7 @@ mod tests {
         fn record(
             &self,
             _path: &str,
-            _abs_path: &str,
+            _abs_path: &Path,
             _outcome: &RepoSyncOutcome,
             _containment: Option<ContainmentOutput>,
         ) {
@@ -9678,7 +9682,7 @@ mod tests {
         // Drive record() from outside the sync orchestration to prove the trait
         // contract is sufficient on its own.
         for outcome in &outcomes {
-            handler.record("some/repo", "/abs/some/repo", outcome, None);
+            handler.record("some/repo", Path::new("/abs/some/repo"), outcome, None);
         }
 
         assert_eq!(

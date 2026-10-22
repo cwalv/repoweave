@@ -15,7 +15,11 @@
     },
     "absolute_path": {
       "description": "The checkout whose files were placed.",
-      "type": "string"
+      "allOf": [
+        {
+          "$ref": "#/definitions/WirePath"
+        }
+      ]
     },
     "files": {
       "description": "How many files were cloned, linked or written.",
@@ -59,6 +63,10 @@
           "minimum": 0.0
         }
       }
+    },
+    "WirePath": {
+      "description": "Absolute path, `/`-separated on every platform.",
+      "type": "string"
     }
   }
 }

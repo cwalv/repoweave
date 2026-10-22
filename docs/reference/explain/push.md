@@ -134,7 +134,7 @@ Schema:
           ],
           "properties": {
             "absolute_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "kind": {
               "type": "string",
@@ -157,7 +157,7 @@ Schema:
           ],
           "properties": {
             "absolute_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "kind": {
               "type": "string",
@@ -181,7 +181,7 @@ Schema:
           ],
           "properties": {
             "absolute_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "kind": {
               "type": "string",
@@ -209,7 +209,7 @@ Schema:
           ],
           "properties": {
             "absolute_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "kind": {
               "type": "string",
@@ -238,7 +238,7 @@ Schema:
           ],
           "properties": {
             "absolute_path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "kind": {
               "type": "string",
@@ -273,8 +273,12 @@ Schema:
           "type": "string"
         },
         "workspace": {
-          "description": "Primary weave root, in the wire spelling.\n\nA `String` and not a `PathBuf` so the spelling is decided at construction rather than by serde: this is a published absolute path and it owes programs the composable form, which `crate::path_spelling::wire_path` is the only producer of.",
-          "type": "string"
+          "description": "Primary weave root.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/WirePath"
+            }
+          ]
         },
         "workweave": {
           "description": "Workweave identity (`<project>--<name>`), as the primary-side registry records it.\n\nAbsent at the primary, and absent for a workweave whose directory no registry entry names — identity is by record, so an unregistered workweave has no identity to report and rwv will not spell one from the directory name. Those two absences are told apart by `workweave_unregistered`, not by this field.",
@@ -288,6 +292,10 @@ Schema:
           "type": "boolean"
         }
       }
+    },
+    "WirePath": {
+      "description": "Absolute path, `/`-separated on every platform.",
+      "type": "string"
     }
   }
 }

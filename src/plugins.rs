@@ -86,6 +86,7 @@
 //! The seam for envelope injection is `build_command` — all spawn paths
 //! go through it. Do not construct the child command inline.
 
+use crate::path_spelling::WirePath;
 use crate::tool_program::ToolProgram;
 use crate::workspace::Resolution;
 use std::ffi::{OsStr, OsString};
@@ -110,7 +111,7 @@ pub fn envelope_vars(resolution: Option<&Resolution>) -> Vec<(&'static str, Stri
     let mut vars: Vec<(&'static str, String)> = Vec::new();
     vars.push(("RWV_VERSION", crate::rwv_version().to_string()));
     if let Some(r) = resolution {
-        vars.push(("RWV_WORKSPACE", r.workspace.clone()));
+        vars.push(("RWV_WORKSPACE", r.workspace.as_str().to_owned()));
         if let Some(ww) = &r.workweave {
             vars.push(("RWV_WORKWEAVE", ww.clone()));
         }
@@ -134,7 +135,7 @@ pub struct PluginRecord {
     /// the `PATHEXT` extension on Windows.
     pub name: String,
     /// Absolute path of this binary on disk, carrying its real file name.
-    pub path: String,
+    pub path: WirePath,
     /// `true` when another binary with the same name will be executed
     /// instead: one earlier in `PATH`, or on Windows one in the same directory
     /// whose extension comes earlier in `PATHEXT`. This binary is unreachable
@@ -143,7 +144,7 @@ pub struct PluginRecord {
     /// Absolute path of the binary that shadows this one. Present iff
     /// `shadowed` is `true`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub shadowed_by: Option<String>,
+    pub shadowed_by: Option<WirePath>,
 }
 
 /// How the host's executable lookup turns a typed name into a file name.
@@ -238,18 +239,13 @@ pub fn discover_plugins(paths_override: Option<&OsStr>) -> Vec<PluginRecord> {
 
 /// Name and rank `found` — matches in PATH-directory order — under `naming`.
 fn plugin_records(found: Vec<PathBuf>, naming: &LookupNaming) -> Vec<PluginRecord> {
-    // `shadowed` is an equality between two of these strings, so the wire
-    // spelling is minted once per discovered path here rather than at each
-    // consumer: a path minted at one site and stringified at another compares
-    // unequal to itself wherever the two spellings differ, which marks the
-    // winner as shadowed by itself.
     let mut dir_index = 0usize;
     let mut prev_dir: Option<PathBuf> = None;
     struct Candidate {
         dir_index: usize,
         rank: usize,
         name: String,
-        path: String,
+        path: PathBuf,
     }
     let mut ranked: Vec<Candidate> = Vec::new();
     for p in found {
@@ -268,13 +264,13 @@ fn plugin_records(found: Vec<PathBuf>, naming: &LookupNaming) -> Vec<PluginRecor
             dir_index,
             rank,
             name: verb.to_owned(),
-            path: crate::path_spelling::wire_path(&p),
+            path: p,
         });
     }
     // Dispatch order: directory first, then PATHEXT position within it.
     ranked.sort_by_key(|c| (c.dir_index, c.rank));
 
-    let mut winner_paths: std::collections::HashMap<String, String> =
+    let mut winner_paths: std::collections::HashMap<String, PathBuf> =
         std::collections::HashMap::new();
     for c in &ranked {
         winner_paths
@@ -288,16 +284,20 @@ fn plugin_records(found: Vec<PathBuf>, naming: &LookupNaming) -> Vec<PluginRecor
             let winner = winner_paths.get(&name).cloned().unwrap_or_default();
             let shadowed = path != winner;
             PluginRecord {
-                shadowed_by: if shadowed { Some(winner) } else { None },
+                shadowed_by: shadowed.then(|| WirePath::of(&winner)),
                 name,
-                path,
+                path: WirePath::of(&path),
                 shadowed,
             }
         })
         .collect();
 
     // Shadowing was decided in dispatch order above; this sort is for output.
-    records.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.path.cmp(&b.path)));
+    records.sort_by(|a, b| {
+        a.name
+            .cmp(&b.name)
+            .then_with(|| a.path.as_str().cmp(b.path.as_str()))
+    });
 
     records
 }
@@ -539,7 +539,7 @@ mod tests {
     #[test]
     fn envelope_vars_primary_checkout_no_workweave() {
         let r = crate::workspace::Resolution {
-            workspace: "/ws/primary".to_owned(),
+            workspace: crate::path_spelling::WirePath::of(std::path::Path::new("/ws/primary")),
             workweave: None,
             workweave_unregistered: false,
             project: crate::manifest::ProjectName::new("myproj").unwrap(),
@@ -561,7 +561,7 @@ mod tests {
     #[test]
     fn envelope_vars_workweave_checkout_includes_workweave() {
         let r = crate::workspace::Resolution {
-            workspace: "/ws/primary".to_owned(),
+            workspace: crate::path_spelling::WirePath::of(std::path::Path::new("/ws/primary")),
             workweave: Some("myproj--fo-123".to_owned()),
             workweave_unregistered: false,
             project: crate::manifest::ProjectName::new("myproj").unwrap(),
@@ -754,11 +754,12 @@ mod tests {
         let shadowed_rec = result.iter().find(|r| r.shadowed).expect("shadowed");
         let winner_wire = crate::path_spelling::wire_path(&winner);
         assert_eq!(
-            winner_rec.path, winner_wire,
+            winner_rec.path.as_str(),
+            winner_wire,
             "wrong winner path: {winner_rec:?}"
         );
         assert_eq!(
-            shadowed_rec.shadowed_by.as_deref(),
+            shadowed_rec.shadowed_by.as_ref().map(WirePath::as_str),
             Some(winner_wire.as_str()),
             "shadowed_by should point to winner: {shadowed_rec:?}"
         );
@@ -785,13 +786,17 @@ mod tests {
         let winners: Vec<&PluginRecord> = result.iter().filter(|r| !r.shadowed).collect();
         assert_eq!(winners.len(), 1, "exactly one winner: {result:?}");
         let winner_str = crate::path_spelling::wire_path(&winner);
-        assert_eq!(winners[0].path, winner_str, "wrong winner: {result:?}");
+        assert_eq!(
+            winners[0].path.as_str(),
+            winner_str,
+            "wrong winner: {result:?}"
+        );
         // Two shadowed, both pointing at the winner.
         let shadowed: Vec<&PluginRecord> = result.iter().filter(|r| r.shadowed).collect();
         assert_eq!(shadowed.len(), 2, "two shadowed: {result:?}");
         for s in &shadowed {
             assert_eq!(
-                s.shadowed_by.as_deref(),
+                s.shadowed_by.as_ref().map(WirePath::as_str),
                 Some(winner_str.as_str()),
                 "shadowed_by should point at winner: {s:?}"
             );
@@ -980,13 +985,16 @@ mod tests {
         let exe_wire = crate::path_spelling::wire_path(&exe);
         let cmd_wire = crate::path_spelling::wire_path(&cmd);
         let winner = records.iter().find(|r| !r.shadowed).expect("a winner");
-        assert_eq!(winner.path, exe_wire, "{records:?}");
+        assert_eq!(winner.path.as_str(), exe_wire, "{records:?}");
         let loser = records
             .iter()
             .find(|r| r.shadowed)
             .expect("a shadowed copy");
-        assert_eq!(loser.path, cmd_wire, "{records:?}");
-        assert_eq!(loser.shadowed_by.as_deref(), Some(exe_wire.as_str()));
+        assert_eq!(loser.path.as_str(), cmd_wire, "{records:?}");
+        assert_eq!(
+            loser.shadowed_by.as_ref().map(WirePath::as_str),
+            Some(exe_wire.as_str())
+        );
         assert!(records.iter().all(|r| r.name == "foo"), "{records:?}");
     }
 
@@ -1000,7 +1008,7 @@ mod tests {
         let winner = records.iter().find(|r| !r.shadowed).expect("a winner");
         assert_eq!(
             winner.path,
-            crate::path_spelling::wire_path(&bare),
+            crate::path_spelling::WirePath::of(&bare),
             "{records:?}"
         );
     }
@@ -1018,7 +1026,7 @@ mod tests {
         let winner = records.iter().find(|r| !r.shadowed).expect("a winner");
         assert_eq!(
             winner.path,
-            crate::path_spelling::wire_path(&first_dir_cmd),
+            crate::path_spelling::WirePath::of(&first_dir_cmd),
             "{records:?}"
         );
     }
@@ -1057,7 +1065,7 @@ mod tests {
             let dispatched = which::which_in(format!("rwv-{}", r.name), Some(&path), tmp.path())
                 .unwrap_or_else(|e| panic!("`rwv {}` does not dispatch: {e}; {records:?}", r.name));
             let dispatched = crate::path_spelling::wire_path(&dispatched);
-            let winner = r.shadowed_by.as_deref().unwrap_or(r.path.as_str());
+            let winner = r.shadowed_by.as_ref().unwrap_or(&r.path).as_str();
             assert_eq!(
                 winner, dispatched,
                 "listing and dispatch disagree on `{}`",

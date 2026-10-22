@@ -11,7 +11,7 @@
 //! Two spellings answer for an absolute path. They differ on the separator,
 //! and the difference is a difference of audience:
 //!
-//! - [`wire_path`] answers a **program**. `--json` documents shell
+//! - [`WirePath`] answers a **program**. `--json` documents shell
 //!   composition as its consumer (`jq -r … | xargs -I {} git -C {}` is the
 //!   shipped recipe), and a backslash-separated value cannot survive bare
 //!   `xargs` — the measured failure. `C:/Users/…` carries no `xargs`-active
@@ -137,21 +137,72 @@ fn is_reserved_device_name(name: &str) -> bool {
     })
 }
 
-/// The spelling a program receives: verbatim prefix dropped, `/`-separated on
-/// every platform.
+/// An absolute path as a program receives it: verbatim prefix dropped,
+/// `/`-separated on every platform.
 ///
-/// Every `--json` field whose value is a filesystem absolute path is built
-/// from this. Two surfaces that must agree consume one function's result.
+/// Every `--json` field whose value is a filesystem absolute path holds one.
+/// [`WirePath::of`] is its one mint; reading it back out of `--json` refuses
+/// what the mint never writes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WirePath(String);
+
+impl WirePath {
+    pub fn of(path: &Path) -> WirePath {
+        let simplified = plain_path(path);
+        #[cfg(windows)]
+        {
+            WirePath(simplified.to_string_lossy().replace('\\', "/"))
+        }
+        #[cfg(not(windows))]
+        {
+            WirePath(simplified.to_string_lossy().into_owned())
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl serde::Serialize for WirePath {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for WirePath {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        if !is_absolute_spelling(&text) || text.starts_with(r"\\?\") {
+            return Err(serde::de::Error::custom(format!(
+                "`{text}` is not a path as `--json` publishes one"
+            )));
+        }
+        Ok(WirePath(text))
+    }
+}
+
+impl schemars::JsonSchema for WirePath {
+    fn schema_name() -> String {
+        "WirePath".to_owned()
+    }
+
+    fn json_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+        schemars::schema::SchemaObject {
+            instance_type: Some(schemars::schema::InstanceType::String.into()),
+            metadata: Some(Box::new(schemars::schema::Metadata {
+                description: Some("Absolute path, `/`-separated on every platform.".to_owned()),
+                ..Default::default()
+            })),
+            ..Default::default()
+        }
+        .into()
+    }
+}
+
+/// [`WirePath::of`]'s text.
 pub fn wire_path(path: &Path) -> String {
-    let simplified = plain_path(path);
-    #[cfg(windows)]
-    {
-        simplified.to_string_lossy().replace('\\', "/")
-    }
-    #[cfg(not(windows))]
-    {
-        simplified.to_string_lossy().into_owned()
-    }
+    WirePath::of(path).0
 }
 
 /// The spelling a person receives: verbatim prefix dropped, native separators
@@ -300,23 +351,24 @@ fn encode_url_path(path: &str) -> String {
     encoded
 }
 
-/// The mint applied at the serde boundary, for a wire field that stays a
-/// `PathBuf` because something inside the binary still reads it as a path.
-///
-/// serde's own `PathBuf` impl publishes whatever the host spelled, so a field
-/// reaching `--json` as a `PathBuf` needs this attached to it; a field whose
-/// only consumer is the wire holds a `String` minted at construction instead.
-pub fn serialize_wire_path<S: serde::Serializer>(
-    path: &Path,
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    serializer.serialize_str(&wire_path(path))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn a_wire_path_reads_back_only_what_the_mint_writes() {
+        let minted = WirePath::of(Path::new("/weave/github/acme/server"));
+        let back: WirePath =
+            serde_json::from_value(serde_json::to_value(&minted).unwrap()).unwrap();
+        assert_eq!(back, minted);
+        for not_minted in ["relative/x", "", r"\\?\C:\x"] {
+            assert!(
+                serde_json::from_value::<WirePath>(serde_json::json!(not_minted)).is_err(),
+                "{not_minted:?}"
+            );
+        }
+    }
 
     /// On Unix the wire spelling is the identity, which is the whole reason
     /// the decision costs nothing where the users are. A backslash in a Unix

@@ -50,20 +50,26 @@ pub const PUSH_RECORD_SCHEMA_URL: &str = crate::schema_url::schema_url!("push-re
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum PushOutcomeOutput {
     /// Member repo was pushed successfully.
-    Pushed { path: String, absolute_path: String },
+    Pushed {
+        path: String,
+        absolute_path: crate::path_spelling::WirePath,
+    },
     /// Member repo was skipped (e.g. by a selector filter).
-    Skipped { path: String, absolute_path: String },
+    Skipped {
+        path: String,
+        absolute_path: crate::path_spelling::WirePath,
+    },
     /// Member repo push failed.
     Failed {
         path: String,
-        absolute_path: String,
+        absolute_path: crate::path_spelling::WirePath,
         /// Free-form error message from the git push attempt.
         message: String,
     },
     /// Project repo was pushed successfully (always the last record).
     ProjectRepoPushed {
         path: String,
-        absolute_path: String,
+        absolute_path: crate::path_spelling::WirePath,
         /// The project name (e.g. `"my-app"`). Distinguishes the project repo's
         /// path convention (`projects/<name>/`) from member-repo paths.
         project: ProjectName,
@@ -71,7 +77,7 @@ pub enum PushOutcomeOutput {
     /// Project repo push failed.
     ProjectRepoFailed {
         path: String,
-        absolute_path: String,
+        absolute_path: crate::path_spelling::WirePath,
         project: ProjectName,
         /// Free-form error message from the git push attempt.
         message: String,
@@ -546,7 +552,7 @@ pub fn run_push(
     // records in the outcomes array / NDJSON stream.
     for (repo_path, _entry) in &default_skipped_repos {
         let path_str = repo_path.as_str().to_string();
-        let abs_str = crate::path_spelling::wire_path(&primary_root.join(repo_path.as_path()));
+        let abs_str = crate::path_spelling::WirePath::of(&primary_root.join(repo_path.as_path()));
         if !json {
             println!("rwv push: skipped {} (non-writable role)", path_str,);
         }
@@ -563,7 +569,7 @@ pub fn run_push(
 
     for ((repo_path, abs_path, _item), raw) in plan_with_paths.iter().zip(raw_outcomes) {
         let path_str = repo_path.to_string();
-        let abs_str = crate::path_spelling::wire_path(abs_path);
+        let abs_str = crate::path_spelling::WirePath::of(abs_path);
 
         let wire = match &raw {
             PushOutcome::Pushed => {
@@ -638,7 +644,7 @@ pub fn run_push(
     //    invariant that the remote-side lock never references unpushed
     //    objects.
     let project_path_str = project_rel_path(&project_name);
-    let project_abs_str = project_dir.to_string_lossy().into_owned();
+    let project_abs_str = crate::path_spelling::WirePath::of(&project_dir);
 
     if !json {
         println!(

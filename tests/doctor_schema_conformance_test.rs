@@ -133,22 +133,26 @@ fn plugins() -> Vec<PluginRecord> {
     vec![
         PluginRecord {
             name: "demo".into(),
-            path: "/usr/local/bin/rwv-demo".into(),
+            path: repoweave::path_spelling::WirePath::of(std::path::Path::new(
+                "/usr/local/bin/rwv-demo",
+            )),
             shadowed: false,
             shadowed_by: None,
         },
         PluginRecord {
             name: "demo".into(),
-            path: "/opt/bin/rwv-demo".into(),
+            path: repoweave::path_spelling::WirePath::of(std::path::Path::new("/opt/bin/rwv-demo")),
             shadowed: true,
-            shadowed_by: Some("/usr/local/bin/rwv-demo".into()),
+            shadowed_by: Some(repoweave::path_spelling::WirePath::of(
+                std::path::Path::new("/usr/local/bin/rwv-demo"),
+            )),
         },
     ]
 }
 
 fn resolution() -> Resolution {
     Resolution {
-        workspace: "/ws".to_owned(),
+        workspace: repoweave::path_spelling::WirePath::of(std::path::Path::new("/ws")),
         workweave: Some("proj--feat-a".into()),
         workweave_unregistered: false,
         project: ProjectName::new("proj").unwrap(),

@@ -17,7 +17,7 @@
           "type": "string"
         },
         "absolute_path": {
-          "type": "string"
+          "$ref": "#/definitions/WirePath"
         },
         "kind": {
           "type": "string",
@@ -43,7 +43,7 @@
           "type": "string"
         },
         "absolute_path": {
-          "type": "string"
+          "$ref": "#/definitions/WirePath"
         },
         "kind": {
           "type": "string",
@@ -70,7 +70,7 @@
           "type": "string"
         },
         "absolute_path": {
-          "type": "string"
+          "$ref": "#/definitions/WirePath"
         },
         "kind": {
           "type": "string",
@@ -101,7 +101,7 @@
           "type": "string"
         },
         "absolute_path": {
-          "type": "string"
+          "$ref": "#/definitions/WirePath"
         },
         "kind": {
           "type": "string",
@@ -133,7 +133,7 @@
           "type": "string"
         },
         "absolute_path": {
-          "type": "string"
+          "$ref": "#/definitions/WirePath"
         },
         "kind": {
           "type": "string",
@@ -156,5 +156,11 @@
   ],
   "required": [
     "$schema"
-  ]
+  ],
+  "definitions": {
+    "WirePath": {
+      "description": "Absolute path, `/`-separated on every platform.",
+      "type": "string"
+    }
+  }
 }

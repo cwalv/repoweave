@@ -16,7 +16,7 @@
           "type": "string"
         },
         "absolute_path": {
-          "type": "string"
+          "$ref": "#/definitions/WirePath"
         },
         "containment": {
           "description": "How this checkout stood against the source when the strategy ran. The `kind` says what the strategy did; this says what it was up against — `behind` is a fast-forward, `diverged` is a rebase.",
@@ -71,7 +71,7 @@
           "type": "string"
         },
         "absolute_path": {
-          "type": "string"
+          "$ref": "#/definitions/WirePath"
         },
         "commits_ahead": {
           "type": "integer",
@@ -134,7 +134,7 @@
           "type": "string"
         },
         "absolute_path": {
-          "type": "string"
+          "$ref": "#/definitions/WirePath"
         },
         "containment": {
           "description": "How this checkout stood against the source, and which read of the source it was equal to.",
@@ -182,7 +182,7 @@
           "type": "string"
         },
         "absolute_path": {
-          "type": "string"
+          "$ref": "#/definitions/WirePath"
         },
         "containment": {
           "description": "How this checkout stood against the source when the strategy ran. `failure.message` renders this in prose; branch on this instead. Absent where the outcome was decided before any pair was read.",
@@ -495,7 +495,7 @@
               ]
             },
             "path": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             }
           }
         },
@@ -514,7 +514,7 @@
               ]
             },
             "repo": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "rev": {
               "type": "string"
@@ -539,7 +539,7 @@
               "$ref": "#/definitions/ConflictOp"
             },
             "repo": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             }
           }
         },
@@ -565,7 +565,7 @@
               "type": "string"
             },
             "repo": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             }
           }
         },
@@ -587,7 +587,7 @@
               "$ref": "#/definitions/MidOperation"
             },
             "repo": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             }
           }
         },
@@ -606,7 +606,7 @@
               ]
             },
             "repo": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "stderr": {
               "type": "string"
@@ -634,7 +634,7 @@
               }
             },
             "repo": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             }
           }
         },
@@ -683,7 +683,7 @@
               ]
             },
             "repo": {
-              "type": "string"
+              "$ref": "#/definitions/WirePath"
             },
             "stderr": {
               "type": "string"
@@ -691,6 +691,10 @@
           }
         }
       ]
+    },
+    "WirePath": {
+      "description": "Absolute path, `/`-separated on every platform.",
+      "type": "string"
     }
   }
 }

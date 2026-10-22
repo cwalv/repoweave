@@ -177,7 +177,9 @@ fn update_json_envelope_round_trips() {
         repos: vec![
             RepoUpdateRecord {
                 path: "github/org/repo".into(),
-                absolute_path: "/abs/github/org/repo".into(),
+                absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new(
+                    "/abs/github/org/repo",
+                )),
                 branch: "main".into(),
                 kind: UpdateKind::Updated,
                 old_sha: Some("abc123".into()),
@@ -186,7 +188,9 @@ fn update_json_envelope_round_trips() {
             },
             RepoUpdateRecord {
                 path: "github/org/other".into(),
-                absolute_path: "/abs/github/org/other".into(),
+                absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new(
+                    "/abs/github/org/other",
+                )),
                 branch: "main".into(),
                 kind: UpdateKind::UpToDate,
                 old_sha: Some("aaa111".into()),
@@ -247,7 +251,9 @@ fn update_json_envelope_round_trips() {
 fn update_json_error_field_omitted_when_not_failed() {
     let record = RepoUpdateRecord {
         path: "github/org/repo".into(),
-        absolute_path: "/abs/github/org/repo".into(),
+        absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new(
+            "/abs/github/org/repo",
+        )),
         branch: "main".into(),
         kind: UpdateKind::Updated,
         old_sha: Some("abc".into()),
@@ -266,7 +272,9 @@ fn update_json_error_field_omitted_when_not_failed() {
 fn update_json_failed_record_serializes() {
     let record = RepoUpdateRecord {
         path: "github/org/repo".into(),
-        absolute_path: "/abs/github/org/repo".into(),
+        absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new(
+            "/abs/github/org/repo",
+        )),
         branch: "main".into(),
         kind: UpdateKind::Failed,
         old_sha: Some("abc".into()),

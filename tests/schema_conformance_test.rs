@@ -78,6 +78,7 @@ use repoweave::integration::{MemberIncompatibility, MissingTool, Observed};
 use repoweave::integrations::GoWork;
 use repoweave::integrations::NpmWorkspaces;
 use repoweave::op_state::{OpPhase, OpVerb, Override};
+use repoweave::path_spelling::WirePath;
 use repoweave::placement::{PlacementNdjsonRecord, PlacementOutput, PLACEMENT_RECORD_SCHEMA_URL};
 use repoweave::push::{
     PushJsonOutput, PushOutcomeNdjsonRecord, PushOutcomeOutput, PUSH_RECORD_SCHEMA_URL,
@@ -103,7 +104,7 @@ use repoweave::vcs::{ConflictOp, MidOperation, VcsErrorOutput};
 use repoweave::workspace::{AdvisoryKindOutput, AdvisoryOutput, Resolution};
 use serde_json::{json, Value};
 use std::collections::{BTreeSet, HashMap};
-use std::path::PathBuf;
+use std::path::Path;
 
 // The bundled rwv-each plugin's wire types: a binary's items are not linkable
 // from here, so its source is compiled in.
@@ -223,13 +224,17 @@ fn cases() -> Vec<VerbCase> {
 const REPO: &str = "github/acme/repo";
 const ABS: &str = "/ws/github/acme/repo";
 
+fn wire(path: &str) -> WirePath {
+    WirePath::of(Path::new(path))
+}
+
 fn sha(byte: char) -> String {
     std::iter::repeat_n(byte, 40).collect()
 }
 
 fn resolution() -> Resolution {
     Resolution {
-        workspace: "/ws".to_owned(),
+        workspace: repoweave::path_spelling::WirePath::of(std::path::Path::new("/ws")),
         workweave: Some("proj--feat-a".into()),
         workweave_unregistered: false,
         project: repoweave::manifest::ProjectName::new("proj").unwrap(),
@@ -238,7 +243,7 @@ fn resolution() -> Resolution {
 
 fn primary_resolution() -> Resolution {
     Resolution {
-        workspace: "/ws".to_owned(),
+        workspace: repoweave::path_spelling::WirePath::of(std::path::Path::new("/ws")),
         workweave: None,
         workweave_unregistered: false,
         project: repoweave::manifest::ProjectName::new("proj").unwrap(),
@@ -250,7 +255,7 @@ fn primary_resolution() -> Resolution {
 /// cannot carry.
 fn unregistered_resolution() -> Resolution {
     Resolution {
-        workspace: "/ws".to_owned(),
+        workspace: repoweave::path_spelling::WirePath::of(std::path::Path::new("/ws")),
         workweave: None,
         workweave_unregistered: true,
         project: repoweave::manifest::ProjectName::new("proj").unwrap(),
@@ -269,7 +274,7 @@ fn placements() -> Vec<PlacementOutput> {
     vec![
         PlacementOutput {
             path: REPO.to_owned(),
-            absolute_path: ABS.to_owned(),
+            absolute_path: wire(ABS),
             files: FilePlacement {
                 reflinked: 4,
                 hardlinked: 2,
@@ -278,7 +283,9 @@ fn placements() -> Vec<PlacementOutput> {
         },
         PlacementOutput {
             path: REPO.to_owned(),
-            absolute_path: "/target/github/acme/repo".to_owned(),
+            absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new(
+                "/target/github/acme/repo",
+            )),
             files: FilePlacement {
                 reflinked: 0,
                 hardlinked: 0,
@@ -388,7 +395,7 @@ fn fetch_outcomes() -> Vec<FetchOutcomeOutput> {
         };
         FetchOutcomeOutput {
             path: REPO.to_owned(),
-            absolute_path: ABS.to_owned(),
+            absolute_path: wire(ABS),
             status,
             message,
         }
@@ -448,25 +455,29 @@ fn push_outcomes() -> Vec<PushOutcomeOutput> {
     vec![
         PushOutcomeOutput::Pushed {
             path: REPO.to_owned(),
-            absolute_path: ABS.to_owned(),
+            absolute_path: wire(ABS),
         },
         PushOutcomeOutput::Skipped {
             path: REPO.to_owned(),
-            absolute_path: ABS.to_owned(),
+            absolute_path: wire(ABS),
         },
         PushOutcomeOutput::Failed {
             path: REPO.to_owned(),
-            absolute_path: ABS.to_owned(),
+            absolute_path: wire(ABS),
             message: "non-fast-forward".to_owned(),
         },
         PushOutcomeOutput::ProjectRepoPushed {
             path: "projects/proj".to_owned(),
-            absolute_path: "/ws/projects/proj".to_owned(),
+            absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new(
+                "/ws/projects/proj",
+            )),
             project: repoweave::manifest::ProjectName::new("proj").unwrap(),
         },
         PushOutcomeOutput::ProjectRepoFailed {
             path: "projects/proj".to_owned(),
-            absolute_path: "/ws/projects/proj".to_owned(),
+            absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new(
+                "/ws/projects/proj",
+            )),
             project: repoweave::manifest::ProjectName::new("proj").unwrap(),
             message: "remote rejected".to_owned(),
         },
@@ -530,9 +541,9 @@ fn status_repos() -> Vec<RepoStatus> {
                 role: repoweave::manifest::Role::ALL[i % repoweave::manifest::Role::ALL.len()],
                 url: "https://github.com/acme/repo.git".to_owned(),
                 project: repoweave::manifest::ProjectName::new("proj").unwrap(),
-                absolute_path: ABS.to_owned(),
+                absolute_path: wire(ABS),
                 parent: (!sparse).then(|| ParentInfo {
-                    path: "/ws".to_owned(),
+                    path: repoweave::path_spelling::WirePath::of(std::path::Path::new("/ws")),
                     tip: Some(repoweave::vcs::CommitId::parse(&sha('c')).unwrap()),
                 }),
             }
@@ -546,9 +557,9 @@ fn op_status(verb: OpVerb, phase: OpPhase) -> OpStatus {
         verb,
         phase,
         started_at: "2026-01-01T00:00:00Z".to_owned(),
-        owner: PathBuf::from("/ws"),
-        source: PathBuf::from("/ws/.workweaves/proj--feat-a"),
-        target: PathBuf::from("/ws"),
+        owner: wire("/ws"),
+        source: wire("/ws/.workweaves/proj--feat-a"),
+        target: wire("/ws"),
         overrides: vec![Override::AllowStaleLock, Override::DiscardLocalCommits],
     }
 }
@@ -608,7 +619,7 @@ fn status_corpus() -> Vec<(&'static str, Value)> {
 /// short, and as an exhaustive match in [`vcs_error_tag`] so the same addition
 /// stops this file compiling.
 fn every_vcs_error() -> Vec<VcsErrorOutput> {
-    let repo = PathBuf::from(ABS);
+    let repo = wire(ABS);
     let mut errors = vec![
         VcsErrorOutput::NotARepo { path: repo.clone() },
         VcsErrorOutput::RevisionNotFound {
@@ -732,21 +743,21 @@ fn sync_outcomes(with_step3: bool) -> Vec<SyncOutcomeOutput> {
     let mut outcomes = vec![
         SyncOutcomeOutput::Converged {
             path: REPO.to_owned(),
-            absolute_path: ABS.to_owned(),
+            absolute_path: wire(ABS),
             step3_advance: step3.clone(),
             derived_content_dropped: Vec::new(),
             containment: Some(c[0]),
         },
         SyncOutcomeOutput::Converged {
             path: REPO.to_owned(),
-            absolute_path: ABS.to_owned(),
+            absolute_path: wire(ABS),
             step3_advance: step3.clone(),
             derived_content_dropped: vec!["Cargo.lock".to_owned()],
             containment: Some(c[1]),
         },
         SyncOutcomeOutput::AlreadyAhead {
             path: REPO.to_owned(),
-            absolute_path: ABS.to_owned(),
+            absolute_path: wire(ABS),
             commits_ahead: 3,
             step3_advance: step3.clone(),
             containment: Some(c[2]),
@@ -754,7 +765,7 @@ fn sync_outcomes(with_step3: bool) -> Vec<SyncOutcomeOutput> {
         },
         SyncOutcomeOutput::AlreadyAhead {
             path: REPO.to_owned(),
-            absolute_path: ABS.to_owned(),
+            absolute_path: wire(ABS),
             commits_ahead: 0,
             step3_advance: step3.clone(),
             containment: None,
@@ -762,7 +773,7 @@ fn sync_outcomes(with_step3: bool) -> Vec<SyncOutcomeOutput> {
         },
         SyncOutcomeOutput::NoOp {
             path: REPO.to_owned(),
-            absolute_path: ABS.to_owned(),
+            absolute_path: wire(ABS),
             step3_advance: step3.clone(),
             containment: Some(c[3]),
         },
@@ -770,7 +781,7 @@ fn sync_outcomes(with_step3: bool) -> Vec<SyncOutcomeOutput> {
     for (n, failure) in sync_failures().into_iter().enumerate() {
         outcomes.push(SyncOutcomeOutput::Failed {
             path: REPO.to_owned(),
-            absolute_path: ABS.to_owned(),
+            absolute_path: wire(ABS),
             failure,
             step3_advance: step3.clone(),
             // A failure decided before any pair was read carries no verdict,
@@ -786,21 +797,21 @@ fn members() -> Vec<MemberOutput> {
     vec![
         MemberOutput::Kept {
             path: REPO.to_owned(),
-            absolute_path: ABS.to_owned(),
+            absolute_path: wire(ABS),
         },
         MemberOutput::Pruned {
             path: REPO.to_owned(),
-            absolute_path: ABS.to_owned(),
+            absolute_path: wire(ABS),
         },
         MemberOutput::PruneRefused {
             path: REPO.to_owned(),
-            absolute_path: ABS.to_owned(),
+            absolute_path: wire(ABS),
             refusal: Some("dirty-checkout".to_owned()),
             message: "worktree has uncommitted changes".to_owned(),
         },
         MemberOutput::PruneRefused {
             path: REPO.to_owned(),
-            absolute_path: ABS.to_owned(),
+            absolute_path: wire(ABS),
             refusal: None,
             message: "worktree remove failed".to_owned(),
         },
@@ -843,7 +854,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
             value(SyncToJsonOutput {
                 schema: SYNC_TO_JSON_SCHEMA_URL.to_owned(),
                 source_workweave: Some("feat-a".to_owned()),
-                target: "/ws".to_owned(),
+                target: repoweave::path_spelling::WirePath::of(std::path::Path::new("/ws")),
                 retired: true,
                 // Fresh run: the absent shape of the `resumed` disclosure.
                 resumed: None,
@@ -860,7 +871,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
             value(SyncToJsonOutput {
                 schema: SYNC_TO_JSON_SCHEMA_URL.to_owned(),
                 source_workweave: None,
-                target: "/ws".to_owned(),
+                target: repoweave::path_spelling::WirePath::of(std::path::Path::new("/ws")),
                 retired: false,
                 // Resumed at replay (the common interruption, a step-1
                 // conflict): replay re-ran, so outcomes carries every repo.
@@ -882,7 +893,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
             value(SyncToJsonOutput {
                 schema: SYNC_TO_JSON_SCHEMA_URL.to_owned(),
                 source_workweave: Some("feat-a".to_owned()),
-                target: "/ws".to_owned(),
+                target: repoweave::path_spelling::WirePath::of(std::path::Path::new("/ws")),
                 retired: false,
                 resumed: Some(OpPhase::Relock),
                 outcomes: Vec::new(),
@@ -898,7 +909,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
             value(SyncToJsonOutput {
                 schema: SYNC_TO_JSON_SCHEMA_URL.to_owned(),
                 source_workweave: Some("feat-a".to_owned()),
-                target: "/ws".to_owned(),
+                target: repoweave::path_spelling::WirePath::of(std::path::Path::new("/ws")),
                 retired: false,
                 resumed: Some(OpPhase::AdvanceTarget),
                 outcomes: Vec::new(),
@@ -914,7 +925,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
             value(SyncToJsonOutput {
                 schema: SYNC_TO_JSON_SCHEMA_URL.to_owned(),
                 source_workweave: Some("feat-a".to_owned()),
-                target: "/ws".to_owned(),
+                target: repoweave::path_spelling::WirePath::of(std::path::Path::new("/ws")),
                 retired: true,
                 resumed: Some(OpPhase::Retire),
                 outcomes: Vec::new(),
@@ -947,7 +958,7 @@ fn update_records() -> Vec<RepoUpdateRecord> {
         };
         RepoUpdateRecord {
             path: REPO.to_owned(),
-            absolute_path: ABS.to_owned(),
+            absolute_path: wire(ABS),
             branch: "main".to_owned(),
             kind,
             old_sha,

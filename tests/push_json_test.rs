@@ -29,7 +29,7 @@ fn to_value(outcome: &PushOutcomeOutput) -> Value {
 fn pushed_outcome_serializes_with_kind_pushed() {
     let v = to_value(&PushOutcomeOutput::Pushed {
         path: "github/cwalv/foo".into(),
-        absolute_path: "/abs/foo".into(),
+        absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new("/abs/foo")),
     });
     assert_eq!(v["kind"], "pushed");
     assert_eq!(v["path"], "github/cwalv/foo");
@@ -40,7 +40,7 @@ fn pushed_outcome_serializes_with_kind_pushed() {
 fn skipped_outcome_serializes_with_kind_skipped() {
     let v = to_value(&PushOutcomeOutput::Skipped {
         path: "github/cwalv/fork".into(),
-        absolute_path: "/abs/fork".into(),
+        absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new("/abs/fork")),
     });
     assert_eq!(v["kind"], "skipped");
     assert_eq!(v["path"], "github/cwalv/fork");
@@ -50,7 +50,7 @@ fn skipped_outcome_serializes_with_kind_skipped() {
 fn failed_outcome_serializes_with_kind_failed_and_message() {
     let v = to_value(&PushOutcomeOutput::Failed {
         path: "github/cwalv/broken".into(),
-        absolute_path: "/abs/broken".into(),
+        absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new("/abs/broken")),
         message: "git push error".into(),
     });
     assert_eq!(v["kind"], "failed");
@@ -61,7 +61,9 @@ fn failed_outcome_serializes_with_kind_failed_and_message() {
 fn project_repo_pushed_serializes_with_project_repo_pushed_kind() {
     let v = to_value(&PushOutcomeOutput::ProjectRepoPushed {
         path: "projects/my-app".into(),
-        absolute_path: "/abs/projects/my-app".into(),
+        absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new(
+            "/abs/projects/my-app",
+        )),
         project: repoweave::manifest::ProjectName::new("my-app").unwrap(),
     });
     assert_eq!(v["kind"], "project-repo-pushed");
@@ -73,7 +75,9 @@ fn project_repo_pushed_serializes_with_project_repo_pushed_kind() {
 fn project_repo_failed_serializes_with_project_repo_failed_kind() {
     let v = to_value(&PushOutcomeOutput::ProjectRepoFailed {
         path: "projects/my-app".into(),
-        absolute_path: "/abs/projects/my-app".into(),
+        absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new(
+            "/abs/projects/my-app",
+        )),
         project: repoweave::manifest::ProjectName::new("my-app").unwrap(),
         message: "push failed: no remote".into(),
     });
@@ -123,15 +127,21 @@ fn push_json_envelope_round_trips() {
         outcomes: vec![
             PushOutcomeOutput::Pushed {
                 path: "github/org/repo".into(),
-                absolute_path: "/abs/github/org/repo".into(),
+                absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new(
+                    "/abs/github/org/repo",
+                )),
             },
             PushOutcomeOutput::Skipped {
                 path: "github/org/fork".into(),
-                absolute_path: "/abs/github/org/fork".into(),
+                absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new(
+                    "/abs/github/org/fork",
+                )),
             },
             PushOutcomeOutput::ProjectRepoPushed {
                 path: "projects/my-app".into(),
-                absolute_path: "/abs/projects/my-app".into(),
+                absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new(
+                    "/abs/projects/my-app",
+                )),
                 project: repoweave::manifest::ProjectName::new("my-app").unwrap(),
             },
         ],
@@ -160,29 +170,29 @@ fn push_json_envelope_round_trips() {
 fn push_outcome_is_failure_only_for_failed_variants() {
     assert!(!PushOutcomeOutput::Pushed {
         path: "p".into(),
-        absolute_path: "/a".into()
+        absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new("/a"))
     }
     .is_failure());
     assert!(!PushOutcomeOutput::Skipped {
         path: "p".into(),
-        absolute_path: "/a".into()
+        absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new("/a"))
     }
     .is_failure());
     assert!(PushOutcomeOutput::Failed {
         path: "p".into(),
-        absolute_path: "/a".into(),
+        absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new("/a")),
         message: "err".into()
     }
     .is_failure());
     assert!(!PushOutcomeOutput::ProjectRepoPushed {
         path: "p".into(),
-        absolute_path: "/a".into(),
+        absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new("/a")),
         project: repoweave::manifest::ProjectName::new("proj").unwrap()
     }
     .is_failure());
     assert!(PushOutcomeOutput::ProjectRepoFailed {
         path: "p".into(),
-        absolute_path: "/a".into(),
+        absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new("/a")),
         project: repoweave::manifest::ProjectName::new("proj").unwrap(),
         message: "err".into()
     }

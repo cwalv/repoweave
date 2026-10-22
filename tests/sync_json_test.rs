@@ -296,8 +296,12 @@ fn serialize_outcome_decided_from(
     outcome: &RepoSyncOutcome,
     containment: Option<ContainmentOutput>,
 ) -> Value {
-    let out =
-        SyncOutcomeOutput::from_outcome(path.to_owned(), abs.to_owned(), outcome, containment);
+    let out = SyncOutcomeOutput::from_outcome(
+        path.to_owned(),
+        repoweave::path_spelling::WirePath::of(std::path::Path::new(abs)),
+        outcome,
+        containment,
+    );
     serde_json::to_value(&out).unwrap()
 }
 
@@ -911,7 +915,7 @@ fn sync_json_envelope_round_trips() {
         outcomes: vec![
             SyncOutcomeOutput::from_outcome(
                 "p1".into(),
-                "/abs/p1".into(),
+                repoweave::path_spelling::WirePath::of(std::path::Path::new("/abs/p1")),
                 &RepoSyncOutcome::Converged {
                     derived_content_dropped: Vec::new(),
                 },
@@ -919,7 +923,7 @@ fn sync_json_envelope_round_trips() {
             ),
             SyncOutcomeOutput::from_outcome(
                 "p2".into(),
-                "/abs/p2".into(),
+                repoweave::path_spelling::WirePath::of(std::path::Path::new("/abs/p2")),
                 &RepoSyncOutcome::AlreadyAhead {
                     commits_ahead: 2,
                     baseline: ReplayBaseline::SourceLockEntry,

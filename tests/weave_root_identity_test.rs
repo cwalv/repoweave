@@ -951,12 +951,12 @@ fn each_marker_defect_refuses_under_the_token_doctor_publishes_for_it() {
     );
 
     assert_eq!(
-        MarkerDefect::Unreadable {
+        MarkerDefect::<PathBuf>::Unreadable {
             detail: "unparseable".into(),
         }
         .kind()
         .token(),
-        wire_tag(&WorkweaveTreeIntegrityKind::UnreadableMarker {
+        wire_tag(&WorkweaveTreeIntegrityKind::<PathBuf>::UnreadableMarker {
             detail: "unparseable".into(),
         })
     );

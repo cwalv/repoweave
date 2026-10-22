@@ -24,7 +24,7 @@ pub struct PlacementOutput {
     /// Manifest-relative path of the repository.
     pub path: String,
     /// The checkout whose files were placed.
-    pub absolute_path: String,
+    pub absolute_path: crate::path_spelling::WirePath,
     /// How many files were cloned, linked or written.
     pub files: FilePlacement,
 }
@@ -33,7 +33,7 @@ impl PlacementOutput {
     pub(crate) fn new(repo_path: &RepoPath, checkout: &Path, files: FilePlacement) -> Self {
         Self {
             path: repo_path.to_string(),
-            absolute_path: crate::path_spelling::wire_path(checkout),
+            absolute_path: crate::path_spelling::WirePath::of(checkout),
             files,
         }
     }

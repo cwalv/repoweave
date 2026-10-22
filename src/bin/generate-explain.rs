@@ -1753,7 +1753,9 @@ fn check_envelope_output_documented(protocol_md_content: &str) -> Vec<String> {
     // Build a fully-populated Resolution so every conditional branch in
     // envelope_vars() fires and we get the complete set of variable names.
     let full_resolution = Resolution {
-        workspace: "/sentinel/workspace".to_owned(),
+        workspace: repoweave::path_spelling::WirePath::of(std::path::Path::new(
+            "/sentinel/workspace",
+        )),
         workweave: Some("sentinel-project--sentinel-ww".to_owned()),
         workweave_unregistered: true,
         project: repoweave::manifest::ProjectName::new("sentinel-project").unwrap(),
