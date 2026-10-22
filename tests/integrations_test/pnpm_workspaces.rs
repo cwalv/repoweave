@@ -8,6 +8,8 @@ use super::*;
 fn auto_detects_repos_with_package_json() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     touch(root, "github/acme/server/package.json");
     touch(root, "github/acme/web/package.json");
@@ -21,12 +23,14 @@ fn auto_detects_repos_with_package_json() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = PnpmWorkspaces;
     integration.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("pnpm-workspace.yaml")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("pnpm-workspace.yaml")).unwrap();
     assert!(content.contains("github/acme/server"));
     assert!(content.contains("github/acme/web"));
     assert!(!content.contains("github/acme/docs"));
@@ -36,6 +40,8 @@ fn auto_detects_repos_with_package_json() {
 fn generates_pnpm_workspace_yaml_with_packages_list() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     touch(root, "github/chatly/protocol/package.json");
     touch(root, "github/chatly/server/package.json");
@@ -49,12 +55,14 @@ fn generates_pnpm_workspace_yaml_with_packages_list() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = PnpmWorkspaces;
     integration.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("pnpm-workspace.yaml")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("pnpm-workspace.yaml")).unwrap();
     // Activate now writes the `# managed by repoweave` marker above the
     // packages block — that is the ownership sentinel for the hybrid contract.
     assert!(content.contains("# managed by repoweave"));
@@ -68,6 +76,8 @@ fn generates_pnpm_workspace_yaml_with_packages_list() {
 fn excludes_reference_repos() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     touch(root, "github/acme/server/package.json");
     touch(root, "github/acme/reference-lib/package.json");
@@ -79,12 +89,14 @@ fn excludes_reference_repos() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = PnpmWorkspaces;
     integration.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("pnpm-workspace.yaml")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("pnpm-workspace.yaml")).unwrap();
     assert!(content.contains("github/acme/server"));
     assert!(!content.contains("reference-lib"));
 }
@@ -160,13 +172,15 @@ fn check_warns_when_pnpm_not_on_path() {
 fn s6_pnpm_1_activate_preserves_catalog_and_comments() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
     touch(root, "github/acme/server/package.json");
 
     // Pre-existing YAML with catalog (user foreign content) + rwv marker on
     // packages (previously-activated state). The catalog and rationale comment
     // must survive activate byte-stable; packages is owned and gets updated.
     write_file(
-        root,
+        &project_dir,
         "pnpm-workspace.yaml",
         r#"# shared dependency versions
 catalog:
@@ -183,9 +197,11 @@ packages:
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::from_toml("enabled = true");
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
-    let path = root.join("pnpm-workspace.yaml");
+    let path = project_dir.join("pnpm-workspace.yaml");
     contract::assert_activate_preserves_foreign(
         &path,
         || {
@@ -270,10 +286,12 @@ packages:
 fn s6_pnpm_4_activate_idempotent_comments_preserved() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
     touch(root, "github/acme/server/package.json");
 
     write_file(
-        root,
+        &project_dir,
         "pnpm-workspace.yaml",
         r#"peerDependencyRules:
   allowedVersions:
@@ -287,9 +305,11 @@ fn s6_pnpm_4_activate_idempotent_comments_preserved() {
     let cache = HashMap::new();
 
     // First activate: just server.
-    let ctx_one = make_ctx(root, &project, &manifest_one, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx_one = base.build_context(&config, &manifest_one);
     PnpmWorkspaces.activate(&ctx_one).unwrap();
-    let after_first = std::fs::read_to_string(root.join("pnpm-workspace.yaml")).unwrap();
+    let after_first = std::fs::read_to_string(project_dir.join("pnpm-workspace.yaml")).unwrap();
 
     // Second activate: server + web.
     touch(root, "github/acme/web/package.json");
@@ -297,9 +317,11 @@ fn s6_pnpm_4_activate_idempotent_comments_preserved() {
         ("github/acme/server", Role::Owned),
         ("github/acme/web", Role::Owned),
     ]);
-    let ctx_two = make_ctx(root, &project, &manifest_two, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx_two = base.build_context(&config, &manifest_two);
     PnpmWorkspaces.activate(&ctx_two).unwrap();
-    let after_second = std::fs::read_to_string(root.join("pnpm-workspace.yaml")).unwrap();
+    let after_second = std::fs::read_to_string(project_dir.join("pnpm-workspace.yaml")).unwrap();
 
     // Inline comment + peerDependencyRules survive both runs.
     assert!(
@@ -348,6 +370,8 @@ fn s6_pnpm_4_activate_idempotent_comments_preserved() {
 fn multi_package_repo_expands_to_prefixed_globs() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // A multi-package repo: root package.json present (triggers detection)
     // and a pnpm-workspace.yaml declaring its own sub-packages.
@@ -367,12 +391,14 @@ fn multi_package_repo_expands_to_prefixed_globs() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = PnpmWorkspaces;
     integration.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("pnpm-workspace.yaml")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("pnpm-workspace.yaml")).unwrap();
     // Prefixed globs from the member repo's pnpm-workspace.yaml.
     assert!(
         content.contains("github/acme/mono/packages/*"),
@@ -401,6 +427,8 @@ fn multi_package_repo_expands_to_prefixed_globs() {
 fn multi_package_repo_empty_packages_list_keeps_bare_path() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     touch(root, "github/acme/mono/package.json");
     write_file(
@@ -413,12 +441,14 @@ fn multi_package_repo_empty_packages_list_keeps_bare_path() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = PnpmWorkspaces;
     integration.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("pnpm-workspace.yaml")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("pnpm-workspace.yaml")).unwrap();
     // Empty packages list → falls back to bare repo path.
     assert!(
         content.contains("github/acme/mono"),
@@ -432,6 +462,8 @@ fn multi_package_repo_empty_packages_list_keeps_bare_path() {
 fn single_package_repo_no_pnpm_workspace_yaml_keeps_bare_path() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     touch(root, "github/acme/server/package.json");
     // No pnpm-workspace.yaml in this repo.
@@ -440,12 +472,14 @@ fn single_package_repo_no_pnpm_workspace_yaml_keeps_bare_path() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = PnpmWorkspaces;
     integration.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("pnpm-workspace.yaml")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("pnpm-workspace.yaml")).unwrap();
     assert!(
         content.contains("github/acme/server"),
         "single-package repo must appear as bare entry; got:\n{content}"
@@ -472,9 +506,11 @@ fn single_package_repo_no_pnpm_workspace_yaml_keeps_bare_path() {
 fn a_decoy_path_in_a_comment_or_catalog_is_not_a_workspace_member() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     write_file(
-        root,
+        &project_dir,
         "pnpm-workspace.yaml",
         "# github/acme/decoy moved out of the weave; note kept on purpose\n\
              catalog:\n  github/acme/decoy: ^1.0.0\n",
@@ -485,11 +521,13 @@ fn a_decoy_path_in_a_comment_or_catalog_is_not_a_workspace_member() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::from_toml("enabled = true");
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     PnpmWorkspaces.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("pnpm-workspace.yaml")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("pnpm-workspace.yaml")).unwrap();
     assert!(
         content.contains("github/acme/decoy"),
         "fixture is inert unless the decoy survives activate; got:\n{content}"

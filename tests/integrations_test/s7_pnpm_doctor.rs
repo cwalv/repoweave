@@ -22,7 +22,10 @@ fn s7_pnpm_doctor_missing_reports_finding() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    project_on_disk(root, "test-project");
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let issues = PnpmWorkspaces.verify(&ctx).unwrap();
     assert_eq!(
@@ -33,7 +36,7 @@ fn s7_pnpm_doctor_missing_reports_finding() {
     let issue = &issues[0];
     assert!(issue.safe_to_fix, "MISSING issue must be safe_to_fix");
     assert!(
-        issue.message.contains("missing"),
+        issue.message.to_string().contains("missing"),
         "MISSING issue message should contain 'missing': {}",
         issue.message
     );
@@ -46,6 +49,8 @@ fn s7_pnpm_doctor_missing_reports_finding() {
 fn s7_pnpm_doctor_missing_fixed_by_activate() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     touch(root, "github/acme/server/package.json");
 
@@ -53,7 +58,9 @@ fn s7_pnpm_doctor_missing_fixed_by_activate() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     // Pre-condition: MISSING.
     let pre = PnpmWorkspaces.verify(&ctx).unwrap();
@@ -62,7 +69,7 @@ fn s7_pnpm_doctor_missing_fixed_by_activate() {
 
     PnpmWorkspaces.activate(&ctx).unwrap();
 
-    let path = root.join("pnpm-workspace.yaml");
+    let path = project_dir.join("pnpm-workspace.yaml");
     assert!(
         path.exists(),
         "pnpm-workspace.yaml must exist after activate"
@@ -91,9 +98,11 @@ fn s7_pnpm_doctor_missing_fixed_by_activate() {
 fn s7_pnpm_doctor_drift_reports_finding() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     write_file(
-        root,
+        &project_dir,
         "pnpm-workspace.yaml",
         "# managed by repoweave\npackages:\n  - github/acme/server\n",
     );
@@ -107,7 +116,9 @@ fn s7_pnpm_doctor_drift_reports_finding() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let issues = PnpmWorkspaces.verify(&ctx).unwrap();
     assert_eq!(
@@ -118,7 +129,7 @@ fn s7_pnpm_doctor_drift_reports_finding() {
     let issue = &issues[0];
     assert!(issue.safe_to_fix, "DRIFT issue must be safe_to_fix");
     assert!(
-        issue.message.contains("drift"),
+        issue.message.to_string().contains("drift"),
         "DRIFT message should contain 'drift': {}",
         issue.message
     );
@@ -131,9 +142,11 @@ fn s7_pnpm_doctor_drift_reports_finding() {
 fn s7_pnpm_doctor_drift_fixed_by_activate() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     write_file(
-        root,
+        &project_dir,
         "pnpm-workspace.yaml",
         "# managed by repoweave\npackages:\n  - github/acme/server\n",
     );
@@ -147,7 +160,9 @@ fn s7_pnpm_doctor_drift_fixed_by_activate() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     // Pre-condition: DRIFT.
     let pre = PnpmWorkspaces.verify(&ctx).unwrap();
@@ -172,10 +187,12 @@ fn s7_pnpm_doctor_drift_fixed_by_activate() {
 fn s7_pnpm_doctor_user_held_reports_finding() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // No marker line.
     write_file(
-        root,
+        &project_dir,
         "pnpm-workspace.yaml",
         "packages:\n  - github/acme/server\n",
     );
@@ -185,7 +202,9 @@ fn s7_pnpm_doctor_user_held_reports_finding() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let issues = PnpmWorkspaces.verify(&ctx).unwrap();
     assert_eq!(
@@ -199,9 +218,9 @@ fn s7_pnpm_doctor_user_held_reports_finding() {
         "USER-HELD issue must NOT be safe_to_fix"
     );
     assert!(
-        issue.message.contains("NOT auto-take-over")
-            || issue.message.contains("not auto")
-            || issue.message.contains("unmarked"),
+        issue.message.to_string().contains("NOT auto-take-over")
+            || issue.message.to_string().contains("not auto")
+            || issue.message.to_string().contains("unmarked"),
         "USER-HELD message must describe no-takeover: {}",
         issue.message
     );
@@ -215,16 +234,20 @@ fn s7_pnpm_doctor_user_held_reports_finding() {
 fn s7_pnpm_doctor_user_held_file_unchanged_after_activate() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     let original = "packages:\n  - github/acme/server\n";
-    write_file(root, "pnpm-workspace.yaml", original);
+    write_file(&project_dir, "pnpm-workspace.yaml", original);
     touch(root, "github/acme/server/package.json");
 
     let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let issues = PnpmWorkspaces.verify(&ctx).unwrap();
     assert_eq!(issues.len(), 1);
@@ -232,7 +255,7 @@ fn s7_pnpm_doctor_user_held_file_unchanged_after_activate() {
 
     PnpmWorkspaces.activate(&ctx).unwrap();
 
-    let after = std::fs::read_to_string(root.join("pnpm-workspace.yaml")).unwrap();
+    let after = std::fs::read_to_string(project_dir.join("pnpm-workspace.yaml")).unwrap();
     assert_eq!(
         after, original,
         "activate must leave a USER-HELD pnpm-workspace.yaml byte-identical"
@@ -263,7 +286,10 @@ fn s7_pnpm_doctor_clean_after_fresh_activate() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    project_on_disk(root, "test-project");
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     PnpmWorkspaces.activate(&ctx).unwrap();
 
@@ -306,7 +332,10 @@ fn s7_pnpm_doctor_clean_when_member_has_duplicate_globs() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    project_on_disk(root, "test-project");
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     // activate() writes the deduped, sorted set.
     PnpmWorkspaces.activate(&ctx).unwrap();

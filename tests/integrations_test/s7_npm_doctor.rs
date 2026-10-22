@@ -22,7 +22,10 @@ fn s7_npm_doctor_missing_reports_finding() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    project_on_disk(root, "test-project");
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let issues = NpmWorkspaces.verify(&ctx).unwrap();
     assert_eq!(
@@ -33,12 +36,12 @@ fn s7_npm_doctor_missing_reports_finding() {
     let issue = &issues[0];
     assert!(issue.safe_to_fix, "MISSING issue must be safe_to_fix");
     assert!(
-        issue.message.contains("missing"),
+        issue.message.to_string().contains("missing"),
         "MISSING issue message should contain 'missing': {}",
         issue.message
     );
     assert!(
-        issue.message.contains("rwv doctor --fix"),
+        issue.message.to_string().contains("rwv doctor --fix"),
         "MISSING issue message should mention 'rwv doctor --fix': {}",
         issue.message
     );
@@ -51,6 +54,8 @@ fn s7_npm_doctor_missing_reports_finding() {
 fn s7_npm_doctor_missing_fixed_by_activate() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     touch(root, "github/acme/server/package.json");
 
@@ -58,7 +63,9 @@ fn s7_npm_doctor_missing_fixed_by_activate() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     // Pre-condition: MISSING.
     let pre_issues = NpmWorkspaces.verify(&ctx).unwrap();
@@ -68,7 +75,7 @@ fn s7_npm_doctor_missing_fixed_by_activate() {
     // Simulate doctor --fix.
     NpmWorkspaces.activate(&ctx).unwrap();
 
-    let pkg_path = root.join("package.json");
+    let pkg_path = project_dir.join("package.json");
     assert!(
         pkg_path.exists(),
         "package.json must be created after activate"
@@ -98,10 +105,12 @@ fn s7_npm_doctor_missing_fixed_by_activate() {
 fn s7_npm_doctor_drift_reports_finding() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // Write package.json with marker but only one workspace (outdated).
     write_file(
-        root,
+        &project_dir,
         "package.json",
         r#"{"x-repoweave":{"managed":true},"name":"test-project","private":true,"workspaces":["github/acme/server"]}"#,
     );
@@ -117,7 +126,9 @@ fn s7_npm_doctor_drift_reports_finding() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let issues = NpmWorkspaces.verify(&ctx).unwrap();
     assert_eq!(
@@ -128,7 +139,7 @@ fn s7_npm_doctor_drift_reports_finding() {
     let issue = &issues[0];
     assert!(issue.safe_to_fix, "DRIFT issue must be safe_to_fix");
     assert!(
-        issue.message.contains("drift"),
+        issue.message.to_string().contains("drift"),
         "DRIFT issue message should contain 'drift': {}",
         issue.message
     );
@@ -141,9 +152,11 @@ fn s7_npm_doctor_drift_reports_finding() {
 fn s7_npm_doctor_drift_fixed_by_activate() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     write_file(
-        root,
+        &project_dir,
         "package.json",
         r#"{"x-repoweave":{"managed":true},"name":"test-project","private":true,"workspaces":["github/acme/server"]}"#,
     );
@@ -157,7 +170,9 @@ fn s7_npm_doctor_drift_fixed_by_activate() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     // Pre-condition: DRIFT.
     let pre_issues = NpmWorkspaces.verify(&ctx).unwrap();
@@ -173,7 +188,7 @@ fn s7_npm_doctor_drift_fixed_by_activate() {
         "verify() must return no issues after activate (CLEAN), got: {post_issues:?}"
     );
 
-    let content = std::fs::read_to_string(root.join("package.json")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("package.json")).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
     let ws = parsed["workspaces"].as_array().unwrap();
     assert_eq!(ws.len(), 2, "both repos must be in workspaces after fix");
@@ -189,10 +204,12 @@ fn s7_npm_doctor_drift_fixed_by_activate() {
 fn s7_npm_doctor_user_held_reports_finding() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // No x-repoweave marker — user holds the pen.
     write_file(
-        root,
+        &project_dir,
         "package.json",
         r#"{"name":"test-project","private":true,"workspaces":["github/acme/server"]}"#,
     );
@@ -202,7 +219,9 @@ fn s7_npm_doctor_user_held_reports_finding() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let issues = NpmWorkspaces.verify(&ctx).unwrap();
     assert_eq!(
@@ -216,9 +235,9 @@ fn s7_npm_doctor_user_held_reports_finding() {
         "USER-HELD issue must NOT be safe_to_fix"
     );
     assert!(
-        issue.message.contains("NOT auto-take-over")
-            || issue.message.contains("not auto")
-            || issue.message.contains("unmarked"),
+        issue.message.to_string().contains("NOT auto-take-over")
+            || issue.message.to_string().contains("not auto")
+            || issue.message.to_string().contains("unmarked"),
         "USER-HELD message must describe no-takeover: {}",
         issue.message
     );
@@ -231,16 +250,20 @@ fn s7_npm_doctor_user_held_reports_finding() {
 fn s7_npm_doctor_user_held_file_unchanged_after_activate() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     let original = r#"{"name":"test-project","private":true,"workspaces":["github/acme/server"]}"#;
-    write_file(root, "package.json", original);
+    write_file(&project_dir, "package.json", original);
     touch(root, "github/acme/server/package.json");
 
     let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     // Verify reports USER-HELD with safe_to_fix=false.
     let issues = NpmWorkspaces.verify(&ctx).unwrap();
@@ -253,7 +276,7 @@ fn s7_npm_doctor_user_held_file_unchanged_after_activate() {
     // Even if activate() is called, the workspaces key is left intact.
     NpmWorkspaces.activate(&ctx).unwrap();
 
-    let after = std::fs::read_to_string(root.join("package.json")).unwrap();
+    let after = std::fs::read_to_string(project_dir.join("package.json")).unwrap();
     // Merge defers: the user's workspaces array is not overwritten.
     assert!(
         !after.contains("x-repoweave"),
@@ -278,7 +301,10 @@ fn s7_npm_doctor_clean_after_fresh_activate() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    project_on_disk(root, "test-project");
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     NpmWorkspaces.activate(&ctx).unwrap();
 

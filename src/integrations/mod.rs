@@ -47,7 +47,7 @@ pub(crate) fn tool_missing_issue<I: crate::integration::DrivesTool>(
     Some(crate::integration::Issue {
         source: crate::integration::IssueSource::integration(integration.name()),
         severity: crate::integration::Severity::Warning,
-        message: format!("{} is not on PATH{consequence}", I::TOOL),
+        message: format!("{} is not on PATH{consequence}", I::TOOL).into(),
         kind: crate::integration::IssueKind::ToolMissing,
         safe_to_fix: true,
     })

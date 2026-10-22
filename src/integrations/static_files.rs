@@ -135,7 +135,7 @@ pub struct StaticFiles;
 /// collision set so callers can emit one Issue per collision or fail with a
 /// single aggregate error message.
 fn collision_names(cfg: &StaticFilesConfig, ctx: &IntegrationContext) -> Vec<String> {
-    let Some(workweave) = ctx.workweave else {
+    let Some(workweave) = ctx.workweave() else {
         return Vec::new();
     };
     if workweave.link.is_empty() || cfg.files.is_empty() {
@@ -168,7 +168,7 @@ fn checked_at_output_dir<'c>(
     cfg: &'c StaticFilesConfig,
     ctx: &IntegrationContext,
 ) -> impl Iterator<Item = &'c str> {
-    let in_workweave = ctx.container_kind == ContainerKind::Workweave;
+    let in_workweave = ctx.container_kind() == ContainerKind::Workweave;
     cfg.files
         .iter()
         .filter(move |f| !(in_workweave && f.reads_primary()))
@@ -220,7 +220,7 @@ impl Integration for StaticFiles {
 
         for file in checked_at_output_dir(&cfg, ctx) {
             if !ctx
-                .output_dir
+                .output_dir()
                 .join(crate::path_spelling::native_relative(file))
                 .exists()
             {
@@ -257,7 +257,7 @@ impl Integration for StaticFiles {
             issues.push(Issue {
                 source: IssueSource::integration(self.name()),
                 severity: Severity::Error,
-                message: collision_message(&name),
+                message: collision_message(&name).into(),
                 kind: IssueKind::ConfigRejected,
                 safe_to_fix: true,
             });
@@ -265,14 +265,15 @@ impl Integration for StaticFiles {
 
         for file in checked_at_output_dir(&cfg, ctx) {
             if !ctx
-                .output_dir
+                .output_dir()
                 .join(crate::path_spelling::native_relative(file))
                 .exists()
             {
                 issues.push(Issue {
                     source: IssueSource::integration(self.name()),
                     severity: Severity::Warning,
-                    message: format!("declared file '{}' not found in project directory", file),
+                    message: format!("declared file '{}' not found in project directory", file)
+                        .into(),
                     kind: IssueKind::ConfigRejected,
                     safe_to_fix: true,
                 });
@@ -282,7 +283,7 @@ impl Integration for StaticFiles {
     }
 
     fn generated_files(&self, ctx: &IntegrationContext) -> Vec<SurfacedFile> {
-        ctx.config
+        ctx.config()
             .settings::<StaticFilesConfig>()
             .unwrap_or_default()
             .files

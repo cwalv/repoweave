@@ -12,43 +12,11 @@ use std::path::Path;
 
 use crate::activate::HooksPermit;
 use crate::integration::{
-    is_enabled, HookOutcome, Integration, IntegrationContext, Issue, IssueKind, IssueSource,
+    is_enabled, HookOutcome, Integration, IntegrationContextBase, Issue, IssueKind, IssueSource,
     Severity,
 };
-use crate::manifest::{IntegrationConfig, Manifest, ProjectName, RepoEntry, RepoPath};
+use crate::manifest::{IntegrationConfig, Manifest, RepoEntry, RepoPath};
 use crate::skipped::SkippedEffect;
-use crate::workspace::ContainerKind;
-
-/// Shared base data for constructing `IntegrationContext` per integration.
-pub struct IntegrationContextBase<'a> {
-    /// Directory an integration's files live in: `<weave>/projects/<project>`.
-    /// Owned rather than borrowed because
-    /// [`WorkspaceSession::context_base`](crate::workspace::WorkspaceSession::context_base)
-    /// derives it rather than taking it from the caller — see that method for why.
-    pub output_dir: std::path::PathBuf,
-    /// Workspace root where repos live on disk.
-    pub workspace_root: &'a Path,
-    /// Which kind of container `workspace_root` is: the primary weave
-    /// directory, or a workweave's. Set by whichever caller resolved the
-    /// `Checkout` this base was built from — an integration reading
-    /// `workspace_root` back off disk to answer the same question would be
-    /// re-deriving a fact its caller already had.
-    pub container_kind: ContainerKind,
-    /// Active project name.
-    pub project: &'a ProjectName,
-    /// All git repos found on disk under registry directories.
-    pub all_repos_on_disk: &'a [RepoPath],
-    /// All project paths.
-    pub all_project_paths: &'a [ProjectName],
-    /// Pre-computed detection cache. Maps manifest filenames to the sorted list
-    /// of active repo paths that contain that manifest.
-    pub detection_cache: &'a HashMap<String, Vec<String>>,
-    /// The project's `workweave:` config, if any. Threaded through so
-    /// integrations can detect cross-section collisions (e.g.
-    /// static-files.files vs workweave.link).
-    /// `None` when the project's `rwv.toml` has no `workweave:` section.
-    pub workweave: Option<&'a crate::manifest::WorkweaveConfig>,
-}
 
 /// The manifest filenames `integrations` detect repos by, deduplicated across
 /// the ecosystems that share one (npm and pnpm both read `package.json`).
@@ -119,31 +87,6 @@ pub fn missing_active_members<'a>(
         .collect();
     missing.sort();
     missing
-}
-
-impl<'a> IntegrationContextBase<'a> {
-    /// Build an `IntegrationContext` from this base and per-integration config.
-    pub fn build_context(
-        &'a self,
-        config: &'a IntegrationConfig,
-        manifest: &'a Manifest,
-    ) -> IntegrationContext<'a> {
-        IntegrationContext {
-            output_dir: &self.output_dir,
-            workspace_root: self.workspace_root,
-            container_kind: self.container_kind,
-            project: self.project,
-            repos: manifest
-                .iter_entries()
-                .map(|(rp, e)| (rp.clone(), e.clone()))
-                .collect::<Vec<(RepoPath, RepoEntry)>>(),
-            config,
-            all_repos_on_disk: self.all_repos_on_disk,
-            all_project_paths: self.all_project_paths,
-            detection_cache: self.detection_cache,
-            workweave: self.workweave,
-        }
-    }
 }
 
 /// The integrations `manifest` enables, each paired with the config it runs
@@ -232,7 +175,7 @@ fn for_each_enabled(
                 issues.push(Issue {
                     source: IssueSource::integration(integration.name()),
                     severity: Severity::Error,
-                    message: format!("{e:#}"),
+                    message: format!("{e:#}").into(),
                     kind: IssueKind::IntegrationFailed,
                     safe_to_fix: true,
                 });
@@ -421,11 +364,13 @@ pub fn run_deactivations(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::integration::MissingTool;
+    use crate::integration::{IntegrationContext, MissingTool};
     use crate::integrations::PnpmWorkspaces;
-    use crate::manifest::{RepoEntry, RepoPath};
+    use crate::manifest::{ProjectName, RepoEntry, RepoPath};
     use crate::vcs::{RawRefName, TrackingRef};
+    use crate::workspace::WorkspaceSession;
     use std::collections::BTreeMap;
+    use std::path::Path;
     use std::sync::{Arc, Mutex};
 
     // -- Mock integration -----------------------------------------------------
@@ -505,7 +450,7 @@ mod tests {
         fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
             self.call_log.lock().unwrap().push((
                 "activate".into(),
-                format!("project={}", ctx.project.as_str()),
+                format!("project={}", ctx.project().as_str()),
             ));
             if let Some(ref msg) = self.activate_err {
                 anyhow::bail!("{msg}");
@@ -525,10 +470,10 @@ mod tests {
         }
 
         fn check(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
-            self.call_log
-                .lock()
-                .unwrap()
-                .push(("check".into(), format!("project={}", ctx.project.as_str())));
+            self.call_log.lock().unwrap().push((
+                "check".into(),
+                format!("project={}", ctx.project().as_str()),
+            ));
             if let Some(ref msg) = self.check_err {
                 anyhow::bail!("{msg}");
             }
@@ -538,7 +483,7 @@ mod tests {
         fn activate_hook(&self, ctx: &IntegrationContext) -> anyhow::Result<HookOutcome> {
             self.call_log.lock().unwrap().push((
                 "activate_hook".into(),
-                format!("project={}", ctx.project.as_str()),
+                format!("project={}", ctx.project().as_str()),
             ));
             if let Some(ref msg) = self.lock_err {
                 anyhow::bail!("{msg}");
@@ -568,22 +513,6 @@ mod tests {
         }
     }
 
-    fn make_ctx_base<'a>(
-        project: &'a ProjectName,
-        cache: &'a HashMap<String, Vec<String>>,
-    ) -> IntegrationContextBase<'a> {
-        IntegrationContextBase {
-            output_dir: std::path::PathBuf::from("/workspace"),
-            workspace_root: Path::new("/workspace"),
-            container_kind: ContainerKind::Primary,
-            project,
-            all_repos_on_disk: &[],
-            all_project_paths: &[],
-            detection_cache: cache,
-            workweave: None,
-        }
-    }
-
     // ========================================================================
     // run_activations tests
     // ========================================================================
@@ -597,7 +526,8 @@ mod tests {
         let manifest = make_manifest(BTreeMap::new());
         let project = ProjectName::new("test-project").unwrap();
         let cache = HashMap::new();
-        let ctx_base = make_ctx_base(&project, &cache);
+        let session = WorkspaceSession::new(Path::new("/workspace"));
+        let ctx_base = IntegrationContextBase::new(&session, &project, &cache, None);
 
         let issues = run_activations(&integrations, &manifest, &ctx_base);
         assert!(issues.is_empty());
@@ -620,7 +550,8 @@ mod tests {
         let manifest = make_manifest(configs);
         let project = ProjectName::new("test-project").unwrap();
         let cache = HashMap::new();
-        let ctx_base = make_ctx_base(&project, &cache);
+        let session = WorkspaceSession::new(Path::new("/workspace"));
+        let ctx_base = IntegrationContextBase::new(&session, &project, &cache, None);
 
         let issues = run_activations(&integrations, &manifest, &ctx_base);
         assert!(issues.is_empty());
@@ -640,7 +571,8 @@ mod tests {
         let manifest = make_manifest(configs);
         let project = ProjectName::new("test-project").unwrap();
         let cache = HashMap::new();
-        let ctx_base = make_ctx_base(&project, &cache);
+        let session = WorkspaceSession::new(Path::new("/workspace"));
+        let ctx_base = IntegrationContextBase::new(&session, &project, &cache, None);
 
         let issues = run_activations(&integrations, &manifest, &ctx_base);
         assert!(issues.is_empty());
@@ -656,13 +588,14 @@ mod tests {
         let manifest = make_manifest(BTreeMap::new());
         let project = ProjectName::new("test-project").unwrap();
         let cache = HashMap::new();
-        let ctx_base = make_ctx_base(&project, &cache);
+        let session = WorkspaceSession::new(Path::new("/workspace"));
+        let ctx_base = IntegrationContextBase::new(&session, &project, &cache, None);
 
         let issues = run_activations(&integrations, &manifest, &ctx_base);
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].source, IssueSource::integration("cargo"));
         assert_eq!(issues[0].severity, Severity::Error);
-        assert!(issues[0].message.contains("kaboom"));
+        assert!(issues[0].message.to_string().contains("kaboom"));
 
         // succeeding integration should still have been called
         assert_eq!(succeeding.calls().len(), 1);
@@ -684,7 +617,8 @@ mod tests {
         let manifest = make_manifest(configs);
         let project = ProjectName::new("test-project").unwrap();
         let cache = HashMap::new();
-        let ctx_base = make_ctx_base(&project, &cache);
+        let session = WorkspaceSession::new(Path::new("/workspace"));
+        let ctx_base = IntegrationContextBase::new(&session, &project, &cache, None);
 
         let issues = run_activations(&integrations, &manifest, &ctx_base);
         assert!(issues.is_empty());
@@ -719,7 +653,8 @@ mod tests {
         let manifest = make_manifest(BTreeMap::new());
         let project = ProjectName::new("test-project").unwrap();
         let cache = HashMap::new();
-        let ctx_base = make_ctx_base(&project, &cache);
+        let session = WorkspaceSession::new(Path::new("/workspace"));
+        let ctx_base = IntegrationContextBase::new(&session, &project, &cache, None);
 
         let issues = run_checks(&integrations, &manifest, &ctx_base);
         assert_eq!(issues.len(), 2);
@@ -735,7 +670,8 @@ mod tests {
         let manifest = make_manifest(BTreeMap::new());
         let project = ProjectName::new("test-project").unwrap();
         let cache = HashMap::new();
-        let ctx_base = make_ctx_base(&project, &cache);
+        let session = WorkspaceSession::new(Path::new("/workspace"));
+        let ctx_base = IntegrationContextBase::new(&session, &project, &cache, None);
 
         let issues = run_checks(&integrations, &manifest, &ctx_base);
         assert!(issues.is_empty());
@@ -757,14 +693,15 @@ mod tests {
         let manifest = make_manifest(BTreeMap::new());
         let project = ProjectName::new("test-project").unwrap();
         let cache = HashMap::new();
-        let ctx_base = make_ctx_base(&project, &cache);
+        let session = WorkspaceSession::new(Path::new("/workspace"));
+        let ctx_base = IntegrationContextBase::new(&session, &project, &cache, None);
 
         let issues = run_checks(&integrations, &manifest, &ctx_base);
         assert_eq!(issues.len(), 2);
         // First issue is the error from "cargo"
         assert_eq!(issues[0].source, IssueSource::integration("cargo"));
         assert_eq!(issues[0].severity, Severity::Error);
-        assert!(issues[0].message.contains("check exploded"));
+        assert!(issues[0].message.to_string().contains("check exploded"));
         // Second is the normal issue from "npm"
         assert_eq!(issues[1].source, IssueSource::integration("npm"));
         assert_eq!(issues[1].severity, Severity::Warning);
@@ -803,7 +740,7 @@ mod tests {
         let issues = run_deactivations(&integrations, &manifest, root);
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].source, IssueSource::integration("cargo"));
-        assert!(issues[0].message.contains("cleanup failed"));
+        assert!(issues[0].message.to_string().contains("cleanup failed"));
 
         assert_eq!(succeeding.calls().len(), 1);
         assert_eq!(succeeding.calls()[0].0, "deactivate");
@@ -838,7 +775,8 @@ mod tests {
         let manifest = make_manifest(BTreeMap::new());
         let project = ProjectName::new("test-project").unwrap();
         let cache = HashMap::new();
-        let ctx_base = make_ctx_base(&project, &cache);
+        let session = WorkspaceSession::new(Path::new("/workspace"));
+        let ctx_base = IntegrationContextBase::new(&session, &project, &cache, None);
 
         let issues =
             run_activate_hooks(HooksPermit::granted(), &integrations, &manifest, &ctx_base).issues;
@@ -862,14 +800,18 @@ mod tests {
         let manifest = make_manifest(BTreeMap::new());
         let project = ProjectName::new("test-project").unwrap();
         let cache = HashMap::new();
-        let ctx_base = make_ctx_base(&project, &cache);
+        let session = WorkspaceSession::new(Path::new("/workspace"));
+        let ctx_base = IntegrationContextBase::new(&session, &project, &cache, None);
 
         let issues =
             run_activate_hooks(HooksPermit::granted(), &integrations, &manifest, &ctx_base).issues;
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].source, IssueSource::integration("cargo"));
         assert_eq!(issues[0].severity, Severity::Error);
-        assert!(issues[0].message.contains("install command failed"));
+        assert!(issues[0]
+            .message
+            .to_string()
+            .contains("install command failed"));
 
         // succeeding integration should still have been called
         let npm_hook_calls: Vec<_> = succeeding
@@ -890,7 +832,8 @@ mod tests {
         let manifest = make_manifest(BTreeMap::new());
         let project = ProjectName::new("test-project").unwrap();
         let cache = HashMap::new();
-        let ctx_base = make_ctx_base(&project, &cache);
+        let session = WorkspaceSession::new(Path::new("/workspace"));
+        let ctx_base = IntegrationContextBase::new(&session, &project, &cache, None);
 
         let run = run_activate_hooks(HooksPermit::granted(), &integrations, &manifest, &ctx_base);
         assert!(run.issues.is_empty(), "a missing tool is no failure");
@@ -924,7 +867,8 @@ mod tests {
         let manifest = make_manifest(configs);
         let project = ProjectName::new("test-project").unwrap();
         let cache = HashMap::new();
-        let ctx_base = make_ctx_base(&project, &cache);
+        let session = WorkspaceSession::new(Path::new("/workspace"));
+        let ctx_base = IntegrationContextBase::new(&session, &project, &cache, None);
 
         let issues =
             run_activate_hooks(HooksPermit::granted(), &integrations, &manifest, &ctx_base).issues;
@@ -946,7 +890,8 @@ mod tests {
         let manifest = make_manifest(BTreeMap::new());
         let project = ProjectName::new("my-special-project").unwrap();
         let cache = HashMap::new();
-        let ctx_base = make_ctx_base(&project, &cache);
+        let session = WorkspaceSession::new(Path::new("/workspace"));
+        let ctx_base = IntegrationContextBase::new(&session, &project, &cache, None);
 
         let issues =
             run_activate_hooks(HooksPermit::granted(), &integrations, &manifest, &ctx_base).issues;

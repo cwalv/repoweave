@@ -27,7 +27,10 @@ fn generated_files_returns_configured_files() {
         "enabled = true\nfiles = [\"turbo.json\", \".eslintrc.json\", \".prettierrc\"]",
     );
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    project_on_disk(root, "test-project");
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = StaticFiles;
     let files = integration.generated_files(&ctx);
@@ -52,7 +55,10 @@ fn generated_files_empty_when_no_files_configured() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::from_toml("enabled = true");
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    project_on_disk(root, "test-project");
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = StaticFiles;
     let files = integration.generated_files(&ctx);
@@ -63,10 +69,12 @@ fn generated_files_empty_when_no_files_configured() {
 fn activate_succeeds_when_files_exist() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // Create the declared files in the project directory (output_dir)
-    write_file(root, "turbo.json", r#"{"pipeline": {}}"#);
-    write_file(root, ".eslintrc.json", "{}");
+    write_file(&project_dir, "turbo.json", r#"{"pipeline": {}}"#);
+    write_file(&project_dir, ".eslintrc.json", "{}");
 
     let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
@@ -74,7 +82,9 @@ fn activate_succeeds_when_files_exist() {
         "enabled = true\nfiles = [\"turbo.json\", \".eslintrc.json\"]",
     );
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = StaticFiles;
     let result = integration.activate(&ctx);
@@ -91,7 +101,10 @@ fn activate_succeeds_even_when_files_missing() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::from_toml("enabled = true\nfiles = [\"turbo.json\"]");
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    project_on_disk(root, "test-project");
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = StaticFiles;
     let result = integration.activate(&ctx);
@@ -105,9 +118,11 @@ fn activate_succeeds_even_when_files_missing() {
 fn check_warns_on_missing_files() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // Create one of two declared files
-    write_file(root, "turbo.json", "{}");
+    write_file(&project_dir, "turbo.json", "{}");
 
     let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
@@ -115,13 +130,15 @@ fn check_warns_on_missing_files() {
         "enabled = true\nfiles = [\"turbo.json\", \".eslintrc.json\"]",
     );
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = StaticFiles;
     let issues = integration.check(&ctx).unwrap();
     assert_eq!(issues.len(), 1);
     assert_eq!(issues[0].severity, Severity::Warning);
-    assert!(issues[0].message.contains(".eslintrc.json"));
+    assert!(issues[0].message.to_string().contains(".eslintrc.json"));
     assert_eq!(issues[0].source, IssueSource::integration("static-files"));
 }
 
@@ -129,16 +146,20 @@ fn check_warns_on_missing_files() {
 fn check_no_issues_when_all_files_present() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
-    write_file(root, "turbo.json", "{}");
-    write_file(root, ".prettierrc", "{}");
+    write_file(&project_dir, "turbo.json", "{}");
+    write_file(&project_dir, ".prettierrc", "{}");
 
     let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let config =
         IntegrationConfig::from_toml("enabled = true\nfiles = [\"turbo.json\", \".prettierrc\"]");
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = StaticFiles;
     let issues = integration.check(&ctx).unwrap();
@@ -154,7 +175,10 @@ fn check_no_issues_when_no_files_configured() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::from_toml("enabled = true");
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    project_on_disk(root, "test-project");
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = StaticFiles;
     let issues = integration.check(&ctx).unwrap();
@@ -180,7 +204,10 @@ fn activate_hook_is_noop() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::from_toml("enabled = true\nfiles = [\"turbo.json\"]");
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    project_on_disk(root, "test-project");
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = StaticFiles;
     let result = integration.activate_hook(&ctx);
@@ -215,7 +242,10 @@ fn activate_fails_when_name_collides_with_workweave_link() {
         link: vec![".beads".to_string()],
         copy: vec![],
     };
-    let ctx = make_ctx_with_workweave(root, &project, &manifest, &config, &cache, &workweave);
+    project_on_disk(root, "test-project");
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, Some(&workweave));
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = StaticFiles;
     let err = integration.activate(&ctx).unwrap_err();
@@ -243,7 +273,10 @@ fn check_emits_error_for_workweave_link_collision() {
         link: vec![".beads".to_string()],
         copy: vec![],
     };
-    let ctx = make_ctx_with_workweave(root, &project, &manifest, &config, &cache, &workweave);
+    project_on_disk(root, "test-project");
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, Some(&workweave));
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = StaticFiles;
     let issues = integration.check(&ctx).unwrap();
@@ -259,9 +292,9 @@ fn check_emits_error_for_workweave_link_collision() {
     let issue = collisions[0];
     assert_eq!(issue.source, IssueSource::integration("static-files"));
     assert!(
-        issue.message.contains(".beads")
-            && issue.message.contains("workweave.link")
-            && issue.message.contains("static-files.files"),
+        issue.message.to_string().contains(".beads")
+            && issue.message.to_string().contains("workweave.link")
+            && issue.message.to_string().contains("static-files.files"),
         "issue should name both integrations and the colliding entry; got: {}",
         issue.message
     );
@@ -287,7 +320,10 @@ fn check_emits_one_error_per_collision() {
         link: vec![".beads".to_string(), ".secrets".to_string()],
         copy: vec![],
     };
-    let ctx = make_ctx_with_workweave(root, &project, &manifest, &config, &cache, &workweave);
+    project_on_disk(root, "test-project");
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, Some(&workweave));
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = StaticFiles;
     let issues = integration.check(&ctx).unwrap();
@@ -301,7 +337,7 @@ fn check_emits_one_error_per_collision() {
         "expected one Severity::Error per collision, got: {issues:?}"
     );
     // Both colliding names should appear across the issue messages.
-    let combined: String = collisions.iter().map(|i| i.message.clone()).collect();
+    let combined: String = collisions.iter().map(|i| i.message.to_string()).collect();
     assert!(combined.contains(".beads"));
     assert!(combined.contains(".secrets"));
 }
@@ -321,7 +357,10 @@ fn check_no_collision_when_workweave_link_empty() {
         link: vec![],
         copy: vec![],
     };
-    let ctx = make_ctx_with_workweave(root, &project, &manifest, &config, &cache, &workweave);
+    project_on_disk(root, "test-project");
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, Some(&workweave));
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = StaticFiles;
     let issues = integration.check(&ctx).unwrap();
@@ -336,8 +375,10 @@ fn check_no_collision_when_workweave_link_empty() {
 fn check_no_collision_when_names_disjoint() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
     write_file(root, ".beads", "");
-    write_file(root, "turbo.json", "{}");
+    write_file(&project_dir, "turbo.json", "{}");
 
     let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
@@ -347,7 +388,9 @@ fn check_no_collision_when_names_disjoint() {
         link: vec![".beads".to_string()],
         copy: vec![],
     };
-    let ctx = make_ctx_with_workweave(root, &project, &manifest, &config, &cache, &workweave);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, Some(&workweave));
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = StaticFiles;
     let issues = integration.check(&ctx).unwrap();
@@ -370,7 +413,10 @@ fn check_no_collision_when_workweave_absent() {
     let config = IntegrationConfig::from_toml("enabled = true\nfiles = [\".beads\"]");
     let cache = HashMap::new();
     // make_ctx -> workweave: None
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    project_on_disk(root, "test-project");
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = StaticFiles;
     let issues = integration.check(&ctx).unwrap();

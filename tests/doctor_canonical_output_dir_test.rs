@@ -19,7 +19,7 @@
 //!    where the sibling file happened to satisfy the check — no finding at all
 //!    for content that was genuinely absent.
 //!
-//! The fix derives `output_dir` inside `WorkspaceSession::context_base` rather
+//! The fix derives `output_dir` inside `IntegrationContextBase::new` rather
 //! than accepting it from the caller, so no verb can bind the root view. These
 //! tests drive the shipped binary end to end: the defect lived in the seam
 //! between doctor's context construction and each integration's read hook,

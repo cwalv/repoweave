@@ -326,7 +326,9 @@ fn doctor_corpus_supplement() -> (Vec<CheckViolation>, Vec<Issue>) {
     let issues = vec![Issue {
         source: IssueSource::integration("go-work"),
         severity: Severity::Error,
-        message: "member-incompatibility: go.work sets `go` to `1.21`".to_owned(),
+        message: "member-incompatibility: go.work sets `go` to `1.21`"
+            .to_owned()
+            .into(),
         kind: IssueKind::MemberIncompatibility(Box::new(MemberIncompatibility::new(
             &GoWork,
             &common::doctor_corpus::path("/ws/projects/proj/go.work"),

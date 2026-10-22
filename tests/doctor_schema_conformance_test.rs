@@ -408,7 +408,7 @@ fn an_issue_publishes_its_source_by_name() {
     let issue = |source| Issue {
         source,
         severity: Severity::Warning,
-        message: "m".to_owned(),
+        message: "m".to_owned().into(),
         kind: IssueKind::CoreFinding,
         safe_to_fix: false,
     };

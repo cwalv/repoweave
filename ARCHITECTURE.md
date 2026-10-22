@@ -111,7 +111,7 @@ module), `fetch`, `init`, `push`, `status`, `sync`, `update`, `prime`, `setup`,
 |---|---|
 | `vcs` (`src/vcs.rs`, 3439) | The `Vcs` trait, its witness and warrant types, and `VcsError`. §6.1. |
 | `git` (`src/git.rs`, 3869) | The one implementor, `GitVcs`, plus `git_command()`. |
-| `integration` (`src/integration.rs`, 618) | The `Integration` trait and `IntegrationContext`; the finding vocabulary `Issue` / `IssueKind` / `MemberIncompatibility` the trait returns. §6.2. |
+| `integration` (`src/integration.rs`, 618) | The `Integration` trait, `IntegrationContextBase` and `IntegrationContext`; the finding vocabulary `Issue` / `IssueKind` / `MemberIncompatibility` the trait returns. §6.2. |
 | `integrations/` | Eight built-in implementors plus `merge.rs`, the managed-file merge engine they share. |
 | `integration_runner` (`src/integration_runner.rs`, 867) | The lifecycle driver: enablement, error containment, and the six entry points that call the trait. |
 | `plugins` (`src/plugins.rs`, 759) | External-subcommand discovery and dispatch. §6.4. |
@@ -510,10 +510,12 @@ not reach this trait.
 `integration_runner` owns the lifecycle, and the division is worth stating
 because the two halves are easy to confuse:
 
-- **`integration.rs`** defines the contract and the per-integration input,
-  `IntegrationContext`.
-- **`integration_runner.rs`** assembles that input once per cycle
-  (`IntegrationContextBase`,), precomputes the on-disk detection cache
+- **`integration.rs`** defines the contract and its input:
+  `IntegrationContextBase`, a `WorkspaceSession` narrowed to one project with
+  the project directory derived from the session's root, and the
+  `IntegrationContext` each integration reads through accessors. Both are
+  built only there (`IntegrationContextBase::new`, `build_context`).
+- **`integration_runner.rs`** precomputes the on-disk detection cache
   (`build_detection_cache`,), filters by enablement, and drives seven
   entry points at `c812509` — `run_activations`, `run_checks`,
   `run_verifications`, `run_member_incompatibilities`,

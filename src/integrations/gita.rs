@@ -33,7 +33,7 @@ impl Gita {
         let mut repo_entries: Vec<(String, String)> = active
             .iter()
             .map(|(rp, _)| {
-                let abs_path = crate::path_spelling::native_join(ctx.workspace_root, rp.as_str());
+                let abs_path = crate::path_spelling::native_join(ctx.workspace_root(), rp.as_str());
                 (abs_path, basename(rp))
             })
             .collect();
@@ -102,11 +102,11 @@ impl Integration for Gita {
             return Ok(Vec::new());
         };
 
-        let gita_dir = ctx.output_dir.join("gita");
+        let gita_dir = ctx.output_dir().join("gita");
         std::fs::create_dir_all(&gita_dir)?;
         for (name, body) in authored {
             std::fs::write(
-                ctx.output_dir
+                ctx.output_dir()
                     .join(crate::path_spelling::native_relative(name)),
                 body,
             )?;
@@ -161,7 +161,7 @@ impl Integration for Gita {
         let mut issues = Vec::new();
         for (name, body) in Self::authored_csvs(ctx).unwrap_or_default() {
             let path = ctx
-                .output_dir
+                .output_dir()
                 .join(crate::path_spelling::native_relative(name));
             match std::fs::read(&path) {
                 Err(e) if e.kind() == ErrorKind::NotFound => {
@@ -206,7 +206,7 @@ impl Integration for Gita {
             .into_iter()
             .filter(|(name, body)| {
                 std::fs::read(
-                    ctx.output_dir
+                    ctx.output_dir()
                         .join(crate::path_spelling::native_relative(name)),
                 )
                 .is_ok_and(|on_disk| on_disk == body.as_bytes())

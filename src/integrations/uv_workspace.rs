@@ -452,7 +452,7 @@ impl Integration for UvWorkspace {
         // last member's path stays behind, in a marked key rwv still owns and
         // would no longer author.
         if paths.is_empty() {
-            Self::strip_managed_region(ctx.output_dir)?;
+            Self::strip_managed_region(ctx.output_dir())?;
             return Ok(Vec::new());
         }
 
@@ -460,7 +460,7 @@ impl Integration for UvWorkspace {
         let mut members = paths;
         members.sort();
 
-        let path = ctx.output_dir.join("pyproject.toml");
+        let path = ctx.output_dir().join("pyproject.toml");
 
         // Step 1: merge-activate the PRIMARY owned keys only (`members` and
         // `package = false` as DefaultOnly). These are the keys that carry the
@@ -472,7 +472,7 @@ impl Integration for UvWorkspace {
         // Step 2: write `[tool.uv.sources].<dep> = { workspace = true }` for
         // each member via a direct toml_edit pass. Source entries do NOT carry
         // the marker (only `members` does) — see module doc.
-        Self::set_workspace_sources(&path, ctx.workspace_root, &members)
+        Self::set_workspace_sources(&path, ctx.workspace_root(), &members)
             .with_context(|| format!("set-workspace-sources {}", path.display()))?;
 
         // `MergeResult.deferred` lists keys the user took the pen on.
@@ -514,14 +514,14 @@ impl Integration for UvWorkspace {
         if repo_paths.is_empty() {
             return Ok(orphaned_region_issues::<TomlDoc>(
                 self.name(),
-                &ctx.output_dir.join("pyproject.toml"),
+                &ctx.output_dir().join("pyproject.toml"),
                 &Self::deactivate_owned_keys(),
                 "rwv.toml declares no uv members, so [tool.uv.workspace] no \
                  longer belongs to rwv.",
             ));
         }
 
-        let path = ctx.output_dir.join("pyproject.toml");
+        let path = ctx.output_dir().join("pyproject.toml");
 
         // ── MISSING ────────────────────────────────────────────────────────
         if !path.exists() {
@@ -571,7 +571,7 @@ impl Integration for UvWorkspace {
         // Runs from workspace_root for the same reason as the other ecosystem
         // hooks (activation symlinks are in place there so uv sees the
         // workspace the user sees).
-        let Some(status) = super::run_install_tool(Self::TOOL, &["sync"], ctx.workspace_root)?
+        let Some(status) = super::run_install_tool(Self::TOOL, &["sync"], ctx.workspace_root())?
         else {
             return Ok(HookOutcome::ToolMissing(MissingTool::of::<Self>()));
         };
@@ -592,13 +592,13 @@ impl Integration for UvWorkspace {
     /// [`CargoWorkspace::owned_paths_on_disk`]: crate::integrations::CargoWorkspace
     fn owned_paths_on_disk(&self, ctx: &IntegrationContext) -> Vec<OwnedPath> {
         if !holds_owned_region::<TomlDoc>(
-            &ctx.output_dir.join("pyproject.toml"),
+            &ctx.output_dir().join("pyproject.toml"),
             &Self::deactivate_owned_keys(),
         ) {
             return vec![];
         }
         let mut paths = vec![OwnedPath::MarkedRegion("pyproject.toml".to_string())];
-        if ctx.output_dir.join("uv.lock").is_file() {
+        if ctx.output_dir().join("uv.lock").is_file() {
             paths.push(OwnedPath::WholeFile("uv.lock".to_string()));
         }
         paths
@@ -632,33 +632,12 @@ impl Integration for UvWorkspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::integration::IntegrationContextBase;
     use crate::integration::IssueKind;
-    use crate::manifest::{IntegrationConfig, ProjectName};
-    use crate::workspace::ContainerKind;
+    use crate::manifest::{IntegrationConfig, Manifest, ProjectName};
+    use crate::workspace::WorkspaceSession;
     use std::collections::HashMap;
     use tempfile::TempDir;
-
-    /// A context over an empty manifest: no repo is declared, so nothing is
-    /// detected and the integration has no `members` list to author.
-    fn ctx_over_no_members<'a>(
-        root: &'a Path,
-        project: &'a ProjectName,
-        config: &'a IntegrationConfig,
-        cache: &'a HashMap<String, Vec<String>>,
-    ) -> IntegrationContext<'a> {
-        IntegrationContext {
-            output_dir: root,
-            workspace_root: root,
-            container_kind: ContainerKind::Primary,
-            project,
-            repos: vec![],
-            config,
-            all_repos_on_disk: &[],
-            all_project_paths: &[],
-            detection_cache: cache,
-            workweave: None,
-        }
-    }
 
     /// The `members` list rwv authored while it had members must not outlive
     /// them: an emptied membership strips it, along with the workspace-true
@@ -670,7 +649,7 @@ mod tests {
         let root = tmp.path();
         let path = write_file(
             &tmp,
-            "pyproject.toml",
+            "projects/test-project/pyproject.toml",
             "[project]\nname = \"demo\"\n\n[tool.uv.workspace]\n# managed by rwv\n\
              members = [\"github/test/pkg\"]\n\n[tool.uv.sources]\npkg = { workspace = true }\n",
         );
@@ -678,7 +657,11 @@ mod tests {
         let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-        let ctx = ctx_over_no_members(root, &project, &config, &cache);
+        let no_members = Manifest::from_toml_str("[repositories]\n").unwrap();
+        std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
+        let session = WorkspaceSession::new(root);
+        let base = IntegrationContextBase::new(&session, &project, &cache, None);
+        let ctx = base.build_context(&config, &no_members);
 
         let issues = UvWorkspace.verify(&ctx).unwrap();
         assert_eq!(issues.len(), 1, "expected one finding, got: {issues:?}");
@@ -702,12 +685,16 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
         let hand_written = "[tool.uv.workspace]\nmembers = [\"github/test/pkg\"]\n";
-        let path = write_file(&tmp, "pyproject.toml", hand_written);
+        let path = write_file(&tmp, "projects/test-project/pyproject.toml", hand_written);
 
         let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-        let ctx = ctx_over_no_members(root, &project, &config, &cache);
+        let no_members = Manifest::from_toml_str("[repositories]\n").unwrap();
+        std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
+        let session = WorkspaceSession::new(root);
+        let base = IntegrationContextBase::new(&session, &project, &cache, None);
+        let ctx = base.build_context(&config, &no_members);
 
         assert!(
             UvWorkspace.verify(&ctx).unwrap().is_empty(),

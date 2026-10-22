@@ -27,7 +27,7 @@
 //! can say so: generated files live in the project dir and are SURFACED at
 //! the weave root via symlinks, for the ACTIVE project alone. A caller that
 //! named the weave root would key the ledger by whichever project happens to
-//! be active. [`crate::workspace::WorkspaceSession::context_base`] derives
+//! be active. [`crate::integration::IntegrationContextBase::new`] derives
 //! `output_dir` rather than accepting one, which is what leaves callers with
 //! nothing else to name.
 //!
@@ -971,7 +971,8 @@ pub fn fully_owned_digest_mismatch_issue(name: &str, path: &Path) -> Issue {
              `rwv materialize --regenerate-drifted` to discard it and regenerate \
              from the current inputs, or restore the file to the recorded content",
             path.display()
-        ),
+        )
+        .into(),
         kind: IssueKind::ManagedFileDrift,
         safe_to_fix: false,
     }
@@ -1480,13 +1481,22 @@ mod tests {
         // House pattern: name the file, the state, and both exits — each
         // spelled as it is invoked, and each runnable in a workweave,
         // which is where a carried attestation puts this finding.
-        assert!(i.message.contains("Cargo.lock"));
-        assert!(i.message.contains("last rwv-accepted generation"));
-        assert!(i.message.contains("rwv materialize --adopt-drifted"));
-        assert!(i.message.contains("rwv materialize --regenerate-drifted"));
-        assert!(i.message.contains("restore the file"));
+        assert!(i.message.to_string().contains("Cargo.lock"));
+        assert!(i
+            .message
+            .to_string()
+            .contains("last rwv-accepted generation"));
+        assert!(i
+            .message
+            .to_string()
+            .contains("rwv materialize --adopt-drifted"));
+        assert!(i
+            .message
+            .to_string()
+            .contains("rwv materialize --regenerate-drifted"));
+        assert!(i.message.to_string().contains("restore the file"));
         assert!(
-            !i.message.contains("rwv activate"),
+            !i.message.to_string().contains("rwv activate"),
             "a workweave refuses that verb, so naming it is the dead end \
              this finding used to be"
         );

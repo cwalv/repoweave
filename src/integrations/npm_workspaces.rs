@@ -156,12 +156,12 @@ impl Integration for NpmWorkspaces {
         // last member's glob stays behind, in a marked key rwv still owns and
         // would no longer author.
         if paths.is_empty() {
-            Self::strip_managed_region(ctx.output_dir)?;
+            Self::strip_managed_region(ctx.output_dir())?;
             return Ok(Vec::new());
         }
-        let paths = expand_workspace_entries(ctx.workspace_root, paths);
+        let paths = expand_workspace_entries(ctx.workspace_root(), paths);
 
-        let path = ctx.output_dir.join("package.json");
+        let path = ctx.output_dir().join("package.json");
 
         // Read the existing package.json (if any) to detect the workspaces
         // shape before calling merge_activate.
@@ -171,7 +171,7 @@ impl Integration for NpmWorkspaces {
             .flatten()
             .and_then(|c| serde_json::from_str(&c).ok());
 
-        let owned = build_owned(existing.as_ref(), paths, ctx.project);
+        let owned = build_owned(existing.as_ref(), paths, ctx.project());
 
         // merge_activate handles: read-or-empty, marker-gated key ownership,
         // set_marker, write back, and preserves all foreign keys untouched.
@@ -222,14 +222,14 @@ impl Integration for NpmWorkspaces {
         if repo_paths.is_empty() {
             return Ok(orphaned_region_issues::<JsonDoc<XRepoweaveMarker>>(
                 self.name(),
-                &ctx.output_dir.join("package.json"),
+                &ctx.output_dir().join("package.json"),
                 &deactivate_owned_keys(),
                 "rwv.toml declares no npm members, so workspaces no longer \
                  belongs to rwv.",
             ));
         }
 
-        let path = ctx.output_dir.join("package.json");
+        let path = ctx.output_dir().join("package.json");
 
         // ── MISSING ────────────────────────────────────────────────────────
         if !path.exists() {
@@ -246,7 +246,7 @@ impl Integration for NpmWorkspaces {
 
         // Compute expected vs on-disk, then defer the dispatch
         // (USER-HELD → DRIFT → CLEAN) to the shared helper.
-        let expected = expand_workspace_entries(ctx.workspace_root, repo_paths);
+        let expected = expand_workspace_entries(ctx.workspace_root(), repo_paths);
         // `None` (no `workspaces` key) is distinct from present-but-empty:
         // an absent key is always DRIFT — preserves the pre-lift Option compare.
         let on_disk = member_globs(pkg.get("workspaces"));
@@ -276,7 +276,7 @@ impl Integration for NpmWorkspaces {
         // Run from workspace_root: the symlink at the root points at the
         // canonical package.json in output_dir, and workspace member
         // paths are resolved relative to the symlink location.
-        let Some(status) = super::run_install_tool(Self::TOOL, &["install"], ctx.workspace_root)?
+        let Some(status) = super::run_install_tool(Self::TOOL, &["install"], ctx.workspace_root())?
         else {
             return Ok(HookOutcome::ToolMissing(MissingTool::of::<Self>()));
         };
@@ -294,13 +294,13 @@ impl Integration for NpmWorkspaces {
     /// [`NpmWorkspaces::deactivate`] already applies before removing the lock.
     fn owned_paths_on_disk(&self, ctx: &IntegrationContext) -> Vec<OwnedPath> {
         if !holds_owned_region::<JsonDoc<XRepoweaveMarker>>(
-            &ctx.output_dir.join("package.json"),
+            &ctx.output_dir().join("package.json"),
             &deactivate_owned_keys(),
         ) {
             return vec![];
         }
         let mut paths = vec![OwnedPath::MarkedRegion("package.json".to_string())];
-        if ctx.output_dir.join("package-lock.json").is_file() {
+        if ctx.output_dir().join("package-lock.json").is_file() {
             paths.push(OwnedPath::WholeFile("package-lock.json".to_string()));
         }
         paths
@@ -347,9 +347,10 @@ impl NpmWorkspaces {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::integration::IntegrationContextBase;
     use crate::integration::IssueKind;
     use crate::manifest::{IntegrationConfig, Manifest, ProjectName, Role};
-    use crate::workspace::ContainerKind;
+    use crate::workspace::WorkspaceSession;
     use std::collections::HashMap;
     use tempfile::TempDir;
 
@@ -365,56 +366,10 @@ mod tests {
         Manifest::from_toml_str(&manifest_toml).unwrap()
     }
 
-    fn make_ctx<'a>(
-        root: &'a Path,
-        project: &'a ProjectName,
-        manifest: &'a Manifest,
-        config: &'a IntegrationConfig,
-        cache: &'a HashMap<String, Vec<String>>,
-    ) -> IntegrationContext<'a> {
-        IntegrationContext {
-            output_dir: root,
-            workspace_root: root,
-            container_kind: ContainerKind::Primary,
-            project,
-            repos: manifest
-                .iter_entries()
-                .map(|(rp, e)| (rp.clone(), e.clone()))
-                .collect(),
-            config,
-            all_repos_on_disk: &[],
-            all_project_paths: &[],
-            detection_cache: cache,
-            workweave: None,
-        }
-    }
-
     fn touch(root: &Path, rel: &str) {
         let path = root.join(rel);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, "").unwrap();
-    }
-
-    /// A context over an empty manifest: no repo is declared, so nothing is
-    /// detected and the integration has no `workspaces` list to author.
-    fn ctx_over_no_members<'a>(
-        root: &'a Path,
-        project: &'a ProjectName,
-        config: &'a IntegrationConfig,
-        cache: &'a HashMap<String, Vec<String>>,
-    ) -> IntegrationContext<'a> {
-        IntegrationContext {
-            output_dir: root,
-            workspace_root: root,
-            container_kind: ContainerKind::Primary,
-            project,
-            repos: vec![],
-            config,
-            all_repos_on_disk: &[],
-            all_project_paths: &[],
-            detection_cache: cache,
-            workweave: None,
-        }
     }
 
     /// The `workspaces` list rwv authored while it had members must not outlive
@@ -424,7 +379,9 @@ mod tests {
     fn emptied_membership_strips_the_marked_workspaces_key() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
-        let path = root.join("package.json");
+        let project_dir = root.join("projects/test-project");
+        std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
+        let path = project_dir.join("package.json");
         std::fs::write(
             &path,
             "{\n  \"name\": \"demo\",\n  \"workspaces\": [\"github/test/pkg\"],\n  \
@@ -435,7 +392,10 @@ mod tests {
         let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-        let ctx = ctx_over_no_members(root, &project, &config, &cache);
+        let no_members = Manifest::from_toml_str("[repositories]\n").unwrap();
+        let session = WorkspaceSession::new(root);
+        let base = IntegrationContextBase::new(&session, &project, &cache, None);
+        let ctx = base.build_context(&config, &no_members);
 
         let issues = NpmWorkspaces.verify(&ctx).unwrap();
         assert_eq!(issues.len(), 1, "expected one finding, got: {issues:?}");
@@ -465,20 +425,25 @@ mod tests {
     fn emptied_membership_keeps_the_lockfile() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
-        let manifest = root.join("package.json");
+        let project_dir = root.join("projects/test-project");
+        std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
+        let manifest = project_dir.join("package.json");
         std::fs::write(
             &manifest,
             "{\n  \"name\": \"demo\",\n  \"workspaces\": [\"github/test/pkg\"],\n  \
              \"x-repoweave\": { \"managed\": true }\n}\n",
         )
         .unwrap();
-        let lock = root.join("package-lock.json");
+        let lock = project_dir.join("package-lock.json");
         std::fs::write(&lock, "{}\n").unwrap();
 
         let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-        let ctx = ctx_over_no_members(root, &project, &config, &cache);
+        let no_members = Manifest::from_toml_str("[repositories]\n").unwrap();
+        let session = WorkspaceSession::new(root);
+        let base = IntegrationContextBase::new(&session, &project, &cache, None);
+        let ctx = base.build_context(&config, &no_members);
 
         NpmWorkspaces.activate(&ctx).unwrap();
         assert!(
@@ -497,14 +462,19 @@ mod tests {
     fn emptied_membership_leaves_an_unmarked_workspaces_key_alone() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
-        let path = root.join("package.json");
+        let project_dir = root.join("projects/test-project");
+        std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
+        let path = project_dir.join("package.json");
         let hand_written = "{\n  \"name\": \"demo\",\n  \"workspaces\": [\"pkg\"]\n}\n";
         std::fs::write(&path, hand_written).unwrap();
 
         let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-        let ctx = ctx_over_no_members(root, &project, &config, &cache);
+        let no_members = Manifest::from_toml_str("[repositories]\n").unwrap();
+        let session = WorkspaceSession::new(root);
+        let base = IntegrationContextBase::new(&session, &project, &cache, None);
+        let ctx = base.build_context(&config, &no_members);
 
         assert!(
             NpmWorkspaces.verify(&ctx).unwrap().is_empty(),
@@ -533,7 +503,10 @@ mod tests {
         let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-        let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+        std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
+        let session = WorkspaceSession::new(root);
+        let base = IntegrationContextBase::new(&session, &project, &cache, None);
+        let ctx = base.build_context(&config, &manifest);
 
         let integration = NpmWorkspaces;
         let generated = integration.generated_files(&ctx);

@@ -8,6 +8,8 @@ use super::*;
 fn auto_detects_all_repos() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // vscode-workspace uses all repos (not filtered by manifest file)
     let manifest = make_manifest(vec![
@@ -17,17 +19,21 @@ fn auto_detects_all_repos() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = VscodeWorkspace;
     integration.activate(&ctx).unwrap();
-    assert!(root.join("test-project.code-workspace").exists());
+    assert!(project_dir.join("test-project.code-workspace").exists());
 }
 
 #[test]
 fn generates_code_workspace_file_with_folders_and_settings() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/web-app");
+    project_on_disk(root, "web-app");
 
     let manifest = make_manifest(vec![
         ("github/chatly/server", Role::Owned),
@@ -36,12 +42,14 @@ fn generates_code_workspace_file_with_folders_and_settings() {
     let project = ProjectName::new("web-app").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = VscodeWorkspace;
     integration.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("web-app.code-workspace")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("web-app.code-workspace")).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
 
     let folders = parsed["folders"].as_array().unwrap();
@@ -65,28 +73,34 @@ fn generates_code_workspace_file_with_folders_and_settings() {
 fn project_name_appears_in_filename() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/my-project");
+    project_on_disk(root, "my-project");
 
     let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
     let project = ProjectName::new("my-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = VscodeWorkspace;
     integration.activate(&ctx).unwrap();
-    assert!(root.join("my-project.code-workspace").exists());
+    assert!(project_dir.join("my-project.code-workspace").exists());
 }
 
 #[test]
 fn preserves_user_customizations_on_reactivation() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // Pre-existing rwv-managed workspace file with user customizations.
     // The marker is what makes this a re-activation rather than a seizure
     // of a hand-authored file.
     write_file(
-        root,
+        &project_dir,
         "test-project.code-workspace",
         r#"{
   "rwv.generated": true,
@@ -106,12 +120,14 @@ fn preserves_user_customizations_on_reactivation() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = VscodeWorkspace;
     integration.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("test-project.code-workspace")).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
 
     // Folders should be updated
@@ -181,19 +197,24 @@ fn check_validates_workspace_file_exists() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    project_on_disk(root, "test-project");
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = VscodeWorkspace;
     let issues = integration.check(&ctx).unwrap();
-    assert!(issues
-        .iter()
-        .any(|i| i.severity == Severity::Warning && i.message.contains("code-workspace")));
+    assert!(issues.iter().any(
+        |i| i.severity == Severity::Warning && i.message.to_string().contains("code-workspace")
+    ));
 }
 
 #[test]
 fn files_exclude_hides_non_project_repos() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // Active project has github/chatly/server.
     // github/acme/web is on disk but not in the project.
@@ -201,31 +222,18 @@ fn files_exclude_hides_non_project_repos() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
 
-    let all_repos_on_disk: Vec<RepoPath> = vec![
-        RepoPath::new("github/chatly/server").expect("known-safe literal"),
-        RepoPath::new("github/acme/web").expect("known-safe literal"),
-    ];
+    for repo in ["github/chatly/server", "github/acme/web"] {
+        clone_on_disk(root, repo);
+    }
 
     let cache = HashMap::new();
-    let ctx = IntegrationContext {
-        output_dir: root,
-        workspace_root: root,
-        container_kind: ContainerKind::Primary,
-        project: &project,
-        repos: manifest
-            .iter_entries()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config: &config,
-        all_repos_on_disk: &all_repos_on_disk,
-        all_project_paths: &[],
-        detection_cache: &cache,
-        workweave: None,
-    };
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     VscodeWorkspace.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("test-project.code-workspace")).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
 
     let exclude = &parsed["settings"]["files.exclude"];
@@ -242,37 +250,26 @@ fn files_exclude_hides_non_project_repos() {
 fn files_exclude_hides_other_projects() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/proj-a");
+    project_on_disk(root, "proj-a");
 
     let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
     let project = ProjectName::new("proj-a").unwrap();
     let config = IntegrationConfig::default();
 
-    let all_repos_on_disk: Vec<RepoPath> =
-        vec![RepoPath::new("github/acme/server").expect("known-safe literal")];
-    let all_project_paths = vec![
-        ProjectName::new("proj-a").unwrap(),
-        ProjectName::new("proj-b").unwrap(),
-    ];
+    clone_on_disk(root, "github/acme/server");
+    for name in ["proj-a", "proj-b"] {
+        project_on_disk(root, name);
+    }
 
-    let ctx = IntegrationContext {
-        output_dir: root,
-        workspace_root: root,
-        container_kind: ContainerKind::Primary,
-        project: &project,
-        repos: manifest
-            .iter_entries()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config: &config,
-        all_repos_on_disk: &all_repos_on_disk,
-        all_project_paths: &all_project_paths,
-        detection_cache: &HashMap::new(),
-        workweave: None,
-    };
+    let cache = HashMap::new();
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     VscodeWorkspace.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("proj-a.code-workspace")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("proj-a.code-workspace")).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
     let exclude = &parsed["settings"]["files.exclude"];
 
@@ -286,16 +283,20 @@ fn files_exclude_hides_other_projects() {
 fn files_exclude_hides_dotfiles_by_default() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     VscodeWorkspace.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("test-project.code-workspace")).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
 
     assert_eq!(
@@ -309,16 +310,20 @@ fn files_exclude_hides_dotfiles_by_default() {
 fn files_exclude_respects_hide_dotfiles_false() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::from_toml("hide-dotfiles = false");
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     VscodeWorkspace.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("test-project.code-workspace")).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
 
     assert!(
@@ -331,6 +336,8 @@ fn files_exclude_respects_hide_dotfiles_false() {
 fn files_exclude_collapses_paths() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // Active project has only github/acme/server.
     // All other repos are under github/other — should collapse to github/other.
@@ -338,32 +345,22 @@ fn files_exclude_collapses_paths() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
 
-    let all_repos_on_disk: Vec<RepoPath> = vec![
-        RepoPath::new("github/acme/server").expect("known-safe literal"),
-        RepoPath::new("github/other/alpha").expect("known-safe literal"),
-        RepoPath::new("github/other/beta").expect("known-safe literal"),
-    ];
+    for repo in [
+        "github/acme/server",
+        "github/other/alpha",
+        "github/other/beta",
+    ] {
+        clone_on_disk(root, repo);
+    }
 
     let cache = HashMap::new();
-    let ctx = IntegrationContext {
-        output_dir: root,
-        workspace_root: root,
-        container_kind: ContainerKind::Primary,
-        project: &project,
-        repos: manifest
-            .iter_entries()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config: &config,
-        all_repos_on_disk: &all_repos_on_disk,
-        all_project_paths: &[],
-        detection_cache: &cache,
-        workweave: None,
-    };
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     VscodeWorkspace.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("test-project.code-workspace")).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
     let exclude = &parsed["settings"]["files.exclude"];
 
@@ -390,16 +387,20 @@ fn files_exclude_collapses_paths() {
 fn git_settings_seeded_on_fresh_workspace() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     VscodeWorkspace.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("test-project.code-workspace")).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
 
     assert_eq!(
@@ -417,10 +418,12 @@ fn git_settings_seeded_on_fresh_workspace() {
 fn git_settings_user_values_preserved_on_reactivate() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // Pre-existing workspace with user-customized git settings and rwv marker.
     write_file(
-        root,
+        &project_dir,
         "test-project.code-workspace",
         r#"{
   "rwv.generated": { "managed": true, "files.exclude": [] },
@@ -437,11 +440,13 @@ fn git_settings_user_values_preserved_on_reactivate() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     VscodeWorkspace.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("test-project.code-workspace")).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
 
     assert_eq!(

@@ -6,6 +6,14 @@ claim that nothing changed in them.
 
 ## Unreleased
 
+### `cargo-patch-shadowing` reads the project's own weave-level patches
+
+`rwv doctor` read the weave-level `[patch]` tables for `cargo-patch-shadowing`
+from `Cargo.toml` and `.cargo/config.toml` at the weave root, which are the
+active project's files. For any other project the finding compared its members
+against the active project's patches. It now reads `projects/<project>/`, and
+`weave_config` names that file, as the derived-patch precheck already did.
+
 ### `rwv doctor` text names a commit by its 12-character abbreviation
 
 `rwv doctor` and `rwv doctor --locked` printed full 40-character commit ids

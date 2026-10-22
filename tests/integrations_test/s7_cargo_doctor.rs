@@ -25,7 +25,7 @@ use repoweave::integrations::CargoWorkspace;
 fn cargo_toml_issues(issues: Vec<Issue>) -> Vec<Issue> {
     issues
         .into_iter()
-        .filter(|i| !i.message.contains("Cargo.lock"))
+        .filter(|i| !i.message.to_string().contains("Cargo.lock"))
         .collect()
 }
 
@@ -48,7 +48,10 @@ fn s7_cargo_doctor_missing_reports_finding() {
     let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    project_on_disk(root, "test-project");
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let issues = cargo_toml_issues(CargoWorkspace.verify(&ctx).unwrap());
     assert_eq!(
@@ -59,12 +62,12 @@ fn s7_cargo_doctor_missing_reports_finding() {
     let issue = &issues[0];
     assert!(issue.safe_to_fix, "MISSING issue must be safe_to_fix");
     assert!(
-        issue.message.contains("missing"),
+        issue.message.to_string().contains("missing"),
         "MISSING issue message should contain 'missing': {}",
         issue.message
     );
     assert!(
-        issue.message.contains("rwv doctor --fix"),
+        issue.message.to_string().contains("rwv doctor --fix"),
         "MISSING issue message should mention 'rwv doctor --fix': {}",
         issue.message
     );
@@ -81,6 +84,8 @@ fn s7_cargo_doctor_missing_reports_finding() {
 fn s7_cargo_doctor_missing_fixed_by_activate() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     let config = IntegrationConfig::from_toml(
         "[members.\"github/cwalv/rvtty\"]\ninclude = [\"daemon\", \"client\", \"common\"]\n",
@@ -88,7 +93,9 @@ fn s7_cargo_doctor_missing_fixed_by_activate() {
     let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     // Pre-condition: MISSING.
     let pre_issues = cargo_toml_issues(CargoWorkspace.verify(&ctx).unwrap());
@@ -99,7 +106,7 @@ fn s7_cargo_doctor_missing_fixed_by_activate() {
     CargoWorkspace.activate(&ctx).unwrap();
 
     // Cargo.toml must exist now.
-    let cargo_toml_path = root.join("Cargo.toml");
+    let cargo_toml_path = project_dir.join("Cargo.toml");
     assert!(
         cargo_toml_path.exists(),
         "Cargo.toml must be created after activate"
@@ -164,12 +171,14 @@ fn s7_cargo_doctor_missing_fixed_by_activate() {
 fn s7_cargo_doctor_drift_reports_finding() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // Write a Cargo.toml with per-key rwv markers but only one member (outdated).
     // Marker format: `# managed by rwv` as a prefix decoration on each owned key,
     // matching what TomlDoc's merge_activate produces.
     write_file(
-        root,
+        &project_dir,
         "Cargo.toml",
         "[workspace]\n# managed by rwv\nmembers = [\"github/cwalv/rvtty/daemon\"]\n# managed by rwv\nresolver = \"2\"\n",
     );
@@ -181,7 +190,9 @@ fn s7_cargo_doctor_drift_reports_finding() {
     let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let issues = cargo_toml_issues(CargoWorkspace.verify(&ctx).unwrap());
     assert_eq!(
@@ -192,7 +203,7 @@ fn s7_cargo_doctor_drift_reports_finding() {
     let issue = &issues[0];
     assert!(issue.safe_to_fix, "DRIFT issue must be safe_to_fix");
     assert!(
-        issue.message.contains("drift"),
+        issue.message.to_string().contains("drift"),
         "DRIFT issue message should contain 'drift': {}",
         issue.message
     );
@@ -205,10 +216,12 @@ fn s7_cargo_doctor_drift_reports_finding() {
 fn s7_cargo_doctor_drift_fixed_by_activate() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // Seed: only daemon in members (drift), with per-key markers.
     write_file(
-        root,
+        &project_dir,
         "Cargo.toml",
         "[workspace]\n# managed by rwv\nmembers = [\"github/cwalv/rvtty/daemon\"]\n# managed by rwv\nresolver = \"2\"\n",
     );
@@ -219,7 +232,9 @@ fn s7_cargo_doctor_drift_fixed_by_activate() {
     let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     // Pre-condition: DRIFT.
     let pre_issues = cargo_toml_issues(CargoWorkspace.verify(&ctx).unwrap());
@@ -236,7 +251,7 @@ fn s7_cargo_doctor_drift_fixed_by_activate() {
     );
 
     // Confirm common is now in the file.
-    let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("Cargo.toml")).unwrap();
     assert!(
         content.contains("\"github/cwalv/rvtty/common\""),
         "common must be in members after fix: {content}"
@@ -253,10 +268,12 @@ fn s7_cargo_doctor_drift_fixed_by_activate() {
 fn s7_cargo_doctor_user_held_reports_finding() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // No "# managed by rwv" marker — user holds the pen.
     write_file(
-        root,
+        &project_dir,
         "Cargo.toml",
         "[workspace]\nmembers = [\"github/cwalv/rvtty/daemon\"]\nresolver = \"2\"\n",
     );
@@ -266,7 +283,9 @@ fn s7_cargo_doctor_user_held_reports_finding() {
     let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let issues = cargo_toml_issues(CargoWorkspace.verify(&ctx).unwrap());
     assert_eq!(
@@ -280,7 +299,8 @@ fn s7_cargo_doctor_user_held_reports_finding() {
         "USER-HELD issue must NOT be safe_to_fix (safe_to_fix=false)"
     );
     assert!(
-        issue.message.contains("NOT auto-take-over") || issue.message.contains("not auto"),
+        issue.message.to_string().contains("NOT auto-take-over")
+            || issue.message.to_string().contains("not auto"),
         "USER-HELD issue must describe no-takeover: {}",
         issue.message
     );
@@ -295,10 +315,12 @@ fn s7_cargo_doctor_user_held_reports_finding() {
 fn s7_cargo_doctor_user_held_file_unchanged_after_activate() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     let original_content =
         "[workspace]\nmembers = [\"github/cwalv/rvtty/daemon\"]\nresolver = \"2\"\n";
-    write_file(root, "Cargo.toml", original_content);
+    write_file(&project_dir, "Cargo.toml", original_content);
 
     let config = IntegrationConfig::from_toml(
         "[members.\"github/cwalv/rvtty\"]\ninclude = [\"daemon\", \"common\"]\n",
@@ -306,7 +328,9 @@ fn s7_cargo_doctor_user_held_file_unchanged_after_activate() {
     let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     // Verify reports USER-HELD with safe_to_fix=false.
     let issues = cargo_toml_issues(CargoWorkspace.verify(&ctx).unwrap());
@@ -321,7 +345,7 @@ fn s7_cargo_doctor_user_held_file_unchanged_after_activate() {
     // the [workspace] content is left intact (merge defers to user).
     CargoWorkspace.activate(&ctx).unwrap();
 
-    let after_content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+    let after_content = std::fs::read_to_string(project_dir.join("Cargo.toml")).unwrap();
     assert!(
         !after_content.contains("# managed by rwv"),
         "user-held file must NOT have rwv markers added by activate: {after_content}"
@@ -351,7 +375,10 @@ fn s7_cargo_doctor_clean_after_fresh_activate() {
     let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    project_on_disk(root, "test-project");
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     CargoWorkspace.activate(&ctx).unwrap();
 
@@ -375,6 +402,8 @@ fn s7_cargo_doctor_clean_after_fresh_activate() {
 fn resolver_default_only_greenfield_sets_resolver_2() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     touch(root, "github/cwalv/myrepo/Cargo.toml");
 
@@ -382,11 +411,13 @@ fn resolver_default_only_greenfield_sets_resolver_2() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     CargoWorkspace.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("Cargo.toml")).unwrap();
     assert!(
         content.contains("resolver = \"2\""),
         "greenfield activate must write resolver = \"2\": {content}"
@@ -403,10 +434,12 @@ fn resolver_default_only_greenfield_sets_resolver_2() {
 fn resolver_default_only_no_resolver_key_sets_resolver_2() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // File has marker+members but no resolver.
     write_file(
-        root,
+        &project_dir,
         "Cargo.toml",
         "[workspace]\n# managed by rwv\nmembers = [\"github/cwalv/rvtty/daemon\"]\n",
     );
@@ -417,11 +450,13 @@ fn resolver_default_only_no_resolver_key_sets_resolver_2() {
     let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     CargoWorkspace.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("Cargo.toml")).unwrap();
     assert!(
         content.contains("resolver = \"2\""),
         "activate must write resolver = \"2\" when key is absent: {content}"
@@ -438,10 +473,12 @@ fn resolver_default_only_no_resolver_key_sets_resolver_2() {
 fn resolver_default_only_operator_override_preserved() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // Cargo.toml seeded with resolver = "1" and the managed marker.
     write_file(
-        root,
+        &project_dir,
         "Cargo.toml",
         "[workspace]\n# managed by rwv\nmembers = [\"github/cwalv/rvtty/daemon\"]\n\
              # managed by rwv\nresolver = \"1\"\n",
@@ -453,11 +490,13 @@ fn resolver_default_only_operator_override_preserved() {
     let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     CargoWorkspace.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("Cargo.toml")).unwrap();
     assert!(
         content.contains("resolver = \"1\""),
         "activate must NOT overwrite operator's resolver = \"1\": {content}"
@@ -479,12 +518,14 @@ fn resolver_default_only_operator_override_preserved() {
 fn resolver_default_only_drift_is_clean() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     touch(root, "github/cwalv/rvtty/daemon/Cargo.toml");
 
     // members matches config; resolver deviates from default "2".
     write_file(
-        root,
+        &project_dir,
         "Cargo.toml",
         "[workspace]\n# managed by rwv\nmembers = [\"github/cwalv/rvtty/daemon\"]\n\
              # managed by rwv\nresolver = \"1\"\n",
@@ -495,7 +536,9 @@ fn resolver_default_only_drift_is_clean() {
     let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let issues = cargo_toml_issues(CargoWorkspace.verify(&ctx).unwrap());
     assert!(
@@ -514,10 +557,12 @@ fn resolver_default_only_drift_is_clean() {
 fn resolver_default_only_members_drift_still_reported() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // members is stale (only daemon), config expects daemon + client.
     write_file(
-        root,
+        &project_dir,
         "Cargo.toml",
         "[workspace]\n# managed by rwv\nmembers = [\"github/cwalv/rvtty/daemon\"]\n\
              # managed by rwv\nresolver = \"2\"\n",
@@ -529,7 +574,9 @@ fn resolver_default_only_members_drift_still_reported() {
     let manifest = make_manifest(vec![("github/cwalv/rvtty", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let issues = cargo_toml_issues(CargoWorkspace.verify(&ctx).unwrap());
     assert_eq!(
@@ -539,7 +586,7 @@ fn resolver_default_only_members_drift_still_reported() {
     );
     assert!(issues[0].safe_to_fix, "DRIFT issue must be safe_to_fix");
     assert!(
-        issues[0].message.contains("drift"),
+        issues[0].message.to_string().contains("drift"),
         "DRIFT issue message should contain 'drift': {}",
         issues[0].message
     );
@@ -580,11 +627,11 @@ fn s7_6_fixture() -> (
     // Repo with a Cargo.toml so `has_active_cargo_work` returns true.
     touch(root, "github/cwalv/mylib/Cargo.toml");
 
-    // Write a clean, marker-decorated root Cargo.toml matching the config
+    // Write a clean, marker-decorated Cargo.toml matching the config
     // so the hybrid Cargo.toml arm of verify() is CLEAN.
     write_file(
         root,
-        "Cargo.toml",
+        "projects/test-project/Cargo.toml",
         "[workspace]\n# managed by rwv\nmembers = [\"github/cwalv/mylib\"]\n\
              # managed by rwv\nresolver = \"2\"\n",
     );
@@ -608,10 +655,14 @@ fn s7_6_fixture() -> (
 fn s7_6_cargo_lock_missing_reports_drift_naming_doctor_fix() {
     let (tmp, project, manifest, config, cache) = s7_6_fixture();
     let root = tmp.path();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     // Confirm Cargo.lock is absent (fixture doesn't create it).
-    assert!(!root.join("Cargo.lock").exists());
+    assert!(!project_dir.join("Cargo.lock").exists());
 
     let issues = CargoWorkspace.verify(&ctx).unwrap();
     assert_eq!(
@@ -626,19 +677,19 @@ fn s7_6_cargo_lock_missing_reports_drift_naming_doctor_fix() {
     );
     // Message must name the file (house pattern: name the file).
     assert!(
-        issue.message.contains("Cargo.lock"),
+        issue.message.to_string().contains("Cargo.lock"),
         "MISSING message must name the file: {}",
         issue.message
     );
     // Message must name the state (house pattern: name the state).
     assert!(
-        issue.message.contains("missing"),
+        issue.message.to_string().contains("missing"),
         "MISSING message must name the state ('missing'): {}",
         issue.message
     );
     // Message must name the repair verb (house pattern: name the repair).
     assert!(
-        issue.message.contains("rwv doctor --fix"),
+        issue.message.to_string().contains("rwv doctor --fix"),
         "MISSING message must name `rwv doctor --fix`: {}",
         issue.message
     );
@@ -652,11 +703,15 @@ fn s7_6_cargo_lock_missing_reports_drift_naming_doctor_fix() {
 fn s7_6_cargo_lock_corrupt_reports_drift_naming_doctor_fix() {
     let (tmp, project, manifest, config, cache) = s7_6_fixture();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // Write garbage bytes — not a valid TOML document.
-    write_file(root, "Cargo.lock", "this is not toml \x00 [[[");
+    write_file(&project_dir, "Cargo.lock", "this is not toml \x00 [[[");
 
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
     let issues = CargoWorkspace.verify(&ctx).unwrap();
     assert_eq!(
         issues.len(),
@@ -669,17 +724,17 @@ fn s7_6_cargo_lock_corrupt_reports_drift_naming_doctor_fix() {
         "corrupt Cargo.lock is safe_to_fix (doctor --fix regenerates)"
     );
     assert!(
-        issue.message.contains("Cargo.lock"),
+        issue.message.to_string().contains("Cargo.lock"),
         "DRIFT message must name the file: {}",
         issue.message
     );
     assert!(
-        issue.message.contains("drift"),
+        issue.message.to_string().contains("drift"),
         "DRIFT message must name the state ('drift'): {}",
         issue.message
     );
     assert!(
-        issue.message.contains("rwv doctor --fix"),
+        issue.message.to_string().contains("rwv doctor --fix"),
         "DRIFT message must name `rwv doctor --fix`: {}",
         issue.message
     );
@@ -695,16 +750,20 @@ fn s7_6_cargo_lock_corrupt_reports_drift_naming_doctor_fix() {
 fn s7_6_cargo_lock_present_and_parseable_is_clean() {
     let (tmp, project, manifest, config, cache) = s7_6_fixture();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // Minimal valid Cargo.lock shape (top-level version + empty package
     // array is enough for the parse-only check).
     write_file(
-        root,
+        &project_dir,
         "Cargo.lock",
         "version = 3\n\n[[package]]\nname = \"mylib\"\nversion = \"0.1.0\"\n",
     );
 
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
     let issues = CargoWorkspace.verify(&ctx).unwrap();
     assert!(
         issues.is_empty(),
@@ -720,12 +779,16 @@ fn s7_6_cargo_lock_present_and_parseable_is_clean() {
 fn s7_6_cargo_lock_never_reports_user_held() {
     let (tmp, project, manifest, config, cache) = s7_6_fixture();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // A "user-authored" Cargo.lock analog: valid TOML, no rwv marker.
     // Fully-owned semantics say this is CLEAN, not USER-HELD.
-    write_file(root, "Cargo.lock", "version = 3\n");
+    write_file(&project_dir, "Cargo.lock", "version = 3\n");
 
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
     let issues = CargoWorkspace.verify(&ctx).unwrap();
 
     // No issue at all. If there were an issue, it must NOT be
@@ -751,23 +814,27 @@ fn s7_6_cargo_lock_never_reports_user_held() {
 fn s7_6_hybrid_user_held_unchanged_by_fully_owned_split() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // No "# managed by rwv" marker — user holds the pen on Cargo.toml.
     write_file(
-        root,
+        &project_dir,
         "Cargo.toml",
         "[workspace]\nmembers = [\"github/cwalv/mylib\"]\nresolver = \"2\"\n",
     );
     touch(root, "github/cwalv/mylib/Cargo.toml");
     // Cargo.lock is present + parseable so the fully-owned arm is CLEAN.
-    write_file(root, "Cargo.lock", "version = 3\n");
+    write_file(&project_dir, "Cargo.lock", "version = 3\n");
 
     let config =
         IntegrationConfig::from_toml("[members.\"github/cwalv/mylib\"]\ninclude = [\".\"]\n");
     let manifest = make_manifest(vec![("github/cwalv/mylib", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let issues = CargoWorkspace.verify(&ctx).unwrap();
     assert_eq!(
@@ -805,17 +872,21 @@ fn s7_6_hybrid_user_held_unchanged_by_fully_owned_split() {
 fn s7_7_activate_hook_refuses_when_managed_file_missing() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // Repo has a Cargo.toml so has_active_cargo_work=true, but the
     // ROOT (output_dir) Cargo.toml is absent — the C3 gap shape.
     touch(root, "github/cwalv/mylib/Cargo.toml");
-    assert!(!root.join("Cargo.toml").exists());
+    assert!(!project_dir.join("Cargo.toml").exists());
 
     let config = IntegrationConfig::default();
     let manifest = make_manifest(vec![("github/cwalv/mylib", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let err = CargoWorkspace
         .activate_hook(&ctx)
@@ -848,24 +919,28 @@ fn s7_7_activate_hook_refuses_when_managed_file_missing() {
 fn s7_7_activate_intent_regenerates_missing_managed_file() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     touch(root, "github/cwalv/mylib/Cargo.toml");
-    assert!(!root.join("Cargo.toml").exists());
+    assert!(!project_dir.join("Cargo.toml").exists());
 
     let config = IntegrationConfig::default();
     let manifest = make_manifest(vec![("github/cwalv/mylib", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     // Intent mode (what doctor --fix invokes) DOES author.
     CargoWorkspace.activate(&ctx).unwrap();
 
     assert!(
-        root.join("Cargo.toml").exists(),
+        project_dir.join("Cargo.toml").exists(),
         "activate() (intent mode) must regenerate the missing managed file"
     );
-    let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("Cargo.toml")).unwrap();
     assert!(
         content.contains("# managed by rwv"),
         "regenerated Cargo.toml must carry the rwv marker: {content}"
@@ -884,7 +959,7 @@ fn s7_7_activate_intent_regenerates_missing_managed_file() {
              got: {post_issues:?}"
     );
     assert!(
-        post_issues[0].message.contains("Cargo.lock"),
+        post_issues[0].message.to_string().contains("Cargo.lock"),
         "remaining issue must be for Cargo.lock, got: {}",
         post_issues[0].message
     );
@@ -921,19 +996,23 @@ use repoweave::owned_state::stamp_owned_digest;
 fn s7_8_cargo_rewrite_valid_toml_reports_warning_with_both_exits() {
     let (tmp, project, manifest, config, cache) = s7_6_fixture();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // The generation rwv accepted (simulating the activation hook's
     // stamp — the hook itself needs real cargo; e2e covers it).
     let accepted = "version = 3\n\n[[package]]\nname = \"mylib\"\nversion = \"0.1.0\"\n";
-    write_file(root, "Cargo.lock", accepted);
-    stamp_owned_digest(root, "Cargo.lock", accepted.as_bytes()).unwrap();
+    write_file(&project_dir, "Cargo.lock", accepted);
+    stamp_owned_digest(&project_dir, "Cargo.lock", accepted.as_bytes()).unwrap();
 
     // Out-of-band cargo rewrite: still perfectly valid TOML — the parse
     // check CANNOT see this. (A dep version was bumped.)
     let rewritten = "version = 3\n\n[[package]]\nname = \"mylib\"\nversion = \"0.2.0\"\n";
-    write_file(root, "Cargo.lock", rewritten);
+    write_file(&project_dir, "Cargo.lock", rewritten);
 
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
     let issues = CargoWorkspace.verify(&ctx).unwrap();
     assert_eq!(
         issues.len(),
@@ -952,7 +1031,7 @@ fn s7_8_cargo_rewrite_valid_toml_reports_warning_with_both_exits() {
     );
     // House pattern: name the file.
     assert!(
-        issue.message.contains("Cargo.lock"),
+        issue.message.to_string().contains("Cargo.lock"),
         "must name the file: {}",
         issue.message
     );
@@ -960,6 +1039,7 @@ fn s7_8_cargo_rewrite_valid_toml_reports_warning_with_both_exits() {
     assert!(
         issue
             .message
+            .to_string()
             .contains("differs from the last rwv-accepted generation"),
         "must name the state: {}",
         issue.message
@@ -969,24 +1049,28 @@ fn s7_8_cargo_rewrite_valid_toml_reports_warning_with_both_exits() {
     // end, and `rwv activate` — what this used to name — is refused in a
     // workweave.
     assert!(
-        issue.message.contains("rwv materialize --adopt-drifted"),
+        issue
+            .message
+            .to_string()
+            .contains("rwv materialize --adopt-drifted"),
         "must name the adopt exit: {}",
         issue.message
     );
     assert!(
         issue
             .message
+            .to_string()
             .contains("rwv materialize --regenerate-drifted"),
         "must name the regenerate exit: {}",
         issue.message
     );
     assert!(
-        issue.message.contains("restore the file"),
+        issue.message.to_string().contains("restore the file"),
         "must name the restore exit: {}",
         issue.message
     );
     assert!(
-        !issue.message.contains("rwv activate"),
+        !issue.message.to_string().contains("rwv activate"),
         "naming a verb the workweave refuses is the defect this fixed: {}",
         issue.message
     );
@@ -1000,14 +1084,18 @@ fn s7_8_cargo_rewrite_valid_toml_reports_warning_with_both_exits() {
 fn s7_8_reactivation_restamp_returns_clean() {
     let (tmp, project, manifest, config, cache) = s7_6_fixture();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
-    write_file(root, "Cargo.lock", "version = 3\n");
-    stamp_owned_digest(root, "Cargo.lock", b"version = 3\n").unwrap();
+    write_file(&project_dir, "Cargo.lock", "version = 3\n");
+    stamp_owned_digest(&project_dir, "Cargo.lock", b"version = 3\n").unwrap();
 
     // Out-of-band rewrite → mismatch.
     let rewritten = "version = 4\n";
-    write_file(root, "Cargo.lock", rewritten);
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    write_file(&project_dir, "Cargo.lock", rewritten);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
     assert_eq!(
         CargoWorkspace.verify(&ctx).unwrap().len(),
         1,
@@ -1016,7 +1104,7 @@ fn s7_8_reactivation_restamp_returns_clean() {
 
     // ACCEPT exit: re-activation re-runs the hook, which re-stamps the
     // now-current content.
-    stamp_owned_digest(root, "Cargo.lock", rewritten.as_bytes()).unwrap();
+    stamp_owned_digest(&project_dir, "Cargo.lock", rewritten.as_bytes()).unwrap();
 
     let issues = CargoWorkspace.verify(&ctx).unwrap();
     assert!(
@@ -1033,13 +1121,17 @@ fn s7_8_reactivation_restamp_returns_clean() {
 fn s7_8_restore_exit_returns_clean_without_restamp() {
     let (tmp, project, manifest, config, cache) = s7_6_fixture();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     let accepted = "version = 3\n";
-    write_file(root, "Cargo.lock", accepted);
-    stamp_owned_digest(root, "Cargo.lock", accepted.as_bytes()).unwrap();
-    write_file(root, "Cargo.lock", "version = 4\n");
+    write_file(&project_dir, "Cargo.lock", accepted);
+    stamp_owned_digest(&project_dir, "Cargo.lock", accepted.as_bytes()).unwrap();
+    write_file(&project_dir, "Cargo.lock", "version = 4\n");
 
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
     assert_eq!(
         CargoWorkspace.verify(&ctx).unwrap().len(),
         1,
@@ -1047,7 +1139,7 @@ fn s7_8_restore_exit_returns_clean_without_restamp() {
     );
 
     // RESTORE exit: put the accepted bytes back.
-    write_file(root, "Cargo.lock", accepted);
+    write_file(&project_dir, "Cargo.lock", accepted);
 
     let issues = CargoWorkspace.verify(&ctx).unwrap();
     assert!(
@@ -1063,12 +1155,16 @@ fn s7_8_restore_exit_returns_clean_without_restamp() {
 fn s7_8_no_digest_state_skips_axis_silently() {
     let (tmp, project, manifest, config, cache) = s7_6_fixture();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // Any valid-TOML content; no .rwv-owned-digests anywhere.
-    write_file(root, "Cargo.lock", "version = 3\n");
-    assert!(!root.join(".rwv-owned-digests").exists());
+    write_file(&project_dir, "Cargo.lock", "version = 3\n");
+    assert!(!project_dir.join(".rwv-owned-digests").exists());
 
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
     let issues = CargoWorkspace.verify(&ctx).unwrap();
     assert!(
         issues.is_empty(),
@@ -1089,13 +1185,15 @@ fn s7_8_no_digest_state_skips_axis_silently() {
 fn s7_8_digest_state_survives_fix_of_other_issues() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     touch(root, "github/cwalv/mylib/Cargo.toml");
 
     // Cargo.toml with markers but STALE members (drift: config expects
     // mylib, file names a repo that no longer exists).
     write_file(
-        root,
+        &project_dir,
         "Cargo.toml",
         "[workspace]\n# managed by rwv\nmembers = [\"github/cwalv/oldlib\"]\n\
              # managed by rwv\nresolver = \"2\"\n",
@@ -1103,27 +1201,29 @@ fn s7_8_digest_state_survives_fix_of_other_issues() {
 
     // Stamped, matching Cargo.lock.
     let lock = "version = 3\n";
-    write_file(root, "Cargo.lock", lock);
-    stamp_owned_digest(root, "Cargo.lock", lock.as_bytes()).unwrap();
-    let digest_before = std::fs::read_to_string(root.join(".rwv-owned-digests")).unwrap();
+    write_file(&project_dir, "Cargo.lock", lock);
+    stamp_owned_digest(&project_dir, "Cargo.lock", lock.as_bytes()).unwrap();
+    let digest_before = std::fs::read_to_string(project_dir.join(".rwv-owned-digests")).unwrap();
 
     let config = IntegrationConfig::default();
     let manifest = make_manifest(vec![("github/cwalv/mylib", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     // Precondition: exactly one issue, and it is the Cargo.toml drift
     // (safe_to_fix) — the lock axis is clean.
     let pre = CargoWorkspace.verify(&ctx).unwrap();
     assert_eq!(pre.len(), 1, "precondition: only the toml drift: {pre:?}");
-    assert!(pre[0].safe_to_fix && !pre[0].message.contains("Cargo.lock"));
+    assert!(pre[0].safe_to_fix && !pre[0].message.to_string().contains("Cargo.lock"));
 
     // doctor --fix write path for the OTHER issue.
     CargoWorkspace.activate(&ctx).unwrap();
 
     // Digest state untouched.
-    let digest_after = std::fs::read_to_string(root.join(".rwv-owned-digests")).unwrap();
+    let digest_after = std::fs::read_to_string(project_dir.join(".rwv-owned-digests")).unwrap();
     assert_eq!(
         digest_before, digest_after,
         "fixing an unrelated issue must not touch the digest state"
@@ -1145,13 +1245,17 @@ fn s7_8_digest_state_survives_fix_of_other_issues() {
 fn s7_8_unparseable_mutation_reports_parse_fail_not_digest_mismatch() {
     let (tmp, project, manifest, config, cache) = s7_6_fixture();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
-    write_file(root, "Cargo.lock", "version = 3\n");
-    stamp_owned_digest(root, "Cargo.lock", b"version = 3\n").unwrap();
+    write_file(&project_dir, "Cargo.lock", "version = 3\n");
+    stamp_owned_digest(&project_dir, "Cargo.lock", b"version = 3\n").unwrap();
     // Mutation produced garbage, not valid TOML.
-    write_file(root, "Cargo.lock", "half a write [[[");
+    write_file(&project_dir, "Cargo.lock", "half a write [[[");
 
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
     let issues = CargoWorkspace.verify(&ctx).unwrap();
     assert_eq!(issues.len(), 1, "exactly one finding, got: {issues:?}");
     assert!(
@@ -1159,7 +1263,7 @@ fn s7_8_unparseable_mutation_reports_parse_fail_not_digest_mismatch() {
         "parse-fail must win (regeneration is the exit): {issues:?}"
     );
     assert!(
-        issues[0].message.contains("rwv doctor --fix"),
+        issues[0].message.to_string().contains("rwv doctor --fix"),
         "parse-fail names the regeneration verb: {}",
         issues[0].message
     );

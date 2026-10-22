@@ -141,11 +141,11 @@ impl Integration for GoWork {
         // last member's path stays behind, in a marked key rwv still owns and
         // would no longer author.
         if paths.is_empty() {
-            Self::strip_managed_region(ctx.output_dir)?;
+            Self::strip_managed_region(ctx.output_dir())?;
             return Ok(Vec::new());
         }
 
-        let go_work_path = ctx.output_dir.join("go.work");
+        let go_work_path = ctx.output_dir().join("go.work");
 
         // ── USER-HELD OWNERSHIP GUARD ──────────────────────────────────────
         // Parity with cargo-workspace: if go.work already exists with a `use`
@@ -185,7 +185,7 @@ impl Integration for GoWork {
         let go_version_override: Option<String> = cfg
             .go_version
             .clone()
-            .or_else(|| max_go_version(&paths, ctx.workspace_root));
+            .or_else(|| max_go_version(&paths, ctx.workspace_root()));
 
         if let Some(go) = go_program() {
             activate_via_go_tool(
@@ -193,7 +193,7 @@ impl Integration for GoWork {
                 &go_work_path,
                 &paths,
                 go_version_override.as_deref(),
-                ctx.workspace_root,
+                ctx.workspace_root(),
             )?;
         } else {
             activate_via_hand_edit(&go_work_path, &paths, go_version_override.as_deref())?;
@@ -248,14 +248,14 @@ impl Integration for GoWork {
         if repo_paths.is_empty() {
             return Ok(orphaned_region_issues::<GoWorkDoc>(
                 self.name(),
-                &ctx.output_dir.join("go.work"),
+                &ctx.output_dir().join("go.work"),
                 &Self::owned_keys(),
                 "rwv.toml declares no go members, so the use block no longer \
                  belongs to rwv.",
             ));
         }
 
-        let path = ctx.output_dir.join("go.work");
+        let path = ctx.output_dir().join("go.work");
 
         // ── MISSING ────────────────────────────────────────────────────────
         if !path.exists() {
@@ -336,7 +336,7 @@ impl Integration for GoWork {
             return Ok(None);
         }
 
-        let path = ctx.output_dir.join("go.work");
+        let path = ctx.output_dir().join("go.work");
         let Some(on_disk_raw) = read_go_directive_from_file(&path) else {
             return Ok(None);
         };
@@ -344,7 +344,7 @@ impl Integration for GoWork {
             return Ok(None);
         };
         let Some((required, required_raw, required_member)) =
-            max_member_go_requirement(&repo_paths, ctx.workspace_root)
+            max_member_go_requirement(&repo_paths, ctx.workspace_root())
         else {
             return Ok(None);
         };
@@ -373,7 +373,7 @@ impl Integration for GoWork {
     /// `go.work.sum` and rwv has never authored a byte of one, so it is
     /// surfaced without ever being owned here.
     fn owned_paths_on_disk(&self, ctx: &IntegrationContext) -> Vec<OwnedPath> {
-        if holds_owned_region::<GoWorkDoc>(&ctx.output_dir.join("go.work"), &Self::owned_keys()) {
+        if holds_owned_region::<GoWorkDoc>(&ctx.output_dir().join("go.work"), &Self::owned_keys()) {
             vec![OwnedPath::MarkedRegion("go.work".to_string())]
         } else {
             vec![]
@@ -875,9 +875,10 @@ fn max_go_version(paths: &[impl AsRef<str>], workspace_root: &Path) -> Option<St
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::integration::IntegrationContextBase;
     use crate::integration::{IssueKind, IssueSource};
     use crate::manifest::{Manifest, ProjectName, Role};
-    use crate::workspace::ContainerKind;
+    use crate::workspace::WorkspaceSession;
     use std::collections::HashMap;
     use tempfile::TempDir;
 
@@ -898,30 +899,6 @@ mod tests {
             ));
         }
         Manifest::from_toml_str(&manifest_toml).unwrap()
-    }
-
-    fn make_ctx_local<'a>(
-        root: &'a Path,
-        project: &'a ProjectName,
-        manifest: &'a Manifest,
-        config: &'a IntegrationConfig,
-        cache: &'a HashMap<String, Vec<String>>,
-    ) -> IntegrationContext<'a> {
-        IntegrationContext {
-            output_dir: root,
-            workspace_root: root,
-            container_kind: ContainerKind::Primary,
-            project,
-            repos: manifest
-                .iter_entries()
-                .map(|(rp, e)| (rp.clone(), e.clone()))
-                .collect(),
-            config,
-            all_repos_on_disk: &[],
-            all_project_paths: &[],
-            detection_cache: cache,
-            workweave: None,
-        }
     }
 
     fn touch(root: &Path, rel: &str) {
@@ -949,10 +926,12 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
+        let project_dir = root.join("projects/test-project");
+        std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
 
         // Pre-existing go.work with replace directive (no marker — no use block yet).
         let seed = "go 1.26\n\n// pin local fork of legacy\nreplace example.com/legacy => ./vendor/legacy\n";
-        write_file(root, "go.work", seed);
+        write_file(&project_dir, "go.work", seed);
 
         // Two repos with go.mod files.
         touch(root, "github/test/repoweave/go.mod");
@@ -965,12 +944,14 @@ mod tests {
         let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::default(); // go_version = None
         let cache = HashMap::new();
-        let ctx = make_ctx_local(root, &project, &manifest, &config, &cache);
+        let session = WorkspaceSession::new(root);
+        let base = IntegrationContextBase::new(&session, &project, &cache, None);
+        let ctx = base.build_context(&config, &manifest);
 
         let integration = GoWork;
         integration.activate(&ctx).unwrap();
 
-        let text = std::fs::read_to_string(root.join("go.work")).unwrap();
+        let text = std::fs::read_to_string(project_dir.join("go.work")).unwrap();
 
         // use block has both repos.
         assert!(
@@ -1020,6 +1001,8 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
+        let project_dir = root.join("projects/test-project");
+        std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
 
         // Pre-existing go.work with three entries under the marker.
         let seed = concat!(
@@ -1033,7 +1016,7 @@ mod tests {
             "\t./github/test/another-module\n",
             ")\n"
         );
-        write_file(root, "go.work", seed);
+        write_file(&project_dir, "go.work", seed);
 
         // Only two repos remain in the manifest (another-module removed).
         touch(root, "github/test/repoweave/go.mod");
@@ -1046,12 +1029,14 @@ mod tests {
         let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-        let ctx = make_ctx_local(root, &project, &manifest, &config, &cache);
+        let session = WorkspaceSession::new(root);
+        let base = IntegrationContextBase::new(&session, &project, &cache, None);
+        let ctx = base.build_context(&config, &manifest);
 
         let integration = GoWork;
         integration.activate(&ctx).unwrap();
 
-        let text = std::fs::read_to_string(root.join("go.work")).unwrap();
+        let text = std::fs::read_to_string(project_dir.join("go.work")).unwrap();
 
         // Removed entry is gone.
         assert!(
@@ -1212,10 +1197,12 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
+        let project_dir = root.join("projects/test-project");
+        std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
 
         // Hand-written go.work: use block present but NO managed-by marker.
         let seed = "go 1.26\n\nuse (\n\t./mine\n)\n";
-        write_file(root, "go.work", seed);
+        write_file(&project_dir, "go.work", seed);
 
         // A repo with a go.mod so activate() and verify() detect repos.
         touch(root, "github/test/repoweave/go.mod");
@@ -1224,13 +1211,15 @@ mod tests {
         let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-        let ctx = make_ctx_local(root, &project, &manifest, &config, &cache);
+        let session = WorkspaceSession::new(root);
+        let base = IntegrationContextBase::new(&session, &project, &cache, None);
+        let ctx = base.build_context(&config, &manifest);
 
         let integration = GoWork;
 
         // activate() must return Ok(()) without touching the file.
         integration.activate(&ctx).unwrap();
-        let text_after = std::fs::read_to_string(root.join("go.work")).unwrap();
+        let text_after = std::fs::read_to_string(project_dir.join("go.work")).unwrap();
         assert_eq!(
             text_after, seed,
             "activate() must not mutate a user-held go.work"
@@ -1249,7 +1238,8 @@ mod tests {
             "USER-HELD issue must have safe_to_fix=false: {issue:?}"
         );
         assert!(
-            issue.message.contains("unmarked") || issue.message.contains("user content"),
+            issue.message.to_string().contains("unmarked")
+                || issue.message.to_string().contains("user content"),
             "issue message should describe the USER-HELD condition: {}",
             issue.message
         );
@@ -1265,6 +1255,8 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
+        let project_dir = root.join("projects/test-project");
+        std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
 
         // No existing go.work.
         touch(root, "github/test/repoweave/go.mod");
@@ -1274,12 +1266,14 @@ mod tests {
         // Set go_version explicitly in config.
         let config = IntegrationConfig::from_toml("go-version = \"1.23\"");
         let cache = HashMap::new();
-        let ctx = make_ctx_local(root, &project, &manifest, &config, &cache);
+        let session = WorkspaceSession::new(root);
+        let base = IntegrationContextBase::new(&session, &project, &cache, None);
+        let ctx = base.build_context(&config, &manifest);
 
         let integration = GoWork;
         integration.activate(&ctx).unwrap();
 
-        let text = std::fs::read_to_string(root.join("go.work")).unwrap();
+        let text = std::fs::read_to_string(project_dir.join("go.work")).unwrap();
         assert!(
             text.contains("go 1.23"),
             "config go-version must be written: {text}"
@@ -1298,16 +1292,20 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
+        let project_dir = root.join("projects/test-project");
+        std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
         touch(root, "github/test/repoweave/go.mod");
 
         let manifest = make_manifest_local(vec![("github/test/repoweave", Role::Owned)]);
         let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::from_toml("go-version = 122");
         let cache = HashMap::new();
-        let ctx = make_ctx_local(root, &project, &manifest, &config, &cache);
+        let session = WorkspaceSession::new(root);
+        let base = IntegrationContextBase::new(&session, &project, &cache, None);
+        let ctx = base.build_context(&config, &manifest);
 
         let issues = hook(&ctx).unwrap();
-        (issues, root.join("go.work").exists())
+        (issues, project_dir.join("go.work").exists())
     }
 
     fn assert_one_malformed_go_version(issues: &[Issue]) {
@@ -1317,7 +1315,7 @@ mod tests {
         assert_eq!(issue.kind, IssueKind::MalformedSettings);
         assert_eq!(issue.source, IssueSource::integration("go-work"));
         assert!(
-            issue.message.contains("go-version"),
+            issue.message.to_string().contains("go-version"),
             "the finding names the key: {}",
             issue.message
         );
@@ -1356,6 +1354,8 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
+        let project_dir = root.join("projects/test-project");
+        std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
 
         // Existing go.work with go 1.26.
         let seed = concat!(
@@ -1365,7 +1365,7 @@ mod tests {
             "\t./github/test/repoweave\n",
             ")\n"
         );
-        write_file(root, "go.work", seed);
+        write_file(&project_dir, "go.work", seed);
 
         // Member go.mod with go 1.24 — lower than the existing 1.26.
         write_file(
@@ -1378,12 +1378,14 @@ mod tests {
         let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::default(); // go_version = None
         let cache = HashMap::new();
-        let ctx = make_ctx_local(root, &project, &manifest, &config, &cache);
+        let session = WorkspaceSession::new(root);
+        let base = IntegrationContextBase::new(&session, &project, &cache, None);
+        let ctx = base.build_context(&config, &manifest);
 
         let integration = GoWork;
         integration.activate(&ctx).unwrap();
 
-        let text = std::fs::read_to_string(root.join("go.work")).unwrap();
+        let text = std::fs::read_to_string(project_dir.join("go.work")).unwrap();
 
         // go 1.26 must be preserved — DefaultOnly never overwrites.
         assert!(
@@ -1448,7 +1450,7 @@ mod tests {
     fn seed_pin_below_member(root: &Path) {
         write_file(
             root,
-            "go.work",
+            "projects/test-project/go.work",
             &format!(
                 "go {PINNED_GO}\n\n// managed by repoweave\nuse (\n\t./github/test/repoweave\n)\n"
             ),
@@ -1465,7 +1467,10 @@ mod tests {
         let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::default(); // go_version = None
         let cache = HashMap::new();
-        let ctx = make_ctx_local(root, &project, &manifest, &config, &cache);
+        std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
+        let session = WorkspaceSession::new(root);
+        let base = IntegrationContextBase::new(&session, &project, &cache, None);
+        let ctx = base.build_context(&config, &manifest);
         GoWork.activate(&ctx).unwrap();
     }
 
@@ -1488,7 +1493,7 @@ mod tests {
 
         activate_in(root);
 
-        let text = std::fs::read_to_string(root.join("go.work")).unwrap();
+        let text = std::fs::read_to_string(root.join("projects/test-project/go.work")).unwrap();
         assert!(
             text.contains(&format!("go {PINNED_GO}")),
             "go {PINNED_GO} must survive `go work use` (DefaultOnly): {text}"
@@ -1526,9 +1531,11 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
+        let project_dir = root.join("projects/test-project");
+        std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
 
         write_file(
-            root,
+            &project_dir,
             "go.work",
             "// managed by repoweave\nuse ./github/test/repoweave\n",
         );
@@ -1550,11 +1557,13 @@ mod tests {
         let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-        let ctx = make_ctx_local(root, &project, &manifest, &config, &cache);
+        let session = WorkspaceSession::new(root);
+        let base = IntegrationContextBase::new(&session, &project, &cache, None);
+        let ctx = base.build_context(&config, &manifest);
 
         GoWork.activate(&ctx).unwrap();
 
-        let text = std::fs::read_to_string(root.join("go.work")).unwrap();
+        let text = std::fs::read_to_string(project_dir.join("go.work")).unwrap();
         assert_eq!(
             text.matches("// managed by repoweave").count(),
             1,
@@ -1617,7 +1626,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         seed(tmp.path());
         activate_in(tmp.path());
-        std::fs::read_to_string(tmp.path().join("go.work")).unwrap()
+        std::fs::read_to_string(tmp.path().join("projects/test-project/go.work")).unwrap()
     }
 
     /// Greenfield, and a member whose go.mod carries no `go` directive — legal
@@ -1654,7 +1663,7 @@ mod tests {
 
         activate_in(root);
 
-        let text = std::fs::read_to_string(root.join("go.work")).unwrap();
+        let text = std::fs::read_to_string(root.join("projects/test-project/go.work")).unwrap();
         assert!(
             go_directive_in(&text).is_none(),
             "`go work init` seeds the running toolchain's version; rwv must not \
@@ -1682,7 +1691,7 @@ mod tests {
 
         activate_in(root);
 
-        let text = std::fs::read_to_string(root.join("go.work")).unwrap();
+        let text = std::fs::read_to_string(root.join("projects/test-project/go.work")).unwrap();
         assert!(
             go_directive_in(&text).is_none(),
             "rwv must not invent a go-line it has no value for: {text}"
@@ -1713,7 +1722,7 @@ mod tests {
         seed_pin_below_member(root);
         write_file(
             root,
-            "go.work",
+            "projects/test-project/go.work",
             &format!(
                 "go {PINNED_GO}\n\ntoolchain go{MEMBER_GO}.0\n\n\
                  // managed by repoweave\nuse (\n\t./github/test/repoweave\n)\n"
@@ -1722,7 +1731,7 @@ mod tests {
 
         activate_in(root);
 
-        let text = std::fs::read_to_string(root.join("go.work")).unwrap();
+        let text = std::fs::read_to_string(root.join("projects/test-project/go.work")).unwrap();
         assert!(
             text.contains(&format!("toolchain go{MEMBER_GO}.0")),
             "the operator's toolchain line must survive activate: {text}"
@@ -1740,6 +1749,8 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
+        let project_dir = root.join("projects/test-project");
+        std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
 
         // No existing go.work. Member go.mod reports go 1.22.
         write_file(
@@ -1752,12 +1763,14 @@ mod tests {
         let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::default(); // go_version = None
         let cache = HashMap::new();
-        let ctx = make_ctx_local(root, &project, &manifest, &config, &cache);
+        let session = WorkspaceSession::new(root);
+        let base = IntegrationContextBase::new(&session, &project, &cache, None);
+        let ctx = base.build_context(&config, &manifest);
 
         let integration = GoWork;
         integration.activate(&ctx).unwrap();
 
-        let text = std::fs::read_to_string(root.join("go.work")).unwrap();
+        let text = std::fs::read_to_string(project_dir.join("go.work")).unwrap();
 
         // go 1.22 written from max_go_version (DefaultOnly on a missing key).
         assert!(
@@ -1777,6 +1790,8 @@ mod tests {
 
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
+        let project_dir = root.join("projects/test-project");
+        std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
 
         // go.work with marker + use block but NO go-line.
         let seed = concat!(
@@ -1785,7 +1800,7 @@ mod tests {
             "\t./github/test/repoweave\n",
             ")\n"
         );
-        write_file(root, "go.work", seed);
+        write_file(&project_dir, "go.work", seed);
 
         // Member go.mod reports go 1.23.
         write_file(
@@ -1798,12 +1813,14 @@ mod tests {
         let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::default(); // go_version = None
         let cache = HashMap::new();
-        let ctx = make_ctx_local(root, &project, &manifest, &config, &cache);
+        let session = WorkspaceSession::new(root);
+        let base = IntegrationContextBase::new(&session, &project, &cache, None);
+        let ctx = base.build_context(&config, &manifest);
 
         let integration = GoWork;
         integration.activate(&ctx).unwrap();
 
-        let text = std::fs::read_to_string(root.join("go.work")).unwrap();
+        let text = std::fs::read_to_string(project_dir.join("go.work")).unwrap();
 
         // go 1.23 must be written — DefaultOnly fills an absent key.
         assert!(
@@ -1823,6 +1840,8 @@ mod tests {
     fn go_directive_default_only_drift_is_clean() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
+        let project_dir = root.join("projects/test-project");
+        std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
 
         let seed = concat!(
             "go 1.21\n\n",
@@ -1831,7 +1850,7 @@ mod tests {
             "\t./github/test/repoweave\n",
             ")\n"
         );
-        write_file(root, "go.work", seed);
+        write_file(&project_dir, "go.work", seed);
 
         write_file(
             root,
@@ -1843,7 +1862,9 @@ mod tests {
         let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-        let ctx = make_ctx_local(root, &project, &manifest, &config, &cache);
+        let session = WorkspaceSession::new(root);
+        let base = IntegrationContextBase::new(&session, &project, &cache, None);
+        let ctx = base.build_context(&config, &manifest);
 
         let issues = GoWork.verify(&ctx).unwrap();
         assert!(
@@ -1868,7 +1889,10 @@ mod tests {
         let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-        let ctx = make_ctx_local(root, &project, &manifest, &config, &cache);
+        std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
+        let session = WorkspaceSession::new(root);
+        let base = IntegrationContextBase::new(&session, &project, &cache, None);
+        let ctx = base.build_context(&config, &manifest);
 
         let integration = GoWork;
         let gen = integration.generated_files(&ctx);
@@ -1906,7 +1930,7 @@ mod tests {
             }
             None => "// managed by repoweave\nuse (\n\t./github/test/repoweave\n)\n".to_string(),
         };
-        write_file(root, "go.work", &seed);
+        write_file(root, "projects/test-project/go.work", &seed);
         write_file(
             root,
             "github/test/repoweave/go.mod",
@@ -1921,7 +1945,9 @@ mod tests {
         config: &IntegrationConfig,
         cache: &HashMap<String, Vec<String>>,
     ) -> Option<MemberIncompatibility> {
-        let ctx = make_ctx_local(root, project, manifest, config, cache);
+        let session = WorkspaceSession::new(root);
+        let base = IntegrationContextBase::new(&session, project, cache, None);
+        let ctx = base.build_context(config, manifest);
         GoWork.member_incompatibility(&ctx).unwrap()
     }
 
@@ -1934,7 +1960,7 @@ mod tests {
         let uses: String = members.iter().map(|(p, _)| format!("\t./{p}\n")).collect();
         write_file(
             root,
-            "go.work",
+            "projects/test-project/go.work",
             &format!("go {go_work_version}\n\n// managed by repoweave\nuse (\n{uses})\n"),
         );
         for (path, version) in members {
@@ -1992,17 +2018,21 @@ mod tests {
             "member-incompatibility is never auto-repairable: {issue:?}"
         );
         assert!(
-            issue.message.contains("member-incompatibility"),
+            issue.message.to_string().contains("member-incompatibility"),
             "message must carry the kind tag; got: {}",
             issue.message
         );
         assert!(
-            issue.message.contains("1.21") && issue.message.contains("1.26"),
+            issue.message.to_string().contains("1.21")
+                && issue.message.to_string().contains("1.26"),
             "message must name both the on-disk value and the requirement; got: {}",
             issue.message
         );
         assert!(
-            issue.message.contains("github/test/repoweave/go.mod"),
+            issue
+                .message
+                .to_string()
+                .contains("github/test/repoweave/go.mod"),
             "message must name the member carrying the requirement; got: {}",
             issue.message
         );
@@ -2016,19 +2046,19 @@ mod tests {
 
         // Both remedies, in both directions — the operator's choice, not rwv's.
         assert!(
-            issue.message.contains("raise"),
+            issue.message.to_string().contains("raise"),
             "message must offer raising the managed value; got: {}",
             issue.message
         );
         assert!(
-            issue.message.contains("lower the requirement"),
+            issue.message.to_string().contains("lower the requirement"),
             "message must offer lowering the member requirement; got: {}",
             issue.message
         );
         // `--fix` re-runs activate(), which refuses to overwrite an existing
         // DefaultOnly value by design. Advertising it would be a lie.
         assert!(
-            !issue.message.contains("--fix"),
+            !issue.message.to_string().contains("--fix"),
             "message must never advertise --fix; got: {}",
             issue.message
         );
@@ -2106,24 +2136,29 @@ mod tests {
         let issue = found.into_issue();
 
         assert!(
-            issue.message.contains("github/test/member-b/go.mod"),
+            issue
+                .message
+                .to_string()
+                .contains("github/test/member-b/go.mod"),
             "message must name the member carrying the strongest requirement; got: {}",
             issue.message
         );
         assert!(
-            issue.message.contains("1.26"),
+            issue.message.to_string().contains("1.26"),
             "message must report the strongest requirement, not a weaker one; got: {}",
             issue.message
         );
         // Naming a member the pin already satisfies would send the operator to
         // a file that needs no change.
         assert!(
-            !issue.message.contains("1.20") && !issue.message.contains("member-a"),
+            !issue.message.to_string().contains("1.20")
+                && !issue.message.to_string().contains("member-a"),
             "message must not name a member the pin already satisfies; got: {}",
             issue.message
         );
         assert!(
-            !issue.message.contains("1.22") && !issue.message.contains("member-c"),
+            !issue.message.to_string().contains("1.22")
+                && !issue.message.to_string().contains("member-c"),
             "message must not name a member the pin already satisfies; got: {}",
             issue.message
         );
@@ -2160,7 +2195,10 @@ mod tests {
         let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-        let ctx = make_ctx_local(root, &project, &manifest, &config, &cache);
+        std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
+        let session = WorkspaceSession::new(root);
+        let base = IntegrationContextBase::new(&session, &project, &cache, None);
+        let ctx = base.build_context(&config, &manifest);
 
         let drift = GoWork.verify(&ctx).unwrap();
         assert!(

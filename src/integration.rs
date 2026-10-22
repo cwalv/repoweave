@@ -4,8 +4,10 @@
 //! from the repo list. Each integration participates in activation (write path)
 //! and check (read-only inspection).
 
-use crate::manifest::{IntegrationConfig, ProjectName, RepoEntry, RepoPath, WorkweaveConfig};
-use crate::workspace::ContainerKind;
+use crate::manifest::{
+    IntegrationConfig, Manifest, ProjectName, RepoEntry, RepoPath, WorkweaveConfig,
+};
+use crate::workspace::{project_dir, ContainerKind, WorkspaceSession};
 use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -14,74 +16,153 @@ use std::path::{Path, PathBuf};
 // Integration context — shared input for all integrations
 // ---------------------------------------------------------------------------
 
-/// Everything an integration needs to do its work.
+/// What every integration in one run shares: the session's view of the weave,
+/// narrowed to one project.
 ///
-/// Constructed once per activation/check cycle and passed to each integration.
-/// Immutable — integrations read this, then write to the filesystem.
+/// Built only by [`IntegrationContextBase::new`], which derives the project's
+/// output directory instead of taking it.
+pub struct IntegrationContextBase<'a> {
+    session: &'a WorkspaceSession,
+    output_dir: PathBuf,
+    project: &'a ProjectName,
+    detection_cache: &'a HashMap<String, Vec<String>>,
+    workweave: Option<&'a WorkweaveConfig>,
+}
+
+impl<'a> IntegrationContextBase<'a> {
+    /// `session` narrowed to `project`.
+    ///
+    /// The output directory is `<root>/projects/<project>`, where an
+    /// integration's managed and generated files live, and is not a caller's
+    /// choice: the weave root is the other directory a caller could hand over,
+    /// and there the same files appear only as surfacing symlinks, for the
+    /// active project alone. A context bound to the root reads the active
+    /// project's inode whichever project it claims to describe, and names a
+    /// path that does not exist for a file that is missing. Whether the root
+    /// carries the symlink is [`crate::activate::verify_surfacing`]'s axis.
+    ///
+    /// The root, its container kind and the repos and projects on disk all
+    /// come from `session`, which observed them together, so no caller can
+    /// pair a root with a kind or a view taken from somewhere else.
+    ///
+    /// `detection_cache` is [`crate::integration_runner::build_detection_cache`]'s
+    /// result for the integrations about to run; an empty cache makes every
+    /// detection a live scan. `workweave` is the project's `workweave:`
+    /// section, threaded through so an integration can see a name both it and
+    /// `workweave.link` claim.
+    pub fn new(
+        session: &'a WorkspaceSession,
+        project: &'a ProjectName,
+        detection_cache: &'a HashMap<String, Vec<String>>,
+        workweave: Option<&'a WorkweaveConfig>,
+    ) -> Self {
+        Self {
+            session,
+            output_dir: project_dir(session.root(), project),
+            project,
+            detection_cache,
+            workweave,
+        }
+    }
+
+    /// The directory the project's integration files live in:
+    /// `<workspace_root>/projects/<project>`.
+    pub fn output_dir(&self) -> &Path {
+        &self.output_dir
+    }
+
+    /// The weave root the session observed.
+    pub fn workspace_root(&self) -> &'a Path {
+        self.session.root()
+    }
+
+    pub fn project(&self) -> &'a ProjectName {
+        self.project
+    }
+
+    /// The context one integration runs with: this base, `manifest`'s repos,
+    /// and the integration's own `config`.
+    pub fn build_context(
+        &'a self,
+        config: &'a IntegrationConfig,
+        manifest: &'a Manifest,
+    ) -> IntegrationContext<'a> {
+        IntegrationContext {
+            base: self,
+            repos: manifest
+                .iter_entries()
+                .map(|(rp, e)| (rp.clone(), e.clone()))
+                .collect(),
+            config,
+        }
+    }
+}
+
+/// Everything an integration needs to do its work, read through accessors.
+///
+/// Built only by [`IntegrationContextBase::build_context`], once per
+/// integration per run. Immutable — integrations read this, then write to the
+/// filesystem.
 pub struct IntegrationContext<'a> {
-    /// The directory an integration's managed and generated files live in:
-    /// `<workspace_root>/projects/<project>`, in every weave and for every
-    /// verb. Write hooks author here and read hooks inspect here, so a finding
-    /// names the same path whichever verb produced it.
-    ///
-    /// This is **not** the weave root. The same files are surfaced there as
-    /// symlinks, but only for the *active* project and only when the source
-    /// exists — a view that answers a different question, and one that
-    /// [`crate::workspace::WorkspaceSession::context_base`] makes impossible
-    /// to bind here. Whether the root carries the symlink is
-    /// [`crate::activate::verify_surfacing`]'s axis, not an integration's.
-    pub output_dir: &'a Path,
-
-    /// The weave root: the directory holding `projects/` and the registry
-    /// dirs the repos live under. Used for detecting manifest files (e.g.,
-    /// `Cargo.toml`, `package.json`) inside repos, which is why it is distinct
-    /// from `output_dir` — the repos are siblings of `projects/`, not children
-    /// of the project directory. Bound to the weave the verb is acting on:
-    /// the primary root at primary, the workweave directory inside one.
-    pub workspace_root: &'a Path,
-
-    /// Which kind of container `workspace_root` is. The verb that resolved
-    /// the workspace already answered this when it resolved a `Checkout`;
-    /// an integration that wants the answer reads it here rather than
-    /// re-deriving it by testing `workspace_root` for a marker file.
-    pub container_kind: ContainerKind,
-
-    /// The active project name.
-    pub project: &'a ProjectName,
-
-    /// Repo entries from the project's `rwv.toml`, as an ordered list of
-    /// `(path, entry)` pairs. Sorted by `RepoPath` (matches the BTreeMap
-    /// iteration order in the manifest). Integrations only iterate this
-    /// field; no random-access lookups are needed.
-    pub repos: Vec<(RepoPath, RepoEntry)>,
-
-    /// Per-integration config from the `integrations:` key in `rwv.toml`.
-    pub config: &'a IntegrationConfig,
-
-    /// All git repos found on disk under registry directories (relative paths).
-    /// Computed once, shared across integrations.
-    pub all_repos_on_disk: &'a [RepoPath],
-
-    /// All project paths (e.g., `["web-app", "mobile-app"]`).
-    /// Computed once, shared across integrations.
-    pub all_project_paths: &'a [ProjectName],
-
-    /// Pre-computed detection cache mapping manifest filenames to lists of
-    /// repo paths that contain that manifest. Populated once per
-    /// activation/check cycle before any integrations run.
-    pub detection_cache: &'a HashMap<String, Vec<String>>,
-
-    /// The project's `workweave:` config from `rwv.toml`, if any.
-    ///
-    /// Made visible so integrations can detect cross-section collisions
-    /// (e.g. a name claimed by both `static-files.files` and
-    /// `workweave.link`). Defaults to `None` for projects with no
-    /// `workweave:` section. Integrations that don't care about workweave
-    /// config should leave this untouched.
-    pub workweave: Option<&'a WorkweaveConfig>,
+    base: &'a IntegrationContextBase<'a>,
+    repos: Vec<(RepoPath, RepoEntry)>,
+    config: &'a IntegrationConfig,
 }
 
 impl<'a> IntegrationContext<'a> {
+    /// The directory an integration's managed and generated files live in:
+    /// `<workspace_root>/projects/<project>`, in every weave and for every
+    /// verb. Write hooks author here and read hooks inspect here, so a finding
+    /// names the same path whichever verb produced it. Not the weave root:
+    /// see [`IntegrationContextBase::new`].
+    pub fn output_dir(&self) -> &'a Path {
+        self.base.output_dir()
+    }
+
+    /// The weave root: the directory holding `projects/` and the registry
+    /// dirs the repos live under, which is where manifest files inside repos
+    /// are detected. The primary root at primary, the workweave directory
+    /// inside one.
+    pub fn workspace_root(&self) -> &'a Path {
+        self.base.workspace_root()
+    }
+
+    /// Which kind of container [`Self::workspace_root`] is, as observed with
+    /// it.
+    pub fn container_kind(&self) -> ContainerKind {
+        self.base.session.container_kind()
+    }
+
+    pub fn project(&self) -> &'a ProjectName {
+        self.base.project
+    }
+
+    /// Repo entries from the project's `rwv.toml`, sorted by `RepoPath`.
+    pub fn repos(&self) -> &[(RepoPath, RepoEntry)] {
+        &self.repos
+    }
+
+    /// This integration's `[integrations.<name>]` block from `rwv.toml`.
+    pub fn config(&self) -> &'a IntegrationConfig {
+        self.config
+    }
+
+    /// Every repo on disk under the registry directories, as the session found
+    /// it.
+    pub fn all_repos_on_disk(&self) -> &'a [RepoPath] {
+        self.base.session.repos_on_disk()
+    }
+
+    /// Every project under `projects/`, as the session found it.
+    pub fn all_project_paths(&self) -> &'a [ProjectName] {
+        self.base.session.project_paths()
+    }
+
+    /// The project's `workweave:` section from `rwv.toml`, if any.
+    pub fn workweave(&self) -> Option<&'a WorkweaveConfig> {
+        self.base.workweave
+    }
+
     /// The typed settings for `integration`, or the finding to report when its
     /// `rwv.toml` block does not deserialize into them.
     ///
@@ -107,7 +188,8 @@ impl<'a> IntegrationContext<'a> {
                  integration's settings: {}. Correct the field it names, or drop it to take \
                  the default",
                 format!("{e:#}").trim_end()
-            ),
+            )
+            .into(),
             kind: IssueKind::MalformedSettings,
             safe_to_fix: false,
         })
@@ -131,10 +213,10 @@ impl<'a> IntegrationContext<'a> {
     /// so that repo detection works even when the output directory differs
     /// from where repos live (e.g., in weaves).
     pub fn detect_repos_with_manifest(&self, filename: &str) -> Vec<String> {
-        if let Some(cached) = self.detection_cache.get(filename) {
+        if let Some(cached) = self.base.detection_cache.get(filename) {
             return cached.clone();
         }
-        detect_repos_with_manifest_impl(self.workspace_root, &self.repos, filename)
+        detect_repos_with_manifest_impl(self.workspace_root(), &self.repos, filename)
     }
 }
 
@@ -417,12 +499,35 @@ impl fmt::Display for IssueSource {
     }
 }
 
+/// What an [`Issue`] says, which is only ever rendered: a finding is told
+/// apart by its [`IssueKind`], never by reading its words back.
+#[derive(Debug, Clone)]
+pub struct IssueMessage(String);
+
+impl From<String> for IssueMessage {
+    fn from(text: String) -> Self {
+        Self(text)
+    }
+}
+
+impl From<&str> for IssueMessage {
+    fn from(text: &str) -> Self {
+        Self(text.to_owned())
+    }
+}
+
+impl fmt::Display for IssueMessage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// A single issue reported by an integration's check or verify hook.
 #[derive(Debug, Clone)]
 pub struct Issue {
     pub source: IssueSource,
     pub severity: Severity,
-    pub message: String,
+    pub message: IssueMessage,
     /// What this finding is, independent of how the message words it.
     pub kind: IssueKind,
     /// This finding's own answer to whether `rwv doctor --fix` may repair it:
@@ -632,7 +737,7 @@ impl MemberIncompatibility {
         Issue {
             source: IssueSource::integration(&self.integration),
             severity: Severity::Warning,
-            message,
+            message: message.into(),
             kind,
             safe_to_fix: false,
         }

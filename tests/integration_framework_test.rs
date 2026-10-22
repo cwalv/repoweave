@@ -7,18 +7,28 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use repoweave::integration::{
-    is_enabled, HookOutcome, Integration, IntegrationContext, Issue, IssueKind, IssueSource,
-    Severity, SurfacedFile,
+    is_enabled, HookOutcome, Integration, IntegrationContext, IntegrationContextBase, Issue,
+    IssueKind, IssueSource, Severity, SurfacedFile,
 };
-use repoweave::manifest::{IntegrationConfig, ProjectName, RepoEntry, RepoPath, Role, VcsType};
+use repoweave::manifest::{
+    IntegrationConfig, Manifest, ProjectName, RepoEntry, RepoPath, Role, VcsType,
+};
 use repoweave::vcs::{RawRefName, TrackingRef};
-use repoweave::workspace::ContainerKind;
+use repoweave::workspace::WorkspaceSession;
 
 mod common;
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+fn manifest_of(repos: impl IntoIterator<Item = (RepoPath, RepoEntry)>) -> Manifest {
+    let mut manifest = Manifest::from_toml_str("[repositories]\n").unwrap();
+    for (path, entry) in repos {
+        manifest.insert_repo(path, entry);
+    }
+    manifest
+}
 
 fn make_repo_entry(role: Role) -> RepoEntry {
     RepoEntry {
@@ -76,7 +86,7 @@ impl Integration for MockIntegration {
     fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
         self.call_log.lock().unwrap().push((
             "activate".into(),
-            format!("project={}", ctx.project.as_str()),
+            format!("project={}", ctx.project().as_str()),
         ));
         Ok(Vec::new())
     }
@@ -90,10 +100,10 @@ impl Integration for MockIntegration {
     }
 
     fn check(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
-        self.call_log
-            .lock()
-            .unwrap()
-            .push(("check".into(), format!("project={}", ctx.project.as_str())));
+        self.call_log.lock().unwrap().push((
+            "check".into(),
+            format!("project={}", ctx.project().as_str()),
+        ));
         Ok(self.check_issues.clone())
     }
 }
@@ -150,21 +160,10 @@ fn active_repos_excludes_reference() {
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
     let tmp = common::tempdir().unwrap();
-    let ctx = IntegrationContext {
-        output_dir: tmp.path(),
-        workspace_root: tmp.path(),
-        container_kind: ContainerKind::Primary,
-        project: &project,
-        repos: repos
-            .iter()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config: &config,
-        all_repos_on_disk: &[],
-        all_project_paths: &[],
-        detection_cache: &cache,
-        workweave: None,
-    };
+    let manifest = manifest_of(repos);
+    let session = WorkspaceSession::new(tmp.path());
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let active: Vec<_> = ctx.active_repos().collect();
     assert_eq!(active.len(), 1);
@@ -195,21 +194,10 @@ fn active_repos_includes_primary_fork_dependency() {
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
     let tmp = common::tempdir().unwrap();
-    let ctx = IntegrationContext {
-        output_dir: tmp.path(),
-        workspace_root: tmp.path(),
-        container_kind: ContainerKind::Primary,
-        project: &project,
-        repos: repos
-            .iter()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config: &config,
-        all_repos_on_disk: &[],
-        all_project_paths: &[],
-        detection_cache: &cache,
-        workweave: None,
-    };
+    let manifest = manifest_of(repos);
+    let session = WorkspaceSession::new(tmp.path());
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let active: Vec<_> = ctx.active_repos().collect();
     assert_eq!(active.len(), 3);
@@ -236,21 +224,10 @@ fn mock_activate_receives_correct_context() {
     let project = ProjectName::new("my-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = IntegrationContext {
-        output_dir: Path::new("/workspace"),
-        workspace_root: Path::new("/workspace"),
-        container_kind: ContainerKind::Primary,
-        project: &project,
-        repos: repos
-            .iter()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config: &config,
-        all_repos_on_disk: &[],
-        all_project_paths: &[],
-        detection_cache: &cache,
-        workweave: None,
-    };
+    let manifest = manifest_of(repos);
+    let session = WorkspaceSession::new(Path::new("/workspace"));
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let mock = MockIntegration::new("cargo", true);
     mock.activate(&ctx).unwrap();
@@ -301,30 +278,19 @@ fn mock_check_returns_issues() {
     let project = ProjectName::new("check-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = IntegrationContext {
-        output_dir: Path::new("/workspace"),
-        workspace_root: Path::new("/workspace"),
-        container_kind: ContainerKind::Primary,
-        project: &project,
-        repos: repos
-            .iter()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config: &config,
-        all_repos_on_disk: &[],
-        all_project_paths: &[],
-        detection_cache: &cache,
-        workweave: None,
-    };
+    let manifest = manifest_of(repos);
+    let session = WorkspaceSession::new(Path::new("/workspace"));
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let mock = MockIntegration::new("cargo", true).with_check_issues(issues);
     let result = mock.check(&ctx).unwrap();
 
     assert_eq!(result.len(), 2);
     assert_eq!(result[0].severity, Severity::Warning);
-    assert_eq!(result[0].message, "missing dependency");
+    assert_eq!(result[0].message.to_string(), "missing dependency");
     assert_eq!(result[1].severity, Severity::Error);
-    assert_eq!(result[1].message, "build failure");
+    assert_eq!(result[1].message.to_string(), "build failure");
 
     // Verify check was logged
     let calls = mock.calls();
@@ -347,7 +313,7 @@ fn issue_creation_with_warning_severity() {
     };
     assert_eq!(issue.source, IssueSource::integration("npm"));
     assert_eq!(issue.severity, Severity::Warning);
-    assert_eq!(issue.message, "outdated lockfile");
+    assert_eq!(issue.message.to_string(), "outdated lockfile");
 }
 
 #[test]
@@ -361,7 +327,7 @@ fn issue_creation_with_error_severity() {
     };
     assert_eq!(issue.source, IssueSource::integration("cargo"));
     assert_eq!(issue.severity, Severity::Error);
-    assert_eq!(issue.message, "unresolvable version conflict");
+    assert_eq!(issue.message.to_string(), "unresolvable version conflict");
 }
 
 // ---------------------------------------------------------------------------
@@ -381,10 +347,8 @@ fn touch(dir: &Path, relative: &str) {
 fn detect_repos_with_manifest_uses_workspace_root_not_output_dir() {
     // Set up two separate directories: workspace_root has the repos,
     // output_dir is an empty workweave directory.
-    let ws_tmp = common::tempdir().unwrap();
-    let out_tmp = common::tempdir().unwrap();
-    let workspace_root = ws_tmp.path();
-    let output_dir = out_tmp.path();
+    let tmp = common::tempdir().unwrap();
+    let workspace_root = tmp.path();
 
     // Create manifest files under workspace_root only
     touch(workspace_root, "github/acme/server/Cargo.toml");
@@ -406,21 +370,11 @@ fn detect_repos_with_manifest_uses_workspace_root_not_output_dir() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = IntegrationContext {
-        output_dir,
-        workspace_root,
-        container_kind: ContainerKind::Primary,
-        project: &project,
-        repos: repos
-            .iter()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config: &config,
-        all_repos_on_disk: &[],
-        all_project_paths: &[],
-        detection_cache: &cache,
-        workweave: None,
-    };
+    let manifest = manifest_of(repos);
+    let session = WorkspaceSession::new(workspace_root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
+    assert!(!ctx.output_dir().join("github").exists());
 
     let detected = ctx.detect_repos_with_manifest("Cargo.toml");
     assert_eq!(detected, vec!["github/acme/server", "github/acme/web"]);
@@ -431,13 +385,12 @@ fn detect_repos_with_manifest_ignores_output_dir_manifests() {
     // Manifest files exist only in output_dir but NOT in workspace_root.
     // detect_repos_with_manifest should return nothing because it checks
     // workspace_root, not output_dir.
-    let ws_tmp = common::tempdir().unwrap();
-    let out_tmp = common::tempdir().unwrap();
-    let workspace_root = ws_tmp.path();
-    let output_dir = out_tmp.path();
+    let tmp = common::tempdir().unwrap();
+    let workspace_root = tmp.path();
+    let output_dir = workspace_root.join("projects/test-project");
 
     // Put manifest file only in output_dir
-    touch(output_dir, "github/acme/server/Cargo.toml");
+    touch(&output_dir, "github/acme/server/Cargo.toml");
 
     let mut repos = BTreeMap::new();
     repos.insert(
@@ -448,21 +401,11 @@ fn detect_repos_with_manifest_ignores_output_dir_manifests() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = IntegrationContext {
-        output_dir,
-        workspace_root,
-        container_kind: ContainerKind::Primary,
-        project: &project,
-        repos: repos
-            .iter()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config: &config,
-        all_repos_on_disk: &[],
-        all_project_paths: &[],
-        detection_cache: &cache,
-        workweave: None,
-    };
+    let manifest = manifest_of(repos);
+    let session = WorkspaceSession::new(workspace_root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
+    assert_eq!(ctx.output_dir(), output_dir);
 
     let detected = ctx.detect_repos_with_manifest("Cargo.toml");
     assert!(detected.is_empty(), "should not detect repos in output_dir");
@@ -485,21 +428,10 @@ fn context_output_dir_and_workspace_root_can_be_same() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = IntegrationContext {
-        output_dir: root,
-        workspace_root: root,
-        container_kind: ContainerKind::Primary,
-        project: &project,
-        repos: repos
-            .iter()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config: &config,
-        all_repos_on_disk: &[],
-        all_project_paths: &[],
-        detection_cache: &cache,
-        workweave: None,
-    };
+    let manifest = manifest_of(repos);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let detected = ctx.detect_repos_with_manifest("package.json");
     assert_eq!(detected, vec!["github/acme/server"]);
@@ -520,21 +452,10 @@ fn default_activate_hook_is_noop() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = IntegrationContext {
-        output_dir: Path::new("/workspace"),
-        workspace_root: Path::new("/workspace"),
-        container_kind: ContainerKind::Primary,
-        project: &project,
-        repos: repos
-            .iter()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config: &config,
-        all_repos_on_disk: &[],
-        all_project_paths: &[],
-        detection_cache: &cache,
-        workweave: None,
-    };
+    let manifest = manifest_of(repos);
+    let session = WorkspaceSession::new(Path::new("/workspace"));
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     // Default activate_hook() should succeed and do nothing
     let result = mock.activate_hook(&ctx);
@@ -588,7 +509,7 @@ impl Integration for MockIntegrationWithActivateHook {
     fn activate_hook(&self, ctx: &IntegrationContext) -> anyhow::Result<HookOutcome> {
         self.call_log.lock().unwrap().push((
             "activate_hook".into(),
-            format!("project={}", ctx.project.as_str()),
+            format!("project={}", ctx.project().as_str()),
         ));
         Ok(HookOutcome::Done)
     }
@@ -605,21 +526,10 @@ fn overridden_activate_hook_is_called() {
     let project = ProjectName::new("my-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = IntegrationContext {
-        output_dir: Path::new("/workspace"),
-        workspace_root: Path::new("/workspace"),
-        container_kind: ContainerKind::Primary,
-        project: &project,
-        repos: repos
-            .iter()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config: &config,
-        all_repos_on_disk: &[],
-        all_project_paths: &[],
-        detection_cache: &cache,
-        workweave: None,
-    };
+    let manifest = manifest_of(repos);
+    let session = WorkspaceSession::new(Path::new("/workspace"));
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     integration.activate_hook(&ctx).unwrap();
 
@@ -644,21 +554,10 @@ fn default_generated_files_returns_empty() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = IntegrationContext {
-        output_dir: Path::new("/workspace"),
-        workspace_root: Path::new("/workspace"),
-        container_kind: ContainerKind::Primary,
-        project: &project,
-        repos: repos
-            .iter()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config: &config,
-        all_repos_on_disk: &[],
-        all_project_paths: &[],
-        detection_cache: &cache,
-        workweave: None,
-    };
+    let manifest = manifest_of(repos);
+    let session = WorkspaceSession::new(Path::new("/workspace"));
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let files = mock.generated_files(&ctx);
     assert!(
@@ -684,21 +583,10 @@ fn cargo_workspace_generated_files() {
     let config = IntegrationConfig::default();
     let tmp = common::tempdir().unwrap();
     let cache = HashMap::new();
-    let ctx = IntegrationContext {
-        output_dir: tmp.path(),
-        workspace_root: tmp.path(),
-        container_kind: ContainerKind::Primary,
-        project: &project,
-        repos: repos
-            .iter()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config: &config,
-        all_repos_on_disk: &[],
-        all_project_paths: &[],
-        detection_cache: &cache,
-        workweave: None,
-    };
+    let manifest = manifest_of(repos);
+    let session = WorkspaceSession::new(tmp.path());
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
     assert_eq!(
         CargoWorkspace.generated_files(&ctx),
         Vec::<SurfacedFile>::new()
@@ -711,21 +599,10 @@ fn cargo_workspace_generated_files() {
         make_repo_entry(Role::Owned),
     );
     touch(tmp.path(), "github/acme/mylib/Cargo.toml");
-    let ctx2 = IntegrationContext {
-        output_dir: tmp.path(),
-        workspace_root: tmp.path(),
-        container_kind: ContainerKind::Primary,
-        project: &project,
-        repos: repos_with_manifest
-            .iter()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config: &config,
-        all_repos_on_disk: &[],
-        all_project_paths: &[],
-        detection_cache: &cache,
-        workweave: None,
-    };
+    let manifest = manifest_of(repos_with_manifest);
+    let session = WorkspaceSession::new(tmp.path());
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx2 = base.build_context(&config, &manifest);
     // Post-port: Cargo.toml moved to managed_files() because
     // it is hybrid (rwv owns the [workspace] region, user owns
     // [profile.*]/[workspace.lints.*]/etc.). Cargo.lock stays fully-owned.
@@ -755,21 +632,10 @@ fn npm_workspaces_generated_files() {
     let config = IntegrationConfig::default();
     let tmp = common::tempdir().unwrap();
     let cache = HashMap::new();
-    let ctx = IntegrationContext {
-        output_dir: tmp.path(),
-        workspace_root: tmp.path(),
-        container_kind: ContainerKind::Primary,
-        project: &project,
-        repos: repos
-            .iter()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config: &config,
-        all_repos_on_disk: &[],
-        all_project_paths: &[],
-        detection_cache: &cache,
-        workweave: None,
-    };
+    let manifest = manifest_of(repos);
+    let session = WorkspaceSession::new(tmp.path());
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
     assert_eq!(
         NpmWorkspaces.generated_files(&ctx),
         Vec::<SurfacedFile>::new()
@@ -782,21 +648,10 @@ fn npm_workspaces_generated_files() {
         make_repo_entry(Role::Owned),
     );
     touch(tmp.path(), "github/acme/webapp/package.json");
-    let ctx2 = IntegrationContext {
-        output_dir: tmp.path(),
-        workspace_root: tmp.path(),
-        container_kind: ContainerKind::Primary,
-        project: &project,
-        repos: repos_with_manifest
-            .iter()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config: &config,
-        all_repos_on_disk: &[],
-        all_project_paths: &[],
-        detection_cache: &cache,
-        workweave: None,
-    };
+    let manifest = manifest_of(repos_with_manifest);
+    let session = WorkspaceSession::new(tmp.path());
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx2 = base.build_context(&config, &manifest);
     // package.json is hybrid (rwv owns `workspaces` inside a user-authored
     // file) — it lives in managed_files(), not generated_files().
     // package-lock.json is fully-owned and stays in generated_files().
@@ -826,21 +681,10 @@ fn pnpm_workspaces_generated_files() {
     let config = IntegrationConfig::default();
     let tmp = common::tempdir().unwrap();
     let cache = HashMap::new();
-    let ctx = IntegrationContext {
-        output_dir: tmp.path(),
-        workspace_root: tmp.path(),
-        container_kind: ContainerKind::Primary,
-        project: &project,
-        repos: repos
-            .iter()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config: &config,
-        all_repos_on_disk: &[],
-        all_project_paths: &[],
-        detection_cache: &cache,
-        workweave: None,
-    };
+    let manifest = manifest_of(repos);
+    let session = WorkspaceSession::new(tmp.path());
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
     assert_eq!(
         PnpmWorkspaces.generated_files(&ctx),
         Vec::<SurfacedFile>::new()
@@ -853,21 +697,10 @@ fn pnpm_workspaces_generated_files() {
         make_repo_entry(Role::Owned),
     );
     touch(tmp.path(), "github/acme/frontend/package.json");
-    let ctx2 = IntegrationContext {
-        output_dir: tmp.path(),
-        workspace_root: tmp.path(),
-        container_kind: ContainerKind::Primary,
-        project: &project,
-        repos: repos_with_manifest
-            .iter()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config: &config,
-        all_repos_on_disk: &[],
-        all_project_paths: &[],
-        detection_cache: &cache,
-        workweave: None,
-    };
+    let manifest = manifest_of(repos_with_manifest);
+    let session = WorkspaceSession::new(tmp.path());
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx2 = base.build_context(&config, &manifest);
     // After the merge port, pnpm-workspace.yaml moved to
     // managed_files() (hybrid — rwv owns the `packages:` region, not the whole
     // file). pnpm-lock.yaml is still fully-rwv-owned (generated by `pnpm
@@ -895,21 +728,10 @@ fn go_work_generated_files() {
     let config = IntegrationConfig::default();
     let tmp = common::tempdir().unwrap();
     let cache = HashMap::new();
-    let ctx = IntegrationContext {
-        output_dir: tmp.path(),
-        workspace_root: tmp.path(),
-        container_kind: ContainerKind::Primary,
-        project: &project,
-        repos: repos
-            .iter()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config: &config,
-        all_repos_on_disk: &[],
-        all_project_paths: &[],
-        detection_cache: &cache,
-        workweave: None,
-    };
+    let manifest = manifest_of(repos);
+    let session = WorkspaceSession::new(tmp.path());
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
     // Both methods are gated on a member carrying a go.mod. `go.work.sum` is
     // fully-owned and `go.work` is hybrid, which decides WHICH method declares
     // each — not whether either declares anything into a weave with no Go in
@@ -925,21 +747,10 @@ fn go_work_generated_files() {
         make_repo_entry(Role::Owned),
     );
     touch(tmp.path(), "github/acme/svc/go.mod");
-    let ctx2 = IntegrationContext {
-        output_dir: tmp.path(),
-        workspace_root: tmp.path(),
-        container_kind: ContainerKind::Primary,
-        project: &project,
-        repos: repos_with_manifest
-            .iter()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config: &config,
-        all_repos_on_disk: &[],
-        all_project_paths: &[],
-        detection_cache: &cache,
-        workweave: None,
-    };
+    let manifest = manifest_of(repos_with_manifest);
+    let session = WorkspaceSession::new(tmp.path());
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx2 = base.build_context(&config, &manifest);
     assert_eq!(
         GoWork.generated_files(&ctx2),
         vec![SurfacedFile::written_through_link("go.work.sum")]
@@ -963,21 +774,10 @@ fn uv_workspace_generated_files() {
     let config = IntegrationConfig::default();
     let tmp = common::tempdir().unwrap();
     let cache = HashMap::new();
-    let ctx = IntegrationContext {
-        output_dir: tmp.path(),
-        workspace_root: tmp.path(),
-        container_kind: ContainerKind::Primary,
-        project: &project,
-        repos: repos
-            .iter()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config: &config,
-        all_repos_on_disk: &[],
-        all_project_paths: &[],
-        detection_cache: &cache,
-        workweave: None,
-    };
+    let manifest = manifest_of(repos);
+    let session = WorkspaceSession::new(tmp.path());
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
     assert_eq!(
         UvWorkspace.generated_files(&ctx),
         Vec::<SurfacedFile>::new()
@@ -990,21 +790,10 @@ fn uv_workspace_generated_files() {
         make_repo_entry(Role::Owned),
     );
     touch(tmp.path(), "github/acme/pylib/pyproject.toml");
-    let ctx2 = IntegrationContext {
-        output_dir: tmp.path(),
-        workspace_root: tmp.path(),
-        container_kind: ContainerKind::Primary,
-        project: &project,
-        repos: repos_with_manifest
-            .iter()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config: &config,
-        all_repos_on_disk: &[],
-        all_project_paths: &[],
-        detection_cache: &cache,
-        workweave: None,
-    };
+    let manifest = manifest_of(repos_with_manifest);
+    let session = WorkspaceSession::new(tmp.path());
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx2 = base.build_context(&config, &manifest);
     // Post-port: pyproject.toml is hybrid — it lives in managed_files(),
     // NOT generated_files(). generated_files() is for fully-owned artifacts
     // that are gitignore-eligible and whole-deletable; pyproject.toml is neither.
@@ -1032,21 +821,10 @@ fn gita_generated_files() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = IntegrationContext {
-        output_dir: Path::new("/workspace"),
-        workspace_root: Path::new("/workspace"),
-        container_kind: ContainerKind::Primary,
-        project: &project,
-        repos: repos
-            .iter()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config: &config,
-        all_repos_on_disk: &[],
-        all_project_paths: &[],
-        detection_cache: &cache,
-        workweave: None,
-    };
+    let manifest = manifest_of(repos);
+    let session = WorkspaceSession::new(Path::new("/workspace"));
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let files = Gita.generated_files(&ctx);
     assert_eq!(
@@ -1069,21 +847,10 @@ fn vscode_workspace_generated_files_includes_project_name() {
     let project = ProjectName::new("web-app").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = IntegrationContext {
-        output_dir: Path::new("/workspace"),
-        workspace_root: Path::new("/workspace"),
-        container_kind: ContainerKind::Primary,
-        project: &project,
-        repos: repos
-            .iter()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config: &config,
-        all_repos_on_disk: &[],
-        all_project_paths: &[],
-        detection_cache: &cache,
-        workweave: None,
-    };
+    let manifest = manifest_of(repos);
+    let session = WorkspaceSession::new(Path::new("/workspace"));
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     // The `.code-workspace` file is hybrid — it lives in managed_files(),
     // not generated_files() (which is empty: vscode has no fully-owned
@@ -1108,21 +875,10 @@ fn vscode_workspace_generated_files_varies_with_project() {
     // Different project name produces different filename
     let project = ProjectName::new("mobile-app").unwrap();
     let cache = HashMap::new();
-    let ctx = IntegrationContext {
-        output_dir: Path::new("/workspace"),
-        workspace_root: Path::new("/workspace"),
-        container_kind: ContainerKind::Primary,
-        project: &project,
-        repos: repos
-            .iter()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config: &config,
-        all_repos_on_disk: &[],
-        all_project_paths: &[],
-        detection_cache: &cache,
-        workweave: None,
-    };
+    let manifest = manifest_of(repos);
+    let session = WorkspaceSession::new(Path::new("/workspace"));
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     assert!(VscodeWorkspace.generated_files(&ctx).is_empty());
     assert_eq!(
@@ -1137,7 +893,7 @@ fn vscode_workspace_generated_files_varies_with_project() {
 // ===========================================================================
 
 mod generated_managed_split_and_trigger_model {
-    use super::common;
+    use super::{common, manifest_of};
     use std::cell::RefCell;
     use std::collections::HashMap;
     use std::path::{Path, PathBuf};
@@ -1145,10 +901,11 @@ mod generated_managed_split_and_trigger_model {
 
     use repoweave::activate::{activate, activate_intent_with_options, ActivateOptions};
     use repoweave::integration::{
-        Integration, IntegrationContext, Issue, IssueKind, Severity, SurfacedFile,
+        Integration, IntegrationContext, IntegrationContextBase, Issue, IssueKind, Severity,
+        SurfacedFile,
     };
     use repoweave::manifest::ProjectName;
-    use repoweave::workspace::ContainerKind;
+    use repoweave::workspace::WorkspaceSession;
 
     // -----------------------------------------------------------------------
     // Tiny fake Integration impl — keeps the framework tests free of any
@@ -1203,7 +960,7 @@ mod generated_managed_split_and_trigger_model {
         fn activate(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
             self.calls.lock().unwrap().activate += 1;
             if let Some((fname, body)) = self.write_on_activate.borrow().as_ref() {
-                std::fs::write(ctx.output_dir.join(fname), body)?;
+                std::fs::write(ctx.output_dir().join(fname), body)?;
             }
             Ok(Vec::new())
         }
@@ -1272,18 +1029,10 @@ mod generated_managed_split_and_trigger_model {
         let project = ProjectName::new("p").unwrap();
         let config = repoweave::manifest::IntegrationConfig::default();
         let cache = HashMap::new();
-        let ctx = IntegrationContext {
-            output_dir: Path::new("/ws"),
-            workspace_root: Path::new("/ws"),
-            container_kind: ContainerKind::Primary,
-            project: &project,
-            repos: Vec::new(),
-            config: &config,
-            all_repos_on_disk: &[],
-            all_project_paths: &[],
-            detection_cache: &cache,
-            workweave: None,
-        };
+        let manifest = manifest_of([]);
+        let session = WorkspaceSession::new(Path::new("/ws"));
+        let base = IntegrationContextBase::new(&session, &project, &cache, None);
+        let ctx = base.build_context(&config, &manifest);
 
         let integration = OnlyGenerated;
         assert_eq!(
@@ -1331,18 +1080,10 @@ mod generated_managed_split_and_trigger_model {
         let project = ProjectName::new("p").unwrap();
         let config = repoweave::manifest::IntegrationConfig::default();
         let cache = HashMap::new();
-        let ctx = IntegrationContext {
-            output_dir: Path::new("/ws"),
-            workspace_root: Path::new("/ws"),
-            container_kind: ContainerKind::Primary,
-            project: &project,
-            repos: Vec::new(),
-            config: &config,
-            all_repos_on_disk: &[],
-            all_project_paths: &[],
-            detection_cache: &cache,
-            workweave: None,
-        };
+        let manifest = manifest_of([]);
+        let session = WorkspaceSession::new(Path::new("/ws"));
+        let base = IntegrationContextBase::new(&session, &project, &cache, None);
+        let ctx = base.build_context(&config, &manifest);
 
         let integration = CheckWarner;
         let verify_out = integration.verify(&ctx).unwrap();
@@ -1490,18 +1231,10 @@ mod generated_managed_split_and_trigger_model {
         let project = ProjectName::new("p").unwrap();
         let config = repoweave::manifest::IntegrationConfig::default();
         let cache: HashMap<String, Vec<String>> = HashMap::new();
-        let ctx = IntegrationContext {
-            output_dir: Path::new("/ws"),
-            workspace_root: Path::new("/ws"),
-            container_kind: ContainerKind::Primary,
-            project: &project,
-            repos: Vec::new(),
-            config: &config,
-            all_repos_on_disk: &[],
-            all_project_paths: &[],
-            detection_cache: &cache,
-            workweave: None,
-        };
+        let manifest = manifest_of([]);
+        let session = WorkspaceSession::new(Path::new("/ws"));
+        let base = IntegrationContextBase::new(&session, &project, &cache, None);
+        let ctx = base.build_context(&config, &manifest);
 
         // Legacy: generated_files = managed_files (override returns
         // vec!["lock.txt"] for both since FakeHybrid stores them).
@@ -1593,18 +1326,11 @@ mod generated_managed_split_and_trigger_model {
         let project = ProjectName::new("p").unwrap();
         let config = repoweave::manifest::IntegrationConfig::default();
         let cache = HashMap::new();
-        let ctx = IntegrationContext {
-            output_dir: &project_dir,
-            workspace_root: &ws,
-            container_kind: ContainerKind::Primary,
-            project: &project,
-            repos: Vec::new(),
-            config: &config,
-            all_repos_on_disk: &[],
-            all_project_paths: &[],
-            detection_cache: &cache,
-            workweave: None,
-        };
+        let manifest = manifest_of([]);
+        let session = WorkspaceSession::new(&ws);
+        let base = IntegrationContextBase::new(&session, &project, &cache, None);
+        let ctx = base.build_context(&config, &manifest);
+        assert_eq!(ctx.output_dir(), project_dir);
 
         // Intent mode → activate() runs, verify() does not.
         fake.activate(&ctx).unwrap();

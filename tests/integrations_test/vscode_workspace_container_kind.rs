@@ -13,45 +13,8 @@
 use super::*;
 use repoweave::integrations::VscodeWorkspace;
 
-/// A context whose disk view and container kind are both stated
-/// explicitly. The exclude set is a function of `repos_on_disk` and
-/// `project_paths`, so varying those is how these tests model a full
-/// view (primary) against a partial one (workweave); `kind` is what the
-/// integration actually branches on, and callers pass it independently
-/// of whatever `root` looks like on disk.
-#[allow(clippy::too_many_arguments)]
-fn ctx_with_view<'a>(
-    root: &'a Path,
-    project: &'a ProjectName,
-    manifest: &'a Manifest,
-    config: &'a IntegrationConfig,
-    cache: &'a HashMap<String, Vec<String>>,
-    repos_on_disk: &'a [RepoPath],
-    project_paths: &'a [ProjectName],
-    kind: ContainerKind,
-) -> IntegrationContext<'a> {
-    IntegrationContext {
-        output_dir: root,
-        workspace_root: root,
-        container_kind: kind,
-        project,
-        repos: manifest
-            .iter_entries()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config,
-        all_repos_on_disk: repos_on_disk,
-        all_project_paths: project_paths,
-        detection_cache: cache,
-        workweave: None,
-    }
-}
-
-/// Lay down a `.rwv-workweave` marker at `root`, so the on-disk shape
-/// matches a real workweave root. The container kind fed to the
-/// integration under test comes from `ctx_with_view`'s `kind` argument,
-/// not from this file — a resolved `Checkout` is what production code
-/// threads through, and this marker is scenery for that, not the input.
+/// Lay down a `.rwv-workweave` marker at `root`: what makes a session scanning
+/// `root` see a workweave.
 fn as_workweave_root(root: &Path) {
     write_file(
         root,
@@ -82,8 +45,8 @@ const WIDE_FILE: &str = r#"{
 }
 "#;
 
-fn parse(root: &Path) -> serde_json::Value {
-    let content = std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
+fn parse(project_dir: &Path) -> serde_json::Value {
+    let content = std::fs::read_to_string(project_dir.join("test-project.code-workspace")).unwrap();
     serde_json::from_str(&content).unwrap()
 }
 
@@ -107,31 +70,25 @@ fn marker_excludes(parsed: &serde_json::Value) -> Vec<String> {
 fn workweave_regen_preserves_entries_it_cannot_observe() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     as_workweave_root(root);
-    write_file(root, "test-project.code-workspace", WIDE_FILE);
-    std::fs::create_dir_all(root.join("github/acme/server")).unwrap();
+    write_file(&project_dir, "test-project.code-workspace", WIDE_FILE);
+    clone_on_disk(root, "github/acme/server");
 
     let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let on_disk = vec![RepoPath::new("github/acme/server").expect("known-safe literal")];
-    let projects = vec![ProjectName::new("test-project").unwrap()];
-    let ctx = ctx_with_view(
-        root,
-        &project,
-        &manifest,
-        &config,
-        &cache,
-        &on_disk,
-        &projects,
-        ContainerKind::Workweave,
-    );
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
+    assert_eq!(ctx.container_kind(), ContainerKind::Workweave);
 
     VscodeWorkspace.activate(&ctx).unwrap();
 
-    let parsed = parse(root);
+    let parsed = parse(&project_dir);
     assert_eq!(
         marker_excludes(&parsed),
         vec![
@@ -170,6 +127,8 @@ fn workweave_regen_preserves_entries_it_cannot_observe() {
 fn workweave_regen_with_no_member_change_is_a_fixpoint() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
@@ -177,30 +136,18 @@ fn workweave_regen_with_no_member_change_is_a_fixpoint() {
     let cache = HashMap::new();
 
     // Full view: one member, one non-member repo, one sibling project.
-    std::fs::create_dir_all(root.join("github/acme/server")).unwrap();
-    std::fs::create_dir_all(root.join("github/other/thing")).unwrap();
-    let wide_disk = vec![
-        RepoPath::new("github/acme/server").expect("known-safe literal"),
-        RepoPath::new("github/other/thing").expect("known-safe literal"),
-    ];
-    let wide_projects = vec![
-        ProjectName::new("test-project").unwrap(),
-        ProjectName::new("sibling").unwrap(),
-    ];
-    let primary_ctx = ctx_with_view(
-        root,
-        &project,
-        &manifest,
-        &config,
-        &cache,
-        &wide_disk,
-        &wide_projects,
-        ContainerKind::Primary,
-    );
+    clone_on_disk(root, "github/acme/server");
+    clone_on_disk(root, "github/other/thing");
+    project_on_disk(root, "sibling");
+    let primary_session = WorkspaceSession::new(root);
+    let primary_base = IntegrationContextBase::new(&primary_session, &project, &cache, None);
+    let primary_ctx = primary_base.build_context(&config, &manifest);
+    assert_eq!(primary_ctx.container_kind(), ContainerKind::Primary);
     VscodeWorkspace.activate(&primary_ctx).unwrap();
-    let authored = std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
+    let authored =
+        std::fs::read_to_string(project_dir.join("test-project.code-workspace")).unwrap();
     assert_eq!(
-        marker_excludes(&parse(root)),
+        marker_excludes(&parse(&project_dir)),
         vec![".*", "github/other", "projects/sibling"],
         "precondition: the full view authored all three entries"
     );
@@ -208,20 +155,14 @@ fn workweave_regen_with_no_member_change_is_a_fixpoint() {
     // The same file, regenerated by a container holding only the member.
     as_workweave_root(root);
     std::fs::remove_dir_all(root.join("github/other")).unwrap();
-    let narrow_disk = vec![RepoPath::new("github/acme/server").expect("known-safe literal")];
-    let narrow_projects = vec![ProjectName::new("test-project").unwrap()];
-    let workweave_ctx = ctx_with_view(
-        root,
-        &project,
-        &manifest,
-        &config,
-        &cache,
-        &narrow_disk,
-        &narrow_projects,
-        ContainerKind::Workweave,
-    );
+    std::fs::remove_dir_all(root.join("projects/sibling")).unwrap();
+    let workweave_session = WorkspaceSession::new(root);
+    let workweave_base = IntegrationContextBase::new(&workweave_session, &project, &cache, None);
+    let workweave_ctx = workweave_base.build_context(&config, &manifest);
+    assert_eq!(workweave_ctx.container_kind(), ContainerKind::Workweave);
     VscodeWorkspace.activate(&workweave_ctx).unwrap();
-    let regenerated = std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
+    let regenerated =
+        std::fs::read_to_string(project_dir.join("test-project.code-workspace")).unwrap();
 
     assert_eq!(
         authored, regenerated,
@@ -238,11 +179,13 @@ fn workweave_regen_with_no_member_change_is_a_fixpoint() {
 fn workweave_regen_drops_an_entry_whose_path_it_can_see() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     as_workweave_root(root);
-    write_file(root, "test-project.code-workspace", WIDE_FILE);
-    std::fs::create_dir_all(root.join("github/acme/server")).unwrap();
-    std::fs::create_dir_all(root.join("github/acme/legacy")).unwrap();
+    write_file(&project_dir, "test-project.code-workspace", WIDE_FILE);
+    clone_on_disk(root, "github/acme/server");
+    clone_on_disk(root, "github/acme/legacy");
 
     let manifest = make_manifest(vec![
         ("github/acme/server", Role::Owned),
@@ -251,25 +194,14 @@ fn workweave_regen_drops_an_entry_whose_path_it_can_see() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let on_disk = vec![
-        RepoPath::new("github/acme/server").expect("known-safe literal"),
-        RepoPath::new("github/acme/legacy").expect("known-safe literal"),
-    ];
-    let projects = vec![ProjectName::new("test-project").unwrap()];
-    let ctx = ctx_with_view(
-        root,
-        &project,
-        &manifest,
-        &config,
-        &cache,
-        &on_disk,
-        &projects,
-        ContainerKind::Workweave,
-    );
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
+    assert_eq!(ctx.container_kind(), ContainerKind::Workweave);
 
     VscodeWorkspace.activate(&ctx).unwrap();
 
-    let parsed = parse(root);
+    let parsed = parse(&project_dir);
     assert!(
         !marker_excludes(&parsed).contains(&"github/acme/legacy".to_string()),
         "an entry naming a path this container materialized is the \
@@ -294,30 +226,24 @@ fn workweave_regen_drops_an_entry_whose_path_it_can_see() {
 fn primary_regen_drops_entries_for_genuinely_absent_paths() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
-    write_file(root, "test-project.code-workspace", WIDE_FILE);
-    std::fs::create_dir_all(root.join("github/acme/server")).unwrap();
+    write_file(&project_dir, "test-project.code-workspace", WIDE_FILE);
+    clone_on_disk(root, "github/acme/server");
 
     let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let on_disk = vec![RepoPath::new("github/acme/server").expect("known-safe literal")];
-    let projects = vec![ProjectName::new("test-project").unwrap()];
-    let ctx = ctx_with_view(
-        root,
-        &project,
-        &manifest,
-        &config,
-        &cache,
-        &on_disk,
-        &projects,
-        ContainerKind::Primary,
-    );
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
+    assert_eq!(ctx.container_kind(), ContainerKind::Primary);
 
     VscodeWorkspace.activate(&ctx).unwrap();
 
-    let parsed = parse(root);
+    let parsed = parse(&project_dir);
     assert_eq!(
         marker_excludes(&parsed),
         vec![".*"],
@@ -339,27 +265,21 @@ fn primary_regen_drops_entries_for_genuinely_absent_paths() {
 fn verify_in_a_workweave_does_not_report_preserved_entries_as_drift() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     as_workweave_root(root);
-    write_file(root, "test-project.code-workspace", WIDE_FILE);
-    std::fs::create_dir_all(root.join("github/acme/server")).unwrap();
+    write_file(&project_dir, "test-project.code-workspace", WIDE_FILE);
+    clone_on_disk(root, "github/acme/server");
 
     let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let on_disk = vec![RepoPath::new("github/acme/server").expect("known-safe literal")];
-    let projects = vec![ProjectName::new("test-project").unwrap()];
-    let ctx = ctx_with_view(
-        root,
-        &project,
-        &manifest,
-        &config,
-        &cache,
-        &on_disk,
-        &projects,
-        ContainerKind::Workweave,
-    );
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
+    assert_eq!(ctx.container_kind(), ContainerKind::Workweave);
 
     let issues = VscodeWorkspace.verify(&ctx).unwrap();
     assert!(
@@ -376,9 +296,11 @@ fn verify_in_a_workweave_does_not_report_preserved_entries_as_drift() {
 fn verify_at_primary_reports_a_shrunk_generated_set_as_drift() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     write_file(
-        root,
+        &project_dir,
         "test-project.code-workspace",
         r#"{
   "folders": [{ "path": ".", "name": "test-project (primary)" }],
@@ -387,28 +309,17 @@ fn verify_at_primary_reports_a_shrunk_generated_set_as_drift() {
 }
 "#,
     );
-    std::fs::create_dir_all(root.join("github/acme/server")).unwrap();
-    std::fs::create_dir_all(root.join("github/other/thing")).unwrap();
+    clone_on_disk(root, "github/acme/server");
+    clone_on_disk(root, "github/other/thing");
 
     let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let on_disk = vec![
-        RepoPath::new("github/acme/server").expect("known-safe literal"),
-        RepoPath::new("github/other/thing").expect("known-safe literal"),
-    ];
-    let projects = vec![ProjectName::new("test-project").unwrap()];
-    let ctx = ctx_with_view(
-        root,
-        &project,
-        &manifest,
-        &config,
-        &cache,
-        &on_disk,
-        &projects,
-        ContainerKind::Primary,
-    );
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
+    assert_eq!(ctx.container_kind(), ContainerKind::Primary);
 
     let issues = VscodeWorkspace.verify(&ctx).unwrap();
     assert_eq!(
@@ -418,7 +329,7 @@ fn verify_at_primary_reports_a_shrunk_generated_set_as_drift() {
     );
     assert!(issues[0].safe_to_fix, "DRIFT issue must be safe_to_fix");
     assert!(
-        issues[0].message.contains("drift"),
+        issues[0].message.to_string().contains("drift"),
         "DRIFT message should say so: {}",
         issues[0].message
     );
@@ -429,5 +340,8 @@ fn verify_at_primary_reports_a_shrunk_generated_set_as_drift() {
         VscodeWorkspace.verify(&ctx).unwrap().is_empty(),
         "activate must clear the drift it reported"
     );
-    assert_eq!(marker_excludes(&parse(root)), vec![".*", "github/other"]);
+    assert_eq!(
+        marker_excludes(&parse(&project_dir)),
+        vec![".*", "github/other"]
+    );
 }

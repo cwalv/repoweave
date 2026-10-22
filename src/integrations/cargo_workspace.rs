@@ -449,7 +449,7 @@ impl CargoWorkspace {
             // nested-workspace check is moot when there is no root manifest
             // to declare `[workspace]`.
             let root_has_workspace = if rust_repo_set.contains(repo.as_str()) {
-                let cargo_toml = ctx.workspace_root.join(repo).join("Cargo.toml");
+                let cargo_toml = ctx.workspace_root().join(repo).join("Cargo.toml");
                 let content = std::fs::read_to_string(&cargo_toml)
                     .with_context(|| format!("failed to read {}", cargo_toml.display()))?;
                 declares_workspace(&content)
@@ -550,7 +550,7 @@ impl CargoWorkspace {
             // [workspace]. Repos without a [workspace] section emit their
             // root as before, unchanged.
             let root_toml = ctx
-                .workspace_root
+                .workspace_root()
                 .join(crate::path_spelling::native_relative(repo))
                 .join("Cargo.toml");
             let has_workspace = std::fs::read_to_string(&root_toml)
@@ -559,7 +559,8 @@ impl CargoWorkspace {
 
             if has_workspace {
                 // Auto-enumerate nested workspace sub-crates.
-                let sub_crates = expand_nested_workspace_members(ctx.workspace_root, repo.as_str());
+                let sub_crates =
+                    expand_nested_workspace_members(ctx.workspace_root(), repo.as_str());
                 if sub_crates.is_empty() {
                     // Fallback: root has [workspace] but no members globs
                     // resolved to Cargo.tomls (e.g. empty workspace). Emit
@@ -702,7 +703,7 @@ impl Integration for CargoWorkspace {
         // member's path stays behind, in a marked key rwv still owns and would
         // no longer author.
         if !Self::has_active_cargo_work(ctx, &cfg) {
-            Self::strip_managed_region(ctx.output_dir)?;
+            Self::strip_managed_region(ctx.output_dir())?;
             return Ok(Vec::new());
         }
 
@@ -715,7 +716,7 @@ impl Integration for CargoWorkspace {
         // `output_dir = project_dir` — the committed `Cargo.toml`
         // lives in the project directory and the weave-root symlink surfaces
         // it. Writing through `output_dir` writes into the committed file.
-        let path = ctx.output_dir.join("Cargo.toml");
+        let path = ctx.output_dir().join("Cargo.toml");
         let owned = Self::owned_pairs(&members, &cfg);
 
         let result: MergeResult = merge_activate::<TomlDoc>(&path, &owned)
@@ -824,7 +825,7 @@ impl Integration for CargoWorkspace {
             issues.push(Issue {
                 source: IssueSource::integration(self.name()),
                 severity: Severity::Error,
-                message: nested_workspace_error(&nested_conflicts),
+                message: nested_workspace_error(&nested_conflicts).into(),
                 kind: IssueKind::ConfigRejected,
                 safe_to_fix: true,
             });
@@ -834,7 +835,7 @@ impl Integration for CargoWorkspace {
     }
 
     fn activate_hook(&self, ctx: &IntegrationContext) -> anyhow::Result<HookOutcome> {
-        let cfg: CargoWorkspaceConfig = ctx.config.settings()?;
+        let cfg: CargoWorkspaceConfig = ctx.config().settings()?;
         if !Self::has_active_cargo_work(ctx, &cfg) {
             return Ok(HookOutcome::Done);
         }
@@ -853,7 +854,7 @@ impl Integration for CargoWorkspace {
         // documented resolution for repos whose ecosystem shape changed after
         // add. This closes the C3 regeneration gap without pushing authoring
         // into the context path.
-        let managed = ctx.output_dir.join("Cargo.toml");
+        let managed = ctx.output_dir().join("Cargo.toml");
         if !managed.exists() {
             anyhow::bail!(
                 "cargo-workspace managed file missing: {}; \
@@ -879,7 +880,7 @@ impl Integration for CargoWorkspace {
         // gets the same treatment at the next `rwv activate`.
         let managed_text = std::fs::read_to_string(&managed)
             .with_context(|| format!("reading {}", managed.display()))?;
-        let unfetched = Self::unfetched_members(&managed_text, ctx.workspace_root);
+        let unfetched = Self::unfetched_members(&managed_text, ctx.workspace_root());
         if !unfetched.is_empty() {
             eprintln!(
                 "[warning] cargo-workspace: skipping the cargo lockfile step — {} \
@@ -894,7 +895,7 @@ impl Integration for CargoWorkspace {
             return Ok(HookOutcome::Done);
         }
 
-        let lock_path = ctx.output_dir.join("Cargo.lock");
+        let lock_path = ctx.output_dir().join("Cargo.lock");
 
         // `cargo fetch` honors the resolve the lock already records, adding
         // only what current membership requires and downloading what the result
@@ -910,7 +911,7 @@ impl Integration for CargoWorkspace {
         // Asked of the lock cargo reads, which is the root's: through the link
         // that is the project's, and where a tool left a real file there, it is
         // that file whose resolve would otherwise be discarded.
-        let surfaced = ctx.workspace_root.join("Cargo.lock");
+        let surfaced = ctx.workspace_root().join("Cargo.lock");
         let subcommand = if Self::lock_records_a_resolve(&surfaced) {
             "fetch"
         } else {
@@ -918,8 +919,9 @@ impl Integration for CargoWorkspace {
         };
         // Before the generator runs, not after it returns: an input that moves
         // while cargo is resolving is exactly what the record must not absorb.
-        let inputs = ObservedInputs::observe(ctx.output_dir, ctx.project, ctx.workspace_root);
-        let Some(status) = super::run_install_tool(Self::TOOL, &[subcommand], ctx.workspace_root)?
+        let inputs = ObservedInputs::observe(ctx.output_dir(), ctx.project(), ctx.workspace_root());
+        let Some(status) =
+            super::run_install_tool(Self::TOOL, &[subcommand], ctx.workspace_root())?
         else {
             return Ok(HookOutcome::ToolMissing(MissingTool::of::<Self>()));
         };
@@ -942,9 +944,7 @@ impl Integration for CargoWorkspace {
         // missed its link — one this weave held before the hook ran — and
         // recording the project copy beside it would attest bytes cargo did not
         // produce; the next verb that may write adopts it instead.
-        if surfaced != lock_path
-            && std::fs::symlink_metadata(&surfaced).is_ok_and(|m| m.file_type().is_file())
-        {
+        if std::fs::symlink_metadata(&surfaced).is_ok_and(|m| m.file_type().is_file()) {
             eprintln!(
                 "[warning] cargo-workspace: cargo {subcommand} wrote {}, a real file where \
                  its link belongs, so the generation is not recorded until it is taken \
@@ -961,7 +961,7 @@ impl Integration for CargoWorkspace {
                 lock_path.display()
             )
         })?;
-        stamp_owned_generation(ctx.output_dir, "Cargo.lock", &lock_bytes, inputs)?;
+        stamp_owned_generation(ctx.output_dir(), "Cargo.lock", &lock_bytes, inputs)?;
 
         Ok(HookOutcome::Done)
     }
@@ -971,13 +971,13 @@ impl Integration for CargoWorkspace {
     /// key's absence is the manifest's answer, which `activate()` gives.
     /// Settings that do not parse are left to the refusal the hooks meet.
     fn fit_to_host(&self, ctx: &IntegrationContext) -> anyhow::Result<()> {
-        let Ok(cfg) = ctx.config.settings::<CargoWorkspaceConfig>() else {
+        let Ok(cfg) = ctx.config().settings::<CargoWorkspaceConfig>() else {
             return Ok(());
         };
         if cfg.rustc_wrapper.is_none() || !Self::has_active_cargo_work(ctx, &cfg) {
             return Ok(());
         }
-        let cargo_dir = ctx.output_dir.join(".cargo");
+        let cargo_dir = ctx.output_dir().join(".cargo");
         if let Some(link) = [cargo_dir.join("config.toml"), cargo_dir]
             .into_iter()
             .find(|p| {
@@ -998,7 +998,7 @@ impl Integration for CargoWorkspace {
 
     /// `Cargo.lock` is fully-owned — gitignore-eligible, whole-deletable.
     fn generated_files(&self, ctx: &IntegrationContext) -> Vec<SurfacedFile> {
-        let Ok(cfg) = ctx.config.settings::<CargoWorkspaceConfig>() else {
+        let Ok(cfg) = ctx.config().settings::<CargoWorkspaceConfig>() else {
             return vec![];
         };
         if !Self::has_active_cargo_work(ctx, &cfg) {
@@ -1020,16 +1020,16 @@ impl Integration for CargoWorkspace {
     fn owned_paths_on_disk(&self, ctx: &IntegrationContext) -> Vec<OwnedPath> {
         let mut paths = Vec::new();
         if holds_owned_region::<TomlDoc>(
-            &ctx.output_dir.join("Cargo.toml"),
+            &ctx.output_dir().join("Cargo.toml"),
             &Self::deactivate_owned_keys(),
         ) {
             paths.push(OwnedPath::MarkedRegion("Cargo.toml".to_string()));
-            if ctx.output_dir.join("Cargo.lock").is_file() {
+            if ctx.output_dir().join("Cargo.lock").is_file() {
                 paths.push(OwnedPath::WholeFile("Cargo.lock".to_string()));
             }
         }
         if Self::cargo_config_holds_marked_entries(
-            &ctx.output_dir.join(".cargo").join("config.toml"),
+            &ctx.output_dir().join(".cargo").join("config.toml"),
         ) {
             paths.push(OwnedPath::MarkedRegion(".cargo/config.toml".to_string()));
         }
@@ -1084,7 +1084,7 @@ impl Integration for CargoWorkspace {
             // the only claim left to make.
             return Ok(orphaned_region_issues::<TomlDoc>(
                 self.name(),
-                &ctx.output_dir.join("Cargo.toml"),
+                &ctx.output_dir().join("Cargo.toml"),
                 &Self::deactivate_owned_keys(),
                 "rwv.toml declares no cargo members, so [workspace] no longer \
                  belongs to rwv.",
@@ -1132,7 +1132,7 @@ impl Integration for CargoWorkspace {
     /// file — rwv publishes it, the operator commits or ignores per policy.
     fn managed_files(&self, ctx: &IntegrationContext) -> Vec<SurfacedFile> {
         let mut files = self.generated_files(ctx);
-        let Ok(cfg) = ctx.config.settings::<CargoWorkspaceConfig>() else {
+        let Ok(cfg) = ctx.config().settings::<CargoWorkspaceConfig>() else {
             return files;
         };
         if Self::has_active_cargo_work(ctx, &cfg) {
@@ -1150,7 +1150,11 @@ impl Integration for CargoWorkspace {
             // a dangling symlink.
             if (cfg.patch_surface.is_cargo_config() && cfg.patch.emits_patches())
                 || (cfg.rustc_wrapper.is_some()
-                    && ctx.output_dir.join(".cargo").join("config.toml").is_file())
+                    && ctx
+                        .output_dir()
+                        .join(".cargo")
+                        .join("config.toml")
+                        .is_file())
             {
                 files.push(SurfacedFile::written_at_source(".cargo/config.toml"));
             }
@@ -1171,7 +1175,7 @@ impl CargoWorkspace {
         ctx: &IntegrationContext,
         cfg: &CargoWorkspaceConfig,
     ) -> anyhow::Result<Vec<Issue>> {
-        let path = ctx.output_dir.join("Cargo.toml");
+        let path = ctx.output_dir().join("Cargo.toml");
 
         // ── MISSING ────────────────────────────────────────────────────────
         if !path.exists() {
@@ -1299,7 +1303,7 @@ impl CargoWorkspace {
         ctx: &IntegrationContext,
         cfg: &CargoWorkspaceConfig,
     ) -> anyhow::Result<Vec<Issue>> {
-        let path = ctx.output_dir.join(".cargo").join("config.toml");
+        let path = ctx.output_dir().join(".cargo").join("config.toml");
 
         // Compute the expected patch set (same computation activate uses).
         // Nested-workspace conflicts short-circuit the whole verify — the
@@ -1499,7 +1503,7 @@ impl CargoWorkspace {
     /// surfacing symlink is an Axis-1 question, answered separately by
     /// `activate::verify_surfacing`.
     fn verify_cargo_lock(&self, ctx: &IntegrationContext) -> Vec<Issue> {
-        let path = ctx.output_dir.join("Cargo.lock");
+        let path = ctx.output_dir().join("Cargo.lock");
 
         // ── MISSING ────────────────────────────────────────────────────────
         // Fully-owned: absent when generation is expected is DRIFT (never
@@ -1544,7 +1548,7 @@ impl CargoWorkspace {
         // stamp named. `NotRecorded` (state file or entry absent, e.g. a
         // pre-upgrade workspace) skips the axis silently — backward compat,
         // never an error.
-        match check_owned_digest(ctx.output_dir, "Cargo.lock", text.as_bytes()) {
+        match check_owned_digest(ctx.output_dir(), "Cargo.lock", text.as_bytes()) {
             OwnedDigestCheck::Differs => {
                 vec![fully_owned_digest_mismatch_issue(self.name(), &path)]
             }
@@ -1685,7 +1689,7 @@ impl CargoWorkspace {
         // sub-paths when the root declares [workspace] but no [package].
         let mut to_index: Vec<String> = Vec::new();
         for p in paths {
-            let member_dir = ctx.workspace_root.join(p);
+            let member_dir = ctx.workspace_root().join(p);
             let cargo_toml = member_dir.join("Cargo.toml");
             if !cargo_toml.exists() {
                 continue;
@@ -1705,7 +1709,7 @@ impl CargoWorkspace {
                 // enumeration scan_members uses. This lets reference-role
                 // repos that host only sub-package crates contribute to the
                 // derived-patch index without operator config.
-                let sub_crates = expand_nested_workspace_members(ctx.workspace_root, p);
+                let sub_crates = expand_nested_workspace_members(ctx.workspace_root(), p);
                 to_index.extend(sub_crates);
             }
             // Otherwise (no [package], no [workspace]): silently skip —
@@ -1713,7 +1717,7 @@ impl CargoWorkspace {
         }
 
         for p in &to_index {
-            let member_dir = ctx.workspace_root.join(p);
+            let member_dir = ctx.workspace_root().join(p);
             let cargo_toml = member_dir.join("Cargo.toml");
             if !cargo_toml.exists() {
                 continue;
@@ -1785,7 +1789,7 @@ impl CargoWorkspace {
 
         let mut patches: BTreeMap<String, String> = BTreeMap::new();
         for member in members {
-            let member_dir = ctx.workspace_root.join(member);
+            let member_dir = ctx.workspace_root().join(member);
             let cargo_toml = member_dir.join("Cargo.toml");
             if !cargo_toml.exists() {
                 continue;
@@ -1873,11 +1877,11 @@ impl CargoWorkspace {
         // still belong in the patch *index*. Enumerate them here and merge
         // with the members list before building the index.
         let reference_repos: Vec<String> = ctx
-            .repos
+            .repos()
             .iter()
             .filter(|(_, e)| !e.role.is_active())
             .map(|(rp, _)| rp.as_str().to_string())
-            .filter(|p| ctx.workspace_root.join(p).join("Cargo.toml").exists())
+            .filter(|p| ctx.workspace_root().join(p).join("Cargo.toml").exists())
             .collect();
 
         // Some reference-role repos may host sub-package crates rather
@@ -1913,7 +1917,7 @@ impl CargoWorkspace {
         let mut out: BTreeMap<String, BTreeMap<String, DerivedPatch>> = BTreeMap::new();
 
         for member in members {
-            let member_dir = ctx.workspace_root.join(member);
+            let member_dir = ctx.workspace_root().join(member);
             let cargo_toml = member_dir.join("Cargo.toml");
             if !cargo_toml.exists() {
                 continue;
@@ -1930,7 +1934,7 @@ impl CargoWorkspace {
                 if extract_workspace_deps_table(&doc).is_some() {
                     Some(doc.clone())
                 } else {
-                    find_ancestor_workspace_deps(ctx.workspace_root, member)
+                    find_ancestor_workspace_deps(ctx.workspace_root(), member)
                 };
 
             for deps_key in ["dependencies", "dev-dependencies", "build-dependencies"] {
@@ -2048,7 +2052,8 @@ impl CargoWorkspace {
                 .insert(p.crate_name.clone(), weave_source.clone());
         }
 
-        for rec in Self::scan_patch_shadowing_against_keys(ctx.workspace_root, members, intended) {
+        for rec in Self::scan_patch_shadowing_against_keys(ctx.workspace_root(), members, intended)
+        {
             eprintln!(
                 "[warning] cargo-workspace: derived patch for `{}` in `[patch.{}]` will be \
                  shadowed by `{}` — cargo's closest-config-wins per-key means the weave-level \
@@ -2077,11 +2082,11 @@ impl CargoWorkspace {
     fn patch_target(surface: PatchSurface, ctx: &IntegrationContext) -> PatchTarget {
         match surface {
             PatchSurface::Manifest => PatchTarget {
-                file: ctx.output_dir.join("Cargo.toml"),
+                file: ctx.output_dir().join("Cargo.toml"),
                 path_prefix: "",
             },
             PatchSurface::CargoConfig => PatchTarget {
-                file: ctx.output_dir.join(".cargo").join("config.toml"),
+                file: ctx.output_dir().join(".cargo").join("config.toml"),
                 // Cargo resolves relative patch paths against the parent
                 // of `.cargo/` (measured directly 2026-07-17; the design
                 // doc's "against the config's logical location" phrase
@@ -2323,15 +2328,15 @@ impl CargoWorkspace {
         ctx: &IntegrationContext,
         cfg: &CargoWorkspaceConfig,
     ) -> anyhow::Result<()> {
-        let path = ctx.output_dir.join(".cargo").join("config.toml");
+        let path = ctx.output_dir().join(".cargo").join("config.toml");
         match Self::detected_wrapper(cfg) {
             Some(name) => Self::merge_rustc_wrapper(&path, &name)
                 .with_context(|| format!("merge-rustc-wrapper {}", path.display())),
             None => {
                 Self::strip_marked_rustc_wrapper(&path)
                     .with_context(|| format!("strip-rustc-wrapper {}", path.display()))?;
-                Self::prune_empty_cargo_config(ctx.output_dir)
-                    .with_context(|| format!("prune-cargo-config {}", ctx.output_dir.display()))
+                Self::prune_empty_cargo_config(ctx.output_dir())
+                    .with_context(|| format!("prune-cargo-config {}", ctx.output_dir().display()))
             }
         }
     }
@@ -2942,11 +2947,12 @@ impl CargoWorkspace {
     /// `[patch.crates-io].foo = ...` **wholly replaces** the weave-level
     /// entry for `foo`, silently, with no warning from cargo.
     ///
-    /// Weave-level patch keys are collected from two sources:
+    /// Weave-level patch keys are collected from two sources in `weave_dir`,
+    /// the project directory those files live in and are surfaced from:
     ///
-    /// 1. `<workspace_root>/Cargo.toml`'s `[patch.<reg>]` sub-tables (the
-    ///    surface today — see `compute_patches`).
-    /// 2. `<workspace_root>/.cargo/config.toml`'s `[patch.<reg>]` sub-tables.
+    /// 1. `Cargo.toml`'s `[patch.<reg>]` sub-tables (the surface today — see
+    ///    `compute_patches`).
+    /// 2. `.cargo/config.toml`'s `[patch.<reg>]` sub-tables.
     ///
     /// Member-level configs are discovered by walking upward from each
     /// member directory to `workspace_root` (exclusive), reading any
@@ -2962,6 +2968,7 @@ impl CargoWorkspace {
     /// "location searched: crates.io index" — so beating cargo to the punch
     /// is not optional polish).
     pub fn scan_patch_shadowing(
+        weave_dir: &Path,
         workspace_root: &Path,
         members: &[String],
     ) -> Vec<PatchShadowingRecord> {
@@ -2970,9 +2977,9 @@ impl CargoWorkspace {
         // exact file the weave key came from.
         let mut weave_keys: BTreeMap<String, BTreeMap<String, std::path::PathBuf>> =
             BTreeMap::new();
-        collect_patch_keys(&workspace_root.join("Cargo.toml"), &mut weave_keys);
+        collect_patch_keys(&weave_dir.join("Cargo.toml"), &mut weave_keys);
         collect_patch_keys(
-            &workspace_root.join(".cargo").join("config.toml"),
+            &weave_dir.join(".cargo").join("config.toml"),
             &mut weave_keys,
         );
 

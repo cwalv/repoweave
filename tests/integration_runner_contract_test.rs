@@ -6,26 +6,22 @@
 //!    pre-computes a detection list for are exactly the ones production code
 //!    detects by. The list used to be a hand-maintained const, and it had
 //!    already drifted: it cached `go.sum`, which nothing has ever detected by.
-//! 2. **The context is assembled by its owner.** `IntegrationContext` and
-//!    `IntegrationContextBase` each have one construction site, so the derived
-//!    `output_dir` rule cannot be sidestepped by a field-by-field literal.
-//! 3. **An integration's name is minted once.** No production module outside
+//! 2. **An integration's name is minted once.** No production module outside
 //!    `src/integrations/` re-spells a name an integration returns from
 //!    `name()`; a rename would otherwise leave a config lookup silently
 //!    falling back to the default config.
-//! 4. **A finding's kind is a value, not a sentence.** The verify state
+//! 3. **A finding's kind is a value, not a sentence.** The verify state
 //!    machine's four outcomes and the member-incompatibility observation reach
-//!    `Issue::kind` intact, and no production code reads a finding back out of
-//!    `Issue::message`.
+//!    `Issue::kind` intact.
 
 mod common;
 
-use common::src_scan::{production_lines, string_arguments_to, struct_literal_needle};
+use common::src_scan::{production_lines, string_arguments_to};
 use repoweave::check::IssueOutput;
 use repoweave::integration::{
     Integration, IntegrationContext, IssueKind, MemberIncompatibility, Observed,
 };
-use repoweave::integration_runner::{detection_vocabulary, IntegrationContextBase};
+use repoweave::integration_runner::detection_vocabulary;
 use repoweave::integrations::builtin_integrations;
 use repoweave::integrations::merge::{drift_issues, missing_issue, Pen, Remedy};
 use repoweave::integrations::GoWork;
@@ -69,42 +65,6 @@ fn detection_vocabulary_is_exactly_what_production_code_detects_by() {
          on every call. Declare it in that integration's \
          `detection_manifests()`."
     );
-}
-
-#[test]
-fn integration_context_types_are_constructed_only_by_their_owners() {
-    let owners = [
-        (
-            struct_literal_needle::<IntegrationContext<'static>>(),
-            "integration_runner.rs",
-        ),
-        (
-            struct_literal_needle::<IntegrationContextBase<'static>>(),
-            "workspace.rs",
-        ),
-    ];
-
-    let lines = production_lines();
-    for (needle, owner) in owners {
-        let sites: Vec<String> = lines
-            .iter()
-            .filter(|l| l.text.contains(&needle))
-            .map(|l| l.site())
-            .collect();
-
-        assert_eq!(
-            sites.len(),
-            1,
-            "`{needle}` must be built in exactly one production site — \
-             {owner}'s constructor, which derives `output_dir` instead of \
-             taking it. Found: {sites:?}"
-        );
-        assert!(
-            sites[0].starts_with(owner),
-            "`{needle}`'s one production site must be in {owner}; found {}",
-            sites[0]
-        );
-    }
 }
 
 #[test]
@@ -239,7 +199,7 @@ fn member_incompatibility_message_opens_with_the_tag_the_wire_carries() {
         },
     )
     .into_issue();
-    let message = issue.message.clone();
+    let message = issue.message.to_string();
 
     let wire = serde_json::to_value(IssueOutput::from_issue(issue)).unwrap();
     let tag = wire["kind"]
@@ -252,36 +212,5 @@ fn member_incompatibility_message_opens_with_the_tag_the_wire_carries() {
     assert!(
         message.starts_with(&format!("{tag}: ")),
         "the message must open with the wire tag: {message}"
-    );
-}
-
-/// No production code recovers a finding's identity from its message text.
-/// The tag used to be the only discriminant available, which made this the
-/// obvious thing to reach for; `Issue::kind` is now the thing to match on.
-#[test]
-fn no_production_code_dispatches_on_issue_message() {
-    let needles = [
-        "message.contains(",
-        "message.starts_with(",
-        "message.ends_with(",
-    ];
-    let lines = production_lines();
-    assert!(
-        lines.len() > 10_000,
-        "scanner returned only {} production lines from src/; it is not \
-         reading the tree",
-        lines.len()
-    );
-
-    let sites: Vec<String> = lines
-        .iter()
-        .filter(|l| needles.iter().any(|n| l.text.contains(n)))
-        .map(|l| format!("{}: {}", l.site(), l.text.trim()))
-        .collect();
-
-    assert!(
-        sites.is_empty(),
-        "production code must not read a finding back out of `Issue::message` \
-         — match on `Issue::kind`. Found: {sites:#?}"
     );
 }

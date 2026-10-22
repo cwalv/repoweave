@@ -8,6 +8,8 @@ use super::*;
 fn auto_detects_repos_with_go_mod() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // go work use requires valid go.mod files (not just empty touches).
     write_file(
@@ -30,12 +32,14 @@ fn auto_detects_repos_with_go_mod() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = GoWork;
     integration.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("go.work")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("go.work")).unwrap();
     assert!(content.contains("github/acme/server"));
     assert!(content.contains("github/acme/web"));
     assert!(!content.contains("github/acme/docs"));
@@ -45,6 +49,8 @@ fn auto_detects_repos_with_go_mod() {
 fn generates_go_work_with_use_directives() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     write_file(
         root,
@@ -64,12 +70,14 @@ fn generates_go_work_with_use_directives() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = GoWork;
     integration.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("go.work")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("go.work")).unwrap();
     // New behavior (merge port): the file includes the ownership marker
     // and uses tab-indented `use` blocks (go tool format).
     // Assert structural content rather than exact string (format varies).
@@ -91,6 +99,8 @@ fn generates_go_work_with_use_directives() {
 fn excludes_reference_repos() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // go work use requires valid go.mod files.
     write_file(
@@ -111,12 +121,14 @@ fn excludes_reference_repos() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = GoWork;
     integration.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("go.work")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("go.work")).unwrap();
     assert!(content.contains("github/acme/server"));
     assert!(!content.contains("reference-lib"));
 }
@@ -203,6 +215,8 @@ fn check_warns_when_go_not_on_path() {
 fn s6_go_1_add_preserves_replace_and_go_version() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // go.mod files declare go 1.20 to match the go.work version.
     // When go is on PATH (primary path), max_go_version is computed from
@@ -225,7 +239,7 @@ fn s6_go_1_add_preserves_replace_and_go_version() {
 
     // Pre-existing go.work with go 1.20, two members, a replace + comment.
     write_file(
-        root,
+        &project_dir,
         "go.work",
         r#"go 1.20
 
@@ -248,11 +262,13 @@ replace example.com/legacy => ./vendor/legacy
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     GoWork.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("go.work")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("go.work")).unwrap();
     assert!(
         content.contains("github/cwalv/repoweave"),
         "use must include repoweave; got:\n{content}"
@@ -288,6 +304,8 @@ replace example.com/legacy => ./vendor/legacy
 fn s6_go_2_remove_keeps_toolchain_and_godebug() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
     // go.mod files declare go 1.20 to match the go.work version (avoids
     // primary-path downgrade when go is on PATH and max_go_version is computed).
     write_file(
@@ -310,7 +328,7 @@ fn s6_go_2_remove_keeps_toolchain_and_godebug() {
     );
 
     write_file(
-        root,
+        &project_dir,
         "go.work",
         r#"go 1.20
 
@@ -335,11 +353,13 @@ use (
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     GoWork.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("go.work")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("go.work")).unwrap();
     assert!(content.contains("./github/cwalv/repoweave"));
     assert!(content.contains("./github/cwalv/some-go-tool"));
     assert!(
@@ -456,6 +476,8 @@ use (
 fn a_decoy_path_in_a_comment_or_replace_is_not_a_use_member() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     write_file(
         root,
@@ -464,7 +486,7 @@ fn a_decoy_path_in_a_comment_or_replace_is_not_a_use_member() {
     );
 
     write_file(
-        root,
+        &project_dir,
         "go.work",
         r#"go 1.20
 
@@ -477,11 +499,13 @@ replace example.com/decoy => ./github/acme/decoy
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     GoWork.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("go.work")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("go.work")).unwrap();
     assert!(
         content.contains("github/acme/decoy"),
         "fixture is inert unless the decoy survives activate; got:\n{content}"

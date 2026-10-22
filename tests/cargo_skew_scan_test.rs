@@ -14,12 +14,12 @@
 //! are report-not-mandate — rwv cannot mandate a version or a patch entry
 //! across sovereign member repos, only observe where they disagree.
 
-use repoweave::integration::IntegrationContext;
+use repoweave::integration::IntegrationContextBase;
 use repoweave::integrations::cargo_workspace::{
     CargoSkewOccurrence, CargoWorkspace, PatchShadowingRecord,
 };
 use repoweave::manifest::{IntegrationConfig, Manifest, ProjectName, Role};
-use repoweave::workspace::ContainerKind;
+use repoweave::workspace::WorkspaceSession;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -47,30 +47,6 @@ fn make_manifest(repos: Vec<(&str, Role)>) -> Manifest {
         ));
     }
     Manifest::from_toml_str(&manifest_toml).unwrap()
-}
-
-fn make_ctx<'a>(
-    root: &'a Path,
-    project: &'a ProjectName,
-    manifest: &'a Manifest,
-    config: &'a IntegrationConfig,
-    cache: &'a HashMap<String, Vec<String>>,
-) -> IntegrationContext<'a> {
-    IntegrationContext {
-        output_dir: root,
-        workspace_root: root,
-        container_kind: ContainerKind::Primary,
-        project,
-        repos: manifest
-            .iter_entries()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config,
-        all_repos_on_disk: &[],
-        all_project_paths: &[],
-        detection_cache: cache,
-        workweave: None,
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -341,10 +317,11 @@ fn version_skew_record_is_sorted_and_stable() {
 fn patch_shadowing_detects_member_config_overriding_weave() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
 
     // Weave-level Cargo.toml with a patch entry.
     write_file(
-        root,
+        &project_dir,
         "Cargo.toml",
         "[workspace]\nmembers = [\"github/acme/foo\"]\nresolver = \"2\"\n\n\
          [patch.crates-io]\nserde = { path = \"github/acme/serde-fork\" }\n",
@@ -364,7 +341,7 @@ fn patch_shadowing_detects_member_config_overriding_weave() {
     );
 
     let members = vec!["github/acme/foo".to_string()];
-    let records = CargoWorkspace::scan_patch_shadowing(root, &members);
+    let records = CargoWorkspace::scan_patch_shadowing(&project_dir, root, &members);
     assert_eq!(
         records.len(),
         1,
@@ -391,12 +368,13 @@ fn patch_shadowing_detects_member_config_overriding_weave() {
 fn patch_shadowing_silent_when_keys_do_not_collide() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
 
     // Weave has a patch for `serde`, member has a patch for `tokio` — no
     // shadowing (cargo merges per-key across configs; disjoint keys stack
     // cleanly).
     write_file(
-        root,
+        &project_dir,
         "Cargo.toml",
         "[workspace]\nmembers = [\"github/acme/foo\"]\nresolver = \"2\"\n\n\
          [patch.crates-io]\nserde = { path = \"github/acme/serde-fork\" }\n",
@@ -413,7 +391,7 @@ fn patch_shadowing_silent_when_keys_do_not_collide() {
     );
 
     let members = vec!["github/acme/foo".to_string()];
-    let records = CargoWorkspace::scan_patch_shadowing(root, &members);
+    let records = CargoWorkspace::scan_patch_shadowing(&project_dir, root, &members);
     assert!(
         records.is_empty(),
         "disjoint patch keys must not fire; got {records:?}"
@@ -424,9 +402,10 @@ fn patch_shadowing_silent_when_keys_do_not_collide() {
 fn patch_shadowing_silent_when_member_has_no_cargo_config() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
 
     write_file(
-        root,
+        &project_dir,
         "Cargo.toml",
         "[workspace]\nmembers = [\"github/acme/foo\"]\nresolver = \"2\"\n\n\
          [patch.crates-io]\nserde = { path = \"github/acme/serde-fork\" }\n",
@@ -439,7 +418,7 @@ fn patch_shadowing_silent_when_member_has_no_cargo_config() {
     // No member .cargo/config.toml → no shadowing possible.
 
     let members = vec!["github/acme/foo".to_string()];
-    let records = CargoWorkspace::scan_patch_shadowing(root, &members);
+    let records = CargoWorkspace::scan_patch_shadowing(&project_dir, root, &members);
     assert!(records.is_empty());
 }
 
@@ -447,11 +426,12 @@ fn patch_shadowing_silent_when_member_has_no_cargo_config() {
 fn patch_shadowing_silent_when_weave_has_no_patches() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
 
     // Weave Cargo.toml has no [patch.*]; a member's .cargo/config.toml
     // patches are then not shadowing anything.
     write_file(
-        root,
+        &project_dir,
         "Cargo.toml",
         "[workspace]\nmembers = [\"github/acme/foo\"]\nresolver = \"2\"\n",
     );
@@ -467,7 +447,7 @@ fn patch_shadowing_silent_when_weave_has_no_patches() {
     );
 
     let members = vec!["github/acme/foo".to_string()];
-    let records = CargoWorkspace::scan_patch_shadowing(root, &members);
+    let records = CargoWorkspace::scan_patch_shadowing(&project_dir, root, &members);
     assert!(records.is_empty());
 }
 
@@ -478,9 +458,10 @@ fn patch_shadowing_reads_weave_level_cargo_config_too() {
     // keys are just as vulnerable to shadowing as the manifest's.
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
 
     write_file(
-        root,
+        &project_dir,
         ".cargo/config.toml",
         "[patch.crates-io]\nserde = { path = \"github/acme/serde-fork\" }\n",
     );
@@ -496,7 +477,7 @@ fn patch_shadowing_reads_weave_level_cargo_config_too() {
     );
 
     let members = vec!["github/acme/foo".to_string()];
-    let records = CargoWorkspace::scan_patch_shadowing(root, &members);
+    let records = CargoWorkspace::scan_patch_shadowing(&project_dir, root, &members);
     assert_eq!(records.len(), 1);
     let r = &records[0];
     // weave_config should point at the .cargo/config.toml, not the missing
@@ -511,9 +492,10 @@ fn patch_shadowing_names_ancestor_config_between_member_and_weave() {
     // still shadows the weave root per closest-wins.
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
 
     write_file(
-        root,
+        &project_dir,
         "Cargo.toml",
         "[workspace]\nmembers = [\"github/acme/foo\"]\nresolver = \"2\"\n\n\
          [patch.crates-io]\nserde = { path = \"github/acme/serde-fork\" }\n",
@@ -530,7 +512,7 @@ fn patch_shadowing_names_ancestor_config_between_member_and_weave() {
     );
 
     let members = vec!["github/acme/foo".to_string()];
-    let records = CargoWorkspace::scan_patch_shadowing(root, &members);
+    let records = CargoWorkspace::scan_patch_shadowing(&project_dir, root, &members);
     assert_eq!(records.len(), 1);
     assert!(
         records[0]
@@ -637,11 +619,13 @@ fn scan_cargo_ecosystem_produces_both_skew_and_shadowing_violations() {
 
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
 
     // A weave with two Rust members, a skewed dep, and a shadowing
     // .cargo/config.toml at one of them.
     write_file(
-        root,
+        &project_dir,
         "Cargo.toml",
         "[workspace]\nmembers = [\"github/acme/foo\", \"github/acme/bar\"]\nresolver = \"2\"\n\n\
          [patch.crates-io]\nserde = { path = \"github/acme/serde-fork\" }\n",
@@ -675,7 +659,9 @@ fn scan_cargo_ecosystem_produces_both_skew_and_shadowing_violations() {
         "Cargo.toml".to_string(),
         vec!["github/acme/bar".to_string(), "github/acme/foo".to_string()],
     );
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let violations = scan_cargo_ecosystem(&ctx).unwrap();
     let mut saw_skew = false;
@@ -718,7 +704,10 @@ fn scan_cargo_ecosystem_silent_when_no_cargo_members() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache: HashMap<String, Vec<String>> = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let violations = scan_cargo_ecosystem(&ctx).unwrap();
     assert!(violations.is_empty());
@@ -778,7 +767,10 @@ fn scan_members_auto_enumerates_nested_workspace_sub_crates_grok_build_shape() {
             "github/xai/grok-build".to_string(),
         ],
     );
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let cfg = repoweave::manifest::CargoWorkspaceConfig::default();
     let members = CargoWorkspace::scan_members(&ctx, &cfg).unwrap();
@@ -851,9 +843,10 @@ fn patch_shadowing_dedupes_repeated_findings_across_members() {
     // reported once — one file has one shadowing key.
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
 
     write_file(
-        root,
+        &project_dir,
         "Cargo.toml",
         "[workspace]\nmembers = [\"github/acme/foo\", \"github/acme/bar\"]\nresolver = \"2\"\n\n\
          [patch.crates-io]\nserde = { path = \"vendor/serde\" }\n",
@@ -876,7 +869,8 @@ fn patch_shadowing_dedupes_repeated_findings_across_members() {
     );
 
     let members = vec!["github/acme/foo".to_string(), "github/acme/bar".to_string()];
-    let records: Vec<PatchShadowingRecord> = CargoWorkspace::scan_patch_shadowing(root, &members);
+    let records: Vec<PatchShadowingRecord> =
+        CargoWorkspace::scan_patch_shadowing(&project_dir, root, &members);
     assert_eq!(
         records.len(),
         1,
@@ -934,7 +928,10 @@ fn scan_members_glob_expansion_exact_path() {
             "github/xai/big-repo".to_string(),
         ],
     );
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let cfg = repoweave::manifest::CargoWorkspaceConfig::default();
     let members = CargoWorkspace::scan_members(&ctx, &cfg).unwrap();
@@ -1004,7 +1001,10 @@ fn scan_members_glob_expansion_wildcard() {
             "github/xai/big-repo".to_string(),
         ],
     );
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let cfg = repoweave::manifest::CargoWorkspaceConfig::default();
     let members = CargoWorkspace::scan_members(&ctx, &cfg).unwrap();
@@ -1064,7 +1064,10 @@ fn scan_members_glob_expansion_respects_workspace_exclude() {
         "Cargo.toml".to_string(),
         vec!["github/xai/big-repo".to_string()],
     );
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let cfg = repoweave::manifest::CargoWorkspaceConfig::default();
     let members = CargoWorkspace::scan_members(&ctx, &cfg).unwrap();
@@ -1118,7 +1121,10 @@ fn scan_members_explicit_config_overrides_auto_enumeration() {
         "[members.\"github/xai/big-repo\"]\ninclude = [\"crate-a\"]\n",
     );
     let cache: HashMap<String, Vec<String>> = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let cfg: repoweave::manifest::CargoWorkspaceConfig = config.settings().unwrap();
     let members = CargoWorkspace::scan_members(&ctx, &cfg).unwrap();
@@ -1169,7 +1175,10 @@ fn scan_members_non_workspace_repos_unaffected() {
         "Cargo.toml".to_string(),
         vec!["github/acme/foo".to_string(), "github/acme/bar".to_string()],
     );
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let cfg = repoweave::manifest::CargoWorkspaceConfig::default();
     let members = CargoWorkspace::scan_members(&ctx, &cfg).unwrap();
@@ -1204,6 +1213,8 @@ fn nested_workspace_reference_repo_becomes_derived_patch_source() {
 
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
 
     // Reference-role nested workspace repo: root has [workspace], no [package].
     write_file(
@@ -1243,7 +1254,9 @@ fn nested_workspace_reference_repo_becomes_derived_patch_source() {
         "Cargo.toml".to_string(),
         vec!["github/acme/app".to_string()],
     );
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     // activate() runs build_package_index which now auto-enumerates
     // ref-lib's sub-crates (via the repos list, not the detection cache).
@@ -1251,7 +1264,7 @@ fn nested_workspace_reference_repo_becomes_derived_patch_source() {
     // [patch.crates-io].core-crate entry in Cargo.toml.
     CargoWorkspace.activate(&ctx).unwrap();
 
-    let generated = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+    let generated = std::fs::read_to_string(project_dir.join("Cargo.toml")).unwrap();
 
     assert!(
         generated.contains("core-crate"),

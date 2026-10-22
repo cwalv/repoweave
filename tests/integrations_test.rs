@@ -13,13 +13,11 @@ mod common;
 
 use common::contract;
 use repoweave::integration::{
-    Integration, IntegrationContext, IssueSource, Severity, SurfacedFile,
+    Integration, IntegrationContextBase, IssueSource, Severity, SurfacedFile,
 };
 use repoweave::integrations::*;
-use repoweave::manifest::{
-    IntegrationConfig, Manifest, ProjectName, RepoPath, Role, WorkweaveConfig,
-};
-use repoweave::workspace::ContainerKind;
+use repoweave::manifest::{IntegrationConfig, Manifest, ProjectName, Role, WorkweaveConfig};
+use repoweave::workspace::{ContainerKind, WorkspaceSession};
 use std::collections::HashMap;
 use std::path::Path;
 use tempfile::TempDir;
@@ -41,59 +39,6 @@ fn make_manifest(repos: Vec<(&str, Role)>) -> Manifest {
     Manifest::from_toml_str(&yaml).unwrap()
 }
 
-/// Build an IntegrationContext from parts.
-/// Both output_dir and workspace_root default to `root`.
-fn make_ctx<'a>(
-    root: &'a Path,
-    project: &'a ProjectName,
-    manifest: &'a Manifest,
-    config: &'a IntegrationConfig,
-    cache: &'a HashMap<String, Vec<String>>,
-) -> IntegrationContext<'a> {
-    IntegrationContext {
-        output_dir: root,
-        workspace_root: root,
-        container_kind: ContainerKind::Primary,
-        project,
-        repos: manifest
-            .iter_entries()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config,
-        all_repos_on_disk: &[],
-        all_project_paths: &[],
-        detection_cache: cache,
-        workweave: None,
-    }
-}
-
-/// Build an IntegrationContext with an attached workweave config. Used by
-/// the static-files / workweave.link collision tests.
-fn make_ctx_with_workweave<'a>(
-    root: &'a Path,
-    project: &'a ProjectName,
-    manifest: &'a Manifest,
-    config: &'a IntegrationConfig,
-    cache: &'a HashMap<String, Vec<String>>,
-    workweave: &'a WorkweaveConfig,
-) -> IntegrationContext<'a> {
-    IntegrationContext {
-        output_dir: root,
-        workspace_root: root,
-        container_kind: ContainerKind::Primary,
-        project,
-        repos: manifest
-            .iter_entries()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config,
-        all_repos_on_disk: &[],
-        all_project_paths: &[],
-        detection_cache: cache,
-        workweave: Some(workweave),
-    }
-}
-
 /// Create a file inside a temp dir at the given relative path, including parent dirs.
 fn touch(root: &Path, relative: &str) {
     let path = root.join(relative);
@@ -110,6 +55,22 @@ fn write_file(root: &Path, relative: &str, content: &str) {
         std::fs::create_dir_all(parent).unwrap();
     }
     std::fs::write(&path, content).unwrap();
+}
+
+/// A clone at `relative` under `root`, as a session scanning `root` finds one.
+fn clone_on_disk(root: &Path, relative: &str) {
+    let dir = root.join(relative);
+    std::fs::create_dir_all(&dir).unwrap();
+    common::git_in(&dir, &["init", "-q"]);
+}
+
+/// A project `name` under `root`'s `projects/`, as a session scanning `root`
+/// finds one. A manifest already there is kept.
+fn project_on_disk(root: &Path, name: &str) {
+    let relative = format!("projects/{name}/rwv.toml");
+    if !root.join(&relative).exists() {
+        write_file(root, &relative, "[repositories]\n");
+    }
 }
 
 #[cfg(unix)]

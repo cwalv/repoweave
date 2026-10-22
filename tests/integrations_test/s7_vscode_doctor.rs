@@ -20,7 +20,10 @@ fn s7_vscode_doctor_missing_reports_finding() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    project_on_disk(root, "test-project");
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let issues = VscodeWorkspace.verify(&ctx).unwrap();
     assert_eq!(
@@ -31,7 +34,7 @@ fn s7_vscode_doctor_missing_reports_finding() {
     let issue = &issues[0];
     assert!(issue.safe_to_fix, "MISSING issue must be safe_to_fix");
     assert!(
-        issue.message.contains("missing"),
+        issue.message.to_string().contains("missing"),
         "MISSING message should contain 'missing': {}",
         issue.message
     );
@@ -44,12 +47,16 @@ fn s7_vscode_doctor_missing_reports_finding() {
 fn s7_vscode_doctor_missing_fixed_by_activate() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     // Pre-condition: MISSING.
     let pre = VscodeWorkspace.verify(&ctx).unwrap();
@@ -58,7 +65,7 @@ fn s7_vscode_doctor_missing_fixed_by_activate() {
 
     VscodeWorkspace.activate(&ctx).unwrap();
 
-    let filepath = root.join("test-project.code-workspace");
+    let filepath = project_dir.join("test-project.code-workspace");
     assert!(
         filepath.exists(),
         "code-workspace must be created after activate"
@@ -87,10 +94,12 @@ fn s7_vscode_doctor_missing_fixed_by_activate() {
 fn s7_vscode_doctor_drift_reports_finding() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // Wrong project name in the primary folder.
     write_file(
-        root,
+        &project_dir,
         "test-project.code-workspace",
         r#"{
   "rwv.generated": {"managed": true, "files.exclude": []},
@@ -104,7 +113,9 @@ fn s7_vscode_doctor_drift_reports_finding() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let issues = VscodeWorkspace.verify(&ctx).unwrap();
     assert_eq!(
@@ -115,7 +126,7 @@ fn s7_vscode_doctor_drift_reports_finding() {
     let issue = &issues[0];
     assert!(issue.safe_to_fix, "DRIFT issue must be safe_to_fix");
     assert!(
-        issue.message.contains("drift"),
+        issue.message.to_string().contains("drift"),
         "DRIFT message should contain 'drift': {}",
         issue.message
     );
@@ -128,9 +139,11 @@ fn s7_vscode_doctor_drift_reports_finding() {
 fn s7_vscode_doctor_drift_fixed_by_activate() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     write_file(
-        root,
+        &project_dir,
         "test-project.code-workspace",
         r#"{
   "rwv.generated": {"managed": true, "files.exclude": []},
@@ -144,7 +157,9 @@ fn s7_vscode_doctor_drift_fixed_by_activate() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     // Pre-condition: DRIFT.
     let pre = VscodeWorkspace.verify(&ctx).unwrap();
@@ -169,10 +184,12 @@ fn s7_vscode_doctor_drift_fixed_by_activate() {
 fn s7_vscode_doctor_user_held_reports_finding() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // No rwv.generated marker.
     write_file(
-        root,
+        &project_dir,
         "test-project.code-workspace",
         r#"{
   "folders": [{"path": ".", "name": "test-project (primary)"}],
@@ -185,7 +202,9 @@ fn s7_vscode_doctor_user_held_reports_finding() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let issues = VscodeWorkspace.verify(&ctx).unwrap();
     assert_eq!(
@@ -199,9 +218,9 @@ fn s7_vscode_doctor_user_held_reports_finding() {
         "USER-HELD issue must NOT be safe_to_fix"
     );
     assert!(
-        issue.message.contains("NOT auto-take-over")
-            || issue.message.contains("not auto")
-            || issue.message.contains("unmarked"),
+        issue.message.to_string().contains("NOT auto-take-over")
+            || issue.message.to_string().contains("not auto")
+            || issue.message.to_string().contains("unmarked"),
         "USER-HELD message must describe no-takeover: {}",
         issue.message
     );
@@ -215,19 +234,23 @@ fn s7_vscode_doctor_user_held_reports_finding() {
 fn s7_vscode_doctor_user_held_file_unchanged_after_activate() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     let original = r#"{
   "folders": [{"path": ".", "name": "test-project (primary)"}],
   "settings": {}
 }
 "#;
-    write_file(root, "test-project.code-workspace", original);
+    write_file(&project_dir, "test-project.code-workspace", original);
 
     let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let issues = VscodeWorkspace.verify(&ctx).unwrap();
     assert_eq!(issues.len(), 1);
@@ -235,7 +258,7 @@ fn s7_vscode_doctor_user_held_file_unchanged_after_activate() {
 
     VscodeWorkspace.activate(&ctx).unwrap();
 
-    let after = std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
+    let after = std::fs::read_to_string(project_dir.join("test-project.code-workspace")).unwrap();
     assert_eq!(
         after, original,
         "activate must leave a USER-HELD file byte-identical"
@@ -266,7 +289,10 @@ fn s7_vscode_doctor_clean_after_fresh_activate() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    project_on_disk(root, "test-project");
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     VscodeWorkspace.activate(&ctx).unwrap();
 

@@ -21,13 +21,13 @@
 //! published behavior, stated on the findings page under "Finding your entry"
 //! — so `--json` is the whole of the kind surface.
 
-use repoweave::integration::Integration;
+use repoweave::integration::{Integration, IntegrationContextBase};
 use repoweave::integration_runner::{
-    build_detection_cache, run_activations, run_checks, run_verifications, IntegrationContextBase,
+    build_detection_cache, run_activations, run_checks, run_verifications,
 };
 use repoweave::integrations::{CargoWorkspace, StaticFiles, VscodeWorkspace};
 use repoweave::manifest::{Manifest, ProjectName};
-use repoweave::workspace::ContainerKind;
+use repoweave::workspace::WorkspaceSession;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -109,16 +109,8 @@ fn hook_records(
     let integrations: Vec<&dyn Integration> = vec![integration];
     let project = ProjectName::new("test-project").unwrap();
     let detection_cache = build_detection_cache(&integrations, root, manifest.iter_entries());
-    let ctx_base = IntegrationContextBase {
-        output_dir: root.to_path_buf(),
-        workspace_root: root,
-        container_kind: ContainerKind::Primary,
-        project: &project,
-        all_repos_on_disk: &[],
-        all_project_paths: &[],
-        detection_cache: &detection_cache,
-        workweave,
-    };
+    let session = WorkspaceSession::new(root);
+    let ctx_base = IntegrationContextBase::new(&session, &project, &detection_cache, workweave);
     issue_records(match hook {
         Hook::Check => run_checks(&integrations, manifest, &ctx_base),
         Hook::Verify => run_verifications(&integrations, manifest, &ctx_base),

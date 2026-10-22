@@ -147,19 +147,6 @@ pub fn body_of(lines: &[SourceLine], file: &str, name: &str) -> Vec<SourceLine> 
     out
 }
 
-/// The struct-literal needle for `T`, derived from `T`'s own type name rather
-/// than spelled out: `repoweave::integration::IntegrationContext<'_>` yields
-/// `IntegrationContext {`. A rename moves the needle with the type.
-pub fn struct_literal_needle<T: ?Sized>() -> String {
-    let name = std::any::type_name::<T>();
-    let unparameterized = name.split('<').next().unwrap_or(name);
-    let short = unparameterized
-        .rsplit("::")
-        .next()
-        .unwrap_or(unparameterized);
-    format!("{short} {{")
-}
-
 /// Every string literal `text` passes as the first argument to `method`.
 ///
 /// Matches `method("…")`, so the method's own definition and any

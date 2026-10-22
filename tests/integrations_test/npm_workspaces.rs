@@ -8,6 +8,8 @@ use super::*;
 fn auto_detects_repos_with_package_json() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // Create repos: two with package.json, one without
     touch(root, "github/acme/server/package.json");
@@ -22,12 +24,14 @@ fn auto_detects_repos_with_package_json() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = NpmWorkspaces;
     integration.activate(&ctx).unwrap();
 
-    let pkg_json = std::fs::read_to_string(root.join("package.json")).unwrap();
+    let pkg_json = std::fs::read_to_string(project_dir.join("package.json")).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&pkg_json).unwrap();
     let workspaces = parsed["workspaces"].as_array().unwrap();
     assert_eq!(workspaces.len(), 2);
@@ -41,6 +45,8 @@ fn auto_detects_repos_with_package_json() {
 fn generates_root_package_json_with_workspaces_array() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     touch(root, "github/chatly/protocol/package.json");
     touch(root, "github/chatly/server/package.json");
@@ -54,12 +60,14 @@ fn generates_root_package_json_with_workspaces_array() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = NpmWorkspaces;
     integration.activate(&ctx).unwrap();
 
-    let pkg_json = std::fs::read_to_string(root.join("package.json")).unwrap();
+    let pkg_json = std::fs::read_to_string(project_dir.join("package.json")).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&pkg_json).unwrap();
     // name is DefaultOnly — on a fresh file, it is set from the project name.
     assert_eq!(parsed["name"], "test-project");
@@ -76,6 +84,8 @@ fn generates_root_package_json_with_workspaces_array() {
 fn excludes_reference_repos() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     touch(root, "github/acme/server/package.json");
     touch(root, "github/acme/reference-lib/package.json");
@@ -87,12 +97,14 @@ fn excludes_reference_repos() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = NpmWorkspaces;
     integration.activate(&ctx).unwrap();
 
-    let pkg_json = std::fs::read_to_string(root.join("package.json")).unwrap();
+    let pkg_json = std::fs::read_to_string(project_dir.join("package.json")).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&pkg_json).unwrap();
     let workspaces = parsed["workspaces"].as_array().unwrap();
     assert_eq!(workspaces.len(), 1);
@@ -103,6 +115,8 @@ fn excludes_reference_repos() {
 fn multi_package_repo_expands_to_prefixed_globs() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // A multi-package repo: root package.json declares its own workspaces.
     write_file(
@@ -120,12 +134,14 @@ fn multi_package_repo_expands_to_prefixed_globs() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = NpmWorkspaces;
     integration.activate(&ctx).unwrap();
 
-    let pkg_json = std::fs::read_to_string(root.join("package.json")).unwrap();
+    let pkg_json = std::fs::read_to_string(project_dir.join("package.json")).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&pkg_json).unwrap();
     let workspaces = parsed["workspaces"].as_array().unwrap();
     assert_eq!(workspaces.len(), 3);
@@ -142,6 +158,8 @@ fn multi_package_repo_expands_to_prefixed_globs() {
 fn multi_package_repo_object_form_workspaces_expands() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     write_file(
         root,
@@ -153,12 +171,14 @@ fn multi_package_repo_object_form_workspaces_expands() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = NpmWorkspaces;
     integration.activate(&ctx).unwrap();
 
-    let pkg_json = std::fs::read_to_string(root.join("package.json")).unwrap();
+    let pkg_json = std::fs::read_to_string(project_dir.join("package.json")).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&pkg_json).unwrap();
     let workspaces = parsed["workspaces"].as_array().unwrap();
     assert_eq!(workspaces.len(), 1);
@@ -257,6 +277,8 @@ fn deactivation_preserves_handwritten_package_json() {
 fn activate_preserves_user_fields_in_existing_package_json() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // Repo with a package.json so the integration detects it.
     touch(root, "github/acme/server/package.json");
@@ -264,7 +286,7 @@ fn activate_preserves_user_fields_in_existing_package_json() {
     // Pre-existing workspace-root package.json that was already activated
     // (carries the x-repoweave marker) plus user-authored fields.
     write_file(
-        root,
+        &project_dir,
         "package.json",
         r#"{
   "x-repoweave": {"managed": true},
@@ -288,11 +310,13 @@ fn activate_preserves_user_fields_in_existing_package_json() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     NpmWorkspaces.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("package.json")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("package.json")).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
 
     // name and private are DefaultOnly — existing value is preserved, not overwritten.
@@ -345,6 +369,8 @@ fn activate_preserves_user_fields_in_existing_package_json() {
 fn activate_is_idempotent_with_user_scripts() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     touch(root, "github/acme/server/package.json");
 
@@ -353,12 +379,14 @@ fn activate_is_idempotent_with_user_scripts() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     NpmWorkspaces.activate(&ctx).unwrap();
 
     // Simulate user adding a ci script after first activate.
-    let pkg_path = root.join("package.json");
+    let pkg_path = project_dir.join("package.json");
     let mut pkg: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&pkg_path).unwrap()).unwrap();
     pkg["scripts"] = serde_json::json!({"ci": "npm test"});
@@ -483,6 +511,8 @@ fn check_warns_when_npm_not_on_path() {
 fn regression_name_and_scripts_survive_activate() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/tmuxcc");
+    project_on_disk(root, "tmuxcc");
 
     touch(root, "github/cwalv/tmuxcc-daemon/package.json");
     touch(root, "github/cwalv/tmuxcc-client/package.json");
@@ -499,7 +529,7 @@ fn regression_name_and_scripts_survive_activate() {
     "test": "node --test"
   }
 }"#;
-    write_file(root, "package.json", original);
+    write_file(&project_dir, "package.json", original);
 
     let manifest = make_manifest(vec![
         ("github/cwalv/tmuxcc-daemon", Role::Owned),
@@ -509,11 +539,13 @@ fn regression_name_and_scripts_survive_activate() {
     let project = ProjectName::new("tmuxcc").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     NpmWorkspaces.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("package.json")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("package.json")).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
 
     // The core regression: name must NOT be overwritten.
@@ -547,6 +579,8 @@ fn regression_name_and_scripts_survive_activate() {
 fn greenfield_name_set_from_context_project_name() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/my-cool-project");
+    project_on_disk(root, "my-cool-project");
 
     touch(root, "github/acme/api/package.json");
 
@@ -554,11 +588,13 @@ fn greenfield_name_set_from_context_project_name() {
     let project = ProjectName::new("my-cool-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     NpmWorkspaces.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("package.json")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("package.json")).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
 
     assert_eq!(
@@ -576,12 +612,14 @@ fn greenfield_name_set_from_context_project_name() {
 fn default_only_private_false_survives_activate() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/acme");
+    project_on_disk(root, "acme");
 
     touch(root, "github/acme/api/package.json");
 
     // Pre-existing file with marker and user-set `private: false`.
     write_file(
-        root,
+        &project_dir,
         "package.json",
         r#"{
   "x-repoweave": {"managed": true},
@@ -595,11 +633,13 @@ fn default_only_private_false_survives_activate() {
     let project = ProjectName::new("acme").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     NpmWorkspaces.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("package.json")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("package.json")).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
 
     assert_eq!(
@@ -629,12 +669,14 @@ fn default_only_private_false_survives_activate() {
 fn s6_npm_1_activate_array_workspaces_preserves_user_fields() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     touch(root, "github/acme/server/package.json");
     touch(root, "github/acme/web/package.json");
 
     write_file(
-        root,
+        &project_dir,
         "package.json",
         r#"{
   "name": "asupersync",
@@ -661,9 +703,11 @@ fn s6_npm_1_activate_array_workspaces_preserves_user_fields() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
-    let path = root.join("package.json");
+    let path = project_dir.join("package.json");
     contract::assert_activate_preserves_foreign(
         &path,
         || {
@@ -703,6 +747,8 @@ fn s6_npm_1_activate_array_workspaces_preserves_user_fields() {
 fn s6_npm_2_activate_preserves_object_form_workspaces_nohoist() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     touch(root, "github/acme/mobile/package.json");
     touch(root, "github/acme/server/package.json");
@@ -710,7 +756,7 @@ fn s6_npm_2_activate_preserves_object_form_workspaces_nohoist() {
     // Seed represents a previously-activated state: x-repoweave marker present,
     // workspaces in object form (packages managed by rwv, nohoist user-authored).
     write_file(
-        root,
+        &project_dir,
         "package.json",
         r#"{
   "x-repoweave": { "managed": true },
@@ -734,11 +780,13 @@ fn s6_npm_2_activate_preserves_object_form_workspaces_nohoist() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     NpmWorkspaces.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("package.json")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("package.json")).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
 
     // workspaces MUST remain an object (not flatten to an array).
@@ -780,11 +828,13 @@ fn s6_npm_2_activate_preserves_object_form_workspaces_nohoist() {
 fn s6_npm_3_reactivate_idempotent_preserve_order() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // Scenario-1 result starting point: pre-activated file with marker
     // + array workspaces + user scripts/engines/packageManager.
     write_file(
-        root,
+        &project_dir,
         "package.json",
         r#"{
   "x-repoweave": { "managed": true },
@@ -811,14 +861,16 @@ fn s6_npm_3_reactivate_idempotent_preserve_order() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     NpmWorkspaces.activate(&ctx).unwrap();
-    let after_first = std::fs::read_to_string(root.join("package.json")).unwrap();
+    let after_first = std::fs::read_to_string(project_dir.join("package.json")).unwrap();
 
     // Re-activate must be idempotent (same ctx, same result).
     NpmWorkspaces.activate(&ctx).unwrap();
-    let after_second = std::fs::read_to_string(root.join("package.json")).unwrap();
+    let after_second = std::fs::read_to_string(project_dir.join("package.json")).unwrap();
     assert_eq!(
         after_first, after_second,
         "second activate must be byte-identical to the first; \

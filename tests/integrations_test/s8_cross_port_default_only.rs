@@ -42,12 +42,14 @@ use super::*;
 fn s8_npm_default_only_preserves_user_value() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/different-project-name");
+    project_on_disk(root, "different-project-name");
 
     touch(root, "github/acme/api/package.json");
 
     // Pre-existing file: marker present, user-chosen name + private: false.
     write_file(
-        root,
+        &project_dir,
         "package.json",
         r#"{
   "x-repoweave": {"managed": true},
@@ -61,11 +63,13 @@ fn s8_npm_default_only_preserves_user_value() {
     let project = ProjectName::new("different-project-name").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     NpmWorkspaces.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("package.json")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("package.json")).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
 
     // DefaultOnly: existing values must survive — no overwrite.
@@ -86,21 +90,25 @@ fn s8_npm_default_only_preserves_user_value() {
 fn s8_npm_default_only_seeds_on_greenfield() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/my-workspace");
+    project_on_disk(root, "my-workspace");
 
     touch(root, "github/acme/api/package.json");
 
     // No root package.json — greenfield.
-    assert!(!root.join("package.json").exists());
+    assert!(!project_dir.join("package.json").exists());
 
     let manifest = make_manifest(vec![("github/acme/api", Role::Owned)]);
     let project = ProjectName::new("my-workspace").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     NpmWorkspaces.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("package.json")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("package.json")).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
 
     // DefaultOnly seeds from project name (not a hardcoded literal).
@@ -130,12 +138,14 @@ fn s8_npm_default_only_seeds_on_greenfield() {
 fn s8_uv_default_only_preserves_user_value() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     touch(root, "github/astral/protocol/pyproject.toml");
 
     // Pre-existing file: marker on members, user-set package = true.
     write_file(
-        root,
+        &project_dir,
         "pyproject.toml",
         concat!(
             "[tool.uv.workspace]\n",
@@ -151,11 +161,13 @@ fn s8_uv_default_only_preserves_user_value() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     UvWorkspace.activate(&ctx).unwrap();
 
-    let after = std::fs::read_to_string(root.join("pyproject.toml")).unwrap();
+    let after = std::fs::read_to_string(project_dir.join("pyproject.toml")).unwrap();
 
     // DefaultOnly: user-set value must survive.
     assert!(
@@ -176,21 +188,25 @@ fn s8_uv_default_only_preserves_user_value() {
 fn s8_uv_default_only_seeds_on_greenfield() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     touch(root, "github/astral/protocol/pyproject.toml");
 
     // No root pyproject.toml — greenfield.
-    assert!(!root.join("pyproject.toml").exists());
+    assert!(!project_dir.join("pyproject.toml").exists());
 
     let manifest = make_manifest(vec![("github/astral/protocol", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     UvWorkspace.activate(&ctx).unwrap();
 
-    let after = std::fs::read_to_string(root.join("pyproject.toml")).unwrap();
+    let after = std::fs::read_to_string(project_dir.join("pyproject.toml")).unwrap();
 
     // DefaultOnly seeds package = false on a fresh file.
     assert!(
@@ -217,12 +233,14 @@ fn s8_uv_default_only_seeds_on_greenfield() {
 fn s8_cargo_default_only_preserves_user_value() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     touch(root, "github/acme/server/Cargo.toml");
 
     // Pre-existing Cargo.toml: marker on members, user-set resolver = "1".
     write_file(
-        root,
+        &project_dir,
         "Cargo.toml",
         "[workspace]\n# managed by rwv\nmembers = [\"github/acme/server\"]\n\
              # managed by rwv\nresolver = \"1\"\n",
@@ -232,11 +250,13 @@ fn s8_cargo_default_only_preserves_user_value() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     CargoWorkspace.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("Cargo.toml")).unwrap();
 
     // DefaultOnly: operator's resolver = "1" must survive.
     assert!(
@@ -256,21 +276,25 @@ fn s8_cargo_default_only_preserves_user_value() {
 fn s8_cargo_default_only_seeds_on_greenfield() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     touch(root, "github/acme/server/Cargo.toml");
 
     // No root Cargo.toml — greenfield.
-    assert!(!root.join("Cargo.toml").exists());
+    assert!(!project_dir.join("Cargo.toml").exists());
 
     let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     CargoWorkspace.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("Cargo.toml")).unwrap();
 
     // DefaultOnly seeds resolver = "2" on a fresh file.
     assert!(
@@ -318,6 +342,8 @@ fn s8_cargo_default_only_seeds_on_greenfield() {
 fn s8_go_work_default_only_preserves_user_value() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // Member go.mod declares go 1.20 — same version as the go.work.
     // max_go_version will compute 1.20, so both primary and fallback paths
@@ -330,7 +356,7 @@ fn s8_go_work_default_only_preserves_user_value() {
 
     // Pre-existing go.work with go 1.20.
     write_file(
-        root,
+        &project_dir,
         "go.work",
         "go 1.20\n\n// managed by repoweave\nuse (\n\t./github/acme/server\n)\n",
     );
@@ -339,11 +365,13 @@ fn s8_go_work_default_only_preserves_user_value() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     GoWork.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("go.work")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("go.work")).unwrap();
 
     // go 1.20 must be present after activate (not downgraded, not removed).
     assert!(
@@ -370,6 +398,8 @@ fn s8_go_work_default_only_preserves_user_value() {
 fn s8_go_work_default_only_seeds_on_greenfield() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // Member go.mod declares go 1.20.
     write_file(
@@ -379,17 +409,19 @@ fn s8_go_work_default_only_seeds_on_greenfield() {
     );
 
     // No go.work — greenfield.
-    assert!(!root.join("go.work").exists());
+    assert!(!project_dir.join("go.work").exists());
 
     let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     GoWork.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("go.work")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("go.work")).unwrap();
 
     // DefaultOnly seeds go version from max_go_version (not a hardcoded
     // literal): restore_go_directive puts the value rwv computed back after
@@ -418,10 +450,12 @@ fn s8_go_work_default_only_seeds_on_greenfield() {
 fn s8_vscode_default_only_preserves_user_value() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // Pre-existing workspace: marker present, user-set git.* values.
     write_file(
-        root,
+        &project_dir,
         "test-project.code-workspace",
         r#"{
   "rwv.generated": { "managed": true, "files.exclude": [] },
@@ -438,11 +472,13 @@ fn s8_vscode_default_only_preserves_user_value() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     VscodeWorkspace.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("test-project.code-workspace")).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
 
     // DefaultOnly: user-set values must survive.
@@ -464,19 +500,23 @@ fn s8_vscode_default_only_preserves_user_value() {
 fn s8_vscode_default_only_seeds_on_greenfield() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // No .code-workspace — greenfield.
-    assert!(!root.join("test-project.code-workspace").exists());
+    assert!(!project_dir.join("test-project.code-workspace").exists());
 
     let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     VscodeWorkspace.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("test-project.code-workspace")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("test-project.code-workspace")).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
 
     // DefaultOnly seeds the expected defaults on a fresh workspace.

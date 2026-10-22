@@ -24,11 +24,13 @@ use std::path::Path;
 
 mod common;
 
-use repoweave::integration::{Integration, IntegrationContext};
+use repoweave::activate::{surface_symlinks, SurfacingMode};
+use repoweave::git::git_vcs;
+use repoweave::integration::{Integration, IntegrationContextBase};
 use repoweave::integrations::{CargoWorkspace, NpmWorkspaces, UvWorkspace};
 use repoweave::manifest::{IntegrationConfig, Manifest, ProjectName, Role};
 use repoweave::owned_state::stamp_owned_digest;
-use repoweave::workspace::ContainerKind;
+use repoweave::workspace::WorkspaceSession;
 
 // ---------------------------------------------------------------------------
 // Fixture helpers
@@ -38,6 +40,19 @@ fn write_file(root: &Path, rel: &str, content: &str) {
     let path = root.join(rel);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, content).unwrap();
+}
+
+/// The weave root as activation leaves it for the hooks: the project's files
+/// surfaced there, so a tool run at the root reads and writes them.
+fn surface(root: &Path, project: &ProjectName, manifest: &Manifest) {
+    surface_symlinks(
+        git_vcs().as_ref(),
+        root,
+        project,
+        manifest,
+        SurfacingMode::Select,
+    )
+    .unwrap();
 }
 
 fn make_manifest(repos: &[(&str, Role)]) -> Manifest {
@@ -50,30 +65,6 @@ fn make_manifest(repos: &[(&str, Role)]) -> Manifest {
         ));
     }
     Manifest::from_toml_str(&toml).unwrap()
-}
-
-fn make_ctx<'a>(
-    root: &'a Path,
-    project: &'a ProjectName,
-    manifest: &'a Manifest,
-    config: &'a IntegrationConfig,
-    cache: &'a HashMap<String, Vec<String>>,
-) -> IntegrationContext<'a> {
-    IntegrationContext {
-        output_dir: root,
-        workspace_root: root,
-        container_kind: ContainerKind::Primary,
-        project,
-        repos: manifest
-            .iter_entries()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config,
-        all_repos_on_disk: &[],
-        all_project_paths: &[],
-        detection_cache: cache,
-        workweave: None,
-    }
 }
 
 /// The `version = "x.y.z"` line of the `pinnable` package in a `Cargo.lock`.
@@ -115,6 +106,8 @@ fn cargo_activation_leaves_a_non_newest_pin_byte_identical() {
     }
     let tmp = common::tempdir().unwrap();
     let root = tmp.path().join("weave");
+    let project_dir = root.join("projects/test-project");
+    std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
     let source = tmp.path().join("crate-source");
     std::fs::create_dir_all(&root).unwrap();
     common::write_local_crate_source(&source, &root, &["0.1.0", "0.1.1"]);
@@ -131,17 +124,20 @@ fn cargo_activation_leaves_a_non_newest_pin_byte_identical() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(&root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(&root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = CargoWorkspace;
     integration.activate(&ctx).unwrap();
+    surface(&root, &project, &manifest);
 
     // The first activation is the first resolve: no lock exists, so nothing is
     // being discarded and the newest match is the right answer.
     integration
         .activate_hook(&ctx)
         .expect("first activation should produce a lock");
-    let lock_path = root.join("Cargo.lock");
+    let lock_path = project_dir.join("Cargo.lock");
     let first = std::fs::read_to_string(&lock_path).unwrap();
     assert_eq!(
         locked_pinnable_version(&first).as_deref(),
@@ -154,7 +150,7 @@ fn cargo_activation_leaves_a_non_newest_pin_byte_identical() {
     let pinned = first.replace(r#"version = "0.1.1""#, r#"version = "0.1.0""#);
     assert_ne!(pinned, first, "fixture: the downgrade must change the lock");
     std::fs::write(&lock_path, &pinned).unwrap();
-    stamp_owned_digest(&root, "Cargo.lock", pinned.as_bytes()).unwrap();
+    stamp_owned_digest(&project_dir, "Cargo.lock", pinned.as_bytes()).unwrap();
 
     integration
         .activate_hook(&ctx)
@@ -319,6 +315,8 @@ fn cargo_activation_adds_a_new_member_without_moving_an_existing_pin() {
 
     let tmp = common::tempdir().unwrap();
     let root = tmp.path().join("weave");
+    let project_dir = root.join("projects/test-project");
+    std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
     let source = tmp.path().join("crate-source");
     std::fs::create_dir_all(&root).unwrap();
     common::write_local_crate_source(&source, &root, &["0.1.0", "0.1.1"]);
@@ -337,16 +335,19 @@ fn cargo_activation_adds_a_new_member_without_moving_an_existing_pin() {
     let integration = CargoWorkspace;
 
     let manifest = make_manifest(&[("github/acme/server", Role::Owned)]);
-    let ctx = make_ctx(&root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(&root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
     integration.activate(&ctx).unwrap();
+    surface(&root, &project, &manifest);
     integration.activate_hook(&ctx).unwrap();
 
-    let lock_path = root.join("Cargo.lock");
+    let lock_path = project_dir.join("Cargo.lock");
     let pinned = std::fs::read_to_string(&lock_path)
         .unwrap()
         .replace(r#"version = "0.1.1""#, r#"version = "0.1.0""#);
     std::fs::write(&lock_path, &pinned).unwrap();
-    stamp_owned_digest(&root, "Cargo.lock", pinned.as_bytes()).unwrap();
+    stamp_owned_digest(&project_dir, "Cargo.lock", pinned.as_bytes()).unwrap();
 
     // A second Rust repo joins the project.
     write_file(
@@ -359,8 +360,11 @@ fn cargo_activation_adds_a_new_member_without_moving_an_existing_pin() {
         ("github/acme/client", Role::Owned),
         ("github/acme/server", Role::Owned),
     ]);
-    let grown_ctx = make_ctx(&root, &project, &grown, &config, &cache);
+    let session = WorkspaceSession::new(&root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let grown_ctx = base.build_context(&config, &grown);
     integration.activate(&grown_ctx).unwrap();
+    surface(&root, &project, &grown);
     integration
         .activate_hook(&grown_ctx)
         .expect("activation after a membership change should succeed");
@@ -391,6 +395,8 @@ fn npm_activation_leaves_a_non_newest_pin_byte_identical() {
     }
     let tmp = common::tempdir().unwrap();
     let root = tmp.path().to_path_buf();
+    let project_dir = root.join("projects/test-project");
+    std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
 
     write_file(
         &root,
@@ -402,15 +408,18 @@ fn npm_activation_leaves_a_non_newest_pin_byte_identical() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(&root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(&root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = NpmWorkspaces;
     integration.activate(&ctx).unwrap();
+    surface(&root, &project, &manifest);
 
     integration
         .activate_hook(&ctx)
         .expect("first activation should produce a package-lock");
-    let lock_path = root.join("package-lock.json");
+    let lock_path = project_dir.join("package-lock.json");
     let newest = locked_npm_version(&std::fs::read_to_string(&lock_path).unwrap());
 
     // Reach the pinned state the way an operator would: ask for the older
@@ -445,7 +454,7 @@ fn npm_activation_leaves_a_non_newest_pin_byte_identical() {
         newest,
         "fixture: the pin must differ from what a fresh resolve picks"
     );
-    stamp_owned_digest(&root, "package-lock.json", pinned.as_bytes()).unwrap();
+    stamp_owned_digest(&project_dir, "package-lock.json", pinned.as_bytes()).unwrap();
 
     integration
         .activate_hook(&ctx)
@@ -514,6 +523,8 @@ fn uv_activation_leaves_a_non_newest_pin_byte_identical() {
     }
     let tmp = common::tempdir().unwrap();
     let root = tmp.path().to_path_buf();
+    let project_dir = root.join("projects/test-project");
+    std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
 
     write_file(
         &root,
@@ -526,15 +537,18 @@ fn uv_activation_leaves_a_non_newest_pin_byte_identical() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(&root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(&root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = UvWorkspace;
     integration.activate(&ctx).unwrap();
+    surface(&root, &project, &manifest);
 
     integration
         .activate_hook(&ctx)
         .expect("first activation should produce a uv.lock");
-    let lock_path = root.join("uv.lock");
+    let lock_path = project_dir.join("uv.lock");
     let first = std::fs::read_to_string(&lock_path).unwrap();
     let newest = locked_uv_version(&first);
 
@@ -560,7 +574,7 @@ fn uv_activation_leaves_a_non_newest_pin_byte_identical() {
         newest,
         "fixture: the pin must differ from what a fresh resolve picks"
     );
-    stamp_owned_digest(&root, "uv.lock", pinned.as_bytes()).unwrap();
+    stamp_owned_digest(&project_dir, "uv.lock", pinned.as_bytes()).unwrap();
 
     integration
         .activate_hook(&ctx)
@@ -965,6 +979,8 @@ fn go_activation_records_membership_without_resolving() {
 
     let tmp = common::tempdir().unwrap();
     let root = tmp.path().to_path_buf();
+    let project_dir = root.join("projects/test-project");
+    std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
     write_file(
         &root,
         "github/acme/server/go.mod",
@@ -975,7 +991,9 @@ fn go_activation_records_membership_without_resolving() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(&root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(&root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = repoweave::integrations::GoWork;
     integration
@@ -986,11 +1004,11 @@ fn go_activation_records_membership_without_resolving() {
         .expect("go hook should succeed");
 
     assert!(
-        root.join("go.work").exists(),
+        project_dir.join("go.work").exists(),
         "go activation should record membership in go.work"
     );
     assert!(
-        !root.join("go.work.sum").exists(),
+        !project_dir.join("go.work.sum").exists(),
         "go activation must not resolve module versions"
     );
     assert!(
@@ -1011,7 +1029,10 @@ fn gita_activation_produces_no_lockfile() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::from_toml("enabled = true");
     let cache = HashMap::new();
-    let ctx = make_ctx(&root, &project, &manifest, &config, &cache);
+    std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
+    let session = WorkspaceSession::new(&root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = repoweave::integrations::Gita;
     integration
@@ -1023,7 +1044,7 @@ fn gita_activation_produces_no_lockfile() {
 
     for lock in ["Cargo.lock", "package-lock.json", "uv.lock", "go.work.sum"] {
         assert!(
-            !root.join(lock).exists(),
+            !root.join(lock).exists() && !ctx.output_dir().join(lock).exists(),
             "gita activation produced {lock}, which it has no business writing"
         );
     }

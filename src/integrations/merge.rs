@@ -1875,7 +1875,8 @@ pub fn drift_issues(
                      rwv will NOT auto-take-over (would discard user content). {}",
                     crate::path_spelling::operator_path(path),
                     remedy.user_held
-                ),
+                )
+                .into(),
                 kind: IssueKind::ManagedFileUserHeld,
                 safe_to_fix: false,
             }];
@@ -1898,7 +1899,8 @@ pub fn drift_issues(
              Run rwv doctor --fix to regenerate",
             crate::path_spelling::operator_path(path),
             remedy.drift
-        ),
+        )
+        .into(),
         kind: IssueKind::ManagedFileDrift,
         safe_to_fix: true,
     }]
@@ -1916,7 +1918,8 @@ pub fn missing_issue(name: &str, path: &Path) -> Issue {
         message: format!(
             "{name} managed file missing: {}; run rwv doctor --fix to regenerate",
             crate::path_spelling::operator_path(path)
-        ),
+        )
+        .into(),
         kind: IssueKind::ManagedFileMissing,
         safe_to_fix: true,
     }
@@ -1958,7 +1961,8 @@ pub fn orphaned_region_issues<D: ManagedDoc>(
             "{name} managed file has drift: {}; {detail} \
              Run rwv doctor --fix to regenerate",
             crate::path_spelling::operator_path(path)
-        ),
+        )
+        .into(),
         kind: IssueKind::ManagedFileDrift,
         safe_to_fix: true,
     }]
@@ -1987,7 +1991,8 @@ pub fn fully_owned_drift_issue(name: &str, path: &Path, detail: &str) -> Issue {
             "{name} generated file has drift: {} ({detail}); \
              run rwv doctor --fix to regenerate",
             crate::path_spelling::operator_path(path)
-        ),
+        )
+        .into(),
         kind: IssueKind::ManagedFileDrift,
         safe_to_fix: true,
     }
@@ -3070,9 +3075,9 @@ replace example.com/legacy => ./vendor/legacy
             assert_eq!(i.source, IssueSource::integration("cargo-workspace"));
             assert_eq!(i.severity, Severity::Warning);
             assert!(!i.safe_to_fix, "USER-HELD must be safe_to_fix=false");
-            assert!(i.message.contains("present but unmarked"));
-            assert!(i.message.contains("NOT auto-take-over"));
-            assert!(i.message.contains("Cut over manually"));
+            assert!(i.message.to_string().contains("present but unmarked"));
+            assert!(i.message.to_string().contains("NOT auto-take-over"));
+            assert!(i.message.to_string().contains("Cut over manually"));
         }
 
         #[test]
@@ -3093,9 +3098,12 @@ replace example.com/legacy => ./vendor/legacy
             let i = &issues[0];
             assert_eq!(i.severity, Severity::Warning);
             assert!(i.safe_to_fix, "DRIFT must be safe_to_fix=true");
-            assert!(i.message.contains("has drift"));
-            assert!(i.message.contains("rwv doctor --fix"));
-            assert!(i.message.contains("on-disk workspaces content differs"));
+            assert!(i.message.to_string().contains("has drift"));
+            assert!(i.message.to_string().contains("rwv doctor --fix"));
+            assert!(i
+                .message
+                .to_string()
+                .contains("on-disk workspaces content differs"));
         }
 
         #[test]
@@ -3124,7 +3132,7 @@ replace example.com/legacy => ./vendor/legacy
                 remedy(),
             );
             assert_eq!(issues.len(), 1, "absent owned key must be DRIFT");
-            assert!(issues[0].message.contains("has drift"));
+            assert!(issues[0].message.to_string().contains("has drift"));
         }
 
         #[test]
@@ -3152,8 +3160,8 @@ replace example.com/legacy => ./vendor/legacy
             assert_eq!(i.source, IssueSource::integration("go-work"));
             assert_eq!(i.severity, Severity::Warning);
             assert!(i.safe_to_fix, "MISSING must be safe_to_fix=true");
-            assert!(i.message.contains("managed file missing"));
-            assert!(i.message.contains("rwv doctor --fix"));
+            assert!(i.message.to_string().contains("managed file missing"));
+            assert!(i.message.to_string().contains("rwv doctor --fix"));
         }
 
         fn write(dir: &TempDir, text: &str) -> std::path::PathBuf {
@@ -3182,7 +3190,7 @@ replace example.com/legacy => ./vendor/legacy
                 issues[0].safe_to_fix,
                 "the strip is the fix, so the finding must route to --fix"
             );
-            assert!(issues[0].message.contains("rwv doctor --fix"));
+            assert!(issues[0].message.to_string().contains("rwv doctor --fix"));
         }
 
         #[test]

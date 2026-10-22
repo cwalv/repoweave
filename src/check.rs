@@ -4,7 +4,7 @@
 //! a series of checks. Integration check hooks are run separately.
 
 use crate::git::RWV_MERGE_DRIVER_PREFIX;
-use crate::integration::{Issue, IssueKind, IssueSource};
+use crate::integration::{IntegrationContextBase, Issue, IssueKind, IssueSource};
 use crate::manifest::{
     LockFile, Manifest, Project, ProjectName, RepoPath, Role, WorkweaveId, WorkweaveName,
 };
@@ -2973,7 +2973,7 @@ impl IssueOutput {
                 crate::integration::Severity::Warning => SeverityOutput::Warning,
                 crate::integration::Severity::Error => SeverityOutput::Error,
             },
-            message: issue.message,
+            message: issue.message.to_string(),
             safe_to_fix,
         }
     }
@@ -4102,11 +4102,11 @@ pub fn scan_cargo_ecosystem(
     use crate::manifest::CargoWorkspaceConfig;
 
     let integration = CargoWorkspace;
-    if !is_enabled(&integration, ctx.config) {
+    if !is_enabled(&integration, ctx.config()) {
         return Ok(Vec::new());
     }
 
-    let cfg: CargoWorkspaceConfig = ctx.config.settings()?;
+    let cfg: CargoWorkspaceConfig = ctx.config().settings()?;
     // Reuse the integration's enablement predicate for "does this workspace
     // have cargo work at all?" so the scan silently no-ops in workspaces
     // without any Rust members.
@@ -4116,14 +4116,17 @@ pub fn scan_cargo_ecosystem(
     }
 
     let mut violations = Vec::new();
-    for (crate_name, occurrences) in CargoWorkspace::scan_version_skew(ctx.workspace_root, &members)
+    for (crate_name, occurrences) in
+        CargoWorkspace::scan_version_skew(ctx.workspace_root(), &members)
     {
         violations.push(CheckViolation::CargoVersionSkew {
             crate_name,
             occurrences,
         });
     }
-    for rec in CargoWorkspace::scan_patch_shadowing(ctx.workspace_root, &members) {
+    for rec in
+        CargoWorkspace::scan_patch_shadowing(ctx.output_dir(), ctx.workspace_root(), &members)
+    {
         violations.push(CheckViolation::CargoPatchShadowing {
             weave_config: rec.weave_config,
             member_config: rec.member_config,
@@ -7705,7 +7708,7 @@ impl CollapsedClass {
             kind: IssueKind::CoreFinding,
             source: IssueSource::Core,
             severity,
-            message,
+            message: message.into(),
             safe_to_fix: self.auto_fixed(),
         }
     }
@@ -8936,7 +8939,7 @@ impl CheckViolation {
             kind: IssueKind::CoreFinding,
             source: IssueSource::Core,
             severity,
-            message,
+            message: message.into(),
             safe_to_fix,
         })
     }
@@ -9824,7 +9827,8 @@ fn stale_generation_issue(finding: &crate::owned_state::StaleGeneration) -> Issu
             "{} may no longer match this checkout — {cause}. Run `rwv materialize` \
              to re-derive it",
             finding.generated
-        ),
+        )
+        .into(),
         kind: IssueKind::DerivedStateStale,
         safe_to_fix: false,
     }
@@ -9855,7 +9859,7 @@ fn disabled_integration_issues(
     project: &crate::manifest::ProjectName,
     integrations: &[&dyn crate::integration::Integration],
     manifest: &crate::manifest::Manifest,
-    ctx_base: &crate::integration_runner::IntegrationContextBase,
+    ctx_base: &IntegrationContextBase,
 ) -> Vec<Issue> {
     use crate::integration::{OwnedPath, Severity};
 
@@ -9873,7 +9877,7 @@ fn disabled_integration_issues(
                     format!(
                         "{} ({shape})",
                         ctx_base
-                            .output_dir
+                            .output_dir()
                             .join(crate::path_spelling::native_relative(path.name()))
                             .display()
                     )
@@ -9897,7 +9901,8 @@ fn disabled_integration_issues(
                      removal is not a repair, and disabling an integration is one \
                      character in rwv.toml",
                     found.integration
-                ),
+                )
+                .into(),
                 kind: IssueKind::DisabledIntegrationArtifact,
                 safe_to_fix: false,
             }
@@ -9931,7 +9936,8 @@ fn collect_doctor_issues(world: &DoctorWorld, repair: Repair) -> Vec<Issue> {
             workspace_dir,
             project.manifest.iter_entries(),
         );
-        let ctx_base = world.session.context_base(
+        let ctx_base = IntegrationContextBase::new(
+            &world.session,
             &project.name,
             &detection_cache,
             project.manifest.workweave.as_ref(),
@@ -9995,7 +10001,8 @@ fn collect_doctor_issues(world: &DoctorWorld, repair: Repair) -> Vec<Issue> {
                     message: format!(
                         "doctor --fix: failed to regenerate integration content for `{}`: {e:#}",
                         project.name
-                    ),
+                    )
+                    .into(),
                     safe_to_fix: true,
                 }),
             }
@@ -10015,7 +10022,8 @@ fn collect_doctor_issues(world: &DoctorWorld, repair: Repair) -> Vec<Issue> {
                          --regenerate-drifted` discards it and regenerates from the \
                          current inputs. Then re-run `rwv doctor --fix`",
                         project.name
-                    ),
+                    )
+                    .into(),
                     safe_to_fix: false,
                 });
             }
@@ -10071,7 +10079,8 @@ fn collect_doctor_issues(world: &DoctorWorld, repair: Repair) -> Vec<Issue> {
                     message: format!(
                         "doctor --fix: failed to re-surface symlinks for `{}`: {e:#}",
                         project.name
-                    ),
+                    )
+                    .into(),
                     safe_to_fix: true,
                 }),
             }
@@ -10678,7 +10687,7 @@ fn text_report(findings: DoctorFindings, fix_errors: Vec<String>) -> Vec<Issue> 
         kind: IssueKind::CoreFinding,
         source: IssueSource::Core,
         severity: Severity::Error,
-        message,
+        message: message.into(),
         safe_to_fix: true,
     }));
     lines.extend(findings.issues);
@@ -10823,7 +10832,8 @@ fn collect_doctor_violations(
                 workspace_dir,
                 project.manifest.iter_entries(),
             );
-            let ctx_base = world.session.context_base(
+            let ctx_base = IntegrationContextBase::new(
+                &world.session,
                 &project.name,
                 &detection_cache,
                 project.manifest.workweave.as_ref(),

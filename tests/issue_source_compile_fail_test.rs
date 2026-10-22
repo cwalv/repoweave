@@ -30,14 +30,14 @@ fn the_harness_can_compile_a_finding_and_a_skip_that_name_their_sources() {
             let core = Issue {
                 source: IssueSource::Core,
                 severity: Severity::Warning,
-                message: String::new(),
+                message: String::new().into(),
                 kind: IssueKind::CoreFinding,
                 safe_to_fix: false,
             };
             let integration = Issue {
                 source: IssueSource::integration("npm-workspaces"),
                 severity: Severity::Warning,
-                message: String::new(),
+                message: String::new().into(),
                 kind: IssueKind::ToolMissing,
                 safe_to_fix: false,
             };
@@ -60,7 +60,7 @@ fn a_core_sentinel_string_is_not_a_source() {
             Issue {
                 source: "core".to_string(),
                 severity: Severity::Warning,
-                message: String::new(),
+                message: String::new().into(),
                 kind: IssueKind::CoreFinding,
                 safe_to_fix: false,
             }
@@ -81,7 +81,7 @@ fn an_issue_has_no_integration_string_field() {
             Issue {
                 integration: "core".to_string(),
                 severity: Severity::Warning,
-                message: String::new(),
+                message: String::new().into(),
                 kind: IssueKind::CoreFinding,
                 safe_to_fix: false,
             }

@@ -25,7 +25,6 @@
 //! feed a flag-derived path to [`WorkspaceContext::resolve_invocation`] instead of
 //! [`acquire_origin_dir`], and everything downstream would still work.
 
-use crate::integration_runner::IntegrationContextBase;
 use crate::manifest::{Manifest, ProjectName, RepoPath, WorkweaveId, WorkweaveName};
 use crate::path_spelling::{native_relative, CanonicalPath};
 use crate::refusal::RefusalKind;
@@ -1015,10 +1014,10 @@ fn spelled_project_names(root: &Path) -> Vec<String> {
 /// Computed-once workspace data: registries, repos on disk, and project paths.
 ///
 /// Call [`WorkspaceSession::new`] once per command invocation to pay the scan
-/// cost a single time, then pass the varying `project` to
-/// [`WorkspaceSession::context_base`] to build an [`IntegrationContextBase`].
+/// cost a single time, then narrow it to each project with
+/// [`IntegrationContextBase::new`](crate::integration::IntegrationContextBase::new).
 pub struct WorkspaceSession {
-    pub root: PathBuf,
+    root: PathBuf,
     container_kind: ContainerKind,
     repos_on_disk: Vec<RepoPath>,
     project_paths: Vec<ProjectName>,
@@ -1041,57 +1040,21 @@ impl WorkspaceSession {
         }
     }
 
-    /// Build an [`IntegrationContextBase`] from this session's shared data
-    /// combined with the per-invocation `project` and that project's optional
-    /// `workweave:` config.
-    ///
-    /// `output_dir` is **derived**, not passed: it is always
-    /// `<self.root>/projects/<project>`, the committed location where an
-    /// integration's managed and generated files actually live. It is not a
-    /// caller's choice, because the weave root is the other thing a caller
-    /// could plausibly hand over — and there the same files appear only as
-    /// surfacing symlinks, for the **active** project alone. A context bound
-    /// to the root view reads the active project's inode no matter which
-    /// project it claims to describe, and names a path that does not exist at
-    /// all for a file that is missing. Deriving the directory here is what
-    /// makes that unrepresentable; whether the root carries the symlink is a
-    /// separate axis, answered by [`crate::activate::verify_surfacing`].
-    ///
-    /// The `workweave` argument is the project's `workweave:` section from
-    /// `rwv.toml` (typically `manifest.workweave.as_ref()`). It is threaded
-    /// through to integrations so they can detect cross-section collisions
-    /// such as a name claimed by both `static-files.files` and
-    /// `workweave.link`.
-    ///
-    /// `container_kind` is derived for the same reason `output_dir` is: it
-    /// qualifies `workspace_root`, the integration that reads it reads it
-    /// against that same directory, and a caller free to state it separately
-    /// is free to describe one root while naming another. The session settles
-    /// it once from its own root ([`RootObservation::container_kind`]), so the
-    /// pair cannot disagree — a caller holding a resolved [`Checkout`] and a
-    /// root from somewhere else has nowhere left to say the mismatch.
-    pub fn context_base<'a>(
-        &'a self,
-        project: &'a ProjectName,
-        detection_cache: &'a std::collections::HashMap<String, Vec<String>>,
-        workweave: Option<&'a crate::manifest::WorkweaveConfig>,
-    ) -> IntegrationContextBase<'a> {
-        IntegrationContextBase {
-            output_dir: project_dir(&self.root, project),
-            workspace_root: &self.root,
-            container_kind: self.container_kind,
-            project,
-            all_repos_on_disk: &self.repos_on_disk,
-            all_project_paths: &self.project_paths,
-            detection_cache,
-            workweave,
-        }
-    }
-
     /// This session as it stands once the `departing` checkouts are off disk.
     pub fn without(mut self, departing: &[RepoPath]) -> Self {
         self.repos_on_disk.retain(|repo| !departing.contains(repo));
         self
+    }
+
+    /// The root this session observed.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// Which kind of container [`Self::root`] is, settled once from the root
+    /// itself ([`RootObservation::container_kind`]).
+    pub fn container_kind(&self) -> ContainerKind {
+        self.container_kind
     }
 
     /// The repos found on disk (relative paths from workspace root).
@@ -3443,7 +3406,7 @@ mod tests {
     /// this asserts they agree.
     #[test]
     fn container_kind_reaches_integration_context_matching_the_resolved_checkout() {
-        use crate::integration::IntegrationContext;
+        use crate::integration::{IntegrationContext, IntegrationContextBase};
         use crate::manifest::IntegrationConfig;
 
         let manifest = Manifest::from_toml_str("[repositories]\n").unwrap();
@@ -3456,17 +3419,17 @@ mod tests {
 
         let ctx = WorkspaceContext::resolve_invocation(&root, None).unwrap();
         let session = WorkspaceSession::new(&root);
-        let base = session.context_base(&project, &cache, None);
+        let base = IntegrationContextBase::new(&session, &project, &cache, None);
         let int_ctx: IntegrationContext = base.build_context(&config, &manifest);
         assert_eq!(ctx.checkout.kind(), ContainerKind::Primary);
-        assert_eq!(int_ctx.container_kind, ctx.checkout.kind());
+        assert_eq!(int_ctx.container_kind(), ctx.checkout.kind());
 
         let ww_ctx = WorkspaceContext::resolve_invocation(&weave_dir, None).unwrap();
         let ww_session = WorkspaceSession::new(&weave_dir);
-        let ww_base = ww_session.context_base(&project, &cache, None);
+        let ww_base = IntegrationContextBase::new(&ww_session, &project, &cache, None);
         let ww_int_ctx: IntegrationContext = ww_base.build_context(&config, &manifest);
         assert_eq!(ww_ctx.checkout.kind(), ContainerKind::Workweave);
-        assert_eq!(ww_int_ctx.container_kind, ww_ctx.checkout.kind());
+        assert_eq!(ww_int_ctx.container_kind(), ww_ctx.checkout.kind());
     }
 
     /// The kind describes the root the session was built at, not the checkout

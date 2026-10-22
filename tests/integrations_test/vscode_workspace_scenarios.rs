@@ -17,12 +17,14 @@ use super::*;
 fn scenario1_user_files_exclude_survives_reactivation() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/foundations");
+    project_on_disk(root, "foundations");
 
     // Seed: an rwv-generated workspace file (marker present, primary folder,
     // git.* settings, rwv-derived exclude keys) PLUS two user-added exclude
     // entries that rwv should never touch.
     write_file(
-        root,
+        &project_dir,
         "foundations.code-workspace",
         r#"{
   "rwv.generated": true,
@@ -50,32 +52,22 @@ fn scenario1_user_files_exclude_survives_reactivation() {
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
 
-    let all_repos_on_disk: Vec<RepoPath> = vec![
-        RepoPath::new("github/cwalv/repoweave").expect("known-safe literal"),
-        RepoPath::new("github/chatly/api").expect("known-safe literal"),
-        RepoPath::new("github/acme/server").expect("known-safe literal"),
-        RepoPath::new("github/acme/web").expect("known-safe literal"),
-    ];
+    for repo in [
+        "github/cwalv/repoweave",
+        "github/chatly/api",
+        "github/acme/server",
+        "github/acme/web",
+    ] {
+        clone_on_disk(root, repo);
+    }
 
-    let ctx = IntegrationContext {
-        output_dir: root,
-        workspace_root: root,
-        container_kind: ContainerKind::Primary,
-        project: &project,
-        repos: manifest
-            .iter_entries()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config: &config,
-        all_repos_on_disk: &all_repos_on_disk,
-        all_project_paths: &[],
-        detection_cache: &cache,
-        workweave: None,
-    };
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     VscodeWorkspace.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("foundations.code-workspace")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("foundations.code-workspace")).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
     let exclude = &parsed["settings"]["files.exclude"];
 
@@ -118,10 +110,12 @@ fn scenario1_user_files_exclude_survives_reactivation() {
 fn scenario2_user_blocks_survive_activate_and_deactivate() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/myproject");
+    project_on_disk(root, "myproject");
 
     // Seed: rwv-generated workspace + the four user-added top-level blocks.
     write_file(
-        root,
+        &project_dir,
         "myproject.code-workspace",
         r#"{
   "rwv.generated": true,
@@ -150,12 +144,14 @@ fn scenario2_user_blocks_survive_activate_and_deactivate() {
     let project = ProjectName::new("myproject").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     // Activate: all four user blocks must survive.
     VscodeWorkspace.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("myproject.code-workspace")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("myproject.code-workspace")).unwrap();
     let after_activate: serde_json::Value = serde_json::from_str(&content).unwrap();
 
     assert!(
@@ -184,14 +180,14 @@ fn scenario2_user_blocks_survive_activate_and_deactivate() {
 
     // Deactivate: file must NOT be deleted; owned keys stripped but user
     // blocks survive.
-    VscodeWorkspace.deactivate(root).unwrap();
+    VscodeWorkspace.deactivate(&project_dir).unwrap();
 
     assert!(
-        root.join("myproject.code-workspace").exists(),
+        project_dir.join("myproject.code-workspace").exists(),
         "file must NOT be deleted — user content remains"
     );
 
-    let content = std::fs::read_to_string(root.join("myproject.code-workspace")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("myproject.code-workspace")).unwrap();
     let after_deactivate: serde_json::Value = serde_json::from_str(&content).unwrap();
 
     // Owned keys stripped.
@@ -244,10 +240,12 @@ fn scenario2_user_blocks_survive_activate_and_deactivate() {
 fn scenario3_user_extra_folder_survives_reactivation() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/foundations");
+    project_on_disk(root, "foundations");
 
     // Seed: primary folder + a user-added extra folder (shared-notes).
     write_file(
-        root,
+        &project_dir,
         "foundations.code-workspace",
         r#"{
   "rwv.generated": true,
@@ -267,11 +265,13 @@ fn scenario3_user_extra_folder_survives_reactivation() {
     let project = ProjectName::new("foundations").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     VscodeWorkspace.activate(&ctx).unwrap();
 
-    let content = std::fs::read_to_string(root.join("foundations.code-workspace")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("foundations.code-workspace")).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
     let folders = parsed["folders"].as_array().unwrap();
 
@@ -533,11 +533,13 @@ fn scenario7_deactivate_leaves_excludes_when_marker_records_none() {
 fn scenario8_activate_leaves_hand_authored_workspace_untouched() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/foundations");
+    project_on_disk(root, "foundations");
 
     // A workspace a user wrote by hand: no rwv.generated marker, a folder
     // layout and excludes that are entirely their own.
     write_file(
-        root,
+        &project_dir,
         "foundations.code-workspace",
         r#"{
   "folders": [
@@ -556,10 +558,12 @@ fn scenario8_activate_leaves_hand_authored_workspace_untouched() {
     let project = ProjectName::new("foundations").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     contract::assert_activate_leaves_user_held_untouched(
-        &root.join("foundations.code-workspace"),
+        &project_dir.join("foundations.code-workspace"),
         || {
             VscodeWorkspace.activate(&ctx).unwrap();
         },
@@ -568,7 +572,7 @@ fn scenario8_activate_leaves_hand_authored_workspace_untouched() {
     // Specifically: no marker was stamped, so the file does not become
     // rwv-owned on the run after next.
     let parsed: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(root.join("foundations.code-workspace")).unwrap(),
+        &std::fs::read_to_string(project_dir.join("foundations.code-workspace")).unwrap(),
     )
     .unwrap();
     assert!(
@@ -586,9 +590,11 @@ fn scenario8_activate_leaves_hand_authored_workspace_untouched() {
 fn scenario9_activate_adopts_unmarked_file_without_the_owned_region() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/foundations");
+    project_on_disk(root, "foundations");
 
     write_file(
-        root,
+        &project_dir,
         "foundations.code-workspace",
         r#"{
   "extensions": {"recommendations": ["rust-lang.rust-analyzer"]},
@@ -600,12 +606,14 @@ fn scenario9_activate_adopts_unmarked_file_without_the_owned_region() {
     let project = ProjectName::new("foundations").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     VscodeWorkspace.activate(&ctx).unwrap();
 
     let parsed: serde_json::Value = serde_json::from_str(
-        &std::fs::read_to_string(root.join("foundations.code-workspace")).unwrap(),
+        &std::fs::read_to_string(project_dir.join("foundations.code-workspace")).unwrap(),
     )
     .unwrap();
 

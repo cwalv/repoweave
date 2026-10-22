@@ -97,14 +97,14 @@ impl Integration for PnpmWorkspaces {
         // last member's glob stays behind, in a marked key rwv still owns and
         // would no longer author.
         if paths.is_empty() {
-            Self::strip_managed_region(ctx.output_dir)?;
+            Self::strip_managed_region(ctx.output_dir())?;
             return Ok(Vec::new());
         }
 
-        let path = ctx.output_dir.join("pnpm-workspace.yaml");
+        let path = ctx.output_dir().join("pnpm-workspace.yaml");
 
         // Expand multi-package member repos into prefixed globs before sorting.
-        let paths = expand_workspace_entries(ctx.workspace_root, paths);
+        let paths = expand_workspace_entries(ctx.workspace_root(), paths);
 
         // Sorted list of member paths — deterministic output.
         let mut members: Vec<String> = paths.into_iter().map(|p| p.to_string()).collect();
@@ -152,14 +152,14 @@ impl Integration for PnpmWorkspaces {
         if repo_paths.is_empty() {
             return Ok(orphaned_region_issues::<YamlDoc>(
                 self.name(),
-                &ctx.output_dir.join("pnpm-workspace.yaml"),
+                &ctx.output_dir().join("pnpm-workspace.yaml"),
                 &[packages_key()],
                 "rwv.toml declares no npm members, so packages: no longer \
                  belongs to rwv.",
             ));
         }
 
-        let path = ctx.output_dir.join("pnpm-workspace.yaml");
+        let path = ctx.output_dir().join("pnpm-workspace.yaml");
 
         // ── MISSING ────────────────────────────────────────────────────────
         if !path.exists() {
@@ -174,7 +174,7 @@ impl Integration for PnpmWorkspaces {
         // Compute expected vs on-disk; the shared helper normalizes both
         // (sort + dedup) so overlapping/repeated globs never cause a false
         // DRIFT, then dispatches USER-HELD → DRIFT → CLEAN.
-        let expected: Vec<String> = expand_workspace_entries(ctx.workspace_root, repo_paths);
+        let expected: Vec<String> = expand_workspace_entries(ctx.workspace_root(), repo_paths);
         // Pre-lift pnpm collapsed absent → empty (`unwrap_or_default`) before
         // comparing; preserve that by passing `Some` of the (possibly empty) vec.
         let on_disk = read_pnpm_packages_globs(&path).unwrap_or_default();
@@ -202,7 +202,7 @@ impl Integration for PnpmWorkspaces {
         // `rwv lock` previously and used `--lockfile-only` for that
         // reason. Run from workspace_root for the same reason npm does —
         // that's where the symlinks make member paths resolve correctly.
-        let Some(status) = super::run_install_tool(Self::TOOL, &["install"], ctx.workspace_root)?
+        let Some(status) = super::run_install_tool(Self::TOOL, &["install"], ctx.workspace_root())?
         else {
             return Ok(HookOutcome::ToolMissing(MissingTool::of::<Self>()));
         };
@@ -221,13 +221,13 @@ impl Integration for PnpmWorkspaces {
     /// [`CargoWorkspace::owned_paths_on_disk`]: crate::integrations::CargoWorkspace
     fn owned_paths_on_disk(&self, ctx: &IntegrationContext) -> Vec<OwnedPath> {
         if !holds_owned_region::<YamlDoc>(
-            &ctx.output_dir.join("pnpm-workspace.yaml"),
+            &ctx.output_dir().join("pnpm-workspace.yaml"),
             &[packages_key()],
         ) {
             return vec![];
         }
         let mut paths = vec![OwnedPath::MarkedRegion("pnpm-workspace.yaml".to_string())];
-        if ctx.output_dir.join("pnpm-lock.yaml").is_file() {
+        if ctx.output_dir().join("pnpm-lock.yaml").is_file() {
             paths.push(OwnedPath::WholeFile("pnpm-lock.yaml".to_string()));
         }
         paths
@@ -271,33 +271,13 @@ impl PnpmWorkspaces {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::integration::IntegrationContextBase;
     use crate::integration::IssueKind;
+    use crate::manifest::Manifest;
     use crate::manifest::{IntegrationConfig, ProjectName};
-    use crate::workspace::ContainerKind;
+    use crate::workspace::WorkspaceSession;
     use std::collections::HashMap;
     use tempfile::TempDir;
-
-    /// A context over an empty manifest: no repo is declared, so nothing is
-    /// detected and the integration has no `packages:` list to author.
-    fn ctx_over_no_members<'a>(
-        root: &'a Path,
-        project: &'a ProjectName,
-        config: &'a IntegrationConfig,
-        cache: &'a HashMap<String, Vec<String>>,
-    ) -> IntegrationContext<'a> {
-        IntegrationContext {
-            output_dir: root,
-            workspace_root: root,
-            container_kind: ContainerKind::Primary,
-            project,
-            repos: vec![],
-            config,
-            all_repos_on_disk: &[],
-            all_project_paths: &[],
-            detection_cache: cache,
-            workweave: None,
-        }
-    }
 
     /// The `packages:` list rwv authored while it had members must not outlive
     /// them: an emptied membership strips it, and reports it until something
@@ -306,7 +286,9 @@ mod tests {
     fn emptied_membership_strips_the_marked_packages_list() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
-        let path = root.join("pnpm-workspace.yaml");
+        let project_dir = root.join("projects/test-project");
+        std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
+        let path = project_dir.join("pnpm-workspace.yaml");
         std::fs::write(
             &path,
             "# managed by repoweave\npackages:\n  - github/test/pkg\n",
@@ -316,7 +298,10 @@ mod tests {
         let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-        let ctx = ctx_over_no_members(root, &project, &config, &cache);
+        let no_members = Manifest::from_toml_str("[repositories]\n").unwrap();
+        let session = WorkspaceSession::new(root);
+        let base = IntegrationContextBase::new(&session, &project, &cache, None);
+        let ctx = base.build_context(&config, &no_members);
 
         let issues = PnpmWorkspaces.verify(&ctx).unwrap();
         assert_eq!(issues.len(), 1, "expected one finding, got: {issues:?}");
@@ -335,14 +320,19 @@ mod tests {
     fn emptied_membership_leaves_an_unmarked_list_alone() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();
-        let path = root.join("pnpm-workspace.yaml");
+        let project_dir = root.join("projects/test-project");
+        std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
+        let path = project_dir.join("pnpm-workspace.yaml");
         let hand_written = "packages:\n  - github/test/pkg\n";
         std::fs::write(&path, hand_written).unwrap();
 
         let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-        let ctx = ctx_over_no_members(root, &project, &config, &cache);
+        let no_members = Manifest::from_toml_str("[repositories]\n").unwrap();
+        let session = WorkspaceSession::new(root);
+        let base = IntegrationContextBase::new(&session, &project, &cache, None);
+        let ctx = base.build_context(&config, &no_members);
 
         assert!(
             PnpmWorkspaces.verify(&ctx).unwrap().is_empty(),

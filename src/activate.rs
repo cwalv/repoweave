@@ -38,11 +38,13 @@ use std::path::Path;
 use anyhow::Context;
 
 use crate::cli::consent::{DriftConsent, RemoveUndeclaredLinksConsent};
-use crate::integration::{Integration, OwnedPath, Severity, SurfacedCopy, SurfacedSource};
+use crate::integration::{
+    Integration, IntegrationContextBase, OwnedPath, Severity, SurfacedCopy, SurfacedSource,
+};
 use crate::integration_runner::{
     build_detection_cache, disabled_integration_artifacts, enabled_integrations,
     malformed_settings, run_activate_hooks, run_activations, run_checks, run_deactivations,
-    run_host_fits, run_verifications, IntegrationContextBase,
+    run_host_fits, run_verifications,
 };
 use crate::integrations::builtin_integrations;
 use crate::manifest::{IntegrationConfig, Manifest, ProjectName, RepoPath};
@@ -276,7 +278,12 @@ fn malformed_settings_at(
     let builtin = builtin_integrations();
     let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
     let detection_cache = build_detection_cache(&integrations, root, manifest.iter_entries());
-    let ctx_base = session.context_base(project, &detection_cache, manifest.workweave.as_ref());
+    let ctx_base = IntegrationContextBase::new(
+        &session,
+        project,
+        &detection_cache,
+        manifest.workweave.as_ref(),
+    );
     malformed_settings(&integrations, manifest, &ctx_base)
 }
 
@@ -335,10 +342,10 @@ fn strip_disabled_integrations(
     root: &Path,
     integrations: &[&dyn Integration],
     manifest: &Manifest,
-    ctx_base: &crate::integration_runner::IntegrationContextBase,
+    ctx_base: &IntegrationContextBase,
 ) -> anyhow::Result<()> {
     let found = disabled_integration_artifacts(integrations, manifest, ctx_base);
-    let output_dir = ctx_base.output_dir.as_path();
+    let output_dir = ctx_base.output_dir();
     let default_config = IntegrationConfig::default();
 
     for artifacts in &found {
@@ -436,9 +443,9 @@ fn strip_disabled_integrations(
 fn strip_disabled_links(
     root: &Path,
     manifest: &Manifest,
-    ctx_base: &crate::integration_runner::IntegrationContextBase,
+    ctx_base: &IntegrationContextBase,
 ) -> anyhow::Result<()> {
-    let names: Vec<String> = disabled_integration_declarations(root, ctx_base.project, manifest)
+    let names: Vec<String> = disabled_integration_declarations(root, ctx_base.project(), manifest)
         .into_iter()
         .collect();
     if names.is_empty() {
@@ -473,9 +480,9 @@ fn prune_emptied_parent(output_dir: &Path, removed: &Path) {
 fn forget_unproduced_attestations(
     integrations: &[&dyn Integration],
     manifest: &Manifest,
-    ctx_base: &crate::integration_runner::IntegrationContextBase,
+    ctx_base: &IntegrationContextBase,
 ) -> anyhow::Result<()> {
-    let output_dir = ctx_base.output_dir.as_path();
+    let output_dir = ctx_base.output_dir();
     let attested = attested_owned_files(output_dir);
     if attested.is_empty() {
         return Ok(());
@@ -732,7 +739,12 @@ fn activate_in_phases(
     let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
 
     let detection_cache = build_detection_cache(&integrations, root, manifest.iter_entries());
-    let ctx_base = session.context_base(project, &detection_cache, manifest.workweave.as_ref());
+    let ctx_base = IntegrationContextBase::new(
+        &session,
+        project,
+        &detection_cache,
+        manifest.workweave.as_ref(),
+    );
     let project_vcs = crate::vcs::project_vcs();
 
     let Some(noticed) = author_and_surface(
@@ -829,7 +841,7 @@ fn author_and_surface(
                 manifest,
                 SurfacingMode::Repair,
             )?;
-            settle_arrived_drift(&ctx_base.output_dir, consent)?;
+            settle_arrived_drift(ctx_base.output_dir(), consent)?;
             fit_to_host(integrations, manifest, ctx_base)?;
         }
     }
@@ -929,13 +941,13 @@ fn run_hooks(
         let after_hooks = match mode {
             ActivationMode::Intent | ActivationMode::Materialize(_) => surface_with_notices(
                 project_vcs,
-                ctx_base.workspace_root,
-                ctx_base.project,
+                ctx_base.workspace_root(),
+                ctx_base.project(),
                 manifest,
                 SurfacingMode::Repair,
             )?,
             ActivationMode::Context => {
-                root_write_notices(ctx_base.workspace_root, ctx_base.project, manifest)
+                root_write_notices(ctx_base.workspace_root(), ctx_base.project(), manifest)
             }
         };
         for notice in after_hooks
@@ -952,7 +964,7 @@ fn run_hooks(
     }
 
     if matches!(mode, ActivationMode::Materialize(_)) {
-        reset_ledger_no_generator_rebuilt(&ctx_base.output_dir)?;
+        reset_ledger_no_generator_rebuilt(ctx_base.output_dir())?;
     }
 
     Ok(skipped)
@@ -1008,7 +1020,7 @@ fn permit_hooks(
     manifest: &Manifest,
     ctx_base: &IntegrationContextBase,
 ) -> anyhow::Result<Option<HooksPermit>> {
-    if withhold_hooks_over_unsettled_drift(&ctx_base.output_dir) {
+    if withhold_hooks_over_unsettled_drift(ctx_base.output_dir()) {
         return Ok(None);
     }
     refuse_hooks_over_malformed_settings(integrations, manifest, ctx_base)?;
@@ -1511,7 +1523,12 @@ fn compute_owned_set(
     let builtin = builtin_integrations();
     let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
     let detection_cache = build_detection_cache(&integrations, root, manifest.iter_entries());
-    let ctx_base = session.context_base(project, &detection_cache, manifest.workweave.as_ref());
+    let ctx_base = IntegrationContextBase::new(
+        &session,
+        project,
+        &detection_cache,
+        manifest.workweave.as_ref(),
+    );
     let default_config = IntegrationConfig::default();
 
     let mut owned: std::collections::BTreeMap<String, SurfacedEntry> =
@@ -2423,7 +2440,12 @@ fn disabled_integration_declarations(
     let builtin = builtin_integrations();
     let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
     let detection_cache = build_detection_cache(&integrations, root, manifest.iter_entries());
-    let ctx_base = session.context_base(project, &detection_cache, manifest.workweave.as_ref());
+    let ctx_base = IntegrationContextBase::new(
+        &session,
+        project,
+        &detection_cache,
+        manifest.workweave.as_ref(),
+    );
     let default_config = IntegrationConfig::default();
 
     integrations
@@ -2585,7 +2607,12 @@ pub fn member_incompatibilities(
     let builtin = builtin_integrations();
     let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
     let detection_cache = build_detection_cache(&integrations, root, manifest.iter_entries());
-    let ctx_base = session.context_base(project, &detection_cache, manifest.workweave.as_ref());
+    let ctx_base = IntegrationContextBase::new(
+        &session,
+        project,
+        &detection_cache,
+        manifest.workweave.as_ref(),
+    );
     crate::integration_runner::run_member_incompatibilities(&integrations, manifest, &ctx_base)
 }
 
@@ -2653,7 +2680,8 @@ pub fn verify_surfacing(
                     link.owner(),
                     project,
                     link.quoted_target()
-                ),
+                )
+                .into(),
                 kind: IssueKind::Surfacing,
                 safe_to_fix: false,
             });
@@ -2665,7 +2693,8 @@ pub fn verify_surfacing(
                 message: format!(
                     "surfacing: `{file}` resolves into project `{owner}` while the weave root \
                      presents `{project}` (shared names follow the root's project; safe to --fix)"
-                ),
+                )
+                .into(),
                 kind: IssueKind::Surfacing,
                 safe_to_fix: true,
             });
@@ -2701,7 +2730,8 @@ pub fn verify_surfacing(
                     message: format!(
                         "surfacing: `{file}` is not surfaced (no symlink at `{}`; safe to --fix)",
                         link.display()
-                    ),
+                    )
+                    .into(),
                     kind: IssueKind::Surfacing,
                     safe_to_fix: true,
                 });
@@ -2741,7 +2771,7 @@ pub fn verify_surfacing(
                 issues.push(Issue {
                     source: IssueSource::integration(integration),
                     severity,
-                    message: format!("surfacing: {message}"),
+                    message: format!("surfacing: {message}").into(),
                     kind: IssueKind::Surfacing,
                     safe_to_fix,
                 });
@@ -2761,7 +2791,8 @@ pub fn verify_surfacing(
                     "surfacing: `{file}` is not a symlink (a real file/dir occupies `{}`; \
                      not auto-fixed)",
                     link.display()
-                ),
+                )
+                .into(),
                 kind: IssueKind::Surfacing,
                 safe_to_fix: false,
             });
@@ -2778,7 +2809,8 @@ pub fn verify_surfacing(
                             "surfacing: `{file}` is surfaced but its source no longer exists \
                              at `{}` (stale symlink; safe to --fix)",
                             source.display()
-                        ),
+                        )
+                        .into(),
                         kind: IssueKind::Surfacing,
                         safe_to_fix: true,
                     });
@@ -2799,7 +2831,8 @@ pub fn verify_surfacing(
                             "not rwv's surfacing link, so not auto-fixed; remove it and \
                              `rwv doctor --fix` makes the expected one"
                         }
-                    ),
+                    )
+                    .into(),
                     kind: IssueKind::Surfacing,
                     safe_to_fix: replaceable,
                 });
@@ -2811,7 +2844,8 @@ pub fn verify_surfacing(
                     message: format!(
                         "surfacing: `{file}` symlink unreadable at `{}` ({e:#}; safe to --fix)",
                         link.display()
-                    ),
+                    )
+                    .into(),
                     kind: IssueKind::Surfacing,
                     safe_to_fix: true,
                 });
@@ -3405,7 +3439,7 @@ mod tests {
         assert!(
             issues
                 .iter()
-                .any(|issue| issue.message.contains("docs/projects/notes.md")),
+                .any(|issue| issue.message.to_string().contains("docs/projects/notes.md")),
             "an undeclared link under a nested `projects/` must be reported: {issues:?}"
         );
 
@@ -3563,7 +3597,8 @@ mod tests {
         assert_eq!(issue.severity, Severity::Warning);
         assert!(issue.safe_to_fix, "missing symlink is safe to --fix");
         assert!(
-            issue.message.contains(".claude") && issue.message.contains("not surfaced"),
+            issue.message.to_string().contains(".claude")
+                && issue.message.to_string().contains("not surfaced"),
             "message should name the file and the gap: {}",
             issue.message
         );
@@ -3592,7 +3627,8 @@ mod tests {
         assert_eq!(issues.len(), 1);
         assert!(issues[0].safe_to_fix);
         assert!(
-            issues[0].message.contains("resolves to") && issues[0].message.contains("expected"),
+            issues[0].message.to_string().contains("resolves to")
+                && issues[0].message.to_string().contains("expected"),
             "mis-resolved message should name actual + expected: {}",
             issues[0].message
         );
@@ -3615,7 +3651,7 @@ mod tests {
             !issues[0].safe_to_fix,
             "a real file at the surfacing path must not be auto-fixed"
         );
-        assert!(issues[0].message.contains("not a symlink"));
+        assert!(issues[0].message.to_string().contains("not a symlink"));
     }
 
     #[test]
@@ -3995,14 +4031,21 @@ mod tests {
         );
         let conflict = issues
             .iter()
-            .find(|i| i.message.contains("neither version control nor"))
+            .find(|i| {
+                i.message
+                    .to_string()
+                    .contains("neither version control nor")
+            })
             .unwrap_or_else(|| panic!("the conflict must be a finding: {issues:?}"));
         assert!(
             !conflict.safe_to_fix,
             "neither side may be chosen for the operator"
         );
         assert!(
-            conflict.message.contains("projects/web-app/Cargo.lock"),
+            conflict
+                .message
+                .to_string()
+                .contains("projects/web-app/Cargo.lock"),
             "both paths are named: {}",
             conflict.message
         );
@@ -4033,7 +4076,7 @@ mod tests {
         assert!(
             issues
                 .iter()
-                .any(|i| i.safe_to_fix && i.message.contains("not yet taken into")),
+                .any(|i| i.safe_to_fix && i.message.to_string().contains("not yet taken into")),
             "the check names it as something --fix adopts: {issues:?}"
         );
     }
@@ -4188,7 +4231,7 @@ mod tests {
 
         let issue = issues
             .iter()
-            .find(|issue| issue.message.contains("Cargo.lock"))
+            .find(|issue| issue.message.to_string().contains("Cargo.lock"))
             .unwrap_or_else(|| panic!("the root write must be reported: {issues:?}"));
         assert_eq!(
             issue.severity,
@@ -4213,7 +4256,12 @@ mod tests {
         let issues = verify_surfacing(project_vcs().as_ref(), root, &project, &manifest);
         let issue = issues
             .iter()
-            .find(|issue| issue.message.contains("could not be determined"))
+            .find(|issue| {
+                issue
+                    .message
+                    .to_string()
+                    .contains("could not be determined")
+            })
             .unwrap_or_else(|| panic!("the read error must be reported: {issues:?}"));
         assert_eq!(
             issue.severity,
@@ -4295,7 +4343,8 @@ mod tests {
         );
         assert!(issues[0].safe_to_fix);
         assert!(
-            issues[0].message.contains(".claude") && issues[0].message.contains("no longer exists"),
+            issues[0].message.to_string().contains(".claude")
+                && issues[0].message.to_string().contains("no longer exists"),
             "message should name the file and say the source is gone: {}",
             issues[0].message
         );
@@ -4462,7 +4511,10 @@ mod tests {
             "expected only the per-project name: {issues:?}"
         );
         assert!(
-            issues[0].message.contains("other-app.code-workspace"),
+            issues[0]
+                .message
+                .to_string()
+                .contains("other-app.code-workspace"),
             "the one finding must be the per-project name: {}",
             issues[0].message
         );
@@ -4495,7 +4547,8 @@ mod tests {
         );
         assert!(issues[0].safe_to_fix);
         assert!(
-            issues[0].message.contains("Cargo.toml") && issues[0].message.contains("other-app"),
+            issues[0].message.to_string().contains("Cargo.toml")
+                && issues[0].message.to_string().contains("other-app"),
             "the finding must name the path and the project it resolves into: {}",
             issues[0].message
         );

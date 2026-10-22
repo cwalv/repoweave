@@ -166,28 +166,33 @@ defense, never the only report.
 
 ## `IntegrationContext`
 
-Each hook receives an `IntegrationContext` (`src/integration.rs`) with:
+Each hook receives an `IntegrationContext` (`src/integration.rs`), read through
+these accessors. Its fields are private: a context is built only by
+`IntegrationContextBase::build_context`, from a base only
+`IntegrationContextBase::new` builds out of a `WorkspaceSession`, so a test
+fixture reaches one the way a verb does.
 
-| Field | Description |
+| Accessor | Description |
 |---|---|
-| `output_dir` | Where managed and generated files live: `<workspace_root>/projects/<project>`, in every weave and for every verb |
-| `workspace_root` | The weave root the verb is acting on — the primary root at the primary, the workweave directory inside one. Repo detection scans under it |
-| `container_kind` | `ContainerKind::Primary` or `ContainerKind::Workweave`, already resolved by the verb. Read it here rather than probing `workspace_root` for a marker file |
-| `project` | The active project name |
-| `repos` | Repo entries from the project's `rwv.toml`, as an ordered `(path, entry)` list |
-| `config` | Per-integration config from the `[integrations.<name>]` table in `rwv.toml` |
-| `all_repos_on_disk` | All repos found on disk under registry directories. Computed once, shared across integrations |
-| `all_project_paths` | All project paths. Computed once, shared across integrations |
-| `detection_cache` | Manifest filename → repo paths containing it, for every filename the integrations about to run declare in `detection_manifests`. Populated once per cycle, before any integration runs |
-| `workweave` | The project's `[workweave]` config, if any. Present so an integration can detect a name claimed by two sections at once |
+| `output_dir()` | Where managed and generated files live: `<workspace_root>/projects/<project>`, in every weave and for every verb. Derived, never passed |
+| `workspace_root()` | The weave root the verb is acting on — the primary root at the primary, the workweave directory inside one. Repo detection scans under it |
+| `container_kind()` | `ContainerKind::Primary` or `ContainerKind::Workweave`, as the session observed the root. Read it here rather than probing `workspace_root` for a marker file |
+| `project()` | The active project name |
+| `repos()` | Repo entries from the project's `rwv.toml`, as an ordered `(path, entry)` list |
+| `config()` | Per-integration config from the `[integrations.<name>]` table in `rwv.toml` |
+| `all_repos_on_disk()` | All repos found on disk under registry directories. Computed once, shared across integrations |
+| `all_project_paths()` | All project paths. Computed once, shared across integrations |
+| `workweave()` | The project's `[workweave]` config, if any. Present so an integration can detect a name claimed by two sections at once |
 
 ## Helper methods
 
 - **`ctx.active_repos()`** — filters out `reference` repos, which are read-only
   and not part of the build graph.
 - **`ctx.detect_repos_with_manifest(filename)`** — active repos containing a
-  given manifest file (e.g. `"package.json"`), served from `detection_cache`
-  when warm and falling back to a live scan under `workspace_root`.
+  given manifest file (e.g. `"package.json"`), served from the run's
+  detection cache — manifest filename to repo paths, for every filename the
+  integrations about to run declare in `detection_manifests` — and falling
+  back to a live scan under `workspace_root`.
 - **`ctx.settings_or_issue::<T>(name)`** — the typed settings, or the
   `MalformedSettings` issue to return when the table does not deserialize into
   `T`. The issue names the field and is `safe_to_fix: false`.

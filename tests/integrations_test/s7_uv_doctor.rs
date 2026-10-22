@@ -22,7 +22,10 @@ fn s7_uv_doctor_missing_reports_finding() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    project_on_disk(root, "test-project");
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let issues = UvWorkspace.verify(&ctx).unwrap();
     assert_eq!(
@@ -33,12 +36,12 @@ fn s7_uv_doctor_missing_reports_finding() {
     let issue = &issues[0];
     assert!(issue.safe_to_fix, "MISSING issue must be safe_to_fix");
     assert!(
-        issue.message.contains("missing"),
+        issue.message.to_string().contains("missing"),
         "MISSING message should contain 'missing': {}",
         issue.message
     );
     assert!(
-        issue.message.contains("rwv doctor --fix"),
+        issue.message.to_string().contains("rwv doctor --fix"),
         "MISSING message should mention 'rwv doctor --fix': {}",
         issue.message
     );
@@ -51,6 +54,8 @@ fn s7_uv_doctor_missing_reports_finding() {
 fn s7_uv_doctor_missing_fixed_by_activate() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     touch(root, "github/acme/server/pyproject.toml");
 
@@ -58,7 +63,9 @@ fn s7_uv_doctor_missing_fixed_by_activate() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     // Pre-condition: MISSING.
     let pre = UvWorkspace.verify(&ctx).unwrap();
@@ -67,7 +74,7 @@ fn s7_uv_doctor_missing_fixed_by_activate() {
 
     UvWorkspace.activate(&ctx).unwrap();
 
-    let path = root.join("pyproject.toml");
+    let path = project_dir.join("pyproject.toml");
     assert!(
         path.exists(),
         "pyproject.toml must be created after activate"
@@ -100,10 +107,12 @@ fn s7_uv_doctor_missing_fixed_by_activate() {
 fn s7_uv_doctor_drift_reports_finding() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // Seed: only server in members (drift — web was added to manifest).
     write_file(
-        root,
+        &project_dir,
         "pyproject.toml",
         "[tool.uv.workspace]\n# managed by rwv\nmembers = [\"github/acme/server\"]\n",
     );
@@ -117,7 +126,9 @@ fn s7_uv_doctor_drift_reports_finding() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let issues = UvWorkspace.verify(&ctx).unwrap();
     assert_eq!(
@@ -128,7 +139,7 @@ fn s7_uv_doctor_drift_reports_finding() {
     let issue = &issues[0];
     assert!(issue.safe_to_fix, "DRIFT issue must be safe_to_fix");
     assert!(
-        issue.message.contains("drift"),
+        issue.message.to_string().contains("drift"),
         "DRIFT message should contain 'drift': {}",
         issue.message
     );
@@ -141,9 +152,11 @@ fn s7_uv_doctor_drift_reports_finding() {
 fn s7_uv_doctor_drift_fixed_by_activate() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     write_file(
-        root,
+        &project_dir,
         "pyproject.toml",
         "[tool.uv.workspace]\n# managed by rwv\nmembers = [\"github/acme/server\"]\n",
     );
@@ -157,7 +170,9 @@ fn s7_uv_doctor_drift_fixed_by_activate() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     // Pre-condition: DRIFT.
     let pre = UvWorkspace.verify(&ctx).unwrap();
@@ -171,7 +186,7 @@ fn s7_uv_doctor_drift_fixed_by_activate() {
         "verify() must return no issues after activate (CLEAN), got: {post:?}"
     );
 
-    let content = std::fs::read_to_string(root.join("pyproject.toml")).unwrap();
+    let content = std::fs::read_to_string(project_dir.join("pyproject.toml")).unwrap();
     assert!(
         content.contains("github/acme/web"),
         "web must be in members after fix: {content}"
@@ -188,10 +203,12 @@ fn s7_uv_doctor_drift_fixed_by_activate() {
 fn s7_uv_doctor_user_held_reports_finding() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // No "# managed by rwv" marker.
     write_file(
-        root,
+        &project_dir,
         "pyproject.toml",
         "[tool.uv.workspace]\nmembers = [\"github/acme/server\"]\n",
     );
@@ -201,7 +218,9 @@ fn s7_uv_doctor_user_held_reports_finding() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let issues = UvWorkspace.verify(&ctx).unwrap();
     assert_eq!(
@@ -215,9 +234,9 @@ fn s7_uv_doctor_user_held_reports_finding() {
         "USER-HELD issue must NOT be safe_to_fix"
     );
     assert!(
-        issue.message.contains("NOT auto-take-over")
-            || issue.message.contains("not auto")
-            || issue.message.contains("unmarked"),
+        issue.message.to_string().contains("NOT auto-take-over")
+            || issue.message.to_string().contains("not auto")
+            || issue.message.to_string().contains("unmarked"),
         "USER-HELD message must describe no-takeover: {}",
         issue.message
     );
@@ -230,16 +249,20 @@ fn s7_uv_doctor_user_held_reports_finding() {
 fn s7_uv_doctor_user_held_file_unchanged_after_activate() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     let original = "[tool.uv.workspace]\nmembers = [\"github/acme/server\"]\n";
-    write_file(root, "pyproject.toml", original);
+    write_file(&project_dir, "pyproject.toml", original);
     touch(root, "github/acme/server/pyproject.toml");
 
     let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let issues = UvWorkspace.verify(&ctx).unwrap();
     assert_eq!(issues.len(), 1);
@@ -248,7 +271,7 @@ fn s7_uv_doctor_user_held_file_unchanged_after_activate() {
     // Even if activate() is called, the members key must not be overwritten.
     UvWorkspace.activate(&ctx).unwrap();
 
-    let after = std::fs::read_to_string(root.join("pyproject.toml")).unwrap();
+    let after = std::fs::read_to_string(project_dir.join("pyproject.toml")).unwrap();
     assert!(
         !after.contains("# managed by rwv"),
         "user-held file must NOT get rwv marker from activate: {after}"
@@ -272,7 +295,10 @@ fn s7_uv_doctor_clean_after_fresh_activate() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    project_on_disk(root, "test-project");
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     UvWorkspace.activate(&ctx).unwrap();
 

@@ -867,7 +867,7 @@ pub fn issue_corpus() -> Vec<Issue> {
     .map(|kind| Issue {
         source: IssueSource::integration("go-work"),
         severity: Severity::Warning,
-        message: format!("sample finding for `{}`", kind.tag()),
+        message: format!("sample finding for `{}`", kind.tag()).into(),
         kind,
         safe_to_fix: true,
     })

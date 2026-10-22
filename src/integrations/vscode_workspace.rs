@@ -183,13 +183,13 @@ fn expected_generated_set(
     prev: &HashSet<String>,
 ) -> anyhow::Result<BTreeMap<String, bool>> {
     let active_repo_set: HashSet<String> = ctx
-        .repos
+        .repos()
         .iter()
         .map(|(rp, _)| rp.as_str().to_string())
         .collect();
 
     let all_repos_on_disk: Vec<String> = ctx
-        .all_repos_on_disk
+        .all_repos_on_disk()
         .iter()
         .map(|p| p.as_str().to_string())
         .collect();
@@ -210,18 +210,18 @@ fn expected_generated_set(
         keys.insert(path, true);
     }
 
-    for project_path in ctx.all_project_paths {
-        if project_path != ctx.project {
+    for project_path in ctx.all_project_paths() {
+        if project_path != ctx.project() {
             keys.insert(project_rel_path(project_path), true);
         }
     }
 
-    if ctx.container_kind == ContainerKind::Workweave {
+    if ctx.container_kind() == ContainerKind::Workweave {
         for key in prev {
             if key == DOTFILES_SENTINEL {
                 continue;
             }
-            if !ctx.workspace_root.join(key).exists() {
+            if !ctx.workspace_root().join(key).exists() {
                 keys.insert(key.clone(), true);
             }
         }
@@ -436,8 +436,8 @@ impl Integration for VscodeWorkspace {
             Ok(cfg) => cfg,
             Err(issue) => return Ok(vec![issue]),
         };
-        let filename = workspace_file_name(&ctx.project.flat());
-        let filepath = ctx.output_dir.join(&filename);
+        let filename = workspace_file_name(&ctx.project().flat());
+        let filepath = ctx.output_dir().join(&filename);
 
         // Parse the existing file, bailing loudly on malformed content (fix #4).
         // An empty or missing file starts as an empty document.
@@ -474,7 +474,7 @@ impl Integration for VscodeWorkspace {
 
         // Merge the `folders` array (fix #2): primary at [0], user folders
         // preserved in their original order.
-        let folders_value = merge_folders(obj, ctx.project);
+        let folders_value = merge_folders(obj, ctx.project());
         obj.insert("folders".to_string(), folders_value);
 
         // The rwv-derived files.exclude keys, under this container's write
@@ -539,15 +539,15 @@ impl Integration for VscodeWorkspace {
             return Ok(vec![issue]);
         }
 
-        let filename = workspace_file_name(&ctx.project.flat());
-        let filepath = ctx.output_dir.join(&filename);
+        let filename = workspace_file_name(&ctx.project().flat());
+        let filepath = ctx.output_dir().join(&filename);
 
         let mut issues = Vec::new();
         if !filepath.is_file() {
             issues.push(Issue {
                 source: IssueSource::integration(self.name()),
                 severity: Severity::Warning,
-                message: format!("{} does not exist", filename),
+                message: format!("{} does not exist", filename).into(),
                 kind: IssueKind::ManagedFileMissing,
                 safe_to_fix: true,
             });
@@ -586,8 +586,8 @@ impl Integration for VscodeWorkspace {
             Ok(cfg) => cfg,
             Err(issue) => return Ok(vec![issue]),
         };
-        let filename = workspace_file_name(&ctx.project.flat());
-        let filepath = ctx.output_dir.join(&filename);
+        let filename = workspace_file_name(&ctx.project().flat());
+        let filepath = ctx.output_dir().join(&filename);
 
         // ── MISSING ────────────────────────────────────────────────────────
         if !filepath.exists() {
@@ -622,7 +622,7 @@ impl Integration for VscodeWorkspace {
             });
         let expected_primary = Some((
             Some(".".to_string()),
-            Some(format!("{} (primary)", ctx.project.as_str())),
+            Some(format!("{} (primary)", ctx.project().as_str())),
         ));
 
         // The generated exclude region as it stands: the keys the marker claims
@@ -666,8 +666,8 @@ impl Integration for VscodeWorkspace {
     /// The project's `.code-workspace`, when it carries the `rwv.generated`
     /// marker `strip_workspace_file` keys on.
     fn owned_paths_on_disk(&self, ctx: &IntegrationContext) -> Vec<OwnedPath> {
-        let name = workspace_file_name(&ctx.project.flat());
-        if holds_owned_region::<JsonDoc<RwvGeneratedMarker>>(&ctx.output_dir.join(&name), &[]) {
+        let name = workspace_file_name(&ctx.project().flat());
+        if holds_owned_region::<JsonDoc<RwvGeneratedMarker>>(&ctx.output_dir().join(&name), &[]) {
             vec![OwnedPath::MarkedRegion(name)]
         } else {
             vec![]
@@ -685,7 +685,7 @@ impl Integration for VscodeWorkspace {
     /// gitignore-eligible and whole-deletable.
     fn managed_files(&self, ctx: &IntegrationContext) -> Vec<SurfacedFile> {
         vec![SurfacedFile::written_at_source(workspace_file_name(
-            &ctx.project.flat(),
+            &ctx.project().flat(),
         ))]
     }
 }
@@ -697,7 +697,9 @@ impl Integration for VscodeWorkspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::integration::IntegrationContextBase;
     use crate::manifest::{IntegrationConfig, Manifest, ProjectName};
+    use crate::workspace::WorkspaceSession;
     use tempfile::TempDir;
 
     fn set(items: &[&str]) -> HashSet<String> {
@@ -717,21 +719,10 @@ mod tests {
         let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::default();
         let cache = HashMap::new();
-        let ctx = IntegrationContext {
-            output_dir: root,
-            workspace_root: root,
-            container_kind: ContainerKind::Primary,
-            project: &project,
-            repos: manifest
-                .iter_entries()
-                .map(|(rp, e)| (rp.clone(), e.clone()))
-                .collect(),
-            config: &config,
-            all_repos_on_disk: &[],
-            all_project_paths: &[],
-            detection_cache: &cache,
-            workweave: None,
-        };
+        std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
+        let session = WorkspaceSession::new(root);
+        let base = IntegrationContextBase::new(&session, &project, &cache, None);
+        let ctx = base.build_context(&config, &manifest);
 
         let integration = VscodeWorkspace;
         assert!(
@@ -754,21 +745,10 @@ mod tests {
         let project = ProjectName::new("test-project").unwrap();
         let config = IntegrationConfig::from_toml("hide-dotfiles = 7");
         let cache = HashMap::new();
-        let ctx = IntegrationContext {
-            output_dir: root,
-            workspace_root: root,
-            container_kind: ContainerKind::Primary,
-            project: &project,
-            repos: manifest
-                .iter_entries()
-                .map(|(rp, e)| (rp.clone(), e.clone()))
-                .collect(),
-            config: &config,
-            all_repos_on_disk: &[],
-            all_project_paths: &[],
-            detection_cache: &cache,
-            workweave: None,
-        };
+        std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
+        let session = WorkspaceSession::new(root);
+        let base = IntegrationContextBase::new(&session, &project, &cache, None);
+        let ctx = base.build_context(&config, &manifest);
 
         let issues = VscodeWorkspace.check(&ctx).unwrap();
 
@@ -777,7 +757,7 @@ mod tests {
         };
         assert_eq!(issue.kind, IssueKind::MalformedSettings);
         assert!(
-            issue.message.contains("hide-dotfiles"),
+            issue.message.to_string().contains("hide-dotfiles"),
             "the finding names the key: {}",
             issue.message
         );

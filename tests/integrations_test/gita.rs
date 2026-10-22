@@ -8,6 +8,8 @@ use super::*;
 fn auto_detects_all_repos() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // gita uses all repos, not just those with a specific manifest file
     let manifest = make_manifest(vec![
@@ -17,12 +19,14 @@ fn auto_detects_all_repos() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = Gita;
     integration.activate(&ctx).unwrap();
 
-    let repos_csv = std::fs::read_to_string(root.join("gita/repos.csv")).unwrap();
+    let repos_csv = std::fs::read_to_string(project_dir.join("gita/repos.csv")).unwrap();
     assert!(repos_csv.contains("server"));
     assert!(repos_csv.contains("web"));
 }
@@ -31,6 +35,8 @@ fn auto_detects_all_repos() {
 fn generates_repos_csv_with_correct_format() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     let manifest = make_manifest(vec![
         ("github/chatly/server", Role::Owned),
@@ -40,12 +46,14 @@ fn generates_repos_csv_with_correct_format() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = Gita;
     integration.activate(&ctx).unwrap();
 
-    let repos_csv = std::fs::read_to_string(root.join("gita/repos.csv")).unwrap();
+    let repos_csv = std::fs::read_to_string(project_dir.join("gita/repos.csv")).unwrap();
     let lines: Vec<&str> = repos_csv.lines().collect();
     assert_eq!(
         lines.len(),
@@ -67,6 +75,8 @@ fn generates_repos_csv_with_correct_format() {
 fn generates_groups_csv_by_role() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     let manifest = make_manifest(vec![
         ("github/chatly/server", Role::Owned),
@@ -76,12 +86,14 @@ fn generates_groups_csv_by_role() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = Gita;
     integration.activate(&ctx).unwrap();
 
-    let groups_csv = std::fs::read_to_string(root.join("gita/groups.csv")).unwrap();
+    let groups_csv = std::fs::read_to_string(project_dir.join("gita/groups.csv")).unwrap();
     assert_eq!(groups_csv, "fork:protocol:\nowned:server web:\n");
 }
 
@@ -111,7 +123,10 @@ fn csvs_match_the_format_gita_writes() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    project_on_disk(root, "test-project");
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     Gita.activate(&ctx).unwrap();
 
@@ -134,7 +149,7 @@ fn csvs_match_the_format_gita_writes() {
             })
             .collect();
         assert!(!expected.is_empty(), "fixture {written} must hold rows");
-        let actual = std::fs::read_to_string(root.join(written)).unwrap();
+        let actual = std::fs::read_to_string(ctx.output_dir().join(written)).unwrap();
         assert_eq!(
             actual.lines().collect::<Vec<_>>(),
             expected,
@@ -143,27 +158,30 @@ fn csvs_match_the_format_gita_writes() {
     }
 }
 
-/// On Windows gita's `os.path.abspath` turns every `/` into `\`; the expected
-/// row is what CPython's `ntpath.abspath` returns for this root and repo. The
-/// root is read for its shape, so this runs the Windows spelling on any host.
+/// On Windows gita's `os.path.abspath` turns every `/` into `\`, so a row
+/// holds the path as the host's own path library spells it under the weave
+/// root. That spelling, for a drive-letter or UNC root on any host, is
+/// `native_join`'s; this pins that the row is exactly it.
 #[test]
-fn repos_csv_under_a_windows_root_is_backslashed_throughout() {
+fn repos_csv_spells_each_path_as_the_host_path_library_does() {
     let tmp = common::tempdir().unwrap();
+    let root = tmp.path();
     let manifest = make_manifest(vec![("github/chatly/protocol", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = IntegrationContext {
-        workspace_root: Path::new(r"C:\Users\runneradmin\AppData\Local\Temp\.tmpOC0a9S"),
-        ..make_ctx(tmp.path(), &project, &manifest, &config, &cache)
-    };
+    project_on_disk(root, "test-project");
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     Gita.activate(&ctx).unwrap();
 
-    let repos_csv = std::fs::read_to_string(tmp.path().join("gita/repos.csv")).unwrap();
+    let repos_csv = std::fs::read_to_string(ctx.output_dir().join("gita/repos.csv")).unwrap();
+    let native = repoweave::path_spelling::native_join(root, "github/chatly/protocol");
     assert_eq!(
         repos_csv.lines().collect::<Vec<_>>(),
-        [r"C:\Users\runneradmin\AppData\Local\Temp\.tmpOC0a9S\github\chatly\protocol,protocol,,"]
+        [format!("{native},protocol,,")]
     );
 }
 
@@ -171,6 +189,8 @@ fn repos_csv_under_a_windows_root_is_backslashed_throughout() {
 fn excludes_reference_repos() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     let manifest = make_manifest(vec![
         ("github/acme/server", Role::Owned),
@@ -179,16 +199,18 @@ fn excludes_reference_repos() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = Gita;
     integration.activate(&ctx).unwrap();
 
-    let repos_csv = std::fs::read_to_string(root.join("gita/repos.csv")).unwrap();
+    let repos_csv = std::fs::read_to_string(project_dir.join("gita/repos.csv")).unwrap();
     assert!(repos_csv.contains("server"));
     assert!(!repos_csv.contains("reference-lib"));
 
-    let groups_csv = std::fs::read_to_string(root.join("gita/groups.csv")).unwrap();
+    let groups_csv = std::fs::read_to_string(project_dir.join("gita/groups.csv")).unwrap();
     assert!(!groups_csv.contains("reference"));
 }
 
@@ -209,30 +231,18 @@ fn deactivation_removes_gita_directory() {
 
 #[test]
 fn repos_csv_paths_use_workspace_root_not_output_dir() {
-    let workspace_tmp = common::tempdir().unwrap();
-    let workspace_root = workspace_tmp.path();
-    let weave_tmp = common::tempdir().unwrap();
-    let output_dir = weave_tmp.path();
+    let tmp = common::tempdir().unwrap();
+    let workspace_root = tmp.path();
 
     let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = IntegrationContext {
-        output_dir,
-        workspace_root,
-        container_kind: ContainerKind::Primary,
-        project: &project,
-        repos: manifest
-            .iter_entries()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config: &config,
-        all_repos_on_disk: &[],
-        all_project_paths: &[],
-        detection_cache: &cache,
-        workweave: None,
-    };
+    project_on_disk(workspace_root, "test-project");
+    let session = WorkspaceSession::new(workspace_root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
+    let output_dir = ctx.output_dir();
 
     let integration = Gita;
     integration.activate(&ctx).unwrap();
@@ -246,8 +256,6 @@ fn repos_csv_paths_use_workspace_root_not_output_dir() {
         "repos.csv should contain workspace_root path: {}",
         repos_csv
     );
-    // output_dir and workspace_root are different TempDirs, so output_dir
-    // should NOT appear in the path column.
     let data_lines: Vec<&str> = repos_csv.lines().collect();
     assert!(!data_lines.is_empty(), "repos.csv must hold a row");
     for line in &data_lines {
@@ -286,6 +294,8 @@ fn check_warns_when_gita_not_on_path() {
 fn csv_escaping_roundtrips_path_with_comma() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // Use a repo path whose basename contains a comma. The manifest helper
     // only sets the `url` from the last path segment, so we synthesize the
@@ -295,26 +305,14 @@ fn csv_escaping_roundtrips_path_with_comma() {
     let project = repoweave::manifest::ProjectName::new("test-project").unwrap();
     let config = repoweave::manifest::IntegrationConfig::default();
     let cache = std::collections::HashMap::new();
-    let ctx = IntegrationContext {
-        output_dir: root,
-        workspace_root: root,
-        container_kind: ContainerKind::Primary,
-        project: &project,
-        repos: manifest
-            .iter_entries()
-            .map(|(rp, e)| (rp.clone(), e.clone()))
-            .collect(),
-        config: &config,
-        all_repos_on_disk: &[],
-        all_project_paths: &[],
-        detection_cache: &cache,
-        workweave: None,
-    };
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     Gita.activate(&ctx).unwrap();
 
     // Round-trip: parse with csv::Reader and verify the path field is intact.
-    let repos_csv_path = root.join("gita/repos.csv");
+    let repos_csv_path = project_dir.join("gita/repos.csv");
     let mut rdr = csv::ReaderBuilder::new()
         .has_headers(false)
         .from_path(&repos_csv_path)
@@ -406,13 +404,16 @@ fn verify_reports_each_absent_csv_missing_until_activated() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    project_on_disk(root, "test-project");
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let before = Gita.verify(&ctx).unwrap();
-    let mut missing: Vec<&str> = before
+    let mut missing: Vec<String> = before
         .iter()
         .filter(|i| i.kind == IssueKind::ManagedFileMissing && i.safe_to_fix)
-        .map(|i| i.message.as_str())
+        .map(|i| i.message.to_string())
         .collect();
     missing.sort();
     assert_eq!(missing.len(), 2, "one MISSING per CSV: {before:?}");
@@ -431,19 +432,27 @@ fn verify_reports_a_csv_rwv_would_not_author_as_drift() {
 
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
     let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     Gita.activate(&ctx).unwrap();
-    write_file(root, "gita/groups.csv", "group,repos\nowned,server\n");
+    write_file(
+        &project_dir,
+        "gita/groups.csv",
+        "group,repos\nowned,server\n",
+    );
 
     let issues = Gita.verify(&ctx).unwrap();
     assert_eq!(issues.len(), 1, "only the rewritten CSV drifts: {issues:?}");
     assert_eq!(issues[0].kind, IssueKind::ManagedFileDrift);
     assert!(issues[0].safe_to_fix);
-    assert!(issues[0].message.contains("groups.csv"));
-    assert!(issues[0].message.contains("rwv doctor --fix"));
+    assert!(issues[0].message.to_string().contains("groups.csv"));
+    assert!(issues[0].message.to_string().contains("rwv doctor --fix"));
 }

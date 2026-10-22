@@ -50,13 +50,17 @@ fn npm_workspaces_activate_hook_runs_npm_install() {
 fn npm_workspaces_activate_hook_noop_when_no_repos_detected() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     // No package.json in any repo
     let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = NpmWorkspaces;
     let result = integration.activate_hook(&ctx);
@@ -65,7 +69,7 @@ fn npm_workspaces_activate_hook_noop_when_no_repos_detected() {
         "npm activate hook should be no-op when no repos detected"
     );
     assert!(
-        !root.join("package-lock.json").exists(),
+        !project_dir.join("package-lock.json").exists(),
         "no package-lock.json should be created when no repos detected"
     );
 }
@@ -110,12 +114,16 @@ fn cargo_workspace_activate_hook_reaches_cargo_and_follows_its_exit() {
 fn cargo_workspace_activate_hook_noop_when_no_repos_detected() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = CargoWorkspace;
     let result = integration.activate_hook(&ctx);
@@ -124,7 +132,7 @@ fn cargo_workspace_activate_hook_noop_when_no_repos_detected() {
         "cargo activate hook should be no-op when no repos detected"
     );
     assert!(
-        !root.join("Cargo.lock").exists(),
+        !project_dir.join("Cargo.lock").exists(),
         "no Cargo.lock should be created when no repos detected"
     );
 }
@@ -347,12 +355,16 @@ fn uv_workspace_activate_hook_runs_uv_sync() {
 fn uv_workspace_activate_hook_noop_when_no_repos_detected() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = UvWorkspace;
     let result = integration.activate_hook(&ctx);
@@ -361,7 +373,7 @@ fn uv_workspace_activate_hook_noop_when_no_repos_detected() {
         "uv activate hook should be no-op when no repos detected"
     );
     assert!(
-        !root.join("uv.lock").exists(),
+        !project_dir.join("uv.lock").exists(),
         "no uv.lock should be created when no repos detected"
     );
 }
@@ -408,12 +420,16 @@ fn pnpm_workspaces_activate_hook_runs_pnpm_install() {
 fn pnpm_workspaces_activate_hook_noop_when_no_repos_detected() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::from_toml("enabled = true");
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = PnpmWorkspaces;
     let result = integration.activate_hook(&ctx);
@@ -422,7 +438,7 @@ fn pnpm_workspaces_activate_hook_noop_when_no_repos_detected() {
         "pnpm activate hook should be no-op when no repos detected"
     );
     assert!(
-        !root.join("pnpm-lock.yaml").exists(),
+        !project_dir.join("pnpm-lock.yaml").exists(),
         "no pnpm-lock.yaml should be created when no repos detected"
     );
 }
@@ -535,6 +551,8 @@ fn hook_whose_tool_is_missing_warns_and_the_other_hooks_still_run() {
 fn go_work_activate_hook_is_noop() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
+    let project_dir = root.join("projects/test-project");
+    project_on_disk(root, "test-project");
 
     touch(root, "github/acme/server/go.mod");
 
@@ -542,13 +560,15 @@ fn go_work_activate_hook_is_noop() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = GoWork;
     let result = integration.activate_hook(&ctx);
     assert!(result.is_ok(), "go-work activate hook should be a no-op");
     assert!(
-        !root.join("go.work.sum").exists(),
+        !project_dir.join("go.work.sum").exists(),
         "go-work runs no install hook; a real hook's `go mod download` would write go.work.sum"
     );
     assert!(
@@ -570,7 +590,10 @@ fn gita_activate_hook_is_noop() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    project_on_disk(root, "test-project");
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = Gita;
     let result = integration.activate_hook(&ctx);
@@ -590,7 +613,10 @@ fn vscode_workspace_activate_hook_is_noop() {
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
     let cache = HashMap::new();
-    let ctx = make_ctx(root, &project, &manifest, &config, &cache);
+    project_on_disk(root, "test-project");
+    let session = WorkspaceSession::new(root);
+    let base = IntegrationContextBase::new(&session, &project, &cache, None);
+    let ctx = base.build_context(&config, &manifest);
 
     let integration = VscodeWorkspace;
     let result = integration.activate_hook(&ctx);

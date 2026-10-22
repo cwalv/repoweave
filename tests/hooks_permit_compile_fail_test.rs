@@ -11,8 +11,8 @@ use common::compile_probe::{assert_fails_with, compile};
 
 const PRELUDE: &str = r#"
     use repoweave::activate::HooksPermit;
-    use repoweave::integration::Integration;
-    use repoweave::integration_runner::{run_activate_hooks, IntegrationContextBase};
+    use repoweave::integration::{Integration, IntegrationContextBase};
+    use repoweave::integration_runner::run_activate_hooks;
     use repoweave::manifest::Manifest;
 "#;
 
