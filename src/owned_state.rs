@@ -375,7 +375,8 @@ pub fn stamp_owned_generation(
              the inputs as they now stand — where what the generator left on \
              disk differs from the last generation rwv accepted, it stops to \
              ask which of the two to keep before regenerating.",
-            dir.join(file_name).display(),
+            dir.join(crate::path_spelling::native_relative(file_name))
+                .display(),
             moved.len()
         );
     }
@@ -831,10 +832,12 @@ pub fn carry_attested_owned_files(
 ) -> anyhow::Result<Vec<String>> {
     let mut carried = BTreeMap::new();
     for (name, entry) in read_owned_digests(source_dir) {
-        let Ok(bytes) = std::fs::read(source_dir.join(&name)) else {
+        let Ok(bytes) =
+            std::fs::read(source_dir.join(crate::path_spelling::native_relative(&name)))
+        else {
             continue;
         };
-        let dest = dest_dir.join(&name);
+        let dest = dest_dir.join(crate::path_spelling::native_relative(&name));
         std::fs::write(&dest, &bytes)
             .with_context(|| format!("copying attested owned file to {}", dest.display()))?;
         carried.insert(name, entry);
@@ -873,7 +876,8 @@ pub fn drifted_attested_owned_files(dir: &Path) -> Vec<DriftedOwnedFile> {
     read_owned_digests(dir)
         .into_iter()
         .filter_map(|(name, recorded)| {
-            let content = std::fs::read(dir.join(&name)).ok()?;
+            let content =
+                std::fs::read(dir.join(crate::path_spelling::native_relative(&name))).ok()?;
             (owned_digest(&content) != recorded.digest())
                 .then_some(DriftedOwnedFile { name, content })
         })

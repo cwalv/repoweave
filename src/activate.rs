@@ -372,7 +372,7 @@ fn strip_disabled_integrations(
             let OwnedPath::WholeFile(name) = path else {
                 continue;
             };
-            let file = output_dir.join(name);
+            let file = output_dir.join(crate::path_spelling::native_relative(name));
             if file.is_file() {
                 std::fs::remove_file(&file)
                     .with_context(|| format!("removing {}", file.display()))?;
@@ -534,7 +534,9 @@ fn settle_arrived_drift(output_dir: &Path, consent: Option<DriftConsent>) -> any
                 .map(|file| {
                     format!(
                         "\n  {}",
-                        crate::path_spelling::operator_path(&output_dir.join(&file.name))
+                        crate::path_spelling::operator_path(
+                            &output_dir.join(crate::path_spelling::native_relative(&file.name))
+                        )
                     )
                 })
                 .collect::<String>();
@@ -553,14 +555,16 @@ fn settle_arrived_drift(output_dir: &Path, consent: Option<DriftConsent>) -> any
                 stamp_owned_digest(output_dir, &file.name, &file.content).with_context(|| {
                     format!(
                         "adopting the current content of {}",
-                        output_dir.join(&file.name).display()
+                        output_dir
+                            .join(crate::path_spelling::native_relative(&file.name))
+                            .display()
                     )
                 })?;
             }
         }
         Some(DriftConsent::Regenerate(_)) => {
             for file in &drifted {
-                let path = output_dir.join(&file.name);
+                let path = output_dir.join(crate::path_spelling::native_relative(&file.name));
                 std::fs::remove_file(&path)
                     .with_context(|| format!("discarding drifted {}", path.display()))?;
             }
@@ -1046,7 +1050,9 @@ fn withhold_hooks_over_unsettled_drift(output_dir: &Path) -> bool {
         .map(|file| {
             format!(
                 "\n  {}",
-                crate::path_spelling::operator_path(&output_dir.join(&file.name))
+                crate::path_spelling::operator_path(
+                    &output_dir.join(crate::path_spelling::native_relative(&file.name))
+                )
             )
         })
         .collect::<String>();
@@ -1221,7 +1227,7 @@ pub fn surfaced_names(root: &Path, names: &[String]) -> Vec<String> {
     names
         .iter()
         .filter(|name| {
-            std::fs::read_link(root.join(name))
+            std::fs::read_link(surfaced_link(root, name))
                 .is_ok_and(|target| target_resolves_to_projects(&sites, Path::new(name), &target))
         })
         .cloned()
@@ -1592,7 +1598,7 @@ impl RestorePoint {
             paths.extend(
                 owned_paths(root, project, manifest)
                     .into_iter()
-                    .map(|file| dir.join(file)),
+                    .map(|file| dir.join(crate::path_spelling::native_relative(&file))),
             );
         }
 
@@ -1983,7 +1989,7 @@ enum LinkSlot {
 }
 
 fn link_slot(root: &Path, sites: &SurfacingSites, wanted: &WantedLink) -> LinkSlot {
-    let link = root.join(&wanted.file);
+    let link = surfaced_link(root, &wanted.file);
     match link.symlink_metadata() {
         Err(e) => unreadable_slot(root, &link, e.kind()),
         Ok(meta) if meta.file_type().is_symlink() => match std::fs::read_link(&link) {
@@ -2039,7 +2045,7 @@ impl SurfacingJournal {
 
         if let Some(declared) = reclaim_from {
             for (file, _owner) in foreign_shared_name_links(root, project, declared) {
-                let link = root.join(&file);
+                let link = surfaced_link(root, &file);
                 let target = std::fs::read_link(&link)?;
                 crate::symlink::remove(&link)?;
                 self.removed.push(RemovedLink { link, target });
@@ -2047,7 +2053,7 @@ impl SurfacingJournal {
         }
 
         for wanted in to_create {
-            let link = root.join(&wanted.file);
+            let link = surfaced_link(root, &wanted.file);
             if let Some(parent) = link.parent() {
                 let missing: Vec<std::path::PathBuf> = parent
                     .ancestors()
@@ -2124,6 +2130,12 @@ impl SurfacingJournal {
 /// like `gita/repos.csv` we prepend `../` once per directory level so the link
 /// remains relative. Reached only through [`SurfacingSites::link`], which is
 /// what creation and the check both ask.
+/// Where the link surfacing `file`, a `/`-spelled declared name, stands under
+/// `root`.
+fn surfaced_link(root: &Path, file: &str) -> std::path::PathBuf {
+    root.join(crate::path_spelling::native_relative(file))
+}
+
 fn relative_symlink_target(project: &ProjectName, file: &str) -> std::path::PathBuf {
     let depth = Path::new(file)
         .parent()
@@ -2134,7 +2146,7 @@ fn relative_symlink_target(project: &ProjectName, file: &str) -> std::path::Path
         relative_target.push("..");
     }
     relative_target.push(project_rel_dir(project));
-    relative_target.push(file);
+    relative_target.push(crate::path_spelling::native_relative(file));
     relative_target
 }
 
@@ -2238,14 +2250,15 @@ impl SurfacingSites {
             (SurfacedCopy::Weave, _) | (SurfacedCopy::Primary, PrimaryProjects::Here) => {
                 Some(PlannedLink {
                     target: relative_symlink_target(project, file),
-                    source: project_dir(root, project).join(file),
+                    source: project_dir(root, project)
+                        .join(crate::path_spelling::native_relative(file)),
                     own_copy: true,
                 })
             }
             (SurfacedCopy::Primary, PrimaryProjects::At(projects)) => {
                 let source = projects
                     .join(crate::path_spelling::native_relative(project.as_str()))
-                    .join(file);
+                    .join(crate::path_spelling::native_relative(file));
                 Some(PlannedLink {
                     target: source.clone(),
                     source,
@@ -2670,7 +2683,7 @@ pub fn verify_surfacing(
         let source_missing = link_waits_for_its_source(entry, source);
         let integration = &entry.integration;
 
-        let link = root.join(file);
+        let link = surfaced_link(root, file);
         let expected_target = &planned.target;
 
         let link_meta = match link.symlink_metadata() {
@@ -2814,6 +2827,34 @@ mod tests {
     use super::*;
     use crate::integration::{Issue, IssueKind, IssueSource};
     use crate::vcs::project_vcs;
+
+    /// Windows reads `/` as a separator but `Path::join` keeps one it is
+    /// handed, so a declared name pushed whole spells `C:\w\gita/repos.csv`.
+    #[cfg(windows)]
+    #[test]
+    fn a_surfaced_file_joined_onto_a_native_root_holds_no_slash() {
+        let root = Path::new(r"C:\w");
+        let project = ProjectName::new("web").unwrap();
+        let sites = SurfacingSites {
+            primary: PrimaryProjects::Here,
+            workweave_links: BTreeSet::new(),
+        };
+        let planned = sites
+            .link(root, &project, "gita/repos.csv", SurfacedCopy::Weave)
+            .unwrap();
+        assert_eq!(
+            planned.source.as_os_str(),
+            r"C:\w\projects\web\gita\repos.csv"
+        );
+        assert_eq!(
+            planned.target.as_os_str(),
+            r"..\projects\web\gita\repos.csv"
+        );
+        assert_eq!(
+            surfaced_link(root, "gita/repos.csv").as_os_str(),
+            r"C:\w\gita\repos.csv"
+        );
+    }
 
     fn issue(integration: &str, severity: Severity, message: &str) -> Issue {
         Issue {

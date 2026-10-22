@@ -219,7 +219,11 @@ impl Integration for StaticFiles {
         }
 
         for file in checked_at_output_dir(&cfg, ctx) {
-            if !ctx.output_dir.join(file).exists() {
+            if !ctx
+                .output_dir
+                .join(crate::path_spelling::native_relative(file))
+                .exists()
+            {
                 eprintln!(
                     "[warning] static-files: declared file '{}' not found in project directory",
                     file
@@ -260,7 +264,11 @@ impl Integration for StaticFiles {
         }
 
         for file in checked_at_output_dir(&cfg, ctx) {
-            if !ctx.output_dir.join(file).exists() {
+            if !ctx
+                .output_dir
+                .join(crate::path_spelling::native_relative(file))
+                .exists()
+            {
                 issues.push(Issue {
                     source: IssueSource::integration(self.name()),
                     severity: Severity::Warning,

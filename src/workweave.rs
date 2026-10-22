@@ -1533,12 +1533,12 @@ fn carry_untracked_managed_files(
     dest_project_dir: &Path,
 ) -> anyhow::Result<()> {
     for name in crate::activate::own_copy_owned_paths(source_root, project, manifest) {
-        let dest_file = dest_project_dir.join(&name);
+        let dest_file = dest_project_dir.join(crate::path_spelling::native_relative(&name));
         refuse_symlinked_component(dest_project_dir, Path::new(&name))?;
         if dest_file.exists() {
             continue;
         }
-        let source_file = source_project_dir.join(&name);
+        let source_file = source_project_dir.join(crate::path_spelling::native_relative(&name));
         let Ok(source_meta) = std::fs::symlink_metadata(&source_file) else {
             continue;
         };

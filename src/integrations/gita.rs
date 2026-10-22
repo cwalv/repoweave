@@ -105,7 +105,11 @@ impl Integration for Gita {
         let gita_dir = ctx.output_dir.join("gita");
         std::fs::create_dir_all(&gita_dir)?;
         for (name, body) in authored {
-            std::fs::write(ctx.output_dir.join(name), body)?;
+            std::fs::write(
+                ctx.output_dir
+                    .join(crate::path_spelling::native_relative(name)),
+                body,
+            )?;
         }
         Ok(Vec::new())
     }
@@ -156,7 +160,9 @@ impl Integration for Gita {
     fn verify(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
         let mut issues = Vec::new();
         for (name, body) in Self::authored_csvs(ctx).unwrap_or_default() {
-            let path = ctx.output_dir.join(name);
+            let path = ctx
+                .output_dir
+                .join(crate::path_spelling::native_relative(name));
             match std::fs::read(&path) {
                 Err(e) if e.kind() == ErrorKind::NotFound => {
                     issues.push(missing_issue(self.name(), &path));
@@ -199,8 +205,11 @@ impl Integration for Gita {
             .unwrap_or_default()
             .into_iter()
             .filter(|(name, body)| {
-                std::fs::read(ctx.output_dir.join(name))
-                    .is_ok_and(|on_disk| on_disk == body.as_bytes())
+                std::fs::read(
+                    ctx.output_dir
+                        .join(crate::path_spelling::native_relative(name)),
+                )
+                .is_ok_and(|on_disk| on_disk == body.as_bytes())
             })
             .map(|(name, _)| OwnedPath::WholeFile(name.to_string()))
             .collect()

@@ -45,7 +45,7 @@ pub(crate) fn read(
     owner: &ProjectName,
     name: &str,
 ) -> std::io::Result<Option<RootWrite>> {
-    let path = root.join(name);
+    let path = root.join(crate::path_spelling::native_relative(name));
     match path.symlink_metadata() {
         Ok(meta) if meta.is_file() => {}
         Ok(_) => return Ok(None),
@@ -54,7 +54,7 @@ pub(crate) fn read(
     }
     let bytes = std::fs::read(&path)?;
     let dir = project_dir(root, owner);
-    let project_copy = match std::fs::read(dir.join(name)) {
+    let project_copy = match std::fs::read(dir.join(crate::path_spelling::native_relative(name))) {
         Ok(copy) => Some(copy),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err(e),
@@ -92,7 +92,8 @@ impl RootWrite {
     /// project copy takes its bytes, and the root file goes so the link can
     /// stand there again.
     pub(crate) fn adoption(&self, root: &Path) -> Vec<Op> {
-        let dest = project_dir(root, &self.owner).join(&self.name);
+        let dest =
+            project_dir(root, &self.owner).join(crate::path_spelling::native_relative(&self.name));
         let mut ops = Vec::new();
         if std::fs::read(&dest).ok().as_deref() != Some(self.bytes.as_slice()) {
             ops.push(Op::Write {
@@ -101,7 +102,7 @@ impl RootWrite {
             });
         }
         ops.push(Op::Remove {
-            path: root.join(&self.name),
+            path: root.join(crate::path_spelling::native_relative(&self.name)),
         });
         ops
     }

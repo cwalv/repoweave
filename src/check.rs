@@ -9865,7 +9865,10 @@ fn disabled_integration_issues(
                     };
                     format!(
                         "{} ({shape})",
-                        ctx_base.output_dir.join(path.name()).display()
+                        ctx_base
+                            .output_dir
+                            .join(crate::path_spelling::native_relative(path.name()))
+                            .display()
                     )
                 })
                 .collect::<Vec<_>>()
