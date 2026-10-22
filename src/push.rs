@@ -16,7 +16,6 @@ use crate::workspace::{project_dir, project_rel_path, Checkout, Resolution, Work
 use anyhow::Context;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -452,10 +451,10 @@ pub fn run_push(
     let force = match mode {
         PushMode::Publish(force) => force,
         PushMode::DryRun => {
-            println!("rwv push (dry-run):");
+            outln!("rwv push (dry-run):");
             for item in &plan {
                 let vcs = vcs_for(item.vcs_type);
-                println!(
+                outln!(
                     "  {}: would push {} -> {}",
                     item.repo_path.as_str(),
                     item.branch,
@@ -463,12 +462,12 @@ pub fn run_push(
                 );
             }
             for (repo_path, _) in &default_skipped_repos {
-                println!(
+                outln!(
                     "  {}: skipped (non-writable role; pass --repo or --role to include)",
                     repo_path.as_str(),
                 );
             }
-            println!(
+            outln!(
                 "  projects/{}: would push {} -> {} (last)",
                 project_name,
                 project_current,
@@ -553,7 +552,7 @@ pub fn run_push(
         let path_str = repo_path.as_str().to_string();
         let abs_str = crate::path_spelling::WirePath::of(&primary_root.join(repo_path.as_path()));
         if output == OutputMode::Text {
-            println!("rwv push: skipped {} (non-writable role)", path_str,);
+            outln!("rwv push: skipped {} (non-writable role)", path_str,);
         }
         skipped += 1;
         let wire = PushOutcomeOutput::Skipped {
@@ -616,7 +615,7 @@ pub fn run_push(
                 resolution: ctx.resolution(),
             };
             if let Ok(out) = serde_json::to_string_pretty(&envelope) {
-                println!("{out}");
+                outln!("{out}");
             }
         }
 
@@ -629,12 +628,12 @@ pub fn run_push(
 
     if output == OutputMode::Text {
         if skipped > 0 {
-            println!(
+            outln!(
                 "rwv push: pushed {} member repo(s); {} skipped (non-writable role; pass --repo or --role to include)",
                 pushed, skipped
             );
         } else {
-            println!("rwv push: pushed {} member repo(s)", pushed);
+            outln!("rwv push: pushed {} member repo(s)", pushed);
         }
     }
 
@@ -646,7 +645,7 @@ pub fn run_push(
     let project_abs_str = crate::path_spelling::WirePath::of(&project_dir);
 
     if output == OutputMode::Text {
-        println!(
+        outln!(
             "rwv push: pushing project repo projects/{} ({} -> {})",
             project_name,
             project_current,
@@ -683,7 +682,7 @@ pub fn run_push(
                 resolution: ctx.resolution(),
             };
             if let Ok(out) = serde_json::to_string_pretty(&envelope) {
-                println!("{out}");
+                outln!("{out}");
             }
         }
         anyhow::bail!(
@@ -704,11 +703,11 @@ pub fn run_push(
             };
             let out = serde_json::to_string_pretty(&envelope)
                 .context("failed to serialize push outcomes to JSON")?;
-            println!("{out}");
+            outln!("{out}");
         }
         // NDJSON mode: already streamed each record above.
     } else {
-        println!("rwv push: done");
+        outln!("rwv push: done");
     }
 
     Ok(())
@@ -750,13 +749,7 @@ fn emit_ndjson_record(write_lock: &Mutex<()>, outcome: &PushOutcomeOutput) {
         schema: PUSH_RECORD_SCHEMA_URL,
         outcome,
     };
-    if let Ok(line) = serde_json::to_string(&record) {
-        let _guard = write_lock.lock().unwrap_or_else(|e| e.into_inner());
-        let stdout = std::io::stdout();
-        let mut handle = stdout.lock();
-        let _ = writeln!(handle, "{line}");
-        let _ = handle.flush();
-    }
+    crate::stdout::stream_record(write_lock, &record);
 }
 
 /// One manifest repo's resolved plan entry — what branch it's on and which

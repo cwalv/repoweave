@@ -66,7 +66,7 @@ pub fn claude_uninstall() -> anyhow::Result<()> {
 /// Implementation that accepts an explicit path (for testing).
 pub fn claude_uninstall_at(settings_path: &Path) -> anyhow::Result<()> {
     if !settings_path.exists() {
-        println!("No settings.json found — nothing to do.");
+        outln!("No settings.json found — nothing to do.");
         return Ok(());
     }
 
@@ -82,7 +82,7 @@ pub fn claude_uninstall_at(settings_path: &Path) -> anyhow::Result<()> {
     let hooks_obj = match root_obj.get_mut("hooks").and_then(|h| h.as_object_mut()) {
         Some(obj) => obj,
         None => {
-            println!("No hooks registered — nothing to do.");
+            outln!("No hooks registered — nothing to do.");
             return Ok(());
         }
     };
@@ -130,14 +130,14 @@ pub fn claude_uninstall_at(settings_path: &Path) -> anyhow::Result<()> {
         let output = serde_json::to_string_pretty(&root)?;
         std::fs::write(settings_path, format!("{output}\n"))
             .with_context(|| format!("failed to write {}", settings_path.display()))?;
-        println!(
+        outln!(
             "Removed {} rwv hook entr{} from {}",
             removed_count,
             if removed_count == 1 { "y" } else { "ies" },
             settings_path.display()
         );
     } else {
-        println!("No rwv hooks found — nothing to do.");
+        outln!("No rwv hooks found — nothing to do.");
     }
 
     Ok(())
@@ -194,9 +194,9 @@ fn claude_inner(settings_path: &Path) -> anyhow::Result<()> {
         let output = serde_json::to_string_pretty(&root)?;
         std::fs::write(settings_path, format!("{output}\n"))
             .with_context(|| format!("failed to write {}", settings_path.display()))?;
-        println!("Registered rwv hooks in {}", settings_path.display());
+        outln!("Registered rwv hooks in {}", settings_path.display());
     } else {
-        println!("rwv hooks up to date — nothing to do.");
+        outln!("rwv hooks up to date — nothing to do.");
     }
 
     Ok(())

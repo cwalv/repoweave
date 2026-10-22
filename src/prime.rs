@@ -24,13 +24,13 @@ use crate::workspace::{discover_projects, project_dir, projects_dir, Checkout, W
 pub fn prime(ctx: Option<&WorkspaceContext>, no_suppress: bool) -> anyhow::Result<()> {
     let Some(ctx) = ctx else {
         if no_suppress {
-            print!("{}", render_overview());
+            out!("{}", render_overview());
         }
         return Ok(());
     };
 
     let output = render_context(ctx);
-    print!("{output}");
+    out!("{output}");
     Ok(())
 }
 

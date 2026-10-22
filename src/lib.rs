@@ -67,6 +67,8 @@ pub(crate) fn report_skip(reason: &str) {
     let _ = std::io::stderr().write_all(format!("SKIP: {reason}\n").as_bytes());
 }
 
+#[macro_use]
+mod stdout;
 pub mod activate;
 pub mod add_remove;
 pub mod check;

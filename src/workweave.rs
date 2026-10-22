@@ -3984,7 +3984,7 @@ pub fn workweave_log(
     if mode.is_json() {
         let out = serde_json::to_string_pretty(&output)
             .context("failed to serialize workweave log to JSON")?;
-        println!("{out}");
+        outln!("{out}");
     } else {
         print_workweave_log_text(&output);
     }
@@ -3995,9 +3995,11 @@ pub fn workweave_log(
 /// Human-readable rendering of a `workweave log [--diff]` result.
 fn print_workweave_log_text(output: &WorkweaveLogOutput) {
     let verb = if output.diff { "diff" } else { "log" };
-    println!(
+    outln!(
         "workweave {} {} vs parent {}",
-        output.workweave, verb, output.parent
+        output.workweave,
+        verb,
+        output.parent
     );
     // Manifest repos first, then the project repo at the end.
     let all_repos: Vec<&WorkweaveLogRepo> = output
@@ -4006,26 +4008,26 @@ fn print_workweave_log_text(output: &WorkweaveLogOutput) {
         .chain(output.project_repo.iter())
         .collect();
     for repo in all_repos {
-        println!();
-        println!("=== {} ===", repo.path);
+        outln!();
+        outln!("=== {} ===", repo.path);
         if let Some(note) = &repo.note {
-            println!("  note: {note}");
+            outln!("  note: {note}");
         }
         if output.diff {
             match &repo.diff {
                 Some(d) if !d.is_empty() => {
                     if let Some(base) = &repo.diff_base {
-                        println!("  (diff range: {}..HEAD)", base.short());
+                        outln!("  (diff range: {}..HEAD)", base.short());
                     }
-                    println!("{d}");
+                    outln!("{d}");
                 }
-                _ => println!("  (no diff vs parent)"),
+                _ => outln!("  (no diff vs parent)"),
             }
         } else if repo.unique_commits.is_empty() {
-            println!("  (no unique commits vs parent)");
+            outln!("  (no unique commits vs parent)");
         } else {
             for c in &repo.unique_commits {
-                println!("  {} {}", c.short, c.subject);
+                outln!("  {} {}", c.short, c.subject);
             }
         }
     }
@@ -4112,7 +4114,7 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
                 None,
                 crate::activate::ActivateOptions::default(),
             ))?;
-            println!("{}", path.display());
+            outln!("{}", path.display());
         }
         Some(HookEvent::WorktreeRemove) => {
             let worktree_path = input

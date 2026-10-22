@@ -691,7 +691,7 @@ pub fn run() -> anyhow::Result<()> {
     match cli.command {
         None => {
             let ctx = WorkspaceContext::resolve_invocation(origin_dir, None)?;
-            println!("{}", ctx.display());
+            outln!("{}", ctx.display());
         }
         Some(Commands::Activate {
             project,
@@ -732,7 +732,7 @@ pub fn run() -> anyhow::Result<()> {
         }
         Some(Commands::Resolve) => {
             let ctx = WorkspaceContext::resolve_invocation(origin_dir, None)?;
-            println!("{}", crate::path_spelling::operator_path(ctx.active_path()));
+            outln!("{}", crate::path_spelling::operator_path(ctx.active_path()));
         }
         Some(Commands::Add {
             url,
@@ -920,7 +920,7 @@ pub fn run() -> anyhow::Result<()> {
                     Some(WorkweaveAction::List) | None => {
                         let names = crate::workweave::list_workweaves(primary_root, &project)?;
                         for n in &names {
-                            println!("{}", n);
+                            outln!("{}", n);
                         }
                     }
                     Some(WorkweaveAction::Delete {
@@ -972,7 +972,7 @@ pub fn run() -> anyhow::Result<()> {
                             created?
                         };
                         if hook_mode {
-                            println!("{}", workweave_path.display());
+                            outln!("{}", workweave_path.display());
                         }
                     }
                     Some(WorkweaveAction::Log { diff, json }) => {
@@ -1272,7 +1272,10 @@ pub fn run() -> anyhow::Result<()> {
         }
         Some(Commands::Completions { shell }) => {
             let mut cmd = Cli::command();
-            clap_complete::generate(shell, &mut cmd, "rwv", &mut std::io::stdout());
+            let mut script = Vec::new();
+            clap_complete::generate(shell, &mut cmd, "rwv", &mut script);
+            crate::stdout::write_bytes(&script)
+                .context("failed to write the completions to stdout")?;
         }
         Some(Commands::Explain { command }) => {
             explain::explain(command.as_deref())?;

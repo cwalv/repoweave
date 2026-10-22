@@ -176,14 +176,12 @@ impl<'a> Reporter<'a> {
     pub fn out(&self, line: &str) {
         match &self.inner {
             ReporterInner::Serial => {
-                println!("{line}");
+                outln!("{line}");
             }
             ReporterInner::Silent => {}
             ReporterInner::Parallel { prefix, write_lock } => {
                 let _guard = write_lock.lock().unwrap_or_else(|e| e.into_inner());
-                let stdout = std::io::stdout();
-                let mut stdout = stdout.lock();
-                let _ = writeln!(stdout, "[{prefix}] {line}");
+                let _ = crate::stdout::write(format_args!("[{prefix}] {line}"), true);
             }
         }
     }

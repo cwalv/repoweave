@@ -235,16 +235,12 @@ fn version_banner() -> String {
     format!("rwv {}\n\n", crate::rwv_version_with_build())
 }
 
-/// Write a page to stdout. A reader that closes the pipe has stopped reading,
-/// which is its choice and not a failure of the page.
+/// Write a page to stdout.
 fn emit(page: &str) -> anyhow::Result<()> {
     use anyhow::Context;
-    use std::io::Write;
-    let mut out = std::io::stdout().lock();
-    match out.write_all(page.as_bytes()).and_then(|()| out.flush()) {
-        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
-        other => other.context("failed to write the explain page to stdout"),
-    }
+    crate::stdout::write_bytes(page.as_bytes())
+        .and_then(|()| crate::stdout::flush())
+        .context("failed to write the explain page to stdout")
 }
 
 /// Print the explain bundle for the requested verb, or the index when none given.

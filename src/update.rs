@@ -20,7 +20,6 @@ use anyhow::Context;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
-use std::io::Write;
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -335,7 +334,7 @@ fn update_for_project(
         };
 
         if let (OutputMode::Text, Some(files)) = (output, placed) {
-            println!("  {}: files {files}", record.path);
+            outln!("  {}: files {files}", record.path);
         }
         let placement =
             placed.map(|files| PlacementOutput::new(&item.repo_path, item.checkout.path(), files));
@@ -350,13 +349,7 @@ fn update_for_project(
                     schema: UPDATE_RECORD_SCHEMA_URL,
                     record: &record,
                 };
-                if let Ok(line) = serde_json::to_string(&line_record) {
-                    let _guard = stdout_lock.lock().unwrap_or_else(|e| e.into_inner());
-                    let stdout = std::io::stdout();
-                    let mut handle = stdout.lock();
-                    let _ = writeln!(handle, "{line}");
-                    let _ = handle.flush();
-                }
+                crate::stdout::stream_record(&stdout_lock, &line_record);
             }
             json_records.push(record);
             placements.extend(placement);
@@ -376,7 +369,7 @@ fn update_for_project(
     }
 
     if output == OutputMode::Text {
-        println!("rwv update: advanced {updated} repo(s)");
+        outln!("rwv update: advanced {updated} repo(s)");
     }
 
     // Under JSON mode with failures: emit output first, then bail.
@@ -394,7 +387,7 @@ fn update_for_project(
             };
             let out = serde_json::to_string_pretty(&envelope)
                 .context("failed to serialize update output")?;
-            println!("{out}");
+            outln!("{out}");
         }
         crate::refuse!(
             crate::refusal::RefusalKind::PartialRunAborted,
@@ -486,7 +479,7 @@ fn update_for_project(
         };
         let out =
             serde_json::to_string_pretty(&envelope).context("failed to serialize update output")?;
-        println!("{out}");
+        outln!("{out}");
     }
 
     Ok(())

@@ -19,6 +19,7 @@ use std::sync::atomic::Ordering;
 use clap::Parser;
 
 use crate::cli::Cli;
+use crate::output::{Printer, Stream};
 use crate::report::{Json, Reporter};
 use crate::run::{CommandSpec, Layout, Runner, INTERRUPTS};
 use crate::select::Envelope;
@@ -47,16 +48,21 @@ fn execute(cli: &Cli) -> anyhow::Result<u8> {
     let command = spec.display();
 
     if cli.dry_run {
-        println!("rwv each (dry-run):");
+        let mut printer = Printer::new(std::io::stdout(), std::io::stderr(), None);
+        let mut say = |line: String| printer.line(None, Stream::Out, line.as_bytes());
+        say("rwv each (dry-run):".to_owned());
         for repo in &repos {
             if repo.present {
-                println!(
+                say(format!(
                     "  {}: would run `{command}` in {}",
                     repo.path,
                     repo.dir.display()
-                );
+                ));
             } else {
-                println!("  {}: not present on disk; run `rwv fetch`", repo.path);
+                say(format!(
+                    "  {}: not present on disk; run `rwv fetch`",
+                    repo.path
+                ));
             }
         }
         return Ok(0);

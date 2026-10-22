@@ -446,7 +446,7 @@ pub fn run_status(
         };
         let out = serde_json::to_string_pretty(&envelope)
             .context("failed to serialize status to JSON")?;
-        println!("{out}");
+        outln!("{out}");
     } else {
         if let Checkout::Workweave { name, .. } = &ctx.checkout {
             if name.recorded().is_none() {
@@ -467,7 +467,7 @@ pub fn run_status(
 /// (verb, phase, age, owner dir, op id, both remedies), disclosed without an
 /// operator having to attempt a mutation first to see it.
 fn print_op_header(op: &op_state::ResolvedOwner) {
-    println!(
+    outln!(
         "{verb} in progress (op {id}, mid `{phase}`, started {elapsed} ago) at {owner}",
         verb = op.record.verb,
         id = op.record.id,
@@ -475,7 +475,7 @@ fn print_op_header(op: &op_state::ResolvedOwner) {
         elapsed = op_state::elapsed_since(&op.record.started_at),
         owner = crate::path_spelling::operator_path(op.owner_workspace.as_path()),
     );
-    println!(
+    outln!(
         "  resume with `{resume}`, or `rwv abort` to discard",
         resume = op_state::resume_command(op.record.verb),
     );
@@ -530,7 +530,7 @@ fn print_table(entries: &[RepoStatus]) {
             ""
         };
 
-        println!(
+        outln!(
             "{:<path_w$}  {:<branch_w$}  {:<tip_w$}  lock: {:<lock_w$}  [{}]{}{}",
             entry.path,
             branch,

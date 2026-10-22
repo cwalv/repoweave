@@ -36,7 +36,6 @@ use anyhow::Context;
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::fmt;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -915,13 +914,7 @@ pub const MEMBER_RECORD_SCHEMA_URL: &str = crate::schema_url::schema_url!("membe
 pub const ADVANCE_RECORD_SCHEMA_URL: &str = crate::schema_url::schema_url!("advance-record");
 
 fn stream_ndjson_line(stdout_lock: &Mutex<()>, record: &impl Serialize) {
-    if let Ok(line) = serde_json::to_string(record) {
-        let _guard = stdout_lock.lock().unwrap_or_else(|e| e.into_inner());
-        let stdout = std::io::stdout();
-        let mut handle = stdout.lock();
-        let _ = writeln!(handle, "{line}");
-        let _ = handle.flush();
-    }
+    crate::stdout::stream_record(stdout_lock, record);
 }
 
 /// Schema URL embedded in `rwv sync --json` output. Pins to the committed
@@ -2363,7 +2356,7 @@ impl OutputHandler for TextHandler<'_> {
         if outcome.is_failure() {
             eprintln!("  {path}: {outcome}");
         } else {
-            println!("  {path}: {outcome}");
+            outln!("  {path}: {outcome}");
         }
         if let RepoSyncOutcome::Converged {
             derived_content_dropped,
@@ -5189,7 +5182,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                         .record_placement(PlacementOutput::new(repo_path, &abs, files));
                 }
                 if emit_text {
-                    println!(
+                    outln!(
                         "  {repo_path}: materialized{}",
                         crate::share::files_note(files)
                     );
@@ -5231,7 +5224,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         let abs = ctx.cwd_workspace_dir.join(repo_path.as_path());
         if !abs.exists() {
             if emit_text {
-                println!("  {repo_path}: skipped (not on disk)");
+                outln!("  {repo_path}: skipped (not on disk)");
             }
             continue;
         }
@@ -5424,7 +5417,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             continue;
         }
         if emit_text {
-            println!(
+            outln!(
                 "  {repo_path}: kept (not in the source's lock; the replayed manifest names it)"
             );
         }
@@ -5445,7 +5438,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         ) {
             Ok(()) => {
                 if emit_text {
-                    println!("  {repo_path}: pruned (dropped from lock)");
+                    outln!("  {repo_path}: pruned (dropped from lock)");
                 }
                 MemberOutput::pruned(repo_path, &checkout)
             }
@@ -5513,7 +5506,7 @@ fn settle_members(
         match settled {
             Ok(settled) => {
                 if let Some(files) = settled.files {
-                    println!("  {repo_path}: files {files}");
+                    outln!("  {repo_path}: files {files}");
                 }
             }
             Err(e) => eprintln!(
@@ -5835,7 +5828,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                             ));
                         }
                         if emit_text {
-                            println!(
+                            outln!(
                                 "  {repo_path}: materialized in target at {}{}",
                                 cwd_tip.id().short(),
                                 crate::share::files_note(born.files)
@@ -5860,7 +5853,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         match ff_advance_repo(vcs.as_ref(), &target_repo, &cwd_repo, &cwd_tip) {
             Ok(advance) => {
                 if emit_text {
-                    println!("  {}: {}", repo_path, ff_advance_line(&advance, &cwd_tip));
+                    outln!("  {}: {}", repo_path, ff_advance_line(&advance, &cwd_tip));
                 }
                 // Record step-3 advance iff the branch pointer actually moved.
                 if advance.onto.is_some() {
@@ -5917,7 +5910,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     ) {
         Ok(advance) => {
             if emit_text {
-                println!(
+                outln!(
                     "  {}: {}",
                     RepoKey::Project,
                     ff_advance_line(&advance, &cwd_project_tip)
@@ -6998,20 +6991,20 @@ fn report_abort_outcome(
             summary.untouched += 1;
         }
         VerifiedRestoreOutcome::RestoredFromIntent => {
-            println!("  {label}: restored (from recorded intent tip)");
+            outln!("  {label}: restored (from recorded intent tip)");
         }
         VerifiedRestoreOutcome::RestoredFromConverged => {
-            println!("  {label}: restored (from recorded converged tip)");
+            outln!("  {label}: restored (from recorded converged tip)");
         }
         VerifiedRestoreOutcome::RestoredFromMidOp => {
-            println!("  {label}: restored (from mid-op state)");
+            outln!("  {label}: restored (from mid-op state)");
         }
         VerifiedRestoreOutcome::AbandonedForeignTip {
             abandoned_tip,
             savepoint,
             pre_abort_ref,
         } => {
-            println!(
+            outln!(
                 "  {label}: restored (abandoned foreign tip, per --abandon-foreign-tip)\n\
                  \tabandoned tip: {abandoned_tip} — still reachable at {ref_label}\n\
                  \trestored to:   {savepoint}",
@@ -7164,7 +7157,7 @@ fn print_abort_noise_summary(summary: &AbortNoiseSummary) {
         ));
     }
     if !parts.is_empty() {
-        println!("  summary: {}", parts.join(", "));
+        outln!("  summary: {}", parts.join(", "));
     }
 }
 
@@ -7324,7 +7317,7 @@ fn run_sync_json_impl(
         };
         let out =
             serde_json::to_string_pretty(&payload).context("failed to serialize sync output")?;
-        println!("{out}");
+        outln!("{out}");
     }
 
     json_exit_tail(any_failure, project_level_result)
@@ -7387,7 +7380,7 @@ fn run_sync_to_json(
     if let Some(envelope) = &run.envelope {
         let out =
             serde_json::to_string_pretty(envelope).context("failed to serialize sync-to output")?;
-        println!("{out}");
+        outln!("{out}");
     }
     json_exit_tail(run.any_failure, run.project_level_result)
 }

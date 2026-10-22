@@ -9,7 +9,6 @@ use crate::manifest::RepoPath;
 use crate::share::FilePlacement;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::io::Write;
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -45,13 +44,7 @@ impl PlacementOutput {
             schema: PLACEMENT_RECORD_SCHEMA_URL,
             placement: self,
         };
-        if let Ok(line) = serde_json::to_string(&record) {
-            let _guard = stdout_lock.lock().unwrap_or_else(|e| e.into_inner());
-            let stdout = std::io::stdout();
-            let mut handle = stdout.lock();
-            let _ = writeln!(handle, "{line}");
-            let _ = handle.flush();
-        }
+        crate::stdout::stream_record(stdout_lock, &record);
     }
 }
 

@@ -294,11 +294,11 @@ fn remove_undeclared_links(root: &Path, project: &ProjectName) -> anyhow::Result
     let declared = owned_paths(root, project, &manifest);
     let links = undeclared_project_links(root, project, &manifest, &declared);
     if links.is_empty() {
-        println!("core: no weave-root links at undeclared names; nothing to remove");
+        outln!("core: no weave-root links at undeclared names; nothing to remove");
         return Ok(());
     }
     for link in &links {
-        println!(
+        outln!(
             "[removed] core: `{}` -> {} (a link at a name `{}` no longer declares; \
              the file it pointed at is untouched)",
             link.name(),

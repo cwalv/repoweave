@@ -5798,7 +5798,7 @@ fn repair_uninitialized_submodules(
                 &crate::share::Filesystem,
             );
             for (path, placement) in &populated.populated {
-                println!(
+                outln!(
                     "[fixed] core: checked out submodule {repo}/{path} in workweave {workweave} \
                      ({placement})"
                 );
@@ -5984,7 +5984,7 @@ fn repair_member_permissions(
         match crate::settle::settle(vcs.as_ref(), &slot.checkout, slot.role) {
             Ok(changed) => {
                 if changed > 0 {
-                    println!(
+                    outln!(
                         "[fixed] core: settled {changed} tracked file(s) of {location} for \
                          its role ({role})",
                         role = slot.role,
@@ -6176,7 +6176,7 @@ fn repair_member_gaps(
             gap.submodules,
             revision.id().as_str(),
         ) {
-            Ok(born) => println!(
+            Ok(born) => outln!(
                 "[fixed] core: created the worktree for {repo} in workweave {ww} at {at}{was}{files}",
                 repo = gap.repo,
                 ww = gap.workweave,
@@ -6227,7 +6227,7 @@ fn repair_standalone_members(
                 entry.role,
                 entry.submodules,
             ) {
-                Ok(born) => println!(
+                Ok(born) => outln!(
                     "[fixed] core: replaced the full clone of {repo} in workweave {workweave} \
                      with a worktree of the canonical clone at {at}{files}",
                     at = born.at.id().short(),
@@ -9173,7 +9173,7 @@ pub fn run_check_locked(ctx: &crate::workspace::WorkspaceContext) -> anyhow::Res
             let repo_abs = workspace_dir.join(repo_path.as_path());
 
             if !raw_entry.version.is_commit_id() {
-                println!(
+                outln!(
                     "warning: {}",
                     crate::lock::pinned_by_name_warning(repo_path, &raw_entry.version)
                 );
@@ -9182,7 +9182,7 @@ pub fn run_check_locked(ctx: &crate::workspace::WorkspaceContext) -> anyhow::Res
             let actual = match vcs.head_revision(&repo_abs) {
                 Ok(rev) => rev,
                 Err(_) => {
-                    println!(
+                    outln!(
                         "{repo_path}: missing on disk (lock pins {}); run `rwv fetch` with no \
                          source to materialize it",
                         raw_entry.version.short_display()
@@ -9193,7 +9193,7 @@ pub fn run_check_locked(ctx: &crate::workspace::WorkspaceContext) -> anyhow::Res
             };
 
             if let Some(raw_rev) = unresolved.get(repo_path) {
-                println!(
+                outln!(
                     "{repo_path}: lock pins unknown revision {}",
                     raw_rev.short_display()
                 );
@@ -9209,9 +9209,9 @@ pub fn run_check_locked(ctx: &crate::workspace::WorkspaceContext) -> anyhow::Res
             };
 
             if actual == resolved_entry.version {
-                println!("{repo_path}: ok");
+                outln!("{repo_path}: ok");
             } else {
-                println!(
+                outln!(
                     "{repo_path}: tip {} ≠ lock {}",
                     actual.short_display(),
                     resolved_entry.version.short_display()
@@ -9240,7 +9240,7 @@ pub fn run_check_locked(ctx: &crate::workspace::WorkspaceContext) -> anyhow::Res
 fn apply_prelude_repairs(ctx: &crate::workspace::WorkspaceContext, fix_errors: &mut Vec<String>) {
     for finding in scan_for_legacy_workweave_markers(ctx.primary_path()) {
         match fix_legacy_workweave_marker(&finding) {
-            Ok(true) => println!(
+            Ok(true) => outln!(
                 "[fixed] core: migrated legacy workweave marker {} to JSON",
                 finding.marker_path.display()
             ),
@@ -9288,7 +9288,7 @@ fn apply_workspace_repairs(
         let project_dir = project_dir(ctx.primary_path(), &active_name);
         if !project_dir.is_dir() {
             match crate::workspace::clear_active_project(ctx.primary_path()) {
-                Ok(()) => println!(
+                Ok(()) => outln!(
                     "[fixed] core: cleared `.rwv-active` (was pointing at missing project `{}`)",
                     active_name
                 ),
@@ -9314,7 +9314,7 @@ fn apply_workspace_repairs(
         } = &v
         {
             match crate::workspace::clear_active_project(root) {
-                Ok(()) => println!(
+                Ok(()) => outln!(
                     "[fixed] core: deleted `.rwv-active` at {} \
                      (redundant with the `.rwv-workweave` marker of registered workweave \
                      `{workweave_name}` in project `{project}`; the marker is unchanged)",
@@ -9330,7 +9330,7 @@ fn apply_workspace_repairs(
 
     let (retracted, retract_errs) = fix_dangling_receipts(ctx.primary_path(), vcs, project_scope);
     for (store_path, ref_name) in &retracted {
-        println!(
+        outln!(
             "[fixed] core: retracted dangling ownership receipt for `{}` in {}",
             ref_name,
             store_path.display()
@@ -9340,7 +9340,7 @@ fn apply_workspace_repairs(
 
     let (retracted, retract_errs) = fix_pre_flat_receipts(ctx.primary_path(), project_scope);
     for (store_path, ref_name) in &retracted {
-        println!(
+        outln!(
             "[fixed] core: retracted the ownership receipt for `{}` in {} — the name \
              carries a `/` segment, which no workweave on disk mints; the branch \
              itself was left untouched and is now unowned",
@@ -9363,7 +9363,7 @@ fn apply_workspace_repairs(
         let mut registry =
             crate::workweave_index::RefRegistry::for_project(ctx.primary_path(), &project);
         match registry.migrate_legacy_index() {
-            Ok(true) => println!(
+            Ok(true) => outln!(
                 "[fixed] core: added the ref-ownership registry to {}",
                 crate::workweave_index::index_path(ctx.primary_path(), &project).display()
             ),
@@ -9385,7 +9385,7 @@ fn apply_workspace_repairs(
             consent,
         );
         for (store_path, branch) in &reattached {
-            println!(
+            outln!(
                 "[fixed] core: reattached detached canonical {} to `{}`",
                 store_path.display(),
                 branch
@@ -9397,7 +9397,7 @@ fn apply_workspace_repairs(
     let (applied, migration_errs) =
         fix_branch_model_migration(ctx.primary_path(), vcs, project_scope, adopt_detached);
     for msg in &applied {
-        println!("[fixed] core: {msg}");
+        outln!("[fixed] core: {msg}");
     }
     fix_errors.extend(migration_errs);
 
@@ -9434,17 +9434,17 @@ fn apply_workspace_repairs(
                     // repo with unrelated staged work is left uncommitted —
                     // user work is never bundled with an rwv-authored fix.
                     match commit_replay_exclusion_migration(vcs, &project_repo) {
-                        Ok(CommitOutcome::Committed) => println!(
+                        Ok(CommitOutcome::Committed) => outln!(
                             "[fixed] core: {migration} in {}/.gitattributes (committed)",
                             project.name
                         ),
-                        Ok(CommitOutcome::SkippedUnrelatedStaged) => println!(
+                        Ok(CommitOutcome::SkippedUnrelatedStaged) => outln!(
                             "[fixed] core: {migration} in {}/.gitattributes (NOT committed: \
                              project repo has unrelated staged changes; commit them, then \
                              re-run `rwv doctor --fix` to complete the migration)",
                             project.name
                         ),
-                        Ok(CommitOutcome::NothingToCommit) => println!(
+                        Ok(CommitOutcome::NothingToCommit) => outln!(
                             "[fixed] core: {migration} in {}/.gitattributes",
                             project.name
                         ),
@@ -9454,7 +9454,7 @@ fn apply_workspace_repairs(
                         )),
                     }
                 } else {
-                    println!(
+                    outln!(
                         "[fixed] core: wrote `rwv.lock merge=rwv-ours` to {}/.gitattributes",
                         project.name
                     );
@@ -9474,7 +9474,7 @@ fn apply_workspace_repairs(
         }
         if let Ok(false) = crate::git::has_rwv_merge_driver_config(&project_repo) {
             match crate::git::plant_rwv_merge_driver_config(&project_repo) {
-                Ok(()) => println!(
+                Ok(()) => outln!(
                     "[fixed] core: planted `{}` config in {}",
                     crate::git::RWV_MERGE_DRIVER_CONFIG_KEY,
                     project.name
@@ -9531,7 +9531,7 @@ fn apply_finding_repairs(
         let repaired = match repo_locations.get(&(workweave.clone(), repo.clone())) {
             Some(repo_abs) => match fix_state_hygiene(vcs, &v, repo_abs) {
                 Ok(true) => {
-                    println!(
+                    outln!(
                         "[fixed] core: stale-worktree-registration for {}: pruned",
                         location_of(workweave, repo)
                     );
@@ -9558,7 +9558,7 @@ fn apply_finding_repairs(
         &world.input.known_repos,
     );
     for (repo_path, branch) in &deleted {
-        println!(
+        outln!(
             "[fixed] core: deleted safe-class stale ephemeral branch `{}` in {}",
             branch,
             repo_path.display()
@@ -9588,7 +9588,7 @@ fn apply_finding_repairs(
                 sub_kind: WorkweaveTreeIntegrityKind::DanglingParent { .. },
             } => match fix_dangling_parent(workweave_dir, ctx.primary_path()) {
                 Ok(true) => {
-                    println!(
+                    outln!(
                         "[fixed] core: re-pointed dangling parent of {} to primary",
                         workweave_dir.display()
                     );
@@ -9614,7 +9614,7 @@ fn apply_finding_repairs(
                 let outcome = fix_stale_registry_entry(ctx.primary_path(), project, workweave_name);
                 match outcome {
                     Ok(()) => {
-                        println!(
+                        outln!(
                             "[fixed] core: pruned stale registry entry `{}` \
                              → {} in project `{}`",
                             workweave_name,
@@ -9650,7 +9650,7 @@ fn apply_finding_repairs(
                 );
                 match outcome {
                     Ok(()) => {
-                        println!(
+                        outln!(
                             "[fixed] core: adopted workweave `{}` at {} into \
                              project `{}`'s registry",
                             workweave_name,
@@ -9679,7 +9679,7 @@ fn apply_finding_repairs(
                 Some(repo_abs) => {
                     let location = location_of(workweave, repo);
                     match reset_index_to_head(repo_abs) {
-                        Ok(()) => println!("[fixed] core: index refreshed for {location}"),
+                        Ok(()) => outln!("[fixed] core: index refreshed for {location}"),
                         Err(e) => fix_errors.push(format!("{location}: index fix failed: {e:#}")),
                     }
                     true
@@ -9695,7 +9695,7 @@ fn apply_finding_repairs(
                 Some(repo_abs) => {
                     let location = location_of(workweave, repo);
                     match restore_working_tree_to_head(repo_abs) {
-                        Ok(()) => println!("[fixed] core: working tree refreshed for {location}"),
+                        Ok(()) => outln!("[fixed] core: working tree refreshed for {location}"),
                         Err(e) => {
                             fix_errors.push(format!("{location}: working-tree fix failed: {e:#}"))
                         }
@@ -9716,7 +9716,7 @@ fn apply_finding_repairs(
             } => match repo_locations.get(&(workweave.clone(), repo.clone())) {
                 Some(repo_abs) => match fix_state_hygiene(vcs, &v, repo_abs) {
                     Ok(true) => {
-                        println!(
+                        outln!(
                             "[fixed] core: orphaned-savepoint for {}: dropped op_id={key}",
                             location_of(workweave, repo)
                         );
@@ -9738,7 +9738,7 @@ fn apply_finding_repairs(
                 ..
             } => match fix_state_hygiene(vcs, &v, workspace_dir) {
                 Ok(true) => {
-                    println!(
+                    outln!(
                         "[fixed] core: dead-op-lease for {}: removed lease (op_id={op_id})",
                         workspace_dir.display()
                     );
@@ -9984,7 +9984,7 @@ fn collect_doctor_issues(world: &DoctorWorld, repair: Repair) -> Vec<Issue> {
             // PRIMARY project's managed files — `activate_intent_at` takes the
             // weave dir, and `workspace_dir` is `ctx.active_path()`.
             match crate::activate::activate_intent_at(&project.name, workspace_dir) {
-                Ok(_) => println!(
+                Ok(_) => outln!(
                     "[fixed] core: regenerated integration content for project `{}` (drift detected)",
                     project.name
                 ),
@@ -10060,7 +10060,7 @@ fn collect_doctor_issues(world: &DoctorWorld, repair: Repair) -> Vec<Issue> {
                 &project.manifest,
                 crate::activate::SurfacingMode::Repair,
             ) {
-                Ok(()) => println!(
+                Ok(()) => outln!(
                     "[fixed] core: re-surfaced symlinks for project `{}` (missing/mis-resolved surfacing)",
                     project.name
                 ),
@@ -10389,7 +10389,7 @@ pub fn run_check(
             Severity::Warning => "warning",
             Severity::Error => "error",
         };
-        println!("[{prefix}] {}: {}", issue.source, issue.message);
+        outln!("[{prefix}] {}: {}", issue.source, issue.message);
     }
     let verdict = doctor_verdict(kind_filter, all_issues.iter().map(|issue| issue.severity));
 
@@ -11167,7 +11167,7 @@ pub fn run_check_json(
     );
     let out =
         serde_json::to_string_pretty(&payload).context("failed to serialize doctor output")?;
-    println!("{out}");
+    outln!("{out}");
     Ok(verdict)
 }
 

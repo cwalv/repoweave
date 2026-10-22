@@ -24,7 +24,6 @@ use crate::workspace::{
 use anyhow::Context;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -91,7 +90,7 @@ pub struct FetchJsonOutput {
 impl FetchJsonOutput {
     fn print(&self) -> anyhow::Result<()> {
         let out = serde_json::to_string_pretty(self).context("failed to serialize fetch output")?;
-        println!("{out}");
+        outln!("{out}");
         Ok(())
     }
 }
@@ -283,7 +282,7 @@ pub fn run_fetch(
         if output.is_json() {
             eprintln!("rwv fetch: cloning project '{}'", name);
         } else {
-            println!("rwv fetch: cloning project '{}'", name);
+            outln!("rwv fetch: cloning project '{}'", name);
         }
         project_vcs
             .clone_repo(&url, &project_dir)
@@ -439,7 +438,7 @@ pub fn run_fetch_in_place(
              (none was active)"
         );
         if output == OutputMode::Text {
-            println!("{msg}");
+            outln!("{msg}");
         } else {
             eprintln!("{msg}");
         }
@@ -533,7 +532,7 @@ fn materialize_workweave_members(
                     crate::share::files_note(born.files),
                 );
                 if output == OutputMode::Text {
-                    println!("{line}");
+                    outln!("{line}");
                 } else {
                     eprintln!("{line}");
                 }
@@ -751,13 +750,7 @@ fn fetch_project_repos(
                     schema: FETCH_RECORD_SCHEMA_URL,
                     outcome: &record,
                 };
-                if let Ok(line) = serde_json::to_string(&ndjson_line) {
-                    let _guard = write_lock.lock().unwrap_or_else(|e| e.into_inner());
-                    let stdout = std::io::stdout();
-                    let mut handle = stdout.lock();
-                    let _ = writeln!(handle, "{line}");
-                    let _ = handle.flush();
-                }
+                crate::stdout::stream_record(&write_lock, &ndjson_line);
             }
 
             (outcome, files, moved_or_created)
@@ -791,7 +784,7 @@ fn fetch_project_repos(
                     added_to_lock.push(rp.clone());
                 }
                 if let (OutputMode::Text, Some(files)) = (output, files) {
-                    println!("rwv fetch: {repo_path}: files {files}");
+                    outln!("rwv fetch: {repo_path}: files {files}");
                 }
                 if output == OutputMode::JsonEnvelope {
                     envelope_records.push(FetchOutcomeOutput {
@@ -865,7 +858,7 @@ fn fetch_project_repos(
     }
 
     if output == OutputMode::Text {
-        println!("rwv fetch: done ({succeeded} repo(s) ready)");
+        outln!("rwv fetch: done ({succeeded} repo(s) ready)");
     }
 
     // Default mode: bootstrap or additively extend the lock.
@@ -936,7 +929,7 @@ fn fetch_project_repos(
                 if output.is_json() {
                     eprintln!("{}", skip.line());
                 } else {
-                    println!("{}", skip.line());
+                    outln!("{}", skip.line());
                 }
                 envelope.skipped.push(skip);
             }
