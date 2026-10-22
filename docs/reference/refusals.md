@@ -45,7 +45,8 @@ print `error:` and exit 2, where a refusal prints `Error:` and exits 1.
 **Condition.** `rwv add --adopt <path>` names a location under neither the
 primary weave root nor, when run from a workweave, that workweave. A relative
 `<path>` resolves against the directory `rwv` runs in, or the `-C`/`-w`
-directory.
+directory, and the location is where the path leads with every symlink in it
+followed: `sym/..` climbs from the directory `sym` points to.
 
 **Why.** The member path `--adopt` records is the clone's position under the
 weave root containing it. A location outside every weave root has no such

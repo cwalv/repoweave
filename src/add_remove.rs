@@ -569,56 +569,56 @@ pub fn run_add_adopt(
 /// that member path under the primary root.
 ///
 /// The weave roots in play are the primary and, from a workweave, that
-/// workweave. The innermost one containing the named location decides the
-/// member path. Named inside a workweave, a clone already there that is not a
-/// worktree of the primary's clone refuses: adopting would register the
-/// primary's copy while the operator pointed at another.
+/// workweave. The innermost one containing the location `path` resolves to
+/// decides the member path, so a `..` after a symlink climbs from where the
+/// symlink points, as it does for the OS. Named inside a workweave, a clone
+/// already there that is not a worktree of the primary's clone refuses:
+/// adopting would register the primary's copy while the operator pointed at
+/// another.
 fn adopt_placement(
     vcs: &dyn Vcs,
     ctx: &WorkspaceContext,
     path: &Path,
 ) -> anyhow::Result<(RepoPath, PathBuf)> {
-    let named = lexically_normal(path);
-    let primary = ctx.primary_path();
+    let named = CanonicalPath::of(path);
+    let primary = ctx.primary_root();
     let workweave = match &ctx.checkout {
-        Checkout::Workweave { dir, .. } => Some(dir.as_path()),
+        Checkout::Workweave { dir, .. } => Some(dir),
         Checkout::Primary { .. } => None,
     };
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the operand is held lexically normalized, not resolved, so containment here is lexical"
-    )]
     let containing = [Some(primary), workweave]
         .into_iter()
         .flatten()
-        .filter(|root| named.starts_with(root))
-        .max_by_key(|root| root.components().count());
+        .filter(|root| root.contains(&named))
+        .max_by_key(|root| root.as_path().components().count());
     let Some(root) = containing else {
         let roots = match workweave {
             Some(ww) => format!(
                 "this workweave ('{}') or the primary weave ('{}')",
-                operator_path(ww),
-                operator_path(primary)
+                operator_path(ww.as_path()),
+                operator_path(primary.as_path())
             ),
-            None => format!("the weave root '{}'", operator_path(primary)),
+            None => format!("the weave root '{}'", operator_path(primary.as_path())),
         };
         crate::refuse!(
             RefusalKind::AdoptPathOutsideWeave,
             "rwv add --adopt: '{}' is not under {roots}. A relative path is read from the \
-             directory rwv runs in (or -C/-w); name the clone by a path inside the weave.",
-            operator_path(&named)
+             directory rwv runs in (or -C/-w), and a symlink in it is followed; name the clone \
+             by a path inside the weave.",
+            operator_path(named.as_path())
         );
     };
     let member: Vec<String> = named
-        .strip_prefix(root)
+        .as_path()
+        .strip_prefix(root.as_path())
         .unwrap_or(Path::new(""))
         .components()
         .map(|c| c.as_os_str().to_string_lossy().into_owned())
         .collect();
     let repo_path = RepoPath::new(member.join("/"))?;
-    let canonical = primary.join(repo_path.as_path());
+    let canonical = primary.as_path().join(repo_path.as_path());
     if let Some(ww) = workweave.filter(|ww| *ww == root) {
-        let checkout = ww.join(repo_path.as_path());
+        let checkout = ww.as_path().join(repo_path.as_path());
         if vcs.is_repo(&checkout) && !shares_store(vcs, &checkout, &canonical) {
             crate::refuse!(
                 RefusalKind::ForeignCloneInWorkweave,
@@ -647,22 +647,6 @@ fn shares_store(vcs: &dyn Vcs, a: &Path, b: &Path) -> bool {
             .and_then(|s| CanonicalPath::existing(&s).ok())
     };
     matches!((store(a), store(b)), (Some(x), Some(y)) if x == y)
-}
-
-/// `path` with `.` dropped and each `..` taking back the component before it,
-/// without consulting the filesystem: the location may not exist yet.
-fn lexically_normal(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for component in path.components() {
-        match component {
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                out.pop();
-            }
-            other => out.push(other),
-        }
-    }
-    out
 }
 
 /// [`place_member`], noting in `left` a workweave worktree it created.

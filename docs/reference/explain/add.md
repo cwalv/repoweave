@@ -257,7 +257,8 @@ rwv add local --new --params-json '{"root": "/srv/repos", "owner": "myorg", "rep
   clone.
 - *adopt path outside weave* (`adopt-path-outside-weave`) — `--adopt` names a
   location under neither the primary weave root nor the current workweave.
-  A relative path resolves against the directory rwv runs in.
+  A relative path resolves against the directory rwv runs in, and a symlink in
+  it is followed.
 - *foreign clone in workweave* (`foreign-clone-in-workweave`) — `--adopt`
   names a clone inside the workweave that is not a worktree of the primary's
   clone at the same path.

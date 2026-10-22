@@ -16,6 +16,17 @@ the commits `--fix` names when it adopts or strands a branch. They now print
 the abbreviation; a tag or branch name a lock pins is still printed in full.
 `rwv doctor --json` keeps every full id.
 
+### `rwv add --adopt` follows a symlink in the path it is given
+
+The weave root a clone is adopted under, and the member path recorded for it,
+come from where the path leads with its symlinks followed. A `..` after a
+symlink used to be folded against the spelling, so `sym/../github/o/r` named
+the weave's own `github/o/r` even when `sym` points elsewhere and the system
+reads it as another directory's; it now names the clone the system does, and
+refuses with `adopt-path-outside-weave` when that is outside the weave. A path
+that reaches the weave through a symlinked spelling of its root is adopted
+under that root rather than refused.
+
 ### Install hooks run the file `PATH` finds
 
 On Windows a hook looked for `npm.cmd` or `pnpm.cmd` by name, so a tool

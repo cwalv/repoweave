@@ -553,7 +553,7 @@ const ROUTED: &[Routed] = &[
     Routed {
         file: "add_remove.rs",
         scope: "",
-        needle: r#"None => format!("the weave root '{}'", operator_path(primary)),"#,
+        needle: r#"None => format!("the weave root '{}'", operator_path(primary.as_path())),"#,
         renders: 1,
         prints: "the weave root an outside-weave adopt refusal names from the primary",
     },

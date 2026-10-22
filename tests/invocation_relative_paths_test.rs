@@ -352,3 +352,90 @@ fn add_from_a_workweave_whose_placement_holds_a_plain_directory_refuses_naming_i
     assert!(manifest_keys(&w.workweave.join("projects/test-project")).is_empty());
     assert!(occupied.join("notes.txt").is_file());
 }
+
+// ---------------------------------------------------------------------------
+// add --adopt asks which weave root holds the location the path resolves to
+//
+// `..` after a symlink climbs from where the link points, so the weave root
+// containing the named clone is a question about the resolved location, not
+// about the spelling. Unix only for the `sym/..` shapes: Win32 folds `..`
+// against the spelling before it follows a link, so there the two readings
+// name one location and no fixture can tell them apart.
+// ---------------------------------------------------------------------------
+
+fn link_dir(target: &Path, link: &Path) {
+    repoweave::symlink::create(target, link, repoweave::symlink::LinkTarget::Directory).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn adopt_through_a_symlink_and_dotdot_registers_the_clone_the_os_names() {
+    let tmp = common::tempdir().unwrap();
+    let w = adopt_weave(tmp.path());
+    clone_at(tmp.path(), "top", &w.primary.join("github/o/r"));
+    clone_at(tmp.path(), "deep", &w.primary.join("deep/github/o/r"));
+    std::fs::create_dir_all(w.primary.join("deep/x")).unwrap();
+    link_dir(&w.primary.join("deep/x"), &w.primary.join("sym"));
+
+    common::rwv()
+        .args(["add", "--adopt", "sym/../github/o/r"])
+        .current_dir(&w.primary)
+        .assert()
+        .success();
+
+    assert_eq!(
+        manifest_keys(&w.primary.join("projects/test-project")),
+        vec!["deep/github/o/r".to_owned()],
+        "`sym/..` climbs from `deep/x`, so the clone named is the one under `deep`"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn adopt_through_a_symlink_and_dotdot_out_of_the_weave_refuses() {
+    let tmp = common::tempdir().unwrap();
+    let w = adopt_weave(tmp.path());
+    clone_at(tmp.path(), "inside", &w.primary.join("github/o/r"));
+    clone_at(
+        tmp.path(),
+        "outside",
+        &tmp.path().join("elsewhere/a/github/o/r"),
+    );
+    std::fs::create_dir_all(tmp.path().join("elsewhere/a/b")).unwrap();
+    link_dir(&tmp.path().join("elsewhere/a/b"), &w.primary.join("sym"));
+
+    let out = common::rwv()
+        .args(["add", "--adopt", "sym/../github/o/r"])
+        .current_dir(&w.primary)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "stderr was:\n{stderr}");
+    assert_routes_to(&stderr, "adopt-path-outside-weave");
+    common::assert_names_operator_path(
+        &stderr,
+        repoweave::path_spelling::resolve(&tmp.path().join("elsewhere/a/github/o/r")).unwrap(),
+    );
+    assert!(manifest_keys(&w.primary.join("projects/test-project")).is_empty());
+}
+
+#[test]
+fn adopt_through_a_symlinked_spelling_of_the_weave_records_the_member_path() {
+    let tmp = common::tempdir().unwrap();
+    let w = adopt_weave(tmp.path());
+    clone_at(tmp.path(), "lib", &w.primary.join("github/o/r"));
+    let link = tmp.path().join("link");
+    link_dir(&w.primary, &link);
+
+    common::rwv()
+        .args(["add", "--adopt"])
+        .arg(link.join("github").join("o").join("r"))
+        .current_dir(&w.primary)
+        .assert()
+        .success();
+
+    assert_eq!(
+        manifest_keys(&w.primary.join("projects/test-project")),
+        vec!["github/o/r".to_owned()]
+    );
+}
