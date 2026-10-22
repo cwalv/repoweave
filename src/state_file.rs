@@ -186,7 +186,7 @@ mod tests {
 
     #[test]
     fn publish_replaces_and_leaves_no_temp() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let active = StateFile::ActiveProject.in_dir(tmp.path());
         active.publish(b"first\n").unwrap();
         active.publish(b"second\n").unwrap();
@@ -202,7 +202,7 @@ mod tests {
 
     #[test]
     fn create_refuses_an_occupied_path_and_leaves_it() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let record = StateFile::OpRecord.in_dir(tmp.path());
         record.create(b"first").unwrap();
         assert!(matches!(
@@ -214,7 +214,7 @@ mod tests {
 
     #[test]
     fn a_state_path_names_its_file_inside_its_directory() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let lock = StateFile::ProjectLock.in_dir(tmp.path());
         assert_eq!(lock.file(), StateFile::ProjectLock);
         assert_eq!(lock.dir(), tmp.path());
@@ -228,7 +228,7 @@ mod tests {
 
     #[test]
     fn display_and_wire_spell_the_same_location() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let marker = StateFile::WorkweaveMarker.in_dir(tmp.path());
         let located = tmp.path().join(StateFile::WorkweaveMarker.file_name());
         assert_eq!(marker.to_string(), located.display().to_string());

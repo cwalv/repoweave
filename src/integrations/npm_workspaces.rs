@@ -352,7 +352,6 @@ mod tests {
     use crate::manifest::{IntegrationConfig, Manifest, ProjectName, Role};
     use crate::workspace::WorkspaceSession;
     use std::collections::HashMap;
-    use tempfile::TempDir;
 
     fn make_manifest(repos: &[(&str, Role)]) -> Manifest {
         let mut manifest_toml = String::from("[repositories]\n");
@@ -377,7 +376,7 @@ mod tests {
     /// does.
     #[test]
     fn emptied_membership_strips_the_marked_workspaces_key() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         let project_dir = root.join("projects/test-project");
         std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
@@ -423,7 +422,7 @@ mod tests {
     /// something: it proves the strip ran at all.
     #[test]
     fn emptied_membership_keeps_the_lockfile() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         let project_dir = root.join("projects/test-project");
         std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
@@ -460,7 +459,7 @@ mod tests {
 
     #[test]
     fn emptied_membership_leaves_an_unmarked_workspaces_key_alone() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         let project_dir = root.join("projects/test-project");
         std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
@@ -496,7 +495,7 @@ mod tests {
     /// whole-deletable — the exact loss path this split closes.
     #[test]
     fn managed_files_includes_hybrid_package_json_not_just_the_lockfile() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         touch(root, "github/test/pkg/package.json");
         let manifest = make_manifest(&[("github/test/pkg", Role::Owned)]);
@@ -533,7 +532,7 @@ mod tests {
     /// co-requisite lockfile must survive.
     #[test]
     fn deactivate_leaves_lockfile_when_user_holds_the_pen() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         std::fs::write(
             root.join("package.json"),
@@ -556,7 +555,7 @@ mod tests {
     /// lockfile IS removed.
     #[test]
     fn deactivate_removes_lockfile_once_rwv_owned_package_json() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         std::fs::write(
             root.join("package.json"),

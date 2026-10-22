@@ -128,7 +128,7 @@ mod tests {
 
     #[test]
     fn the_spawn_is_the_file_the_lookup_found() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         write_script(tmp.path(), "mytool", "echo from-mytool");
 
         let program = ToolProgram::find_in("mytool", &search(&[tmp.path()]), tmp.path()).unwrap();
@@ -140,13 +140,13 @@ mod tests {
 
     #[test]
     fn a_name_on_no_search_entry_is_not_found() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         assert!(ToolProgram::find_in("mytool", &search(&[tmp.path()]), tmp.path()).is_none());
     }
 
     #[test]
     fn a_script_tool_spawns() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         write_script(tmp.path(), "scripttool", "echo ran-script");
 
         let program =
@@ -178,7 +178,7 @@ mod tests {
     /// looked up by, whatever extension the platform gives it.
     #[test]
     fn an_executable_tool_spawns() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         write_executable(tmp.path(), "exetool");
 
         let program = ToolProgram::find_in("exetool", &search(&[tmp.path()]), tmp.path()).unwrap();

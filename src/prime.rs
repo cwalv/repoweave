@@ -293,7 +293,7 @@ mod tests {
 
     #[test]
     fn render_context_primary_with_project() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_test_workspace(tmp.path(), "ws");
 
         write_manifest(
@@ -365,7 +365,7 @@ enabled = true
     fn key_commands_table_names_only_real_verbs() {
         use clap::CommandFactory;
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_test_workspace(tmp.path(), "ws");
         let ctx = WorkspaceContext::resolve_invocation(&root, None).unwrap();
         let output = render_context(&ctx);
@@ -420,7 +420,7 @@ enabled = true
 
     #[test]
     fn render_context_workweave() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_test_workspace(tmp.path(), "ws");
         let workweave_dir = tmp.path().join("ws--hotfix");
         std::fs::create_dir_all(&workweave_dir).unwrap();
@@ -460,7 +460,7 @@ role = "owned"
 
     #[test]
     fn render_context_no_project() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_test_workspace(tmp.path(), "ws");
 
         let ctx = WorkspaceContext::resolve_invocation(&root, None).unwrap();
@@ -476,7 +476,7 @@ role = "owned"
 
     #[test]
     fn render_context_empty_repos() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_test_workspace(tmp.path(), "ws");
 
         write_manifest(&root, "minimal", "[repositories]\n");
@@ -494,7 +494,7 @@ role = "owned"
 
     #[test]
     fn directory_layout_active_marker() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_test_workspace(tmp.path(), "ws");
         write_manifest(&root, "web-app", Manifest::SKELETON);
         write_manifest(&root, "mobile", Manifest::SKELETON);

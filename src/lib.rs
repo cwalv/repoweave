@@ -67,6 +67,26 @@ pub(crate) fn report_skip(reason: &str) {
     let _ = std::io::stderr().write_all(format!("SKIP: {reason}\n").as_bytes());
 }
 
+/// A temporary directory under the resolved spelling of the temp root; every
+/// inline `#[cfg(test)]` module takes its fixture roots from here.
+///
+/// The counterpart to `tempdir` in `tests/common/mod.rs`, which the library
+/// crate cannot see. rwv records and reports resolved locations, and `$TMPDIR`
+/// may sit behind a symlink — on macOS `/var` is one to `/private/var` — so a
+/// path a test joins onto the raw root is a second spelling of the location
+/// rwv names. Resolved once here, every path derived from the root is the
+/// spelling rwv reports.
+#[cfg(test)]
+pub(crate) fn tempdir() -> std::io::Result<tempfile::TempDir> {
+    static ROOT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    let root = ROOT.get_or_init(|| {
+        let raw = std::env::temp_dir();
+        path_spelling::resolve(&raw)
+            .unwrap_or_else(|e| panic!("temp dir {} does not resolve: {e}", raw.display()))
+    });
+    tempfile::TempDir::new_in(root)
+}
+
 #[macro_use]
 mod stdout;
 pub mod activate;

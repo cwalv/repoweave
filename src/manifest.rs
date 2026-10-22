@@ -2392,7 +2392,7 @@ role = "owned"
 
     #[test]
     fn manifest_from_path_valid() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::tempdir().unwrap();
         let path = dir.path().join(Manifest::FILE_NAME);
         std::fs::write(&path, VALID_MANIFEST).unwrap();
 
@@ -2403,7 +2403,7 @@ role = "owned"
 
     #[test]
     fn manifest_from_path_minimal() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::tempdir().unwrap();
         let path = dir.path().join(Manifest::FILE_NAME);
         std::fs::write(&path, MINIMAL_MANIFEST).unwrap();
 
@@ -2418,7 +2418,7 @@ role = "owned"
 
     #[test]
     fn manifest_from_path_missing_file() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::tempdir().unwrap();
         let result = Manifest::from_path(&dir.path().join("nonexistent.yaml"));
         assert!(result.is_err());
         let msg = format!("{}", result.unwrap_err());
@@ -2430,7 +2430,7 @@ role = "owned"
 
     #[test]
     fn manifest_from_path_invalid_yaml() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::tempdir().unwrap();
         let path = dir.path().join("bad.yaml");
         std::fs::write(&path, "{{{{not yaml at all::::").unwrap();
 
@@ -2440,7 +2440,7 @@ role = "owned"
 
     #[test]
     fn manifest_from_path_missing_repositories_field() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::tempdir().unwrap();
         let path = dir.path().join("missing.toml");
         std::fs::write(&path, "[integrations]\n").unwrap();
 
@@ -2453,7 +2453,7 @@ role = "owned"
 
     #[test]
     fn manifest_from_path_wrong_role_value() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::tempdir().unwrap();
         let path = dir.path().join("bad_role.toml");
         std::fs::write(
             &path,
@@ -2473,7 +2473,7 @@ role = "nonexistent_role"
 
     #[test]
     fn manifest_from_path_missing_url_in_entry() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::tempdir().unwrap();
         let path = dir.path().join("no_url.toml");
         std::fs::write(
             &path,
@@ -2496,7 +2496,7 @@ role = "owned"
 
     #[test]
     fn lock_from_path_valid() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::tempdir().unwrap();
         let path = dir.path().join("rwv.lock");
         std::fs::write(&path, VALID_LOCK).unwrap();
 
@@ -2510,14 +2510,14 @@ role = "owned"
 
     #[test]
     fn lock_from_path_missing_file() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::tempdir().unwrap();
         let result = LockFile::from_path(&dir.path().join("nope.lock"));
         assert!(result.is_err());
     }
 
     #[test]
     fn lock_from_path_invalid_json() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::tempdir().unwrap();
         let path = dir.path().join("bad.lock");
         std::fs::write(&path, "not valid json {{").unwrap();
 
@@ -2530,7 +2530,7 @@ role = "owned"
     /// fix. The error must name it rather than surface a raw serde error.
     #[test]
     fn lock_from_path_parse_failure_names_regeneration_remedy() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::tempdir().unwrap();
         let path = dir.path().join("rwv.lock");
         std::fs::write(
             &path,
@@ -2553,7 +2553,7 @@ role = "owned"
 
     #[test]
     fn lock_from_path_missing_repositories() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::tempdir().unwrap();
         let path = dir.path().join("empty.lock");
         std::fs::write(&path, "{}\n").unwrap();
 
@@ -2566,7 +2566,7 @@ role = "owned"
     /// stale key into a hard error rather than a silent drop.
     #[test]
     fn lock_from_path_rejects_legacy_workweave_key() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::tempdir().unwrap();
         let path = dir.path().join("rwv.lock");
         std::fs::write(&path, r#"{"workweave": "hotfix-42", "repositories": {}}"#).unwrap();
 
@@ -3130,7 +3130,7 @@ role = "owned"
 
     #[test]
     fn project_from_dir_no_manifest() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::tempdir().unwrap();
         let result = Project::from_dir(dir.path(), ProjectName::new("proj").unwrap());
         assert!(result.is_err());
         let msg = format!("{:#}", result.unwrap_err());
@@ -3142,7 +3142,7 @@ role = "owned"
 
     #[test]
     fn project_from_dir_manifest_only_no_lock() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::tempdir().unwrap();
         // A tempdir's own name (e.g. `.tmpXXXXXX`) is not a valid project
         // name (leading `.`), and `Project::from_dir` now enforces that even
         // on the no-`projects/`-ancestor fallback — so tests exercising this
@@ -3162,7 +3162,7 @@ role = "owned"
     /// file.
     #[test]
     fn project_from_dir_bad_lock_errors() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::tempdir().unwrap();
         std::fs::write(dir.path().join(Manifest::FILE_NAME), MINIMAL_MANIFEST).unwrap();
         std::fs::write(dir.path().join(LockFile::FILE_NAME), "{{bad").unwrap();
 
@@ -3190,7 +3190,7 @@ role = "owned"
     /// from_dir fails; from_dir_skip_lock returns a usable project.
     #[test]
     fn project_from_dir_skip_lock_succeeds_with_conflict_markers() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::tempdir().unwrap();
         // See project_from_dir_manifest_only_no_lock: nest under a
         // plain-named subdirectory so the derived project name is valid.
         let project_dir = dir.path().join("proj");
@@ -3224,7 +3224,7 @@ role = "owned"
     /// from_dir succeeds with lock: None; from_dir_skip_lock also succeeds.
     #[test]
     fn project_from_dir_skip_lock_succeeds_with_missing_lock() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::tempdir().unwrap();
         // See project_from_dir_manifest_only_no_lock: nest under a
         // plain-named subdirectory so the derived project name is valid.
         let project_dir = dir.path().join("proj");
@@ -3246,7 +3246,7 @@ role = "owned"
     /// from_dir_skip_lock succeeds.
     #[test]
     fn project_from_dir_skip_lock_succeeds_with_empty_lock() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::tempdir().unwrap();
         // See project_from_dir_manifest_only_no_lock: nest under a
         // plain-named subdirectory so the derived project name is valid.
         let project_dir = dir.path().join("proj");
@@ -3273,7 +3273,7 @@ role = "owned"
     /// No rwv.toml either — from_dir_skip_lock must still fail (manifest is required).
     #[test]
     fn project_from_dir_skip_lock_fails_without_manifest() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::tempdir().unwrap();
         // Neither rwv.toml nor rwv.lock is present.
 
         let result = Project::from_dir_skip_lock(dir.path(), ProjectName::new("proj").unwrap());
@@ -3303,7 +3303,7 @@ role = "owned"
     /// wrong is a separate defect, in the walk, with its own end-to-end pin.
     #[test]
     fn from_dir_returns_the_name_it_was_given_not_one_read_off_the_path() {
-        let base = tempfile::tempdir().unwrap();
+        let base = crate::tempdir().unwrap();
         let project_dir = base.path().join("projects").join("on-disk-basename");
         std::fs::create_dir_all(&project_dir).unwrap();
         std::fs::write(project_dir.join(Manifest::FILE_NAME), MINIMAL_MANIFEST).unwrap();
@@ -3354,7 +3354,7 @@ role = "owned"
     fn manifest_write_replaces_by_rename_not_in_place() {
         use std::os::unix::fs::MetadataExt;
 
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::tempdir().unwrap();
         let path = dir.path().join(Manifest::FILE_NAME);
 
         let first: Manifest = toml::from_str(MINIMAL_MANIFEST).unwrap();
@@ -3406,7 +3406,7 @@ role = "owned"
     fn manifest_write_failure_leaves_prior_content_recoverable() {
         use std::os::unix::fs::PermissionsExt;
 
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::tempdir().unwrap();
         let path = dir.path().join(Manifest::FILE_NAME);
 
         let original: Manifest = toml::from_str(MINIMAL_MANIFEST).unwrap();
@@ -3478,7 +3478,7 @@ copy = [".env"]
 
     #[test]
     fn project_from_dir_with_lock() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::tempdir().unwrap();
         // See project_from_dir_manifest_only_no_lock: nest under a
         // plain-named subdirectory so the derived project name is valid.
         let project_dir = dir.path().join("proj");

@@ -700,7 +700,6 @@ mod tests {
     use crate::integration::IntegrationContextBase;
     use crate::manifest::{IntegrationConfig, Manifest, ProjectName};
     use crate::workspace::WorkspaceSession;
-    use tempfile::TempDir;
 
     fn set(items: &[&str]) -> HashSet<String> {
         items.iter().map(|s| s.to_string()).collect()
@@ -713,7 +712,7 @@ mod tests {
     /// deletable would silently discard the user's own folders and settings.
     #[test]
     fn managed_files_carries_the_hybrid_workspace_file_not_generated_files() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         let manifest = Manifest::from_toml_str("[repositories]\n").unwrap();
         let project = ProjectName::new("test-project").unwrap();
@@ -739,7 +738,7 @@ mod tests {
 
     #[test]
     fn check_reports_a_hide_dotfiles_that_is_not_a_boolean_rather_than_a_missing_file() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         let manifest = Manifest::from_toml_str("[repositories]\n").unwrap();
         let project = ProjectName::new("test-project").unwrap();

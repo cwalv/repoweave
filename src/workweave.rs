@@ -4232,7 +4232,7 @@ mod tests {
     /// A primary weave holding one project and one repo with a commit.
     /// Returns `(tempdir, primary_root, project, store)`.
     fn weave() -> (tempfile::TempDir, PathBuf, ProjectName, PathBuf) {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = ProjectName::new("web-app").unwrap();
         std::fs::create_dir_all(primary.join("projects/web-app")).unwrap();
@@ -4609,7 +4609,7 @@ mod tests {
     /// keys refs on the path it is handed, and the receipt is keyed on the
     /// canonical spelling.
     fn fake_weave() -> (tempfile::TempDir, PathBuf, ProjectName, PathBuf) {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = ProjectName::new("web-app").unwrap();
         std::fs::create_dir_all(primary.join("projects/web-app")).unwrap();
@@ -4844,7 +4844,7 @@ mod tests {
     /// A primary and a workweave whose marker records that primary as its
     /// parent. Returns `(tempdir, primary, workweave_dir)`.
     fn forked_from_primary() -> (tempfile::TempDir, PathBuf, PathBuf) {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let workweave_dir = tmp.path().join(".workweaves").join("web-app--feat");
         std::fs::create_dir_all(&primary).unwrap();

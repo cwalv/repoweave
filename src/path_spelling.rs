@@ -510,7 +510,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn a_resolved_path_carries_no_verbatim_prefix() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let resolved = resolve(tmp.path()).unwrap();
         assert!(
             !resolved.as_os_str().to_string_lossy().starts_with(r"\\?\"),
@@ -524,7 +524,7 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn a_link_to_a_resolved_path_reads_back_unchanged() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let target = resolve(tmp.path()).unwrap().join("shared.db");
         std::fs::write(&target, "").unwrap();
         let link = tmp.path().join("link");

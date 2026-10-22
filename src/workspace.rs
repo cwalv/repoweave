@@ -2630,7 +2630,7 @@ mod tests {
     /// already one of the two marker names it replaces.
     #[test]
     fn a_member_checkouts_own_projects_dir_shadows_the_real_weave_root() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "myworkspace");
         let member = root.join("github").join("acme").join("thing");
         std::fs::create_dir_all(member.join("projects")).unwrap();
@@ -2647,7 +2647,7 @@ mod tests {
 
     #[test]
     fn resolve_from_inside_weave_registry_dir() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "myworkspace");
         let deep = root.join("github").join("acme").join("server");
         std::fs::create_dir_all(&deep).unwrap();
@@ -2672,7 +2672,7 @@ mod tests {
 
     #[test]
     fn resolve_from_inside_project_dir() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         let project_dir = root.join("projects").join("web-app");
         std::fs::create_dir_all(&project_dir).unwrap();
@@ -2703,7 +2703,7 @@ mod tests {
 
     #[test]
     fn resolve_from_inside_weave_dir_without_marker_errors() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let _root = make_workspace(tmp.path(), "ws");
         // Create a workweave-shaped sibling with no marker.
         let weave_dir = tmp.path().join("ws--hotfix");
@@ -2730,7 +2730,7 @@ mod tests {
 
     #[test]
     fn resolve_from_repo_inside_weave_without_marker_resolves_as_weave() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let _root = make_workspace(tmp.path(), "ws");
         let weave_dir = tmp.path().join("ws--feat-login");
         std::fs::create_dir_all(weave_dir.join("projects")).unwrap();
@@ -2761,7 +2761,7 @@ mod tests {
 
     #[test]
     fn resolve_outside_workspace_errors() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         // No workspace markers here
         let result = WorkspaceContext::resolve_invocation(tmp.path(), None);
         assert!(result.is_err());
@@ -2778,7 +2778,7 @@ mod tests {
 
     #[test]
     fn resolve_with_project_override_in_weave_root() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
 
         let ctx = WorkspaceContext::resolve_invocation(
@@ -2797,7 +2797,7 @@ mod tests {
 
     #[test]
     fn resolve_with_project_override_in_workweave() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         let weave_dir = tmp.path().join("ws--hotfix");
         std::fs::create_dir_all(&weave_dir).unwrap();
@@ -2830,7 +2830,7 @@ mod tests {
 
     #[test]
     fn resolve_at_workspace_root() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
 
         let ctx = WorkspaceContext::resolve_invocation(&root, None).unwrap();
@@ -2863,14 +2863,14 @@ mod tests {
 
     #[test]
     fn a_missing_pointer_is_absent() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         assert!(matches!(read_active_pointer(&root), ActivePointer::Absent));
     }
 
     #[test]
     fn an_empty_pointer_is_unreadable() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         std::fs::write(root.join(".rwv-active"), "").unwrap();
         assert_eq!(unreadable_detail(&root), "the file is empty");
@@ -2880,7 +2880,7 @@ mod tests {
 
     #[test]
     fn a_pointer_holding_no_project_name_is_unreadable() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         std::fs::write(root.join(".rwv-active"), "-not-a-valid-name\n").unwrap();
         let detail = unreadable_detail(&root);
@@ -2889,7 +2889,7 @@ mod tests {
 
     #[test]
     fn a_pointer_naming_a_project_selects_it() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();
         assert_eq!(named(&root).unwrap().as_str(), "web-app");
@@ -2899,7 +2899,7 @@ mod tests {
 
     #[test]
     fn selecting_through_an_unreadable_pointer_refuses_naming_the_file_and_the_repairs() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         std::fs::write(root.join(".rwv-active"), "two words\n").unwrap();
         let err = read_active_pointer(&root).selection().unwrap_err();
@@ -2931,7 +2931,7 @@ mod tests {
 
     #[test]
     fn select_project_writes_file() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         let project = ProjectName::new("web-app").unwrap();
         witness(&root).select_project(&project).unwrap();
@@ -2942,7 +2942,7 @@ mod tests {
 
     #[test]
     fn select_project_overwrites_existing() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         let identity = witness(&root);
         identity
@@ -2957,7 +2957,7 @@ mod tests {
 
     #[test]
     fn select_then_read_round_trips() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         let project = ProjectName::new("mobile-app").unwrap();
         witness(&root).select_project(&project).unwrap();
@@ -2969,7 +2969,7 @@ mod tests {
     /// caller names — there is no second argument to disagree with the first.
     #[test]
     fn select_project_writes_to_the_root_the_witness_came_from() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let observed = make_workspace(tmp.path(), "ws");
         let other = make_workspace(tmp.path(), "elsewhere");
 
@@ -2987,7 +2987,7 @@ mod tests {
 
     #[test]
     fn resolve_prefers_rwv_active_over_no_project() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         // CWD is workspace root (not inside projects/), so CWD inference yields None.
         // But .rwv-active is set.
@@ -3010,7 +3010,7 @@ mod tests {
         // `.rwv-active` is the single source of truth. The previous
         // behavior — silently substituting CWD's project directory for
         // the active one — let symlinks and manifests diverge.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         let project_dir = root.join("projects").join("from-cwd");
         std::fs::create_dir_all(&project_dir).unwrap();
@@ -3036,7 +3036,7 @@ mod tests {
 
     #[test]
     fn resolve_project_override_takes_precedence_over_rwv_active() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         std::fs::write(root.join(".rwv-active"), "from-file\n").unwrap();
 
@@ -3060,7 +3060,7 @@ mod tests {
 
     #[test]
     fn require_workspace_or_empty_ok_in_existing_workspace() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         // Inside a valid workspace — should succeed.
         assert!(require_workspace_or_empty(&root, false).is_ok());
@@ -3068,7 +3068,7 @@ mod tests {
 
     #[test]
     fn require_workspace_or_empty_ok_in_empty_dir() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let empty = tmp.path().join("fresh");
         std::fs::create_dir_all(&empty).unwrap();
         // Empty directory, no workspace markers — should succeed.
@@ -3077,7 +3077,7 @@ mod tests {
 
     #[test]
     fn require_workspace_or_empty_errors_in_non_empty_non_workspace() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path().join("messy");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("random.txt"), "stuff").unwrap();
@@ -3092,7 +3092,7 @@ mod tests {
 
     #[test]
     fn require_workspace_or_empty_allow_non_empty_dir_bypasses_check() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path().join("messy");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("random.txt"), "stuff").unwrap();
@@ -3106,7 +3106,7 @@ mod tests {
 
     #[test]
     fn workweave_marker_write_then_read() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let marker = WorkweaveMarker::new(
             Path::new("/home/user/weaveroot"),
@@ -3124,7 +3124,7 @@ mod tests {
 
     #[test]
     fn workweave_marker_read_missing_returns_none() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let result = WorkweaveMarker::read(tmp.path()).unwrap();
         assert!(result.is_none());
     }
@@ -3140,7 +3140,7 @@ mod tests {
 
     #[test]
     fn workweave_marker_parent_round_trips() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let primary = resolved_dir(dir, "weaveroot/primary");
         let parent = resolved_dir(dir, "weaveroot/.workweaves/primary--ww1");
@@ -3156,7 +3156,7 @@ mod tests {
     /// a consumer comparing against it cannot tell where the value came from.
     #[test]
     fn workweave_marker_resolves_a_hand_written_parent_on_read() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path().join("ww");
         let primary = tmp.path().join("primary");
         std::fs::create_dir_all(&dir).unwrap();
@@ -3186,7 +3186,7 @@ mod tests {
     /// marker this build writes must stay readable by one that predates it.
     #[test]
     fn workweave_marker_parent_is_written_as_a_bare_string() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let primary = resolved_dir(dir, "primary");
         let parent = resolved_dir(dir, "parent");
@@ -3209,7 +3209,7 @@ mod tests {
         // Legacy marker written before parent tracking: only primary and
         // project fields present on disk. read() must reject the marker with
         // an actionable error — no silent backfill.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let legacy = "primary: /home/user/weaveroot/primary\nproject: legacy-project\n";
         std::fs::write(dir.join(".rwv-workweave"), legacy).unwrap();
@@ -3236,7 +3236,7 @@ mod tests {
     /// at `rwv doctor --fix`, which would leave the file untouched.
     #[test]
     fn workweave_marker_missing_primary_is_unmigratable() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let legacy = "project: legacy-project\n";
         std::fs::write(dir.join(".rwv-workweave"), legacy).unwrap();
@@ -3271,7 +3271,7 @@ mod tests {
         // `primary`, `project`, and `parent` — is not silently accepted as
         // usable just because it has the right shape; it is a legacy marker
         // like any other, refused at read and convertible by migrate_legacy.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let primary = resolved_dir(dir, "primary");
         let yaml = format!(
@@ -3307,7 +3307,7 @@ mod tests {
         // missing/null; one already present in the legacy YAML (e.g. a
         // marker forked from another workweave) must survive migration
         // rather than get overwritten with primary.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let primary = resolved_dir(dir, "primary");
         let parent = resolved_dir(dir, ".workweaves/primary--ww1");
@@ -3331,7 +3331,7 @@ mod tests {
 
     #[test]
     fn workweave_marker_migrate_legacy_backfills_parent() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let legacy = "primary: /home/user/weaveroot/primary\nproject: legacy-project\n";
         std::fs::write(dir.join(".rwv-workweave"), legacy).unwrap();
@@ -3352,7 +3352,7 @@ mod tests {
 
     #[test]
     fn workweave_marker_migrate_legacy_is_idempotent() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let legacy = "primary: /home/user/weaveroot/primary\nproject: legacy-project\n";
         std::fs::write(dir.join(".rwv-workweave"), legacy).unwrap();
@@ -3371,7 +3371,7 @@ mod tests {
     /// from splicing the text directly.
     #[test]
     fn workweave_marker_migrate_legacy_quotes_yaml_special_primary() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let legacy =
             "primary: '/home/user/weaveroot/has: a colon-space'\nproject: legacy-project\n";
@@ -3399,7 +3399,7 @@ mod tests {
     fn pending_index_migration_reports_an_index_without_receipts() {
         // The index-side legacy shape, next to the marker-side one above:
         // written before ref-ownership receipts existed.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = primary_with_project(&primary, "web-app");
         let path = crate::workweave_index::index_path(&primary, &project);
@@ -3415,7 +3415,7 @@ mod tests {
 
     #[test]
     fn pending_index_migration_is_quiet_for_current_and_absent_indexes() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = primary_with_project(&primary, "web-app");
 
@@ -3445,7 +3445,7 @@ mod tests {
 
     #[test]
     fn resolve_from_workweave_with_marker() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
 
         // Create .workweaves/feat/ with a marker
@@ -3511,7 +3511,7 @@ mod tests {
         let cache = std::collections::HashMap::new();
         let project = ProjectName::new("web-app").unwrap();
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let (root, weave_dir) = primary_and_workweave_roots(tmp.path());
 
         let ctx = WorkspaceContext::resolve_invocation(&root, None).unwrap();
@@ -3540,7 +3540,7 @@ mod tests {
     /// checkout the operator invoked it in.
     #[test]
     fn container_kind_describes_the_session_root_not_the_resolved_checkout() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let (root, weave_dir) = primary_and_workweave_roots(tmp.path());
 
         let primary_ctx = WorkspaceContext::resolve_invocation(&root, None).unwrap();
@@ -3568,7 +3568,7 @@ mod tests {
 
     #[test]
     fn resolve_from_repo_inside_workweave_with_marker() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
 
         let workweaves_dir = tmp.path().join(".workweaves");
@@ -3601,7 +3601,7 @@ mod tests {
 
     #[test]
     fn resolve_marker_takes_precedence_over_naming() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
 
         // Create a directory with BOTH a -- naming convention AND a marker
@@ -3633,7 +3633,7 @@ mod tests {
 
     #[test]
     fn resolve_workweave_missing_marker_in_workweaves_dir() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         // No workspace root set up — just a .workweaves/feat/ dir with no marker
         let workweaves_dir = tmp.path().join(".workweaves");
         let weave_dir = workweaves_dir.join("feat");
@@ -3677,7 +3677,7 @@ mod tests {
 
     #[test]
     fn resolve_refuses_a_marker_whose_primary_is_not_a_workspace_root() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let (dir, dangling) = make_copied_workweave(tmp.path());
         std::fs::write(dir.join(ACTIVE_PROJECT_FILE), "web-app\n").unwrap();
 
@@ -3706,7 +3706,7 @@ mod tests {
     /// fall through to the enclosing workspace either.
     #[test]
     fn resolve_refuses_from_inside_a_copied_workweave() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let outer = make_workspace(tmp.path(), "ws");
         let (dir, _) = make_copied_workweave(&outer);
         let repo_dir = dir.join("github").join("acme").join("server");
@@ -3739,7 +3739,7 @@ mod tests {
 
     #[test]
     fn resolve_refuses_a_root_carrying_both_identity_files() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let (_, dir) = make_disputed_workweave(tmp.path());
 
         let err = WorkspaceContext::resolve_invocation(&dir, None).unwrap_err();
@@ -3764,7 +3764,7 @@ mod tests {
     /// pointer's `other-project` decides nothing.
     #[test]
     fn the_exempt_entry_point_proceeds_by_marker_from_a_disputed_root() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let (root, dir) = make_disputed_workweave(tmp.path());
 
         let ctx =
@@ -3791,7 +3791,7 @@ mod tests {
     /// reaches the same refusal.
     #[test]
     fn the_exempt_entry_point_still_refuses_an_unverifiable_marker() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let (dir, dangling) = make_copied_workweave(tmp.path());
         assert!(!dir.join(ACTIVE_PROJECT_FILE).exists());
 
@@ -3820,7 +3820,7 @@ mod tests {
 
     #[test]
     fn checkout_workweave_carries_the_markers_parent_when_forked_from_primary() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         let dir = tmp.path().join(".workweaves").join("web-app--feat");
         std::fs::create_dir_all(&dir).unwrap();
@@ -3848,7 +3848,7 @@ mod tests {
     /// primary_root beside it.
     #[test]
     fn checkout_workweave_carries_a_parent_that_is_not_the_primary() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         let primary_canon = resolve(&root).unwrap();
 
@@ -3914,7 +3914,7 @@ mod tests {
         // tempfile creates dirs under $TMPDIR or /tmp, which is NOT under
         // $HOME. This test verifies that the ceiling does not affect paths
         // that are already outside $HOME (they walk normally to the root).
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         // Walk from deep inside the workspace — ceiling should not interfere
         // (we're in /tmp, not inside $HOME).
@@ -3991,7 +3991,7 @@ mod tests {
     /// gets the real path and correctly returns `true`.
     #[test]
     fn home_ceiling_blocks_symlinked_home() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let base = tmp.path();
 
         // 1. Create the real home directory and a symlinked alias.
@@ -4030,7 +4030,7 @@ mod tests {
     /// should continue.
     #[test]
     fn home_ceiling_blocks_does_not_fire_within_home() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let base = tmp.path();
 
         let real_home = base.join("real_home");
@@ -4065,7 +4065,7 @@ mod tests {
     /// verifies: a symlink-spelled cwd resolves to the canonical `real_home/ws`.
     #[test]
     fn resolve_symlinked_cwd_resolves_to_canonical_workspace() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let base = tmp.path();
 
         // Real home directory.
@@ -4147,7 +4147,7 @@ mod tests {
 
     #[test]
     fn resolve_for_project_does_not_consult_the_pointer() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         make_projects(&root, &["one", "two"]);
         std::fs::write(root.join(".rwv-active"), "two\n").unwrap();
@@ -4164,7 +4164,7 @@ mod tests {
 
     #[test]
     fn resolve_for_project_refuses_a_marker_naming_another_project() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = make_workspace(tmp.path(), "primary");
         make_projects(&primary, &["web-app", "other-app"]);
         let ww = make_workweave(tmp.path(), "other-app--feat", &primary, "other-app");
@@ -4181,7 +4181,7 @@ mod tests {
 
     #[test]
     fn resolve_for_project_proceeds_when_the_marker_corroborates() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = make_workspace(tmp.path(), "primary");
         make_projects(&primary, &["web-app"]);
         let ww = make_workweave(tmp.path(), "web-app--feat", &primary, "web-app");
@@ -4193,7 +4193,7 @@ mod tests {
 
     #[test]
     fn resolve_for_project_refuses_when_the_project_is_absent() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         make_projects(&root, &["one"]);
 
@@ -4213,7 +4213,7 @@ mod tests {
 
     #[test]
     fn resolve_unbound_leaves_a_primary_with_no_project() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         make_projects(&root, &["one"]);
         std::fs::write(root.join(".rwv-active"), "one\n").unwrap();
@@ -4233,7 +4233,7 @@ mod tests {
     /// comparisons that motivated it.
     #[test]
     fn resolve_unbound_still_reports_a_workweave_marker() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = make_workspace(tmp.path(), "primary");
         make_projects(&primary, &["web-app"]);
         let ww = make_workweave(tmp.path(), "web-app--feat", &primary, "web-app");
@@ -4246,7 +4246,7 @@ mod tests {
     /// is set. Provenance = Flag.
     #[test]
     fn provenance_flag_at_primary_beats_active_file() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         make_projects(&root, &["one", "two"]);
         std::fs::write(root.join(".rwv-active"), "one\n").unwrap();
@@ -4262,7 +4262,7 @@ mod tests {
     /// names a different project. Provenance = Flag.
     #[test]
     fn provenance_flag_in_workweave_beats_marker() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         make_projects(&root, &["one", "two"]);
         let weave_dir = tmp.path().join("ws--feat");
@@ -4284,7 +4284,7 @@ mod tests {
     /// structurally scoped to one project.
     #[test]
     fn provenance_marker_in_workweave_ignores_active_file() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         make_projects(&root, &["one", "two"]);
         // Pointer at primary names a different project — must not leak.
@@ -4302,7 +4302,7 @@ mod tests {
     /// existing project. Provenance = ActiveFile. Single-project workspace.
     #[test]
     fn provenance_active_file_at_primary_single_project() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         make_projects(&root, &["only"]);
         std::fs::write(root.join(".rwv-active"), "only\n").unwrap();
@@ -4321,7 +4321,7 @@ mod tests {
     /// among alternatives, so the target-line surfacing exists.
     #[test]
     fn provenance_active_file_at_primary_multi_project() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         make_projects(&root, &["a", "b", "c"]);
         std::fs::write(root.join(".rwv-active"), "b\n").unwrap();
@@ -4339,7 +4339,7 @@ mod tests {
     /// also None. Caller surfaces via `require_active_project`.
     #[test]
     fn provenance_none_when_no_project_resolvable() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         make_projects(&root, &["only"]);
         // No .rwv-active written.
@@ -4353,7 +4353,7 @@ mod tests {
     /// otherwise fire — the flag is the topmost step.
     #[test]
     fn provenance_flag_beats_marker_and_active_file_together() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         make_projects(&root, &["marker-p", "active-p", "flag-p"]);
         std::fs::write(root.join(".rwv-active"), "active-p\n").unwrap();
@@ -4408,7 +4408,7 @@ mod tests {
     /// path is exercised.
     #[test]
     fn emit_target_line_is_noop_for_non_active_file() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         make_projects(&root, &["p"]);
 
@@ -4441,7 +4441,7 @@ mod tests {
     /// tests in the CLI test suite.
     #[test]
     fn emit_target_line_runs_for_active_file() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         make_projects(&root, &["a", "b"]);
         std::fs::write(root.join(".rwv-active"), "b\n").unwrap();
@@ -4470,7 +4470,7 @@ mod tests {
     /// to activate.
     #[test]
     fn require_active_project_no_projects_names_init() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         let ctx = WorkspaceContext::resolve_invocation(&root, None).unwrap();
         let err = ctx.require_active_project().unwrap_err().to_string();
@@ -4487,7 +4487,7 @@ mod tests {
     /// the operator has a menu — corrective, not just diagnostic.
     #[test]
     fn require_active_project_lists_existing_projects() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         make_projects(&root, &["alpha", "beta"]);
         let ctx = WorkspaceContext::resolve_invocation(&root, None).unwrap();
@@ -4504,7 +4504,7 @@ mod tests {
     /// `DanglingActiveProject` check surfaces at scan time.
     #[test]
     fn require_active_project_on_disk_stale_pointer_errors() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         // .rwv-active names a project whose directory does NOT exist.
         std::fs::write(root.join(".rwv-active"), "ghost\n").unwrap();
@@ -4527,7 +4527,7 @@ mod tests {
     /// can pick one directly.
     #[test]
     fn require_active_project_on_disk_stale_lists_existing() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         make_projects(&root, &["real-one", "real-two"]);
         std::fs::write(root.join(".rwv-active"), "ghost\n").unwrap();
@@ -4563,7 +4563,7 @@ mod tests {
     /// absent (no workweave checkout), workspace and project match the context.
     #[test]
     fn resolution_at_primary_has_workspace_and_project_no_workweave() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         std::fs::write(root.join(".rwv-active"), "myproject\n").unwrap();
 
@@ -4594,7 +4594,7 @@ mod tests {
     /// At primary without an active project: resolution is absent entirely.
     #[test]
     fn resolution_at_primary_without_active_project_is_none() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         // No .rwv-active file — no project resolved.
 
@@ -4609,7 +4609,7 @@ mod tests {
     /// the identity matches the context's own checkout exactly.
     #[test]
     fn resolution_in_workweave_has_workweave_identity() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         let primary_canon = resolve(&root).unwrap();
 
@@ -4661,7 +4661,7 @@ mod tests {
     /// to hold.
     #[test]
     fn primary_and_workweave_publish_one_spelling_of_the_workspace_root() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         std::fs::write(root.join(".rwv-active"), "myproject\n").unwrap();
         let primary_canon = resolve(&root).unwrap();
@@ -4697,7 +4697,7 @@ mod tests {
     /// provenance fields. This guards against accidental leakage.
     #[test]
     fn resolution_json_key_set_at_primary() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         std::fs::write(root.join(".rwv-active"), "myproject\n").unwrap();
 
@@ -4720,7 +4720,7 @@ mod tests {
     /// no provenance fields.
     #[test]
     fn resolution_json_key_set_in_workweave() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         let primary_canon = resolve(&root).unwrap();
 
@@ -4760,7 +4760,7 @@ mod tests {
     /// contract, that it is somewhere it is not.
     #[test]
     fn an_unregistered_workweave_does_not_serialize_as_the_primary() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         std::fs::write(root.join(".rwv-active"), "myproject\n").unwrap();
         let primary_canon = resolve(&root).unwrap();
@@ -4886,7 +4886,7 @@ mod tests {
 
     #[test]
     fn observe_root_reads_a_verified_marker_as_a_workweave() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = make_workspace(tmp.path(), "ws");
         // Deliberately not workspace-shaped: the marker arm does not consult
         // the tree's own shape, and a workweave that has not materialized any
@@ -4904,7 +4904,7 @@ mod tests {
 
     #[test]
     fn observe_root_reads_a_pointer_at_a_workspace_shaped_root_as_primary() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         write_pointer(&root, "web-app");
 
@@ -4925,7 +4925,7 @@ mod tests {
 
     #[test]
     fn observe_root_reads_a_bare_workspace_shaped_root_as_primary_with_no_selection() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
 
         match observe(&root) {
@@ -4938,7 +4938,7 @@ mod tests {
 
     #[test]
     fn observe_root_reads_both_files_as_disputed() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = make_workspace(tmp.path(), "ws");
         let weave_dir = make_workweave(tmp.path(), "ws--feat", &primary, "myproject");
         write_pointer(&weave_dir, "myproject");
@@ -4965,7 +4965,7 @@ mod tests {
     /// not need in order to say so.
     #[test]
     fn observe_root_reads_an_empty_pointer_beside_a_marker_as_disputed() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = make_workspace(tmp.path(), "ws");
         let weave_dir = make_workweave(tmp.path(), "ws--feat", &primary, "myproject");
         std::fs::write(weave_dir.join(ACTIVE_PROJECT_FILE), "\n").unwrap();
@@ -4980,7 +4980,7 @@ mod tests {
 
     #[test]
     fn observe_root_reads_a_dangling_primary_as_marker_unverifiable() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let gone = tmp.path().join("moved-away");
         let weave_dir = make_workweave(tmp.path(), "ws--feat", &gone, "myproject");
         // A copied tree is workspace-shaped on its own; the marker's claim is
@@ -5016,7 +5016,7 @@ mod tests {
     /// accepts, pinned so it stays a deliberate call rather than drift.
     #[test]
     fn observe_root_reads_a_registry_only_primary_as_dangling() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("registry-only");
         std::fs::create_dir_all(primary.join("github")).unwrap();
         let weave_dir = make_workweave(tmp.path(), "ws--feat", &primary, "myproject");
@@ -5034,7 +5034,7 @@ mod tests {
 
     #[test]
     fn observe_root_reads_a_legacy_marker_as_marker_unverifiable() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = make_workspace(tmp.path(), "ws");
         let weave_dir = tmp.path().join("ws--feat");
         std::fs::create_dir_all(&weave_dir).unwrap();
@@ -5071,7 +5071,7 @@ mod tests {
     /// silently treating the broken marker as someone else's to report.
     #[test]
     fn observe_root_reads_a_legacy_marker_with_no_primary_as_unreadable() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let weave_dir = tmp.path().join("ws--feat");
         std::fs::create_dir_all(&weave_dir).unwrap();
         std::fs::write(
@@ -5122,7 +5122,7 @@ mod tests {
     /// for the other required field.
     #[test]
     fn observe_root_reads_a_legacy_marker_with_no_project_as_unreadable() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = make_workspace(tmp.path(), "ws");
         let weave_dir = tmp.path().join("ws--feat");
         std::fs::create_dir_all(&weave_dir).unwrap();
@@ -5164,7 +5164,7 @@ mod tests {
     /// dropped this into a `None` hint while still classifying `Legacy`.
     #[test]
     fn observe_root_reads_a_legacy_marker_with_invalid_project_as_unreadable() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = make_workspace(tmp.path(), "ws");
         let weave_dir = tmp.path().join("ws--feat");
         std::fs::create_dir_all(&weave_dir).unwrap();
@@ -5203,7 +5203,7 @@ mod tests {
 
     #[test]
     fn observe_root_reads_an_unparseable_marker_as_marker_unverifiable() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let weave_dir = tmp.path().join("ws--feat");
         std::fs::create_dir_all(&weave_dir).unwrap();
         std::fs::write(
@@ -5223,7 +5223,7 @@ mod tests {
 
     #[test]
     fn observe_root_reads_a_directory_that_is_neither_as_nothing() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let plain = tmp.path().join("just-a-dir");
         std::fs::create_dir_all(&plain).unwrap();
 
@@ -5235,7 +5235,7 @@ mod tests {
     /// any directory a weave root.
     #[test]
     fn observe_root_reads_a_lone_pointer_as_nothing() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let plain = tmp.path().join("just-a-dir");
         std::fs::create_dir_all(&plain).unwrap();
         write_pointer(&plain, "web-app");
@@ -5272,7 +5272,7 @@ mod tests {
 
     #[test]
     fn require_exclusive_projects_the_two_usable_arms() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = make_workspace(tmp.path(), "ws");
         let weave_dir = make_workweave(tmp.path(), "ws--feat", &primary, "myproject");
         write_pointer(&primary, "web-app");
@@ -5296,7 +5296,7 @@ mod tests {
 
     #[test]
     fn require_exclusive_refuses_a_disputed_root_naming_both_files_and_the_repair() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = make_workspace(tmp.path(), "ws");
         let weave_dir = make_workweave(tmp.path(), "ws--feat", &primary, "myproject");
         write_pointer(&weave_dir, "something-else");
@@ -5322,7 +5322,7 @@ mod tests {
     /// no writer produces is the state that must not survive being tolerated.
     #[test]
     fn require_exclusive_refuses_a_disputed_root_whose_files_agree() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = make_workspace(tmp.path(), "ws");
         let weave_dir = make_workweave(tmp.path(), "ws--feat", &primary, "myproject");
         write_pointer(&weave_dir, "myproject");
@@ -5358,7 +5358,7 @@ mod tests {
 
     #[test]
     fn require_exclusive_names_the_dangling_value_and_both_exits() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let gone = tmp.path().join("moved-away");
         let weave_dir = make_workweave(tmp.path(), "ws--feat", &gone, "myproject");
 
@@ -5384,7 +5384,7 @@ mod tests {
 
     #[test]
     fn presented_project_answers_for_a_disputed_root() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = make_workspace(tmp.path(), "ws");
         let weave_dir = make_workweave(tmp.path(), "ws--feat", &primary, "myproject");
         write_pointer(&weave_dir, "something-else");
@@ -5404,7 +5404,7 @@ mod tests {
 
     #[test]
     fn presented_project_answers_for_a_legacy_marker() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = make_workspace(tmp.path(), "ws");
         let weave_dir = tmp.path().join("ws--feat");
         std::fs::create_dir_all(&weave_dir).unwrap();
@@ -5426,7 +5426,7 @@ mod tests {
 
     #[test]
     fn presented_project_answers_for_a_primary_from_its_pointer() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
         write_pointer(&root, "web-app");
 

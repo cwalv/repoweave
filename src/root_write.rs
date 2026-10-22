@@ -302,7 +302,7 @@ mod tests {
     /// The verdict on a root `Cargo.lock` over a project repo `stage` left in
     /// some state.
     fn verdict_over(stage: impl FnOnce(&Path)) -> Verdict {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         let repo = root.join("projects/demo");
         std::fs::create_dir_all(&repo).unwrap();
@@ -388,7 +388,7 @@ mod tests {
 
     #[test]
     fn a_differing_copy_in_a_project_outside_version_control_is_a_conflict() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         let project = root.join("projects/demo");
         std::fs::create_dir_all(&project).unwrap();

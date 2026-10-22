@@ -3024,7 +3024,7 @@ mod tests {
     /// A weave whose one project hands `[integrations.cargo-workspace]` the
     /// given body, ready for a context-mode activation with the hooks live.
     fn make_cargo_settings_workspace(settings_body: &str) -> tempfile::TempDir {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         std::fs::create_dir_all(root.join("github")).unwrap();
         let project_dir = root.join("projects").join("demo");
@@ -3132,7 +3132,7 @@ mod tests {
         declared: &[&str],
         authored: &[&str],
     ) -> (tempfile::TempDir, ProjectName) {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         // Registry marker dir so WorkspaceSession scans cleanly.
         std::fs::create_dir_all(root.join("github")).unwrap();
@@ -3349,7 +3349,7 @@ mod tests {
 
     #[test]
     fn a_file_ancestor_is_the_occupant_whichever_error_the_platform_reports() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         std::fs::write(root.join("gita"), "a file\n").unwrap();
         let link = root.join("gita/repos.csv");
@@ -3370,7 +3370,7 @@ mod tests {
 
     #[test]
     fn a_path_missing_under_directories_is_clear() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         std::fs::create_dir_all(root.join("projects/old/.claude")).unwrap();
         std::fs::create_dir(root.join("sub")).unwrap();
@@ -3854,7 +3854,7 @@ mod tests {
     /// outcome. `cargo` is never invoked — the declaration gate is a
     /// filesystem test for a member manifest.
     fn make_cargo_surfacing_workspace() -> (tempfile::TempDir, ProjectName) {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         let member = root.join("github/acme/server");
         std::fs::create_dir_all(&member).unwrap();
@@ -4778,7 +4778,7 @@ mod tests {
         /// A directory where `name` was accepted holding `accepted`, and now
         /// holds `on_disk`.
         fn attested(name: &str, accepted: &[u8], on_disk: &[u8]) -> tempfile::TempDir {
-            let tmp = tempfile::tempdir().unwrap();
+            let tmp = crate::tempdir().unwrap();
             let dir = tmp.path();
             std::fs::write(dir.join(name), accepted).unwrap();
             stamp_owned_digest(dir, name, accepted).unwrap();
@@ -4803,7 +4803,7 @@ mod tests {
 
         #[test]
         fn an_attested_file_that_is_gone_is_not_a_fork() {
-            let tmp = tempfile::tempdir().unwrap();
+            let tmp = crate::tempdir().unwrap();
             stamp_owned_digest(tmp.path(), "Cargo.lock", b"version = 4\n").unwrap();
             settle_arrived_drift(tmp.path(), None)
                 .expect("a file to regenerate is not a choice between two losses");

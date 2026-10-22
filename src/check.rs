@@ -11263,7 +11263,7 @@ mod branch_discipline_scope_tests {
     }
 
     fn weave() -> Weave {
-        let tmp = tempfile::TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = crate::path_spelling::resolve(tmp.path())
             .unwrap()
             .join("ws");

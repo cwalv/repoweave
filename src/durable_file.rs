@@ -283,7 +283,7 @@ mod tests {
 
     #[test]
     fn replace_overwrites_and_leaves_no_temp() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let path = tmp.path().join("f");
         replace(&path, b"one").unwrap();
         replace(&path, b"two").unwrap();
@@ -293,7 +293,7 @@ mod tests {
 
     #[test]
     fn create_new_refuses_an_occupied_path_and_leaves_it_intact() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let path = tmp.path().join("f");
         create_new(&path, b"first").unwrap();
         assert!(matches!(
@@ -306,7 +306,7 @@ mod tests {
 
     #[test]
     fn concurrent_create_new_has_exactly_one_winner() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let path = tmp.path().join("f");
         let winners: usize = std::thread::scope(|s| {
             let handles: Vec<_> = (0..16)
@@ -334,7 +334,7 @@ mod tests {
     /// it, so the budget has to cover the queue, not one holder.
     #[test]
     fn every_holder_in_a_queue_of_slow_sections_gets_its_turn() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let path = tmp.path().join("f.lock");
         let refused: Vec<String> = std::thread::scope(|s| {
             let handles: Vec<_> = (0..8)
@@ -367,7 +367,7 @@ mod tests {
     fn a_release_that_fails_for_a_moment_is_retried() {
         use std::os::unix::fs::PermissionsExt;
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let path = tmp.path().join("f.lock");
         let held = claim(&path).unwrap();
         let writable = std::fs::metadata(tmp.path()).unwrap().permissions();
@@ -394,7 +394,7 @@ mod tests {
         use std::os::windows::fs::OpenOptionsExt;
         const HOLD: std::time::Duration = std::time::Duration::from_millis(300);
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let path = tmp.path().join("f");
         replace(&path, b"one").unwrap();
         let holder = std::fs::OpenOptions::new()

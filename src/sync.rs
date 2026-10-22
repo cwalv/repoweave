@@ -7769,7 +7769,7 @@ mod tests {
 
     #[test]
     fn containment_names_each_shape_of_one_pair() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let repo = tmp.path().join("r");
         init_repo(&repo);
         let base = git_vcs().head_revision(&repo).unwrap();
@@ -7833,7 +7833,7 @@ mod tests {
         // A count git refuses to produce is not zero, and zero on both sides
         // is what `Equal` means: the pair that cannot be read must yield no
         // verdict at all, or every unreadable pair reports as converged.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let repo = tmp.path().join("r");
         init_repo(&repo);
         let head = git_vcs().head_revision(&repo).unwrap();
@@ -7930,7 +7930,7 @@ mod tests {
 
     #[test]
     fn the_repo_outcome_follows_the_carried_verdict_not_the_disk() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let repo = tmp.path().join("r");
         init_repo(&repo);
         let target = git_vcs().head_revision(&repo).unwrap();
@@ -7963,7 +7963,7 @@ mod tests {
 
     #[test]
     fn a_carried_equal_verdict_runs_no_strategy() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let repo = tmp.path().join("r");
         init_repo(&repo);
         let target = git_vcs().head_revision(&repo).unwrap();
@@ -8003,7 +8003,7 @@ mod tests {
         // already-ahead — the record claiming a landing the printed outcome
         // denies. The carried verdict sends it to the strategy instead, which
         // is the only place that can act on what is actually there.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let repo = tmp.path().join("r");
         init_repo(&repo);
         let target = commit(&repo, "target");
@@ -8035,7 +8035,7 @@ mod tests {
 
     #[test]
     fn the_phase1_refusal_calls_a_contained_source_ahead_and_names_the_blockers() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let repo = tmp.path().join("project");
         init_repo(&repo);
         let source_tip = git_vcs().head_revision(&repo).unwrap();
@@ -8069,7 +8069,7 @@ mod tests {
 
     #[test]
     fn the_phase1_refusal_separates_a_diverged_destination_from_an_ahead_one() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let repo = tmp.path().join("project");
         let (cwd_tip, source_tip) = forked_tips(&repo);
 
@@ -8133,7 +8133,7 @@ mod tests {
         // The control. Without it, the refusal test below could pass because
         // this fixture cannot advance at all rather than because the refusal
         // fired.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let (cwd, target, cwd_tip) = landing_pair(tmp.path());
 
         let advance = ff_advance_repo(git_vcs().as_ref(), &target, &cwd, &cwd_tip)
@@ -8156,7 +8156,7 @@ mod tests {
 
     #[test]
     fn ff_advance_repo_leads_its_refusal_with_the_containment_verdict() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let (cwd, target, cwd_tip) = landing_pair(tmp.path());
         git(&target, &["config", "user.email", "t@t"]);
         git(&target, &["config", "user.name", "T"]);
@@ -8183,7 +8183,7 @@ mod tests {
         // moves HEAD alone and reports success, so the landing ends up
         // referenced by nothing — and `--retire` then force-deletes the
         // source's branch, the only other ref that was holding it.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let (cwd, target, cwd_tip) = landing_pair(tmp.path());
 
         let main_before = git(&target, &["rev-parse", "refs/heads/main"]);
@@ -8220,7 +8220,7 @@ mod tests {
         // the ordering cannot be "tidied" into refusing on every detached
         // target, which would make `--continue` unable to finish an op whose
         // target was already advanced.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let (cwd, target, cwd_tip) = landing_pair(tmp.path());
 
         git(&target, &["fetch", cwd.to_str().unwrap(), "HEAD"]);
@@ -8256,7 +8256,7 @@ mod tests {
     fn check_store_unclaimed_passes_on_a_store_nothing_claims() {
         // The control: without it the two refusals below could be passing on
         // a fixture that can never be unclaimed.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let (store, primary, project) = store_fixture(tmp.path());
 
         check_store_unclaimed(
@@ -8272,7 +8272,7 @@ mod tests {
 
     #[test]
     fn check_store_unclaimed_refuses_while_a_worktree_is_registered() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let (store, primary, project) = store_fixture(tmp.path());
 
         // `git worktree add` writes its administration into the canonical
@@ -8307,7 +8307,7 @@ mod tests {
 
     #[test]
     fn check_store_unclaimed_refuses_while_a_receipt_stands() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let (store, primary, project) = store_fixture(tmp.path());
         let at = git_vcs().head_revision(&store).unwrap();
 
@@ -8363,7 +8363,7 @@ mod tests {
     #[test]
     fn check_store_unclaimed_refuses_when_the_claims_cannot_be_read() {
         // Fail-closed: a claim we could not enumerate is a claim that stands.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let not_a_repo = tmp.path().join("not-a-repo");
         std::fs::create_dir_all(&not_a_repo).unwrap();
 
@@ -8418,7 +8418,7 @@ mod tests {
     fn prune_dropped_repo_removes_a_store_nothing_claims() {
         // The control. Without it, the two refusals below could be reporting
         // a fixture that can never be pruned rather than a gate that fired.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let (ctx, store, project) = primary_with_cloned_store(tmp.path());
 
         prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped(), &project)
@@ -8436,7 +8436,7 @@ mod tests {
         // about to `remove_dir_all`. Detached, so the fixture adds no
         // local-only branch: the shipped predicate passes and R4 is the only
         // thing left standing between the live workweave and the delete.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let (ctx, store, project) = primary_with_cloned_store(tmp.path());
 
         let live = tmp.path().join("live-workweave");
@@ -8479,7 +8479,7 @@ mod tests {
 
     #[test]
     fn prune_dropped_repo_refuses_until_the_receipts_are_retracted() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let (ctx, store, project) = primary_with_cloned_store(tmp.path());
         let at = git_vcs().head_revision(&store).unwrap();
 
@@ -8535,7 +8535,7 @@ mod tests {
         // This is the E1 scenario: a workweave holding a commit that exists
         // nowhere else. It must refuse *because of the unique commit*, with
         // a receipt on file, not in spite of one.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let (ctx, store, project) = primary_with_cloned_store(tmp.path());
         let at = git_vcs().head_revision(&store).unwrap();
 
@@ -8584,7 +8584,7 @@ mod tests {
 
     #[test]
     fn prune_dropped_repo_refuses_unpushed_work_when_a_tag_shares_the_branch_name() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let (ctx, store, project) = primary_with_cloned_store(tmp.path());
         let unpushed = commit(&store, "only-here");
         git(&store, &["tag", "main", "refs/remotes/origin/main"]);
@@ -8611,7 +8611,7 @@ mod tests {
         // FAIL rather than answer. That failure is "we could not tell" and
         // has to refuse — read as "nothing unpushed" it clears the branch and
         // hands the store to the delete.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let (ctx, store, project) = primary_with_cloned_store(tmp.path());
 
         // A loose ref file wins over the packed-refs entry the clone wrote.
@@ -8697,7 +8697,7 @@ mod tests {
         // "the store is gone, so this must be a linked worktree, delete it" —
         // but the objects under this path exist nowhere else in the weave, and
         // with no canonical to compare against, nothing has looked at them.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let origin = tmp.path().join("origin");
         init_repo(&origin);
         let (ctx, checkout, project) = workweave_without_primary_canonical(tmp.path());
@@ -8742,7 +8742,7 @@ mod tests {
         // directory removes a working tree and nothing else. Without this,
         // the refusal above could be reporting an arm that never removes
         // anything.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let store = tmp.path().join("elsewhere/server");
         init_repo(&store);
         let (ctx, checkout, project) = workweave_without_primary_canonical(tmp.path());
@@ -8860,7 +8860,7 @@ mod tests {
     fn materialize_missing_repo_authors_the_ref_and_records_it() {
         // The control. Without it the refusal below could be passing on a
         // fixture that can never materialize anything at all.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let (ctx, canonical, project, entry) = workweave_missing_one_repo(tmp.path());
 
         materialize_missing_repo(
@@ -8891,7 +8891,7 @@ mod tests {
         // so it is neither adopted into a receipt nor destroyed. If this test
         // ever goes green on a materialize that SUCCEEDS, the operator's
         // branch has just become rwv's to delete.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let (ctx, canonical, project, entry) = workweave_missing_one_repo(tmp.path());
 
         // The operator's own branch, sitting at the name rwv would mint, and
@@ -9400,7 +9400,7 @@ mod tests {
     fn sync_source_workweave_resolve_errors_when_no_active_project() {
         // Build a minimal workspace directory so resolution
         // succeeds and recognizes it as a Weave (no .rwv-active).
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path().join("ws");
         std::fs::create_dir_all(root.join("projects")).unwrap();
 
@@ -9620,7 +9620,7 @@ mod tests {
 
     #[test]
     fn the_rebase_strategy_resolves_a_declared_derived_path_without_stopping() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let repo = tmp.path().join("manifest");
         let main_tip = diverged_on_a_declared_derived_path(&repo);
         assert_no_durable_driver_definition(&repo);
@@ -9654,7 +9654,7 @@ mod tests {
         // interrupted replay never got to. A resume that stated nothing would
         // stop again on the declared path — after the operator had already
         // resolved the real conflict.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let repo = tmp.path().join("manifest");
         let main_tip = diverged_on_a_declared_derived_path(&repo);
         assert_no_durable_driver_definition(&repo);

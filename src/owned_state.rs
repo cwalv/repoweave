@@ -966,7 +966,6 @@ pub fn fully_owned_digest_mismatch_issue(name: &str, path: &Path) -> Issue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
 
     fn key(root: &str, target: &str) -> String {
         workspace_relative_key(Path::new(root), Path::new(root), Path::new(target))
@@ -1002,7 +1001,7 @@ mod tests {
 
     #[test]
     fn check_without_state_file_is_not_recorded() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         assert_eq!(
             check_owned_digest(tmp.path(), "Cargo.lock", b"anything"),
             OwnedDigestCheck::NotRecorded,
@@ -1012,7 +1011,7 @@ mod tests {
 
     #[test]
     fn check_without_entry_is_not_recorded() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         stamp_owned_digest(tmp.path(), "uv.lock", b"other file").unwrap();
         assert_eq!(
             check_owned_digest(tmp.path(), "Cargo.lock", b"anything"),
@@ -1023,7 +1022,7 @@ mod tests {
 
     #[test]
     fn stamp_then_check_same_content_matches() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         stamp_owned_digest(tmp.path(), "Cargo.lock", b"version = 3\n").unwrap();
         assert_eq!(
             check_owned_digest(tmp.path(), "Cargo.lock", b"version = 3\n"),
@@ -1033,7 +1032,7 @@ mod tests {
 
     #[test]
     fn stamp_then_check_mutated_content_differs() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         stamp_owned_digest(tmp.path(), "Cargo.lock", b"version = 3\n").unwrap();
         assert_eq!(
             check_owned_digest(tmp.path(), "Cargo.lock", b"version = 4\n"),
@@ -1044,7 +1043,7 @@ mod tests {
 
     #[test]
     fn restamp_updates_recorded_digest() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         stamp_owned_digest(tmp.path(), "Cargo.lock", b"old").unwrap();
         stamp_owned_digest(tmp.path(), "Cargo.lock", b"new").unwrap();
         assert_eq!(
@@ -1061,7 +1060,7 @@ mod tests {
 
     #[test]
     fn stamp_preserves_other_entries() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         stamp_owned_digest(tmp.path(), "Cargo.lock", b"cargo bytes").unwrap();
         stamp_owned_digest(tmp.path(), "uv.lock", b"uv bytes").unwrap();
         assert_eq!(
@@ -1077,7 +1076,7 @@ mod tests {
 
     #[test]
     fn corrupt_state_file_is_reported_and_stamp_recovers() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         std::fs::write(tmp.path().join(OWNED_DIGESTS_FILE), "not json {{{").unwrap();
         assert_eq!(
             check_owned_digest(tmp.path(), "Cargo.lock", b"x"),
@@ -1105,7 +1104,7 @@ mod tests {
 
     #[test]
     fn absence_is_not_a_fault() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         assert_eq!(unreadable_ledger(tmp.path()), None, "no ledger at all");
         stamp_owned_digest(tmp.path(), "Cargo.lock", b"x").unwrap();
         assert_eq!(
@@ -1121,7 +1120,7 @@ mod tests {
 
     #[test]
     fn state_file_is_json_map_with_sha256_prefixed_digests() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         stamp_owned_digest(tmp.path(), "Cargo.lock", b"content").unwrap();
         let text = std::fs::read_to_string(tmp.path().join(OWNED_DIGESTS_FILE)).unwrap();
         let map: BTreeMap<String, String> = serde_json::from_str(&text).unwrap();
@@ -1148,7 +1147,7 @@ mod tests {
     /// look, starting with [`carry_attested_owned_files`].
     #[test]
     fn ledger_anchors_to_the_named_directory() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let project_dir = tmp.path().join("projects/web-app");
         let elsewhere = tmp.path().join("elsewhere");
         std::fs::create_dir_all(&project_dir).unwrap();
@@ -1193,7 +1192,7 @@ mod tests {
     /// nothing and the copy would arrive unattested, silently.
     #[test]
     fn carry_reads_the_ledger_the_stamp_wrote_for_a_symlinked_file() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let source = tmp.path().join("source");
         let elsewhere = tmp.path().join("elsewhere");
         let dest = tmp.path().join("dest");
@@ -1229,7 +1228,7 @@ mod tests {
         // state file never appears as an untracked file in a dirty-tree
         // check. This mirrors the workweave_index::write chokepoint for
         // .rwv-workweave-index.
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         stamp_owned_digest(tmp.path(), "Cargo.lock", b"version = 3\n").unwrap();
 
         let gitignore = tmp.path().join(".gitignore");
@@ -1249,7 +1248,7 @@ mod tests {
         // A second stamp must not duplicate the ignore entry. Counted by whole
         // line: the claim file's name has the ledger's as a prefix, so a
         // substring count reads one entry for each of the two names.
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         stamp_owned_digest(tmp.path(), "Cargo.lock", b"v1").unwrap();
         stamp_owned_digest(tmp.path(), "Cargo.lock", b"v2").unwrap();
 
@@ -1268,7 +1267,7 @@ mod tests {
     /// wedge every later stamp in this directory would hit.
     #[test]
     fn a_finished_stamp_leaves_no_claim_behind() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         stamp_owned_digest(tmp.path(), "Cargo.lock", b"v1").unwrap();
         assert!(
             !tmp.path().join(OWNED_DIGESTS_CLAIM_FILE).exists(),
@@ -1290,7 +1289,7 @@ mod tests {
     fn a_release_that_keeps_failing_is_reported_with_the_file_to_delete() {
         use std::os::unix::fs::PermissionsExt;
 
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path().join("ledger");
         std::fs::create_dir(&dir).unwrap();
         let writable = std::fs::metadata(&dir).unwrap().permissions();
@@ -1322,7 +1321,7 @@ mod tests {
     /// contention look like a fault.
     #[test]
     fn an_abandoned_claim_refuses_later_stamps_and_names_what_to_remove() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let claim = tmp.path().join(OWNED_DIGESTS_CLAIM_FILE);
         std::fs::write(&claim, "pid 999999\n").unwrap();
 
@@ -1368,7 +1367,7 @@ mod tests {
     /// a legitimate no-op and publishes as `Ok(())`.
     #[test]
     fn a_refusing_edit_reaches_the_caller_and_writes_nothing() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         stamp_owned_digest(tmp.path(), "Cargo.lock", b"before").unwrap();
 
         let result = edit_owned_digests(tmp.path(), |entries| {
@@ -1396,7 +1395,7 @@ mod tests {
     /// one: the copy must report the same drift the source does.
     #[test]
     fn carry_reproduces_content_and_the_source_verdict() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let source = tmp.path().join("source");
         let dest = tmp.path().join("dest");
         std::fs::create_dir_all(&source).unwrap();
@@ -1435,7 +1434,7 @@ mod tests {
 
     #[test]
     fn carry_attests_only_what_it_copied() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let source = tmp.path().join("source");
         let dest = tmp.path().join("dest");
         std::fs::create_dir_all(&source).unwrap();
@@ -1460,7 +1459,7 @@ mod tests {
 
     #[test]
     fn carry_from_a_source_with_no_record_writes_nothing() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let source = tmp.path().join("source");
         let dest = tmp.path().join("dest");
         std::fs::create_dir_all(&source).unwrap();
@@ -1482,7 +1481,7 @@ mod tests {
 
     #[test]
     fn mismatch_issue_shape() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let path = tmp.path().join("Cargo.lock");
         let i = fully_owned_digest_mismatch_issue("cargo-workspace", &path);
         assert_eq!(i.source, IssueSource::integration("cargo-workspace"));

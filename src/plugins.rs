@@ -506,7 +506,7 @@ mod tests {
 
     #[test]
     fn build_command_sets_program_and_args() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let plugin = installed_plugin(tmp.path(), "rwv-example");
         let args: Vec<OsString> = vec!["--flag".into(), "value".into(), "--".into(), "-x".into()];
         let cmd = build_command(&plugin, &args, std::path::Path::new("/tmp"), None);
@@ -596,7 +596,7 @@ mod tests {
     #[test]
     fn exec_failure_error_carries_errno_prose() {
         let io_err = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let plugin = installed_plugin(tmp.path(), "rwv-example");
         let err = exec_failure_error("example", &plugin, io_err).to_string();
         assert!(err.contains("rwv-example"), "err: {err}");
@@ -682,7 +682,7 @@ mod tests {
     /// A single fixture dir with two executable `rwv-*` files.
     #[test]
     fn discover_plugins_finds_executables_in_single_dir() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let dir = tmp.path();
         make_executable(dir, "rwv-bar");
         make_executable(dir, "rwv-foo");
@@ -700,7 +700,7 @@ mod tests {
     /// Non-executable `rwv-*` files must NOT appear in results.
     #[test]
     fn discover_plugins_skips_non_executable_files() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let dir = tmp.path();
         make_non_executable(dir, "rwv-notexec");
         make_executable(dir, "rwv-isexec");
@@ -713,7 +713,7 @@ mod tests {
     /// Non-existent PATH dir is silently skipped.
     #[test]
     fn discover_plugins_nonexistent_path_dir_silently_skipped() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let dir = tmp.path();
         make_executable(dir, "rwv-present");
         let absent = tmp.path().join("does_not_exist");
@@ -726,7 +726,7 @@ mod tests {
     /// Files not named `rwv-*` are not returned.
     #[test]
     fn discover_plugins_ignores_non_rwv_executables() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let dir = tmp.path();
         make_executable(dir, "git");
         make_executable(dir, "cargo");
@@ -744,7 +744,7 @@ mod tests {
     /// key on the `shadowed` flag, not position.
     #[test]
     fn discover_plugins_duplicate_shadowed_by_path_order() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let dir1 = tmp.path().join("dir1");
         let dir2 = tmp.path().join("dir2");
         fs::create_dir_all(&dir1).unwrap();
@@ -776,7 +776,7 @@ mod tests {
     /// unshadowed; the other two carry shadowed_by pointing at the winner.
     #[test]
     fn discover_plugins_triple_duplicate_all_after_first_shadowed() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let dir1 = tmp.path().join("a");
         let dir2 = tmp.path().join("b");
         let dir3 = tmp.path().join("c");
@@ -813,7 +813,7 @@ mod tests {
     /// Symlinked executable `rwv-*` is included.
     #[test]
     fn discover_plugins_symlinked_plugin_is_found() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let bin_dir = tmp.path().join("real");
         let link_dir = tmp.path().join("links");
         fs::create_dir_all(&bin_dir).unwrap();
@@ -835,7 +835,7 @@ mod tests {
     /// Output is sorted by name across multiple dirs.
     #[test]
     fn discover_plugins_result_sorted_by_name() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let dir = tmp.path();
         make_executable(dir, "rwv-zebra");
         make_executable(dir, "rwv-alpha");
@@ -860,7 +860,7 @@ mod tests {
     /// With a fixture plugin, the help section lists the name.
     #[test]
     fn help_section_lists_plugin_name() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let dir = tmp.path();
         make_executable(dir, "rwv-example");
         let path = join_paths(&[dir]);
@@ -880,7 +880,7 @@ mod tests {
     /// Shadowed duplicates are NOT listed in the help section (only unique names).
     #[test]
     fn help_section_omits_shadowed_duplicates() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let dir1 = tmp.path().join("d1");
         let dir2 = tmp.path().join("d2");
         fs::create_dir_all(&dir1).unwrap();
@@ -1044,7 +1044,7 @@ mod tests {
     /// the in-directory `PATHEXT` tie exists only on a Windows run.
     #[test]
     fn discovery_winner_is_what_dispatch_resolves() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let dir1 = tmp.path().join("d1");
         let dir2 = tmp.path().join("d2");
         fs::create_dir_all(&dir1).unwrap();

@@ -172,7 +172,7 @@ mod tests {
 
     #[test]
     fn a_directory_source_yields_a_directory_link() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path().join("claude");
         std::fs::create_dir(&dir).unwrap();
         assert_eq!(LinkTarget::on_disk(&dir), LinkTarget::Directory);
@@ -180,7 +180,7 @@ mod tests {
 
     #[test]
     fn a_file_source_yields_a_file_link() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let file = tmp.path().join("Cargo.toml");
         std::fs::write(&file, "").unwrap();
         assert_eq!(LinkTarget::on_disk(&file), LinkTarget::File);
@@ -188,7 +188,7 @@ mod tests {
 
     #[test]
     fn an_absent_source_yields_a_file_link() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         assert_eq!(
             LinkTarget::on_disk(&tmp.path().join("Cargo.lock")),
             LinkTarget::File,
@@ -198,7 +198,7 @@ mod tests {
 
     #[test]
     fn a_symlink_to_a_directory_yields_a_directory_link() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path().join("canonical");
         std::fs::create_dir(&dir).unwrap();
         let alias = tmp.path().join("alias");
@@ -212,7 +212,7 @@ mod tests {
 
     #[test]
     fn an_occupied_link_path_returns_the_failure() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let link = tmp.path().join("occupied");
         std::fs::write(&link, "user content").unwrap();
         let err = create(Path::new("target"), &link, LinkTarget::File).unwrap_err();
@@ -286,7 +286,7 @@ mod tests {
         // The helper above is only evidence if the real error path is the same
         // path. Both calls hit one occupied link, so the two errors agree and
         // the strings may be compared whole.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let link = tmp.path().join("occupied");
         std::fs::write(&link, "user content").unwrap();
         let target = Path::new("target");

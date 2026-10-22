@@ -2038,7 +2038,7 @@ mod tests {
         fn activate_preserves_foreign_content() {
             // Realistic seed: an npm-style package.json with user scripts,
             // engines, devDependencies — none of which rwv owns.
-            let dir = TempDir::new().unwrap();
+            let dir = crate::tempdir().unwrap();
             let path = write_file(
                 &dir,
                 "package.json",
@@ -2080,7 +2080,7 @@ mod tests {
 
         #[test]
         fn activate_is_idempotent() {
-            let dir = TempDir::new().unwrap();
+            let dir = crate::tempdir().unwrap();
             let path = write_file(
                 &dir,
                 "package.json",
@@ -2107,7 +2107,7 @@ mod tests {
 
         #[test]
         fn deactivate_strips_owned_and_preserves_foreign() {
-            let dir = TempDir::new().unwrap();
+            let dir = crate::tempdir().unwrap();
             let path = write_file(
                 &dir,
                 "package.json",
@@ -2136,7 +2136,7 @@ mod tests {
 
         #[test]
         fn deactivate_deletes_when_only_owned_present() {
-            let dir = TempDir::new().unwrap();
+            let dir = crate::tempdir().unwrap();
             let path = write_file(
                 &dir,
                 "package.json",
@@ -2154,7 +2154,7 @@ mod tests {
         #[test]
         fn verify_and_warn_when_user_holds_pen() {
             // Owned key present but no marker → user took the pen.
-            let dir = TempDir::new().unwrap();
+            let dir = crate::tempdir().unwrap();
             let path = write_file(
                 &dir,
                 "package.json",
@@ -2188,7 +2188,7 @@ mod tests {
         fn strip_skips_when_marker_absent() {
             // User holds the pen on a hand-written package.json — strip is a
             // no-op (don't destroy what we don't own).
-            let dir = TempDir::new().unwrap();
+            let dir = crate::tempdir().unwrap();
             let path = write_file(
                 &dir,
                 "package.json",
@@ -2211,7 +2211,7 @@ mod tests {
         fn object_form_sub_key_merge() {
             // npm object-form `workspaces` — rwv owns `workspaces.packages`,
             // preserves user's `workspaces.nohoist`.
-            let dir = TempDir::new().unwrap();
+            let dir = crate::tempdir().unwrap();
             let path = write_file(
                 &dir,
                 "package.json",
@@ -2249,7 +2249,7 @@ mod tests {
         fn vscode_marker_accepted_as_bool() {
             // RwvGeneratedMarker: existing on-disk shape is `rwv.generated: true`.
             // has_marker must recognize a plain bool true.
-            let dir = TempDir::new().unwrap();
+            let dir = crate::tempdir().unwrap();
             let path = write_file(
                 &dir,
                 "foo.code-workspace",
@@ -2269,7 +2269,7 @@ mod tests {
 
         #[test]
         fn malformed_json_bails() {
-            let dir = TempDir::new().unwrap();
+            let dir = crate::tempdir().unwrap();
             let path = write_file(&dir, "package.json", "{ not json");
             let owned = vec![(kp(&["private"]), Ownership::Author, OwnedValue::Bool(true))];
             let err = merge_activate::<JsonDoc>(&path, &owned).unwrap_err();
@@ -2285,7 +2285,7 @@ mod tests {
         #[test]
         fn default_only_sets_when_absent() {
             // When the key is absent, DefaultOnly should write the default value.
-            let dir = TempDir::new().unwrap();
+            let dir = crate::tempdir().unwrap();
             let path = write_file(
                 &dir,
                 "package.json",
@@ -2320,7 +2320,7 @@ mod tests {
         #[test]
         fn default_only_does_not_overwrite_existing() {
             // When the key is present, DefaultOnly must leave the existing value alone.
-            let dir = TempDir::new().unwrap();
+            let dir = crate::tempdir().unwrap();
             let path = write_file(
                 &dir,
                 "package.json",
@@ -2356,7 +2356,7 @@ mod tests {
         #[test]
         fn default_only_not_in_authored_or_deferred() {
             // DefaultOnly keys must not appear in MergeResult.authored or .deferred.
-            let dir = TempDir::new().unwrap();
+            let dir = crate::tempdir().unwrap();
             let path = write_file(&dir, "package.json", r#"{}"#);
             let owned = vec![
                 (
@@ -2388,7 +2388,7 @@ mod tests {
             // strip_deactivate only strips keys passed to it (which should be
             // Author keys). DefaultOnly keys are not passed to strip_deactivate
             // by the caller — they survive deactivation.
-            let dir = TempDir::new().unwrap();
+            let dir = crate::tempdir().unwrap();
             let path = write_file(
                 &dir,
                 "package.json",
@@ -2431,7 +2431,7 @@ mod tests {
         /// `[# managed by rwv\nworkspace.package]`.
         #[test]
         fn a_header_table_is_marked_above_its_header_and_still_parses() {
-            let dir = TempDir::new().unwrap();
+            let dir = crate::tempdir().unwrap();
             let path = write_file(&dir, "Cargo.toml", "[package]\nname = \"root\"\n");
 
             let owned = vec![(
@@ -2472,7 +2472,7 @@ mod tests {
         /// produces.
         #[test]
         fn write_parseable_refuses_unparseable_toml_and_keeps_the_old_file() {
-            let dir = TempDir::new().unwrap();
+            let dir = crate::tempdir().unwrap();
             let before = "[workspace]\nmembers = []\n\n[workspace.package]\n";
             let path = write_file(&dir, "Cargo.toml", before);
 
@@ -2531,7 +2531,7 @@ mod tests {
         /// byte-identical, for activation and strip alike.
         #[test]
         fn authoring_and_strip_refuse_output_that_does_not_parse() {
-            let dir = TempDir::new().unwrap();
+            let dir = crate::tempdir().unwrap();
             let before = "previous bytes\n";
             let path = write_file(&dir, "managed.file", before);
             let owned = vec![(
@@ -2565,7 +2565,7 @@ select = ["E", "F"]
 
         #[test]
         fn activate_preserves_foreign_content_and_comments() {
-            let dir = TempDir::new().unwrap();
+            let dir = crate::tempdir().unwrap();
             let path = write_file(&dir, "pyproject.toml", UV_SEED);
 
             let owned = vec![(
@@ -2596,7 +2596,7 @@ select = ["E", "F"]
 
         #[test]
         fn activate_is_idempotent() {
-            let dir = TempDir::new().unwrap();
+            let dir = crate::tempdir().unwrap();
             let path = write_file(&dir, "pyproject.toml", UV_SEED);
             let owned = vec![(
                 kp(&["tool", "uv", "workspace", "members"]),
@@ -2612,7 +2612,7 @@ select = ["E", "F"]
 
         #[test]
         fn deactivate_strips_owned_and_preserves_foreign() {
-            let dir = TempDir::new().unwrap();
+            let dir = crate::tempdir().unwrap();
             // Pre-marked file as if rwv authored.
             let seed = format!(
                 "{UV_SEED}\n[tool.uv.workspace]\n{TOML_MARKER_PREFIX}members = [\"github/acme/server\"]\n"
@@ -2632,7 +2632,7 @@ select = ["E", "F"]
 
         #[test]
         fn deactivate_deletes_when_only_owned_present() {
-            let dir = TempDir::new().unwrap();
+            let dir = crate::tempdir().unwrap();
             let seed = format!(
                 "[tool.uv.workspace]\n{TOML_MARKER_PREFIX}members = [\"github/acme/server\"]\n"
             );
@@ -2645,7 +2645,7 @@ select = ["E", "F"]
         #[test]
         fn verify_and_warn_when_user_holds_pen() {
             // members present (as a native glob) but no marker.
-            let dir = TempDir::new().unwrap();
+            let dir = crate::tempdir().unwrap();
             let seed = format!("{UV_SEED}\n[tool.uv.workspace]\nmembers = [\"packages/*\"]\n");
             let path = write_file(&dir, "pyproject.toml", &seed);
             let owned = vec![(
@@ -2669,7 +2669,7 @@ select = ["E", "F"]
 
         #[test]
         fn strip_skips_when_marker_absent() {
-            let dir = TempDir::new().unwrap();
+            let dir = crate::tempdir().unwrap();
             let seed = format!("{UV_SEED}\n[tool.uv.workspace]\nmembers = [\"packages/*\"]\n");
             let path = write_file(&dir, "pyproject.toml", &seed);
             let owned_keys = vec![kp(&["tool", "uv", "workspace", "members"])];
@@ -2683,7 +2683,7 @@ select = ["E", "F"]
 
         #[test]
         fn malformed_toml_bails() {
-            let dir = TempDir::new().unwrap();
+            let dir = crate::tempdir().unwrap();
             let path = write_file(&dir, "pyproject.toml", "[ not toml");
             let owned = vec![(kp(&["x", "y"]), Ownership::Author, OwnedValue::Bool(true))];
             let err = merge_activate::<TomlDoc>(&path, &owned).unwrap_err();
@@ -2719,7 +2719,7 @@ overrides:
 
         #[test]
         fn activate_preserves_foreign_content() {
-            let dir = TempDir::new().unwrap();
+            let dir = crate::tempdir().unwrap();
             let path = write_file(&dir, "pnpm-workspace.yaml", PNPM_SEED);
 
             let owned = vec![(
@@ -2747,7 +2747,7 @@ overrides:
 
         #[test]
         fn activate_is_idempotent() {
-            let dir = TempDir::new().unwrap();
+            let dir = crate::tempdir().unwrap();
             let path = write_file(&dir, "pnpm-workspace.yaml", PNPM_SEED);
             let owned = vec![(
                 kp(&["packages"]),
@@ -2763,7 +2763,7 @@ overrides:
 
         #[test]
         fn deactivate_strips_owned_and_preserves_foreign() {
-            let dir = TempDir::new().unwrap();
+            let dir = crate::tempdir().unwrap();
             let seed =
                 format!("{PNPM_SEED}\n{YAML_MARKER_LINE}\npackages:\n  - github/acme/server\n");
             let path = write_file(&dir, "pnpm-workspace.yaml", &seed);
@@ -2780,7 +2780,7 @@ overrides:
 
         #[test]
         fn deactivate_deletes_when_only_owned_present() {
-            let dir = TempDir::new().unwrap();
+            let dir = crate::tempdir().unwrap();
             let seed = format!(
                 "{YAML_MARKER_LINE}\npackages:\n  - github/acme/server\n  - github/acme/web\n"
             );
@@ -2794,7 +2794,7 @@ overrides:
         fn verify_and_warn_when_user_holds_pen() {
             // packages: present with no marker — user took the pen.
             let seed = "packages:\n  - packages/*\n";
-            let dir = TempDir::new().unwrap();
+            let dir = crate::tempdir().unwrap();
             let path = write_file(&dir, "pnpm-workspace.yaml", seed);
             let owned = vec![(
                 kp(&["packages"]),
@@ -2844,7 +2844,7 @@ replace example.com/legacy => ./vendor/legacy
 
         #[test]
         fn activate_preserves_foreign_content() {
-            let dir = TempDir::new().unwrap();
+            let dir = crate::tempdir().unwrap();
             let path = write_file(&dir, "go.work", GO_SEED);
             // Seed has a `use` block but no marker → user took the pen.
             // Use a fresh seed with no use-block to test author-from-empty.
@@ -2871,7 +2871,7 @@ replace example.com/legacy => ./vendor/legacy
 
         #[test]
         fn activate_is_idempotent() {
-            let dir = TempDir::new().unwrap();
+            let dir = crate::tempdir().unwrap();
             let path = write_file(
                 &dir,
                 "go.work",
@@ -2891,7 +2891,7 @@ replace example.com/legacy => ./vendor/legacy
 
         #[test]
         fn deactivate_strips_use_and_preserves_replace_toolchain() {
-            let dir = TempDir::new().unwrap();
+            let dir = crate::tempdir().unwrap();
             let seed = format!(
                 "go 1.26\n\ntoolchain go1.26.0\n\n{GO_MARKER_LINE}\nuse (\n\t./repoweave\n)\n\nreplace example.com/legacy => ./vendor/legacy\n"
             );
@@ -2909,7 +2909,7 @@ replace example.com/legacy => ./vendor/legacy
 
         #[test]
         fn deactivate_deletes_when_only_owned_present() {
-            let dir = TempDir::new().unwrap();
+            let dir = crate::tempdir().unwrap();
             // Only the marker and use block — no other content. is_empty for
             // GoWorkDoc treats comments as foreign, so we strip and the
             // remaining text must be all-comment-or-blank for delete.
@@ -2923,7 +2923,7 @@ replace example.com/legacy => ./vendor/legacy
         #[test]
         fn verify_and_warn_when_user_holds_pen() {
             // `use (...)` present but no marker — user took the pen.
-            let dir = TempDir::new().unwrap();
+            let dir = crate::tempdir().unwrap();
             let path = write_file(&dir, "go.work", "go 1.26\n\nuse (\n\t./mine\n)\n");
             let owned = vec![(
                 kp(&["use"]),
@@ -3181,7 +3181,7 @@ replace example.com/legacy => ./vendor/legacy
 
         #[test]
         fn orphaned_marked_region_is_fixable_drift() {
-            let tmp = TempDir::new().unwrap();
+            let tmp = crate::tempdir().unwrap();
             let path = write(&tmp, "[workspace]\n# managed by rwv\nmembers = [\"a\"]\n");
             let issues = orphaned(&path);
             assert_eq!(issues.len(), 1, "expected one finding, got: {issues:?}");
@@ -3195,7 +3195,7 @@ replace example.com/legacy => ./vendor/legacy
 
         #[test]
         fn orphaned_unmarked_region_is_silent() {
-            let tmp = TempDir::new().unwrap();
+            let tmp = crate::tempdir().unwrap();
             let path = write(&tmp, "[workspace]\nmembers = [\"a\"]\n");
             assert!(
                 orphaned(&path).is_empty(),
@@ -3206,7 +3206,7 @@ replace example.com/legacy => ./vendor/legacy
 
         #[test]
         fn orphaned_malformed_file_is_silent() {
-            let tmp = TempDir::new().unwrap();
+            let tmp = crate::tempdir().unwrap();
             let path = write(&tmp, "[workspace\nmembers = ");
             assert!(
                 orphaned(&path).is_empty(),
@@ -3216,7 +3216,7 @@ replace example.com/legacy => ./vendor/legacy
 
         #[test]
         fn orphaned_absent_file_is_silent() {
-            let tmp = TempDir::new().unwrap();
+            let tmp = crate::tempdir().unwrap();
             assert!(orphaned(&tmp.path().join("Cargo.toml")).is_empty());
         }
     }

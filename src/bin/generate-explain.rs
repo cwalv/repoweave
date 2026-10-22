@@ -5115,6 +5115,20 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The library's `#[cfg(test)]` `tempdir`, which this binary cannot reach: a
+/// temporary directory under the resolved spelling of the temp root, so a
+/// path a test joins onto it is the spelling rwv reports.
+#[cfg(test)]
+fn tempdir() -> std::io::Result<tempfile::TempDir> {
+    static ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    let root = ROOT.get_or_init(|| {
+        let raw = std::env::temp_dir();
+        repoweave::path_spelling::resolve(&raw)
+            .unwrap_or_else(|e| panic!("temp dir {} does not resolve: {e}", raw.display()))
+    });
+    tempfile::TempDir::new_in(root)
+}
+
 #[cfg(test)]
 mod tests {
     /// This binary is its own crate, so it cannot reach the library's
@@ -5200,7 +5214,7 @@ mod tests {
     /// The fixture `make_tree` builds is well-formed and produces no findings.
     #[test]
     fn a_well_formed_fixture_tree_produces_no_findings() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let docs = make_tree(tmp.path());
         let errors = check_assembled_docs(&docs);
         assert!(
@@ -5213,7 +5227,7 @@ mod tests {
     /// A broken relative link in a non-explain doc (how-to/) is reported.
     #[test]
     fn broken_link_in_non_explain_doc_is_reported() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let docs = make_tree(tmp.path());
         // Overwrite the how-to guide with a broken link.
         fs::write(
@@ -5236,7 +5250,7 @@ mod tests {
     /// A broken relative link in an assembled explain doc is also reported.
     #[test]
     fn broken_link_in_explain_doc_is_reported() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let docs = make_tree(tmp.path());
         // Overwrite the assembled explain page with a broken link.
         fs::write(
@@ -5254,7 +5268,7 @@ mod tests {
     /// Template files are excluded — broken links inside them must not be reported.
     #[test]
     fn template_files_are_excluded() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let docs = make_tree(tmp.path());
         // Templates already contain broken links in make_tree; the clean
         // base tree must pass.
@@ -5268,7 +5282,7 @@ mod tests {
     /// Rustdoc bare autolink syntax in an assembled explain doc is rejected.
     #[test]
     fn rustdoc_bare_autolink_in_assembled_doc_is_rejected() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let docs = make_tree(tmp.path());
         fs::write(
             docs.join("reference/explain/verb.md"),
@@ -5291,7 +5305,7 @@ mod tests {
     /// by the link check — rustdoc leakage is only meaningful in assembled output.
     #[test]
     fn rustdoc_bare_autolink_in_non_assembled_doc_is_allowed() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let docs = make_tree(tmp.path());
         // Hand-written docs may legitimately use backtick references like
         // [`Type`] as formatting; only assembled pages must be clean.
@@ -5314,7 +5328,7 @@ mod tests {
     /// produces no findings.
     #[test]
     fn help_flag_ordering_passes_on_well_formed_fixture_tree() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let docs = make_tree(tmp.path());
         let errors = check_help_flag_ordering(&docs);
         assert!(
@@ -5329,7 +5343,7 @@ mod tests {
     /// the exact line `rwv-hzs1.6` reverts to watch the check go red.
     #[test]
     fn rwv_help_verb_ordering_in_explain_page_is_reported() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let docs = make_tree(tmp.path());
         fs::write(
             docs.join("reference/explain/verb.md"),
@@ -5355,7 +5369,7 @@ mod tests {
     /// The fixed spelling, `rwv <verb> --help`, is not flagged.
     #[test]
     fn verb_before_help_flag_is_not_flagged() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let docs = make_tree(tmp.path());
         fs::write(
             docs.join("reference/explain/verb.md"),
@@ -5376,7 +5390,7 @@ mod tests {
     /// checking the assembled output they produce is equivalent.
     #[test]
     fn rwv_help_verb_ordering_in_template_is_excluded() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let docs = make_tree(tmp.path());
         fs::write(
             docs.join("reference/explain/templates/verb.md.tmpl"),
@@ -5657,7 +5671,7 @@ mod tests {
     /// The base appearing only in `schema_url.rs` — passes.
     #[test]
     fn schema_url_scheme_passes_when_base_appears_only_in_schema_url_rs() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let file = tmp.path().join("schema_url.rs");
         fs::write(
             &file,
@@ -5676,7 +5690,7 @@ mod tests {
     /// (seeded-failure proof).
     #[test]
     fn schema_url_scheme_fails_on_hand_spelled_base_elsewhere() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let file = tmp.path().join("fetch.rs");
         fs::write(
             &file,
@@ -5698,7 +5712,7 @@ mod tests {
     /// Allowlist parsing accepts valid entries with inline reasons.
     #[test]
     fn allowlist_parsing_valid_entries() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let path = tmp.path().join("allowlist.txt");
         fs::write(
             &path,
@@ -5713,7 +5727,7 @@ mod tests {
     /// Allowlist parsing rejects an entry missing an inline reason.
     #[test]
     fn allowlist_parsing_rejects_missing_reason() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let path = tmp.path().join("allowlist.txt");
         fs::write(&path, "registry:resolve\n").unwrap();
         let result = load_coverage_allowlist(&path);
@@ -5726,7 +5740,7 @@ mod tests {
     /// Allowlist parsing rejects an unknown check type.
     #[test]
     fn allowlist_parsing_rejects_unknown_check_type() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let path = tmp.path().join("allowlist.txt");
         fs::write(&path, "unknown:foo  # reason\n").unwrap();
         let result = load_coverage_allowlist(&path);
@@ -5738,7 +5752,7 @@ mod tests {
     /// env-input allowlist parsing accepts valid entries with inline reasons.
     #[test]
     fn env_input_allowlist_parsing_valid_entries() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let path = tmp.path().join("env-input-allowlist.txt");
         fs::write(
             &path,
@@ -5752,7 +5766,7 @@ mod tests {
     /// env-input allowlist parsing rejects an entry with no reason comment.
     #[test]
     fn env_input_allowlist_parsing_rejects_missing_reason() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let path = tmp.path().join("env-input-allowlist.txt");
         fs::write(&path, "env-input:MY_VAR\n").unwrap();
         let result = load_env_input_allowlist(&path);
@@ -5765,7 +5779,7 @@ mod tests {
     /// env-input allowlist parsing rejects an unknown check type.
     #[test]
     fn env_input_allowlist_parsing_rejects_unknown_check_type() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let path = tmp.path().join("env-input-allowlist.txt");
         fs::write(&path, "other:MY_VAR  # reason\n").unwrap();
         let result = load_env_input_allowlist(&path);
@@ -5775,7 +5789,7 @@ mod tests {
     /// A src dir with no env reads passes the check.
     #[test]
     fn env_input_check_passes_with_no_reads() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let src = tmp.path().join("src");
         fs::create_dir_all(&src).unwrap();
         fs::write(src.join("lib.rs"), "pub fn hello() {}\n").unwrap();
@@ -5791,7 +5805,7 @@ mod tests {
     /// An allowlisted env read does not produce an error.
     #[test]
     fn env_input_check_passes_with_allowlisted_read() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let src = tmp.path().join("src");
         fs::create_dir_all(&src).unwrap();
         fs::write(
@@ -5816,7 +5830,7 @@ mod tests {
     /// test, a check that never fires is indistinguishable from a correct check.
     #[test]
     fn env_input_check_fails_on_unlisted_read() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let src = tmp.path().join("src");
         fs::create_dir_all(&src).unwrap();
         fs::write(
@@ -5847,7 +5861,7 @@ mod tests {
     /// spawn. A check that never fires is indistinguishable from a correct one.
     #[test]
     fn vcs_seam_check_fails_on_a_raw_git_spawn() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let src = tmp.path().join("src");
         fs::create_dir_all(&src).unwrap();
         fs::write(
@@ -5875,7 +5889,7 @@ mod tests {
     /// is not a converted call site.
     #[test]
     fn vcs_seam_check_fails_on_a_minted_backend() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let src = tmp.path().join("src");
         fs::create_dir_all(&src).unwrap();
         fs::write(
@@ -5905,7 +5919,7 @@ mod tests {
     /// working check.
     #[test]
     fn vcs_seam_check_fails_on_each_on_disk_layout_shape() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let src = tmp.path().join("src");
         fs::create_dir_all(&src).unwrap();
         fs::write(
@@ -5939,7 +5953,7 @@ mod tests {
     /// the same way.
     #[test]
     fn vcs_seam_check_ignores_url_suffixes_and_working_tree_files() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let src = tmp.path().join("src");
         fs::create_dir_all(&src).unwrap();
         fs::write(
@@ -5963,7 +5977,7 @@ mod tests {
     /// `src/git/` are the seam itself.
     #[test]
     fn vcs_seam_check_allows_the_resolver_and_the_backend_module() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let src = tmp.path().join("src");
         fs::create_dir_all(src.join("git")).unwrap();
         fs::write(
@@ -5994,7 +6008,7 @@ mod tests {
     /// `pub` for. The boundary is any test module, not one named `tests`.
     #[test]
     fn vcs_seam_check_excludes_test_modules_under_any_name() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let src = tmp.path().join("src");
         fs::create_dir_all(&src).unwrap();
         fs::write(
@@ -6018,7 +6032,7 @@ mod tests {
     /// env reads inside a `#[cfg(test)] mod tests` block are excluded.
     #[test]
     fn env_input_check_excludes_test_module_reads() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let src = tmp.path().join("src");
         fs::create_dir_all(&src).unwrap();
         // Production code has no env reads; test module has one.
@@ -6047,7 +6061,7 @@ mod tests {
     /// unescaped form. These two write them the ordinary way.
     #[test]
     fn env_input_check_excludes_reads_in_the_windows_that_used_to_leak() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let src = tmp.path().join("src");
         fs::create_dir_all(&src).unwrap();
         // A prose mention of the attribute below the real declaration.
@@ -6085,7 +6099,7 @@ mod tests {
     /// env reads on comment lines are excluded.
     #[test]
     fn env_input_check_excludes_comment_lines() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let src = tmp.path().join("src");
         fs::create_dir_all(&src).unwrap();
         // The env read is on a comment line — must not fire.
@@ -6108,7 +6122,7 @@ mod tests {
     /// never runs.
     #[test]
     fn consumer_vocabulary_check_fails_on_tl_and_epic() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let src = tmp.path().join("src");
         fs::create_dir_all(&src).unwrap();
         fs::write(
@@ -6138,7 +6152,7 @@ mod tests {
     /// non-alphanumeric characters or a string edge on both sides.
     #[test]
     fn consumer_vocabulary_check_ignores_tl_look_alikes() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let src = tmp.path().join("src");
         fs::create_dir_all(&src).unwrap();
         fs::write(
@@ -6158,7 +6172,7 @@ mod tests {
     /// with no `src/` present at all, must still be reported.
     #[test]
     fn consumer_vocabulary_check_reaches_tests_dir() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let tests_dir = tmp.path().join("tests");
         fs::create_dir_all(&tests_dir).unwrap();
         fs::write(
@@ -6206,7 +6220,7 @@ mod tests {
     /// The actual violation this gate closed was in `scripts/ci-local.sh`.
     #[test]
     fn consumer_vocabulary_check_reaches_scripts_dir() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let scripts = tmp.path().join("scripts");
         fs::create_dir_all(&scripts).unwrap();
         fs::write(
@@ -6231,7 +6245,7 @@ mod tests {
     /// file has no referent for consumer words.
     #[test]
     fn consumer_vocabulary_check_reaches_githooks_dir() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let hooks = tmp.path().join(".githooks");
         fs::create_dir_all(&hooks).unwrap();
         fs::write(
@@ -6256,7 +6270,7 @@ mod tests {
     /// `run:` fields are operator-facing text.
     #[test]
     fn consumer_vocabulary_check_reaches_github_workflows_dir() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let workflows = tmp.path().join(".github/workflows");
         fs::create_dir_all(&workflows).unwrap();
         fs::write(
@@ -6324,7 +6338,7 @@ mod tests {
     /// plants a hit and asserts on it.
     #[test]
     fn foreign_vocabulary_check_fails_on_seeded_rig_hit() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let docs = tmp.path().join("docs");
         fs::create_dir_all(&docs).unwrap();
         fs::write(docs.join("deploy.md"), "Ship it through the rig.\n").unwrap();
@@ -6341,7 +6355,7 @@ mod tests {
     /// for the `rig` entry specifically.
     #[test]
     fn foreign_vocabulary_check_ignores_rig_look_alikes() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let docs = tmp.path().join("docs");
         fs::create_dir_all(&docs).unwrap();
         fs::write(
@@ -6361,7 +6375,7 @@ mod tests {
     /// does and had no test at all before this.
     #[test]
     fn foreign_vocabulary_check_fails_on_seeded_multiword_hit() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let docs = tmp.path().join("docs");
         fs::create_dir_all(&docs).unwrap();
         fs::write(docs.join("deploy.md"), "Deployed from the Gas City rig.\n").unwrap();
@@ -6380,7 +6394,7 @@ mod tests {
     /// word of the entry on its own.
     #[test]
     fn foreign_vocabulary_check_multiword_entry_respects_word_boundary() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let docs = tmp.path().join("docs");
         fs::create_dir_all(&docs).unwrap();
         fs::write(
@@ -6404,7 +6418,7 @@ mod tests {
     /// `scripts/` root is in scope.
     #[test]
     fn foreign_vocabulary_check_reaches_scripts_dir() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let scripts = tmp.path().join("scripts");
         fs::create_dir_all(&scripts).unwrap();
         fs::write(
@@ -6433,7 +6447,7 @@ mod tests {
     #[test]
     fn tracker_id_check_fails_on_fo_prefixed_id() {
         let planted_id = format!("{}-{}", "fo", "ab12cd.3");
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let src = tmp.path().join("src");
         fs::create_dir_all(&src).unwrap();
         fs::write(
@@ -6453,7 +6467,7 @@ mod tests {
     #[test]
     fn tracker_id_check_fails_on_review_shorthand() {
         let planted = format!("{} {}", "Correction", "4");
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let src = tmp.path().join("src");
         fs::create_dir_all(&src).unwrap();
         fs::write(
@@ -6475,7 +6489,7 @@ mod tests {
     #[test]
     fn tracker_id_check_reaches_tests_dir() {
         let planted_id = format!("{}-{}", "fo", "ab12cd.3");
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let tests_dir = tmp.path().join("tests");
         fs::create_dir_all(&tests_dir).unwrap();
         fs::write(
@@ -6501,7 +6515,7 @@ mod tests {
     #[test]
     fn tracker_id_check_reaches_root_level_md() {
         let planted_id = format!("{}-{}", "fo", "ab12cd.3");
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         fs::write(
             tmp.path().join("CLAUDE.md"),
             format!("Banned everywhere, per {planted_id}.\n"),
@@ -6524,7 +6538,7 @@ mod tests {
     #[test]
     fn tracker_id_check_reaches_root_level_rs() {
         let planted_id = format!("{}-{}", "fo", "ab12cd.3");
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         fs::write(
             tmp.path().join("build.rs"),
             format!("// Regression per {planted_id}.\nfn main() {{}}\n"),
@@ -6548,7 +6562,7 @@ mod tests {
     #[test]
     fn tracker_id_check_reaches_root_level_toml() {
         let planted_id = format!("{}-{}", "fo", "ab12cd.3");
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         fs::write(
             tmp.path().join("Cargo.toml"),
             format!("# Added for {planted_id}.\nserde = \"1\"\n"),
@@ -6571,7 +6585,7 @@ mod tests {
     #[test]
     fn tracker_id_check_reaches_docs_md() {
         let planted_id = format!("{}-{}", "fo", "ab12cd.3");
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let docs = tmp.path().join("docs");
         fs::create_dir_all(&docs).unwrap();
         fs::write(
@@ -6599,7 +6613,7 @@ mod tests {
     #[test]
     fn tracker_id_check_reaches_scripts_dir() {
         let planted_id = format!("{}-{}", "fo", "ab12cd.3");
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let scripts = tmp.path().join("scripts");
         fs::create_dir_all(&scripts).unwrap();
         fs::write(
@@ -6624,7 +6638,7 @@ mod tests {
     #[test]
     fn tracker_id_check_reaches_github_workflows_dir() {
         let planted_id = format!("{}-{}", "fo", "ab12cd.3");
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let workflows = tmp.path().join(".github/workflows");
         fs::create_dir_all(&workflows).unwrap();
         fs::write(
@@ -6656,7 +6670,7 @@ mod tests {
     fn tracker_id_check_fails_on_identifier_spelled_id() {
         let module_id = format!("{}_{}_3", "fo", "ab12cd");
         let fn_id = format!("{}_{}", "fo", "ef34gh");
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let tests_dir = tmp.path().join("tests");
         fs::create_dir_all(&tests_dir).unwrap();
         fs::write(
@@ -6691,7 +6705,7 @@ mod tests {
     fn tracker_id_check_fails_on_retired_doc_claim_id() {
         let short = format!("project-{}-{}", "reporoot", "201");
         let long = format!("project-{}-{}", "reporoot", "85h9");
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let tests_dir = tmp.path().join("tests");
         fs::create_dir_all(&tests_dir).unwrap();
         fs::write(
@@ -6730,7 +6744,7 @@ mod tests {
         let hyphen_control = format!("{}-{}", "fo", "ab12cd");
         let underscore_control = format!("{}_{}", "fo", "ef34gh");
         let claim_control = format!("project-{}-{}", "reporoot", "c3ad");
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let src = tmp.path().join("src");
         fs::create_dir_all(&src).unwrap();
         fs::write(
@@ -6952,7 +6966,7 @@ mod tests {
     ///     is the exemption the gate would be WRONG to drop.
     #[test]
     fn the_citation_gate_now_covers_tests_but_stays_silent_on_fixture_paths() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let root = tmp.path();
         fs::create_dir_all(root.join("src")).unwrap();
         fs::create_dir_all(root.join("tests")).unwrap();
@@ -7017,7 +7031,7 @@ mod tests {
     /// next door, and no set at all reports the one the fixture stands behind.
     #[test]
     fn a_filename_one_test_files_code_names_does_not_exempt_a_citation_in_another() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let root = tmp.path();
         fs::create_dir_all(root.join("src")).unwrap();
         fs::create_dir_all(root.join("tests")).unwrap();
@@ -7141,7 +7155,7 @@ mod tests {
     /// `citation_errors`, plus `extra` files written relative to the repo root
     /// so a fixture can supply whatever a citation is supposed to resolve to.
     fn citation_errors_with(extra: &[(&str, &str)], body: &str) -> Vec<String> {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let root = tmp.path();
         let joints = root.join("docs/explanation/joints");
         fs::create_dir_all(&joints).unwrap();
@@ -7257,7 +7271,7 @@ mod tests {
     /// on the one machine where nobody needs the check.
     #[test]
     fn a_citation_climbing_above_the_repo_root_is_reported() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         fs::write(tmp.path().join("design.md"), "# design\n").unwrap();
         let root = tmp.path().join("repo");
         let src = root.join("src");
@@ -7386,7 +7400,7 @@ mod tests {
     /// live citations along with the fixtures.
     #[test]
     fn this_gates_own_fixtures_are_exempt_and_its_production_comments_are_not() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let root = tmp.path();
         let dir = root.join("src/bin");
         fs::create_dir_all(&dir).unwrap();
@@ -7675,7 +7689,7 @@ mod tests {
     /// content it is meant to reject, not merely stay quiet on a clean tree.
     #[test]
     fn internals_path_on_assembled_explain_page_is_reported() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let root = tmp.path();
         write_minimal_clean_summary(root);
         let explain = root.join("docs/reference/explain");
@@ -7696,7 +7710,7 @@ mod tests {
     /// A `docs/internals/` reference embedded in a generated schema is caught.
     #[test]
     fn internals_path_in_generated_schema_is_reported() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let root = tmp.path();
         write_minimal_clean_summary(root);
         let schemas = root.join("docs/reference/schemas");
@@ -7719,7 +7733,7 @@ mod tests {
     /// scans only assembled output.
     #[test]
     fn internals_path_in_template_is_out_of_scope() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let root = tmp.path();
         write_minimal_clean_summary(root);
         let templates = root.join("docs/reference/explain/templates");
@@ -7742,7 +7756,7 @@ mod tests {
     /// scope.
     #[test]
     fn clean_operator_surfaces_are_allowed() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let root = tmp.path();
         write_minimal_clean_summary(root);
         let explain = root.join("docs/reference/explain");
@@ -7775,7 +7789,7 @@ mod tests {
     /// vacuously.
     #[test]
     fn internals_path_on_summary_listed_page_is_reported() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let root = tmp.path();
         let docs = root.join("docs");
         fs::create_dir_all(docs.join("how-to")).unwrap();
@@ -7820,7 +7834,7 @@ mod tests {
     /// would be reported for.
     #[test]
     fn readme_and_architecture_internals_mentions_are_out_of_scope() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let root = tmp.path();
         write_minimal_clean_summary(root);
         fs::write(
@@ -7846,7 +7860,7 @@ mod tests {
     /// scanning nothing.
     #[test]
     fn zero_summary_pages_is_a_reported_failure() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let root = tmp.path();
         fs::create_dir_all(root.join("docs/reference/explain")).unwrap();
         // No docs/SUMMARY.md at all.
@@ -7864,7 +7878,7 @@ mod tests {
     /// not survive into the resolved path.
     #[test]
     fn collect_summary_listed_pages_parses_nested_and_skips_non_pages() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let root = tmp.path();
         let docs = root.join("docs");
         fs::create_dir_all(docs.join("reference/integrations")).unwrap();
@@ -7896,7 +7910,7 @@ mod tests {
     /// findings. The identifier set is built from the same file, so a fixture
     /// declares the code it wants to be believed about.
     fn symbol_errors(body: &str) -> Vec<String> {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let root = tmp.path();
         let src = root.join("src");
         fs::create_dir_all(&src).unwrap();
@@ -8222,7 +8236,7 @@ mod tests {
 
     #[test]
     fn clean_prose_tree_passes() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let help = write_minimal_prose_tree(tmp.path());
         let errors = check_vocabulary_and_spelling(tmp.path(), &help);
         assert!(errors.is_empty(), "got:\n{}", errors.join("\n"));
@@ -8233,7 +8247,7 @@ mod tests {
     /// content rather than the file.
     #[test]
     fn banned_synonym_on_summary_listed_page_is_reported() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let root = tmp.path();
         let help = write_minimal_prose_tree(root);
         write_at(
@@ -8262,7 +8276,7 @@ mod tests {
     /// finding names the line it starts on — the line an author edits.
     #[test]
     fn wrapped_synonym_is_reported_at_the_line_it_starts() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let root = tmp.path();
         let help = write_minimal_prose_tree(root);
         write_at(
@@ -8283,7 +8297,7 @@ mod tests {
     /// the gate reads templates as well as what is generated from them.
     #[test]
     fn british_spelling_in_explain_template_is_reported() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let root = tmp.path();
         let help = write_minimal_prose_tree(root);
         write_at(
@@ -8305,7 +8319,7 @@ mod tests {
     /// served, each reported under its own name.
     #[test]
     fn banned_terms_in_generated_schema_and_help_are_reported() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let root = tmp.path();
         let mut help = write_minimal_prose_tree(root);
         write_at(
@@ -8331,7 +8345,7 @@ mod tests {
     /// module answer to spelling only.
     #[test]
     fn src_message_text_is_held_to_the_vocabulary() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let root = tmp.path();
         let help = write_minimal_prose_tree(root);
         write_at(
@@ -8359,7 +8373,7 @@ mod tests {
     /// and a maintainer page under `docs/internals/`.
     #[test]
     fn spelling_reaches_comments_tests_and_internals() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let root = tmp.path();
         let help = write_minimal_prose_tree(root);
         write_at(
@@ -8398,7 +8412,7 @@ mod tests {
     /// workspace root, `git-repo`'s manifest repository, and identifiers.
     #[test]
     fn look_alikes_are_not_reported() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let root = tmp.path();
         let help = write_minimal_prose_tree(root);
         write_at(
@@ -8424,7 +8438,7 @@ mod tests {
     /// `CLAUDE.md` states both rules, so it names what they ban.
     #[test]
     fn claude_md_is_out_of_scope() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let root = tmp.path();
         let help = write_minimal_prose_tree(root);
         write_at(root, "CLAUDE.md", "Not \"manifest repo\"; not whilst.\n");
@@ -8435,7 +8449,7 @@ mod tests {
     /// Non-vacuity: every surface class that yields nothing is a finding.
     #[test]
     fn empty_surface_classes_are_reported() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let errors = check_vocabulary_and_spelling(tmp.path(), &[]);
         let (_, population) = vocabulary_and_spelling_texts(tmp.path(), &[]);
         assert_eq!(
@@ -8453,7 +8467,7 @@ mod tests {
     /// scan; a spelling anywhere else in it is still reported.
     #[test]
     fn self_table_and_test_module_are_masked() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let root = tmp.path();
         let help = write_minimal_prose_tree(root);
         write_at(
@@ -8525,7 +8539,7 @@ mod tests {
     /// `body` as the one page a temp tree's `docs/SUMMARY.md` lists, scanned
     /// against this repository's vocabulary and clap tree.
     fn scan_page(body: &str) -> (Vec<String>, DocTokenPopulation) {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         write_at(
             tmp.path(),
             "docs/SUMMARY.md",
@@ -8841,7 +8855,7 @@ mod tests {
     }
 
     fn plugin_tree(files: &[(&str, &str)]) -> tempfile::TempDir {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         for (name, body) in files {
             let path = tmp.path().join(name);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -8923,7 +8937,7 @@ mod tests {
 
     #[test]
     fn plugin_boundary_refuses_a_missing_directory_rather_than_passing_it() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = crate::tempdir().expect("tempdir");
         let errors = check_plugin_library_boundary(&tmp.path().join("absent"), LIBRARY_CRATE);
         assert_eq!(errors.len(), 1);
         assert!(errors[0].contains("not a directory"), "{}", errors[0]);

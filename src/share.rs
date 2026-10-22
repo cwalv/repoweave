@@ -779,7 +779,7 @@ mod tests {
         /// A primary whose project gives [`REPO`] the role `role`, and whose
         /// checkouts write line endings as `endings` says.
         fn listing(endings: LineEndings, files: &[(&str, &str)], role: Role) -> Self {
-            let tmp = tempfile::tempdir().unwrap();
+            let tmp = crate::tempdir().unwrap();
             // git reports worktree paths resolved, so the fakes must key on the
             // same spelling (macOS temp dirs sit behind the /var symlink).
             let root = resolve(tmp.path()).unwrap();

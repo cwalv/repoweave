@@ -277,14 +277,13 @@ mod tests {
     use crate::manifest::{IntegrationConfig, ProjectName};
     use crate::workspace::WorkspaceSession;
     use std::collections::HashMap;
-    use tempfile::TempDir;
 
     /// The `packages:` list rwv authored while it had members must not outlive
     /// them: an emptied membership strips it, and reports it until something
     /// does.
     #[test]
     fn emptied_membership_strips_the_marked_packages_list() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         let project_dir = root.join("projects/test-project");
         std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
@@ -318,7 +317,7 @@ mod tests {
 
     #[test]
     fn emptied_membership_leaves_an_unmarked_list_alone() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         let project_dir = root.join("projects/test-project");
         std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
@@ -348,7 +347,7 @@ mod tests {
 
     #[test]
     fn read_pnpm_packages_globs_absent_file_is_none() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         assert_eq!(
             read_pnpm_packages_globs(&tmp.path().join("pnpm-workspace.yaml")),
             None
@@ -357,14 +356,14 @@ mod tests {
 
     #[test]
     fn read_pnpm_packages_globs_unreadable_path_is_none() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         // A directory is not readable as file text — read_to_string fails.
         assert_eq!(read_pnpm_packages_globs(tmp.path()), None);
     }
 
     #[test]
     fn read_pnpm_packages_globs_invalid_yaml_is_none() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let path = tmp.path().join("pnpm-workspace.yaml");
         // Unterminated flow sequence.
         std::fs::write(&path, "packages: [foo, bar\n").unwrap();
@@ -373,7 +372,7 @@ mod tests {
 
     #[test]
     fn read_pnpm_packages_globs_no_packages_key_is_none() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let path = tmp.path().join("pnpm-workspace.yaml");
         std::fs::write(&path, "catalog:\n  react: ^18\n").unwrap();
         assert_eq!(read_pnpm_packages_globs(&path), None);
@@ -381,7 +380,7 @@ mod tests {
 
     #[test]
     fn read_pnpm_packages_globs_block_style() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let path = tmp.path().join("pnpm-workspace.yaml");
         std::fs::write(&path, "packages:\n  - packages/*\n  - apps/web\n").unwrap();
         assert_eq!(
@@ -392,7 +391,7 @@ mod tests {
 
     #[test]
     fn read_pnpm_packages_globs_flow_style() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let path = tmp.path().join("pnpm-workspace.yaml");
         std::fs::write(&path, "packages: [\"packages/*\", \"apps/web\"]\n").unwrap();
         assert_eq!(
@@ -403,7 +402,7 @@ mod tests {
 
     #[test]
     fn read_pnpm_packages_globs_skips_non_string_entries() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let path = tmp.path().join("pnpm-workspace.yaml");
         std::fs::write(&path, "packages:\n  - packages/*\n  - 42\n  - true\n").unwrap();
         assert_eq!(

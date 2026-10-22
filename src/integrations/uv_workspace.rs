@@ -645,7 +645,7 @@ mod tests {
     /// does.
     #[test]
     fn emptied_membership_strips_the_marked_members_list() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         let path = write_file(
             &tmp,
@@ -682,7 +682,7 @@ mod tests {
 
     #[test]
     fn emptied_membership_leaves_an_unmarked_members_list_alone() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         let hand_written = "[tool.uv.workspace]\nmembers = [\"github/test/pkg\"]\n";
         let path = write_file(&tmp, "projects/test-project/pyproject.toml", hand_written);
@@ -741,7 +741,7 @@ mod tests {
     /// requires to reproduce.
     #[test]
     fn set_workspace_sources_keys_by_project_name_not_dir_basename() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -774,7 +774,7 @@ mod tests {
     /// than keyed by their directory basename — the loud-fallback contract.
     #[test]
     fn set_workspace_sources_skips_member_when_name_unreadable() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -827,7 +827,7 @@ mod tests {
     /// just stripped.
     #[test]
     fn strip_then_regen_converges_wrong_basename_key_to_project_name() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -874,7 +874,7 @@ py-server = { workspace = true }
     /// cycle pinned above, not a plain re-run.
     #[test]
     fn set_workspace_sources_alone_does_not_clear_a_stale_key() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
 
         write_file(
@@ -912,7 +912,7 @@ py-server = { workspace = true }
 
     #[test]
     fn strip_workspace_sources_removes_workspace_true_leaves_git() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let path = write_file(
             &tmp,
             "pyproject.toml",
@@ -945,7 +945,7 @@ some-private-lib = { git = "https://example.com/foo.git" }
 
     #[test]
     fn strip_workspace_sources_deletes_file_when_only_workspace_sources_remain() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let path = write_file(
             &tmp,
             "pyproject.toml",
@@ -961,7 +961,7 @@ some-private-lib = { git = "https://example.com/foo.git" }
 
     #[test]
     fn strip_workspace_sources_noop_when_no_workspace_true() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let content = "[project]\nname = \"acme\"\n\n[tool.uv.sources]\nfoo = { git = \"x\" }\n";
         let path = write_file(&tmp, "pyproject.toml", content);
 
@@ -979,7 +979,7 @@ some-private-lib = { git = "https://example.com/foo.git" }
     /// `server`/`web` entries removed.
     #[test]
     fn deactivate_leaves_unmarked_workspace_sources_untouched() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let content = r#"[project]
 name = "acme"
 version = "0.1.0"
@@ -1010,7 +1010,7 @@ some-private-lib = { git = "https://example.com/foo.git" }
     /// document empty, and `remove_file`s user-authored content.
     #[test]
     fn deactivate_does_not_delete_unmarked_file_of_only_workspace_sources() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let content = "[tool.uv.sources]\nserver = { workspace = true }\n";
         let path = write_file(&tmp, "pyproject.toml", content);
 
@@ -1032,7 +1032,7 @@ some-private-lib = { git = "https://example.com/foo.git" }
     /// sources and user sections survive.
     #[test]
     fn deactivate_still_strips_when_marked() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let path = write_file(
             &tmp,
             "pyproject.toml",
@@ -1075,7 +1075,7 @@ some-private-lib = { git = "https://example.com/foo.git" }
     /// gate must not turn that into a leftover empty file.
     #[test]
     fn deactivate_still_deletes_marked_file_with_nothing_else_in_it() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let path = write_file(
             &tmp,
             "pyproject.toml",

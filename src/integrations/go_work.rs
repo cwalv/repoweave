@@ -880,7 +880,6 @@ mod tests {
     use crate::manifest::{Manifest, ProjectName, Role};
     use crate::workspace::WorkspaceSession;
     use std::collections::HashMap;
-    use tempfile::TempDir;
 
     // Force the hand-parse fallback for all tests in this module.
     // This is idempotent and deterministic: each test body calls this before
@@ -924,7 +923,7 @@ mod tests {
     fn scenario1_adding_repo_preserves_replace_and_go_version() {
         force_fallback();
 
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         let project_dir = root.join("projects/test-project");
         std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
@@ -999,7 +998,7 @@ mod tests {
     fn scenario2_removing_repo_keeps_toolchain_and_godebug() {
         force_fallback();
 
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         let project_dir = root.join("projects/test-project");
         std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
@@ -1074,7 +1073,7 @@ mod tests {
     fn scenario3_deactivate_strips_use_keeps_replace() {
         force_fallback();
 
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
 
         let seed = concat!(
@@ -1131,7 +1130,7 @@ mod tests {
     fn scenario4_deactivate_deletes_when_only_rwv_content() {
         force_fallback();
 
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
 
         // go 1.26 + use block only (no replace/godebug/toolchain).
@@ -1164,7 +1163,7 @@ mod tests {
     fn deactivate_no_marker_is_noop() {
         force_fallback();
 
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
 
         // Hand-written go.work with no marker.
@@ -1195,7 +1194,7 @@ mod tests {
     fn user_held_activate_noop_and_verify_returns_issue() {
         force_fallback();
 
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         let project_dir = root.join("projects/test-project");
         std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
@@ -1253,7 +1252,7 @@ mod tests {
     fn go_version_config_writes_go_line_in_fallback() {
         force_fallback();
 
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         let project_dir = root.join("projects/test-project");
         std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
@@ -1290,7 +1289,7 @@ mod tests {
     ) -> (Vec<Issue>, bool) {
         force_fallback();
 
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         let project_dir = root.join("projects/test-project");
         std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
@@ -1352,7 +1351,7 @@ mod tests {
     fn regression_no_downgrade_defaultonly_preserves_existing_go_line() {
         force_fallback();
 
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         let project_dir = root.join("projects/test-project");
         std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
@@ -1487,7 +1486,7 @@ mod tests {
             return;
         }
 
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         seed_pin_below_member(root);
 
@@ -1529,7 +1528,7 @@ mod tests {
             return;
         }
 
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         let project_dir = root.join("projects/test-project");
         std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
@@ -1623,7 +1622,7 @@ mod tests {
 
     /// Seed a fresh temp root, activate in it, and return the resulting go.work.
     fn activate_fresh(seed: impl Fn(&Path)) -> String {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         seed(tmp.path());
         activate_in(tmp.path());
         std::fs::read_to_string(tmp.path().join("projects/test-project/go.work")).unwrap()
@@ -1657,7 +1656,7 @@ mod tests {
             return;
         }
 
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         seed_member_without_go_directive(root);
 
@@ -1685,7 +1684,7 @@ mod tests {
     fn greenfield_without_go_version_writes_no_go_line_in_fallback() {
         force_fallback();
 
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         seed_member_without_go_directive(root);
 
@@ -1717,7 +1716,7 @@ mod tests {
             return;
         }
 
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         seed_pin_below_member(root);
         write_file(
@@ -1747,7 +1746,7 @@ mod tests {
     fn greenfield_go_line_written_from_max_go_version() {
         force_fallback();
 
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         let project_dir = root.join("projects/test-project");
         std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
@@ -1788,7 +1787,7 @@ mod tests {
     fn existing_without_go_line_defaultonly_writes_default() {
         force_fallback();
 
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         let project_dir = root.join("projects/test-project");
         std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
@@ -1838,7 +1837,7 @@ mod tests {
 
     #[test]
     fn go_directive_default_only_drift_is_clean() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         let project_dir = root.join("projects/test-project");
         std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
@@ -1880,7 +1879,7 @@ mod tests {
 
     #[test]
     fn managed_files_split() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
 
         touch(root, "github/test/repoweave/go.mod");
@@ -1978,7 +1977,7 @@ mod tests {
         go_work_version: &str,
         members: &[(&str, &str)],
     ) -> Option<MemberIncompatibility> {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         seed_multi_member_workspace(root, go_work_version, members);
 
@@ -1992,7 +1991,7 @@ mod tests {
 
     /// Run the predicate over a one-member workspace and return the finding.
     fn probe(go_work_version: Option<&str>, member_version: &str) -> Option<MemberIncompatibility> {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         seed_go_workspace(root, go_work_version, member_version);
 
@@ -2187,7 +2186,7 @@ mod tests {
     /// drift_is_clean` pins the CLEAN half on its own.
     #[test]
     fn member_incompatibility_coexists_with_clean_verify() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let root = tmp.path();
         seed_go_workspace(root, Some("1.21"), "1.26");
 

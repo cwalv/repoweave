@@ -1056,7 +1056,7 @@ mod tests {
     /// is the wedge every later write to this index would hit.
     #[test]
     fn a_finished_write_leaves_no_claim_behind() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
 
@@ -1092,7 +1092,7 @@ mod tests {
     fn a_release_that_keeps_failing_is_reported_with_the_file_to_delete() {
         use std::os::unix::fs::PermissionsExt;
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
         let project_dir = primary.join("projects/web-app");
@@ -1126,7 +1126,7 @@ mod tests {
     /// look like a fault.
     #[test]
     fn an_abandoned_claim_refuses_later_writes_and_names_what_to_remove() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
         let claim = claim_path(&primary, &project);
@@ -1174,7 +1174,7 @@ mod tests {
 
     #[test]
     fn read_missing_returns_none() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
 
@@ -1184,7 +1184,7 @@ mod tests {
 
     #[test]
     fn write_then_read_round_trips() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
 
@@ -1210,7 +1210,7 @@ mod tests {
 
     #[test]
     fn record_workweave_seeds_index_when_missing() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
 
@@ -1234,7 +1234,7 @@ mod tests {
 
     #[test]
     fn forget_workweave_removes_entry() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
 
@@ -1270,7 +1270,7 @@ mod tests {
 
     #[test]
     fn forget_workweave_noop_when_missing() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
 
@@ -1285,7 +1285,7 @@ mod tests {
 
     #[test]
     fn set_container_preserves_existing_entries() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
 
@@ -1313,7 +1313,7 @@ mod tests {
 
     #[test]
     fn ensure_ignore_entry_creates_gitignore_when_missing() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
 
@@ -1324,7 +1324,7 @@ mod tests {
 
     #[test]
     fn ensure_ignore_entry_idempotent_when_present() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
 
@@ -1347,7 +1347,7 @@ mod tests {
 
     #[test]
     fn write_ensures_ignore_entry() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
 
@@ -1370,7 +1370,7 @@ mod tests {
     /// path of a lock file nobody asked about.
     #[test]
     fn writing_without_a_project_dir_names_the_missing_directory() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         // Note: no projects/web-app dir.
         let project = ProjectName::new("web-app").unwrap();
@@ -1390,7 +1390,7 @@ mod tests {
 
     #[test]
     fn resolve_container_prefers_recorded_over_default() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
 
@@ -1404,7 +1404,7 @@ mod tests {
 
     #[test]
     fn resolve_container_falls_back_to_default_when_no_index() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
 
@@ -1424,7 +1424,7 @@ mod tests {
     /// path can reach.
     #[test]
     fn a_recorded_path_resolves_a_symlinked_spelling() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let real = tmp.path().join("real");
         std::fs::create_dir_all(&real).unwrap();
         let link = tmp.path().join("link");
@@ -1463,7 +1463,7 @@ mod tests {
     /// process would have.
     #[test]
     fn crash_after_the_receipt_and_before_the_ref_leaves_a_retractable_receipt() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
         let store = make_store(tmp.path(), "weave/github/acme/server");
@@ -1511,7 +1511,7 @@ mod tests {
     /// answer for this name — ownership is per exact name, not per prefix.
     #[test]
     fn a_name_with_no_receipt_of_its_own_is_not_owned() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
         let store = make_store(tmp.path(), "weave/github/acme/server");
@@ -1540,7 +1540,7 @@ mod tests {
     /// One name, two stores, two refs. The key is the pair.
     #[test]
     fn receipts_key_on_the_store_as_well_as_the_name() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
         let server = make_store(tmp.path(), "weave/github/acme/server");
@@ -1584,7 +1584,7 @@ mod tests {
     /// nothing downstream can recover it.
     #[test]
     fn concurrent_receipt_writers_lose_nothing() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
         let stores: Vec<PathBuf> = (0..8)
@@ -1621,7 +1621,7 @@ mod tests {
     /// ones that directory left behind.
     #[test]
     fn receipts_outlive_the_workweave_directory() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
         let store = make_store(tmp.path(), "weave/github/acme/server");
@@ -1663,7 +1663,7 @@ mod tests {
     /// "untouched since rwv created it" and authorize destroying them.
     #[test]
     fn re_recording_keeps_the_first_created_at() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
         let store = make_store(tmp.path(), "weave/github/acme/server");
@@ -1689,7 +1689,7 @@ mod tests {
 
     #[test]
     fn recording_against_a_store_that_is_not_there_refuses() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
         let absent = tmp.path().join("weave/github/acme/ghost");
@@ -1712,7 +1712,7 @@ mod tests {
     /// unrelated index write must carry the receipts through.
     #[test]
     fn an_unrelated_index_write_preserves_receipts() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
         let store = make_store(tmp.path(), "weave/github/acme/server");
@@ -1759,7 +1759,7 @@ mod tests {
 
     #[test]
     fn a_legacy_index_refuses_a_receipt_and_names_the_fix() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
         let store = make_store(tmp.path(), "weave/github/acme/server");
@@ -1794,7 +1794,7 @@ mod tests {
 
     #[test]
     fn retracting_against_a_legacy_index_does_not_migrate_it() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
         let store = make_store(tmp.path(), "weave/github/acme/server");
@@ -1812,7 +1812,7 @@ mod tests {
 
     #[test]
     fn migrating_a_legacy_index_adds_an_empty_registry_and_keeps_placements() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
         let store = make_store(tmp.path(), "weave/github/acme/server");
@@ -1852,7 +1852,7 @@ mod tests {
 
     #[test]
     fn a_fresh_index_is_not_a_legacy_one() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
 
@@ -1877,7 +1877,7 @@ mod tests {
     /// ever match — that would read as "this ref moved" forever.
     #[test]
     fn a_malformed_recorded_revision_is_refused_not_laundered() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
         let store = make_store(tmp.path(), "weave/github/acme/server");
@@ -1907,7 +1907,7 @@ mod tests {
     /// would strand the ref it accounts for.
     #[test]
     fn a_symlinked_spelling_finds_the_same_receipt() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
         let store = make_store(tmp.path(), "weave/github/acme/server");
@@ -1936,7 +1936,7 @@ mod tests {
     /// accounts for with no way to retract or destroy it.
     #[test]
     fn a_receipt_recorded_under_a_non_canonical_spelling_is_still_found() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
         let store = make_store(tmp.path(), "weave/github/acme/server");
@@ -1978,7 +1978,7 @@ mod tests {
     fn an_index_write_replaces_the_file_by_rename() {
         use std::os::unix::fs::MetadataExt;
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
         let store = make_store(tmp.path(), "weave/github/acme/server");
@@ -2016,7 +2016,7 @@ mod tests {
     /// index, and the next write must still land.
     #[test]
     fn an_orphan_temp_from_a_crashed_write_changes_nothing() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
         let store = make_store(tmp.path(), "weave/github/acme/server");

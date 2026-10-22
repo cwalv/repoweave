@@ -3473,7 +3473,7 @@ mod tests {
 
     #[test]
     fn unfetched_members_reports_only_the_absent_paths() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         write_member(tmp.path(), "org/lib/crates/core");
         let manifest = "[workspace]\nmembers = [\"org/lib/crates/core\", \"org/lib/crates/cli\"]\n";
         assert_eq!(
@@ -3486,7 +3486,7 @@ mod tests {
     fn unfetched_members_counts_a_dir_without_a_manifest_as_absent() {
         // cargo's precondition is the member's Cargo.toml, not its directory:
         // an empty directory fails identically ("failed to read .../Cargo.toml").
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         std::fs::create_dir_all(tmp.path().join("org/lib/crates/core")).unwrap();
         let manifest = "[workspace]\nmembers = [\"org/lib/crates/core\"]\n";
         assert_eq!(
@@ -3500,7 +3500,7 @@ mod tests {
         // Cargo expands globs and a pattern matching nothing is not an error,
         // so a glob can never be "missing" — reporting one would defer the
         // lockfile for a workspace cargo would have resolved fine.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let manifest = "[workspace]\nmembers = [\"crates/*\"]\n";
         assert!(CargoWorkspace::unfetched_members(manifest, tmp.path()).is_empty());
     }
@@ -3509,13 +3509,13 @@ mod tests {
     fn unfetched_members_defers_to_cargo_on_a_malformed_manifest() {
         // A parse failure is cargo's error to report, not something to
         // reinterpret as absent members.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         assert!(CargoWorkspace::unfetched_members("[workspace", tmp.path()).is_empty());
     }
 
     #[test]
     fn unfetched_members_is_empty_without_a_members_key() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let manifest = "[package]\nname = \"foo\"\n";
         assert!(CargoWorkspace::unfetched_members(manifest, tmp.path()).is_empty());
     }

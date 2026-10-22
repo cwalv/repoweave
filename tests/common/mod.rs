@@ -166,7 +166,7 @@ pub fn resolve_tool_or_skip(tool: &str) -> Option<PathBuf> {
 /// Canonicalizing the root here rather than at each comparison is the point.
 /// A rule applied where paths are compared has to be remembered by every test
 /// anyone adds later; rooted here there is no non-canonical path in the suite
-/// to get wrong. `canonical_temp_root_test.rs` keeps it that way.
+/// to get wrong. `tests/canonical_temp_root_test.rs` keeps it that way.
 ///
 /// Reproduce the macOS geometry on any platform:
 ///

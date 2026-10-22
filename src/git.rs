@@ -4121,7 +4121,7 @@ mod branch_model_tests {
 
     /// A repo on `main` with one commit.
     fn repo() -> tempfile::TempDir {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let p = tmp.path();
         git(p, &["init", "-b", "main"]);
         git(p, &["config", "user.email", "t@t"]);
@@ -4139,7 +4139,7 @@ mod branch_model_tests {
     /// it, so a fixture that merely writes `refs/remotes/origin/x` by hand
     /// would let the birth pass unobserved.
     fn clone_of(origin: &Path) -> (tempfile::TempDir, PathBuf) {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dest = tmp.path().join("clone");
         git(
             tmp.path(),
@@ -4167,7 +4167,7 @@ mod branch_model_tests {
     /// A worktree destination that does not exist yet, inside its own temp
     /// directory so parallel tests cannot collide on it.
     fn worktree_dest() -> (tempfile::TempDir, PathBuf) {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dest = tmp.path().join("wt");
         (tmp, dest)
     }
@@ -4328,7 +4328,7 @@ mod branch_model_tests {
     fn an_unrelated_failure_under_a_hook_shaped_path_is_not_a_hook_rejection() {
         let store = repo();
         let start = GitVcs.head_revision(store.path()).unwrap();
-        let home = tempfile::tempdir().unwrap();
+        let home = crate::tempdir().unwrap();
         let dest = home.path().join("hooks").join("wt");
         std::fs::create_dir_all(&dest).unwrap();
         std::fs::write(dest.join("occupant"), "in the way").unwrap();
@@ -4962,7 +4962,7 @@ mod branch_model_tests {
 
     #[test]
     fn an_unborn_head_yields_no_witness_to_move() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         git(tmp.path(), &["init", "-b", "main"]);
 
         let observed = GitVcs.head_attachment(tmp.path()).unwrap();
@@ -5026,7 +5026,7 @@ mod branch_model_tests {
     /// is refused by git itself, which would make a push test pass or fail
     /// for a reason that has nothing to do with the ref being published.
     fn clone_of_bare_origin() -> (tempfile::TempDir, PathBuf, PathBuf) {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let bare = tmp.path().join("origin.git");
         let seed = tmp.path().join("seed");
         let clone = tmp.path().join("clone");
@@ -5326,7 +5326,7 @@ mod population_tests {
         attributes: &str,
         endings: LineEndings,
     ) -> (tempfile::TempDir, PathBuf) {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let repo = tmp.path().join("repo");
         let p = repo.as_path();
         git(tmp.path(), &["init", "-q", "-b", "main", "repo"]);
@@ -6085,7 +6085,7 @@ mod peer_registration_tests {
 
     impl Fixture {
         fn new() -> Self {
-            let tmp = tempfile::tempdir().unwrap();
+            let tmp = crate::tempdir().unwrap();
             let store = tmp.path().join("store");
             std::fs::create_dir(&store).unwrap();
             git(&store, &["init", "-b", "main"]);

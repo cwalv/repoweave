@@ -307,7 +307,7 @@ mod tests {
 
     #[test]
     fn claude_errors_if_settings_missing() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let path = tmp.path().join("settings.json");
         let result = claude_at_tmp(&path);
         assert!(result.is_err());
@@ -319,7 +319,7 @@ mod tests {
 
     #[test]
     fn claude_adds_hooks_to_empty_settings() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let path = tmp.path().join("settings.json");
         std::fs::write(&path, "{}").unwrap();
 
@@ -358,7 +358,7 @@ mod tests {
     fn claude_does_not_install_hook_scripts() {
         // rwv setup claude no longer installs shell scripts — it registers
         // `rwv workweave --claude-hook` directly in settings.json.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let settings_path = tmp.path().join("settings.json");
         let hooks_dir = tmp.path().join("hooks");
         std::fs::write(&settings_path, "{}").unwrap();
@@ -374,7 +374,7 @@ mod tests {
 
     #[test]
     fn claude_workweave_hooks_registered_in_settings() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let settings_path = tmp.path().join("settings.json");
         std::fs::write(&settings_path, "{}").unwrap();
 
@@ -405,7 +405,7 @@ mod tests {
 
     #[test]
     fn claude_appends_to_existing_catchall() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let path = tmp.path().join("settings.json");
         std::fs::write(
             &path,
@@ -445,7 +445,7 @@ mod tests {
 
     #[test]
     fn claude_idempotent() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let path = tmp.path().join("settings.json");
         std::fs::write(&path, "{}").unwrap();
 
@@ -460,7 +460,7 @@ mod tests {
 
     #[test]
     fn claude_idempotent_across_groups() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let path = tmp.path().join("settings.json");
         // rwv prime already in a non-catch-all group
         std::fs::write(
@@ -494,7 +494,7 @@ mod tests {
 
     #[test]
     fn claude_preserves_other_settings() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let path = tmp.path().join("settings.json");
         std::fs::write(
             &path,
@@ -523,7 +523,7 @@ mod tests {
 
     #[test]
     fn claude_uninstall_removes_rwv_hooks() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let path = tmp.path().join("settings.json");
         // Settings with both rwv hooks and a non-rwv hook (bd prime).
         std::fs::write(
@@ -571,7 +571,7 @@ mod tests {
 
     #[test]
     fn claude_uninstall_cleans_empty_events() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let path = tmp.path().join("settings.json");
         // All hooks in every event are rwv hooks — all event keys should be removed.
         std::fs::write(
@@ -611,7 +611,7 @@ mod tests {
 
     #[test]
     fn claude_uninstall_preserves_other_settings() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let path = tmp.path().join("settings.json");
         std::fs::write(
             &path,
@@ -643,7 +643,7 @@ mod tests {
 
     #[test]
     fn claude_uninstall_noop_when_no_hooks() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let path = tmp.path().join("settings.json");
         std::fs::write(
             &path,

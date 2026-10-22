@@ -1456,7 +1456,7 @@ mod tests {
     #[test]
     fn a_record_with_both_kinds_of_tip_key_is_rewritten_byte_for_byte() {
         let tip = |c: char| c.to_string().repeat(40);
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let place = |name: &str| {
             let dir = tmp.path().join(name);
             std::fs::create_dir(&dir).unwrap();
@@ -1572,7 +1572,7 @@ mod tests {
 
     #[test]
     fn the_strategy_is_written_as_the_token_it_has_always_been() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         for (strategy, token) in [(SyncStrategy::Ff, "ff"), (SyncStrategy::Rebase, "rebase")] {
             let record = OwnerRecord::new_sync(
@@ -1620,7 +1620,7 @@ mod tests {
 
     #[test]
     fn owner_write_read_roundtrip_sync() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_sync(
@@ -1653,7 +1653,7 @@ mod tests {
     fn advanced_tips_populated_roundtrip() {
         // Write a record with advanced_tips populated, read it back, verify the
         // map survives serialization/deserialization unchanged.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let op_id = OpId::new_now();
         let mut record = OwnerRecord::new_sync(
@@ -1685,7 +1685,7 @@ mod tests {
         // write goes through the full struct, so a record missing a key is
         // malformed, not old, and must fail to parse rather than silently
         // filling it in.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let json = r#"{
   "id": "9999999999999999999",
@@ -1714,7 +1714,7 @@ mod tests {
         // The op's project is what abort resolves both of the op's workspaces
         // under. A record without it has no answer that is not a guess at
         // ambient state, so it is malformed rather than defaulted.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let json = r#"{
   "id": "9999999999999999999",
@@ -1744,7 +1744,7 @@ mod tests {
         // widens back into one: a name no `ProjectName` could be built from
         // is a parse error at the boundary rather than a path component
         // assembled later.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let json = r#"{
   "id": "9999999999999999999",
@@ -1791,7 +1791,7 @@ mod tests {
 
     #[test]
     fn wire_record_rejects_an_id_in_the_target_namespace() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         std::fs::write(
             dir.join(OP_STATE_FILE),
@@ -1807,7 +1807,7 @@ mod tests {
 
     #[test]
     fn wire_record_rejects_a_strategy_no_variant_names() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         std::fs::write(
             dir.join(OP_STATE_FILE),
@@ -1825,7 +1825,7 @@ mod tests {
 
     #[test]
     fn wire_record_missing_converged_tips_key_is_rejected() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let json = r#"{
   "id": "9999999999999999999",
@@ -1851,7 +1851,7 @@ mod tests {
 
     #[test]
     fn wire_record_missing_overrides_key_is_rejected() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let json = r#"{
   "id": "9999999999999999999",
@@ -1919,7 +1919,7 @@ mod tests {
         // A converged record serializes with a populated `converged_tips:` and
         // an empty `advanced_tips:` (the swap cleared it) — and reads back as
         // the Converged half. This mirrors the J(relock) crash-matrix state.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let op_id = OpId::new_now();
         let mut record = OwnerRecord::new_sync(
@@ -1972,7 +1972,7 @@ mod tests {
         // From<OwnerRecord> impl always empties the inactive half. The
         // canonicalization always resolves that ambiguity to the replay half,
         // regardless of the recorded `phase`.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let json = r#"{
   "id": "1",
@@ -1998,7 +1998,7 @@ mod tests {
     fn a_tag_name_in_either_tip_slot_is_refused_at_load() {
         let tagged = r#"{"github/a/b": "v2.0"}"#;
         for (advanced, converged) in [(tagged, "{}"), ("{}", tagged)] {
-            let tmp = tempfile::tempdir().unwrap();
+            let tmp = crate::tempdir().unwrap();
             let dir = tmp.path();
             let json = format!(
                 r#"{{"id": "1", "verb": "sync", "strategy": "rebase", "project": "web-app",
@@ -2017,7 +2017,7 @@ mod tests {
 
     #[test]
     fn owner_write_read_roundtrip_sync_to() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_sync_to(
@@ -2038,13 +2038,13 @@ mod tests {
 
     #[test]
     fn read_owner_returns_none_when_absent() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         assert!(read_owner(tmp.path()).unwrap().is_none());
     }
 
     #[test]
     fn clear_owner_removes_file() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_sync(
@@ -2062,7 +2062,7 @@ mod tests {
 
     #[test]
     fn set_phase_updates_owner_file() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_sync(
@@ -2099,7 +2099,7 @@ mod tests {
     fn write_owner_replaces_by_rename_not_in_place() {
         use std::os::unix::fs::MetadataExt;
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let op_id = OpId::new_now();
         let mut record = OwnerRecord::new_sync(
@@ -2154,7 +2154,7 @@ mod tests {
     fn write_owner_failure_leaves_prior_record_recoverable() {
         use std::os::unix::fs::PermissionsExt;
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let op_id = OpId::new_now();
         let original = OwnerRecord::new_sync(
@@ -2197,7 +2197,7 @@ mod tests {
     /// way (a full disk mid-rename, a hand-edited file).
     #[test]
     fn read_owner_rejects_every_truncated_prefix() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_sync(
@@ -2243,7 +2243,7 @@ mod tests {
 
     #[test]
     fn lease_write_read_roundtrip() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let lease = LeaseRecord {
             id: "1234567890".parse().unwrap(),
@@ -2258,7 +2258,7 @@ mod tests {
 
     #[test]
     fn read_lease_returns_none_when_absent() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         assert!(read_lease(tmp.path()).unwrap().is_none());
     }
 
@@ -2269,7 +2269,7 @@ mod tests {
         // derive treats a syntactic `Option<T>` field as optional-on-the-wire
         // unconditionally, so this parses whether or not the attribute is
         // present.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let json = r#"{"id": "1234567890", "owner": "/owner/ws"}"#;
         std::fs::write(dir.join(OP_LEASE_FILE), json).unwrap();
@@ -2279,7 +2279,7 @@ mod tests {
 
     #[test]
     fn clear_lease_removes_file() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let lease = LeaseRecord {
             id: "abc".parse().unwrap(),
@@ -2298,7 +2298,7 @@ mod tests {
 
     #[test]
     fn resolve_owner_from_owner_workspace() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let owner_dir = tmp.path().join("owner");
         std::fs::create_dir_all(&owner_dir).unwrap();
         let op_id = OpId::new_now();
@@ -2318,7 +2318,7 @@ mod tests {
 
     #[test]
     fn resolve_owner_from_lease_workspace_follows_pointer() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let owner_dir = tmp.path().join("owner");
         let lease_dir = tmp.path().join("lease");
         std::fs::create_dir_all(&owner_dir).unwrap();
@@ -2350,7 +2350,7 @@ mod tests {
 
     #[test]
     fn resolve_to_owner_returns_none_when_absent() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         assert!(resolve_to_owner(tmp.path()).unwrap().is_none());
     }
 
@@ -2360,13 +2360,13 @@ mod tests {
 
     #[test]
     fn check_no_op_passes_when_clean() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         assert!(check_no_op_in_progress(&[tmp.path()]).is_ok());
     }
 
     #[test]
     fn check_no_op_fails_when_owner_record_present() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_sync(
@@ -2390,7 +2390,7 @@ mod tests {
 
     #[test]
     fn check_no_op_fails_when_lease_present() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let lease = LeaseRecord {
             id: "some-op-id".parse().unwrap(),
@@ -2420,7 +2420,7 @@ mod tests {
 
     #[test]
     fn check_no_op_owner_refusal_is_the_whole_template() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let op_id = OpId::new_now();
         let mut record = OwnerRecord::new_sync_to(
@@ -2451,7 +2451,7 @@ mod tests {
     /// record, and every field below arrives from there.
     #[test]
     fn check_no_op_lease_refusal_is_the_whole_template() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let owner_dir = tmp.path().join("owner");
         let lease_dir = tmp.path().join("lease");
         std::fs::create_dir_all(&owner_dir).unwrap();
@@ -2498,7 +2498,7 @@ mod tests {
     /// sentence has to tell the operator to supply the owning verb themselves.
     #[test]
     fn check_no_op_dangling_lease_refusal_is_the_whole_template() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let owner = tmp.path().join("nonexistent-owner");
         let lease = LeaseRecord {
@@ -2522,7 +2522,7 @@ mod tests {
 
     #[test]
     fn check_no_op_fails_across_multiple_dirs() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let empty_dir = tmp.path().join("empty");
         let dirty_dir = tmp.path().join("dirty");
         std::fs::create_dir_all(&empty_dir).unwrap();
@@ -2553,7 +2553,7 @@ mod tests {
 
     #[test]
     fn resume_returns_record_for_owner_workspace() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_sync(
@@ -2574,7 +2574,7 @@ mod tests {
 
     #[test]
     fn resume_follows_lease_pointer() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let owner_dir = tmp.path().join("owner");
         let lease_dir = tmp.path().join("lease");
         std::fs::create_dir_all(&owner_dir).unwrap();
@@ -2607,7 +2607,7 @@ mod tests {
 
     #[test]
     fn resume_errors_when_no_op_present() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let err = resume(tmp.path()).unwrap_err().to_string();
         assert!(
             err.contains("no sync"),
@@ -2621,7 +2621,7 @@ mod tests {
 
     #[test]
     fn clear_all_at_removes_both_files() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let op_id = OpId::new_now();
         let record = OwnerRecord::new_sync(
@@ -2694,7 +2694,7 @@ mod tests {
     fn acquire_op_writes_owner_only_for_plain_sync() {
         // Plain `sync` has no lease workspaces — only the owner record is
         // written. This is the minimal-acquisition case.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let owner = tmp.path();
         let op_id = OpId::new_now();
         let record = make_sync_record(&op_id, owner, &PathBuf::from("/src"));
@@ -2711,7 +2711,7 @@ mod tests {
     #[test]
     fn acquire_op_writes_owner_plus_lease_for_sync_to() {
         // `sync-to` writes an owner at CWD and a lease at the target.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let owner_dir = tmp.path().join("owner");
         let target_dir = tmp.path().join("target");
         std::fs::create_dir_all(&owner_dir).unwrap();
@@ -2737,7 +2737,7 @@ mod tests {
     /// exits. Clearing on drop would delete the running op's own claim.
     #[test]
     fn dropping_an_acquired_handle_leaves_the_records_on_disk() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let owner_dir = tmp.path().join("owner");
         let target_dir = tmp.path().join("target");
         std::fs::create_dir_all(&owner_dir).unwrap();
@@ -2762,7 +2762,7 @@ mod tests {
         // If a prior op left an owner record, acquisition must refuse with the
         // standard in-flight-op refusal (verb / age / phase / both exits) —
         // NOT a raw "AlreadyExists" I/O error.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let owner_dir = tmp.path();
         // Plant a prior op.
         let prior_id = OpId::new_now();
@@ -2798,7 +2798,7 @@ mod tests {
         // sync-to acquires owner then lease. If the lease workspace already
         // holds an op-state file, the just-written owner MUST be rolled back
         // so a refusal leaves no trace (cleanup table).
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let owner_dir = tmp.path().join("owner");
         let target_dir = tmp.path().join("target");
         std::fs::create_dir_all(&owner_dir).unwrap();
@@ -2837,7 +2837,7 @@ mod tests {
         // After a successful acquisition, `release_acquired` must clear every
         // file it created — this is the cleanup-table row for a precondition
         // refusal AFTER acquisition.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let owner_dir = tmp.path().join("owner");
         let target_dir = tmp.path().join("target");
         std::fs::create_dir_all(&owner_dir).unwrap();
@@ -2869,7 +2869,7 @@ mod tests {
         // would let both racers pass; atomic O_CREAT|O_EXCL forces a serial
         // winner. Repeated across trials to expose ordering flakiness.
         for _ in 0..20 {
-            let tmp = tempfile::tempdir().unwrap();
+            let tmp = crate::tempdir().unwrap();
             let owner_dir = tmp.path().to_path_buf();
             let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
 
@@ -2920,13 +2920,13 @@ mod tests {
 
     #[test]
     fn detect_dead_lease_returns_none_when_absent() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         assert!(detect_dead_lease(tmp.path()).unwrap().is_none());
     }
 
     #[test]
     fn detect_dead_lease_returns_none_when_owner_matches() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let owner_dir = tmp.path().join("owner");
         let lease_dir = tmp.path().join("lease");
         std::fs::create_dir_all(&owner_dir).unwrap();
@@ -2952,7 +2952,7 @@ mod tests {
         // The concrete crash pattern: a lease whose owner workspace has no
         // `.rwv-op` — either the owner file was hand-removed or the workspace
         // was deleted out-of-band. Doctor auto-fixes this.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let owner_dir = tmp.path().join("owner");
         let lease_dir = tmp.path().join("lease");
         std::fs::create_dir_all(&owner_dir).unwrap();
@@ -2979,7 +2979,7 @@ mod tests {
         // A stale lease survived past its op — the owner is now on a fresh op
         // with a different id. The lease is dead by structural comparison of
         // op ids, not by any time input.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let owner_dir = tmp.path().join("owner");
         let lease_dir = tmp.path().join("lease");
         std::fs::create_dir_all(&owner_dir).unwrap();
@@ -3011,7 +3011,7 @@ mod tests {
 
     #[test]
     fn fix_dead_lease_removes_lease_file() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = crate::tempdir().unwrap();
         let lease_dir = tmp.path();
         overwrite_lease_in_test(
             lease_dir,
