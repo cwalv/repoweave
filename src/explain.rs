@@ -235,27 +235,33 @@ fn version_banner() -> String {
     format!("rwv {}\n\n", crate::rwv_version_with_build())
 }
 
+/// Write a page to stdout. A reader that closes the pipe has stopped reading,
+/// which is its choice and not a failure of the page.
+fn emit(page: &str) -> anyhow::Result<()> {
+    use anyhow::Context;
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+    match out.write_all(page.as_bytes()).and_then(|()| out.flush()) {
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        other => other.context("failed to write the explain page to stdout"),
+    }
+}
+
 /// Print the explain bundle for the requested verb, or the index when none given.
 ///
 /// Returns an error only when an unknown verb is requested (matches the
 /// "unknown subcommand" UX agents already understand).
 pub fn explain(cmd: Option<&str>) -> anyhow::Result<()> {
     match cmd {
-        None => {
-            print!("{}", version_banner());
-            print!("{INDEX_EXPLAIN}");
-        }
+        None => emit(&format!("{}{INDEX_EXPLAIN}", version_banner()))?,
         // A verb first, then a token. Verbs win a collision because that is
         // the name the reader typed a command with a moment ago.
         Some(verb) if entry_for_token(verb).is_some() && !is_known_verb(verb) => {
-            print!("{}", version_banner());
-            println!("{}", entry_for_token(verb).expect("just matched"));
+            let entry = entry_for_token(verb).expect("just matched");
+            emit(&format!("{}{entry}\n", version_banner()))?;
         }
         Some(verb) => match VERB_BUNDLES.iter().find(|&&(name, _)| name == verb) {
-            Some(&(_, bundle)) => {
-                print!("{}", version_banner());
-                print!("{bundle}")
-            }
+            Some(&(_, bundle)) => emit(&format!("{}{bundle}", version_banner()))?,
             // Non-core verb: explain is reflection over core's committed,
             // CI-checked surfaces. Extending it to exec third-party binaries
             // would make rwv's reflection surface only as trustworthy as the

@@ -42,6 +42,35 @@ fn explain_index_lists_every_acceptance_verb() {
     );
 }
 
+/// A reader that stops reading ends the page quietly: `rwv explain doctor |
+/// head -1` is a use of the command, not a crash of it. The page is larger
+/// than any pipe buffer, so the write is still in flight when the reader goes.
+#[test]
+fn a_reader_that_closes_stdout_after_one_line_ends_explain_quietly() {
+    use std::io::{BufRead, BufReader};
+    use std::process::Stdio;
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_rwv"))
+        .args(["explain", "doctor"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("rwv runs");
+    let mut reader = BufReader::new(child.stdout.take().expect("stdout is piped"));
+    let mut first = String::new();
+    reader.read_line(&mut first).expect("a first line arrives");
+    assert!(first.starts_with("rwv "), "{first:?}");
+    drop(reader);
+
+    let out = child.wait_with_output().expect("rwv ends");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.contains("panicked") && !stderr.contains("Broken pipe"),
+        "a closed stdout must not be reported:\n{stderr}"
+    );
+    assert!(out.status.success(), "{:?}\n{stderr}", out.status);
+}
+
 #[test]
 fn explain_status_includes_purpose_and_schema() {
     rwv().args(["explain", "status"]).assert().success().stdout(
