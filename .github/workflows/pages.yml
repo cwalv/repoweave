@@ -1,8 +1,16 @@
+# Publishes the documentation site after each release, and on demand.
+#
+# The site's content is release tags only: scripts/assemble-docs-site.py
+# builds every v* tag's book from that tag's own tree. The checked-out commit
+# supplies only the machinery, and for a workflow_run event GitHub runs and
+# checks out the default branch's head, so a fix there reaches every version
+# on the next run.
 name: Deploy docs to GitHub Pages
 
 on:
-  push:
-    branches: [main]
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -16,9 +24,25 @@ concurrency:
 
 jobs:
   build:
+    # A Release run also completes for every pull request, and for a tag push
+    # that failed. head_branch holds the tag name when a tag push started the
+    # run; the test is publish-shims.yml's.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       startsWith(github.event.workflow_run.head_branch, 'v') &&
+       contains(github.event.workflow_run.head_branch, '.'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
 
       - name: Install mdbook
         uses: peaceiris/actions-mdbook@v2
@@ -33,16 +57,13 @@ jobs:
         with:
           tool: mdbook-mermaid@0.17.0
 
-      - name: Generate mermaid assets
-        run: mdbook-mermaid install .
-
-      - name: Build docs
-        run: mdbook build
+      - name: Build every release's book
+        run: python scripts/assemble-docs-site.py --repo . --out "${{ runner.temp }}/site"
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: book
+          path: ${{ runner.temp }}/site
 
   deploy:
     needs: build

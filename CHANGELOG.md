@@ -6,6 +6,16 @@ claim that nothing changed in them.
 
 ## Unreleased
 
+### The documentation site publishes releases only, each at its own address
+
+The site at https://cwalv.github.io/repoweave/ was rebuilt from the main branch
+on every push, so it could describe behavior no installable release has. It is
+now built from release tags alone, after each release. Every release's
+documentation stays at `/vX.Y.Z/`, every page has a selector for switching
+versions, and the site root opens the highest stable release. `/install.sh` is
+that release's installer. Pages at the earlier unversioned addresses, such as
+`/tutorial.html`, are gone; open them under a version instead.
+
 ### A `\` in a surfaced name is part of the name on Unix
 
 A `static-files` entry or `[workweave] link` whose name holds a `\` was read
