@@ -480,7 +480,7 @@ fn print_op_header(op: &op_state::ResolvedOwner) {
 fn shown_revision(revision: &Option<String>) -> String {
     match revision {
         None => "-".to_owned(),
-        Some(s) => CommitId::parse(s).map_or_else(|_| s.clone(), |id| id.short().to_owned()),
+        Some(s) => crate::vcs::short_revision(s).to_owned(),
     }
 }
 

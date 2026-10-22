@@ -2304,7 +2304,7 @@ fn detached_checkout_with_commit_bearing_legacy_branch_reports_both_tips() {
     let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains(&lock_sha) && stdout.contains(&w_sha),
+        stdout.contains(&lock_sha[..12]) && stdout.contains(&w_sha[..12]),
         "arm 3 must report BOTH tips; got:\n{stdout}"
     );
     assert!(
@@ -2394,6 +2394,27 @@ fn detached_beside_a_pre_flat_branch(tmp: &Path) -> (PathBuf, PathBuf, String, S
     (ws, canonical, lock_sha, w_sha)
 }
 
+/// Text is read by a person, who gets the abbreviation every operator
+/// surface prints; `--json` keeps the full id.
+#[test]
+fn a_detached_finding_names_both_commits_by_abbreviation_in_text() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, _, lock_sha, w_sha) = detached_beside_a_pre_flat_branch(tmp.path());
+
+    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let finding = stdout
+        .lines()
+        .find(|l| l.contains("workweave checkout is detached at"))
+        .unwrap_or_else(|| panic!("no detached finding in:\n{stdout}"));
+    for full in [&lock_sha, &w_sha] {
+        assert!(
+            finding.contains(&full[..12]) && !finding.contains(full.as_str()),
+            "{full} is named by its 12-character abbreviation: {finding}"
+        );
+    }
+}
+
 #[test]
 fn a_detached_finding_names_both_commits_by_full_id_in_json() {
     let tmp = common::tempdir().unwrap();
@@ -2469,7 +2490,7 @@ fn adopt_detached_checkouts_mints_at_head_and_warns_about_stranding() {
         "arm 3 MUST warn when it strands a commit-bearing tip; got:\n{fix_stdout}"
     );
     assert!(
-        fix_stdout.contains(&w_sha),
+        fix_stdout.contains(&w_sha[..12]),
         "the warning must name the stranded tip so it can be recovered; \
          got:\n{fix_stdout}"
     );
@@ -3999,7 +4020,11 @@ fn detached_beside_its_own_flat_ref_names_the_reattach_that_clears_it() {
     let pr_tip = rev(&ww_checkout, "HEAD");
     let finding = detached_finding(&ws);
     assert!(
-        finding.contains(&format!("checking out {branch_tip} in place of {pr_tip}")),
+        finding.contains(&format!(
+            "checking out {} in place of {}",
+            &branch_tip[..12],
+            &pr_tip[..12]
+        )),
         "{finding}"
     );
     assert!(

@@ -6,6 +6,16 @@ claim that nothing changed in them.
 
 ## Unreleased
 
+### `rwv doctor` text names a commit by its 12-character abbreviation
+
+`rwv doctor` and `rwv doctor --locked` printed full 40-character commit ids
+where every other text surface prints the first 12 characters: the
+`stale-lock` and `--locked` drift lines, `lock-sha-unreachable`, the
+`branch-discipline` findings for a detached checkout or a leaked branch, and
+the commits `--fix` names when it adopts or strands a branch. They now print
+the abbreviation; a tag or branch name a lock pins is still printed in full.
+`rwv doctor --json` keeps every full id.
+
 ### Install hooks run the file `PATH` finds
 
 On Windows a hook looked for `npm.cmd` or `pnpm.cmd` by name, so a tool

@@ -323,10 +323,9 @@ fn lock_sha_unreachable_is_reported() {
             || stdout.contains("missing the pinned revision"),
         "doctor should report lock-sha-unreachable; got:\n{stdout}"
     );
-    // Should mention the absent SHA.
     assert!(
-        stdout.contains(absent_sha),
-        "report should name the unreachable SHA; got:\n{stdout}"
+        stdout.contains(&absent_sha[..12]) && !stdout.contains(absent_sha),
+        "report should name the unreachable SHA by its abbreviation; got:\n{stdout}"
     );
 }
 

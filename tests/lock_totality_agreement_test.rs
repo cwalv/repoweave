@@ -118,6 +118,15 @@ fn run_locked(cwd: &Path) -> (String, bool) {
     )
 }
 
+fn run_doctor_text(cwd: &Path) -> String {
+    let out = rwv_cmd()
+        .args(["doctor"])
+        .current_dir(cwd)
+        .output()
+        .expect("rwv failed to start");
+    String::from_utf8(out.stdout).expect("stdout not utf-8")
+}
+
 fn run_doctor_json(cwd: &Path) -> Value {
     let out = rwv_cmd()
         .args(["doctor", "--json"])
@@ -232,12 +241,23 @@ fn locked_and_stale_lock_agree_on_the_revisions_they_report() {
     let json_actual = stale.get("actual").and_then(|v| v.as_str()).unwrap();
     let json_locked = stale.get("locked").and_then(|v| v.as_str()).unwrap();
 
+    let shown = |revision: &str| repoweave::vcs::short_revision(revision).to_owned();
     assert_eq!(
-        (locked_tip.as_str(), locked_lock.as_str()),
-        (json_actual, json_locked),
+        (locked_tip.clone(), locked_lock.clone()),
+        (shown(json_actual), shown(json_locked)),
         "`--locked` and `stale-lock` must name the same tip and the same lock \
-         revision; `--locked` said tip={locked_tip} lock={locked_lock}, the \
-         pipeline said actual={json_actual} locked={json_locked}"
+         revision, abbreviated in text; `--locked` said tip={locked_tip} \
+         lock={locked_lock}, the pipeline said actual={json_actual} locked={json_locked}"
+    );
+    let text = run_doctor_text(&root);
+    let stale_line = format!(
+        "{DRIFTED} locked={} actual={};",
+        shown(json_locked),
+        shown(json_actual)
+    );
+    assert!(
+        text.contains(&stale_line),
+        "doctor's text names the revisions as `--locked` does: wanted {stale_line:?} in:\n{text}"
     );
     assert_eq!(
         (json_actual, json_locked),

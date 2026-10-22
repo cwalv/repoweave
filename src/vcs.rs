@@ -191,6 +191,16 @@ impl From<CommitId> for ResolvedRevisionId {
     }
 }
 
+/// A revision as operator text shows it: a commit id abbreviated as
+/// [`CommitId::short`] abbreviates one, a name in full.
+pub fn short_revision(text: &str) -> &str {
+    if is_canonical_commit_id(text) {
+        &text[..CommitId::SHORT_WIDTH]
+    } else {
+        text
+    }
+}
+
 fn is_canonical_commit_id(s: &str) -> bool {
     matches!(s.len(), 40 | 64)
         && s.bytes()
@@ -279,6 +289,11 @@ impl RawRevisionId {
     /// The recorded string as a [`CommitId`], when it is one.
     pub fn as_commit_id(&self) -> Option<CommitId> {
         CommitId::parse(&self.0).ok()
+    }
+
+    /// The recorded string as operator text shows it.
+    pub fn short_display(&self) -> &str {
+        short_revision(&self.0)
     }
 }
 
@@ -3927,6 +3942,17 @@ mod tests {
         assert!(CommitId::parse(&"A".repeat(40)).is_err());
         assert!(CommitId::parse(&"g".repeat(40)).is_err());
         assert!(CommitId::parse("").is_err());
+    }
+
+    #[test]
+    fn operator_text_abbreviates_a_commit_id_and_nothing_else() {
+        let sha1 = "a".repeat(40);
+        let sha256 = "b".repeat(64);
+        assert_eq!(short_revision(&sha1), &sha1[..12]);
+        assert_eq!(short_revision(&sha256), &sha256[..12]);
+        for name in ["v1.0.0", "main", "aaaaaaa", "A".repeat(40).as_str()] {
+            assert_eq!(short_revision(name), name);
+        }
     }
 
     #[test]

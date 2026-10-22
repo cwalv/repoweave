@@ -6974,7 +6974,7 @@ fn migrate_legacy_ref(
             format!(
                 "branch `{label}` moved while it was being migrated (recorded at {}); \
                  re-run `rwv doctor --fix`",
-                owned_legacy.created_at().display_str()
+                owned_legacy.created_at().short_display()
             ),
         )
     })?;
@@ -7023,7 +7023,7 @@ fn adopt_flat_ref(
     Ok(format!(
         "adopted `{flat}` in {} at {} (rwv now holds an ownership receipt for it)",
         store.display(),
-        tip.display_str()
+        tip.short_display()
     ))
 }
 
@@ -7073,7 +7073,7 @@ fn adopt_detached_workweave_checkout(
                 format!(
                     " — WARNING: this STRANDED the commits at {}, which HEAD does not carry; \
                      they are reachable only through {}'s reflog",
-                    tip.display_str(),
+                    tip.short_display(),
                     store.display()
                 ),
             ),
@@ -7847,8 +7847,10 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                     locked,
                     actual,
                 } => format!(
-                    "stale lock in {project}: {repo} locked={locked} actual={actual}; \
-                     run `rwv lock` to re-snapshot current HEAD SHAs"
+                    "stale lock in {project}: {repo} locked={} actual={}; \
+                     run `rwv lock` to re-snapshot current HEAD SHAs",
+                    locked.short_display(),
+                    actual.short_display(),
                 ),
                 CheckViolation::IncompleteLock { project, repo } => format!(
                     "incomplete lock in {project}: {repo} has no rwv.lock entry; \
@@ -8284,9 +8286,10 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                         file_url = crate::path_spelling::file_url_suggestion(&manifest_url),
                     ),
                     ProvenanceKind::LockShaUnreachable { sha } => format!(
-                        "{project}: {repo}: lock pins SHA {sha} which is absent from \
+                        "{project}: {repo}: lock pins SHA {} which is absent from \
                          the local object store; the canonical store is missing the pinned \
                          revision — refresh it from its remote (fetch, not sync)",
+                        crate::vcs::short_revision(&sha),
                     ),
                     ProvenanceKind::PlacementDisagreement { expected_path } => format!(
                         "{project}: {repo}: recorded at `{repo}`, but its URL places at \
@@ -8409,7 +8412,7 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                                     String::new()
                                 };
                                 let sits_at = match &legacy.tip_sha {
-                                    Some(tip) => format!("sits at {tip} ({relation})"),
+                                    Some(tip) => format!("sits at {} ({relation})", tip.short()),
                                     None => "names no commit".to_owned(),
                                 };
                                 format!(
@@ -8420,13 +8423,13 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                                      --adopt-detached-checkouts` to mint `{}` here at {} \
                                      instead{}",
                                     repo_path.display(),
-                                    at_sha,
+                                    at_sha.short(),
                                     legacy.branch,
                                     sits_at,
                                     legacy.branch,
                                     expected_ref,
                                     expected_ref,
-                                    at_sha,
+                                    at_sha.short(),
                                     stranding,
                                 )
                             }
@@ -8436,11 +8439,11 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                                  `rwv doctor --fix --adopt-detached-checkouts` to mint \
                                  `{}` here at {}",
                                 repo_path.display(),
-                                at_sha,
+                                at_sha.short(),
                                 expected_ref,
                                 reattach_advice(recorded_ref.as_deref(), expected_ref),
                                 expected_ref,
-                                at_sha,
+                                at_sha.short(),
                             ),
                         },
                         // The fully automatic migration case.
@@ -8500,7 +8503,7 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                                  ordinary detached-HEAD finding with a remedy that will \
                                  actually run",
                                 repo_path.display(),
-                                at_sha,
+                                at_sha.short(),
                                 blocking_refs.len(),
                                 expected_ref,
                                 blocking_refs
@@ -8522,7 +8525,11 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                             let moves = if at_sha == branch_tip {
                                 " without moving the working tree".to_owned()
                             } else {
-                                format!(", checking out {branch_tip} in place of {at_sha}")
+                                format!(
+                                    ", checking out {} in place of {}",
+                                    branch_tip.short(),
+                                    at_sha.short()
+                                )
                             };
                             format!(
                                 "{}: workweave checkout is in detached-HEAD state at {} \
@@ -8531,9 +8538,9 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                                  `--adopt-detached-checkouts` mints the branch only where \
                                  none exists)",
                                 repo_path.display(),
-                                at_sha,
+                                at_sha.short(),
                                 expected_ref,
-                                branch_tip,
+                                branch_tip.short(),
                                 expected_ref,
                                 moves,
                             )
@@ -8605,7 +8612,7 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                                  commit — `rwv doctor --fix --reattach-checkouts` will \
                                  reattach it, or `git switch {}` by hand",
                                 repo_path.display(),
-                                at_sha,
+                                at_sha.short(),
                                 name,
                                 name
                             ),
@@ -8617,10 +8624,10 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                                  yourself, then `git switch {}` \
                                  (report-only; --reattach-checkouts will not fire here)",
                                 repo_path.display(),
-                                at_sha,
+                                at_sha.short(),
                                 name,
                                 name,
-                                at_sha,
+                                at_sha.short(),
                                 name
                             ),
                             (None, _) => format!(
@@ -8629,7 +8636,7 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                                  cannot name a branch to reattach to \
                                  (report-only; `git switch <branch>` by hand)",
                                 repo_path.display(),
-                                at_sha
+                                at_sha.short()
                             ),
                         },
                         BranchDisciplineKind::StaleEphemeralBranchSafe { branch, project } => {
@@ -8677,7 +8684,7 @@ fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> 
                                 repo_path.display(),
                                 branch,
                                 project,
-                                tip_sha
+                                tip_sha.short()
                             )
                         }
                     };
@@ -9171,7 +9178,7 @@ pub fn run_check_locked(ctx: &crate::workspace::WorkspaceContext) -> anyhow::Res
                     println!(
                         "{repo_path}: missing on disk (lock pins {}); run `rwv fetch` with no \
                          source to materialize it",
-                        raw_entry.version
+                        raw_entry.version.short_display()
                     );
                     any_drift = true;
                     continue;
@@ -9179,7 +9186,10 @@ pub fn run_check_locked(ctx: &crate::workspace::WorkspaceContext) -> anyhow::Res
             };
 
             if let Some(raw_rev) = unresolved.get(repo_path) {
-                println!("{repo_path}: lock pins unknown revision {}", raw_rev);
+                println!(
+                    "{repo_path}: lock pins unknown revision {}",
+                    raw_rev.short_display()
+                );
                 any_drift = true;
                 continue;
             }
@@ -9196,7 +9206,8 @@ pub fn run_check_locked(ctx: &crate::workspace::WorkspaceContext) -> anyhow::Res
             } else {
                 println!(
                     "{repo_path}: tip {} ≠ lock {}",
-                    actual, resolved_entry.version
+                    actual.short_display(),
+                    resolved_entry.version.short_display()
                 );
                 any_drift = true;
             }
