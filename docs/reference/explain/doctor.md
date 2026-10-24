@@ -1629,7 +1629,7 @@ Schema:
           ]
         },
         {
-          "description": "Nothing local holds it, so only a fetch into the canonical clone can. Report-only.",
+          "description": "Nothing local holds it. Report-only: `rwv fetch` in the primary weave fetches it into the canonical clone.",
           "type": "string",
           "enum": [
             "unfetched"

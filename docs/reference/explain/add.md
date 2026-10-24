@@ -26,6 +26,15 @@ not) or file at the placement that is not a clone refuses
 (`non-clone-at-placement`); so does one at the workweave's own placement when
 `add` or `add --adopt` runs from a workweave.
 
+### Submodules
+
+`add` gives the canonical clone the member's submodules from upstream, nested
+ones included, as `rwv fetch` does (see `rwv explain fetch`), so a checkout
+created later, which never reaches the network, can check them out from it. A
+submodule that cannot be fetched is a warning, not a failure. On re-running
+`add` for a member the manifest already names, its `submodules = "skip"` is
+honored; `--adopt` and `--new` fetch nothing.
+
 ### Workweave-aware worktree materialization
 
 When `rwv add` is invoked from inside a workweave, it also creates a
