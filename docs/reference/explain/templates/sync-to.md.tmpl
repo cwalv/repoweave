@@ -203,6 +203,9 @@ Outcome `kind` tags, and the order of `outcomes` (sorted by repo path), are iden
 `docs/reference/schemas/sync-to.json`). Each advance-target fast-forward that
 moved a branch pointer is reported as its repo's `step3_advance`, or as
 `project_repo_advance` for the project repo, each with `from_sha` and `to_sha`.
+`members` carries the same record kinds as on `rwv sync`, for the member
+checkouts replay keeps, prunes or fails to create in CWD; a
+`materialize-failed` record carries the `refusal` token when there is one.
 
 `complete` is as on `rwv sync`: true once every step ran and op-state is
 cleared, whatever the exit code, so a complete op prints its envelope even on

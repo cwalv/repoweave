@@ -818,6 +818,20 @@ pub enum MemberOutput {
         /// discriminant.
         message: String,
     },
+    /// The source's lock names this member and no checkout of it is on disk
+    /// here, but creating one failed. It gets no per-repo outcome, and the op
+    /// parks.
+    MaterializeFailed {
+        path: String,
+        absolute_path: crate::path_spelling::WirePath,
+        /// The refusal token, resolvable with `rwv explain <token>`. Absent
+        /// when the failure carries no classified refusal.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        refusal: Option<String>,
+        /// Free-form display message, the full cause chain. Not a typed
+        /// discriminant.
+        message: String,
+    },
 }
 
 impl MemberOutput {
@@ -837,6 +851,15 @@ impl MemberOutput {
 
     fn prune_refused(repo_path: &RepoPath, checkout: &Path, error: &anyhow::Error) -> Self {
         Self::PruneRefused {
+            path: repo_path.to_string(),
+            absolute_path: crate::path_spelling::WirePath::of(checkout),
+            refusal: crate::refusal::kind_of(error).map(RefusalKind::token),
+            message: format!("{error:#}"),
+        }
+    }
+
+    fn materialize_failed(repo_path: &RepoPath, checkout: &Path, error: &anyhow::Error) -> Self {
+        Self::MaterializeFailed {
             path: repo_path.to_string(),
             absolute_path: crate::path_spelling::WirePath::of(checkout),
             refusal: crate::refusal::kind_of(error).map(RefusalKind::token),
@@ -5184,7 +5207,12 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             Err(e) => {
                 if emit_text {
                     eprintln!("  {repo_path}: materialize failed: {e:#}");
+                    if let Some(kind) = crate::refusal::kind_of(&e) {
+                        eprintln!("rwv explain {}", kind.token());
+                    }
                 }
+                ctx.handler
+                    .record_member(MemberOutput::materialize_failed(repo_path, &abs, &e));
                 materialize_failures.push(repo_path.clone());
             }
         }
@@ -5216,7 +5244,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     for (repo_path, raw_entry) in snapshot.raw_source_lock.iter_entries() {
         let abs = ctx.cwd_workspace_dir.join(repo_path.as_path());
         if !abs.exists() {
-            if emit_text {
+            if emit_text && !materialize_failures.contains(repo_path) {
                 outln!("  {repo_path}: skipped (not on disk)");
             }
             continue;

@@ -313,10 +313,23 @@ lists each skipped project under `unreadable_projects`, with its load error.
 
 ### `rwv fetch` names a member's refusal
 
+`rwv each` over such a project said the project had no repo outside role
+`reference` and advised `--role reference`, which could not help. It now says
+the manifest did not load.
+
+### `rwv fetch` and `rwv sync` name a member's refusal
+
 When a member fails with a refusal, such as `unresolvable-repo-source` for a
 `url` no clone can use, `rwv fetch` prints `rwv explain <token>` after that
 member's error line, and its `--json` record carries the token as `refusal`.
 The run as a whole still ends with `partial-run-aborted`.
+
+When `rwv sync` or `rwv sync-to` cannot create the checkout of a member the
+source's lock names, it prints `rwv explain <token>` after the member's
+`materialize failed` line instead of `skipped (not on disk)`, and `--json`
+lists the member under `members` as `materialize-failed`, with the token as
+`refusal` and the full `message`. The member was missing from `--json`
+altogether. The op still parks.
 
 ### A refused `rwv add` names the order its cleanup works in
 
