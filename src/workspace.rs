@@ -712,35 +712,47 @@ fn active_project_path(root: &Path) -> StatePath {
 /// The built-ins stay in so a weave whose manifests name no `github/` member
 /// still reports a stray clone sitting there as orphaned.
 pub(crate) fn scannable_registry_segments(root: &Path) -> std::collections::BTreeSet<String> {
-    registry_segments_and_unparseable(root).0
+    manifest_placements(root).segments
 }
 
-/// The segments of [`scannable_registry_segments`], and whether any project
-/// manifest failed to parse: an unparseable manifest contributes no segments,
-/// so the set is then a lower bound, not the full answer.
-fn registry_segments_and_unparseable(root: &Path) -> (std::collections::BTreeSet<String>, bool) {
-    let mut any_unparseable = false;
-    let mut segments: std::collections::BTreeSet<String> = builtin_registry_names()
-        .iter()
-        .map(|n| n.as_str().to_owned())
-        .collect();
+/// What the project manifests under a root say about where members sit.
+struct ManifestPlacements {
+    /// [`scannable_registry_segments`].
+    segments: std::collections::BTreeSet<String>,
+    /// Every member path a parseable manifest names, at whatever depth.
+    members: std::collections::BTreeSet<RepoPath>,
+    /// An unparseable manifest contributes nothing, so both sets are then a
+    /// lower bound, not the full answer.
+    any_unparseable: bool,
+}
+
+fn manifest_placements(root: &Path) -> ManifestPlacements {
+    let mut placements = ManifestPlacements {
+        segments: builtin_registry_names()
+            .iter()
+            .map(|n| n.as_str().to_owned())
+            .collect(),
+        members: std::collections::BTreeSet::new(),
+        any_unparseable: false,
+    };
 
     for project in discover_projects(root) {
         let manifest_path = project_dir(root, &project).join(Manifest::FILE_NAME);
         let Ok(manifest) = Manifest::from_path(&manifest_path) else {
-            any_unparseable = true;
+            placements.any_unparseable = true;
             continue;
         };
         for repo_path in manifest.iter_repo_paths() {
             if let Some((registry, _, _)) =
                 crate::registry::split_canonical_local_path(repo_path.as_str())
             {
-                segments.insert(registry.to_owned());
+                placements.segments.insert(registry.to_owned());
             }
+            placements.members.insert(repo_path.clone());
         }
     }
 
-    (segments, any_unparseable)
+    placements
 }
 
 /// VCS repos directly under `root/{segment}/{owner}/{repo}`, filtered by
@@ -780,20 +792,29 @@ fn repos_under_segment(root: &Path, segment: &str, vcs: &dyn Vcs) -> Vec<RepoPat
     repos
 }
 
-/// Scan registry directories under `root` for VCS repos on disk.
-///
-/// Walks the `{registry}/{owner}/{repo}` directory structure of every registry
-/// segment a project manifest under `root` names, and of the built-ins,
-/// filters directories using `vcs.is_repo()`, and returns relative paths from
-/// `root`.
+/// VCS repos on disk under `root`, as paths relative to `root`: every repo
+/// at `{registry}/{owner}/{repo}` depth under a registry segment a project
+/// manifest names or a built-in, plus every member path a manifest names,
+/// at whatever depth it sits. Sorted, each repo once.
 ///
 /// The walk set is derived from `root` rather than passed in: a caller
 /// holding a narrower set than the manifests name is the shape that hides
 /// members from every disk-keyed scan at once.
 pub fn scan_repos_on_disk(root: &Path, vcs: &dyn Vcs) -> Vec<RepoPath> {
-    scannable_registry_segments(root)
+    let placements = manifest_placements(root);
+    let walked = placements
+        .segments
         .iter()
-        .flat_map(|segment| repos_under_segment(root, segment, vcs))
+        .flat_map(|segment| repos_under_segment(root, segment, vcs));
+    let named = placements
+        .members
+        .iter()
+        .filter(|member| vcs.is_repo(&root.join(member.as_path())))
+        .cloned();
+    walked
+        .chain(named)
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
         .collect()
 }
 
@@ -819,13 +840,13 @@ pub fn scan_repos_on_disk(root: &Path, vcs: &dyn Vcs) -> Vec<RepoPath> {
 /// Empty while any project manifest fails to parse: that manifest may name
 /// the segment, so no directory can be called unnamed.
 pub fn scan_unknown_segment_repos(root: &Path, vcs: &dyn Vcs) -> Vec<RepoPath> {
-    let (known, any_unparseable) = registry_segments_and_unparseable(root);
-    if any_unparseable {
+    let placements = manifest_placements(root);
+    if placements.any_unparseable {
         return Vec::new();
     }
     candidate_segments(root)
         .into_iter()
-        .filter(|name| !known.contains(name))
+        .filter(|name| !placements.segments.contains(name))
         .flat_map(|segment| repos_under_segment(root, &segment, vcs))
         .collect()
 }

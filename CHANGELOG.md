@@ -79,6 +79,17 @@ run the same report and word it the same way, naming `rwv doctor --fix`. It
 runs after the install hooks, so a lock file the hooks write is no longer
 reported missing just before they write it.
 
+### A member adopted outside a registry directory is found on disk
+
+`rwv add --adopt vendor/other` recorded the member, but `rwv doctor` then
+reported it as a dangling reference and advised `rwv fetch`, which skipped it
+because the clone was already there. Only checkouts under a registry directory
+such as `github/`, at `<registry>/<owner>/<repo>` depth, were counted as on
+disk. Every member a manifest names is now found at its recorded path, whatever
+its top-level directory and depth, so its lock and branch state are checked
+like any other member's. A named member missing from disk is still a dangling
+reference, and `rwv fetch` clones it back to that path.
+
 ### On Windows, `rwv explain` and `rwv prime` print LF line endings
 
 The pages `rwv explain` and `rwv prime` print are built into the binary. The

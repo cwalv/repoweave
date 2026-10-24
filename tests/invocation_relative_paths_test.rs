@@ -198,6 +198,24 @@ fn clone_at(tmp: &Path, name: &str, dest: &Path) {
     );
 }
 
+fn doctor_finding_kinds_at(weave: &Path, member: &str) -> Vec<String> {
+    let out = common::rwv()
+        .args(["doctor", "--json"])
+        .current_dir(weave)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let report: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("doctor --json must parse ({e}):\n{stdout}"));
+    report["violations"]
+        .as_array()
+        .expect("the report carries a violations array")
+        .iter()
+        .filter(|v| v["path"] == member)
+        .map(|v| v["kind"].as_str().unwrap_or_default().to_owned())
+        .collect()
+}
+
 fn manifest_keys(project_dir: &Path) -> Vec<String> {
     let raw = std::fs::read_to_string(project_dir.join("rwv.toml")).unwrap();
     let doc: toml::Table = raw.parse().unwrap();
@@ -225,6 +243,10 @@ fn adopt_from_a_primary_subdirectory_under_c_records_the_weave_relative_member_p
         manifest_keys(&w.primary.join("projects/test-project")),
         vec!["bar/lib".to_owned()]
     );
+    assert!(
+        !doctor_finding_kinds_at(&w.primary, "bar/lib").contains(&"dangling-reference".to_owned()),
+        "the adopted clone is the member on disk"
+    );
 }
 
 #[test]
@@ -247,6 +269,10 @@ fn adopt_from_a_workweave_subdirectory_names_the_primarys_clone_at_that_member_p
     assert!(
         w.workweave.join("bar/x/.git").is_file(),
         "the workweave gets a worktree of the primary's clone"
+    );
+    assert!(
+        !doctor_finding_kinds_at(&w.workweave, "bar/x").contains(&"dangling-reference".to_owned()),
+        "the workweave's worktree is the member on disk"
     );
 }
 
