@@ -671,7 +671,7 @@ fn a_refused_url_add_in_a_workweave_names_its_worktree_and_its_clone() {
     assert!(worktree.join(".git").is_file() && clone.join(".git").is_dir());
     assert!(
         stderr.contains(&format!(
-            "kept the worktree it made at {}",
+            "kept the worktree it made at {}: once the cause below is fixed",
             worktree.display()
         )) && stderr.contains(&format!("`rwv remove {beta} --delete` in this workweave"))
             && stderr.contains(&format!("kept the clone it made at {}", clone.display()))
