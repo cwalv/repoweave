@@ -1831,9 +1831,9 @@ impl WorkspaceContext {
 
     /// Project the resolved context into the machine-readable `resolution` block.
     ///
-    /// Returns `None` when no project is resolved (bare primary with neither
-    /// `--project` nor `.rwv-active` set) — in that case the block is omitted
-    /// from `--json` output entirely.
+    /// Every resolved context has one; `project` is absent in it when no
+    /// project is resolved (bare primary with neither `--project` nor a
+    /// usable `.rwv-active`).
     ///
     /// The returned value is a pure projection: `workspace` is the primary root
     /// (abs path), `workweave` is the full `<project>--<name>` identity the
@@ -1848,8 +1848,7 @@ impl WorkspaceContext {
     /// same projection, mapping these fields to the `RWV_*` env vars a
     /// spawned plugin reads. It calls this method; the values are never
     /// independently computed.
-    pub fn resolution(&self) -> Option<Resolution> {
-        let project = self.active_project()?;
+    pub fn resolution(&self) -> Resolution {
         let workspace = crate::path_spelling::WirePath::of(self.primary_root.as_path());
         let (workweave, workweave_unregistered) = match &self.checkout {
             Checkout::Primary { .. } => (None, false),
@@ -1867,12 +1866,12 @@ impl WorkspaceContext {
                 None => (None, true),
             },
         };
-        Some(Resolution {
+        Resolution {
             workspace,
             workweave,
             workweave_unregistered,
-            project: project.clone(),
-        })
+            project: self.active_project().cloned(),
+        }
     }
 }
 
@@ -1926,8 +1925,10 @@ pub struct Resolution {
     /// this is absent and `workweave` carries the identity.
     #[serde(default, skip_serializing_if = "is_false")]
     pub workweave_unregistered: bool,
-    /// Resolved project name.
-    pub project: ProjectName,
+    /// Resolved project name; absent when the workspace resolved but no
+    /// project did (a primary with no project selected).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<ProjectName>,
 }
 
 /// `skip_serializing_if` predicate for a flag that is only news when set.
@@ -4589,9 +4590,7 @@ mod tests {
         std::fs::write(root.join(".rwv-active"), "myproject\n").unwrap();
 
         let ctx = WorkspaceContext::resolve_invocation(&root, None).unwrap();
-        let res = ctx
-            .resolution()
-            .expect("resolution must be present with an active project");
+        let res = ctx.resolution();
 
         assert_eq!(
             res.workspace,
@@ -4604,7 +4603,7 @@ mod tests {
             "an internal spelling reached a published field: {}",
             res.workspace.as_str()
         );
-        assert_eq!(res.project.as_str(), "myproject");
+        assert_eq!(res.project.as_ref().map(|p| p.as_str()), Some("myproject"));
         assert!(
             res.workweave.is_none(),
             "workweave must be absent at primary; got {:?}",
@@ -4612,18 +4611,27 @@ mod tests {
         );
     }
 
-    /// At primary without an active project: resolution is absent entirely.
     #[test]
-    fn resolution_at_primary_without_active_project_is_none() {
+    fn resolution_at_primary_without_active_project_names_the_workspace_only() {
         let tmp = crate::tempdir().unwrap();
         let root = make_workspace(tmp.path(), "ws");
-        // No .rwv-active file — no project resolved.
 
-        let ctx = WorkspaceContext::resolve_invocation(&root, None).unwrap();
-        assert!(
-            ctx.resolution().is_none(),
-            "resolution must be absent when no project is resolved"
+        let res = WorkspaceContext::resolve_invocation(&root, None)
+            .unwrap()
+            .resolution();
+        assert_eq!(
+            res.workspace,
+            crate::path_spelling::WirePath::of(&resolve(&root).unwrap())
         );
+        assert!(res.project.is_none(), "no project resolved: {res:?}");
+        let json = serde_json::to_value(&res).expect("serializes");
+        let keys: Vec<&str> = json
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(keys, ["workspace"]);
     }
 
     /// Inside a workweave: resolution has workweave = "<project>--<name>" and
@@ -4646,9 +4654,7 @@ mod tests {
         register_workweave(&primary_canon, "myproject", "fo-abc", &weave_dir);
 
         let ctx = WorkspaceContext::resolve_invocation(&weave_dir, None).unwrap();
-        let res = ctx
-            .resolution()
-            .expect("resolution must be present in a workweave");
+        let res = ctx.resolution();
 
         // workweave must be present and match the <project>--<name> identity.
         let ww = res
@@ -4659,7 +4665,7 @@ mod tests {
             ww, "myproject--fo-abc",
             "workweave identity must be '<project>--<name>', got {ww:?}"
         );
-        assert_eq!(res.project.as_str(), "myproject");
+        assert_eq!(res.project.as_ref().map(|p| p.as_str()), Some("myproject"));
         assert_eq!(
             res.workspace,
             crate::path_spelling::WirePath::of(
@@ -4700,12 +4706,10 @@ mod tests {
 
         let at_primary = WorkspaceContext::resolve_invocation(&root, None)
             .unwrap()
-            .resolution()
-            .expect("resolution must be present at primary");
+            .resolution();
         let in_workweave = WorkspaceContext::resolve_invocation(&weave_dir, None)
             .unwrap()
-            .resolution()
-            .expect("resolution must be present in a workweave");
+            .resolution();
 
         assert_eq!(
             at_primary.workspace, in_workweave.workspace,
@@ -4723,7 +4727,7 @@ mod tests {
         std::fs::write(root.join(".rwv-active"), "myproject\n").unwrap();
 
         let ctx = WorkspaceContext::resolve_invocation(&root, None).unwrap();
-        let res = ctx.resolution().unwrap();
+        let res = ctx.resolution();
         let json = serde_json::to_value(&res).expect("serializes");
         let obj = json.as_object().expect("is a JSON object");
 
@@ -4756,7 +4760,7 @@ mod tests {
         register_workweave(&primary_canon, "myproject", "fo-abc", &weave_dir);
 
         let ctx = WorkspaceContext::resolve_invocation(&weave_dir, None).unwrap();
-        let res = ctx.resolution().unwrap();
+        let res = ctx.resolution();
         let json = serde_json::to_value(&res).expect("serializes");
         let obj = json.as_object().expect("is a JSON object");
 
@@ -4799,12 +4803,10 @@ mod tests {
 
         let unregistered = WorkspaceContext::resolve_invocation(&weave_dir, None)
             .unwrap()
-            .resolution()
-            .expect("a resolution exists — the marker names the project");
+            .resolution();
         let primary = WorkspaceContext::resolve_invocation(&root, None)
             .unwrap()
-            .resolution()
-            .expect("the pointer names the project");
+            .resolution();
 
         // The property first, then the mechanism that delivers it: a
         // mutation collapsing the states should be reported as the states
@@ -4851,7 +4853,7 @@ mod tests {
             workspace: crate::path_spelling::WirePath::of(std::path::Path::new("/ws")),
             workweave: None,
             workweave_unregistered: false,
-            project: ProjectName::new("myproject").unwrap(),
+            project: Some(ProjectName::new("myproject").unwrap()),
         };
         assert_eq!(
             serde_json::to_string(&primary).unwrap(),
@@ -4862,7 +4864,7 @@ mod tests {
             workspace: crate::path_spelling::WirePath::of(std::path::Path::new("/ws")),
             workweave: Some("myproject--feat".to_owned()),
             workweave_unregistered: false,
-            project: ProjectName::new("myproject").unwrap(),
+            project: Some(ProjectName::new("myproject").unwrap()),
         };
         assert_eq!(
             serde_json::to_string(&registered).unwrap(),
@@ -4873,7 +4875,7 @@ mod tests {
             workspace: crate::path_spelling::WirePath::of(std::path::Path::new("/ws")),
             workweave: None,
             workweave_unregistered: true,
-            project: ProjectName::new("myproject").unwrap(),
+            project: Some(ProjectName::new("myproject").unwrap()),
         };
         assert_eq!(
             serde_json::to_string(&unregistered).unwrap(),

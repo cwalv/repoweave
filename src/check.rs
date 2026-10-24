@@ -11270,7 +11270,7 @@ pub fn run_check_json(
     let payload = build_doctor_json(
         findings,
         &world.workspace_dir,
-        ctx.resolution(),
+        Some(ctx.resolution()),
         plugins,
         advisories,
     );

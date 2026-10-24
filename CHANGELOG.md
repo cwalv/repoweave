@@ -6,6 +6,17 @@ claim that nothing changed in them.
 
 ## Unreleased
 
+### `rwv each` with no project selected names `rwv activate`
+
+At a primary with no project selected, including the state `rwv doctor --fix`
+leaves after removing an unreadable `.rwv-active`, `rwv each` refused with
+"no workspace resolved" and advised `-C <path>` or `-w`, neither of which
+selects a project. It now refuses with "no project resolved" and names
+`rwv activate <project>`. Plugins in that state receive `RWV_WORKSPACE`
+without `RWV_PROJECT`, where before they received neither, and the
+`resolution` block in `--json` output carries `workspace` without `project`,
+where before it was absent.
+
 ### A `go.work` that cannot be read stops `go-work` activation
 
 When the `go.work` at the weave root could not be read, `go-work` treated it as

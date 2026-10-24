@@ -101,7 +101,7 @@ use std::process::Command;
 /// to the child's inherited env (which won't have them either).
 ///
 /// `RWV_VERSION` is always included; workspace vars appear only when
-/// `resolution` is `Some`.
+/// `resolution` is `Some`, and `RWV_PROJECT` only when it names a project.
 ///
 /// This function is the single source of truth for which names are in the
 /// envelope and how each [`Resolution`] field maps to them. Both the spawn
@@ -118,7 +118,9 @@ pub fn envelope_vars(resolution: Option<&Resolution>) -> Vec<(&'static str, Stri
         if r.workweave_unregistered {
             vars.push(("RWV_WORKWEAVE_UNREGISTERED", "1".to_owned()));
         }
-        vars.push(("RWV_PROJECT", r.project.to_string()));
+        if let Some(project) = &r.project {
+            vars.push(("RWV_PROJECT", project.to_string()));
+        }
     }
     vars
 }
@@ -336,8 +338,9 @@ pub fn external_commands_help_section(paths_override: Option<&OsStr>) -> Option<
 /// - `RWV_VERSION` is always set to the `rwv` semver.
 /// - `RWV_WORKSPACE`, `RWV_WORKWEAVE` (when the registry names the
 ///   workweave), `RWV_WORKWEAVE_UNREGISTERED` (when it does not), and
-///   `RWV_PROJECT` are set when `resolution` is `Some`; they are absent
-///   from the child's env when no workspace was resolved (soft fallthrough).
+///   `RWV_PROJECT` (when a project resolved) are set when `resolution` is
+///   `Some`; they are absent from the child's env when no workspace was
+///   resolved (soft fallthrough).
 ///
 /// The envelope is derived from `resolution` via [`envelope_vars`] — the
 /// same [`Resolution`] value the `--json` output block serializes. The two
@@ -549,7 +552,7 @@ mod tests {
             workspace: crate::path_spelling::WirePath::of(std::path::Path::new("/ws/primary")),
             workweave: None,
             workweave_unregistered: false,
-            project: crate::manifest::ProjectName::new("myproj").unwrap(),
+            project: Some(crate::manifest::ProjectName::new("myproj").unwrap()),
         };
         let vars = envelope_vars(Some(&r));
         let map: std::collections::HashMap<_, _> = vars.into_iter().collect();
@@ -571,7 +574,7 @@ mod tests {
             workspace: crate::path_spelling::WirePath::of(std::path::Path::new("/ws/primary")),
             workweave: Some("myproj--fo-123".to_owned()),
             workweave_unregistered: false,
-            project: crate::manifest::ProjectName::new("myproj").unwrap(),
+            project: Some(crate::manifest::ProjectName::new("myproj").unwrap()),
         };
         let vars = envelope_vars(Some(&r));
         let map: std::collections::HashMap<_, _> = vars.into_iter().collect();

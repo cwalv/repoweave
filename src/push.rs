@@ -567,7 +567,7 @@ pub fn run_push(
             let envelope = PushJsonOutput {
                 schema_url: PUSH_SCHEMA_URL.to_string(),
                 outcomes: json_outcomes,
-                resolution: ctx.resolution(),
+                resolution: Some(ctx.resolution()),
             };
             if let Ok(out) = serde_json::to_string_pretty(&envelope) {
                 outln!("{out}");
@@ -631,7 +631,7 @@ pub fn run_push(
             let envelope = PushJsonOutput {
                 schema_url: PUSH_SCHEMA_URL.to_string(),
                 outcomes: json_outcomes,
-                resolution: ctx.resolution(),
+                resolution: Some(ctx.resolution()),
             };
             if let Ok(out) = serde_json::to_string_pretty(&envelope) {
                 outln!("{out}");
@@ -649,7 +649,7 @@ pub fn run_push(
         let envelope = PushJsonOutput {
             schema_url: PUSH_SCHEMA_URL.to_string(),
             outcomes: json_outcomes,
-            resolution: ctx.resolution(),
+            resolution: Some(ctx.resolution()),
         };
         let out = serde_json::to_string_pretty(&envelope)
             .context("failed to serialize push outcomes to JSON")?;

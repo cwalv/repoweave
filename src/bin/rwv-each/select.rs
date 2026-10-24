@@ -38,7 +38,7 @@ impl Envelope {
     /// checkout this plugin was dispatched from.
     pub fn status_args(&self) -> anyhow::Result<Vec<OsString>> {
         let Some(workspace) = &self.workspace else {
-            bail!("no workspace resolved: run this from inside a workspace, or address one with rwv's -C <path> or -w <project>--<name>");
+            bail!("no workspace resolved: run this from inside a workspace, or address one with rwv's -C <path>");
         };
         let mut args: Vec<OsString> = vec!["-C".into(), workspace.clone()];
         if let Some(workweave) = &self.workweave {

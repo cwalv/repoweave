@@ -11,6 +11,10 @@ if [ -z "${RWV_WORKSPACE:-}" ]; then
   echo "rwv-check-mid-op: not inside a workspace" >&2
   exit 1
 fi
+if [ -z "${RWV_PROJECT:-}" ]; then
+  echo "rwv-check-mid-op: no project selected; run \`rwv activate <project>\`" >&2
+  exit 1
+fi
 
 if [ -n "${RWV_WORKWEAVE:-}" ]; then
   data=$(rwv -C "$RWV_WORKSPACE" -w "$RWV_WORKWEAVE" status --json)
@@ -35,11 +39,15 @@ Make the script executable (`chmod +x ~/.local/bin/rwv-check-mid-op`) and invoke
 
 ## 1. Guard on being inside a workspace
 
-`rwv` sets `$RWV_WORKSPACE` only when it resolves a workspace. Plugins that require a workspace check `$RWV_WORKSPACE` up front and exit non-zero with a clear message when invoked outside one:
+`rwv` sets `$RWV_WORKSPACE` only when it resolves a workspace, and `$RWV_PROJECT` only when it also resolves a project — a primary with no project selected has the first and not the second. Plugins that require them check both up front and exit non-zero with a message naming the step that fixes it:
 
 ```sh
 if [ -z "${RWV_WORKSPACE:-}" ]; then
   echo "rwv-check-mid-op: not inside a workspace" >&2
+  exit 1
+fi
+if [ -z "${RWV_PROJECT:-}" ]; then
+  echo "rwv-check-mid-op: no project selected; run \`rwv activate <project>\`" >&2
   exit 1
 fi
 ```

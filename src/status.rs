@@ -427,7 +427,7 @@ pub fn run_status(
         let envelope = StatusJsonOutput {
             schema_url: STATUS_SCHEMA_URL.to_string(),
             repos: entries,
-            resolution: ctx.resolution(),
+            resolution: Some(ctx.resolution()),
             op: op.as_ref().map(OpStatus::from),
         };
         let out = serde_json::to_string_pretty(&envelope)

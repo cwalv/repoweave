@@ -178,7 +178,7 @@ fn resolution() -> Resolution {
         workspace: repoweave::path_spelling::WirePath::of(std::path::Path::new("/ws")),
         workweave: Some("proj--feat-a".into()),
         workweave_unregistered: false,
-        project: repoweave::manifest::ProjectName::new("proj").unwrap(),
+        project: Some(repoweave::manifest::ProjectName::new("proj").unwrap()),
     }
 }
 
@@ -187,7 +187,7 @@ fn primary_resolution() -> Resolution {
         workspace: repoweave::path_spelling::WirePath::of(std::path::Path::new("/ws")),
         workweave: None,
         workweave_unregistered: false,
-        project: repoweave::manifest::ProjectName::new("proj").unwrap(),
+        project: Some(repoweave::manifest::ProjectName::new("proj").unwrap()),
     }
 }
 
@@ -199,7 +199,7 @@ fn unregistered_resolution() -> Resolution {
         workspace: repoweave::path_spelling::WirePath::of(std::path::Path::new("/ws")),
         workweave: None,
         workweave_unregistered: true,
-        project: repoweave::manifest::ProjectName::new("proj").unwrap(),
+        project: Some(repoweave::manifest::ProjectName::new("proj").unwrap()),
     }
 }
 

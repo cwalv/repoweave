@@ -723,6 +723,103 @@ fn a_workweave_runs_in_its_own_checkouts_never_the_primarys() {
     assert_ne!(canonical(&ran_in), canonical(&pw.workspace.join(APP)));
 }
 
+/// The command an error message spells between its first pair of backticks,
+/// with each `<placeholder>` replaced from `fill`.
+fn advised_command(message: &str, fill: &[(&str, &str)]) -> Vec<String> {
+    let quoted = message
+        .split('`')
+        .nth(1)
+        .unwrap_or_else(|| panic!("no backticked command in: {message}"));
+    quoted
+        .split_whitespace()
+        .map(|word| {
+            fill.iter()
+                .find(|(placeholder, _)| *placeholder == word)
+                .map_or(word, |(_, value)| *value)
+                .to_owned()
+        })
+        .collect()
+}
+
+fn follow_the_activate_advice(w: &Weave) {
+    let refused = w.each(&args_then(&["--"], MARK));
+    assert_eq!(refused.status.code(), Some(1), "{}", stderr(&refused));
+    assert!(!w.ran(APP), "nothing runs without a project");
+
+    let advice = advised_command(&stderr(&refused), &[("<project>", "demo")]);
+    assert_eq!(advice[..2], ["rwv", "activate"], "{}", stderr(&refused));
+    let followed = common::rwv_std()
+        .args(&advice[1..])
+        .current_dir(&w.ws)
+        .output()
+        .unwrap();
+    assert!(followed.status.success(), "{}", stderr(&followed));
+
+    let out = w.each(&args_then(&["--"], MARK));
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(w.ran(APP) && w.ran(LIB));
+}
+
+#[test]
+fn a_primary_with_no_project_selected_names_the_step_that_selects_one() {
+    let w = Weave::standard();
+    std::fs::remove_file(w.ws.join(".rwv-active")).unwrap();
+    follow_the_activate_advice(&w);
+}
+
+#[test]
+fn the_state_doctor_leaves_after_dropping_an_unreadable_pointer_names_the_step_that_selects_one() {
+    let w = Weave::standard();
+    std::fs::write(w.ws.join(".rwv-active"), "x y\n").unwrap();
+    let fixed = common::rwv_std()
+        .args(["doctor", "--fix"])
+        .current_dir(&w.ws)
+        .output()
+        .unwrap();
+    assert!(
+        !w.ws.join(".rwv-active").exists(),
+        "doctor --fix keeps the unreadable pointer:\n{}",
+        stdout(&fixed)
+    );
+    follow_the_activate_advice(&w);
+}
+
+#[test]
+fn outside_any_workspace_addressing_one_with_minus_c_runs_there() {
+    let w = Weave::standard();
+    let outside = w.ws.parent().unwrap();
+    let refused = common::rwv_std()
+        .arg("each")
+        .args(args_then(&["--"], MARK))
+        .current_dir(outside)
+        .env("PATH", path_with_bins())
+        .output()
+        .unwrap();
+    assert_eq!(refused.status.code(), Some(1), "{}", stderr(&refused));
+    assert!(
+        stderr(&refused).contains("-C <path>"),
+        "{}",
+        stderr(&refused)
+    );
+    assert!(
+        !stderr(&refused).contains("-w "),
+        "-w looks its name up in the workspace it starts in, so from outside one it is no advice: {}",
+        stderr(&refused)
+    );
+
+    let out = common::rwv_std()
+        .arg("-C")
+        .arg(&w.ws)
+        .arg("each")
+        .args(args_then(&["--"], MARK))
+        .current_dir(outside)
+        .env("PATH", path_with_bins())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(w.ran(APP) && w.ran(LIB));
+}
+
 #[test]
 fn job_helper() {
     common::job::serve();

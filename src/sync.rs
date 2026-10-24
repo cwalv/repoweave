@@ -7074,7 +7074,7 @@ fn run_sync_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Result
         SYNC_JSON_SCHEMA_URL,
         project_level_result,
         false,
-        ctx.resolution(),
+        Some(ctx.resolution()),
     )
 }
 
@@ -7244,7 +7244,7 @@ pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJ
     let outcome = recorder.into_outcome();
     SyncToJsonRun {
         any_failure: outcome.any_failure(),
-        envelope: outcome.envelope(project_level_result.is_err(), ctx.resolution()),
+        envelope: outcome.envelope(project_level_result.is_err(), Some(ctx.resolution())),
         project_level_result,
     }
 }

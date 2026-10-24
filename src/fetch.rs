@@ -383,7 +383,7 @@ pub fn run_fetch_in_place(
         jobs,
         output,
         None,
-        ctx.resolution(),
+        Some(ctx.resolution()),
     )?;
 
     let created = match &ctx.checkout {

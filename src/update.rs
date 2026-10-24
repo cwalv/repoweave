@@ -345,7 +345,7 @@ fn update_for_project(
             schema_url: UPDATE_SCHEMA_URL.to_string(),
             repos: json_records,
             placements,
-            resolution: ctx.resolution(),
+            resolution: Some(ctx.resolution()),
             skipped: Vec::new(),
         };
         let out =
@@ -436,7 +436,7 @@ fn update_for_project(
             schema_url: UPDATE_SCHEMA_URL.to_string(),
             repos: json_records,
             placements,
-            resolution: ctx.resolution(),
+            resolution: Some(ctx.resolution()),
             skipped,
         };
         let out =

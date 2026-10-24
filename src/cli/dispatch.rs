@@ -1321,12 +1321,12 @@ pub fn run() -> anyhow::Result<()> {
                             origin_dir.display()
                         )
                     })?;
-                ctx.resolution()
+                Some(ctx.resolution())
             } else {
                 // No flags: soft fallthrough — tolerate resolution failure.
                 WorkspaceContext::resolve_invocation(origin_dir, None)
                     .ok()
-                    .and_then(|ctx| ctx.resolution())
+                    .map(|ctx| ctx.resolution())
             };
 
             // Exec. Never returns on success; on error, the two documented

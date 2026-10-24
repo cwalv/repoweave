@@ -155,7 +155,7 @@ fn resolution() -> Resolution {
         workspace: repoweave::path_spelling::WirePath::of(std::path::Path::new("/ws")),
         workweave: Some("proj--feat-a".into()),
         workweave_unregistered: false,
-        project: ProjectName::new("proj").unwrap(),
+        project: Some(ProjectName::new("proj").unwrap()),
     }
 }
 

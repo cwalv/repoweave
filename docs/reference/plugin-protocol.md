@@ -29,7 +29,7 @@ For the design rationale — what earns a place in core versus a plugin, and why
 | `RWV_WORKSPACE` | primary weave root (absolute path) | no workspace resolved |
 | `RWV_WORKWEAVE` | `<project>--<name>` | not in a workweave, or in one the registry does not name |
 | `RWV_WORKWEAVE_UNREGISTERED` | `1` | anywhere else |
-| `RWV_PROJECT` | resolved project name | no workspace resolved |
+| `RWV_PROJECT` | resolved project name | no project resolved |
 
 - **Outputs only.** `rwv` sets these; it never reads them back. A plugin that needs to hand a value back to `rwv` passes it as an explicit argument — see addressing, below.
 - **Presence encodes checkout kind across `RWV_WORKWEAVE` and `RWV_WORKWEAVE_UNREGISTERED`:**
@@ -40,6 +40,7 @@ For the design rationale — what earns a place in core versus a plugin, and why
   | Registered workweave | `<project>--<name>` | *(unset)* |
   | Unregistered workweave (register with `rwv doctor --fix`) | *(unset)* | `1` |
 
+- **A workspace can resolve without a project.** At a primary with no project selected, `RWV_WORKSPACE` is set and `RWV_PROJECT` is not; `rwv activate <project>` selects one.
 - **`RWV_WORKSPACE` is always the primary root**, not "wherever this checkout is" — the value is identical whether the plugin is running at primary or inside a workweave. See addressing, below, for why this matters.
 - **One projection, two surfaces.** The envelope is a pure projection of the same resolved value that the `resolution` block in `--json` output serializes. A plugin that reads both never sees them disagree.
 - **Version floors are a last resort.** `RWV_VERSION` is always set, but prefer probing the shape of `--json` output over gating on it — see [additive-schema guarantee](#additive-schema-guarantee) below.
