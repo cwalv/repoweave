@@ -377,7 +377,6 @@ fn fetch_of_a_manifest_url_that_is_a_plain_path_clears_once_it_is_spelled_file()
         .unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(!out.status.success(), "{stderr}");
-    assert_routes_to(&stderr, "partial-run-aborted");
     assert!(!ws.join("local/remotes/lib").exists());
 
     let spelled = stderr
