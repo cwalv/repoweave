@@ -36,16 +36,24 @@ exactly one project, in-place `fetch` fetches that project and then activates
 it, as `rwv activate` would; with zero or several projects it refuses
 (`no-active-project`) and names `--project`.
 
-Run in a workweave, in-place `fetch` aligns the canonical clones and then
-gives the workweave its worktree for every member its `rwv.lock` pins and the
-workweave lacks — nothing at the slot, a symlink there, which is replaced, or
-a checkout whose worktree link dangles, which keeps its files. The worktree
-goes on the workweave's own branch at its own tip where that branch survives,
-and on that branch created at the pinned revision where it does not; no branch
-is moved or deleted. It is the repair `rwv doctor` names for a
-`workweave-drift` finding whose canonical clone is not on disk; one whose
-canonical clone holds what the worktree needs, `rwv doctor --fix` gives back
-without the network.
+Run in a workweave, in-place `fetch` treats the canonical clones in the
+primary as the store the workweave's worktrees share, not as checkouts to
+align. It moves no branch and no checkout of theirs: where a canonical clone
+lacks a revision the workweave's `rwv.lock` pins, it fetches from that clone's
+remote, and where one is not on disk, it clones it at the revision the
+primary's own `rwv.lock` pins (at the workweave's pin when the primary pins
+none). It then gives the workweave its worktree for every member its
+`rwv.lock` pins and the workweave lacks — nothing at the slot, a symlink
+there, which is replaced, or a checkout whose worktree link dangles, which
+keeps its files; a symlinked member the lock does not pin starts from the
+canonical clone's HEAD. The worktree goes on the workweave's own branch at its
+own tip where that branch survives, and on that branch created at the pinned
+revision where it does not; no branch is moved or deleted. It does not write
+the workweave's `rwv.lock`, which records the workweave's own worktrees;
+`rwv lock` does. It is the repair `rwv doctor` names for a `workweave-drift`
+finding whose canonical clone does not hold the pinned revision or is not on
+disk; one whose canonical clone holds what the worktree needs,
+`rwv doctor --fix` gives back without the network.
 
 ### What happens to a clone that is already present
 
@@ -68,12 +76,12 @@ the lock covers it:
 - **There is no lock at all** (first-time bootstrap). The clone is left
   exactly as it is, and the lock is written from the on-disk HEADs.
 
-Realignment is a *local* operation: nothing of the member's own history is
-fetched over the network for a clone that is already present (its submodules
-are another matter; see below). If the locked revision is not in that clone's
-object store, the repo fails with `revision ... not found` rather than being
-re-fetched — run `git fetch` in that repo and re-run, or re-lock to a
-reachable revision (see the reconcile-repos how-to).
+At the primary, realignment is a *local* operation: nothing of the member's
+own history is fetched over the network for a clone that is already present
+(its submodules are another matter; see below). If the locked revision is not
+in that clone's object store, the repo fails with `revision ... not found`
+rather than being re-fetched — run `git fetch` in that repo and re-run, or
+re-lock to a reachable revision (see the reconcile-repos how-to).
 
 A newly cloned repo is *born* on that same branch, positioned at the lock
 revision rather than at the remote tip — so bootstrapping a weave from a
@@ -91,9 +99,10 @@ is a submodule git's `submodule.<name>.update = none` declines. A submodule
 that cannot be fetched is a warning, not a failure.
 
 Run in a workweave, `fetch` also checks out the empty submodules of the
-workweave's members from the canonical clone's copies. This is the repair
-`rwv doctor` names for `uninitialized-submodule` / `unfetched`, run in the
-primary weave and followed by `rwv doctor --fix`.
+workweave's members from the canonical clone's copies, after fetching into
+them the commits the workweave's checkouts record. This is the repair
+`rwv doctor` names for `uninitialized-submodule` / `unfetched`, run in that
+workweave.
 
 ### Realignment refuses to change what HEAD is attached to
 
@@ -693,9 +702,9 @@ rwv fetch --detach-checkouts
 - *repo is mid-…* — an already-detached repo is stopped mid-rebase, mid-merge
   or mid-bisect. Finish or abort that operation and re-run; rwv will not move
   a HEAD that is carrying an in-flight operation's state.
-- *revision … not found in …* — the clone is present but its object store
-  does not have the locked revision, and a present clone is realigned without
-  a network fetch. `git fetch` in that repo, or re-lock to a reachable
+- *revision … not found in …* — at the primary, the clone is present but its
+  object store does not have the locked revision, and a present clone is
+  realigned without a network fetch. `git fetch` in that repo, or re-lock to a reachable
   revision.
 - *repository not found* — the source URL is wrong or the remote is private
   and credentials aren't configured.
