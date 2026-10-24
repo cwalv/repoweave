@@ -231,8 +231,8 @@ fn the_exit_code_is_0_when_every_repo_succeeds() {
 }
 
 #[test]
-fn the_text_summary_lists_each_failed_repo_with_its_exit_status_in_manifest_order() {
-    let w = Weave::standard();
+fn the_text_summary_lists_each_failed_repo_with_its_exit_status_in_path_order() {
+    let w = Weave::new(&[(LIB, "dependency"), (APP, "owned")]);
     let out = w.each(&["-j", "2", "--shell", "exit 4"]);
     assert_eq!(out.status.code(), Some(1));
     let err = stderr(&out);
@@ -242,7 +242,7 @@ fn the_text_summary_lists_each_failed_repo_with_its_exit_status_in_manifest_orde
     let tail = &err[summary..];
     let app = tail.find(&format!("  {APP}: exit 4")).expect("app listed");
     let lib = tail.find(&format!("  {LIB}: exit 4")).expect("lib listed");
-    assert!(app < lib, "manifest order:\n{tail}");
+    assert!(app < lib, "path order, not rwv.toml's:\n{tail}");
 }
 
 #[test]
@@ -750,6 +750,14 @@ impl Weave {
         cmd.env(common::job::ROLE, common::job::TREE_ROOT);
         cmd
     }
+
+    /// [`Weave::each_tree`] with a [`common::job::ORPHANING_ROOT`]: the leaf
+    /// holds none of the command's output, so only its tree reaches it.
+    fn each_orphaning_tree(&self, flags: &[&str]) -> Command {
+        let mut cmd = self.each_tree(flags);
+        cmd.env(common::job::ROLE, common::job::ORPHANING_ROOT);
+        cmd
+    }
 }
 
 #[test]
@@ -800,10 +808,79 @@ fn an_interrupt_reaches_every_running_tree_starts_no_more_and_exits_130() {
     assert!(stderr(&out).contains("a/two: not run"), "{}", stderr(&out));
 }
 
+#[test]
+fn after_an_interrupt_what_a_command_left_running_is_ended_even_when_it_holds_no_output() {
+    for jobs in ["2", "1"] {
+        let w = Weave::new(&[(APP, "owned")]);
+        let mut cmd = w.each_orphaning_tree(&["-j", jobs]);
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+        let child = common::job::as_foreground_job(&mut cmd).spawn().unwrap();
+        let leaf = common::job::leaf_pid(&w.ws.join(APP), Duration::from_secs(20));
+        common::job::interrupt_foreground_job(&child);
+        let out = common::job::wait_job_with_output(child, common::job::JOB_BOUND)
+            .unwrap_or_else(|e| panic!("-j {jobs}: the interrupted job never ended: {e}"));
+        assert_eq!(out.status.code(), Some(130), "-j {jobs}: {}", stderr(&out));
+        common::job::wait_dead(leaf);
+    }
+}
+
+#[test]
+fn a_lone_dash_for_the_joblog_or_results_is_refused_and_nothing_runs() {
+    let w = Weave::new(&[(APP, "owned")]);
+    for flag in ["--joblog", "--results"] {
+        let out = w.each(&args_then(&[flag, "-", "--"], MARK));
+        assert_eq!(out.status.code(), Some(2), "{flag}: {}", stderr(&out));
+        let err = stderr(&out);
+        assert!(err.contains("stdout carries the commands' output"), "{err}");
+        assert!(err.contains("`./-`"), "{err}");
+        assert!(!w.ws.join("-").exists(), "{flag} - wrote a file named -");
+        assert!(!w.ran(APP), "{flag} -: a repo ran");
+    }
+}
+
 #[cfg(unix)]
 mod unix {
     use super::*;
     use std::io::Write;
+
+    /// `rwv each` as the foreground job of a terminal of its own, which the
+    /// test types into through `master`.
+    fn on_a_terminal(mut cmd: Command) -> (std::process::Child, std::fs::File) {
+        use std::os::unix::process::CommandExt;
+        let pty = nix::pty::openpty(None, None).expect("a pty");
+        cmd.stdin(Stdio::from(pty.slave.try_clone().unwrap()))
+            .stdout(Stdio::from(pty.slave.try_clone().unwrap()))
+            .stderr(Stdio::from(pty.slave));
+        // SAFETY: setsid and ioctl are async-signal-safe, and nothing else
+        // runs between fork and exec.
+        unsafe {
+            cmd.pre_exec(|| {
+                nix::unistd::setsid()?;
+                if nix::libc::ioctl(0, nix::libc::TIOCSCTTY as _, 0) == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let child = cmd.spawn().expect("rwv each starts on the terminal");
+        drop(cmd);
+        let master = std::fs::File::from(pty.master);
+        let mut screen = master.try_clone().unwrap();
+        std::thread::spawn(move || std::io::copy(&mut screen, &mut std::io::sink()));
+        (child, master)
+    }
+
+    #[test]
+    fn ctrl_c_typed_under_one_job_ends_what_the_command_left_running() {
+        let w = Weave::new(&[(APP, "owned")]);
+        let (mut child, mut master) = on_a_terminal(w.each_orphaning_tree(&["-j", "1"]));
+        let leaf = common::job::leaf_pid(&w.ws.join(APP), Duration::from_secs(20));
+        master.write_all(b"\x03").unwrap();
+        let status = common::job::wait_job(&mut child, common::job::JOB_BOUND)
+            .unwrap_or_else(|e| panic!("the interrupted job never ended: {e}"));
+        assert_eq!(status.code(), Some(130));
+        common::job::wait_dead(leaf);
+    }
 
     #[test]
     fn concurrent_output_lines_never_interleave_mid_line() {

@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::time::Duration;
 
 use clap::{ArgGroup, Parser};
@@ -44,12 +45,12 @@ pub struct Cli {
     pub timeout: Option<Duration>,
 
     /// Write one tab-separated line per repo to FILE as each finishes, after a header row.
-    #[arg(long, value_name = "FILE")]
-    pub joblog: Option<std::path::PathBuf>,
+    #[arg(long, value_name = "FILE", value_parser = parse_output_path)]
+    pub joblog: Option<PathBuf>,
 
     /// Also write each repo's stdout, stderr and outcome to `DIR/<path>/stdout`, `stderr` and `exit`.
-    #[arg(long, value_name = "DIR")]
-    pub results: Option<std::path::PathBuf>,
+    #[arg(long, value_name = "DIR", value_parser = parse_output_path)]
+    pub results: Option<PathBuf>,
 
     /// Keep a one-line progress summary at the bottom of stderr while repos run. Draws nothing when stderr is not a terminal.
     #[arg(long)]
@@ -67,6 +68,17 @@ pub struct Cli {
         conflicts_with = "shell"
     )]
     pub command: Vec<String>,
+}
+
+pub fn parse_output_path(raw: &str) -> Result<PathBuf, String> {
+    if raw == "-" {
+        return Err(
+            "`-` does not mean stdout here: stdout carries the commands' output. \
+             Name a file; spell it `./-` for one named `-`"
+                .to_owned(),
+        );
+    }
+    Ok(PathBuf::from(raw))
 }
 
 pub fn parse_duration(raw: &str) -> Result<Duration, String> {
@@ -108,6 +120,15 @@ fn seconds_to_duration(seconds: f64) -> Option<Duration> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_lone_dash_is_refused_and_any_other_spelling_is_a_path() {
+        let err = parse_output_path("-").unwrap_err();
+        assert!(err.contains("stdout carries the commands' output"), "{err}");
+        assert!(err.contains("`./-`"), "{err}");
+        assert_eq!(parse_output_path("./-"), Ok(PathBuf::from("./-")));
+        assert_eq!(parse_output_path("run.tsv"), Ok(PathBuf::from("run.tsv")));
+    }
 
     #[test]
     fn a_bare_number_is_seconds() {

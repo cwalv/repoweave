@@ -46,6 +46,12 @@ pub const TREE_ROOT: &str = "tree-root";
 /// A process that would outlive its parent by a minute and takes no action on
 /// an interrupt.
 const TREE_LEAF: &str = "tree-leaf";
+/// A [`TREE_ROOT`] whose leaf holds none of its stdio, so nothing but the
+/// tree ties the leaf to the command. Its leaf records its own pid once it
+/// takes no action on an interrupt, and on a terminal the root starts it only
+/// once the terminal has been handed to the root's group.
+pub const ORPHANING_ROOT: &str = "orphaning-root";
+const QUIET_LEAF: &str = "quiet-leaf";
 /// A process that writes its pid into the file [`hold`] names once it can
 /// take an interrupt, waits for one, then winds down and exits
 /// [`HOLD_EXIT`].
@@ -70,6 +76,8 @@ pub fn serve() {
     match role.as_str() {
         TREE_ROOT => tree_root(),
         TREE_LEAF => tree_leaf(),
+        ORPHANING_ROOT => orphaning_root(),
+        QUIET_LEAF => quiet_leaf(),
         HOLD => hold_until_interrupted(),
         LINGER => linger_with_default_interrupts(),
         #[cfg(windows)]
@@ -115,6 +123,46 @@ fn tree_leaf() {
     ctrlc::set_handler(|| {}).expect("the leaf takes interrupts itself");
     std::thread::sleep(Duration::from_secs(60));
 }
+
+fn orphaning_root() {
+    wait_for_the_terminal();
+    let mut leaf = Command::new(helper_exe())
+        .args(helper_args())
+        .env(ROLE, QUIET_LEAF)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("the leaf starts");
+    let _ = leaf.wait();
+}
+
+fn quiet_leaf() {
+    ctrlc::set_handler(|| {}).expect("the leaf takes interrupts itself");
+    std::fs::write(LEAF_PID_FILE, format!("{}\n", std::process::id()))
+        .expect("the leaf pid is recorded");
+    std::thread::sleep(Duration::from_secs(60));
+}
+
+#[cfg(unix)]
+fn wait_for_the_terminal() {
+    use std::io::IsTerminal;
+    let stdin = std::io::stdin();
+    if !stdin.is_terminal() {
+        return;
+    }
+    let start = Instant::now();
+    while nix::unistd::tcgetpgrp(&stdin) != Ok(nix::unistd::getpgrp()) {
+        assert!(
+            start.elapsed() < HELPER_BOUND,
+            "the terminal was never handed to this group"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[cfg(not(unix))]
+fn wait_for_the_terminal() {}
 
 fn hold_until_interrupted() {
     use std::sync::atomic::{AtomicBool, Ordering};

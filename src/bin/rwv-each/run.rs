@@ -170,7 +170,7 @@ pub struct Runner<'a> {
 }
 
 impl Runner<'_> {
-    /// Every repo's outcome, in manifest order; a repo never started is
+    /// Every repo's outcome, in the order of `repos`; a repo never started is
     /// `not-run`.
     pub fn run_all(&self) -> Vec<Finished> {
         let next = AtomicUsize::new(0);
@@ -282,15 +282,18 @@ impl Runner<'_> {
                     }
                 }
                 let exited = status.is_some() || wait_error.is_some();
-                if exited && readers.iter().all(|r| r.is_finished()) {
-                    break;
+                if inherit && status.as_ref().is_some_and(tree::died_of_interrupt) {
+                    INTERRUPTS.fetch_max(1, Ordering::SeqCst);
                 }
                 // A non-interactive shell starts background commands with
                 // SIGINT ignored, so they outlive an interrupt that ended the
-                // command itself, holding its output open.
-                if exited && delivered > 0 && !swept {
+                // command itself.
+                if exited && interrupted() && !swept {
                     let _ = tree::kill_tree(child.as_mut());
                     swept = true;
+                }
+                if exited && readers.iter().all(|r| r.is_finished()) {
+                    break;
                 }
                 let interrupts = INTERRUPTS.load(Ordering::SeqCst);
                 if interrupts > delivered {
@@ -316,11 +319,6 @@ impl Runner<'_> {
         drop(foreground);
 
         let duration = clock.elapsed();
-        if let Some(status) = &status {
-            if inherit && tree::died_of_interrupt(status) {
-                INTERRUPTS.fetch_max(1, Ordering::SeqCst);
-            }
-        }
         let [stdout, stderr] = captured.map(|c| c.into_inner().unwrap());
         let outcome_status = if timed_out {
             EachOutcomeStatus::TimedOut

@@ -535,7 +535,9 @@ every repo succeeded. A bare command name is found on `PATH` once, before any
 repo runs, and every repo runs that program. `--json`, `--fail-fast`,
 `--dry-run`, `--shell`, `--timeout`, `--joblog`, `--results` and `--progress`
 are described in the `rwv each` reference. Ctrl-C and `--timeout` end a
-command's whole process tree.
+command's whole process tree, including anything the command left running when
+it exited. `--joblog` and `--results` refuse `-`, since stdout carries the
+commands' output; `./-` names a file called `-`.
 
 ### Every release channel installs `rwv-each` beside `rwv`, and no longer `generate-explain`
 

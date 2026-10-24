@@ -93,7 +93,7 @@ impl PushOutcomeOutput {
 /// Top-level envelope for `rwv push --json` (serial mode, `jobs == 1`).
 ///
 /// Shape: `{ "$schema": "<url>", "outcomes": [<PushOutcomeOutput>, ...] }`.
-/// Member-repo records appear first, in manifest order; the project-repo
+/// Member-repo records appear first, sorted by repo path; the project-repo
 /// record is appended last (reflecting push ordering). Consumers can
 /// distinguish the project-repo record by checking `kind` for
 /// `"project-repo-pushed"` or `"project-repo-failed"`.

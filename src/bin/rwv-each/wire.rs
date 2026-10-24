@@ -24,7 +24,7 @@ impl std::fmt::Display for Role {
 }
 
 /// The envelope `rwv each --json -j 1` prints once every repo is done:
-/// `{ "$schema": "<url>", "outcomes": [<Outcome>, ...] }`, in manifest order.
+/// `{ "$schema": "<url>", "outcomes": [<Outcome>, ...] }`, sorted by repo path.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct EachJsonOutput {
     #[serde(rename = "$schema")]

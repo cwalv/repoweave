@@ -68,7 +68,7 @@ A bare command name is looked up on `PATH` once, before any repo runs, so every 
 
 Except under `-j 1` with the terminal attached, commands get no stdin. Under `-j 1`, `--results` and `--progress` also detach the terminal: output is read line by line, under the header, unprefixed.
 
-When anything did not succeed, a summary on stderr lists every such repo in manifest order with its exit status (`exit 3`, `killed by signal 9`, `timed out`, `not present on disk`, `not run`). A clean run prints no summary.
+When anything did not succeed, a summary on stderr lists every such repo, sorted by repo path, with its exit status (`exit 3`, `killed by signal 9`, `failed to run`, `timed out`, `not present on disk`, `not run`). `failed to run` is a command that could not be started. A clean run prints no summary.
 
 `--progress` keeps a one-line count — done, running, failed, remaining, and which repos are running — at the bottom of stderr, erased before each output line and redrawn after it. When stderr is not a terminal it prints nothing.
 
@@ -76,7 +76,7 @@ When anything did not succeed, a summary on stderr lists every such repo in mani
 
 ### `--json`
 
-With `-j 1`, one envelope once every repo is done, outcomes in manifest order:
+With `-j 1`, one envelope once every repo is done, outcomes sorted by repo path:
 
 ```json
 { "$schema": "https://raw.githubusercontent.com/cwalv/repoweave/main/docs/reference/schemas/each.json",
@@ -96,7 +96,7 @@ One tab-separated line per repo, written as each finishes, after a header row. T
 Seq	Repo	Starttime	JobRuntime	Exitval	Signal	Command
 ```
 
-`Seq` is the repo's position in the selection, from 1. `Starttime` is Unix seconds and `JobRuntime` seconds, both with millisecond precision. `Exitval` is `-1` when the command left no exit code. Repos that never started have no line. FILE is replaced if it exists; writing the joblog to stdout is not supported, since stdout carries the commands' output.
+`Seq` is the repo's position in the selection sorted by repo path, from 1. `Starttime` is Unix seconds and `JobRuntime` seconds, both with millisecond precision. `Exitval` is `-1` when the command left no exit code. Repos that never started have no line. FILE is replaced if it exists. The joblog cannot go to stdout, which carries the commands' output: `--joblog -` is refused, and `--joblog ./-` names a file called `-`. The same holds for `--results -`.
 
 ### How a command is shown
 
