@@ -632,3 +632,16 @@ fn possible_values_are_found_for_the_enum_valued_flag() {
         "clap's `Possible values:` block for --strategy must parse; got: {accepted:?}"
     );
 }
+
+#[test]
+fn set_container_help_names_info_exclude_not_gitignore() {
+    let help = help_text(&["workweave", "proj", "set-container"]);
+    assert!(
+        help.contains("set-container") && help.contains("`.git/info/exclude`"),
+        "set-container help must name the exclusion mechanism, got:\n{help}"
+    );
+    assert!(
+        !help.contains(".gitignore"),
+        "cli.md says the index is never excluded through .gitignore, got:\n{help}"
+    );
+}

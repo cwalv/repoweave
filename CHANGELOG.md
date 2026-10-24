@@ -46,6 +46,19 @@ keeps it with a warning. That warning reads as `rwv workweave delete`'s does.
 `rwv workweave delete` no longer follows its warning about a branch it keeps
 with a second line calling the same branch one rwv did not record.
 
+### `rwv remove --delete-shared-clone` without `--delete` is a usage error
+
+`rwv remove <path> --delete-shared-clone` without `--delete` is refused as a
+usage error, exit 2, naming the missing `--delete`. v0.24.0 accepted the
+combination and went on to look the path up in the manifest.
+
+### `reserved-repo-path` refuses a repo path of `(project)`
+
+A repo path of `(project)` is refused with the new refusal `reserved-repo-path`.
+`(project)` is how the project repo is named wherever a repo is a key, so a
+member at that path could not be told from it. The refusal is listed in
+`docs/reference/refusals.md`.
+
 ### On Windows, `rwv explain` and `rwv prime` print LF line endings
 
 The pages `rwv explain` and `rwv prime` print are built into the binary. The
