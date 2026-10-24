@@ -23,10 +23,10 @@
 //! a `BTreeMap<String, _>`.
 
 use repoweave::check::{
-    BranchDisciplineKind, CheckViolation, CloneTopologyKind, DeadOpLeaseKind, DriftKind,
-    IndexDriftKind, LegacyRefAtTip, OrphanedSavepointKind, PermissionsKind, ProvenanceKind,
-    ReplayExclusionKind, SubmoduleCommitKind, WeaveRootIdentityConflictKind, WorkingTreeDriftKind,
-    WorkweaveTreeIntegrityKind,
+    BranchDisciplineKind, CheckViolation, CloneTopologyKind, DeadOpLeaseKind, DetachedAncestry,
+    DriftKind, IndexDriftKind, LegacyRefAtTip, OrphanedSavepointKind, PermissionsKind,
+    ProvenanceKind, ReplayExclusionKind, SubmoduleCommitKind, WeaveRootIdentityConflictKind,
+    WorkingTreeDriftKind, WorkweaveTreeIntegrityKind,
 };
 use repoweave::integration::{Issue, IssueKind, IssueSource, Severity};
 use repoweave::integration::{MemberIncompatibility, Observed};
@@ -687,6 +687,7 @@ pub fn corpus() -> Vec<CheckViolation> {
                 expected_ref: "proj--feat-a".into(),
                 at_sha: commit(),
                 branch_tip: commit(),
+                ancestry: DetachedAncestry::HeadAhead,
             },
         },
         CheckViolation::BranchDiscipline {

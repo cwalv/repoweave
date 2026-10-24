@@ -1903,8 +1903,11 @@ pub enum BranchDisciplineKind {
     /// would be a MOVE no receipt witnesses. The migration's consented arm
     /// skips this state for the same reason.
     ///
-    /// Report-only. Reattaching is `git switch` to the branch; it checks out
-    /// the branch's tip, which is HEAD's commit only when the two agree.
+    /// Report-only. The reattach it names is chosen by `ancestry` so that
+    /// following it strands no commit: `git switch` where the branch carries
+    /// HEAD, a fast-forward of the branch to HEAD where HEAD carries the
+    /// branch, and a new branch for HEAD's commits first where they have
+    /// diverged.
     DetachedOffEphemeralBranch {
         /// The flat ref (`<project>--<workweave>`).
         expected_ref: String,
@@ -1912,6 +1915,8 @@ pub enum BranchDisciplineKind {
         at_sha: CommitId,
         /// The commit the flat ref names.
         branch_tip: CommitId,
+        /// How HEAD's commit stands against the flat ref's.
+        ancestry: DetachedAncestry,
     },
     /// (a) The workweave's flat ref exists in the canonical store, but rwv
     /// holds no receipt for it.
@@ -2072,6 +2077,42 @@ pub struct LegacyRefAtTip {
     /// whether adopting the checkout would **strand** work. Arm 3 makes the
     /// warning mandatory in exactly this case.
     pub strands_commits: bool,
+}
+
+/// How a detached HEAD stands against its workweave's existing branch, which
+/// decides the one reattach that strands no commit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum DetachedAncestry {
+    /// HEAD is at the branch's tip.
+    Equal,
+    /// The branch carries HEAD and commits HEAD lacks: switching to it
+    /// strands nothing.
+    HeadBehind,
+    /// HEAD carries the branch and commits the branch lacks: only a
+    /// fast-forward of the branch to HEAD strands nothing.
+    HeadAhead,
+    /// Each carries commits the other lacks, or their ancestry could not be
+    /// read: switching strands HEAD's, and moving the branch strands its own.
+    Diverged,
+}
+
+impl DetachedAncestry {
+    fn observe(
+        vcs: &dyn crate::vcs::Vcs,
+        store: &Path,
+        head: &ResolvedRevisionId,
+        branch_tip: &ResolvedRevisionId,
+    ) -> Self {
+        let switching_strands_head = leaves_commits_behind(vcs, store, head, branch_tip);
+        let moving_branch_strands_tip = leaves_commits_behind(vcs, store, branch_tip, head);
+        match (switching_strands_head, moving_branch_strands_tip) {
+            (false, false) => Self::Equal,
+            (false, true) => Self::HeadBehind,
+            (true, false) => Self::HeadAhead,
+            (true, true) => Self::Diverged,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -5159,6 +5200,7 @@ fn scan_workweave_repo_branches(
                         expected_ref: expected_ref.clone(),
                         at_sha: d.at().id().clone(),
                         branch_tip: tip.id().clone(),
+                        ancestry: DetachedAncestry::observe(vcs, &store, d.at(), &tip),
                     }
                 } else {
                     BranchDisciplineKind::Detached {
@@ -5185,16 +5227,27 @@ fn scan_workweave_repo_branches(
     }
 }
 
+/// Whether giving up `left` for `kept` strands commits: anything `left`
+/// reaches that `kept` does not.
+///
+/// Structural: the question is ancestry, never how long ago anything
+/// happened. Unreadable ancestry counts as stranding. The direction that is
+/// wrong to guess is the quiet one.
+fn leaves_commits_behind(
+    vcs: &dyn crate::vcs::Vcs,
+    store: &Path,
+    left: &ResolvedRevisionId,
+    kept: &ResolvedRevisionId,
+) -> bool {
+    !vcs.is_ancestor(store, left, kept).unwrap_or(false)
+}
+
 /// Read a pre-flat branch's tip and decide whether adopting the checkout at
 /// `head` would strand it. A stranded tip **must** be warned about.
 ///
-/// Structural: the question is ancestry, never how long ago
-/// anything happened. A tip that is an ancestor of `head` is carried by the
-/// commit HEAD already names, so the branch's name can go without any commit
-/// going with it; anything else strands work, and the report has to say so.
-///
-/// Unreadable ancestry counts as stranding. The direction that is wrong to
-/// guess is the quiet one.
+/// A tip that is an ancestor of `head` is carried by the commit HEAD already
+/// names, so the branch's name can go without any commit going with it;
+/// anything else strands work, and the report has to say so.
 fn legacy_ref_at_tip(
     vcs: &dyn crate::vcs::Vcs,
     store: &Path,
@@ -5204,7 +5257,7 @@ fn legacy_ref_at_tip(
     let raw = legacy.to_raw();
     let tip = vcs.resolve_local_branch_tip(store, &raw).ok().flatten();
     let strands_commits = match &tip {
-        Some(t) => !vcs.is_ancestor(store, t, head).unwrap_or(false),
+        Some(t) => leaves_commits_behind(vcs, store, t, head),
         None => false,
     };
     LegacyRefAtTip {
@@ -8616,29 +8669,47 @@ impl CheckViolation {
                         expected_ref,
                         at_sha,
                         branch_tip,
+                        ancestry,
                     } => {
                         safe_to_fix = false;
-                        let moves = if at_sha == branch_tip {
-                            " without moving the working tree".to_owned()
-                        } else {
-                            format!(
-                                ", checking out {} in place of {}",
+                        let reattach = match ancestry {
+                            DetachedAncestry::Equal => format!(
+                                "`git switch {expected_ref}` reattaches it without moving \
+                                     the working tree"
+                            ),
+                            DetachedAncestry::HeadBehind => format!(
+                                "`{expected_ref}` carries HEAD, so `git switch \
+                                     {expected_ref}` reattaches it, checking out {} in \
+                                     place of {}",
                                 branch_tip.short(),
                                 at_sha.short()
-                            )
+                            ),
+                            DetachedAncestry::HeadAhead => format!(
+                                "HEAD carries `{expected_ref}` and commits it lacks, which \
+                                     switching alone would leave on no branch; `git switch \
+                                     {expected_ref} && git merge --ff-only {at_sha}` \
+                                     reattaches it with `{expected_ref}` fast-forwarded to \
+                                     HEAD"
+                            ),
+                            DetachedAncestry::Diverged => format!(
+                                "HEAD and `{expected_ref}` have diverged, so reattaching \
+                                     either way leaves commits on no branch: `git switch -c \
+                                     <new-branch>` keeps HEAD's on a branch first, then `git \
+                                     rebase {expected_ref}` and `git switch {expected_ref} && \
+                                     git merge --ff-only <new-branch>` bring them onto \
+                                     `{expected_ref}`"
+                            ),
                         };
                         format!(
                             "{}: workweave checkout is in detached-HEAD state at {} \
-                                 while its ephemeral branch `{}` stands at {}; \
-                                 `git switch {}` reattaches it{} (report-only; \
-                                 `--adopt-detached-checkouts` mints the branch only where \
-                                 none exists)",
+                                 while its ephemeral branch `{}` stands at {}; {} \
+                                 (report-only; `--adopt-detached-checkouts` mints the \
+                                 branch only where none exists)",
                             repo_path.display(),
                             at_sha.short(),
                             expected_ref,
                             branch_tip.short(),
-                            expected_ref,
-                            moves,
+                            reattach,
                         )
                     }
                     BranchDisciplineKind::UnrecordedEphemeralBranch { branch } => format!(

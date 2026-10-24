@@ -4102,20 +4102,10 @@ fn name_half_rename_keeps_recorded_branch_healthy_and_reports_misnamed() {
     );
 }
 
-/// A checkout detached by hand while its flat ref stands, as in a review
-/// workweave holding a pull request's tip: `--adopt-detached-checkouts` has
-/// no branch to mint, so the finding names only the reattach, and the
-/// reattach it names clears it.
-///
-/// **Mutation evidence**: dropping the `flat_present` branch from the
-/// `HeadAttachment::Detached` arm of `scan_workweave_repo_branches` reports
-/// `detached` here, and that finding offers the flag; dropping the
-/// `!flat_present` guard from the migration's consented arm makes the flag
-/// fail on the existing name.
-#[test]
-fn detached_beside_its_own_flat_ref_names_the_reattach_that_clears_it() {
-    let tmp = common::tempdir().unwrap();
-    let ws = make_primary(tmp.path());
+/// A workweave checkout attached to its receipted flat ref `myproj--feat-a`:
+/// the primary, its canonical store, and the checkout.
+fn checkout_on_its_flat_ref(tmp: &Path) -> (PathBuf, PathBuf, PathBuf) {
+    let ws = make_primary(tmp);
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
     let ww_dir = workweaves_dir(&ws).join("myproj--feat-a");
@@ -4125,7 +4115,56 @@ fn detached_beside_its_own_flat_ref_names_the_reattach_that_clears_it() {
     std::fs::create_dir_all(ww_checkout.parent().unwrap()).unwrap();
     worktree_add(&canonical, &ww_checkout, "myproj--feat-a");
     record_receipt(&ws, "myproj", "feat-a", &canonical);
-    let branch_tip = rev(&canonical, "myproj--feat-a");
+    (ws, canonical, ww_checkout)
+}
+
+/// The `git` commands a finding names, in the order it names them.
+fn named_git_commands(finding: &str) -> Vec<String> {
+    finding
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .filter(|span| span.starts_with("git "))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Run `command` in `repo` as an operator pasting it would: each
+/// `&&`-joined step in turn, stopping at the first that fails.
+fn follow(repo: &Path, command: &str) {
+    for step in command.split("&&") {
+        let args: Vec<&str> = step.split_whitespace().collect();
+        assert_eq!(args.first(), Some(&"git"), "not a git command: {command}");
+        git_in(repo, &args[1..]);
+    }
+}
+
+/// Whether some local branch in `repo` reaches `sha`.
+fn on_a_branch(repo: &Path, sha: &str) -> bool {
+    let out = git()
+        .args(["branch", "--contains", sha, "--format=%(refname)"])
+        .current_dir(repo)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "git branch --contains {sha}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    !String::from_utf8_lossy(&out.stdout).trim().is_empty()
+}
+
+/// Detached at its branch's tip, or behind it: `git switch` is the whole
+/// reattach, and following it leaves HEAD's commit on the branch and the
+/// finding gone.
+///
+/// The flag half is the reason this finding exists:
+/// `--adopt-detached-checkouts` has no branch to mint, so it is not offered,
+/// and it leaves the checkout and the branch alone.
+#[test]
+fn detached_at_or_behind_its_flat_ref_is_reattached_by_git_switch() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, canonical, ww_checkout) = checkout_on_its_flat_ref(tmp.path());
 
     git_in(&ww_checkout, &["checkout", "--detach", "-q"]);
     assert_eq!(
@@ -4137,23 +4176,11 @@ fn detached_beside_its_own_flat_ref_names_the_reattach_that_clears_it() {
         finding.contains("`git switch myproj--feat-a` reattaches it without moving"),
         "{finding}"
     );
-
-    add_commit(&ww_checkout, "PR.txt", "pull request commit");
-    let pr_tip = rev(&ww_checkout, "HEAD");
-    let finding = detached_finding(&ws);
-    assert!(
-        finding.contains(&format!(
-            "checking out {} in place of {}",
-            &branch_tip[..12],
-            &pr_tip[..12]
-        )),
-        "{finding}"
-    );
     assert!(
         !finding.contains("run `rwv doctor --fix --adopt-detached-checkouts`"),
         "the flag has no branch to mint here, so it is not offered: {finding}"
     );
-
+    let at_tip = rev(&ww_checkout, "HEAD");
     let fix = rwv()
         .args(["doctor", "--fix", "--adopt-detached-checkouts"])
         .current_dir(&ws)
@@ -4164,23 +4191,154 @@ fn detached_beside_its_own_flat_ref_names_the_reattach_that_clears_it() {
         !fix_report.contains("already exists"),
         "the consented arm leaves an existing flat ref alone: {fix_report}"
     );
+    assert_eq!(rev(&canonical, "myproj--feat-a"), at_tip);
+    assert_eq!(rev(&ww_checkout, "HEAD"), at_tip, "still detached");
+    let commands = named_git_commands(&finding);
+    for command in &commands {
+        follow(&ww_checkout, command);
+    }
+    assert_eq!(branch_discipline_sub_kinds(&ws), Vec::<String>::new());
+    assert_eq!(rev(&canonical, "myproj--feat-a"), at_tip);
+    assert_eq!(commands, vec!["git switch myproj--feat-a".to_owned()]);
+
+    add_commit(&ww_checkout, "LATER.txt", "a later commit on the branch");
+    let branch_tip = rev(&ww_checkout, "HEAD");
+    git_in(&ww_checkout, &["checkout", "--detach", "-q", "HEAD~1"]);
+    let head = rev(&ww_checkout, "HEAD");
+
+    let finding = detached_finding(&ws);
+    let commands = named_git_commands(&finding);
+    for command in &commands {
+        follow(&ww_checkout, command);
+    }
+
+    assert!(on_a_branch(&canonical, &head), "{finding}");
+    assert_eq!(branch_discipline_sub_kinds(&ws), Vec::<String>::new());
+    assert_eq!(rev(&canonical, "myproj--feat-a"), branch_tip);
+    assert_eq!(commands, vec!["git switch myproj--feat-a".to_owned()]);
+    assert!(
+        finding.contains(&format!(
+            "checking out {} in place of {}",
+            &branch_tip[..12],
+            &head[..12]
+        )),
+        "{finding}"
+    );
+}
+
+/// Detached ahead of its branch, as a review workweave is after a commit on
+/// the pull request's tip: a bare `git switch` would leave that commit on no
+/// branch, so the finding names a fast-forward of the branch to HEAD, and
+/// following it keeps the commit and clears the finding.
+#[test]
+fn detached_ahead_of_its_flat_ref_names_the_fast_forward_that_keeps_its_commits() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, canonical, ww_checkout) = checkout_on_its_flat_ref(tmp.path());
+    let branch_tip = rev(&canonical, "myproj--feat-a");
+
+    git_in(&ww_checkout, &["checkout", "--detach", "-q"]);
+    add_commit(&ww_checkout, "PR.txt", "pull request commit");
+    let head = rev(&ww_checkout, "HEAD");
+
+    let finding = detached_finding(&ws);
+    let commands = named_git_commands(&finding);
+    for command in &commands {
+        follow(&ww_checkout, command);
+    }
+
+    assert!(
+        on_a_branch(&canonical, &head),
+        "following the advice left HEAD's commit on no branch: {finding}"
+    );
+    assert_eq!(branch_discipline_sub_kinds(&ws), Vec::<String>::new());
+    assert_eq!(rev(&canonical, "myproj--feat-a"), head);
+    assert!(on_a_branch(&canonical, &branch_tip));
+    assert_eq!(
+        commands,
+        vec![format!(
+            "git switch myproj--feat-a && git merge --ff-only {head}"
+        )]
+    );
+}
+
+/// Detached and diverged from its branch: switching strands HEAD's commit and
+/// moving the branch strands the branch's, so the finding names a new branch
+/// for HEAD's commit first. That state reports `shared-branch`, and the steps
+/// the finding names after it bring the commit onto the workweave's branch
+/// and clear both findings.
+#[test]
+fn detached_and_diverged_from_its_flat_ref_names_a_new_branch_first() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, canonical, ww_checkout) = checkout_on_its_flat_ref(tmp.path());
+
+    add_commit(&ww_checkout, "BRANCH.txt", "a commit only the branch has");
+    let branch_tip = rev(&ww_checkout, "HEAD");
+    git_in(&ww_checkout, &["checkout", "--detach", "-q", "HEAD~1"]);
+    add_commit(&ww_checkout, "HEAD.txt", "a commit only HEAD has");
+    let head = rev(&ww_checkout, "HEAD");
+
+    let finding = detached_finding(&ws);
+    let commands: Vec<String> = named_git_commands(&finding)
+        .into_iter()
+        .map(|c| c.replace("<new-branch>", "keep-head"))
+        .collect();
+    let (first, rest) = commands
+        .split_first()
+        .unwrap_or_else(|| panic!("the finding names no git command: {finding}"));
+    follow(&ww_checkout, first);
+
+    assert!(
+        on_a_branch(&canonical, &head),
+        "following the advice left HEAD's commit on no branch: {finding}"
+    );
     assert_eq!(rev(&canonical, "myproj--feat-a"), branch_tip);
     assert_eq!(
-        rev(&ww_checkout, "HEAD"),
-        pr_tip,
-        "still detached at the PR"
+        branch_discipline_sub_kinds(&ws),
+        vec!["shared-branch".to_string()],
+        "the documented next state"
+    );
+    let report = rwv()
+        .args(["doctor", "--json"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let report: serde_json::Value = serde_json::from_slice(&report.stdout).unwrap();
+    let shared = report["violations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find_map(|v| v["sub_kind"].get("shared-branch"))
+        .unwrap_or_else(|| panic!("no shared-branch record: {report}"));
+    assert_eq!(
+        (&shared["actual_branch"], &shared["recorded_ref"]),
+        (&"keep-head".into(), &"myproj--feat-a".into()),
+        "its switch target is the workweave's branch, which `keep-head` makes safe to \
+         return to: {shared}"
     );
 
-    let switch = finding
-        .split('`')
-        .skip(1)
-        .step_by(2)
-        .find(|span| span.starts_with("git switch "))
-        .unwrap_or_else(|| panic!("the finding must name a `git switch`: {finding}"));
-    let args: Vec<&str> = switch.split_whitespace().skip(1).collect();
-    git_in(&ww_checkout, &args);
-
+    for command in rest {
+        follow(&ww_checkout, command);
+    }
     assert_eq!(branch_discipline_sub_kinds(&ws), Vec::<String>::new());
+    assert!(on_a_branch(&canonical, &branch_tip));
+    let carried = git()
+        .args(["show", "myproj--feat-a:HEAD.txt"])
+        .current_dir(&canonical)
+        .output()
+        .unwrap();
+    assert!(
+        carried.status.success(),
+        "the workweave's branch must carry HEAD's change: {}",
+        String::from_utf8_lossy(&carried.stderr)
+    );
+    assert_eq!(
+        commands,
+        vec![
+            "git switch -c keep-head".to_owned(),
+            "git rebase myproj--feat-a".to_owned(),
+            "git switch myproj--feat-a && git merge --ff-only keep-head".to_owned(),
+        ]
+    );
 }
 
 /// The line `rwv doctor` prints for a detached workweave checkout.

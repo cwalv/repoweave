@@ -1228,9 +1228,25 @@ detached by hand, such as onto a pull request's tip in a review workweave.
 Reported *in place of* `detached`, not beside it: `--adopt-detached-checkouts`
 mints the branch only where none exists, and leaves this checkout alone.
 
-**What to do:** the message names `git switch <branch>`, which reattaches the
-checkout. It says whether that moves the working tree: the switch checks out
-the branch's tip, which is HEAD's commit only when the two agree.
+**What to do:** the message names the reattach that leaves every commit on a
+branch. Which one depends on how HEAD stands against the branch, reported as
+`ancestry` in `--json`:
+
+- `equal` or `head-behind` — the branch carries HEAD. `git switch <branch>`
+  reattaches the checkout, moving the working tree to the branch's tip when
+  the two differ.
+- `head-ahead` — HEAD carries the branch and commits it lacks, which a bare
+  `git switch <branch>` would leave on no branch.
+  `git switch <branch> && git merge --ff-only <HEAD>` reattaches the checkout
+  and fast-forwards the branch to HEAD.
+- `diverged` — each holds commits the other lacks, so switching strands
+  HEAD's and moving the branch strands its own. `git switch -c <new-branch>`
+  puts HEAD's commits on a branch first. The checkout then reports
+  [`shared-branch`](#shared-branch), whose switch target is `<branch>`.
+  Switching back strands nothing, since `<new-branch>` holds the commits, but
+  leaves them off the workweave's branch, which is what `rwv sync-to` lands.
+  To bring them onto it, run `git rebase <branch>` on `<new-branch>`, then
+  `git switch <branch> && git merge --ff-only <new-branch>`.
 
 #### `unrecorded-ephemeral-branch`
 

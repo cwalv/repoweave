@@ -65,7 +65,7 @@
 mod common;
 
 use common::json_schema;
-use repoweave::check::{CheckViolation, DOCTOR_SCHEMA_URL};
+use repoweave::check::{BranchDisciplineKind, CheckViolation, DetachedAncestry, DOCTOR_SCHEMA_URL};
 use repoweave::fetch::{FetchJsonOutput, FetchOutcomeOutput, FetchOutcomeStatus, FETCH_SCHEMA_URL};
 use repoweave::integration::{Issue, IssueKind, IssueSource, Severity};
 use repoweave::integration::{MemberIncompatibility, MissingTool, Observed};
@@ -252,16 +252,33 @@ fn value(envelope: impl serde::Serialize) -> Value {
 // doctor
 // ---------------------------------------------------------------------------
 
-/// Two members `tests/common/doctor_corpus.rs` does not reach: it fixes every
-/// sample's `severity` at `warning`, and samples the only violation carrying an
-/// `OpVerb` at `sync-to`. Both are wire values with nothing else to produce
-/// them, so they are supplied here rather than left unvalidated.
+/// Wire values `tests/common/doctor_corpus.rs` does not reach: it fixes every
+/// sample's `severity` at `warning`, samples the only violation carrying an
+/// `OpVerb` at `sync-to`, and holds one sample per finding, so a finding's
+/// closed-vocabulary field takes a single value there. Nothing else produces
+/// these, so they are supplied here rather than left unvalidated.
 fn doctor_corpus_supplement() -> (Vec<CheckViolation>, Vec<Issue>) {
-    let violations = vec![CheckViolation::StaleOpState {
+    let mut violations = vec![CheckViolation::StaleOpState {
         workspace_dir: common::doctor_corpus::path("/ws"),
         verb: OpVerb::Sync,
         started_at: "2026-01-01T00:00:00Z".to_owned(),
     }];
+    violations.extend(
+        [
+            DetachedAncestry::Equal,
+            DetachedAncestry::HeadBehind,
+            DetachedAncestry::Diverged,
+        ]
+        .map(|ancestry| CheckViolation::BranchDiscipline {
+            repo_path: common::doctor_corpus::path("/ws/github/acme/repo"),
+            sub_kind: BranchDisciplineKind::DetachedOffEphemeralBranch {
+                expected_ref: "proj--feat-a".into(),
+                at_sha: common::doctor_corpus::commit(),
+                branch_tip: common::doctor_corpus::commit(),
+                ancestry,
+            },
+        }),
+    );
     let issues = vec![Issue {
         source: IssueSource::integration("go-work"),
         severity: Severity::Error,

@@ -128,6 +128,19 @@ that described its lines: `fetch-record.json`, `update-record.json`,
 `--results DIR`, each repo's output and outcome. The `-j` defaults are
 unchanged.
 
+### `detached-off-ephemeral-branch` names a reattach that keeps HEAD's commits
+
+A workweave checkout detached while its ephemeral branch exists was told to
+run `git switch <branch>` whatever the two held. When HEAD carried commits the
+branch lacked, as in a review workweave after a commit on the pull request's
+tip, the switch left them on no branch, reachable only through the reflog. The
+advice now depends on how HEAD stands against the branch, reported as
+`ancestry` in `rwv doctor --json`: `git switch <branch>` where the branch
+carries HEAD; `git switch <branch> && git merge --ff-only <HEAD>`, which
+fast-forwards the branch, where HEAD carries the branch; and, where the two
+have diverged, `git switch -c <new-branch>` to keep HEAD's commits on a branch
+first, then a rebase onto the workweave's branch and a fast-forward of it.
+
 ### On Windows, `rwv explain` and `rwv prime` print LF line endings
 
 The pages `rwv explain` and `rwv prime` print are built into the binary. The
