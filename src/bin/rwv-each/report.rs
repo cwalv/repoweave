@@ -296,7 +296,9 @@ mod tests {
         let refs: Vec<&Outcome> = all.iter().collect();
         assert_eq!(
             summary(&refs, false).unwrap(),
-            "rwv each: 5 of 6 repos did not succeed\n  a: exit 3\n  c: timed out\n  d: not present on disk; run `rwv fetch`\n  e: not run\n  f: failed to run"
+            "rwv each: 5 of 6 repos did not succeed\n  a: exit 3\n  c: timed out\n  d: not present \
+             on disk; run `rwv fetch` to restore it, then `rwv doctor --fix` to relink any workweave \
+             checkouts of it\n  e: not run\n  f: failed to run"
         );
     }
 
