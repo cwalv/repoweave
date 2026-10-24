@@ -311,8 +311,6 @@ it reads the workweave's own `rwv.toml`, not the primary weave's.
 project with the warning, as it does in the primary weave. `rwv status --json`
 lists each skipped project under `unreadable_projects`, with its load error.
 
-### `rwv fetch` names a member's refusal
-
 `rwv each` over such a project said the project had no repo outside role
 `reference` and advised `--role reference`, which could not help. It now says
 the manifest did not load.
