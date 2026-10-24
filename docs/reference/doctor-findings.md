@@ -1165,6 +1165,15 @@ exact.
 of a named branch, which breaks the merged-check and ref-namespace
 invariants.
 
+Neither this finding nor
+[`blocked-detached-namespace`](#blocked-detached-namespace) or
+[`detached-off-ephemeral-branch`](#detached-off-ephemeral-branch) is reported
+while an operation owns HEAD: an rwv operation holding the workweave, whose
+exits, `--continue` and `rwv abort`, [`stale-op-state`](#stale-op-state)
+names, or a rebase, merge, cherry-pick or bisect stopped in the checkout,
+which `rwv status` shows. git refuses to switch branches mid-rebase, and moving
+HEAD mid-bisect abandons the bisect.
+
 **What to do:** `rwv doctor --fix --adopt-detached-checkouts` mints the
 workweave's flat ref *at HEAD*. When a pre-flat branch of this workweave's
 namespace also exists, both tips are reported side by side, because those two
@@ -1227,6 +1236,8 @@ detached by hand, such as onto a pull request's tip in a review workweave.
 
 Reported *in place of* `detached`, not beside it: `--adopt-detached-checkouts`
 mints the branch only where none exists, and leaves this checkout alone.
+
+Not reported while an operation owns HEAD, as for [`detached`](#detached).
 
 **What to do:** the message names the reattach that leaves every commit on a
 branch. Which one depends on how HEAD stands against the branch, reported as

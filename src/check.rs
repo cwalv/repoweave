@@ -5105,6 +5105,7 @@ fn scan_workweave_repo_branches(
 
     let flat = EphemeralRefName::mint(&workweave.flat());
     let expected_ref = flat.to_string();
+    let op_owns_workweave = crate::op_state::check_no_op_in_progress(&[workweave_dir]).is_err();
 
     for abs in workweave_checkouts(vcs, workweave_dir, &workweave.project) {
         // The receipt, if any, lives in this checkout's canonical store —
@@ -5174,6 +5175,11 @@ fn scan_workweave_repo_branches(
                         recorded_ref: recorded_ref.clone(),
                     },
                 }
+            }
+            Ok(HeadAttachment::Detached(_))
+                if op_owns_workweave || vcs.mid_operation(&abs).is_some() =>
+            {
+                continue;
             }
             Ok(HeadAttachment::Detached(d)) => {
                 // When two or more refs share the namespace the same guard

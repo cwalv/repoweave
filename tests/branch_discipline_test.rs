@@ -4341,6 +4341,170 @@ fn detached_and_diverged_from_its_flat_ref_names_a_new_branch_first() {
     );
 }
 
+/// The sub-kinds of the findings that advise reattaching a detached
+/// workweave checkout.
+const DETACHED_SUB_KINDS: [&str; 3] = [
+    "detached",
+    "blocked-detached-namespace",
+    "detached-off-ephemeral-branch",
+];
+
+fn detached_sub_kinds(ws: &Path) -> Vec<String> {
+    branch_discipline_sub_kinds(ws)
+        .into_iter()
+        .filter(|k| DETACHED_SUB_KINDS.contains(&k.as_str()))
+        .collect()
+}
+
+/// A `sync-to` parked on a member's rebase conflict leaves that checkout
+/// detached mid-rebase. git refuses a branch switch there, and the op's own
+/// exits are `--continue` and `rwv abort`, so doctor names no switch, from
+/// either workspace, and reports the op instead.
+#[test]
+fn a_sync_to_parked_mid_rebase_draws_no_switch_advice() {
+    const LIB: &str = "local/owner/lib";
+    let tmp = common::tempdir().unwrap();
+    let upstream = tmp.path().join("upstream/owner/lib");
+    init_repo_with_commit(&upstream);
+
+    let primary = tmp.path().join("ws");
+    let primary_lib = common::under(&primary, LIB);
+    let primary_project = primary.join("projects").join("app");
+    git_in(
+        tmp.path(),
+        &[
+            "clone",
+            "-q",
+            &common::file_url(&upstream),
+            primary_lib.to_str().unwrap(),
+        ],
+    );
+    std::fs::create_dir_all(&primary_project).unwrap();
+    git_in(&primary_project, &["init", "-q", "-b", "main"]);
+    std::fs::write(
+        primary_project.join(".gitattributes"),
+        "rwv.lock merge=rwv-ours\n",
+    )
+    .unwrap();
+    std::fs::write(primary_project.join(".gitignore"), "*.code-workspace\n").unwrap();
+    std::fs::write(
+        primary_project.join("rwv.toml"),
+        format!(
+            "[repositories.\"{LIB}\"]\ntype = \"git\"\nurl = \"{}\"\nversion = \"main\"\nrole = \"owned\"\n",
+            common::file_url(&upstream)
+        ),
+    )
+    .unwrap();
+    std::fs::write(primary.join(".rwv-active"), "app\n").unwrap();
+    rwv().arg("lock").current_dir(&primary).assert().success();
+    git_in(&primary_project, &["add", "-A"]);
+    git_in(&primary_project, &["commit", "-q", "-m", "initial"]);
+    rwv()
+        .args(["workweave", "app", "create", "s1"])
+        .current_dir(&primary)
+        .assert()
+        .success();
+    let seat = tmp.path().join(".workweaves").join("app--s1");
+    let seat_lib = common::under(&seat, LIB);
+
+    for (repo, text) in [(&seat_lib, "seat\n"), (&primary_lib, "primary\n")] {
+        std::fs::write(repo.join("c.txt"), text).unwrap();
+        git_in(repo, &["add", "c.txt"]);
+        git_in(repo, &["commit", "-q", "-m", text.trim()]);
+    }
+    rwv().arg("lock").current_dir(&primary).assert().success();
+    git_in(&primary_project, &["add", "rwv.lock"]);
+    git_in(&primary_project, &["commit", "-q", "-m", "relock"]);
+
+    let parked = rwv().arg("sync-to").current_dir(&seat).output().unwrap();
+    assert!(
+        !parked.status.success() && seat.join(".rwv-op").exists(),
+        "the member conflict must park sync-to:\n{}",
+        String::from_utf8_lossy(&parked.stderr)
+    );
+    let rebase_dir = git()
+        .args(["rev-parse", "--git-path", "rebase-merge"])
+        .current_dir(&seat_lib)
+        .output()
+        .unwrap();
+    let rebase_dir = seat_lib.join(String::from_utf8_lossy(&rebase_dir.stdout).trim());
+    assert!(rebase_dir.is_dir(), "the seat's member is mid-rebase");
+    let attached = git()
+        .args(["symbolic-ref", "-q", "HEAD"])
+        .current_dir(&seat_lib)
+        .status()
+        .unwrap();
+    assert!(!attached.success(), "and detached");
+
+    for from in [&primary, &seat] {
+        let report = rwv().arg("doctor").current_dir(from).output().unwrap();
+        let report = String::from_utf8_lossy(&report.stdout);
+        assert!(
+            !report.contains("git switch"),
+            "doctor in {} names a switch git refuses mid-rebase:\n{report}",
+            from.display()
+        );
+        assert_eq!(detached_sub_kinds(from), Vec::<String>::new());
+    }
+    assert!(doctor_kinds(&seat).contains(&"stale-op-state".to_owned()));
+}
+
+/// A rebase stopped by hand in a detached checkout owns HEAD just as a
+/// parked op does: the detached finding stands down while it is in progress
+/// and returns once it is aborted.
+#[test]
+fn a_detached_checkout_mid_rebase_draws_no_switch_advice() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, _, ww_checkout) = checkout_on_its_flat_ref(tmp.path());
+    std::fs::write(ww_checkout.join("README.md"), "branch\n").unwrap();
+    git_in(&ww_checkout, &["commit", "-q", "-am", "branch side"]);
+    git_in(&ww_checkout, &["checkout", "--detach", "-q", "HEAD~1"]);
+    std::fs::write(ww_checkout.join("README.md"), "head\n").unwrap();
+    git_in(&ww_checkout, &["commit", "-q", "-am", "head side"]);
+
+    let rebase = git()
+        .args(["rebase", "myproj--feat-a"])
+        .current_dir(&ww_checkout)
+        .output()
+        .unwrap();
+    assert!(
+        !rebase.status.success(),
+        "the rebase must stop on its conflict"
+    );
+
+    assert_eq!(detached_sub_kinds(&ws), Vec::<String>::new());
+
+    git_in(&ww_checkout, &["rebase", "--abort"]);
+    assert_eq!(
+        detached_sub_kinds(&ws),
+        vec!["detached-off-ephemeral-branch".to_owned()]
+    );
+}
+
+/// An rwv operation holding the workweave owns its checkouts' HEADs even
+/// where no git operation is stopped: `stale-op-state` names its exits, and
+/// the detached finding returns once the op is gone.
+#[test]
+fn a_detached_checkout_in_a_workweave_an_op_holds_draws_no_switch_advice() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, _, _, _) = detached_beside_a_pre_flat_branch(tmp.path());
+    let ww_dir = workweaves_dir(&ws).join("myproj--feat-a");
+    let owner = repoweave::op_state::OwnerRecord::new_sync(
+        &repoweave::op_state::OpId::new_now(),
+        repoweave::op_state::SyncStrategy::Rebase,
+        ProjectName::new("myproj").unwrap(),
+        &ws,
+        &ww_dir,
+    );
+    repoweave::op_state::write_owner(&ww_dir, &owner).expect("owner record written");
+
+    assert_eq!(detached_sub_kinds(&ws), Vec::<String>::new());
+    assert!(doctor_kinds(&ws).contains(&"stale-op-state".to_owned()));
+
+    repoweave::op_state::clear_owner(&ww_dir);
+    assert_eq!(detached_sub_kinds(&ws), vec!["detached".to_owned()]);
+}
+
 /// The line `rwv doctor` prints for a detached workweave checkout.
 fn detached_finding(ws: &Path) -> String {
     let out = rwv().args(["doctor"]).current_dir(ws).output().unwrap();

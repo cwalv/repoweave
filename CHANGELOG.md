@@ -141,6 +141,13 @@ fast-forwards the branch, where HEAD carries the branch; and, where the two
 have diverged, `git switch -c <new-branch>` to keep HEAD's commits on a branch
 first, then a rebase onto the workweave's branch and a fast-forward of it.
 
+`detached`, `blocked-detached-namespace` and `detached-off-ephemeral-branch` are
+no longer reported while an operation owns the checkout's HEAD: an rwv
+operation holding the workweave, or a rebase, merge, cherry-pick or bisect
+stopped in the checkout. A `sync-to` parked on a member's rebase conflict drew
+a `git switch` that git refuses mid-rebase, beside `stale-op-state`'s own
+`--continue` and `rwv abort`.
+
 ### On Windows, `rwv explain` and `rwv prime` print LF line endings
 
 The pages `rwv explain` and `rwv prime` print are built into the binary. The
