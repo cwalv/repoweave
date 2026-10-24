@@ -25,8 +25,9 @@
 use repoweave::check::{
     BranchDisciplineKind, CheckViolation, CloneTopologyKind, DeadOpLeaseKind, DetachedAncestry,
     DriftKind, IndexDriftKind, LegacyRefAtTip, OrphanedSavepointKind, PermissionsKind,
-    PlacementConvergence, ProvenanceKind, ReplayExclusionKind, SubmoduleCommitKind,
-    WeaveRootIdentityConflictKind, WorkingTreeDriftKind, WorkweaveTreeIntegrityKind,
+    PlacementConvergence, ProvenanceKind, RegistrationDirectoryKind, ReplayExclusionKind,
+    SubmoduleCommitKind, WeaveRootIdentityConflictKind, WorkingTreeDriftKind,
+    WorkweaveTreeIntegrityKind,
 };
 use repoweave::integration::{Issue, IssueKind, IssueSource, Severity};
 use repoweave::integration::{MemberIncompatibility, Observed};
@@ -253,7 +254,14 @@ pub fn case_token(v: &CheckViolation) -> String {
             };
             format!("branch-discipline/{tail}")
         }
-        CheckViolation::StaleWorktreeRegistration { .. } => "stale-worktree-registration".into(),
+        CheckViolation::StaleWorktreeRegistration { sub_kind, .. } => match sub_kind {
+            RegistrationDirectoryKind::DirectoryGone => {
+                "stale-worktree-registration/directory-gone".into()
+            }
+            RegistrationDirectoryKind::DirectoryStands => {
+                "stale-worktree-registration/directory-stands".into()
+            }
+        },
         CheckViolation::StaleOpState { .. } => "stale-op-state".into(),
         CheckViolation::DeadOpLease { sub_kind, .. } => match sub_kind {
             DeadOpLeaseKind::OwnerRecordAbsent => "dead-op-lease/owner-record-absent".into(),
@@ -764,7 +772,14 @@ pub fn corpus() -> Vec<CheckViolation> {
         CheckViolation::StaleWorktreeRegistration {
             workweave: Some(workweave()),
             repo: repo(),
-            missing_path: path("/gone"),
+            worktree_path: path("/gone"),
+            sub_kind: RegistrationDirectoryKind::DirectoryGone,
+        },
+        CheckViolation::StaleWorktreeRegistration {
+            workweave: Some(workweave()),
+            repo: repo(),
+            worktree_path: path("/unlinked"),
+            sub_kind: RegistrationDirectoryKind::DirectoryStands,
         },
         CheckViolation::StaleOpState {
             workspace_dir: path("/ws"),

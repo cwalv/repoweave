@@ -434,11 +434,9 @@ pub enum CheckViolation {
         /// Discriminator for the specific branch-discipline anomaly.
         sub_kind: BranchDisciplineKind,
     },
-    /// A worktree registration recorded in a repo whose on-disk directory
-    /// no longer exists. The administrative entry is stale; auto-fixable
-    /// by running `worktree prune` — information-preserving by
-    /// construction (the only state being dropped is a pointer to a
-    /// directory that already is not there).
+    /// A worktree registration in a repo that no longer leads to a
+    /// worktree: its directory is gone, or stands without its link back to
+    /// the repo. [`RegistrationDirectoryKind`] says which.
     StaleWorktreeRegistration {
         /// The workweave the *registering* repo (the one that holds the
         /// stale `.git/worktrees/` entry) lives in; `None` when it is in the
@@ -446,9 +444,10 @@ pub enum CheckViolation {
         workweave: Option<WorkweaveId>,
         /// The registering repo's manifest-relative path.
         repo: RepoPath,
-        /// Absolute path of the missing worktree directory, as recorded
-        /// in the VCS's worktree list.
-        missing_path: PathBuf,
+        /// Absolute path of the registered worktree, as recorded in the
+        /// VCS's worktree list.
+        worktree_path: PathBuf,
+        sub_kind: RegistrationDirectoryKind,
     },
 
     /// A `.rwv-op` file is present at a workspace root. Reports the file's
@@ -761,7 +760,6 @@ impl CheckViolation {
             | CheckViolation::UnreadableActiveProject { .. }
             | CheckViolation::LegacyWorkweaveMarker { .. }
             | CheckViolation::LegacyWorkweaveIndex { .. }
-            | CheckViolation::StaleWorktreeRegistration { .. }
             | CheckViolation::DanglingRefReceipt { .. }
             | CheckViolation::PreFlatRefReceipt { .. }
             | CheckViolation::DeadOpLease { .. }
@@ -775,6 +773,10 @@ impl CheckViolation {
             CheckViolation::UninitializedSubmodule { sub_kind, .. } => match sub_kind {
                 SubmoduleCommitKind::Fetched => Auto,
                 SubmoduleCommitKind::Unfetched => ReportOnly,
+            },
+            CheckViolation::StaleWorktreeRegistration { sub_kind, .. } => match sub_kind {
+                RegistrationDirectoryKind::DirectoryGone => Auto,
+                RegistrationDirectoryKind::DirectoryStands => ReportOnly,
             },
             CheckViolation::WorkweaveDrift { kind, .. } => match kind {
                 DriftKind::Missing | DriftKind::Symlink | DriftKind::DanglingLink => Auto,
@@ -1227,6 +1229,19 @@ pub enum SubmoduleCommitKind {
     /// Nothing local holds it. Report-only: `rwv fetch` in the workweave
     /// fetches it into the canonical clone and checks it out.
     Unfetched,
+}
+
+/// What stands at a stale worktree registration's path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum RegistrationDirectoryKind {
+    /// Nothing. Auto-fixable: `--fix` drops the registration, which points
+    /// at nothing.
+    DirectoryGone,
+    /// A directory without the file that links it to the repo. Report-only:
+    /// its files may be the operator's work, so `--fix` keeps the
+    /// registration until the directory is moved away.
+    DirectoryStands,
 }
 
 /// How a stale index should be treated.
@@ -2372,8 +2387,10 @@ pub enum ViolationOutput {
         absolute_path: WirePath,
         /// The workweave's identity, `<project>--<name>`; `None` for the primary weave.
         workweave: Option<WorkweaveId>,
-        /// Absolute path of the missing worktree directory.
-        missing_path: WirePath,
+        /// Absolute path of the registered worktree.
+        worktree_path: WirePath,
+        #[serde(rename = "sub_kind")]
+        sub_kind: RegistrationDirectoryKind,
     },
     StaleOpState {
         /// Absolute path to the workspace dir that holds the `.rwv-op` file.
@@ -2837,12 +2854,14 @@ impl ViolationOutput {
             CheckViolation::StaleWorktreeRegistration {
                 workweave,
                 repo,
-                missing_path,
+                worktree_path,
+                sub_kind,
             } => Self::StaleWorktreeRegistration {
                 absolute_path: abs_in(&workweave, workspace_dir, workweave_dirs, &repo),
                 path: repo.to_string(),
                 workweave: workweave.clone(),
-                missing_path: WirePath::of(&missing_path),
+                worktree_path: WirePath::of(&worktree_path),
+                sub_kind,
             },
             CheckViolation::StaleOpState {
                 workspace_dir: ws_dir,
@@ -6672,11 +6691,17 @@ pub fn scan_state_hygiene(
 
         // Stale worktree registrations.
         if let Ok(stale_paths) = vcs.list_stale_worktree_registrations(&repo.abs) {
-            for missing_path in stale_paths {
+            for worktree_path in stale_paths {
+                let sub_kind = if worktree_path.symlink_metadata().is_ok() {
+                    RegistrationDirectoryKind::DirectoryStands
+                } else {
+                    RegistrationDirectoryKind::DirectoryGone
+                };
                 violations.push(CheckViolation::StaleWorktreeRegistration {
                     workweave: repo.workweave.clone(),
                     repo: repo.repo.clone(),
-                    missing_path,
+                    worktree_path,
+                    sub_kind,
                 });
             }
         }
@@ -7597,11 +7622,12 @@ pub fn fix_pre_flat_receipts(
 ///
 /// The accepted `--fix` paths are deliberately narrow:
 ///
-/// - [`CheckViolation::StaleWorktreeRegistration`] →
-///   [`crate::vcs::Vcs::prune_stale_worktree_registration`] of the missing
-///   path in the registering repo. Information-preserving by construction:
-///   the only state dropped is a pointer to a directory that does not exist,
-///   and a locked registration is kept.
+/// - [`CheckViolation::StaleWorktreeRegistration`] with
+///   [`RegistrationDirectoryKind::DirectoryGone`] →
+///   [`crate::vcs::Vcs::prune_stale_worktree_registration`] of its path in
+///   the registering repo. Information-preserving by construction: the only
+///   state dropped is a pointer to a directory that does not exist, and a
+///   locked registration, or one whose directory has come back, is kept.
 /// - [`CheckViolation::OrphanedSavepoint`] with
 ///   [`OrphanedSavepointKind::Redundant`] → [`crate::vcs::Vcs::drop_savepoint`].
 ///   The ref tip is reachable from the current branch, so dropping the
@@ -7624,9 +7650,13 @@ pub fn fix_state_hygiene(
     repo_abs: &Path,
 ) -> anyhow::Result<bool> {
     match violation {
-        CheckViolation::StaleWorktreeRegistration { missing_path, .. } => {
+        CheckViolation::StaleWorktreeRegistration {
+            worktree_path,
+            sub_kind: RegistrationDirectoryKind::DirectoryGone,
+            ..
+        } => {
             let outcome = vcs
-                .prune_stale_worktree_registration(repo_abs, missing_path)
+                .prune_stale_worktree_registration(repo_abs, worktree_path)
                 .with_context(|| format!("worktree prune failed in {}", repo_abs.display()))?;
             Ok(outcome == crate::vcs::RegistrationPrune::Pruned)
         }
@@ -7948,9 +7978,10 @@ impl CollapsedClass {
                 sub_kind: WorkweaveTreeIntegrityKind::StaleRegistryEntry { .. },
                 ..
             } => Some(Self::StaleRegistryEntry),
-            CheckViolation::StaleWorktreeRegistration { .. } => {
-                Some(Self::StaleWorktreeRegistration)
-            }
+            CheckViolation::StaleWorktreeRegistration {
+                sub_kind: RegistrationDirectoryKind::DirectoryGone,
+                ..
+            } => Some(Self::StaleWorktreeRegistration),
             CheckViolation::BranchDiscipline { sub_kind, .. } => match sub_kind {
                 BranchDisciplineKind::StaleEphemeralBranchSafe { .. } => {
                     Some(Self::StaleEphemeralBranchSafe)
@@ -9145,17 +9176,27 @@ impl CheckViolation {
             CheckViolation::StaleWorktreeRegistration {
                 workweave,
                 repo,
-                missing_path,
+                worktree_path,
+                sub_kind,
             } => {
                 let location = match workweave {
                     Some(ww) => format!("{ww}/{repo}"),
                     None => format!("{repo}"),
                 };
-                format!(
-                    "{location}: stale-worktree-registration: missing path \
+                match sub_kind {
+                    RegistrationDirectoryKind::DirectoryGone => format!(
+                        "{location}: stale-worktree-registration: missing path \
                          {} (run `rwv doctor --fix` to prune)",
-                    missing_path.display()
-                )
+                        worktree_path.display()
+                    ),
+                    RegistrationDirectoryKind::DirectoryStands => format!(
+                        "{location}: stale-worktree-registration: {} stands without \
+                         the `.git` file that links it to the repo, so `rwv doctor \
+                         --fix` keeps its registration. Move the directory away to \
+                         keep its files, then run `rwv doctor --fix` to prune it",
+                        worktree_path.display()
+                    ),
+                }
             }
             CheckViolation::DanglingRefReceipt {
                 project,
@@ -9967,9 +10008,15 @@ fn apply_finding_repairs(
     // Ahead of fix_stale_ephemeral_branches, which prunes the same
     // registrations in the stores it deletes from: run after it, these
     // findings would meet registrations already gone and stay reported.
-    let (registrations, violations): (Vec<_>, Vec<_>) = violations
-        .into_iter()
-        .partition(|v| matches!(v, CheckViolation::StaleWorktreeRegistration { .. }));
+    let (registrations, violations): (Vec<_>, Vec<_>) = violations.into_iter().partition(|v| {
+        matches!(
+            v,
+            CheckViolation::StaleWorktreeRegistration {
+                sub_kind: RegistrationDirectoryKind::DirectoryGone,
+                ..
+            }
+        )
+    });
 
     let mut kept = Vec::with_capacity(violations.len() + registrations.len());
     for v in registrations {

@@ -1343,6 +1343,25 @@
         }
       ]
     },
+    "RegistrationDirectoryKind": {
+      "description": "What stands at a stale worktree registration's path.",
+      "oneOf": [
+        {
+          "description": "Nothing. Auto-fixable: `--fix` drops the registration, which points at nothing.",
+          "type": "string",
+          "enum": [
+            "directory-gone"
+          ]
+        },
+        {
+          "description": "A directory without the file that links it to the repo. Report-only: its files may be the operator's work, so `--fix` keeps the registration until the directory is moved away.",
+          "type": "string",
+          "enum": [
+            "directory-stands"
+          ]
+        }
+      ]
+    },
     "ReplayExclusionKind": {
       "description": "Which spelling of the replay exclusion the project repo carries, which decides whether `--fix` writes the entry fresh or migrates one in place.",
       "oneOf": [
@@ -2395,8 +2414,9 @@
           "required": [
             "absolute_path",
             "kind",
-            "missing_path",
-            "path"
+            "path",
+            "sub_kind",
+            "worktree_path"
           ],
           "properties": {
             "absolute_path": {
@@ -2408,16 +2428,19 @@
                 "stale-worktree-registration"
               ]
             },
-            "missing_path": {
-              "description": "Absolute path of the missing worktree directory.",
+            "path": {
+              "type": "string"
+            },
+            "sub_kind": {
+              "$ref": "#/definitions/RegistrationDirectoryKind"
+            },
+            "worktree_path": {
+              "description": "Absolute path of the registered worktree.",
               "allOf": [
                 {
                   "$ref": "#/definitions/WirePath"
                 }
               ]
-            },
-            "path": {
-              "type": "string"
             },
             "workweave": {
               "description": "The workweave's identity, `<project>--<name>`; `None` for the primary weave.",

@@ -202,7 +202,7 @@ The `$schema` URL points to the committed schema artifact. Variants are
 discriminated by the `kind` tag — `branch-discipline`, `cargo-patch-shadowing`, `cargo-version-skew`, `clone-topology`, `confusable-siblings`, `dangling-active-project`, `dangling-ref-receipt`, `dangling-reference`, `dead-op-lease`, `head-unreadable`, `incomplete-lock`, `index-drift`, `legacy-manifest-format`, `legacy-workweave-index`, `legacy-workweave-marker`, `lock-pinned-by-name`, `member-permissions`, `merge-driver-config-unreadable`, `missing-canonical-clone`, `missing-merge-driver-config`, `missing-replay-exclusion`, `orphaned-clone`, `orphaned-savepoint`, `phantom-merge-driver`, `pre-flat-ref-receipt`, `projectless-dir`, `projects-dir-unreadable`, `provenance`, `replay-exclusion-unreadable`, `role-disagreement`, `stale-lock`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unknown-segment-clone`, `unnameable-project`, `unparseable-project`, `unreadable-active-project`, `unreadable-owned-state`, `unreadable-workweave-index`, `unrecognized-savepoint-ref`, `unresolvable-lock-entry`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
 Every per-repo variant carries `path` (manifest-relative) and
 `absolute_path` (fully resolved). Variants with subkinds
-(`branch-discipline`, `clone-topology`, `dead-op-lease`, `index-drift`, `member-permissions`, `missing-replay-exclusion`, `orphaned-savepoint`, `provenance`, `uninitialized-submodule`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
+(`branch-discipline`, `clone-topology`, `dead-op-lease`, `index-drift`, `member-permissions`, `missing-replay-exclusion`, `orphaned-savepoint`, `provenance`, `stale-worktree-registration`, `uninitialized-submodule`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
 `workweave-tree-integrity` carries `workweave_dir` and a `sub_kind`
 (`dangling-parent`, `foreign-primary`, `foreign-primary-other-workspace`, `misnamed-dir`, `nested-workweave-dir`, `parent-chain-anomaly`, `stale-registry-entry`, `tracked-index`, `unreadable-marker`, `unregistered-dir`, `unregistered-workweave`).
 
@@ -1578,6 +1578,25 @@ Schema:
         }
       ]
     },
+    "RegistrationDirectoryKind": {
+      "description": "What stands at a stale worktree registration's path.",
+      "oneOf": [
+        {
+          "description": "Nothing. Auto-fixable: `--fix` drops the registration, which points at nothing.",
+          "type": "string",
+          "enum": [
+            "directory-gone"
+          ]
+        },
+        {
+          "description": "A directory without the file that links it to the repo. Report-only: its files may be the operator's work, so `--fix` keeps the registration until the directory is moved away.",
+          "type": "string",
+          "enum": [
+            "directory-stands"
+          ]
+        }
+      ]
+    },
     "ReplayExclusionKind": {
       "description": "Which spelling of the replay exclusion the project repo carries, which decides whether `--fix` writes the entry fresh or migrates one in place.",
       "oneOf": [
@@ -2630,8 +2649,9 @@ Schema:
           "required": [
             "absolute_path",
             "kind",
-            "missing_path",
-            "path"
+            "path",
+            "sub_kind",
+            "worktree_path"
           ],
           "properties": {
             "absolute_path": {
@@ -2643,16 +2663,19 @@ Schema:
                 "stale-worktree-registration"
               ]
             },
-            "missing_path": {
-              "description": "Absolute path of the missing worktree directory.",
+            "path": {
+              "type": "string"
+            },
+            "sub_kind": {
+              "$ref": "#/definitions/RegistrationDirectoryKind"
+            },
+            "worktree_path": {
+              "description": "Absolute path of the registered worktree.",
               "allOf": [
                 {
                   "$ref": "#/definitions/WirePath"
                 }
               ]
-            },
-            "path": {
-              "type": "string"
             },
             "workweave": {
               "description": "The workweave's identity, `<project>--<name>`; `None` for the primary weave.",

@@ -37,10 +37,11 @@ rwv doctor --json | jq -r '.issues[] |
     (if (.kind | type) == "string" then .kind else (.kind | keys[0]) end)'
 ```
 
-Thirteen kinds carry a `sub_kind` — `branch-discipline`, `clone-topology`,
+Fourteen kinds carry a `sub_kind` — `branch-discipline`, `clone-topology`,
 `dead-op-lease`, `index-drift`, `member-permissions`,
 `missing-replay-exclusion`, `orphaned-savepoint`, `provenance`,
-`uninitialized-submodule`, `weave-root-identity-conflict`,
+`stale-worktree-registration`, `uninitialized-submodule`,
+`weave-root-identity-conflict`,
 `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`. Where the
 sub-kind decides the disposition the entry has a sub-heading per `sub_kind`;
 where it only narrows what was found, one entry covers them all.
@@ -94,7 +95,8 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`workweave-drift`](#workweave-drift) / `extra` | Warning | Report-only |
 | [`member-permissions`](#member-permissions) (`writable-reference`, `read-only-member`) | Warning | Auto-fixable |
 | [`role-disagreement`](#role-disagreement) | Warning | Report-only |
-| [`stale-worktree-registration`](#stale-worktree-registration) | Warning | Auto-fixable |
+| [`stale-worktree-registration`](#stale-worktree-registration) / `directory-gone` | Warning | Auto-fixable |
+| [`stale-worktree-registration`](#stale-worktree-registration) / `directory-stands` | Warning | Report-only |
 | [`clone-topology`](#clone-topology) / `standalone-in-workweave` | Error | Auto-fixable |
 | [`clone-topology`](#clone-topology) / `disconnected-weave-clone`, `wrong-parent-worktree`, `weave-clone-is-worktree` | Error | Report-only |
 | [`missing-canonical-clone`](#missing-canonical-clone) | Warning | Report-only |
@@ -938,13 +940,27 @@ in every project listing it, with `rwv role --project <name> <repo> <role>`.
 
 ### `stale-worktree-registration`
 
-**Warning. Auto-fixable.** A git worktree registration pointing at a directory
-that no longer exists.
+A git worktree registration that no longer leads to a worktree.
+
+#### `directory-gone`
+
+**Warning. Auto-fixable.** Nothing stands at the registered path.
 
 **What to do:** `rwv doctor --fix` drops the registration. The repair is
 information-preserving by construction: the only state dropped is a pointer to
-a directory that already is not there. A locked registration, or one whose path
-holds a directory again, is left in place and still reported.
+a directory that already is not there. A locked registration is left in place
+and still reported.
+
+#### `directory-stands`
+
+**Warning. Report-only.** A directory stands at the registered path, but
+without the `.git` file that links it to the repo, as when something copied
+over the checkout. Its files may be your work, so `--fix` keeps the
+registration and says so.
+
+**What to do:** move the directory away, keeping whatever you need from it,
+then run `rwv doctor --fix`: the finding becomes `directory-gone`, and the fix
+drops the registration.
 
 ---
 

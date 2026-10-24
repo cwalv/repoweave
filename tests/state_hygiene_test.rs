@@ -232,6 +232,77 @@ fn stale_worktree_registration_reported_and_fixable() {
     );
 }
 
+/// A registration whose directory stands without its `.git` file is one git
+/// calls prunable, but the directory's files may be the operator's: `--fix`
+/// keeps the registration and says so. Following the advice — move the
+/// directory away, run `--fix` — clears the finding and keeps the files.
+#[test]
+fn a_registration_whose_directory_stands_is_kept_until_the_directory_moves() {
+    let tmp = common::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+    let repo_rel = "github/acme/server";
+    let repo_abs = root.join(repo_rel);
+    init_git_repo(&repo_abs);
+    write_manifest(
+        &root.join("projects").join("my-app"),
+        &[(repo_rel, "https://github.com/acme/server.git")],
+    );
+    let worktree = tmp.path().join("unlinked-wt");
+    common::git_in(
+        &repo_abs,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            worktree.to_str().unwrap(),
+            "-b",
+            "unlinked",
+        ],
+    );
+    std::fs::remove_file(worktree.join(".git")).unwrap();
+    std::fs::write(worktree.join("work.txt"), "keep\n").unwrap();
+    let registered = || {
+        common::git_in(&repo_abs, &["worktree", "list", "--porcelain"])
+            .lines()
+            .filter_map(|line| line.strip_prefix("worktree "))
+            .any(|path| Path::new(path) == worktree)
+    };
+
+    let out = rwv_cmd()
+        .args(["doctor", "--fix"])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("[warning: stale-worktree-registration/directory-stands]")
+            && stdout.contains("so `rwv doctor --fix` keeps its registration")
+            && !stdout.contains("[fixed] core: stale-worktree-registration"),
+        "{stdout}"
+    );
+    assert!(registered(), "{stdout}");
+    assert!(worktree.join("work.txt").exists());
+
+    let moved = tmp.path().join("moved-aside");
+    std::fs::rename(&worktree, &moved).unwrap();
+    let out = rwv_cmd()
+        .args(["doctor", "--fix"])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("[fixed] core: stale-worktree-registration for"),
+        "{stdout}"
+    );
+    assert!(!registered(), "{stdout}");
+    assert!(moved.join("work.txt").exists());
+
+    let out = rwv_cmd().arg("doctor").current_dir(&root).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!stdout.contains("stale-worktree-registration"), "{stdout}");
+}
+
 // ===========================================================================
 // 2. stale-op-state (report-only forever)
 // ===========================================================================

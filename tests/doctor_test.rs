@@ -1728,7 +1728,7 @@ mod doctor_json {
             path: String,
             absolute_path: String,
             workweave: Option<String>,
-            missing_path: String,
+            worktree_path: String,
         },
         StaleOpState {
             workspace_dir: String,

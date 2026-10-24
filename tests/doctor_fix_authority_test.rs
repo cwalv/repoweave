@@ -1495,7 +1495,7 @@ fn repair_bindings() -> Vec<(&'static str, Binding)> {
         ),
         (
             "stale-worktree-registration for",
-            Findings(&["stale-worktree-registration"]),
+            Findings(&["stale-worktree-registration/directory-gone"]),
         ),
         (
             "orphaned-savepoint for",

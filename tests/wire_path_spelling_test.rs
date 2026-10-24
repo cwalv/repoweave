@@ -113,7 +113,6 @@ fn every_wire_path_field_is_declared_a_wire_path() {
         "marker_primary",
         "member_config",
         "missing_dir",
-        "missing_path",
         "other_store_path",
         "owner",
         "parent_path",
@@ -133,6 +132,7 @@ fn every_wire_path_field_is_declared_a_wire_path() {
         "workspace",
         "workspace_dir",
         "workweave_dir",
+        "worktree_path",
     ];
     const DECLARED_AS_A_PATH: &[&str] = &[
         "WirePath",

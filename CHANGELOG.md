@@ -131,8 +131,14 @@ first delete in a store, `--fix` now drops that store's registrations of
 removed worktrees, listed in a manifest or not, and prints a line for each.
 A locked registration stays, with the branch it holds.
 
-The `stale-worktree-registration` repair no longer drops a registration whose
-path holds a directory again; it is reported instead.
+`stale-worktree-registration` now carries a `sub_kind`, and its `--json`
+records name the registered path `worktree_path` where they said
+`missing_path`. `directory-gone` is the registration whose directory is gone,
+which `--fix` drops as before. `directory-stands` is one whose path holds a
+directory without the `.git` file that links it to the repo, as when something
+copied over a checkout: `--fix` no longer drops it, because the files there may
+be yours, and the finding says so and says what to do — move the directory
+away, then run `rwv doctor --fix`.
 
 ### A member a workweave's sync prunes no longer keeps the primary's clone claimed
 
