@@ -541,7 +541,7 @@ Schema:
           "additionalProperties": false
         },
         {
-          "description": "(a) The workweave checkout is in detached-HEAD state while its flat ref already exists in the canonical store.\n\nReported in place of `Detached` because that finding's remedy, `--adopt-detached-checkouts`, mints the flat ref and refuses a name that already exists: moving an existing branch to HEAD would be a MOVE no receipt witnesses. The migration's consented arm skips this state for the same reason.\n\nReport-only. Reattaching is `git switch` to the branch; it checks out the branch's tip, which is HEAD's commit only when the two agree.",
+          "description": "(a) The workweave checkout is in detached-HEAD state while its flat ref already exists in the canonical store.\n\nReported in place of `Detached` because that finding's remedy, `--adopt-detached-checkouts`, mints the flat ref and refuses a name that already exists: moving an existing branch to HEAD would be a MOVE no receipt witnesses. The migration's consented arm skips this state for the same reason.\n\nReport-only. The reattach it names is chosen by `ancestry` so that following it strands no commit: `git switch` where the branch carries HEAD, a fast-forward of the branch to HEAD where HEAD carries the branch, and a new branch for HEAD's commits first where they have diverged.",
           "type": "object",
           "required": [
             "detached-off-ephemeral-branch"
@@ -550,11 +550,20 @@ Schema:
             "detached-off-ephemeral-branch": {
               "type": "object",
               "required": [
+                "ancestry",
                 "at_sha",
                 "branch_tip",
                 "expected_ref"
               ],
               "properties": {
+                "ancestry": {
+                  "description": "How HEAD's commit stands against the flat ref's.",
+                  "allOf": [
+                    {
+                      "$ref": "#/definitions/DetachedAncestry"
+                    }
+                  ]
+                },
                 "at_sha": {
                   "description": "The commit HEAD names directly.",
                   "allOf": [
@@ -984,6 +993,39 @@ Schema:
             }
           },
           "additionalProperties": false
+        }
+      ]
+    },
+    "DetachedAncestry": {
+      "description": "How a detached HEAD stands against its workweave's existing branch, which decides the one reattach that strands no commit.",
+      "oneOf": [
+        {
+          "description": "HEAD is at the branch's tip.",
+          "type": "string",
+          "enum": [
+            "equal"
+          ]
+        },
+        {
+          "description": "The branch carries HEAD and commits HEAD lacks: switching to it strands nothing.",
+          "type": "string",
+          "enum": [
+            "head-behind"
+          ]
+        },
+        {
+          "description": "HEAD carries the branch and commits the branch lacks: only a fast-forward of the branch to HEAD strands nothing.",
+          "type": "string",
+          "enum": [
+            "head-ahead"
+          ]
+        },
+        {
+          "description": "Each carries commits the other lacks, or their ancestry could not be read: switching strands HEAD's, and moving the branch strands its own.",
+          "type": "string",
+          "enum": [
+            "diverged"
+          ]
         }
       ]
     },
