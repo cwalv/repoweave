@@ -795,6 +795,7 @@ pub fn corpus() -> Vec<CheckViolation> {
         CheckViolation::UnrecognizedSavepointRef {
             workweave: Some(workweave()),
             repo: repo(),
+            holder: path("/ws/.workweaves/p--w/github/acme/repo"),
             ref_name: "refs/rwv/pre-op/not.a.key".into(),
         },
         CheckViolation::CargoVersionSkew {

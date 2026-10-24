@@ -1446,10 +1446,13 @@ as the operation's record exists.
 **Warning. Report-only.** A ref under `refs/rwv/pre-op/` that no op id names.
 rwv did not file it: it is a hand-made ref, a damaged name, or one written by
 a different rwv. What it points at is unknown, so `--fix` never drops it. The
-finding carries the `ref_name`.
+finding carries the `ref_name` and the holding repo's `absolute_path`. Refs
+live in the store a clone shares with its workweave checkouts, so one ref is
+one finding, however many checkouts see it.
 
 **What to do:** inspect it, and delete it by hand with
-`git update-ref -d <ref_name>` once nothing needs it.
+`git -C <absolute_path> update-ref -d <ref_name>` once nothing needs it; the
+text output prints that command filled in.
 
 ### `stale-op-state`
 

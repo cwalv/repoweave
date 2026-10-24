@@ -603,6 +603,8 @@ pub enum CheckViolation {
         workweave: Option<WorkweaveId>,
         /// The holding repo's manifest-relative path.
         repo: RepoPath,
+        /// The holding repo's directory on disk.
+        holder: PathBuf,
         /// The reference, spelled as the VCS spells it.
         ref_name: String,
     },
@@ -2803,6 +2805,7 @@ impl ViolationOutput {
                 workweave,
                 repo,
                 ref_name,
+                ..
             } => Self::UnrecognizedSavepointRef {
                 absolute_path: abs_in(&workweave, workspace_dir, workweave_dirs, &repo),
                 path: repo.to_string(),
@@ -6443,6 +6446,10 @@ pub fn scan_state_hygiene(
 
     // Phase 2: per-repo checks (stale worktree registrations + orphaned
     // savepoints).
+    // Refs live in the store every worktree of a clone shares, so one ref is
+    // seen once per checkout of it.
+    let mut reported_refs: std::collections::HashSet<(PathBuf, String)> =
+        std::collections::HashSet::new();
     for repo in repos {
         // Skip repos that are not vcs-managed (the manifest may list a
         // path that hasn't been cloned yet).
@@ -6470,10 +6477,17 @@ pub fn scan_state_hygiene(
             Ok(listing) => listing,
             Err(_) => continue, // can't enumerate → leave repo alone
         };
+        let store = vcs
+            .resolve_canonical_store(&repo.abs)
+            .unwrap_or_else(|| repo.abs.clone());
         for ref_name in listing.unrecognized {
+            if !reported_refs.insert((store.clone(), ref_name.clone())) {
+                continue;
+            }
             violations.push(CheckViolation::UnrecognizedSavepointRef {
                 workweave: repo.workweave.clone(),
                 repo: repo.repo.clone(),
+                holder: repo.abs.clone(),
                 ref_name,
             });
         }
@@ -8889,18 +8903,21 @@ impl CheckViolation {
             CheckViolation::UnrecognizedSavepointRef {
                 workweave,
                 repo,
+                holder,
                 ref_name,
             } => {
                 let location = match workweave {
                     Some(ww) => format!("{ww}/{repo}"),
                     None => format!("{repo}"),
                 };
+                let holder = holder.display().to_string();
+                let holder = shell_word(&holder);
                 format!(
                     "{location}: unrecognized-savepoint-ref {ref_name} — it sits in the \
                          savepoint namespace but no op id names it, so rwv did not file it. \
                          Never auto-fixed: what it points at is unknown. Inspect it, and \
-                         delete it by hand with `git update-ref -d {ref_name}` once nothing \
-                         needs it."
+                         delete it by hand with `git -C {holder} update-ref -d {ref_name}` \
+                         once nothing needs it."
                 )
             }
             CheckViolation::CargoVersionSkew {
@@ -11278,6 +11295,33 @@ pub fn run_check_json(
         serde_json::to_string_pretty(&payload).context("failed to serialize doctor output")?;
     outln!("{out}");
     Ok(verdict)
+}
+
+/// `word` as one shell argument: bare when no shell would split, expand or
+/// unescape it, single-quoted otherwise.
+fn shell_word(word: &str) -> std::borrow::Cow<'_, str> {
+    let bare = !word.is_empty()
+        && word
+            .chars()
+            .all(|c| c.is_alphanumeric() || "/:._-+=@,".contains(c));
+    if bare {
+        word.into()
+    } else {
+        format!("'{}'", word.replace('\'', "'\\''")).into()
+    }
+}
+
+#[cfg(test)]
+mod shell_word_tests {
+    use super::shell_word;
+
+    #[test]
+    fn a_path_a_shell_would_split_is_quoted_whole() {
+        assert_eq!(shell_word("/a/b-c_d.e"), "/a/b-c_d.e");
+        assert_eq!(shell_word("/my weave/lib"), "'/my weave/lib'");
+        assert_eq!(shell_word("/it's"), "'/it'\\''s'");
+        assert_eq!(shell_word(r"C:\w\lib"), r"'C:\w\lib'");
+    }
 }
 
 #[cfg(test)]

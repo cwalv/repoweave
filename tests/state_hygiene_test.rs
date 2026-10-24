@@ -794,6 +794,92 @@ fn a_ref_in_the_savepoint_namespace_that_names_no_op_is_reported_and_kept() {
     assert!(savepoint_exists(&repo_abs, "nested/leaf"));
 }
 
+/// The words of a command printed with POSIX single-quoting.
+fn shell_words(command: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut word: Option<String> = None;
+    let mut quoted = false;
+    for c in command.chars() {
+        match c {
+            '\'' => {
+                quoted = !quoted;
+                word.get_or_insert_with(String::new);
+            }
+            c if c.is_whitespace() && !quoted => words.extend(word.take()),
+            c => word.get_or_insert_with(String::new).push(c),
+        }
+    }
+    assert!(!quoted, "unbalanced quote in: {command}");
+    words.extend(word);
+    words
+}
+
+#[test]
+fn an_unrecognized_ref_is_reported_once_per_clone_and_its_printed_deletion_clears_it() {
+    let repo_rel = "github/acme/server";
+    let pw = common::build_workspace("demo", &[(repo_rel, "owned")]);
+    let created = rwv_cmd()
+        .args(["workweave", "demo", "create", "seat"])
+        .current_dir(&pw.workspace)
+        .output()
+        .unwrap();
+    assert!(
+        created.status.success(),
+        "{}",
+        String::from_utf8_lossy(&created.stderr)
+    );
+    let repo_abs = pw.workspace.join(repo_rel);
+    let head = common::git_in(&repo_abs, &["rev-parse", "HEAD"]);
+    add_savepoint(&repo_abs, "not.a.key", head.trim());
+
+    let doctor = |args: &[&str]| -> String {
+        let out = rwv_cmd()
+            .args(args)
+            .current_dir(&pw.workspace)
+            .output()
+            .unwrap();
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        )
+    };
+    let report = doctor(&["doctor"]);
+    let findings: Vec<&str> = report
+        .lines()
+        .filter(|l| l.contains("unrecognized-savepoint-ref"))
+        .collect();
+    assert_eq!(
+        findings.len(),
+        1,
+        "the primary and the workweave share one ref store:\n{report}"
+    );
+
+    let printed = findings[0]
+        .split('`')
+        .nth(1)
+        .unwrap_or_else(|| panic!("no command in: {}", findings[0]));
+    let words = shell_words(printed);
+    assert_eq!(words[0], "git", "{printed}");
+    let followed = common::git()
+        .args(&words[1..])
+        .current_dir(&pw.workspace)
+        .output()
+        .unwrap();
+    assert!(
+        followed.status.success(),
+        "`{printed}` from the weave root: {}",
+        String::from_utf8_lossy(&followed.stderr)
+    );
+
+    assert!(!savepoint_exists(&repo_abs, "not.a.key"));
+    let after = doctor(&["doctor", "--json"]);
+    assert!(
+        !after.contains("unrecognized-savepoint-ref"),
+        "the finding outlived the deletion it printed:\n{after}"
+    );
+}
+
 // ===========================================================================
 // 7. JSON channel surfaces the new variants
 // ===========================================================================

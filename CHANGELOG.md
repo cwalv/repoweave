@@ -6,6 +6,14 @@ claim that nothing changed in them.
 
 ## Unreleased
 
+### `unrecognized-savepoint-ref` prints a deletion that runs, once per clone
+
+The finding advised `git update-ref -d <ref>` without naming a repository, so
+run from the weave root, where `rwv doctor` runs, it failed or deleted nothing.
+It now prints `git -C <repo> update-ref -d <ref>` with the repository's
+absolute path. A ref seen by the primary and its workweaves, which share one
+ref store, is reported once instead of once per checkout.
+
 ### `rwv each` with no project selected names `rwv activate`
 
 At a primary with no project selected, including the state `rwv doctor --fix`
