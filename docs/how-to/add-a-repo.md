@@ -47,6 +47,30 @@ rwv add https://github.com/interesting/library.git --role reference
 
 Use `rwv add --role reference` instead of an untracked `git clone` under the weave root so `rwv doctor` does not report the directory as an orphaned clone. See [Roles reference](../reference/roles.md) for full role semantics.
 
+## Change a repository's role
+
+`rwv role` changes the role of a repository already in `rwv.toml`, for example to keep a repository as read-only study material, or to start working on it again:
+
+```bash
+rwv role github/example/some-lib reference
+rwv role github/example/some-lib owned
+```
+
+It edits `rwv.toml`, regenerates the ecosystem workspace files (a `reference` repository is left out of every build graph), and sets the checkout's file permissions for the new role. A change to `reference` refuses while the repository has uncommitted changes to tracked files; commit, stash or discard them first. Record the change as you record an addition (see [Record the change](#record-the-change)). See `rwv explain role` for the full behavior.
+
+## Track a non-default branch
+
+`rwv add` records the remote's default branch. To track another branch, set `version = "<branch>"` on the entry in `projects/<project>/rwv.toml`, switch the clone to that branch, and record the new tip:
+
+```bash
+$EDITOR projects/<project>/rwv.toml        # version = "dev" on github/example/some-lib
+git -C github/example/some-lib fetch origin
+git -C github/example/some-lib switch dev
+rwv update --commit
+```
+
+`rwv update --commit` advances the clone to the branch's remote tip and commits `rwv.lock` together with the edited `rwv.toml` and the integration files it regenerates. Editing `version` alone does not move the clone: `rwv fetch` refuses to align a clone that sits on another branch, and for an entry not yet in `rwv.lock` it records the commit the clone is on.
+
 ## Create a new repository (`--new`)
 
 With `--new`, the positional argument is a creation address (`<registry>/<owner>/<repo>` or bare `<registry>` with `--param key=value`). Creation is dispatched by registry:
