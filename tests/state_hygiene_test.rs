@@ -651,6 +651,48 @@ fn live_op_state_protects_matching_savepoint() {
     );
 }
 
+/// A record whose tip table does not parse still names its op, and `rwv
+/// abort` restores from that op's savepoints, so `--fix` must keep them.
+#[test]
+fn a_record_whose_header_parses_keeps_its_savepoints_under_fix() {
+    let tmp = common::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_rel = "github/acme/server";
+    let repo_abs = root.join(repo_rel);
+    let head_sha = init_git_repo(&repo_abs);
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_rel, "https://github.com/acme/server.git")],
+    );
+
+    let op_id = "666666666666666666";
+    write_op_state(&root, op_id);
+    let record = root.join(".rwv-op");
+    let unparseable = std::fs::read_to_string(&record).unwrap().replace(
+        "\"advanced_tips\": {}",
+        "\"advanced_tips\": {\"(project)\": \"v1.0\"}",
+    );
+    std::fs::write(&record, unparseable).unwrap();
+    add_savepoint(&repo_abs, op_id, &head_sha);
+
+    let out = rwv_cmd()
+        .args(["doctor", "--fix"])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("stale-op-state"),
+        "the record must be reported; got:\n{stdout}"
+    );
+    assert!(
+        savepoint_exists(&repo_abs, op_id),
+        "--fix must keep the savepoint abort restores from; got:\n{stdout}"
+    );
+}
+
 /// A parked `sync-to`: its owner record, and the savepoints it filed per repo
 /// on both sides (`<op-id>`, and `<op-id>-target` for the target's).
 fn parked_sync_to(root: &Path) -> (PathBuf, String, String) {

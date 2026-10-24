@@ -2710,14 +2710,25 @@ fn cell_advanced_tips_mixed_foreign_server_refuses_intent_project_restores() {
 // Cell 7: a `.rwv-op` record missing the `advanced_tips` key.
 //
 // Schema v2 carries no default for it — a record missing the key is
-// malformed, not old, and abort must refuse to parse it rather than
-// silently degrading to an empty map.
+// malformed, not old. Abort never reads it as an empty map: it reads the
+// header alone, says so, and attributes no tip the record would have.
 // ---------------------------------------------------------------------------
 
-/// Cell 7 (§8.7): a record with no `advanced_tips` key fails to parse, and
-/// abort refuses without touching any repo.
+fn cell7_record(primary: &Workspace, ww: &Workspace, op_id: &str) -> String {
+    format!(
+        "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
+         \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
+         \"phase\": \"replay\", \"converged_tips\": {{}}, \"overrides\": [], \
+         \"started_at\": \"2026-06-10T00:00:00Z\"}}",
+        src = common::json_escaped(&primary.root),
+        tgt = common::json_escaped(&ww.root),
+    )
+}
+
+/// Cell 7 (§8.7): a record with no `advanced_tips` key does not parse whole,
+/// and abort restores from its header, naming the parse failure.
 #[test]
-fn cell_owner_record_missing_advanced_tips_key_fails_to_parse() {
+fn cell_owner_record_missing_advanced_tips_key_aborts_from_its_header() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, sha) = make_shared_workspaces(tmp.path());
 
@@ -2726,18 +2737,7 @@ fn cell_owner_record_missing_advanced_tips_key_fails_to_parse() {
     assert_eq!(ww_server_pre, sha);
 
     let op_id = "crash-matrix-cell7-malformed";
-
-    // Write the owner record WITHOUT the advanced_tips key.
-    let body = format!(
-        "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"strategy\": \"rebase\", \"project\": \"web-app\", \
-         \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
-         \"phase\": \"replay\", \"converged_tips\": {{}}, \"overrides\": [], \
-         \"started_at\": \"2026-06-10T00:00:00Z\"}}",
-        src = common::json_escaped(&primary.root),
-        tgt = common::json_escaped(&ww.root),
-    );
-    std::fs::write(ww.root.join(".rwv-op"), &body).unwrap();
-
+    std::fs::write(ww.root.join(".rwv-op"), cell7_record(&primary, &ww, op_id)).unwrap();
     plant_savepoint_at(&ww.server_dir, op_id, &ww_server_pre);
     plant_savepoint_at(&ww.project_dir, op_id, &ww_project_pre);
 
@@ -2746,28 +2746,65 @@ fn cell_owner_record_missing_advanced_tips_key_fails_to_parse() {
         .current_dir(&ww.root)
         .output()
         .expect("rwv abort failed to spawn");
-    assert!(
-        !out.status.success(),
-        "[cell7] abort must refuse a record missing advanced_tips, not silently default"
-    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("failed to parse owner record"),
-        "[cell7] refusal must name the parse failure; stderr:\n{stderr}"
+        out.status.success(),
+        "[cell7] abort must restore from a record whose header parses; stderr:\n{stderr}"
     );
-
+    assert!(
+        stderr.contains(&format!(
+            "does not parse past op {op_id}'s id and workspaces"
+        )) && stderr.contains("advanced_tips"),
+        "[cell7] abort must name the parse failure it read past; stderr:\n{stderr}"
+    );
     assert_eq!(
         common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
         ww_server_pre,
-        "[cell7] a record that fails to parse must not move any repo"
     );
     assert_eq!(
         common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]),
         ww_project_pre,
-        "[cell7] a record that fails to parse must not move any repo"
     );
     assert!(
-        ww.root.join(".rwv-op").exists(),
-        "[cell7] the unparseable record must be left in place for the operator to inspect"
+        !ww.root.join(".rwv-op").exists(),
+        "[cell7] a clean abort clears the record it read"
     );
+}
+
+/// Cell 7b: a record whose header does not parse names no op, so abort
+/// refuses without touching any repo and leaves the record to the operator.
+#[test]
+fn cell_owner_record_without_a_readable_header_is_refused() {
+    let tmp = common::tempdir().unwrap();
+    let (primary, ww, _sha) = make_shared_workspaces(tmp.path());
+
+    let ww_server_pre = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
+    let ww_project_pre = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
+
+    let op_id = "crash-matrix-cell7b-headless";
+    let body = cell7_record(&primary, &ww, op_id).replace("\"verb\": \"sync\"", "\"verb\": 7");
+    std::fs::write(ww.root.join(".rwv-op"), &body).unwrap();
+    plant_savepoint_at(&ww.server_dir, op_id, &ww_server_pre);
+    plant_savepoint_at(&ww.project_dir, op_id, &ww_project_pre);
+
+    let out = rwv()
+        .args(["abort"])
+        .current_dir(&ww.root)
+        .output()
+        .expect("rwv abort failed to spawn");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "[cell7b] stderr:\n{stderr}");
+    assert!(
+        stderr.contains("It names no op this rwv can read"),
+        "[cell7b] refusal must say the record names no op; stderr:\n{stderr}"
+    );
+    assert_eq!(
+        common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
+        ww_server_pre,
+    );
+    assert_eq!(
+        common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]),
+        ww_project_pre,
+    );
+    assert!(ww.root.join(".rwv-op").exists());
 }

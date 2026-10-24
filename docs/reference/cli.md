@@ -352,6 +352,8 @@ Roll an in-flight `sync` or `sync-to` back to its savepoints in every workspace 
 
 Errors if no sync operation is in progress. Without the flag, a repo whose tip is unattributable is refused, not reset.
 
+An op record this rwv cannot fully parse is still aborted when its op id, verb, project and workspaces parse. Abort says so, reads none of the tips the record holds, and attributes only a tip at its savepoint or mid-op; every other tip is refused as `foreign-tip`, for `--abandon-foreign-tip <repo>` to settle. A record where even those fields do not parse names no op, and abort refuses it; the error names what removing the file leaves behind and the command that clears each part.
+
 **Exit codes:**
 - `0` — all repositories restored cleanly to their savepoints and op-state removed.
 - `1` — a refusal (`no-op-recorded` with nothing in progress, or `foreign-tip` without `--abandon-foreign-tip <repo>`), or a partial restore failure (`abort completed with failures`: at least one repository failed to reset, and op-state is retained so `rwv abort` can be retried).

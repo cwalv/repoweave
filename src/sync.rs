@@ -13,7 +13,7 @@ use crate::manifest::{
     ResolvedLockFile, WorkweaveName,
 };
 use crate::op_state::{
-    self, OpId, OpVerb, Override, Overrides, OwnerRecord, SavepointKey, SyncStrategy,
+    self, OpId, OpVerb, Override, Overrides, OwnerHeader, OwnerRecord, SavepointKey, SyncStrategy,
 };
 use crate::parallel::{run_in_parallel, OutputMode};
 use crate::path_spelling::CanonicalPath;
@@ -6524,8 +6524,8 @@ enum AbortSide {
 }
 
 impl AbortSide {
-    fn of(workspace: &CanonicalPath, record: &OwnerRecord) -> Self {
-        if record.verb == OpVerb::SyncTo && *workspace == record.target {
+    fn of(workspace: &CanonicalPath, header: &OwnerHeader) -> Self {
+        if header.verb == OpVerb::SyncTo && *workspace == header.target {
             Self::SyncToTarget
         } else {
             Self::Replay
@@ -6593,27 +6593,37 @@ pub fn run_abort(
     let workspace = ctx.active_root();
     let workspace_dir = workspace.as_path().to_path_buf();
 
-    // resolve_to_owner follows a lease pointer if the workspace holds a lease,
+    // resolve_for_abort follows a lease pointer if the workspace holds a lease,
     // so `rwv abort` invoked from either the owner or a leased workspace finds
-    // the same full record.
-    let Some(resolved) = op_state::resolve_to_owner(&workspace_dir)? else {
+    // the same record.
+    let Some((reading, owner_workspace)) = op_state::resolve_for_abort(&workspace_dir)? else {
         crate::refuse!(RefusalKind::NoOpRecorded, "no operation in progress")
     };
-    let other_workspace = (resolved.record.verb == OpVerb::SyncTo).then(|| {
-        if resolved.owner_workspace == *workspace {
-            resolved.record.target.clone()
+    let header = reading.header();
+    if let op_state::OwnerReading::HeaderOnly { parse_error, .. } = &reading {
+        eprintln!(
+            "owner record at {} does not parse past op {}'s id and workspaces: {parse_error}\n\
+             No tips it recorded are read: a repo is restored only where it sits at its \
+             savepoint or mid-op, and any other tip is refused as foreign.",
+            op_state::OwnerRecord::path_in(owner_workspace.as_path()),
+            header.id,
+        );
+    }
+    let other_workspace = (header.verb == OpVerb::SyncTo).then(|| {
+        if owner_workspace == *workspace {
+            header.target.clone()
         } else {
-            resolved.owner_workspace.clone()
+            owner_workspace.clone()
         }
     });
-    let owner_record = resolved.record;
-    let op_id = owner_record.id.clone();
+    let tips = reading.tips();
+    let op_id = header.id.clone();
 
     // Both of the op's workspaces are enumerated under the op's own project,
     // whichever side abort was invoked from. A workspace's `.rwv-active` may
     // name a different project by the time an operator aborts, and that
     // project's repos are not the ones this op advanced.
-    let op_project_name = owner_record.project.clone();
+    let op_project_name = header.project.clone();
     let cwd_project_dir = project_dir(&workspace_dir, &op_project_name);
     // Use the lockless loader: abort's contract is "the state is bad, get me
     // out". rwv.lock may contain git conflict markers from the half-completed
@@ -6632,10 +6642,10 @@ pub fn run_abort(
         &workspace_dir,
         &cwd_project_dir,
         &cwd_project,
-        AbortSide::of(workspace, &owner_record),
+        AbortSide::of(workspace, &header),
         "",
         &op_id,
-        &owner_record,
+        tips,
         abandon,
         &mut tally,
     );
@@ -6650,7 +6660,7 @@ pub fn run_abort(
                 let other_project_dir = project_dir(&other_ws_dir, &op_project_name);
                 match Project::from_dir_skip_lock(&other_project_dir, op_project_name.clone()) {
                     Ok(other_project) => {
-                        let side = AbortSide::of(other_ctx.active_root(), &owner_record);
+                        let side = AbortSide::of(other_ctx.active_root(), &header);
                         restore_abort_workspace(
                             &other_ws_dir,
                             &other_project_dir,
@@ -6658,7 +6668,7 @@ pub fn run_abort(
                             side,
                             side.label(),
                             &op_id,
-                            &owner_record,
+                            tips,
                             abandon,
                             &mut tally,
                         );
@@ -6741,14 +6751,14 @@ fn restore_abort_workspace(
     side: AbortSide,
     label: &str,
     op_id: &OpId,
-    owner_record: &OwnerRecord,
+    tips: Option<&op_state::PhaseTips>,
     abandon: &crate::cli::consent::AbandonForeignTipConsent,
     tally: &mut AbortTally,
 ) {
     let empty_tips = std::collections::BTreeMap::new();
-    let converged_tips = owner_record.tips.converged().unwrap_or(&empty_tips);
+    let converged_tips = tips.and_then(|t| t.converged()).unwrap_or(&empty_tips);
     let advanced_tips = match side {
-        AbortSide::Replay => owner_record.tips.advanced().unwrap_or(&empty_tips),
+        AbortSide::Replay => tips.and_then(|t| t.advanced()).unwrap_or(&empty_tips),
         AbortSide::SyncToTarget => &empty_tips,
     };
     let restore_key = side.savepoint_key(op_id);

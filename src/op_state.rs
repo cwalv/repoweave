@@ -664,6 +664,41 @@ impl OwnerRecord {
         }
     }
 
+    pub fn header(&self) -> OwnerHeader {
+        OwnerHeader {
+            id: self.id.clone(),
+            verb: self.verb,
+            project: self.project.clone(),
+            source: self.source.clone(),
+            target: self.target.clone(),
+            started_at: self.started_at.clone(),
+        }
+    }
+
+    pub fn savepoint_keys(&self) -> Vec<SavepointKey> {
+        self.header().savepoint_keys()
+    }
+
+    /// The owner op-state file within `workspace_dir`.
+    pub fn path_in(workspace_dir: &Path) -> StatePath {
+        StateFile::OpRecord.in_dir(workspace_dir)
+    }
+}
+
+/// The fields of an owner record that name its op and the workspaces the op
+/// touched. They parse on their own, so a record whose other fields do not
+/// still tells `rwv abort` which savepoints to restore from.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct OwnerHeader {
+    pub id: OpId,
+    pub verb: OpVerb,
+    pub project: ProjectName,
+    pub source: CanonicalPath,
+    pub target: CanonicalPath,
+    pub started_at: String,
+}
+
+impl OwnerHeader {
     /// The keys this op files savepoints under: its own, and for a `sync-to`
     /// the target side's. A savepoint under any of them belongs to the op for
     /// as long as its record exists.
@@ -676,10 +711,32 @@ impl OwnerRecord {
             ],
         }
     }
+}
 
-    /// The owner op-state file within `workspace_dir`.
-    pub fn path_in(workspace_dir: &Path) -> StatePath {
-        StateFile::OpRecord.in_dir(workspace_dir)
+/// An owner record as `rwv abort` reads it: whole, or only its header when
+/// the rest does not parse.
+#[derive(Debug)]
+pub enum OwnerReading {
+    Whole(OwnerRecord),
+    HeaderOnly {
+        header: OwnerHeader,
+        parse_error: String,
+    },
+}
+
+impl OwnerReading {
+    pub fn header(&self) -> OwnerHeader {
+        match self {
+            Self::Whole(record) => record.header(),
+            Self::HeaderOnly { header, .. } => header.clone(),
+        }
+    }
+
+    pub fn tips(&self) -> Option<&PhaseTips> {
+        match self {
+            Self::Whole(record) => Some(&record.tips),
+            Self::HeaderOnly { .. } => None,
+        }
     }
 }
 
@@ -745,51 +802,73 @@ pub struct ResolvedOwner {
 /// - Returns an error if a present file cannot be parsed, or if the lease
 ///   pointer leads to a missing owner record.
 ///
-/// This is the entry point for `--continue` and `abort` invoked from any
-/// workspace (owner or leased).
+/// This is the entry point for `--continue` invoked from any workspace (owner
+/// or leased); `rwv abort` resolves through [`resolve_for_abort`].
 pub fn resolve_to_owner(workspace_dir: &Path) -> anyhow::Result<Option<ResolvedOwner>> {
-    let owner_path = OwnerRecord::path_in(workspace_dir);
-    if owner_path.exists() {
-        let record = read_owner(workspace_dir)?.ok_or_else(|| {
+    Ok(
+        resolve_with(workspace_dir, read_owner, |record| &record.id)?.map(
+            |(record, owner_workspace)| ResolvedOwner {
+                record,
+                owner_workspace,
+            },
+        ),
+    )
+}
+
+/// [`resolve_to_owner`] for `rwv abort`, which can still restore from an
+/// owner record whose header parses when the rest does not.
+pub fn resolve_for_abort(
+    workspace_dir: &Path,
+) -> anyhow::Result<Option<(OwnerReading, CanonicalPath)>> {
+    resolve_with(
+        workspace_dir,
+        read_owner_for_abort,
+        |reading| match reading {
+            OwnerReading::Whole(record) => &record.id,
+            OwnerReading::HeaderOnly { header, .. } => &header.id,
+        },
+    )
+}
+
+fn resolve_with<T>(
+    workspace_dir: &Path,
+    read: impl Fn(&Path) -> anyhow::Result<Option<T>>,
+    id_of: impl Fn(&T) -> &OpId,
+) -> anyhow::Result<Option<(T, CanonicalPath)>> {
+    if OwnerRecord::path_in(workspace_dir).exists() {
+        let record = read(workspace_dir)?.ok_or_else(|| {
             anyhow::anyhow!(
                 "internal: owner record disappeared at {}",
                 workspace_dir.display()
             )
         })?;
-        return Ok(Some(ResolvedOwner {
-            record,
-            owner_workspace: CanonicalPath::of(workspace_dir),
-        }));
+        return Ok(Some((record, CanonicalPath::of(workspace_dir))));
     }
 
-    let lease_path = LeaseRecord::path_in(workspace_dir);
-    if lease_path.exists() {
-        let lease = read_lease(workspace_dir)?.ok_or_else(|| {
-            anyhow::anyhow!("internal: lease disappeared at {}", workspace_dir.display())
-        })?;
-        // Follow the pointer.
-        let record = read_owner(lease.owner.as_path())?.ok_or_else(|| {
-            crate::refusal::refusal(
-                RefusalKind::DeadOpLease,
-                format!(
-                    "lease at {} points to {}, but no owner record found there; \
-                 the owner workspace may have been moved or its op-state manually \
-                 removed. Run `rwv abort` in the owner workspace to clean up, or \
-                 manually remove {} and {}.",
-                    workspace_dir.display(),
-                    lease.owner.as_path().display(),
-                    lease_path,
-                    OwnerRecord::path_in(lease.owner.as_path()),
-                ),
-            )
-        })?;
-        return Ok(Some(ResolvedOwner {
-            record,
-            owner_workspace: lease.owner,
-        }));
+    let Some(lease) = read_lease(workspace_dir)? else {
+        return Ok(None);
+    };
+    match read(lease.owner.as_path())? {
+        Some(record) if *id_of(&record) == lease.id => Ok(Some((record, lease.owner))),
+        _ => Err(crate::refusal::refusal(
+            RefusalKind::DeadOpLease,
+            dead_lease_sentence(workspace_dir, &lease),
+        )),
     }
+}
 
-    Ok(None)
+/// The advice for a lease whose owner workspace records no op with its id:
+/// with no record, nothing can resume or abort the op, so the lease is
+/// released on its own.
+fn dead_lease_sentence(lease_dir: &Path, lease: &LeaseRecord) -> String {
+    format!(
+        "{dir} is leased to op {id}, but its owner workspace {owner} records no such op, \
+         so nothing can resume or abort it. `rwv doctor --fix` run in {dir} releases \
+         the lease.",
+        dir = lease_dir.display(),
+        id = lease.id,
+        owner = lease.owner.as_path().display(),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -816,6 +895,28 @@ pub fn write_owner(workspace_dir: &Path, record: &OwnerRecord) -> anyhow::Result
 ///
 /// Returns an error if the file exists but cannot be parsed.
 pub fn read_owner(workspace_dir: &Path) -> anyhow::Result<Option<OwnerRecord>> {
+    match read_owner_for_abort(workspace_dir)? {
+        None => Ok(None),
+        Some(OwnerReading::Whole(record)) => Ok(Some(record)),
+        Some(OwnerReading::HeaderOnly {
+            header,
+            parse_error,
+        }) => Err(anyhow::anyhow!(
+            "failed to parse owner record at {path}: {parse_error}. This rwv cannot resume \
+             the {verb} op it records; `rwv abort` still discards it, because the op's id \
+             and workspaces parse: it restores the repos it can attribute from the op's \
+             savepoints and refuses the rest by name",
+            path = OwnerRecord::path_in(workspace_dir),
+            verb = header.verb,
+        )),
+    }
+}
+
+/// Read the `.rwv-op` file from `workspace_dir` as `rwv abort` needs it.
+///
+/// Returns an error only when the file exists and not even its
+/// [`OwnerHeader`] parses.
+pub fn read_owner_for_abort(workspace_dir: &Path) -> anyhow::Result<Option<OwnerReading>> {
     let path = OwnerRecord::path_in(workspace_dir);
     if !path.exists() {
         return Ok(None);
@@ -823,14 +924,31 @@ pub fn read_owner(workspace_dir: &Path) -> anyhow::Result<Option<OwnerRecord>> {
     let json = path
         .read_to_string()
         .with_context(|| format!("failed to read owner record from {path}"))?;
-    let record: OwnerRecord = serde_json::from_str(&json).map_err(|e| {
-        anyhow::anyhow!(
-            "failed to parse owner record at {path}: {e:#}. Resuming an op and aborting it both \
-             read this record, so one this rwv cannot parse blocks both; remove the file to \
-             discard the op, and `rwv doctor` will list the savepoints it left"
-        )
-    })?;
-    Ok(Some(record))
+    let whole_error = match serde_json::from_str::<OwnerRecord>(&json) {
+        Ok(record) => return Ok(Some(OwnerReading::Whole(record))),
+        Err(e) => e,
+    };
+    match serde_json::from_str::<OwnerHeader>(&json) {
+        Ok(header) => Ok(Some(OwnerReading::HeaderOnly {
+            header,
+            parse_error: format!("{whole_error:#}"),
+        })),
+        Err(_) => Err(anyhow::anyhow!(
+            "failed to parse owner record at {path}: {whole_error:#}. It names no op this rwv \
+             can read, so neither resuming nor `rwv abort` can use it. Removing the file \
+             discards the op and leaves what it did in place: repos it left mid-rebase or \
+             mid-merge, which `rwv status` marks and git's own `rebase --abort` or \
+             `merge --abort` returns to their branch; the lease it holds on the workspace \
+             the record names as `target`, which `rwv doctor --fix` run there releases; \
+             and its savepoints, which `rwv doctor` lists"
+        )),
+    }
+}
+
+/// The header of the `.rwv-op` file in `workspace_dir`, whether or not the
+/// rest of the record parses.
+pub fn read_owner_header(workspace_dir: &Path) -> anyhow::Result<Option<OwnerHeader>> {
+    Ok(read_owner_for_abort(workspace_dir)?.map(|reading| reading.header()))
 }
 
 /// Record `new_phase` as the phase in progress in the owner record at
@@ -930,58 +1048,64 @@ pub fn check_no_op_in_progress(workspace_dirs: &[&Path]) -> anyhow::Result<()> {
 /// file, or `Ok(None)` if the directory is clean.
 ///
 /// Split out of [`check_no_op_in_progress`] so [`acquire_op`] can emit the
-/// identical refusal shape on an atomic-create `AlreadyExists`. Every shape
-/// the sentence takes is one condition, so the kind is attached here rather
-/// than at each of them.
+/// identical refusal shape on an atomic-create `AlreadyExists`.
 fn in_flight_refusal_for(dir: &Path) -> anyhow::Result<Option<anyhow::Error>> {
-    Ok(in_flight_sentence_for(dir)?
-        .map(|sentence| crate::refusal::refusal(RefusalKind::OpInProgress, sentence)))
+    Ok(
+        in_flight_sentence_for(dir)?
+            .map(|(kind, sentence)| crate::refusal::refusal(kind, sentence)),
+    )
 }
 
-fn in_flight_sentence_for(dir: &Path) -> anyhow::Result<Option<String>> {
+fn in_flight_sentence_for(dir: &Path) -> anyhow::Result<Option<(RefusalKind, String)>> {
     // Owner record: full detail is right here.
     if let Some(record) = read_owner(dir)? {
         let elapsed = elapsed_since(&record.started_at);
-        return Ok(Some(format!(
-            "{verb} in progress (started {elapsed} ago, mid `{phase}`) at {dir}.\n\
+        return Ok(Some((
+            RefusalKind::OpInProgress,
+            format!(
+                "{verb} in progress (started {elapsed} ago, mid `{phase}`) at {dir}.\n\
              Rerun with `{resume}` from that workspace after resolving, \
              or `rwv abort` to discard.",
-            verb = record.verb,
-            phase = record.phase,
-            dir = dir.display(),
-            resume = resume_command(record.verb),
+                verb = record.verb,
+                phase = record.phase,
+                dir = dir.display(),
+                resume = resume_command(record.verb),
+            ),
         )));
     }
     // Lease: follow the pointer to the owner record so the refusal carries
     // the same op / age / phase detail and names where `--continue` runs.
     if let Some(lease) = read_lease(dir)? {
-        // A resolvable owner record gives the rich message; if the pointer
-        // is dangling (owner workspace moved / op-state hand-removed), fall
-        // back to the lease's own fields rather than failing the guard —
-        // the operator still learns an op involves this workspace.
-        match read_owner(lease.owner.as_path()) {
-            Ok(Some(record)) => {
+        let owner = read_owner(lease.owner.as_path()).map_err(|e| {
+            anyhow::anyhow!(
+                "{} is leased to op {}, owned by {}: {e:#}",
+                dir.display(),
+                lease.id,
+                lease.owner.as_path().display()
+            )
+        })?;
+        match owner {
+            Some(record) if record.id == lease.id => {
                 let elapsed = elapsed_since(&record.started_at);
-                return Ok(Some(format!(
-                    "{verb} in progress (started {elapsed} ago, mid `{phase}`); this \
+                return Ok(Some((
+                    RefusalKind::OpInProgress,
+                    format!(
+                        "{verb} in progress (started {elapsed} ago, mid `{phase}`); this \
                      workspace ({dir}) is leased to it. Owner workspace: {owner}.\n\
                      Rerun with `{resume}` from the owner workspace after \
                      resolving, or `rwv abort` to discard.",
-                    verb = record.verb,
-                    phase = record.phase,
-                    dir = dir.display(),
-                    owner = lease.owner.as_path().display(),
-                    resume = resume_command(record.verb),
+                        verb = record.verb,
+                        phase = record.phase,
+                        dir = dir.display(),
+                        owner = lease.owner.as_path().display(),
+                        resume = resume_command(record.verb),
+                    ),
                 )));
             }
             _ => {
-                return Ok(Some(format!(
-                    "op {id} in progress (lease at {dir}; owner workspace: {owner}).\n\
-                     Rerun the owning verb with `--continue` from the owner workspace, or \
-                     `rwv abort` to discard.",
-                    id = lease.id,
-                    dir = dir.display(),
-                    owner = lease.owner.as_path().display(),
+                return Ok(Some((
+                    RefusalKind::DeadOpLease,
+                    dead_lease_sentence(dir, &lease),
                 )));
             }
         }
@@ -1281,12 +1405,11 @@ pub fn detect_dead_lease(workspace_dir: &Path) -> anyhow::Result<Option<DeadLeas
             created_at,
         }));
     }
-    // Owner record exists — check op-id match. If the owner file is present
-    // but unparseable, treat that as a live/undecided case: the stale-op-state
-    // check will surface the parse issue via its own path.
-    if let Ok(Some(owner_record)) = read_owner(lease.owner.as_path()) {
-        if owner_record.id != lease.id {
-            let owner_op_id = owner_record.id.clone();
+    // An owner record whose header does not parse names no op to compare
+    // against, so the lease is left undecided rather than called dead.
+    if let Ok(Some(owner_header)) = read_owner_header(lease.owner.as_path()) {
+        if owner_header.id != lease.id {
+            let owner_op_id = owner_header.id.clone();
             return Ok(Some(DeadLease {
                 workspace_dir: workspace_dir.to_path_buf(),
                 op_id: lease.id,
@@ -2391,14 +2514,19 @@ mod tests {
     #[test]
     fn check_no_op_fails_when_lease_present() {
         let tmp = crate::tempdir().unwrap();
-        let dir = tmp.path();
+        let dir = tmp.path().join("leased");
+        let owner_dir = tmp.path().join("owner");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&owner_dir).unwrap();
+        let op_id = OpId::new_now();
+        write_owner(&owner_dir, &make_sync_to_record(&op_id, &owner_dir, &dir)).unwrap();
         let lease = LeaseRecord {
-            id: "some-op-id".parse().unwrap(),
-            owner: CanonicalPath::of(Path::new("/owner/ws")),
+            id: op_id,
+            owner: CanonicalPath::of(&owner_dir),
             created_at: None,
         };
-        overwrite_lease_in_test(dir, &lease).unwrap();
-        let err = check_no_op_in_progress(&[dir]).unwrap_err().to_string();
+        overwrite_lease_in_test(&dir, &lease).unwrap();
+        let err = check_no_op_in_progress(&[&dir]).unwrap_err().to_string();
         assert!(
             err.contains("in progress"),
             "expected 'in progress' in error: {err}"
@@ -2492,10 +2620,9 @@ mod tests {
         );
     }
 
-    /// If the lease pointer is dangling (owner record gone), the guard still
-    /// refuses — falling back to the lease's own fields rather than passing.
-    /// This arm cannot name a verb, so `--continue` arrives unqualified and the
-    /// sentence has to tell the operator to supply the owning verb themselves.
+    /// A lease whose owner records no op cannot be resumed or aborted, so its
+    /// refusal names the repair that releases it rather than resume-or-abort,
+    /// which would send the operator to a verb that finds nothing.
     #[test]
     fn check_no_op_dangling_lease_refusal_is_the_whole_template() {
         let tmp = crate::tempdir().unwrap();
@@ -2507,17 +2634,96 @@ mod tests {
             created_at: None,
         };
         overwrite_lease_in_test(dir, &lease).unwrap();
-        let err = check_no_op_in_progress(&[dir]).unwrap_err().to_string();
+        let err = check_no_op_in_progress(&[dir]).unwrap_err();
         assert_eq!(
-            err,
+            crate::refusal::kind_of(&err),
+            Some(RefusalKind::DeadOpLease)
+        );
+        assert_eq!(
+            err.to_string(),
             format!(
-                "op dangling-op in progress (lease at {dir}; owner workspace: {owner}).\n\
-                 Rerun the owning verb with `--continue` from the owner workspace, or \
-                 `rwv abort` to discard.",
+                "{dir} is leased to op dangling-op, but its owner workspace {owner} records \
+                 no such op, so nothing can resume or abort it. `rwv doctor --fix` run in \
+                 {dir} releases the lease.",
                 dir = dir.display(),
                 owner = owner.display(),
             )
         );
+    }
+
+    #[test]
+    fn a_lease_whose_owner_records_another_op_is_refused_as_dead() {
+        let tmp = crate::tempdir().unwrap();
+        let lease_dir = tmp.path().join("leased");
+        let owner_dir = tmp.path().join("owner");
+        std::fs::create_dir_all(&lease_dir).unwrap();
+        std::fs::create_dir_all(&owner_dir).unwrap();
+        let record = OwnerRecord::new_sync(
+            &OpId::new_now(),
+            SyncStrategy::Ff,
+            test_project(),
+            &owner_dir,
+            &owner_dir,
+        );
+        write_owner(&owner_dir, &record).unwrap();
+        let lease = LeaseRecord {
+            id: "finished-op".parse().unwrap(),
+            owner: CanonicalPath::of(&owner_dir),
+            created_at: None,
+        };
+        overwrite_lease_in_test(&lease_dir, &lease).unwrap();
+
+        let err = check_no_op_in_progress(&[&lease_dir]).unwrap_err();
+        assert_eq!(
+            crate::refusal::kind_of(&err),
+            Some(RefusalKind::DeadOpLease)
+        );
+        let err = resolve_to_owner(&lease_dir).unwrap_err();
+        assert_eq!(
+            crate::refusal::kind_of(&err),
+            Some(RefusalKind::DeadOpLease)
+        );
+    }
+
+    #[test]
+    fn abort_reads_the_header_of_a_record_whose_tips_do_not_parse() {
+        let tmp = crate::tempdir().unwrap();
+        let dir = tmp.path();
+        let op_id = OpId::new_now();
+        let record = OwnerRecord::new_sync_to(
+            &op_id,
+            SyncStrategy::Rebase,
+            test_project(),
+            Path::new("/src"),
+            Path::new("/tgt"),
+            false,
+        );
+        write_owner(dir, &record).unwrap();
+        let path = OwnerRecord::path_in(dir);
+        let mut json: serde_json::Value =
+            serde_json::from_str(&path.read_to_string().unwrap()).unwrap();
+        json["advanced_tips"]["(project)"] = "v1.0".into();
+        path.publish(json.to_string().as_bytes()).unwrap();
+
+        let err = read_owner(dir).unwrap_err().to_string();
+        assert!(err.contains("`rwv abort` still discards it"), "{err}");
+        match read_owner_for_abort(dir).unwrap().unwrap() {
+            OwnerReading::HeaderOnly {
+                header,
+                parse_error,
+            } => {
+                assert_eq!(header, record.header());
+                assert!(
+                    parse_error.contains("'v1.0' is not a commit id"),
+                    "{parse_error}"
+                );
+            }
+            OwnerReading::Whole(_) => panic!("a tag name must not parse as a tip"),
+        }
+
+        path.publish(b"{ not json").unwrap();
+        let err = read_owner_for_abort(dir).unwrap_err().to_string();
+        assert!(err.contains("It names no op this rwv can read"), "{err}");
     }
 
     #[test]
@@ -2818,8 +3024,8 @@ mod tests {
             .to_string();
 
         assert!(
-            err.contains("in progress"),
-            "lease-side refusal must name in-flight state; got: {err}"
+            err.contains("is leased to op prior-op"),
+            "lease-side refusal must name the lease it met; got: {err}"
         );
         // The owner file we would have written must NOT persist — refusal
         // leaves no trace.

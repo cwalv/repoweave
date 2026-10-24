@@ -6497,11 +6497,10 @@ pub fn scan_state_hygiene(
     let mut live_savepoints: std::collections::HashSet<SavepointKey> =
         std::collections::HashSet::new();
     for target in op_state_targets {
-        // Absent or unparseable file → nothing to do here. An unparseable
-        // file is surfaced by `op_state::read_owner`'s caller in sync paths;
-        // the doctor's job for the `.rwv-op` line is just to report
-        // presence, not to debug its content.
-        if let Ok(Some(state)) = crate::op_state::read_owner(&target.workspace_dir) {
+        // A record whose header parses still owns its savepoints, since
+        // `rwv abort` restores from them; one whose header does not is
+        // surfaced by the verbs that read it, with its own advice.
+        if let Ok(Some(state)) = crate::op_state::read_owner_header(&target.workspace_dir) {
             violations.push(CheckViolation::StaleOpState {
                 workspace_dir: target.workspace_dir.clone(),
                 verb: state.verb,
@@ -7869,8 +7868,8 @@ impl CollapsedClass {
             ),
             Self::LiveSavepoint => format!(
                 "{n} live orphaned-savepoint finding{s} — savepoint{s} holding \
-                 commits no live ref anchors; report-only, reclaimed by the \
-                 reviewed operator sweep (report-before-drop)"
+                 commits no live ref anchors; report-only: recover or delete \
+                 each by hand, as `rwv doctor --kind orphaned-savepoint` itemizes"
             ),
             Self::SharedBranch => format!(
                 "{n} shared-branch finding{s} — checkout{s} standing on a \

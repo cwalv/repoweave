@@ -25,6 +25,28 @@ without `RWV_PROJECT`, where before they received neither, and the
 `resolution` block in `--json` output carries `workspace` without `project`,
 where before it was absent.
 
+### An op record rwv cannot parse no longer traps the weave in a loop
+
+When a parked `sync` or `sync-to` left an op record that did not parse, the
+error said to remove the file. Doing so left the op's lease on its other
+workspace and its checkouts mid-rebase. `rwv sync-to` then refused with
+"`rwv abort` to discard", and `rwv abort` answered that no operation was in
+progress. Now:
+
+- `rwv abort` aborts a record whose op id, verb, project and workspaces parse.
+  It says what failed to parse, reads none of the record's tips, and restores
+  only repos at their savepoint or mid-op. It refuses every other repo as
+  `foreign-tip`, which `--abandon-foreign-tip <repo>` settles.
+- A record where even those fields do not parse is refused by name. The error
+  lists what removing it leaves and how to clear each part: checkouts
+  mid-rebase or mid-merge, the lease on the record's `target`, and the
+  savepoints.
+- A lease whose owner records no matching op is refused as `dead-op-lease` by
+  `rwv sync`, `rwv sync-to`, `rwv abort` and `rwv status`. The refusal names
+  the workspace where `rwv doctor --fix` releases the lease.
+- `rwv doctor` reports a record whose header parses as `stale-op-state`, and
+  `--fix` keeps that op's savepoints instead of dropping them as orphaned.
+
 ### A `go.work` that cannot be read stops `go-work` activation
 
 When the `go.work` at the weave root could not be read, `go-work` treated it as

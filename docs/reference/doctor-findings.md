@@ -1504,7 +1504,9 @@ text output prints that command filled in.
 
 **Warning. Report-only.** A `.rwv-op` file is present at a weave root.
 The finding reports the file's age, its path, and the `verb` that started the
-op (`sync` or `sync-to`).
+op (`sync` or `sync-to`). A file whose op id, verb, project, workspaces and
+start time parse is reported, and its savepoints held live, even when the
+rest of it does not parse, since `rwv abort` can still restore from them.
 
 `--fix` has no arm here and will not grow one: another terminal may be
 mid-conflict-resolution, and rwv has no daemon that could know which workspace
@@ -1530,7 +1532,13 @@ classical crash between acquire and mark) and `owner-op-id-mismatch` (the
 owner has an `.rwv-op`, but for a different operation, so this lease points at
 one that has already finished).
 
-**What to do:** `rwv doctor --fix` removes the lease.
+Verbs that read op-state (`rwv sync`, `rwv sync-to`, `rwv abort`, `rwv
+status`) refuse with this kind when they meet such a lease, naming the
+workspace that holds it: with no owner record, nothing can resume or abort the
+operation the lease names.
+
+**What to do:** `rwv doctor --fix`, run in the workspace holding the lease,
+removes it.
 
 ---
 
