@@ -27,7 +27,7 @@ src/add_remove.rs	unknown-registry	-	1
 src/add_remove.rs	unresolvable-repo-source	tests/project_and_source_spelling_test.rs	1
 src/add_remove.rs	unspellable-directory-name	tests/adopt_unspellable_directory_name_test.rs	1
 src/add_remove.rs	unusable-creation-param	tests/refusal_arrival_test.rs	10
-src/bin/rwv-each/select.rs	(untokened:plugin)	-	5
+src/bin/rwv-each/select.rs	(untokened:plugin)	-	6
 src/check.rs	repair-target-changed	-	5
 src/check.rs	unknown-finding-kind	-	1
 src/cli/dispatch.rs	(untokened:argv-shim)	-	1
@@ -40,6 +40,7 @@ src/cli/dispatch.rs	wrong-address-flag	-	4
 src/cli/dispatch.rs	wrong-checkout-kind	-	1
 src/explain.rs	ambiguous-explain-token	-	1
 src/explain.rs	no-explain-entry	-	4
+src/fetch.rs	(untokened:tally)	-	1
 src/fetch.rs	incomplete-lock	-	1
 src/fetch.rs	missing-lock	-	1
 src/fetch.rs	partial-run-aborted	tests/refusal_arrival_test.rs	3
