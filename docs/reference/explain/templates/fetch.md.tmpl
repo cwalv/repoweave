@@ -99,9 +99,10 @@ is a submodule git's `submodule.<name>.update = none` declines. A submodule
 that cannot be fetched is a warning, not a failure.
 
 Run in a workweave, `fetch` also checks out the empty submodules of the
-workweave's members from the canonical clone's copies. This is the repair
-`rwv doctor` names for `uninitialized-submodule` / `unfetched`, run in the
-primary weave and followed by `rwv doctor --fix`.
+workweave's members from the canonical clone's copies, after fetching into
+them the commits the workweave's checkouts record. This is the repair
+`rwv doctor` names for `uninitialized-submodule` / `unfetched`, run in that
+workweave.
 
 ### Realignment refuses to change what HEAD is attached to
 

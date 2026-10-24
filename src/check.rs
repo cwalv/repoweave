@@ -1224,8 +1224,8 @@ pub enum SubmoduleCommitKind {
     /// The canonical clone's copy of the submodule holds it. Auto-fixable:
     /// `--fix` checks the submodule out from there without the network.
     Fetched,
-    /// Nothing local holds it. Report-only: `rwv fetch` in the primary
-    /// weave fetches it into the canonical clone.
+    /// Nothing local holds it. Report-only: `rwv fetch` in the workweave
+    /// fetches it into the canonical clone and checks it out.
     Unfetched,
 }
 
@@ -9344,9 +9344,8 @@ impl CheckViolation {
                     }
                     SubmoduleCommitKind::Unfetched => format!(
                         "their recorded commits are not in the canonical clone's copies; \
-                             `rwv fetch --project {project} --repo {repo}` run in the primary \
-                             weave fetches them there, then `rwv doctor --fix` checks them out",
-                        project = workweave.project,
+                             `rwv fetch --repo {repo}` run in that workweave fetches them \
+                             there and checks them out"
                     ),
                 };
                 format!(

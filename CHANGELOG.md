@@ -689,8 +689,8 @@ them on the next `rwv fetch`. A submodule that cannot be fetched is a warning.
 A submodule whose recorded commit the canonical clone lacks stays empty, and
 `rwv doctor` reports `uninitialized-submodule`, from the primary and now from
 inside a workweave too, with a `sub_kind`: `fetched` (`--fix` checks it out
-locally) or `unfetched` (`rwv fetch --project <project> --repo <path>` in the
-primary weave fetches it, then `--fix` checks it out). `submodules = "skip"` on
+locally) or `unfetched` (`rwv fetch --repo <path>` run in that workweave
+fetches it and checks it out). `submodules = "skip"` on
 a `[repositories."<path>"]` entry leaves a member's submodules empty, unfetched
 and unreported, and git's own `submodule.<name>.update = none` does the same
 for one submodule.

@@ -1102,10 +1102,9 @@ network is involved.
 **Warning. Report-only.** The canonical clone holds no copy of each listed
 submodule with the commit the member records.
 
-**What to do:** run the `rwv fetch --project <project> --repo <path>` the
-message names in the primary weave. It fetches the commits into the canonical
-clone, checking out there any submodule whose directory is empty, without
-moving one already checked out. Then `rwv doctor --fix` checks them out in the
+**What to do:** run the `rwv fetch --repo <path>` the message names in that
+workweave. It fetches the commits into the canonical clone's copies, without
+moving a submodule already checked out there, and checks them out in the
 workweave. `--fix` itself never reaches the network, so it leaves this
 finding as it is.
 

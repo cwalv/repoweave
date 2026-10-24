@@ -196,6 +196,18 @@ fn finding_text(cwd: &Path) -> String {
         .to_owned()
 }
 
+/// The `rwv fetch` doctor's text names for an `unfetched` finding on
+/// `member`, run in `cwd`, as the arguments to run it with in the workweave.
+fn advised_fetch(cwd: &Path, member: &str) -> Vec<String> {
+    let advice = finding_text(cwd);
+    let fetch = format!("rwv fetch --repo {member}");
+    assert!(
+        advice.contains(&format!("`{fetch}` run in that workweave")),
+        "{advice}"
+    );
+    fetch.split(' ').skip(1).map(str::to_owned).collect()
+}
+
 fn is_empty(dir: &Path) -> bool {
     std::fs::read_dir(dir).map_or(true, |mut entries| entries.next().is_none())
 }
@@ -282,17 +294,13 @@ fn the_advised_fetch_gives_a_canonical_clone_without_module_data_its_submodules(
             cwd.display()
         );
     }
-    let advice = finding_text(&weave.primary);
-    let fetch = format!("rwv fetch --project {PROJECT} --repo {member}");
-    assert!(advice.contains(&format!("`{fetch}`")), "{advice}");
+    let fetch = advised_fetch(&weave.primary, &member);
 
-    let args: Vec<&str> = fetch.split(' ').skip(1).collect();
-    rwv(&weave.primary, &args);
+    rwv(&one, &fetch.iter().map(String::as_str).collect::<Vec<_>>());
 
     assert_populated(&weave.canonical(&member));
-    assert_eq!(sole_finding(&one)["sub_kind"], "fetched");
-    rwv(&one, &["doctor", "--fix"]);
     assert_populated(&one.join(&member));
+    assert!(findings(&one).is_empty());
     let two = weave.seat("two");
     assert_populated(&two.join(&member));
     assert!(findings(&weave.primary).is_empty());
@@ -534,4 +542,21 @@ fn a_submodule_git_declines_is_not_checked_out_from_local_data() {
 
     assert!(is_empty(&seat.join(&member).join(SUB)));
     assert!(findings(&seat).is_empty());
+}
+
+#[test]
+fn the_advised_fetch_in_the_workweave_brings_and_checks_out_a_commit_only_it_records() {
+    let weave = weave();
+    let (seat, member, moved) = seat_records_a_newer_sub(&weave);
+    let canonical = weave.canonical(&member);
+    let canonical_head = git(&canonical, &["rev-parse", "HEAD"]);
+    assert_eq!(sole_finding(&seat)["sub_kind"], "unfetched");
+    let fetch = advised_fetch(&seat, &member);
+
+    rwv(&seat, &fetch.iter().map(String::as_str).collect::<Vec<_>>());
+
+    assert!(findings(&seat).is_empty());
+    let checkout = seat.join(&member);
+    assert_eq!(git(&checkout.join(SUB), &["rev-parse", "HEAD"]), moved);
+    assert_eq!(git(&canonical, &["rev-parse", "HEAD"]), canonical_head);
 }
