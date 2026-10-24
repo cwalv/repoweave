@@ -41,7 +41,7 @@ rwv explain <verb>                 # markdown bundle for that verb
 
 The bundle has a fixed shape: *Purpose*, *Invocation* (flags, types, defaults), *Output* (a prose description plus, for `--json`-capable verbs, the JSON Schema as a fenced code block), *Exit codes*, *Examples*, *Common errors*. An agent that wants to know "does `rwv push` support `--force`?" parses the *Invocation* section of `rwv explain push`, not its training data.
 
-The rendered bundles are committed at `docs/reference/explain/` for offline browsing — those files are build artifacts of `cargo run --bin generate-explain`, not hand-authored. CI fails if they diverge from the templates.
+The rendered bundles are committed at `docs/reference/explain/` for offline browsing — those files are build artifacts of `cargo run --example generate-explain`, not hand-authored. CI fails if they diverge from the templates.
 
 ### Structured output — the `--json` envelope
 

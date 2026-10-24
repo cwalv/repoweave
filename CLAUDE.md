@@ -319,7 +319,7 @@ alike. `check_no_foreign_vocabulary` holds one deployment's terms
 (`FOREIGN_VOCABULARY`) out of `docs/` and shipped files. Read the lists rather
 than guessing, and name the mechanism, not the process around it: "while this
 machinery was built", not "in this epic". In the gate a hit surfaces late, as
-`generator exited non-zero` after the test stage; `cargo run --quiet --bin
+`generator exited non-zero` after the test stage; `cargo run --quiet --example
 generate-explain` names the file, line and word in seconds.
 
 ## Cited tokens exist
@@ -467,9 +467,9 @@ and register rules:
    `check_no_internals_on_operator_surfaces`.
 4. **Generated operator reference (`docs/reference/explain/*.md`,
    `docs/reference/schemas/*.json`, `docs/reference/prime/overview.md`)** —
-   committed outputs of `cargo run --bin generate-explain` derived from
+   committed outputs of `cargo run --example generate-explain` derived from
    `src/explain.rs`, `src/prime.rs`, and `#[derive(JsonSchema)]`. Edit the
-   generator inputs and re-run `cargo run --bin generate-explain`; never
+   generator inputs and re-run `cargo run --example generate-explain`; never
    hand-edit the generated files.
 
 ### Operator prose register (`README.md` and `docs/SUMMARY.md` pages)

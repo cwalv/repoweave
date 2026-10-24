@@ -634,6 +634,10 @@ regenerates this repository's own documentation; it is no longer shipped.
 After upgrading by hand, `rm` any `generate-explain` an earlier install left
 beside `rwv`.
 
+`cargo install --git https://github.com/cwalv/repoweave` works as written. In
+v0.24.0 it stopped at "multiple packages with binaries found", because a test
+fixture crate in the repository counted as a second package.
+
 ### rwv waits for a plugin through Ctrl-C
 
 A Ctrl-C while a plugin runs no longer ends `rwv` ahead of the plugin. `rwv`

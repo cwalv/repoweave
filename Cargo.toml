@@ -12,6 +12,9 @@ categories = ["development-tools", "command-line-utilities"]
 # tool, left out of the published crate so the published package carries
 # what every release channel ships: rwv and its bundled plugins.
 exclude = ["src/bin/generate-explain.rs"]
+# Every binary is declared below. Auto-discovery would make generate-explain a
+# [[bin]], which `cargo install` installs.
+autobins = false
 
 [[bin]]
 name = "rwv"
@@ -23,6 +26,14 @@ path = "src/main.rs"
 [[bin]]
 name = "rwv-each"
 path = "src/bin/rwv-each/main.rs"
+
+# An example, not a [[bin]], because `cargo install` installs every [[bin]]
+# whose features are on and never an example; `test = true` keeps its tests in
+# a plain `cargo test`. Run it with `cargo run --example generate-explain`.
+[[example]]
+name = "generate-explain"
+path = "src/bin/generate-explain.rs"
+test = true
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

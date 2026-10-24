@@ -56,15 +56,16 @@ on disk that a later invocation reads and resumes (§5).
 
 ## 2. Module map
 
-One library crate (`repoweave`, `src/lib.rs`) and two binaries. `src/lib.rs` is
+One library crate (`repoweave`, `src/lib.rs`) and three programs. `src/lib.rs` is
 a flat list of 34 `pub mod` declarations — there is no internal layering
 enforced by the module tree, so the grouping below is by role, not by
 visibility.
 
-| Binary | Source | Declared |
+| Program | Source | Declared |
 |---|---|---|
-| `rwv` | `src/main.rs` | `Cargo.toml:12-14` |
-| `generate-explain` | `src/bin/generate-explain.rs` | auto-discovered by Cargo (no `[[bin]]` stanza) |
+| `rwv` | `src/main.rs` | `[[bin]]` in `Cargo.toml` |
+| `rwv-each` | `src/bin/rwv-each/main.rs` | `[[bin]]` in `Cargo.toml` |
+| `generate-explain` | `src/bin/generate-explain.rs` | `[[example]]` in `Cargo.toml`, so `cargo install` never installs it |
 
 `src/main.rs` is thirteen lines whose entire body is
 `repoweave::cli::dispatch::run()`. The emptiness is load-bearing and documented
@@ -634,7 +635,7 @@ Stdout belongs to the JSON-capable verbs; operator prose goes to stderr
 
 ### Generated docs are checked into the tree
 
-`generate-explain` is a second binary, not a build script, and it does two jobs.
+`generate-explain` is a program of its own, not a build script: a Cargo example, run with `cargo run --example generate-explain`. It does two jobs.
 
 It **assembles**: each of the 16 `docs/reference/explain/templates/<verb>.md.tmpl`
 becomes `docs/reference/explain/<verb>.md`, and for the seven verbs with a JSON

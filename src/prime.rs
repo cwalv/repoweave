@@ -44,7 +44,7 @@ pub fn prime(ctx: Option<&WorkspaceContext>, no_suppress: bool) -> anyhow::Resul
 ///
 /// The content is maintained as a committed markdown file:
 /// `docs/reference/prime/overview.md` (rendered from
-/// `docs/reference/prime/templates/overview.md.tmpl` by `cargo run --bin
+/// `docs/reference/prime/templates/overview.md.tmpl` by `cargo run --example
 /// generate-explain`). This function simply embeds it at compile time.
 pub fn render_overview() -> String {
     include_str!("../docs/reference/prime/overview.md").to_string()

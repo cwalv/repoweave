@@ -7,7 +7,7 @@
 //! writes raw schemas to `docs/reference/schemas/<verb>.json`,
 //! and writes an `index.md` listing all explainable verbs.
 //!
-//! Run with `cargo run --bin generate-explain`. CI re-runs the generator and
+//! Run with `cargo run --example generate-explain`. CI re-runs the generator and
 //! fails on drift via `git diff --exit-code docs/reference/explain/
 //! docs/reference/schemas/`.
 //!
@@ -825,7 +825,7 @@ type MsgRegistry = HashMap<&'static str, String>;
 /// 1. Export the emitting function/constant from the relevant module.
 /// 2. Add an entry below, calling the function (possibly with a sentinel).
 /// 3. Add `{{MSG:<key>}}` in the relevant template.
-/// 4. Re-run `cargo run --bin generate-explain`.
+/// 4. Re-run `cargo run --example generate-explain`.
 fn build_msg_registry() -> MsgRegistry {
     let mut m: MsgRegistry = HashMap::new();
 

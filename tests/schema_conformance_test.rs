@@ -4,7 +4,7 @@
 //!
 //! `--json` is advertised as the agent-integration surface, each envelope
 //! embeds a `$schema` URL naming one of these files, and the files are
-//! regenerated from the Rust types by `cargo run --bin generate-explain`.
+//! regenerated from the Rust types by `cargo run --example generate-explain`.
 //! Regeneration proves the artifact matches the type. It does not prove a
 //! serialized envelope satisfies the artifact: a `skip_serializing_if` that
 //! drops a required key, a `flatten` that moves one, a rename on one side

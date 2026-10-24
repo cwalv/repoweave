@@ -314,7 +314,7 @@ pub fn read_normalized(path: impl AsRef<std::path::Path>) -> String {
 
 /// `GIT_*` environment variables that git itself sets for hooks and that
 /// would silently misdirect any subprocess `git` invocation if inherited.
-const GIT_ENV_VARS: &[&str] = &[
+pub const GIT_ENV_VARS: &[&str] = &[
     "GIT_DIR",
     "GIT_WORK_TREE",
     "GIT_INDEX_FILE",

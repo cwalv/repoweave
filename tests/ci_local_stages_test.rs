@@ -44,7 +44,7 @@ fn ci_local_sh() -> PathBuf {
 
 const STUB_CARGO: &str = "#!/bin/sh\n\
 printf 'STUB_CARGO: %s\\n' \"$*\"\n\
-if [ \"$1 $2 $3\" = \"run --quiet --bin\" ] && [ -n \"${CI_LOCAL_TEST_DRIFT_FILE:-}\" ]; then\n\
+if [ \"$1 $2 $3\" = \"run --quiet --example\" ] && [ -n \"${CI_LOCAL_TEST_DRIFT_FILE:-}\" ]; then\n\
     printf 'drift\\n' >> \"$CI_LOCAL_TEST_DRIFT_FILE\"\n\
 fi\n\
 exit 0\n";
@@ -153,7 +153,7 @@ const HEADERS_IN_ORDER: &[&str] = &[
     "==> cargo test --release --no-fail-fast",
     AMBIENT_AUTOCRLF_HEADER,
     "==> cargo clippy --all-targets -- -D warnings",
-    "==> cargo doc --no-deps --document-private-items (rustdoc warnings deny)",
+    "==> cargo doc --no-deps --document-private-items --lib --bins --examples (rustdoc warnings deny)",
     "==> cargo fmt --all -- --check",
     "==> explain artifacts up to date (no drift after regeneration)",
 ];
@@ -309,7 +309,7 @@ fn stages_flag_drift_only_skips_every_other_stage() {
         assert!(!stdout.contains(h), "unexpected header {h:?} in:\n{stdout}");
     }
     assert_eq!(stdout.matches("STUB_CARGO:").count(), 1);
-    assert!(stdout.contains("STUB_CARGO: run --quiet --bin generate-explain"));
+    assert!(stdout.contains("STUB_CARGO: run --quiet --example generate-explain"));
     assert!(
         stdout
             .trim_end()

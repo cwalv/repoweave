@@ -92,7 +92,7 @@ fn assert_byte_identical(verb: &str) {
         };
         panic!(
             "drift: `rwv explain {verb}` does not match the version banner + {}{trail}.\n\
-             Hint: re-run `cargo run --bin generate-explain` and recommit.",
+             Hint: re-run `cargo run --example generate-explain` and recommit.",
             doc_path.display()
         );
     }

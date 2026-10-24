@@ -3,7 +3,7 @@
 //! Returns a markdown bundle for the requested verb (purpose, invocation,
 //! output description with JSON Schema for `--json`-capable verbs).
 //!
-//! Implementation: build-time generator (`cargo run --bin generate-explain`)
+//! Implementation: build-time generator (`cargo run --example generate-explain`)
 //! assembles markdown from hand-written templates + schemars-derived JSON
 //! schemas, writing artifacts to `docs/reference/explain/*.md` and
 //! `docs/reference/schemas/*.json`. This module embeds those artifacts via

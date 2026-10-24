@@ -3,7 +3,7 @@
 //! The last read of this deprecated env var is gone; rwv's
 //! env-input inventory is `$HOME` only (docs/env-input-allowlist.txt). This
 //! pins that under plain `cargo test`, rather than relying solely on
-//! `cargo run --bin generate-explain`'s env-input-allowlist check, which a
+//! `cargo run --example generate-explain`'s env-input-allowlist check, which a
 //! contributor running just the test suite would never see.
 //!
 //! Comment lines are excluded — occurrence outside a comment is the test,

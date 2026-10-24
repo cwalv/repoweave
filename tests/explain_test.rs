@@ -311,7 +311,7 @@ fn explain_verb_and_token_open_with_the_version_line() {
 
 /// Drift-safety check: re-running the generator must produce byte-for-byte
 /// the same artifacts already on disk. This is the local equivalent of the
-/// CI drift gate (`cargo run --bin generate-explain && git diff
+/// CI drift gate (`cargo run --example generate-explain && git diff
 /// --exit-code`), but framed against the working tree rather than git so
 /// it works pre-commit and in environments without a git checkout.
 ///
@@ -353,7 +353,7 @@ fn generator_produces_no_drift_against_committed_artifacts() {
 
     // Re-run the generator.
     let status = Command::new("cargo")
-        .args(["run", "--quiet", "--bin", "generate-explain"])
+        .args(["run", "--quiet", "--example", "generate-explain"])
         .current_dir(&manifest_dir)
         .status()
         .expect("spawn generator");
@@ -393,7 +393,7 @@ fn msg_auto_relock_splice_resolves_and_matches_code() {
     let sync_to_md = manifest_dir.join("docs/reference/explain/sync-to.md");
 
     let content = std::fs::read_to_string(&sync_to_md).expect(
-        "docs/reference/explain/sync-to.md must exist (run cargo run --bin generate-explain)",
+        "docs/reference/explain/sync-to.md must exist (run cargo run --example generate-explain)",
     );
 
     // The sentinel form the generator uses: auto_relock_commit_message("<source>").
@@ -402,7 +402,7 @@ fn msg_auto_relock_splice_resolves_and_matches_code() {
         content.contains(&expected),
         "sync-to.md does not contain the auto-relock commit message '{expected}'; \
          the {{{{MSG:auto_relock}}}} splice may not have resolved correctly.\n\
-         Hint: run `cargo run --bin generate-explain` and commit the output.\n\
+         Hint: run `cargo run --example generate-explain` and commit the output.\n\
          sync-to.md content (first 500 chars):\n{}",
         &content[..content.len().min(500)]
     );

@@ -162,8 +162,8 @@ if run_stage clippy; then
 fi
 
 if run_stage doc; then
-    header "cargo doc --no-deps --document-private-items (rustdoc warnings deny)"
-    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items
+    header "cargo doc --no-deps --document-private-items --lib --bins --examples (rustdoc warnings deny)"
+    RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items --lib --bins --examples
 fi
 
 if run_stage fmt; then
@@ -181,7 +181,7 @@ if run_stage drift; then
     # generator currently produces from current inputs — nothing about a
     # hand edit anywhere else, and nothing about one made inside them, since
     # regeneration already overwrote it before this diff ran.
-    cargo run --quiet --bin generate-explain
+    cargo run --quiet --example generate-explain
     git diff --exit-code -- docs/reference/explain/ docs/reference/schemas/ docs/reference/prime/ || {
         status=$?
         printf 'explain artifacts changed by regeneration — commit them (this check compares the regenerated docs/reference/explain, docs/reference/schemas, and docs/reference/prime against the index; it does not inspect files the generator does not write)\n' >&2

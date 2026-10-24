@@ -2,7 +2,7 @@
 //!
 //! Four classes of check anchored to the committed
 //! `docs/reference/prime/overview.md` (rendered from
-//! `docs/reference/prime/templates/overview.md.tmpl` by `cargo run --bin
+//! `docs/reference/prime/templates/overview.md.tmpl` by `cargo run --example
 //! generate-explain`):
 //!
 //! **Class 1 - CLI claim verification.**

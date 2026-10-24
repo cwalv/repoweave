@@ -3,8 +3,8 @@
 //!
 //! The list is `[dist.binaries]` in dist-workspace.toml, which cargo-dist
 //! reads for the archives and the Homebrew formula. The wheel builder reads
-//! it too; the install script and the published crate cannot, so each is
-//! held to it here.
+//! it too; the install script, `cargo install` and the published crate
+//! cannot, so each is held to it here.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -12,7 +12,7 @@ use std::process::Command;
 
 mod common;
 
-/// Binaries of this package that are built for this repo's own maintenance
+/// Programs of this package that are built for this repo's own maintenance
 /// and must not reach a user, keyed to the file the crate leaves out.
 const MAINTAINER_TOOLS: &[(&str, &str)] = &[("generate-explain", "src/bin/generate-explain.rs")];
 
@@ -36,59 +36,174 @@ fn shipped() -> Vec<String> {
         .collect()
 }
 
-/// Every binary target cargo builds for this package: the explicit `[[bin]]`
-/// entries, plus `src/bin/<name>.rs` and `src/bin/<name>/main.rs` that no
-/// explicit entry claims (cargo's auto-discovery).
-fn package_binaries() -> BTreeSet<String> {
-    let manifest = read_toml("Cargo.toml");
-    let mut names = BTreeSet::new();
-    let mut claimed = BTreeSet::new();
-    if let Some(bins) = manifest.get("bin").and_then(|b| b.as_array_of_tables()) {
-        for bin in bins {
-            names.insert(bin["name"].as_str().unwrap().to_owned());
-            if let Some(path) = bin.get("path").and_then(|p| p.as_str()) {
-                claimed.insert(path.to_owned());
-            }
+fn cargo() -> Command {
+    let mut cmd = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
+    for var in common::GIT_ENV_VARS {
+        cmd.env_remove(var);
+    }
+    cmd
+}
+
+/// This package's entry in `cargo metadata`, which in a workspace of several
+/// members is one of several.
+fn package_metadata() -> serde_json::Value {
+    let out = cargo()
+        .args([
+            "metadata",
+            "--no-deps",
+            "--format-version",
+            "1",
+            "--manifest-path",
+        ])
+        .arg(root().join("Cargo.toml"))
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let metadata: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let manifest = repoweave::path_spelling::resolve(&root().join("Cargo.toml")).unwrap();
+    metadata["packages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| {
+            repoweave::path_spelling::resolve(Path::new(p["manifest_path"].as_str().unwrap()))
+                .unwrap()
+                == manifest
+        })
+        .expect("cargo metadata lists this package")
+        .clone()
+}
+
+fn strings(value: &serde_json::Value) -> Vec<String> {
+    value
+        .as_array()
+        .map(|a| a.iter().map(|v| v.as_str().unwrap().to_owned()).collect())
+        .unwrap_or_default()
+}
+
+/// The features `cargo install` turns on with no `--features`: `default`, and
+/// every package feature it names, transitively.
+fn default_features(package: &serde_json::Value) -> BTreeSet<String> {
+    let table = &package["features"];
+    let mut on = BTreeSet::new();
+    let mut pending = vec!["default".to_owned()];
+    while let Some(feature) = pending.pop() {
+        if table.get(&feature).is_some() && on.insert(feature.clone()) {
+            pending.extend(strings(&table[&feature]));
         }
     }
-    for entry in std::fs::read_dir(root().join("src/bin")).unwrap() {
-        let path = entry.unwrap().path();
-        let name = path.file_stem().unwrap().to_string_lossy().into_owned();
-        let target = if path.is_dir() {
-            path.join("main.rs")
-        } else if path.extension().is_some_and(|e| e == "rs") {
-            path.clone()
-        } else {
-            continue;
-        };
-        let rel = target
-            .strip_prefix(root())
-            .unwrap()
-            .to_string_lossy()
-            .replace('\\', "/");
-        if target.is_file() && !claimed.contains(&rel) {
-            names.insert(name);
-        }
-    }
-    names
+    on
+}
+
+/// Every target `cargo install` installs from this package: a `bin` whose
+/// required features are all on by default.
+fn installable_binaries(package: &serde_json::Value) -> BTreeSet<String> {
+    let defaults = default_features(package);
+    package["targets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|t| strings(&t["kind"]).iter().any(|k| k == "bin"))
+        .filter(|t| {
+            strings(&t["required-features"])
+                .iter()
+                .all(|f| defaults.contains(f))
+        })
+        .map(|t| t["name"].as_str().unwrap().to_owned())
+        .collect()
 }
 
 #[test]
-fn the_release_ships_every_binary_except_the_maintainer_tools() {
-    let mut expected = package_binaries();
-    for (tool, _) in MAINTAINER_TOOLS {
-        assert!(
-            expected.remove(*tool),
-            "{tool} is no longer a binary of this package"
-        );
-    }
+fn cargo_install_installs_exactly_the_shipped_binaries() {
+    let package = package_metadata();
     let shipped: BTreeSet<String> = shipped().into_iter().collect();
     assert_eq!(
-        shipped, expected,
-        "dist-workspace.toml [dist.binaries] must name every binary a user gets — rwv and \
-         each bundled plugin — and no maintainer tool"
+        installable_binaries(&package),
+        shipped,
+        "`cargo install` must install what every other channel ships — rwv and each \
+         bundled plugin — and no maintainer tool"
     );
     assert!(shipped.contains("rwv") && shipped.contains("rwv-each"));
+    let targets: BTreeSet<String> = package["targets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap().to_owned())
+        .collect();
+    for (tool, _) in MAINTAINER_TOOLS {
+        assert!(
+            targets.contains(*tool),
+            "{tool} is no longer a target of this package"
+        );
+    }
+}
+
+/// `git ls-files` for what a commit of this checkout would hold: the index,
+/// plus untracked files not ignored.
+fn committable_files() -> Vec<String> {
+    let out = common::git_in(
+        root(),
+        &["ls-files", "--cached", "--others", "--exclude-standard"],
+    );
+    out.lines()
+        .filter(|rel| root().join(rel).is_file())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// `cargo install --git <this repo>` with no package named searches every
+/// `Cargo.toml` in the repository and refuses when more than one package has
+/// a binary. Run against a commit of this checkout, with every registry
+/// replaced by an empty directory so nothing is fetched: past package
+/// selection, the install fails resolving its first dependency instead.
+#[test]
+fn cargo_install_git_finds_one_package_with_binaries() {
+    let tmp = common::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    let files = committable_files();
+    assert!(files.iter().any(|f| f == "Cargo.toml"), "{files:?}");
+    for rel in &files {
+        let dest = repo.join(rel);
+        std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+        std::fs::copy(root().join(rel), &dest).unwrap();
+    }
+    common::git_in(&repo, &["init", "-q"]);
+    common::git_in(&repo, &["add", "-A"]);
+    common::git_in(&repo, &["commit", "-q", "-m", "snapshot"]);
+
+    let empty_registry = tmp.path().join("empty-registry");
+    std::fs::create_dir_all(&empty_registry).unwrap();
+    let out = cargo()
+        .current_dir(tmp.path())
+        .env("CARGO_HOME", tmp.path().join("cargo-home"))
+        .env("CARGO_TARGET_DIR", tmp.path().join("target"))
+        .args(["install", "--git", &common::file_url(&repo), "--root"])
+        .arg(tmp.path().join("root"))
+        .args(["--config", "source.crates-io.replace-with='empty'"])
+        .arg("--config")
+        .arg(format!(
+            "source.empty.directory='{}'",
+            empty_registry.display().to_string().replace('\\', "/")
+        ))
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{stderr}");
+    assert!(
+        !stderr.contains("multiple packages with binaries"),
+        "the documented `cargo install --git https://github.com/cwalv/repoweave` needs \
+         this repository to hold one package with binaries; a fixture crate under tests/ \
+         is one more:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("failed to compile `repoweave v") && stderr.contains("no matching package"),
+        "cargo selected the package and then failed on something other than the empty \
+         registry:\n{stderr}"
+    );
 }
 
 #[test]
