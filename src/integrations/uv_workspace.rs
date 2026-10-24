@@ -80,8 +80,8 @@ use crate::integration::{
 };
 use crate::integrations::merge::{
     drift_issues, holds_owned_region, keypath, merge_activate, missing_issue,
-    orphaned_region_issues, strip_deactivate, toml_array_strings, KeyPath, ManagedDoc, MergeResult,
-    OwnedValue, Ownership, Remedy, StripOutcome, TomlDoc,
+    orphaned_region_issues, strip_deactivate, toml_array_strings, write_unless_held, KeyPath,
+    ManagedDoc, MergeResult, OwnedValue, Ownership, Remedy, StripOutcome, TomlDoc,
 };
 use anyhow::Context;
 use std::path::Path;
@@ -251,7 +251,7 @@ impl UvWorkspace {
         }
 
         let out = doc.to_string();
-        std::fs::write(path, out).with_context(|| format!("writing {}", path.display()))?;
+        write_unless_held(path, &out)?;
         Ok(())
     }
 
@@ -331,7 +331,7 @@ impl UvWorkspace {
                 .with_context(|| format!("removing empty {}", path.display()))?;
         } else {
             let out = doc.to_string();
-            std::fs::write(path, out).with_context(|| format!("writing {}", path.display()))?;
+            write_unless_held(path, &out)?;
         }
         Ok(())
     }

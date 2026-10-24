@@ -15,8 +15,8 @@
 
 use crate::integration::{Integration, IntegrationContext, Issue, OwnedPath, SurfacedFile};
 use crate::integrations::merge::{
-    drift_issues, holds_owned_region, keypath, missing_issue, JsonDoc, JsonMarker, ManagedDoc,
-    Remedy, RwvGeneratedMarker,
+    drift_issues, holds_owned_region, keypath, missing_issue, write_unless_held, JsonDoc,
+    JsonMarker, ManagedDoc, Remedy, RwvGeneratedMarker,
 };
 use crate::registry::split_canonical_local_path;
 use crate::workspace::{project_rel_path, ContainerKind};
@@ -408,7 +408,7 @@ fn strip_workspace_file(path: &Path) -> anyhow::Result<()> {
         std::fs::remove_file(path).with_context(|| format!("removing {}", path.display()))?;
     } else {
         let stripped = doc.serialize()?;
-        std::fs::write(path, stripped).with_context(|| format!("writing {}", path.display()))?;
+        write_unless_held(path, &stripped)?;
     }
     Ok(())
 }
@@ -514,7 +514,7 @@ impl Integration for VscodeWorkspace {
         }
 
         let content = doc.serialize()?;
-        std::fs::write(&filepath, content)?;
+        write_unless_held(&filepath, &content)?;
         Ok(Vec::new())
     }
 

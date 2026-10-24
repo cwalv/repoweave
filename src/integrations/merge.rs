@@ -363,6 +363,21 @@ pub fn write_parseable<D: ManagedDoc>(path: &Path, text: &str) -> Result<()> {
             path.display()
         );
     }
+    write_unless_held(path, text)
+}
+
+/// Write `text` to `path` unless the file already holds it in some line-ending
+/// spelling.
+///
+/// A checkout under `core.autocrlf=true` holds CRLF where rwv generates LF.
+/// Rewriting such a file with identical content changes its size, and git
+/// reports a size change as a modification even when `git diff` is empty.
+pub fn write_unless_held(path: &Path, text: &str) -> Result<()> {
+    if let Ok(on_disk) = std::fs::read(path) {
+        if String::from_utf8(on_disk).is_ok_and(|held| held.replace("\r\n", "\n") == text) {
+            return Ok(());
+        }
+    }
     std::fs::write(path, text).with_context(|| format!("writing {}", path.display()))
 }
 

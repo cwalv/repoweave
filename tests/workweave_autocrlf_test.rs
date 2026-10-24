@@ -145,3 +145,62 @@ fn a_genuinely_dirty_lock_is_still_captured_with_capture_dirty() {
         "the workweave must hold the source's dirty lock bytes verbatim"
     );
 }
+
+/// A checkout smudges the committed `.code-workspace` to CRLF; an authoring
+/// verb that generates the same content must leave that file as it found it,
+/// or git reports it modified with an empty diff and `rwv lock --commit`
+/// refuses the project as dirty.
+#[test]
+fn an_authoring_verb_leaves_a_smudged_unchanged_workspace_file_clean() {
+    let tmp = common::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(
+        home.join(".gitconfig"),
+        "[core]\n\tautocrlf = true\n[user]\n\temail = test@test.com\n\tname = Test\n",
+    )
+    .unwrap();
+    let upstream = tmp.path().join("upstream/lib");
+    std::fs::create_dir_all(&upstream).unwrap();
+    git(&home, &upstream, &["init", "-q", "-b", "main"]);
+    std::fs::write(upstream.join("README.md"), "init\n").unwrap();
+    git(&home, &upstream, &["add", "-A"]);
+    git(&home, &upstream, &["commit", "-qm", "initial"]);
+
+    let ws = tmp.path().join("ws");
+    std::fs::create_dir_all(&ws).unwrap();
+    let rwv = |args: &[&str], cwd: &Path| {
+        common::rwv()
+            .env("HOME", &home)
+            .args(args)
+            .current_dir(cwd)
+            .assert()
+            .success();
+    };
+    rwv(&["init", "app"], &ws);
+    let project = ws.join("projects/app");
+    git(&home, &project, &["add", "-A"]);
+    git(&home, &project, &["commit", "-qm", "init"]);
+    rwv(&["workweave", "app", "create", "ww1"], &ws);
+    let ww = tmp.path().join(".workweaves/app--ww1");
+    let file = ww.join("projects/app/app.code-workspace");
+    let smudged = std::fs::read(&file).unwrap();
+    assert!(
+        smudged.windows(2).any(|w| w == b"\r\n"),
+        "the fixture should check the file out with CRLF"
+    );
+
+    rwv(&["add", &common::file_url(&upstream)], &ww);
+
+    assert_eq!(
+        std::fs::read(&file).unwrap(),
+        smudged,
+        "`rwv add` changed nothing in the file and should not have rewritten it"
+    );
+    let status = git_out(&home, &ww.join("projects/app"), &["status", "--porcelain"]);
+    assert!(
+        !status.contains("app.code-workspace"),
+        "the unchanged file should read clean; status reports:\n{status}"
+    );
+    rwv(&["lock", "--commit"], &ww);
+}
