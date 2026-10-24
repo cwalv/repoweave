@@ -65,7 +65,7 @@ impl Weave {
         common::git_in(&project, &["add", "-A"]);
         common::git_in(&project, &["commit", "-qm", "alpha"]);
         succeed(&["workweave", "app", "create", "one"], &ws);
-        let workweave = tmp.path().join(".workweaves/app--one");
+        let workweave = common::under(tmp.path(), ".workweaves/app--one");
         for root in [&ws, &workweave] {
             let manifest = root.join("projects/app/rwv.toml");
             let mut body = std::fs::read_to_string(&manifest).unwrap();
@@ -175,9 +175,7 @@ fn prime_reads_the_manifest_of_the_checkout_it_runs_in() {
     let stderr = String::from_utf8_lossy(&workweave.stderr);
     assert!(
         stderr.contains(
-            &weave
-                .workweave
-                .join("projects/app/rwv.toml")
+            &common::under(&weave.workweave, "projects/app/rwv.toml")
                 .display()
                 .to_string()
         ) && names_the_line(&stderr),

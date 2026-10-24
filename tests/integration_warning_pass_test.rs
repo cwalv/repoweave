@@ -154,7 +154,7 @@ fn activate_materialize_and_workweave_create_report_a_missing_managed_file_alike
     let materialize = run(&["materialize"], &ws);
     let create = run(&["workweave", "myapp", "create", "feat"], &ws);
 
-    let seat = tmp.path().join(".workweaves/myapp--feat");
+    let seat = common::under(tmp.path(), ".workweaves/myapp--feat");
     let reports = [
         ("rwv activate", &activate, common::under(&ws, file)),
         ("rwv materialize", &materialize, common::under(&ws, file)),

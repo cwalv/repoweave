@@ -930,11 +930,10 @@ fn the_default_job_count_is_the_core_count_capped_at_eight() {
     let refs: Vec<(&str, &str)> = repos.iter().map(|(p, r)| (p.as_str(), *r)).collect();
     let w = Weave::new(&refs);
     let log = w.ws.join("concurrency.log");
-    let line = format!(
-        "echo start >> '{log}'; sleep 1; echo end >> '{log}'",
-        log = log.display()
-    );
-    let out = w.each(&["--shell", &line]);
+    let out = w
+        .each_span(&[], &log, None)
+        .output()
+        .expect("rwv each runs");
     assert!(out.status.success(), "{}", stderr(&out));
     let (mut running, mut peak) = (0usize, 0usize);
     for event in std::fs::read_to_string(&log).unwrap().lines() {
@@ -953,9 +952,14 @@ fn the_default_job_count_is_the_core_count_capped_at_eight() {
 #[test]
 fn fail_fast_lets_repos_already_running_finish() {
     let w = Weave::new(&[(APP, "owned"), (LIB, "owned")]);
-    let script =
-        format!(r#"if [ "$RWV_REPO" = {APP} ]; then exit 1; fi; sleep 1; git config each.ran yes"#);
-    let out = w.each(&["-j", "2", "--fail-fast", "--shell", &script]);
+    let out = w
+        .each_span(
+            &["-j", "2", "--fail-fast"],
+            &w.ws.join("span.log"),
+            Some(APP),
+        )
+        .output()
+        .expect("rwv each runs");
     assert_eq!(out.status.code(), Some(1));
     assert!(w.ran(LIB), "the repo running beside the failure finishes");
     assert!(
@@ -1064,7 +1068,54 @@ fn job_helper() {
     common::job::serve();
 }
 
+const SPAN_LOG: &str = "RWV_TEST_SPAN_LOG";
+const SPAN_FAILS_IN: &str = "RWV_TEST_SPAN_FAILS_IN";
+
+/// The command [`Weave::each_span`] runs in each repo, as this test binary
+/// started again. In an ordinary suite run [`SPAN_LOG`] is unset and it
+/// returns at once.
+#[test]
+fn span_helper() {
+    let Some(log) = std::env::var_os(SPAN_LOG) else {
+        return;
+    };
+    if std::env::var_os("RWV_REPO") == std::env::var_os(SPAN_FAILS_IN) {
+        std::process::exit(1);
+    }
+    let append = |event: &str| {
+        use std::io::Write;
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log)
+            .and_then(|mut f| f.write_all(format!("{event}\n").as_bytes()))
+            .expect("the span log takes the event");
+    };
+    append("start");
+    std::thread::sleep(Duration::from_secs(1));
+    append("end");
+    common::git_in(".", &["config", "each.ran", "yes"]);
+}
+
 impl Weave {
+    fn each_span(&self, flags: &[&str], log: &Path, fails_in: Option<&str>) -> Command {
+        let exe = common::job::helper_exe();
+        let mut args: Vec<&str> = flags.to_vec();
+        args.extend([
+            "--",
+            exe.to_str().expect("a UTF-8 test binary path"),
+            "--exact",
+            "span_helper",
+            "--test-threads=1",
+        ]);
+        let mut cmd = self.each_cmd(&args);
+        cmd.env(SPAN_LOG, log);
+        if let Some(repo) = fails_in {
+            cmd.env(SPAN_FAILS_IN, repo);
+        }
+        cmd
+    }
+
     /// `rwv each` running a [`common::job::TREE_ROOT`] in each repo: a
     /// process with a child of its own that ignores interrupts and would
     /// outlive it by a minute.
