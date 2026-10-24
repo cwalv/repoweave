@@ -466,3 +466,37 @@ fn rwv_each_advice_in_the_primary_restores_a_deleted_canonical_clone_and_its_wor
     assert_eq!(findings(&w.primary, true), Vec::<String>::new());
     assert_eq!(findings(&w.workweave, false), Vec::<String>::new());
 }
+
+/// A locked registration is never dropped: the removed checkout is not
+/// restored, and the refusal names the unlock that frees the slot.
+#[test]
+fn a_locked_registration_of_a_removed_checkout_is_left_and_named() {
+    let w = Weave::new();
+    let tip = w.branch_tip();
+    common::git_in(
+        w.canonical(),
+        &["worktree", "lock", &w.checkout().to_string_lossy()],
+    );
+    std::fs::remove_dir_all(w.checkout()).unwrap();
+
+    let out = common::rwv()
+        .args(["fetch"])
+        .current_dir(&w.workweave)
+        .output()
+        .unwrap();
+    let refusal = text(&out);
+    assert!(!out.status.success(), "{refusal}");
+    assert_names(
+        &refusal,
+        &["holds a locked registration of", "worktree unlock"],
+    );
+    assert!(!w.checkout().exists());
+    assert_eq!(w.branch_tip(), tip);
+
+    common::git_in(
+        w.canonical(),
+        &["worktree", "unlock", &w.checkout().to_string_lossy()],
+    );
+    rwv(&w.workweave, &["fetch"]);
+    assert_eq!(status(&w.checkout()), format!("## {BRANCH}\n"));
+}

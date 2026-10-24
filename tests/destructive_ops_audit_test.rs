@@ -227,10 +227,26 @@ const ALLOWLIST: &[Allowed] = &[
     },
     Allowed {
         file: "git.rs",
-        pattern: "remove_file",
+        pattern: "remove_dir_all",
         count: 1,
         callers: &[],
-        justification: "discard_captured_change: deletes a working file the \
+        justification: "register_worktree_in_place: removes the staging \
+            directory it created empty in the same call, only when the \
+            `git worktree add --no-checkout` into it failed. It holds nothing \
+            but what that add wrote; the checkout being registered is never \
+            under it.",
+    },
+    Allowed {
+        file: "git.rs",
+        pattern: "remove_file",
+        count: 2,
+        callers: &[],
+        justification: "register_worktree_in_place: removes the checkout's \
+            `.git` link file, which names a git directory that is not there \
+            — the only state it is reached in — so the link git just wrote \
+            for the new registration can take its place. No tracked or \
+            untracked file of the checkout is touched. \
+            discard_captured_change: deletes a working file the \
             parent commit does not record — the second half of a move whose \
             first half copied it elsewhere. Gated inside the method, not on \
             its callers: the file is read back and must hold exactly the \
@@ -274,7 +290,7 @@ const ALLOWLIST: &[Allowed] = &[
         callers: &[
             ("remove_worktree", 4),
             ("prune_orphan_worktrees_for", 3),
-            ("prune_stale_worktree_registration", 2),
+            ("prune_stale_worktree_registration", 3),
         ],
         justification: "remove_worktree. NOTE the `--force`: git will remove \
             a DIRTY worktree here, so what protects each caller has to be \
@@ -317,7 +333,9 @@ const ALLOWLIST: &[Allowed] = &[
             callers are doctor --fix's two registration repairs: \
             fix_state_hygiene for a stale-worktree-registration finding, and \
             prune_gone_registrations ahead of the stale ephemeral branch \
-            delete.",
+            delete; and workweave::materialize_member, which drops the \
+            registration of the very slot it is about to give a worktree, \
+            only when nothing stands there.",
     },
     Allowed {
         file: "git.rs",

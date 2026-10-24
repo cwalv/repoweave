@@ -143,10 +143,10 @@ src/workweave.rs	target-dir-occupied	-	2
 src/workweave.rs	uncommitted-work	-	1
 src/workweave.rs	unmerged-commits	-	1
 src/workweave.rs	unmigrated-ephemeral-branch	-	1
-src/workweave.rs	unowned-branch-in-namespace	-	2
+src/workweave.rs	unowned-branch-in-namespace	-	3
 src/workweave.rs	unreadable-status	-	1
 src/workweave.rs	unregistered-workweave	-	1
-src/workweave.rs	workweave-drift	tests/symlinked_member_migration_test.rs	1
+src/workweave.rs	workweave-drift	tests/symlinked_member_migration_test.rs	2
 src/workweave.rs	workweave-name-taken	-	1
 src/workweave.rs	wrong-checkout-kind	-	1
 src/workweave_index.rs	legacy-workweave-index	-	1
