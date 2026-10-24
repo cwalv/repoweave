@@ -77,8 +77,8 @@ impl From<&op_state::ResolvedOwner> for OpStatus {
 
 /// Relation between the current branch tip and the lock SHA.
 ///
-/// The two clone-health variants (`Missing` / `Unreachable`) address distinct
-/// failure modes that `NoLock` previously masked:
+/// The two clone-health variants (`Missing` / `Unreachable`) name distinct
+/// failure modes, neither of which is `NoLock`:
 ///
 /// - `Missing` — the clone directory is absent from disk entirely (out-of-band
 ///   `rm -rf`, never fetched, etc.). The lock entry may be fine; the repair
@@ -86,8 +86,9 @@ impl From<&op_state::ResolvedOwner> for OpStatus {
 ///
 /// - `Unreachable` — the clone directory exists but the SHA pinned in the lock
 ///   is not present in the local object store (history rewritten, shallow
-///   clone, object pruned). The repair verb is a `git fetch` / `rwv fetch`
-///   to re-materialize the missing object.
+///   clone, object pruned). The repair is `git fetch` in that clone, which
+///   re-materializes the missing object; `rwv fetch` does not fetch into a
+///   clone that is present.
 ///
 /// Neither state should be attributed to the lock file itself — surfacing them
 /// as `no-lock` misdirects operators at the wrong repair path.
@@ -105,7 +106,8 @@ pub enum LockRelation {
     Missing,
     /// Clone directory exists but the locked SHA is not in the local object
     /// store (history rewritten, shallow clone, object pruned).
-    /// Repair: `git fetch` / `rwv fetch` to materialize the missing object.
+    /// Repair: `git fetch` in that clone to materialize the missing object;
+    /// `rwv fetch` does not fetch into a clone that is present.
     Unreachable,
 }
 
@@ -298,22 +300,6 @@ pub fn run_status(
             }
             let vcs = vcs_for(entry.vcs_type);
             let repo_abs = workspace_dir.join(repo_path.as_path());
-
-            // --- clone-health pre-check ---
-            //
-            // Detect the two states that previously both collapsed into
-            // `NoLock` (misdirecting operators at the lock file instead of
-            // the clone):
-            //
-            //   Missing     — clone dir absent from disk entirely.  The lock
-            //                 entry may be fine; repair = re-clone / rwv fetch.
-            //
-            //   Unreachable — clone dir present but the locked SHA is not in
-            //                 the local object store (history rewritten, shallow
-            //                 clone, object pruned).  Repair = git/rwv fetch.
-            //
-            // Either state short-circuits to an explicit relation before the
-            // normal tip/lock comparison runs.
 
             if !repo_abs.exists() {
                 // Clone directory is absent.  Retrieve the raw lock version
