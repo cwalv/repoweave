@@ -6,6 +6,14 @@ claim that nothing changed in them.
 
 ## Unreleased
 
+### `orphaned-clone` names `rwv add --adopt` at the clone's placement
+
+`rwv doctor`'s `orphaned-clone` advised `rwv add <url>`, which registers a
+clone only when it already sits where its URL places it; for a clone anywhere
+else it makes a second clone and the finding stays. The advice now names
+moving the clone to that path under the primary weave root, unless it already
+sits there, and `rwv add --adopt` with that path.
+
 ### `unrecognized-savepoint-ref` prints a deletion that runs, once per clone
 
 The finding advised `git update-ref -d <ref>` without naming a repository, so

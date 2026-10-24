@@ -7980,8 +7980,10 @@ impl CheckViolation {
                 second: second.clone(),
             }),
             CheckViolation::OrphanedClone { path } => format!(
-                "orphaned clone: {path} — not listed in any project's rwv.toml; \
-                     run `rwv add <url>` to register it, or remove the directory manually"
+                "orphaned clone: {path} — not listed in any project's rwv.toml; to \
+                     register it, move it to the path its remote's URL places it at under \
+                     the primary weave root, unless it already sits there, and run \
+                     `rwv add --adopt` with that path; or remove the directory manually"
             ),
             CheckViolation::UnknownSegmentClone { path } => format!(
                 "unknown-segment clone: {path} — sits under a top-level directory no \

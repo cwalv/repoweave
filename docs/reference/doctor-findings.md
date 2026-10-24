@@ -212,10 +212,16 @@ down, and only a filesystem that actually folds them will report them.
 **Error. Report-only.** A directory under a registry path that no project's
 `rwv.toml` lists. rwv will not remove a directory it was never told about.
 
-**What to do:** `rwv add <url>` to register it, or remove the directory
-yourself. Note that without `--all`, orphan detection is skipped entirely — a
-repo missing from the active project may belong to another one, and reporting
-it would be a false positive.
+**What to do:** to register it, move it to the path its origin URL places it
+at under the primary weave root (the canonical path
+[`rwv add`](./cli.md#rwv-add-url-) describes), unless it already sits there,
+and run `rwv add --adopt <path>` with that path. Adopted at any other path, it
+is registered there, and an `owned` or `dependency` entry then reports
+[`placement-disagreement`](#placement-disagreement). `rwv add <url>` registers
+it only once it sits at that path; anywhere else it makes a second clone and
+leaves this one standing. Or remove the directory yourself. Note that without
+`--all`, orphan detection is skipped entirely — a repo missing from the active
+project may belong to another one, and reporting it would be a false positive.
 
 ### `unknown-segment-clone`
 
