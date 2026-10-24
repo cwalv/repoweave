@@ -299,17 +299,43 @@ fn adopt_of_a_location_under_neither_weave_root_refuses_naming_both() {
         repoweave::path_spelling::resolve(&w.workweave).unwrap(),
     );
     assert!(manifest_keys(&w.workweave.join("projects/test-project")).is_empty());
+
+    std::fs::create_dir_all(w.primary.join("github/o")).unwrap();
+    std::fs::rename(
+        tmp.path().join("outside/stray"),
+        w.primary.join("github/o/stray"),
+    )
+    .unwrap();
+    let findings_before = common::doctor_findings(&w.workweave);
+    let followed = common::run_advised("rwv add --adopt github/o/stray", &w.workweave);
+    assert!(
+        followed.status.success(),
+        "naming the clone by a path inside the weave:\n{}",
+        String::from_utf8_lossy(&followed.stderr)
+    );
+    assert_eq!(
+        manifest_keys(&w.workweave.join("projects/test-project")),
+        vec!["github/o/stray".to_owned()]
+    );
+    common::assert_no_new_findings(&w.workweave, &findings_before);
 }
 
 #[test]
 fn adopt_of_a_workweave_clone_that_is_not_the_primarys_refuses_naming_both() {
     let tmp = common::tempdir().unwrap();
     let w = adopt_weave(tmp.path());
-    clone_at(tmp.path(), "dup", &w.primary.join("bar/dup"));
-    clone_at(tmp.path(), "own", &w.workweave.join("bar/dup"));
+    clone_at(tmp.path(), "dup", &w.primary.join("github/o/dup"));
+    common::git_in(
+        tmp.path(),
+        &[
+            "clone",
+            &tmp.path().join("remotes/dup.git").to_string_lossy(),
+            &w.workweave.join("github/o/dup").to_string_lossy(),
+        ],
+    );
 
     let out = common::rwv()
-        .args(["add", "--adopt", "bar/dup"])
+        .args(["add", "--adopt", "github/o/dup"])
         .current_dir(&w.workweave)
         .output()
         .unwrap();
@@ -318,26 +344,98 @@ fn adopt_of_a_workweave_clone_that_is_not_the_primarys_refuses_naming_both() {
     assert_routes_to(&stderr, "foreign-clone-in-workweave");
     common::assert_names_operator_path(
         &stderr,
-        repoweave::path_spelling::resolve(&w.primary.join("bar/dup")).unwrap(),
+        repoweave::path_spelling::resolve(&w.primary.join("github/o/dup")).unwrap(),
     );
     common::assert_names_operator_path(
         &stderr,
-        repoweave::path_spelling::resolve(&w.workweave.join("bar/dup")).unwrap(),
+        repoweave::path_spelling::resolve(&w.workweave.join("github/o/dup")).unwrap(),
     );
     assert!(manifest_keys(&w.workweave.join("projects/test-project")).is_empty());
+
+    let named = advised_primary_clone(&stderr);
+    let findings_before = common::doctor_findings(&w.workweave);
+    let followed = common::run_advised(&format!("rwv add --adopt {named}"), &w.workweave);
+    assert!(
+        followed.status.success(),
+        "naming the primary's clone directly:\n{}",
+        String::from_utf8_lossy(&followed.stderr)
+    );
+    assert_eq!(
+        manifest_keys(&w.workweave.join("projects/test-project")),
+        vec!["github/o/dup".to_owned()]
+    );
+    let fixed = common::rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&w.workweave)
+        .output()
+        .unwrap();
+    assert!(
+        fixed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&fixed.stdout)
+    );
+    assert!(
+        w.workweave.join("github/o/dup/.git").is_file(),
+        "the workweave's own clone became a worktree of the primary's"
+    );
+    common::assert_no_new_findings(&w.workweave, &findings_before);
+}
+
+/// The primary's clone path a foreign-clone refusal tells the operator to
+/// name.
+fn advised_primary_clone(stderr: &str) -> String {
+    let after = stderr
+        .split("or name '")
+        .nth(1)
+        .expect("the refusal names the primary's clone");
+    after.split("' directly").next().unwrap().to_owned()
+}
+
+#[test]
+fn adopt_of_a_workweave_clone_clears_once_moved_to_where_the_primary_has_none() {
+    let tmp = common::tempdir().unwrap();
+    let w = adopt_weave(tmp.path());
+    clone_at(tmp.path(), "own", &w.workweave.join("github/o/dup"));
+
+    let out = common::rwv()
+        .args(["add", "--adopt", "github/o/dup"])
+        .current_dir(&w.workweave)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success());
+    assert_routes_to(&stderr, "foreign-clone-in-workweave");
+
+    let there = advised_primary_clone(&stderr);
+    assert!(!Path::new(&there).exists(), "the primary holds no clone");
+    std::fs::create_dir_all(w.primary.join("github/o")).unwrap();
+    std::fs::rename(w.workweave.join("github/o/dup"), &there).unwrap();
+    let findings_before = common::doctor_findings(&w.workweave);
+    let followed = common::run_advised("rwv add --adopt github/o/dup", &w.workweave);
+    assert!(
+        followed.status.success(),
+        "re-running the adopt after moving the clone:\n{}",
+        String::from_utf8_lossy(&followed.stderr)
+    );
+    assert_eq!(
+        manifest_keys(&w.workweave.join("projects/test-project")),
+        vec!["github/o/dup".to_owned()]
+    );
+    assert!(w.workweave.join("github/o/dup/.git").is_file());
+    common::assert_no_new_findings(&w.workweave, &findings_before);
 }
 
 #[test]
 fn adopt_into_a_workweave_whose_placement_holds_a_plain_directory_refuses_naming_it() {
     let tmp = common::tempdir().unwrap();
     let w = adopt_weave(tmp.path());
-    clone_at(tmp.path(), "dup", &w.primary.join("bar/dup"));
-    let occupied = w.workweave.join("bar/dup");
+    clone_at(tmp.path(), "dup", &w.primary.join("github/o/dup"));
+    let occupied = w.workweave.join("github/o/dup");
     std::fs::create_dir_all(&occupied).unwrap();
     std::fs::write(occupied.join("notes.txt"), "not a clone\n").unwrap();
 
     let out = common::rwv()
-        .args(["add", "--adopt", "bar/dup"])
+        .args(["add", "--adopt", "github/o/dup"])
         .current_dir(&w.workweave)
         .output()
         .unwrap();
@@ -350,6 +448,25 @@ fn adopt_into_a_workweave_whose_placement_holds_a_plain_directory_refuses_naming
     );
     assert!(manifest_keys(&w.workweave.join("projects/test-project")).is_empty());
     assert!(occupied.join("notes.txt").is_file());
+
+    let retry = common::advised_command(&stderr, "rwv add");
+    std::fs::rename(&occupied, w.workweave.join("github/o/dup.aside")).unwrap();
+    let findings_before = common::doctor_findings(&w.workweave);
+    let followed = common::run_advised(&retry, &w.workweave);
+    assert!(
+        followed.status.success(),
+        "`{retry}` after moving the directory aside:\n{}",
+        String::from_utf8_lossy(&followed.stderr)
+    );
+    assert_eq!(
+        manifest_keys(&w.workweave.join("projects/test-project")),
+        vec!["github/o/dup".to_owned()]
+    );
+    assert!(
+        occupied.join(".git").is_file(),
+        "the workweave gets a worktree of the primary's clone"
+    );
+    common::assert_no_new_findings(&w.workweave, &findings_before);
 }
 
 #[test]
@@ -377,6 +494,67 @@ fn add_from_a_workweave_whose_placement_holds_a_plain_directory_refuses_naming_i
     );
     assert!(manifest_keys(&w.workweave.join("projects/test-project")).is_empty());
     assert!(occupied.join("notes.txt").is_file());
+
+    let retry = common::advised_command(&stderr, "rwv add");
+    assert_eq!(retry, format!("rwv add {}", common::file_url(&bare)));
+    std::fs::rename(&occupied, w.workweave.join("local/remotes/lib.aside")).unwrap();
+    let findings_before = common::doctor_findings(&w.workweave);
+    let followed = common::run_advised(&retry, &w.workweave);
+    assert!(
+        followed.status.success(),
+        "`{retry}` after moving the directory aside:\n{}",
+        String::from_utf8_lossy(&followed.stderr)
+    );
+    assert_eq!(
+        manifest_keys(&w.workweave.join("projects/test-project")),
+        vec!["local/remotes/lib".to_owned()]
+    );
+    assert!(occupied.join(".git").exists());
+    common::assert_no_new_findings(&w.workweave, &findings_before);
+}
+
+#[test]
+fn add_from_a_workweave_whose_primary_placement_holds_a_plain_directory_clears_once_moved_aside() {
+    let tmp = common::tempdir().unwrap();
+    let w = adopt_weave(tmp.path());
+    let bare = tmp.path().join("ours/remotes/lib.git");
+    std::fs::create_dir_all(bare.parent().unwrap()).unwrap();
+    common::init_bare_repo_with_commit(&bare);
+    let occupied = w.primary.join("local/remotes/lib");
+    std::fs::create_dir_all(occupied.join("junk")).unwrap();
+
+    let out = common::rwv()
+        .args(["add", &common::file_url(&bare)])
+        .current_dir(&w.workweave)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "stderr was:\n{stderr}");
+    assert_routes_to(&stderr, "non-clone-at-placement");
+    common::assert_names_operator_path(
+        &stderr,
+        repoweave::path_spelling::resolve(&occupied).unwrap(),
+    );
+
+    let retry = common::advised_command(&stderr, "rwv add");
+    std::fs::rename(&occupied, w.primary.join("local/remotes/lib.aside")).unwrap();
+    let findings_before = common::doctor_findings(&w.workweave);
+    let followed = common::run_advised(&retry, &w.workweave);
+    assert!(
+        followed.status.success(),
+        "`{retry}` after moving the directory aside:\n{}",
+        String::from_utf8_lossy(&followed.stderr)
+    );
+    assert_eq!(
+        manifest_keys(&w.workweave.join("projects/test-project")),
+        vec!["local/remotes/lib".to_owned()]
+    );
+    assert!(
+        occupied.join(".git").is_dir(),
+        "the primary holds the clone"
+    );
+    assert!(w.workweave.join("local/remotes/lib/.git").is_file());
+    common::assert_no_new_findings(&w.workweave, &findings_before);
 }
 
 // ---------------------------------------------------------------------------
@@ -443,6 +621,19 @@ fn adopt_through_a_symlink_and_dotdot_out_of_the_weave_refuses() {
         repoweave::path_spelling::resolve(&tmp.path().join("elsewhere/a/github/o/r")).unwrap(),
     );
     assert!(manifest_keys(&w.primary.join("projects/test-project")).is_empty());
+
+    let findings_before = common::doctor_findings(&w.primary);
+    let followed = common::run_advised("rwv add --adopt github/o/r", &w.primary);
+    assert!(
+        followed.status.success(),
+        "naming the clone by a path inside the weave:\n{}",
+        String::from_utf8_lossy(&followed.stderr)
+    );
+    assert_eq!(
+        manifest_keys(&w.primary.join("projects/test-project")),
+        vec!["github/o/r".to_owned()]
+    );
+    common::assert_no_new_findings(&w.primary, &findings_before);
 }
 
 #[test]

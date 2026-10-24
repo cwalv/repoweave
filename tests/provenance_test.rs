@@ -874,6 +874,23 @@ fn a_plain_path_url_is_reported_with_its_file_url() {
         text.contains("`file:///srv/repos/acme/x`"),
         "the finding names the spelling to write: {text}"
     );
+
+    let spelled = common::advised_command(&text, "file://");
+    let manifest = ws.join("projects/my-project/rwv.toml");
+    let body = std::fs::read_to_string(&manifest).unwrap();
+    let findings_before = common::doctor_findings(&ws);
+    std::fs::write(
+        &manifest,
+        body.replace(
+            "url = \"/srv/repos/acme/x\"",
+            &format!("url = \"{spelled}\""),
+        ),
+    )
+    .unwrap();
+
+    let (_, json) = doctor_text_and_json(&ws);
+    assert!(!json.contains("unresolvable-url"), "{json}");
+    common::assert_no_new_findings(&ws, &findings_before);
 }
 
 #[test]
@@ -931,4 +948,14 @@ fn a_relative_remote_is_reported_by_name() {
             && text.contains("remote set-url origin https://github.com/myorg/myrepo.git"),
         "the finding names the path and the command that replaces it: {text}"
     );
+
+    let advised = common::advised_command(&text, "git -C");
+    let findings_before = common::doctor_findings(&ws);
+    let followed = common::run_advised(&advised, &ws);
+    assert!(followed.status.success(), "`{advised}`");
+
+    let (_, json) = doctor_text_and_json(&ws);
+    assert!(!json.contains("relative-remote"), "{json}");
+    assert!(!json.contains("origin-url-mismatch"), "{json}");
+    common::assert_no_new_findings(&ws, &findings_before);
 }

@@ -164,6 +164,17 @@ fn add_refuses_a_plain_path_to_a_bare_remote_and_names_both_spellings() {
     );
     assert_eq!(project_files(&ws), before);
     assert!(!ws.join("local").exists(), "nothing may have been cloned");
+
+    let advised = common::advised_command(&stderr, "rwv add file://");
+    let findings_before = common::doctor_findings(&ws);
+    let followed = common::run_advised(&advised, &ws);
+    assert!(
+        followed.status.success(),
+        "`{advised}`:\n{}",
+        String::from_utf8_lossy(&followed.stderr)
+    );
+    assert!(ws.join("local/remotes/lib/.git").exists());
+    common::assert_no_new_findings(&ws, &findings_before);
 }
 
 #[test]
@@ -191,6 +202,27 @@ fn add_no_longer_adopts_an_existing_clone_named_by_its_path() {
         before,
         "a path is not registered without --adopt"
     );
+
+    let advised = common::advised_command(&stderr, "rwv add --adopt");
+    let followed = common::run_advised(&advised, &ws);
+    assert!(
+        followed.status.success(),
+        "`{advised}`:\n{}",
+        String::from_utf8_lossy(&followed.stderr)
+    );
+    let manifest = std::fs::read_to_string(ws.join("projects/web-app/rwv.toml")).unwrap();
+    assert!(manifest.contains("vendor/other"), "{manifest}");
+
+    let fetched = common::rwv()
+        .arg("fetch")
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    assert!(
+        fetched.status.success(),
+        "rwv fetch after the adopt:\n{}",
+        String::from_utf8_lossy(&fetched.stderr)
+    );
 }
 
 #[test]
@@ -210,6 +242,16 @@ fn adopt_refuses_a_path_with_no_clone_including_a_bare_remote() {
         assert!(stderr.contains("file://"), "{stderr}");
     }
     assert_eq!(project_files(&ws), before);
+
+    let findings_before = common::doctor_findings(&ws);
+    let followed = common::run_advised(&format!("rwv add {}", common::file_url(&bare)), &ws);
+    assert!(
+        followed.status.success(),
+        "the URL spelling the refusal names:\n{}",
+        String::from_utf8_lossy(&followed.stderr)
+    );
+    assert!(ws.join("local/remotes/lib/.git").exists());
+    common::assert_no_new_findings(&ws, &findings_before);
 }
 
 #[test]
@@ -260,8 +302,18 @@ fn fetch_refuses_a_plain_path_source_and_names_both_spellings() {
     let tmp = common::tempdir().unwrap();
     let target = tmp.path().join("fresh");
     std::fs::create_dir_all(&target).unwrap();
+    let seed = tmp.path().join("seed");
+    init_project(&seed);
     let bare = tmp.path().join("web-app.git");
-    common::init_bare_repo_with_commit(&bare);
+    common::git_in(
+        tmp.path(),
+        &[
+            "clone",
+            "--bare",
+            &seed.to_string_lossy(),
+            &bare.to_string_lossy(),
+        ],
+    );
     let path = bare.to_str().unwrap();
 
     let stderr = refusal_stderr(&["fetch", path], &target);
@@ -275,6 +327,86 @@ fn fetch_refuses_a_plain_path_source_and_names_both_spellings() {
         !target.join("projects").exists(),
         "nothing may have been cloned"
     );
+
+    let advised = common::advised_command(&stderr, "rwv fetch file://");
+    let followed = common::run_advised(&advised, &target);
+    assert!(
+        followed.status.success(),
+        "`{advised}`:\n{}",
+        String::from_utf8_lossy(&followed.stderr)
+    );
+    assert!(
+        target.join("projects").is_dir(),
+        "the fetch cloned the project"
+    );
+    let findings = common::doctor_findings(&target);
+    assert!(
+        findings
+            .iter()
+            .all(|f| f.starts_with("missing-replay-exclusion")
+                || f.starts_with("missing-merge-driver-config")),
+        "{findings:?}"
+    );
+}
+
+/// A manifest `url` that is a plain path names no remote to clone from; the
+/// refusal on `rwv fetch` names the `file://` spelling to write instead.
+#[test]
+fn fetch_of_a_manifest_url_that_is_a_plain_path_clears_once_it_is_spelled_file() {
+    let tmp = common::tempdir().unwrap();
+    let ws = two_project_weave(tmp.path());
+    let bare = tmp.path().join("remotes/lib.git");
+    std::fs::create_dir_all(bare.parent().unwrap()).unwrap();
+    common::init_bare_repo_with_commit(&bare);
+    let manifest = ws.join("projects/web-app/rwv.toml");
+    std::fs::write(
+        &manifest,
+        format!(
+            "[repositories.\"local/remotes/lib\"]\ntype = \"git\"\nurl = \"{}\"\nversion = \"main\"\nrole = \"owned\"\n",
+            bare.display()
+        ),
+    )
+    .unwrap();
+
+    let findings_before = common::doctor_findings(&ws);
+    let out = common::rwv()
+        .arg("fetch")
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{stderr}");
+    assert_routes_to(&stderr, "partial-run-aborted");
+    assert!(!ws.join("local/remotes/lib").exists());
+
+    let spelled = stderr
+        .split_whitespace()
+        .find(|w| w.starts_with("file://"))
+        .map(|w| w.trim_end_matches([')', '`', ',', '.']))
+        .expect("the refusal names the file:// spelling");
+    assert_eq!(spelled, common::file_url(&bare));
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    std::fs::write(
+        &manifest,
+        text.replace(
+            &format!("url = \"{}\"", bare.display()),
+            &format!("url = \"{spelled}\""),
+        ),
+    )
+    .unwrap();
+
+    let followed = common::rwv()
+        .arg("fetch")
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    assert!(
+        followed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&followed.stderr)
+    );
+    assert!(ws.join("local/remotes/lib/.git").exists());
+    common::assert_no_new_findings(&ws, &findings_before);
 }
 
 /// Two bare remotes whose URLs place at the same path, `local/remotes/lib`.
@@ -376,10 +508,28 @@ fn add_refuses_anything_but_a_clone_at_the_placement() {
         );
         assert!(!stderr.contains("skipping clone"), "{stderr}");
         assert_eq!(project_files(&ws), before);
-        if placed.is_dir() {
-            std::fs::remove_dir_all(&placed).unwrap();
+
+        let retry = common::advised_command(&stderr, "rwv add");
+        std::fs::rename(&placed, placed.with_extension("aside")).unwrap();
+        let findings_before = common::doctor_findings(&ws);
+        let followed = common::run_advised(&retry, &ws);
+        assert!(
+            followed.status.success(),
+            "`{retry}` after moving the {shape} aside:\n{}",
+            String::from_utf8_lossy(&followed.stderr)
+        );
+        assert!(placed.join(".git").exists(), "the retry cloned into place");
+        common::assert_no_new_findings(&ws, &findings_before);
+
+        std::fs::remove_dir_all(&placed).unwrap();
+        let aside = placed.with_extension("aside");
+        if aside.is_dir() {
+            std::fs::remove_dir_all(aside).unwrap();
         } else {
-            std::fs::remove_file(&placed).unwrap();
+            std::fs::remove_file(aside).unwrap();
+        }
+        for (file, body) in &before {
+            std::fs::write(file, body).unwrap();
         }
     }
 }

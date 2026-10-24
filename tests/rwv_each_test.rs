@@ -195,6 +195,90 @@ fn a_default_scope_holding_only_reference_repos_fails_saying_how_to_include_them
         "{}",
         stderr(&out)
     );
+
+    let out = w.each(&[
+        "--json",
+        "-j",
+        "1",
+        "--role",
+        "reference",
+        "--",
+        "git",
+        "status",
+    ]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(paths_in(&envelope(&out)), [DOCS]);
+}
+
+#[test]
+fn an_unregistered_workweave_runs_once_doctor_fix_registers_it() {
+    let pw = common::build_workspace("demo", &[(APP, "owned")]);
+    let created = common::rwv()
+        .args(["workweave", "demo", "create", "seat"])
+        .current_dir(&pw.workspace)
+        .output()
+        .unwrap();
+    assert!(created.status.success(), "{}", stderr(&created));
+    let status: Value = serde_json::from_slice(
+        &common::rwv()
+            .args(["-w", "demo--seat", "status", "--json"])
+            .current_dir(&pw.workspace)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let checkout = PathBuf::from(status["repos"][0]["absolute_path"].as_str().unwrap());
+    let seat = checkout
+        .ancestors()
+        .nth(APP.split('/').count())
+        .unwrap()
+        .to_path_buf();
+
+    let index = pw.workspace.join("projects/demo/.rwv-workweave-index");
+    let mut doc: Value = serde_json::from_str(&std::fs::read_to_string(&index).unwrap()).unwrap();
+    doc["workweaves"] = serde_json::json!({});
+    std::fs::write(&index, serde_json::to_string(&doc).unwrap()).unwrap();
+
+    let each = |dir: &Path| {
+        common::rwv_std()
+            .args([
+                "each",
+                "--json",
+                "-j",
+                "1",
+                "--",
+                "git",
+                "rev-parse",
+                "--show-toplevel",
+            ])
+            .current_dir(dir)
+            .env("PATH", path_with_bins())
+            .stdin(Stdio::null())
+            .output()
+            .unwrap()
+    };
+    let refused = each(&seat);
+    assert_eq!(refused.status.code(), Some(1));
+    let advised = common::advised_command(&stderr(&refused), "rwv doctor");
+    assert!(advised.contains("--fix"), "{advised}");
+
+    let fixed = common::run_advised(&advised, &seat);
+    assert!(
+        fixed.status.success(),
+        "`{advised}`:\n{}",
+        String::from_utf8_lossy(&fixed.stderr)
+    );
+    let out = each(&seat);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let ran_in = PathBuf::from(
+        outcome_of(&envelope(&out), APP)["stdout"]
+            .as_str()
+            .unwrap()
+            .trim(),
+    );
+    let canonical = |p: &Path| repoweave::path_spelling::resolve(p).unwrap();
+    assert_eq!(canonical(&ran_in), canonical(&checkout));
 }
 
 #[test]

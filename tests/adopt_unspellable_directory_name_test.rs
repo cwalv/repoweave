@@ -79,6 +79,15 @@ fn refusal_of_a_name_that_is_not_unicode(dir: &Path) -> Option<Errno> {
     refusal
 }
 
+fn manifest_keys(ws: &Path) -> Vec<String> {
+    let raw = std::fs::read_to_string(ws.join("projects/test-project/rwv.toml")).unwrap();
+    let doc: toml::Table = raw.parse().unwrap();
+    doc.get("repositories")
+        .and_then(|r| r.as_table())
+        .map(|t| t.keys().cloned().collect())
+        .unwrap_or_default()
+}
+
 fn manifest_unchanged(ws: &Path) {
     assert_eq!(
         std::fs::read_to_string(ws.join("projects/test-project/rwv.toml")).unwrap(),
@@ -106,6 +115,13 @@ fn a_backslash_in_a_directory_name_refuses_naming_the_rename() {
         "the refusal states the backslash as its reason; stderr was:\n{stderr}"
     );
     manifest_unchanged(&ws);
+
+    let findings_before = common::doctor_findings(&ws);
+    std::fs::rename(ws.join("github/o/a\\b"), ws.join("github/o/ab")).unwrap();
+    let (ok, stderr) = adopt(&ws, Path::new("github/o/ab"));
+    assert!(ok, "adopting by the new path:\n{stderr}");
+    assert!(manifest_keys(&ws).contains(&"github/o/ab".to_owned()));
+    common::assert_no_new_findings(&ws, &findings_before);
 }
 
 #[test]
@@ -141,4 +157,11 @@ fn a_directory_name_that_is_not_unicode_refuses_naming_the_rename() {
         "stderr was:\n{stderr}"
     );
     manifest_unchanged(&ws);
+
+    let findings_before = common::doctor_findings(&ws);
+    std::fs::rename(&unspellable, &spelled).unwrap();
+    let (ok, stderr) = adopt(&ws, Path::new("github/o/lib"));
+    assert!(ok, "adopting by the new path:\n{stderr}");
+    assert_eq!(manifest_keys(&ws), vec!["github/o/lib".to_owned()]);
+    common::assert_no_new_findings(&ws, &findings_before);
 }

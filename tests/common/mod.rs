@@ -881,6 +881,79 @@ pub fn rwv() -> assert_cmd::Command {
     cmd
 }
 
+/// The first backtick span of `text` that begins with `prefix`: the command a
+/// refusal or finding tells the operator to run.
+pub fn advised_command(text: &str, prefix: &str) -> String {
+    text.split('`')
+        .skip(1)
+        .step_by(2)
+        .find(|span| span.starts_with(prefix))
+        .unwrap_or_else(|| panic!("no `{prefix}...` command is advised in:\n{text}"))
+        .to_owned()
+}
+
+/// Run `command` as advised, from `cwd`: `rwv ...` through [`rwv`], `git ...`
+/// through [`git`]. The argv is split on whitespace, so a path the command
+/// carries must hold none.
+pub fn run_advised(command: &str, cwd: impl AsRef<std::path::Path>) -> std::process::Output {
+    let mut argv = command.split_whitespace();
+    let program = argv.next().expect("an advised command is not empty");
+    match program {
+        "rwv" => rwv().args(argv).current_dir(cwd).output().unwrap(),
+        "git" => git().args(argv).current_dir(cwd).output().unwrap(),
+        other => panic!("no runner for the advised program `{other}`"),
+    }
+}
+
+/// Every finding `rwv doctor --all --json` reports from `cwd`, as its kind,
+/// its sub-kind token where it has one, and the path it names.
+pub fn doctor_findings(cwd: impl AsRef<std::path::Path>) -> Vec<String> {
+    let out = rwv()
+        .args(["doctor", "--all", "--json"])
+        .current_dir(cwd)
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_else(|e| {
+        panic!(
+            "doctor --json produced invalid JSON: {e}\noutput: {}",
+            String::from_utf8_lossy(&out.stdout)
+        )
+    });
+    json["violations"]
+        .as_array()
+        .expect("violations is an array")
+        .iter()
+        .map(|v| {
+            let sub_kind = v["sub_kind"]
+                .as_object()
+                .and_then(|o| o.keys().next().cloned())
+                .unwrap_or_default();
+            format!(
+                "{} {sub_kind} {}",
+                v["kind"].as_str().unwrap_or_default(),
+                v["path"].as_str().unwrap_or_default()
+            )
+        })
+        .collect()
+}
+
+/// Panics if `rwv doctor --all` from `cwd` reports a finding that was not in
+/// `before` (from [`doctor_findings`]), other than the two a fixture
+/// explains: an entry just added is not in `rwv.lock` yet, and a clone whose
+/// remote is a temp path places elsewhere than where the fixture put it. Neither is what the advice
+/// under test is about; any other new finding is damage.
+pub fn assert_no_new_findings(cwd: &std::path::Path, before: &[String]) {
+    let new: Vec<String> = doctor_findings(cwd)
+        .into_iter()
+        .filter(|f| {
+            !before.contains(f)
+                && !f.starts_with("incomplete-lock")
+                && !f.starts_with("provenance placement-disagreement")
+        })
+        .collect();
+    assert_eq!(new, Vec::<String>::new());
+}
+
 /// Strip the `rwv <version>` banner every `rwv explain` invocation opens
 /// with, returning the bundle or entry text a committed doc can be compared
 /// against. Panics if `stdout` does not open with exactly that banner, so a

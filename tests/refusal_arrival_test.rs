@@ -504,11 +504,14 @@ fn an_adopt_with_no_origin_remote_routes_to_no_remote_url() {
 fn an_adopt_of_a_relative_remote_routes_to_no_remote_url() {
     let tmp = common::tempdir().unwrap();
     let ws = plain_weave(tmp.path());
+    let up = up_remote(tmp.path());
     let clone_dir = ws.join(SERVER_PATH);
-    std::fs::create_dir_all(&clone_dir).unwrap();
-    std::fs::write(clone_dir.join("README.md"), "init\n").unwrap();
-    git_init_with_commit(&clone_dir);
-    common::git_in(&clone_dir, &["remote", "add", "origin", "../../up.git"]);
+    std::fs::create_dir_all(clone_dir.parent().unwrap()).unwrap();
+    common::git_in(
+        tmp.path(),
+        &["clone", &up.to_string_lossy(), &clone_dir.to_string_lossy()],
+    );
+    common::git_in(&clone_dir, &["remote", "set-url", "origin", "../../up.git"]);
 
     let stderr = refusal_stderr(&["add", "--adopt", SERVER_PATH], &ws);
     assert!(
@@ -516,6 +519,32 @@ fn an_adopt_of_a_relative_remote_routes_to_no_remote_url() {
         "the refusal names the recorded path:\n{stderr}"
     );
     assert_routes_to(&stderr, "no-remote-url");
+
+    let set_url =
+        common::advised_command(&stderr, "git -C").replace("<url>", &common::file_url(&up));
+    let rerun = common::advised_command(&stderr, "rwv add --adopt");
+    let findings_before = common::doctor_findings(&ws);
+    let set = common::run_advised(&set_url, &ws);
+    assert!(set.status.success(), "`{set_url}`");
+    let adopted = common::run_advised(&rerun, &ws);
+    assert!(
+        adopted.status.success(),
+        "`{rerun}` after `{set_url}`:\n{}",
+        String::from_utf8_lossy(&adopted.stderr)
+    );
+    let manifest = std::fs::read_to_string(ws.join("projects/web-app/rwv.toml")).unwrap();
+    assert!(
+        manifest.contains(&format!("url = \"{}\"", common::file_url(&up))),
+        "the manifest records the URL the clone was given:\n{manifest}"
+    );
+    common::assert_no_new_findings(&ws, &findings_before);
+}
+
+fn up_remote(tmp: &Path) -> PathBuf {
+    let bare = tmp.join("remotes/up.git");
+    std::fs::create_dir_all(bare.parent().unwrap()).unwrap();
+    common::init_bare_repo_with_commit(&bare);
+    bare
 }
 
 /// The selector errors, which are three conditions under one type. A single
