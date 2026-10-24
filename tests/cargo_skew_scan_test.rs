@@ -1280,3 +1280,63 @@ fn nested_workspace_reference_repo_becomes_derived_patch_source() {
         "a [patch.*] table must be present; got:\n{generated}"
     );
 }
+
+/// CHANGELOG, `cargo-patch-shadowing`: the scan reads the patches of the
+/// project doctor was scoped to, so `rwv doctor --project <inactive>` names
+/// that project's own `Cargo.toml` as the weave-level entry that is defeated.
+#[test]
+fn doctor_scoped_to_an_inactive_project_reads_that_projects_weave_level_patches() {
+    let tmp = common::tempdir().unwrap();
+    let root = tmp.path().join("ws");
+    let member = root.join("github/acme/foo");
+    write_file(
+        &member,
+        "Cargo.toml",
+        "[package]\nname = \"foo\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    );
+    write_file(
+        &member,
+        ".cargo/config.toml",
+        "[patch.crates-io]\nserde = { path = \"../serde-different\" }\n",
+    );
+    common::git_in(&member, &["init", "-q", "--initial-branch=main"]);
+    common::git_in(&member, &["add", "-A"]);
+    common::git_in(&member, &["commit", "-q", "-m", "init"]);
+
+    write_file(&root, "projects/a/rwv.toml", "[repositories]\n");
+    write_file(
+        &root,
+        "projects/b/rwv.toml",
+        &format!(
+            "[repositories.\"github/acme/foo\"]\ntype = \"git\"\nurl = \"{}\"\nversion = \"main\"\nrole = \"owned\"\n",
+            common::file_url(&member)
+        ),
+    );
+    write_file(
+        &root,
+        "projects/b/Cargo.toml",
+        "[workspace]\nmembers = [\"github/acme/foo\"]\nresolver = \"2\"\n\n\
+         [patch.crates-io]\nserde = { path = \"github/acme/serde-fork\" }\n",
+    );
+    write_file(&root, ".rwv-active", "a\n");
+
+    let out = common::rwv()
+        .args(["doctor", "--project", "b", "--json"])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let shadowing: Vec<&serde_json::Value> = report["violations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|v| v["kind"] == "cargo-patch-shadowing")
+        .collect();
+    assert_eq!(shadowing.len(), 1, "{report:#}");
+    let weave_config = Path::new(shadowing[0]["weave_config"].as_str().unwrap());
+    assert!(
+        weave_config.ends_with("projects/b/Cargo.toml"),
+        "the defeated entry is the scoped project's own: {}",
+        weave_config.display()
+    );
+}
