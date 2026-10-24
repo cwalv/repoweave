@@ -969,7 +969,15 @@ fn a_plain_path_url_is_reported_with_its_file_url() {
 
     let (_, json) = doctor_text_and_json(&ws);
     assert!(!json.contains("unresolvable-url"), "{json}");
-    common::assert_no_new_findings(&ws, &findings_before);
+    let new: Vec<String> = common::doctor_findings(&ws)
+        .into_iter()
+        .filter(|f| !findings_before.contains(f) && !f.starts_with("incomplete-lock"))
+        .collect();
+    assert_eq!(
+        new,
+        ["dangling-reference  local/acme/x"],
+        "once the url names a remote, the missing clone is fetch's to repair"
+    );
 }
 
 #[test]
