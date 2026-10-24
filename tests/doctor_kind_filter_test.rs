@@ -14,6 +14,8 @@
 //!   4. An integration issue's kind is a kind too: naming it admits those
 //!      issues, and under `--json` a non-empty view fails the run, which is
 //!      how CI escalates a warning such as `tool-missing`.
+//!   5. That gate in its CI place: a source fetch over a missing tool exits
+//!      0 with the warning, and `--kind tool-missing` fails the same weave.
 //!
 //! The fixture holds findings of two kinds at once: two redundant orphaned
 //! savepoints (a collapsed reclamation class) and one misnamed workweave
@@ -424,4 +426,100 @@ fn issue_kinds_are_admissible_and_share_no_name_with_violation_kinds() {
         valid.len(),
         "a kind name appears in both registers: {valid:?}"
     );
+}
+
+/// The CI recipe: a source fetch over a missing ecosystem tool exits 0 with
+/// a `tool-missing` warning, so the job's gate is `rwv doctor --kind
+/// tool-missing`, which fails on that weave and passes once the tool is
+/// installed.
+#[cfg(unix)]
+#[test]
+fn a_source_fetch_passes_over_a_missing_tool_and_the_kind_gate_fails_it() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = common::tempdir().unwrap();
+    let seed = |name: &str, file: &str, body: &str| -> String {
+        let bare = tmp.path().join(format!("{name}.git"));
+        common::git_in(
+            tmp.path(),
+            &[
+                "init",
+                "--bare",
+                "--initial-branch=main",
+                bare.to_str().unwrap(),
+            ],
+        );
+        let work = tmp.path().join(format!("{name}-work"));
+        common::git_in(
+            tmp.path(),
+            &["clone", bare.to_str().unwrap(), work.to_str().unwrap()],
+        );
+        std::fs::write(work.join(file), body).unwrap();
+        common::git_in(&work, &["add", "."]);
+        common::git_in(
+            &work,
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@test.com",
+                "commit",
+                "-m",
+                "seed",
+            ],
+        );
+        common::git_in(&work, &["push", "origin", "main"]);
+        common::file_url(&bare)
+    };
+    let member = seed(
+        "web",
+        "package.json",
+        "{\"name\": \"web\", \"version\": \"0.1.0\"}\n",
+    );
+    let project = seed(
+        "app",
+        "rwv.toml",
+        &format!(
+            "[repositories.\"local/acme/web\"]\ntype = \"git\"\nurl = \"{member}\"\n\
+             version = \"main\"\nrole = \"owned\"\n"
+        ),
+    );
+
+    let no_npm = common::tool_only_bin("git");
+    let with_npm = tmp.path().join("with-npm");
+    std::fs::create_dir_all(&with_npm).unwrap();
+    std::os::unix::fs::symlink(which::which("git").unwrap(), with_npm.join("git")).unwrap();
+    let npm = with_npm.join("npm");
+    std::fs::write(&npm, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&npm, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let ws = tmp.path().join("ws");
+    std::fs::create_dir_all(&ws).unwrap();
+    let run = |args: &[&str], path: &Path| {
+        let out = common::rwv()
+            .args(args)
+            .current_dir(&ws)
+            .env("PATH", path)
+            .output()
+            .unwrap();
+        let report = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        (out.status.success(), report)
+    };
+
+    let (ok, report) = run(&["fetch", &project], &no_npm);
+    assert!(ok, "fetch must not fail over a missing tool:\n{report}");
+    assert!(
+        report.contains("[warning] npm-workspaces: npm is not on PATH"),
+        "fetch must report the missing tool as a warning:\n{report}"
+    );
+
+    let (ok, report) = run(&["doctor", "--kind", "tool-missing"], &no_npm);
+    assert!(!ok, "the gate must fail while npm is missing:\n{report}");
+
+    let (ok, report) = run(&["doctor", "--kind", "tool-missing"], &with_npm);
+    assert!(ok, "control: with npm installed the gate passes:\n{report}");
 }

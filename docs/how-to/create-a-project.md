@@ -57,6 +57,14 @@ mkdir -p ~/weave && cd ~/weave
 rwv fetch https://github.com/chatly/web-app.git
 ```
 
+A missing ecosystem tool does not fail the fetch: the install hook that needs it is skipped with a `tool-missing` warning, and `rwv fetch` exits 0. A CI job that needs every install hook to have run gates on it next:
+
+```bash
+rwv doctor --kind tool-missing
+```
+
+It exits non-zero while any enabled integration's tool is not on `PATH`, and 0 once each one is installed.
+
 ## Create a second project in the same weave
 
 A single weave can host multiple projects under `projects/` that share canonical member clones under `github/` (`gitlab/`, `local/`):

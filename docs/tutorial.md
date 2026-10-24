@@ -136,7 +136,7 @@ Anyone else can now reproduce your exact state:
 rwv fetch chatly/web-app --frozen
 ```
 
-`--frozen` errors if `rwv.lock` is incomplete — some member repo has no entry (suitable for CI). Without `--frozen`, `rwv fetch` aligns each repo to the SHA recorded in `rwv.lock`, adding any missing entries; a stale lock (present but behind `HEAD`) is reported by `rwv doctor`.
+`--frozen` errors if `rwv.lock` is incomplete — some member repo has no entry (suitable for CI). A CI job also runs `rwv doctor --kind tool-missing` after it: a missing ecosystem tool is only a warning to `rwv fetch`, and this check exits non-zero for it. Without `--frozen`, `rwv fetch` aligns each repo to the SHA recorded in `rwv.lock`, adding any missing entries; a stale lock (present but behind `HEAD`) is reported by `rwv doctor`.
 
 ## Where to go next
 
