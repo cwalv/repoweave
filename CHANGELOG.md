@@ -4,7 +4,7 @@ This changelog starts at 0.23.0. Releases 0.4.0 through 0.22.0 shipped without
 entries, and none are reconstructed here — the gap is a gap in the record, not a
 claim that nothing changed in them.
 
-## Unreleased
+## 0.25.0
 
 ### A workweave checkout whose pinned commits went with a deleted clone can be relinked
 
