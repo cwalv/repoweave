@@ -1,6 +1,6 @@
 # Upgrade to a new rwv on an existing weave
 
-Before replacing the `rwv` binary, finish or abort any in-flight sync using the **old** binary; after upgrading, migrate workweave markers, manifests, and locks from the primary weave root:
+Before replacing the binaries, finish or abort any in-flight sync using the **old** binary; after upgrading, migrate workweave markers, manifests, and locks from the primary weave root:
 
 ```bash
 # 1. Before upgrading (with the old rwv binary): clear any in-flight sync,
@@ -10,7 +10,7 @@ rwv abort                           # if an operation is in progress
 rwv doctor --fix --all
 rwv doctor --all                    # a clean run records the health floor
 
-# 2. After installing the new rwv binary (from the primary weave root):
+# 2. After installing the new binaries (from the primary weave root):
 rwv doctor --fix                    # migrate .rwv-workweave markers and reference worktrees
 rwv lock                            # regenerate rwv.lock in the current JSON format
 rwv materialize --remove-undeclared-links   # optional: unlink retired go.sum root symlink
@@ -26,6 +26,30 @@ For resting state on disk, installing a newer `rwv` does not touch existing file
 | `.rwv-workweave` & member slots | Written by `rwv` itself | `rwv doctor --fix` from the primary weave migrates them |
 | `rwv.yaml` → `rwv.toml` | Hand-authored by you | Rewrite as `rwv.toml` and delete `rwv.yaml` (no `--fix` arm) |
 | `rwv.lock` | Generated output | `rwv lock` regenerates it |
+
+## Install the new binaries
+
+Every release channel installs two executables side by side: `rwv`, and `rwv-each`, the bundled [`rwv each`](../reference/rwv-each.md) plugin. An upgrade by hand from a release archive copies both into the same directory; copying `rwv` alone leaves `rwv each` an [unknown verb](../reference/refusals.md#unknown-verb). Releases before 0.25.0 also installed an executable named generate-explain beside `rwv`, which only maintains this project's own documentation; `rm` it.
+
+If you wrote your own `rwv-each`, as earlier versions of [run a command across repos](./run-a-command-across-repos.md) showed at `~/.local/bin/rwv-each`, rename it to another verb before upgrading:
+
+```bash
+mv ~/.local/bin/rwv-each ~/.local/bin/rwv-myeach    # now run as: rwv myeach
+```
+
+What each channel does with a file you wrote at the path it installs `rwv-each` to:
+
+| Channel | Your file |
+|---|---|
+| Install script | Refuses before installing anything, and names the file |
+| `pip install`, `pip install --user` | **Replaced without a word** |
+| `uv tool install` | Refuses (`Executable already exists`) and links neither executable |
+| `cargo install --git` | Refuses (`binary already exists in destination`) and installs neither executable |
+| Homebrew | Installs into its own prefix, never `~/.local/bin`; `brew link` refuses a file already at its own target |
+
+A script you keep in a directory earlier on `PATH` than the new install shadows the bundled plugin, so `rwv each` keeps running yours. `rwv doctor --json` lists every `rwv-each` it finds in its `plugins` array and marks each copy that loses `shadowed: true`.
+
+## Migrate files from an older release
 
 From inside a workweave, the marker is checked first, then the manifest, then the lock. Each step below quotes the refusal you will see and the command that clears it.
 

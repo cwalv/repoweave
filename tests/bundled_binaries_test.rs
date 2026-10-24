@@ -378,7 +378,9 @@ fn a_wheel_is_refused_when_the_archive_lacks_a_shipped_binary() {
 /// What the install script runs besides `tar`, `xz` and `curl`, plus the `cp`
 /// the stand-in `curl` runs.
 #[cfg(unix)]
-const INSTALL_SCRIPT_TOOLS: &[&str] = &["uname", "mkdir", "mktemp", "rm", "install", "cp"];
+const INSTALL_SCRIPT_TOOLS: &[&str] = &[
+    "uname", "mkdir", "mktemp", "rm", "install", "cp", "dd", "grep",
+];
 
 #[cfg(unix)]
 fn stub(dir: &Path, name: &str, body: &str) {
@@ -406,15 +408,44 @@ fn host_tar_lacks_its_xz() -> bool {
     String::from_utf8_lossy(&version.stdout).contains("GNU tar") && common::skip_without_tool("xz")
 }
 
+/// A release the stand-in `curl` serves: its version, and the files its
+/// archive holds.
+#[cfg(unix)]
+struct Release {
+    version: &'static str,
+    archived: Vec<String>,
+}
+
+#[cfg(unix)]
+impl Release {
+    /// Every shipped binary and a maintainer tool.
+    fn current() -> Self {
+        let mut archived = shipped();
+        archived.push("generate-explain".into());
+        Release {
+            version: "9.9.9",
+            archived,
+        }
+    }
+}
+
+/// The directory the install script installs into, under `tmp`. A test may
+/// populate it before the run.
+#[cfg(unix)]
+fn install_dir(tmp: &Path) -> PathBuf {
+    tmp.join("installed")
+}
+
 /// The install script against a stand-in `curl` that serves a local archive
-/// of every shipped binary and a maintainer tool, with the stand-ins in
-/// `stubs` ahead of `path`. `None` when the host's architecture has no
-/// release archive.
+/// of `release` and logs each request to `curl.log` under `tmp`, with the
+/// stand-ins in `stubs` ahead of `path`. `None` when the host's architecture
+/// has no release archive.
 #[cfg(unix)]
 fn run_install_script(
     tmp: &Path,
     stubs: &Path,
     path: &str,
+    release: &Release,
 ) -> Option<(std::process::Output, PathBuf)> {
     let triple = match std::env::consts::ARCH {
         "x86_64" => "x86_64",
@@ -430,9 +461,7 @@ fn run_install_script(
         "unknown-linux-gnu"
     };
     let file = format!("repoweave-{triple}-{os}.tar.xz");
-    let mut names: Vec<String> = shipped();
-    names.push("generate-explain".into());
-    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let refs: Vec<&str> = release.archived.iter().map(String::as_str).collect();
     let archive = fake_archive(tmp, &file, &refs);
 
     std::fs::create_dir_all(stubs).unwrap();
@@ -440,15 +469,19 @@ fn run_install_script(
         stubs,
         "curl",
         &format!(
-            "while [ $# -gt 0 ]; do case \"$1\" in -o) out=\"$2\"; shift 2;; *) shift;; esac; done\ncp '{}' \"$out\"\n",
+            "echo \"$*\" >> '{}'\nwhile [ $# -gt 0 ]; do case \"$1\" in -o) out=\"$2\"; shift 2;; *) shift;; esac; done\ncp '{}' \"$out\"\n",
+            tmp.join("curl.log").display(),
             archive.display()
         ),
     );
-    let dest = tmp.join("installed");
+    let dest = install_dir(tmp);
+    let home = tmp.join("home");
+    std::fs::create_dir_all(&home).unwrap();
     let out = Command::new("/bin/sh")
         .arg(root().join("docs/install.sh"))
         .env("PATH", format!("{}:{path}", stubs.display()))
-        .env("VERSION", "9.9.9")
+        .env("HOME", &home)
+        .env("VERSION", release.version)
         .env("INSTALL_DIR", &dest)
         .output()
         .unwrap();
@@ -478,9 +511,12 @@ fn the_install_script_installs_every_shipped_binary_from_the_archive() {
         return;
     }
     let tmp = common::tempdir().unwrap();
-    let Some((out, dest)) =
-        run_install_script(tmp.path(), &tmp.path().join("stub"), "/usr/bin:/bin")
-    else {
+    let Some((out, dest)) = run_install_script(
+        tmp.path(),
+        &tmp.path().join("stub"),
+        "/usr/bin:/bin",
+        &Release::current(),
+    ) else {
         return;
     };
     assert_installed_every_shipped_binary(&out, &dest);
@@ -506,7 +542,8 @@ fn a_tar_that_unpacks_xz_itself_installs_with_no_xz_on_path() {
         ),
     );
     let path = toolbox(&tmp.path().join("tools"), INSTALL_SCRIPT_TOOLS);
-    let Some((out, dest)) = run_install_script(tmp.path(), &stubs, &path) else {
+    let Some((out, dest)) = run_install_script(tmp.path(), &stubs, &path, &Release::current())
+    else {
         return;
     };
     assert_installed_every_shipped_binary(&out, &dest);
@@ -529,10 +566,301 @@ fn a_gnu_tar_with_no_xz_on_path_refuses_naming_xz() {
         "if [ \"$1\" = --version ]; then echo 'tar (GNU tar) 1.35'; exit 0; fi\necho 'extracted without xz' >&2; exit 2\n",
     );
     let path = toolbox(&tmp.path().join("tools"), INSTALL_SCRIPT_TOOLS);
-    let Some((out, _)) = run_install_script(tmp.path(), &stubs, &path) else {
+    let Some((out, _)) = run_install_script(tmp.path(), &stubs, &path, &Release::current()) else {
         return;
     };
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("need 'xz'"), "{stderr}");
+}
+
+#[cfg(unix)]
+fn listing(dir: &Path) -> BTreeSet<String> {
+    match std::fs::read_dir(dir) {
+        Ok(entries) => entries
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect(),
+        Err(_) => BTreeSet::new(),
+    }
+}
+
+#[cfg(unix)]
+fn install_script_runnable() -> bool {
+    wheel_builder_available() && !host_tar_lacks_its_xz()
+}
+
+/// The marker the install script recognizes a repoweave binary by.
+fn install_script_marker() -> String {
+    install_sh()
+        .lines()
+        .find_map(|l| l.strip_prefix("REPOWEAVE_MARKER=\""))
+        .expect("docs/install.sh sets REPOWEAVE_MARKER=\"...\"")
+        .trim_end_matches('"')
+        .to_owned()
+}
+
+/// The install script replaces a file only when it is a repoweave binary,
+/// which it decides by the marker without running the file. Both binaries
+/// this build makes must carry it.
+#[test]
+fn every_shipped_binary_carries_the_install_script_marker() {
+    let marker = install_script_marker();
+    for (name, path) in [
+        ("rwv", env!("CARGO_BIN_EXE_rwv")),
+        ("rwv-each", env!("CARGO_BIN_EXE_rwv-each")),
+    ] {
+        let bytes = std::fs::read(path).unwrap();
+        assert!(!bytes.starts_with(b"#!"), "{name} is a script");
+        assert!(
+            bytes.windows(marker.len()).any(|w| w == marker.as_bytes()),
+            "{name} does not hold {marker:?}, so the install script would refuse to replace it"
+        );
+    }
+    let shipped: BTreeSet<String> = shipped().into_iter().collect();
+    assert_eq!(
+        shipped,
+        ["rwv", "rwv-each"].map(String::from).into(),
+        "check the marker in every shipped binary"
+    );
+}
+
+#[cfg(unix)]
+fn write_executable(path: &Path, bytes: &[u8]) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, bytes).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// The `rwv-each` script v0.23.0 and v0.24.0 told operators to write, at the
+/// directory the install script installs to by default.
+#[test]
+#[cfg(unix)]
+fn a_user_rwv_each_script_stops_the_install_and_survives_byte_for_byte() {
+    if !install_script_runnable() {
+        return;
+    }
+    let tmp = common::tempdir().unwrap();
+    let script = b"#!/usr/bin/env bash\n# my rwv-each, from https://github.com/cwalv/repoweave docs\nfor d in */; do (cd \"$d\" && \"$@\"); done\n";
+    let user_file = install_dir(tmp.path()).join("rwv-each");
+    write_executable(&user_file, script);
+    let Some((out, dest)) = run_install_script(
+        tmp.path(),
+        &tmp.path().join("stub"),
+        "/usr/bin:/bin",
+        &Release::current(),
+    ) else {
+        return;
+    };
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{stderr}");
+    assert!(
+        stderr.contains(&format!(
+            "{} exists and is not a repoweave binary",
+            user_file.display()
+        )) && stderr.contains("rename it to another verb")
+            && stderr.contains("rwv-myeach"),
+        "{stderr}"
+    );
+    assert_eq!(std::fs::read(&user_file).unwrap(), script);
+    assert_eq!(listing(&dest), ["rwv-each".to_owned()].into());
+    assert!(
+        !tmp.path().join("curl.log").exists(),
+        "refused only after downloading"
+    );
+}
+
+/// A file named `rwv` that is not repoweave's, a symlink included, is left
+/// alone too.
+#[test]
+#[cfg(unix)]
+fn a_foreign_rwv_stops_the_install() {
+    if !install_script_runnable() {
+        return;
+    }
+    for foreign in ["binary", "symlink"] {
+        let tmp = common::tempdir().unwrap();
+        let dest = install_dir(tmp.path());
+        let rwv = dest.join("rwv");
+        let elsewhere = tmp.path().join("elsewhere-rwv");
+        write_executable(&elsewhere, b"\x7fELF someone else's rwv cwalv/repoweave");
+        match foreign {
+            "binary" => write_executable(&rwv, b"\x7fELF someone else's rwv"),
+            _ => {
+                std::fs::create_dir_all(&dest).unwrap();
+                std::os::unix::fs::symlink(&elsewhere, &rwv).unwrap()
+            }
+        }
+        let before = std::fs::read(&rwv).unwrap();
+        let Some((out, _)) = run_install_script(
+            tmp.path(),
+            &tmp.path().join("stub"),
+            "/usr/bin:/bin",
+            &Release::current(),
+        ) else {
+            return;
+        };
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{foreign}: {stderr}");
+        assert!(
+            stderr.contains(&format!(
+                "{} exists and is not a repoweave binary",
+                rwv.display()
+            )),
+            "{foreign}: {stderr}"
+        );
+        assert_eq!(std::fs::read(&rwv).unwrap(), before, "{foreign}");
+        assert_eq!(
+            std::fs::symlink_metadata(&rwv)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            foreign == "symlink"
+        );
+        assert_eq!(listing(&dest), ["rwv".to_owned()].into(), "{foreign}");
+    }
+}
+
+/// A `#!` script is never a release binary, whatever it mentions.
+#[test]
+#[cfg(unix)]
+fn a_script_naming_the_marker_still_stops_the_install() {
+    if !install_script_runnable() {
+        return;
+    }
+    let tmp = common::tempdir().unwrap();
+    let script = format!(
+        "#!/bin/sh\n# wraps {}\nexec rwv each \"$@\"\n",
+        install_script_marker()
+    );
+    let user_file = install_dir(tmp.path()).join("rwv-each");
+    write_executable(&user_file, script.as_bytes());
+    let Some((out, _)) = run_install_script(
+        tmp.path(),
+        &tmp.path().join("stub"),
+        "/usr/bin:/bin",
+        &Release::current(),
+    ) else {
+        return;
+    };
+    assert!(!out.status.success());
+    assert_eq!(std::fs::read(&user_file).unwrap(), script.as_bytes());
+}
+
+/// An earlier install of repoweave is replaced without a word.
+#[test]
+#[cfg(unix)]
+fn a_previous_repoweave_install_is_replaced() {
+    if !install_script_runnable() {
+        return;
+    }
+    let tmp = common::tempdir().unwrap();
+    let dest = install_dir(tmp.path());
+    let previous = std::fs::read(env!("CARGO_BIN_EXE_rwv")).unwrap();
+    write_executable(&dest.join("rwv"), &previous);
+    let previous_each = std::fs::read(env!("CARGO_BIN_EXE_rwv-each")).unwrap();
+    write_executable(&dest.join("rwv-each"), &previous_each);
+    let Some((out, dest)) = run_install_script(
+        tmp.path(),
+        &tmp.path().join("stub"),
+        "/usr/bin:/bin",
+        &Release::current(),
+    ) else {
+        return;
+    };
+    assert_installed_every_shipped_binary(&out, &dest);
+    for name in shipped() {
+        assert_eq!(
+            std::fs::read(dest.join(&name)).unwrap(),
+            name.as_bytes(),
+            "{name} was not replaced by the archive's"
+        );
+    }
+    assert!(
+        !String::from_utf8_lossy(&out.stderr).contains("not a repoweave binary"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn an_existing_empty_directory_installs() {
+    if !install_script_runnable() {
+        return;
+    }
+    let tmp = common::tempdir().unwrap();
+    std::fs::create_dir_all(install_dir(tmp.path())).unwrap();
+    let Some((out, dest)) = run_install_script(
+        tmp.path(),
+        &tmp.path().join("stub"),
+        "/usr/bin:/bin",
+        &Release::current(),
+    ) else {
+        return;
+    };
+    assert_installed_every_shipped_binary(&out, &dest);
+}
+
+/// A release before rwv-each shipped is pointed at its own installer, before
+/// anything is downloaded or written.
+#[test]
+#[cfg(unix)]
+fn a_pin_of_a_release_without_rwv_each_installs_nothing() {
+    if !install_script_runnable() {
+        return;
+    }
+    let tmp = common::tempdir().unwrap();
+    let release = Release {
+        version: "0.24.0",
+        archived: vec!["rwv".into(), "generate-explain".into()],
+    };
+    let Some((out, dest)) = run_install_script(
+        tmp.path(),
+        &tmp.path().join("stub"),
+        "/usr/bin:/bin",
+        &release,
+    ) else {
+        return;
+    };
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{stderr}");
+    assert!(
+        stderr.contains(
+            "curl -fsSL https://cwalv.github.io/repoweave/v0.24.0/install.sh | VERSION=0.24.0 sh"
+        ),
+        "{stderr}"
+    );
+    assert!(listing(&dest).is_empty(), "{:?}", listing(&dest));
+    assert!(!tmp.path().join("curl.log").exists());
+}
+
+/// An archive missing a binary the script installs, whatever its version,
+/// leaves the directory as it was.
+#[test]
+#[cfg(unix)]
+fn an_archive_missing_rwv_each_installs_nothing() {
+    if !install_script_runnable() {
+        return;
+    }
+    let tmp = common::tempdir().unwrap();
+    let release = Release {
+        version: "9.9.9",
+        archived: vec!["rwv".into()],
+    };
+    let Some((out, dest)) = run_install_script(
+        tmp.path(),
+        &tmp.path().join("stub"),
+        "/usr/bin:/bin",
+        &release,
+    ) else {
+        return;
+    };
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("could not find rwv-each in archive; nothing was installed"),
+        "{stderr}"
+    );
+    assert!(listing(&dest).is_empty(), "{:?}", listing(&dest));
 }

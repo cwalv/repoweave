@@ -634,6 +634,20 @@ regenerates this repository's own documentation; it is no longer shipped.
 After upgrading by hand, `rm` any `generate-explain` an earlier install left
 beside `rwv`.
 
+If you wrote your own `rwv-each`, as the v0.23.0 and v0.24.0 docs showed at
+`~/.local/bin/rwv-each`, rename it to another verb before upgrading (for
+example `rwv-myeach`, run as `rwv myeach`). `pip install` replaces it without a
+word. The install script, `uv tool install` and `cargo install` refuse and
+install nothing; Homebrew installs into its own prefix. A copy left earlier on
+`PATH` shadows the bundled plugin; `rwv doctor --json` marks it in `plugins`.
+
+The install script never replaces a file at `rwv` or `rwv-each` that is not a
+repoweave binary: it refuses before downloading, names the file, and installs
+nothing. It decides by reading the file, never by running it.
+`VERSION=` pins of a release before 0.25.0, which ships no `rwv-each`, refuse
+before installing anything and print that release's own installer,
+`https://cwalv.github.io/repoweave/v<VERSION>/install.sh`.
+
 `cargo install --git https://github.com/cwalv/repoweave` works as written. In
 v0.24.0 it stopped at "multiple packages with binaries found", because a test
 fixture crate in the repository counted as a second package.

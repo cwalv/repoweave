@@ -4,7 +4,7 @@
 
 ## Installation
 
-Every release channel installs `rwv-each` in the same directory as `rwv`: the install script, the release archives, Homebrew, `pip`/`uv` (including a one-off `uvx`), and `cargo install --git https://github.com/cwalv/repoweave`. It is the same version as the `rwv` beside it.
+Every release channel installs `rwv-each` in the same directory as `rwv`: the install script, the release archives, Homebrew, `pip`/`uv` (including a one-off `uvx`), and `cargo install --git https://github.com/cwalv/repoweave`. It is the same version as the `rwv` beside it. An `rwv-each` you wrote yourself at that path is replaced by `pip` and refused by every other channel; [upgrade rwv](../how-to/upgrade-rwv.md#install-the-new-binaries) says to rename it first.
 
 `rwv` finds `rwv-each` the way it finds any plugin — on `PATH` — so if `rwv each` is refused as an [unknown verb](./refusals.md#unknown-verb), `rwv-each` is not on `PATH`: the directory it was installed to is missing from `PATH`, or `rwv` came from somewhere that installs it alone (a single binary copied out of an archive, `cargo install --git https://github.com/cwalv/repoweave --bin rwv`). Put the `rwv-each` from the same release on `PATH`, next to `rwv`.
 

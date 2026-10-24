@@ -9,12 +9,22 @@
 #   curl -fsSL https://cwalv.github.io/repoweave/install.sh | INSTALL_DIR=/usr/local/bin sh
 #
 # Set VERSION to pin a specific release (default: latest):
-#   curl -fsSL https://cwalv.github.io/repoweave/install.sh | VERSION=0.1.0 sh
+#   curl -fsSL https://cwalv.github.io/repoweave/install.sh | VERSION=0.25.0 sh
+# A release before 0.25.0 ships no rwv-each; install one of those with the
+# installer published beside its own documentation:
+#   curl -fsSL https://cwalv.github.io/repoweave/v0.24.0/install.sh | VERSION=0.24.0 sh
+#
+# A file already at INSTALL_DIR/rwv or INSTALL_DIR/rwv-each is replaced only
+# when it is a repoweave binary. Anything else, such as your own rwv-each
+# script, stops the install before anything is written.
 
 set -eu
 
 REPO="cwalv/repoweave"
 BINARIES="rwv rwv-each"
+FIRST_VERSION_WITH_EVERY_BINARY="0.25.0"
+REPOWEAVE_MARKER="cwalv/repoweave"
+SITE_URL="https://cwalv.github.io/repoweave"
 INSTALL_DIR="${INSTALL_DIR:-"$HOME/.local/bin"}"
 BASE_URL="https://github.com/${REPO}/releases"
 
@@ -69,6 +79,50 @@ resolve_version() {
     echo "$_url" | sed 's|.*/v\{0,1\}||'
 }
 
+# Succeeds when MAJOR.MINOR.PATCH version $1 is at least $2. A pre-release or
+# build suffix on $1 is ignored.
+version_at_least() {
+    _have="${1%%[-+]*}"
+    _want="$2"
+    for _i in 1 2 3; do
+        _h="${_have%%.*}"
+        _w="${_want%%.*}"
+        case "$_h" in
+            ''|*[!0-9]*) err "VERSION must be MAJOR.MINOR.PATCH, such as 0.25.0; got '$1'" ;;
+        esac
+        _have="${_have#"$_h"}"; _have="${_have#.}"
+        _want="${_want#"$_w"}"; _want="${_want#.}"
+        if [ "$_h" -gt "$_w" ]; then return 0; fi
+        if [ "$_h" -lt "$_w" ]; then return 1; fi
+    done
+    return 0
+}
+
+# --- existing files ---------------------------------------------------------
+
+# Never executes the file: it may be anyone's script. A release binary is never
+# a #! script, and every rwv and rwv-each release binary holds the marker.
+is_repoweave_binary() {
+    [ -f "$1" ] && [ ! -L "$1" ] || return 1
+    [ "$(dd if="$1" bs=2 count=1 2>/dev/null)" != "#!" ] || return 1
+    LC_ALL=C grep -q -F "$REPOWEAVE_MARKER" "$1"
+}
+
+refuse_foreign_files() {
+    for _bin in $BINARIES; do
+        _dest="${INSTALL_DIR}/${_bin}"
+        if [ -e "$_dest" ] || [ -L "$_dest" ]; then
+            if ! is_repoweave_binary "$_dest"; then
+                case "$_bin" in
+                    rwv-*) _fix="If it is your own \`rwv ${_bin#rwv-}\` plugin, rename it to another verb (for example ${INSTALL_DIR}/rwv-my${_bin#rwv-}, run as \`rwv my${_bin#rwv-}\`) or move it out of ${INSTALL_DIR}, then re-run." ;;
+                    *)     _fix="Move it out of ${INSTALL_DIR}, or set INSTALL_DIR to another directory, then re-run." ;;
+                esac
+                err "${_dest} exists and is not a repoweave binary; nothing was installed. ${_fix}"
+            fi
+        fi
+    done
+}
+
 # --- download helpers -------------------------------------------------------
 
 has_curl() { command -v curl > /dev/null 2>&1; }
@@ -97,18 +151,33 @@ download() {
     fi
 }
 
+archived() {
+    if [ -f "${_extracted_dir}/$1" ]; then
+        echo "${_extracted_dir}/$1"
+    elif [ -f "${_tmpdir}/$1" ]; then
+        echo "${_tmpdir}/$1"
+    fi
+}
+
 # --- main -------------------------------------------------------------------
 
 main() {
     need_cmd uname
     need_cmd tar
     need_cmd mkdir
+    need_cmd dd
+    need_cmd grep
 
     _os="$(detect_os)"
     _arch="$(detect_arch)"
     _target="$(target_triple "$_os" "$_arch")"
     _version="$(resolve_version)"
     _tag="v${_version}"
+
+    if ! version_at_least "$_version" "$FIRST_VERSION_WITH_EVERY_BINARY"; then
+        err "repoweave ${_version} predates ${FIRST_VERSION_WITH_EVERY_BINARY}, the first release that ships every one of: ${BINARIES}; nothing was installed. Install it with its own installer: curl -fsSL ${SITE_URL}/v${_version}/install.sh | VERSION=${_version} sh"
+    fi
+    refuse_foreign_files
 
     _archive="repoweave-${_target}.tar.xz"
     _url="${BASE_URL}/download/${_tag}/${_archive}"
@@ -134,15 +203,13 @@ main() {
 
     # cargo-dist places the binaries inside a directory named after the archive stem.
     _extracted_dir="${_tmpdir}/repoweave-${_target}"
+    for _bin in $BINARIES; do
+        [ -n "$(archived "$_bin")" ] || err "could not find ${_bin} in archive; nothing was installed"
+    done
+
     _uninstall=""
     for _bin in $BINARIES; do
-        if [ -f "${_extracted_dir}/${_bin}" ]; then
-            install -m 755 "${_extracted_dir}/${_bin}" "${INSTALL_DIR}/${_bin}"
-        elif [ -f "${_tmpdir}/${_bin}" ]; then
-            install -m 755 "${_tmpdir}/${_bin}" "${INSTALL_DIR}/${_bin}"
-        else
-            err "could not find ${_bin} in archive"
-        fi
+        install -m 755 "$(archived "$_bin")" "${INSTALL_DIR}/${_bin}"
         info "installed ${_bin} to ${INSTALL_DIR}/${_bin}"
         _uninstall="${_uninstall} ${INSTALL_DIR}/${_bin}"
     done
