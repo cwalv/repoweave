@@ -39,7 +39,7 @@ When a repository is `ahead` or `diverged`, pick the action that matches your in
 
 ## Step 3 — repair `missing`, `behind`, or `unreachable` repos
 
-When `rwv status` shows `missing` or `behind`, run in-place `rwv fetch` (with no source argument) from the weave root:
+When `rwv status` shows `missing` or `behind`, run in-place `rwv fetch` (with no source argument) from the weave root (for a project that is not active, `rwv fetch --project <name>`):
 
 ```bash
 rwv fetch
@@ -48,7 +48,8 @@ rwv doctor --locked
 
 In-place `rwv fetch`:
 
-- Clones any missing member repository from its `url` in `rwv.toml` (creating the worktree in a workweave when run inside one), attached to the branch declared in `version = "..."` and positioned at the revision in `rwv.lock`.
+- Clones any missing member repository from its `url` in `rwv.toml`, attached to the branch declared in `version = "..."` and positioned at the revision in `rwv.lock`.
+- Inside a workweave, also creates the missing member's worktree, on the workweave's `<project>--<workweave>` branch at that revision.
 - Fast-forwards existing checkouts that are `behind` the lock without changing their branch attachment (refusing if the move is not a fast-forward or the checkout is on a different branch, unless `--detach-checkouts` is passed).
 - Contacts the network only to clone a missing member repository; it does not fetch into an existing checkout.
 - Never moves an existing `rwv.lock` entry. It writes an entry only for a member repository the lock lacks, unless `--frozen` is passed, which refuses instead.
