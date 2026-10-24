@@ -4597,7 +4597,6 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-
     // Sanity-check schema URLs the binary embeds match the artifact paths we
     // just wrote. If a URL drifts (e.g. someone changes the crate version
     // path), this surfaces immediately.
