@@ -53,7 +53,7 @@ Every JSON-capable verb emits a self-describing envelope:
 
 The key is verb-specific (`repos` for status, `violations` for doctor, `outcomes` for sync). Schemas live at `docs/reference/schemas/<verb>.json` and are also embedded inside the corresponding `rwv explain <verb>` bundle. Agents resolve `$schema` once and cache the schema; they don't assume any shape.
 
-Under parallel mode (`rwv sync -j N > 1`), output switches to NDJSON: one JSON record per line as workers finish, no envelope, each line carrying its own `$schema`. The branch-on-shape pattern lets consumers handle both modes uniformly: read the first record; if subsequent lines also have `$schema`, parse as NDJSON.
+`-j` never changes the shape: under `rwv sync -j N` the envelope is the same as under `-j 1`, its records in manifest order, so one parser serves every worker count.
 
 ### Roles as a safety boundary
 
@@ -115,7 +115,7 @@ Where the tool already has agent-shaped surface (`rwv prime`, `rwv explain`, the
 
 ## The shape, in one paragraph
 
-Agents take a path, not a session. The landed tool surface — `rwv prime` for discovery, `rwv explain` for JIT reflection, `rwv setup claude` for context and worktree-lifecycle hooks, the `--json` envelope (with NDJSON under parallel mode) for structured output, and roles as a machine-readable safety boundary — gives a harness everything it needs to drive a multi-repo workspace without scraping help text. The recommended workflow pattern is to give the agent its own workweave: isolation from human state, full project context preserved, verification then landing via `rwv sync-to --retire`.
+Agents take a path, not a session. The landed tool surface — `rwv prime` for discovery, `rwv explain` for JIT reflection, `rwv setup claude` for context and worktree-lifecycle hooks, the `--json` envelope for structured output, and roles as a machine-readable safety boundary — gives a harness everything it needs to drive a multi-repo workspace without scraping help text. The recommended workflow pattern is to give the agent its own workweave: isolation from human state, full project context preserved, verification then landing via `rwv sync-to --retire`.
 
 ## Related
 
@@ -123,5 +123,5 @@ Agents take a path, not a session. The landed tool surface — `rwv prime` for d
 - [Monorepo lens](./monorepo.md) — workweaves as parallel-work primitive
 - [Hand task to agent](../../how-to/hand-task-to-agent.md) — the operational recipe
 - [Workweave hierarchy](../joints/workweave-hierarchy.md) — parent tracking, one-hop sync
-- [Sync semantics](../joints/sync-semantics.md) — phase model, `--retire`, NDJSON
+- [Sync semantics](../joints/sync-semantics.md) — phase model, `--retire`, parallel sync
 - [reference/cli — Scripting helpers](../../reference/cli.md#scripting-helpers) — `prime`, `resolve`, `explain` side by side

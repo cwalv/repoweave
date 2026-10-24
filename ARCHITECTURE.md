@@ -170,8 +170,10 @@ There are no threads outside `parallel::run_in_parallel`
 (`src/parallel.rs`), which runs a closure over items in a bounded
 `std::thread::scope` pool and gathers results in input order. `fetch` and
 `update` default to `min(available_parallelism, 8)`; `sync`, `sync-to` and
-`push` default to serial, because their `--json` envelope is a single document
-and `-j N > 1` switches them to NDJSON (§7).
+`push` default to serial. A push authenticates and runs the repo's pre-push
+hook, which concurrent pushes would run side by side against one terminal's
+credential prompts. `-j` never changes `--json` output: every verb prints one
+envelope, its records in input order (§7).
 
 ## 4. State & ownership
 
@@ -287,8 +289,9 @@ above are pinned by `tests/concurrency_boundaries_test.rs`.
 
 `sync` and `sync-to` are one machine. `src/sync.rs` exposes two verb entry
 points, `run_sync` and `run_sync_to`, each handed the `OutputMode` the
-dispatcher resolved. Text runs the machine under a text handler, and a JSON mode
-under the envelope or NDJSON one (`JsonShape`). Every route delegates to one
+dispatcher resolved. Text runs the machine under a text handler, and JSON under
+the envelope one, which sorts the outcomes the workers recorded into manifest
+order. Every route delegates to one
 private driver, `run_machine`.
 
 ### Shape
@@ -623,9 +626,8 @@ of `rwv doctor`'s report renderers, the text report and `build_doctor_json`,
 take only the `DoctorFindings` its findings pipeline returns.
 
 What *is* shared is `Resolution` (`src/workspace.rs`): every envelope
-carries it, and it is the same value the plugin envelope projects (§6.4). Under
-`-j N > 1` the envelope is dropped and each per-repo record is emitted as a
-self-describing NDJSON line via `#[serde(flatten)]` wrappers.
+carries it, and it is the same value the plugin envelope projects (§6.4). The
+envelope is the same whatever `-j` is.
 
 Stdout belongs to the JSON-capable verbs; operator prose goes to stderr
 (`src/workspace.rs`).

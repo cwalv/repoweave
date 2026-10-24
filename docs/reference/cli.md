@@ -105,17 +105,15 @@ How `rwv fetch` handles each manifest repository:
 | `--detach-checkouts` | Realign a present clone even where that changes what HEAD is attached to: materialize the pin on a detached HEAD instead of refusing |
 | `--role` / `--repo` | Selector filters (see [Selector grammar](#selector-grammar)). A filtered run skips the lock write |
 | `-j N` | Parallel per-repo workers (default: `min(nproc, 8)`; `-j 1` for serial execution) |
-| `--json` | Structured output: single JSON envelope when `-j 1`, self-describing NDJSON lines when `-j > 1` (default on multi-core hosts) |
+| `--json` | Structured output: one JSON envelope, whatever `-j` is |
 | `--project <name>` | In-place mode only: fetch this project instead of the active one (does not change `.rwv-active`). With `<source>` it refuses with `inapplicable-flag` |
 | `--no-materialize` | Skip the install hooks of the activation a fetch performs (a bootstrap fetch's, or an in-place fetch selecting the weave's only project); `.rwv-active` and the weave-root links are still written. With a project already active, an in-place fetch activates nothing and the flag has no effect |
 
 The lock is **read-only** for covered entries. To advance tips and re-snapshot, use `rwv update`.
 
-`--json` emits `{ "$schema": "...", "outcomes": [...] }` envelope in serial mode
-(`-j 1`). Under `-j N` with `N > 1`, switches to NDJSON (one
-self-describing record per repo as workers finish). Without `-j` the worker
-count is `min(nproc, 8)`, so multi-core hosts get NDJSON. See [JSON envelope
-convention](#--json-envelope-convention).
+`--json` emits the envelope `{ "$schema": "...", "outcomes": [...] }` once
+every repo is done, with `outcomes` in manifest order, whatever `-j` is. See
+[JSON envelope convention](#--json-envelope-convention).
 
 ### `rwv update [...]`
 
@@ -130,7 +128,7 @@ The advance is a **fast-forward of the branch the checkout is on**, not a checko
 | `--detach-checkouts` | Advance a repo even where that changes what HEAD is attached to: materialize the tip on a detached HEAD instead of refusing |
 | `--role` / `--repo` | Selector filters |
 | `-j N` | Parallel per-repo workers (default: min(nproc, 8)) |
-| `--json` | Structured output: envelope under `-j 1`, NDJSON under `-j > 1` |
+| `--json` | Structured output: one JSON envelope, whatever `-j` is |
 | `--dirty` | Allow update with uncommitted changes in repos when relocking |
 | `--commit` | Commit `rwv.lock` together with the integration files regenerated against the new tips, and with `rwv.toml` when it has uncommitted changes. Other uncommitted changes in the project repo refuse (`dirty-checkout`) |
 | `-m` / `--message <msg>` | The commit message for `--commit`, in place of the generated summary. Without `--commit` it is a usage error (exit 2) |
@@ -268,7 +266,8 @@ Absorb `<source>`'s committed state into CWD. `<source>` is required: a workspac
 | `--allow-stale-lock` | Consent: skip the lock-freshness precondition on both source and destination |
 | `--discard-local-commits` | Consent: discard CWD's project commits not reachable from source, hard-resetting the project repo to source's tip. Pre-sync state preserved in `refs/rwv/pre-op/<id>` |
 | `--continue` | Resume a sync interrupted mid-op. All parameters, the project included, are read from the in-progress op-state file; no other flags may be passed alongside `--continue` (except `--project`, which asserts rather than rebinds — naming a project other than the recorded one is refused) |
-| `--json` / `-j N` | Structured output / parallel sync (NDJSON when N > 1) |
+| `--json` | Structured output: one JSON envelope, whatever `-j` is |
+| `-j N` | Parallel per-repo syncs (default: 1) |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
 See [sync semantics](../explanation/joints/sync-semantics.md) for the three-phase model and the direction-explicit pair with `rwv sync-to`.
@@ -300,7 +299,8 @@ Advance `<target>` to CWD's tip via a three-step orchestration: (1) rebase CWD a
 | `--allow-stale-lock` | Consent: skip the lock-freshness precondition on both source and destination |
 | `--discard-local-commits` | Consent: discard CWD's project commits not reachable from target, hard-resetting the project repo to target's tip. Pre-sync state preserved in `refs/rwv/pre-op/<id>` |
 | `--continue` | Resume after resolving a mid-op conflict. All parameters are read from the in-progress op-state file |
-| `--json` / `-j N` | Structured output / parallel step-1 sync (NDJSON when N > 1) |
+| `--json` | Structured output: one JSON envelope, whatever `-j` is |
+| `-j N` | Parallel per-repo step-1 syncs (default: 1) |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
 See [sync semantics](../explanation/joints/sync-semantics.md) for the full three-step model, strategy semantics, and the `--retire` contract. Exit codes and the unpruned-checkout case are as for `rwv sync` above.
@@ -333,8 +333,8 @@ Coordinated cross-repo push from the primary weave. Default scope: `owned` and `
 |---|---|
 | `--role` / `--repo` | Selector filters |
 | `--force` | Force-push every repo in the operation (member repos and the project repo). Default deny. The lock-precondition check still runs unconditionally |
-| `-j N` | Parallel push (up to N concurrent for member repos; project repo always last and serial) |
-| `--json` / `-j N` | Structured output / parallel push (NDJSON when N > 1) |
+| `-j N` | Parallel push (up to N concurrent for member repos; project repo always last and serial). Default: 1, because every push authenticates and runs the repo's pre-push hook: concurrent pushes would contend for one terminal's credential prompts and run those hooks side by side. The default push set is already narrowed to writable roles, so there is less to parallelize than in a fetch |
+| `--json` | Structured output: one JSON envelope, whatever `-j` is |
 | `--dry-run` | Print the push plan without executing |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
@@ -492,9 +492,6 @@ command), and `integration` for a single integration's hook. For example:
   { "effect": "install-hooks", "reason": "narrowed", "remedy": "rwv materialize" }
 ]
 ```
-
-NDJSON (`-j N` with `N > 1`) carries no skipped records; the stderr lines still
-print.
 
 ## Scripting helpers
 
@@ -670,13 +667,11 @@ The `sync` and `sync-to` envelopes also carry `complete`: `true` when the op ran
 
 Schemas live at `docs/reference/schemas/<verb>.json` and are also embedded as fenced code blocks inside the corresponding `rwv explain <verb>` bundle.
 
-### NDJSON under parallel mode
+### The envelope and `-j`
 
-When a verb runs with `-j N` and `N > 1`, the output switches to NDJSON: one JSON record per line as workers finish, **no envelope wrapper**, and each line carries its own `"$schema"` field so a consumer can identify any single record without out-of-band context.
+`-j` changes how a verb runs, never what `--json` prints: the envelope is the same under `-j 1` and `-j N`, printed once the verb is done, with its per-repo records in manifest order (`push`'s project-repo record last). Nothing streams on stdout. For per-repo progress as each repo finishes, use [`rwv each`](./rwv-each.md)'s `--joblog` and `--results`.
 
-The branch-on-shape pattern lets consumers handle both modes uniformly: peek at stdout; if subsequent lines carry their own `"$schema"`, parse as NDJSON; otherwise parse as one envelope document.
-
-Exit semantics under `--json` are the same in both modes and match the text mode: non-zero when at least one per-repo outcome is `failed`, when a refusal stopped the verb, and for `sync` and `sync-to` when a checkout replay could not prune is left on disk. The envelope, or the record lines, still print in that last case. NDJSON records carry no `complete`; `rwv status` answers whether an op is in progress.
+Exit semantics under `--json` match the text mode: non-zero when at least one per-repo outcome is `failed`, when a refusal stopped the verb, and for `sync` and `sync-to` when a checkout replay could not prune is left on disk. The envelope still prints in that last case.
 
 ## External commands
 

@@ -90,6 +90,25 @@ its top-level directory and depth, so its lock and branch state are checked
 like any other member's. A named member missing from disk is still a dangling
 reference, and `rwv fetch` clones it back to that path.
 
+### Breaking: `--json` prints one envelope whatever `-j` is
+
+`rwv fetch`, `rwv update`, `rwv push`, `rwv sync`, `rwv sync-to` and `rwv each`
+printed one JSON envelope under `-j 1` and switched to NDJSON, one
+self-describing record per line as each repo finished, under `-j N` with
+`N > 1`. `fetch`, `update` and `each` default to `min(nproc, 8)` workers, so
+`--json` without `-j` streamed on a multi-core machine and printed an envelope
+on a single-core one. Each verb now prints its envelope under every `-j`, once
+it is done, with its per-repo records in manifest order.
+
+The stream is gone, with no flag to bring it back, and so are the nine schemas
+that described its lines: `fetch-record.json`, `update-record.json`,
+`push-record.json`, `sync-record.json`, `sync-to-record.json`,
+`member-record.json`, `advance-record.json`, `placement-record.json` and
+`each-record.json`. To follow repos as they finish, run the command through
+`rwv each` with `--joblog FILE`, one line per repo as it finishes, or
+`--results DIR`, each repo's output and outcome. The `-j` defaults are
+unchanged.
+
 ### On Windows, `rwv explain` and `rwv prime` print LF line endings
 
 The pages `rwv explain` and `rwv prime` print are built into the binary. The

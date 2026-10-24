@@ -69,7 +69,7 @@ Then read [create a feature workweave](./how-to/create-feature-workweave.md) and
 
 ### "I want agents to drive my multi-repo project safely"
 
-Start with the [agent lens](./explanation/lenses/agent.md). It covers the agent surface (`rwv prime`, `rwv explain`, the `--json` envelope, NDJSON, roles as an allow-list) and the recommended workflow pattern: give the agent its own workweave, sync the result home with verification.
+Start with the [agent lens](./explanation/lenses/agent.md). It covers the agent surface (`rwv prime`, `rwv explain`, the `--json` envelope, roles as an allow-list) and the recommended workflow pattern: give the agent its own workweave, sync the result home with verification.
 
 Then read [hand task to agent](./how-to/hand-task-to-agent.md) for the harness recipe.
 

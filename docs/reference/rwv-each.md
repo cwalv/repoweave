@@ -76,7 +76,7 @@ When anything did not succeed, a summary on stderr lists every such repo, sorted
 
 ### `--json`
 
-With `-j 1`, one envelope once every repo is done, outcomes sorted by repo path:
+One envelope once every repo is done, outcomes sorted by repo path, whatever `-j` is:
 
 ```json
 { "$schema": "https://raw.githubusercontent.com/cwalv/repoweave/main/docs/reference/schemas/each.json",
@@ -84,9 +84,9 @@ With `-j 1`, one envelope once every repo is done, outcomes sorted by repo path:
                   "signal": null, "duration_ms": 1234, "stdout": "…", "stderr": "" } ] }
 ```
 
-With `-j N`, `N > 1`, one record per line as each repo finishes (repos never started come last), each carrying its own `$schema` (`each-record.json`). Output is emitted even when repos fail.
+The envelope prints even when repos fail. For a record of each repo as it finishes, use `--joblog` and `--results`.
 
-`status` is one of `ok`, `failed` (non-zero exit, killed by a signal, or could not be started), `timed-out`, `not-run`, `not-present`. `exit_code` and `signal` are `null` when they do not apply; `signal` is never set on Windows. The schemas are committed at `docs/reference/schemas/each.json` and `each-record.json`.
+`status` is one of `ok`, `failed` (non-zero exit, killed by a signal, or could not be started), `timed-out`, `not-run`, `not-present`. `exit_code` and `signal` are `null` when they do not apply; `signal` is never set on Windows. The schema is committed at `docs/reference/schemas/each.json`.
 
 ### `--joblog FILE`
 

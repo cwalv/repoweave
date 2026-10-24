@@ -197,20 +197,17 @@ The `ff` refusal names `--strategy rebase`, which *lands* CWD's project
 commits, and `--discard-local-commits`, which *discards* them into the
 savepoint tombstone.
 
-## Parallel sync (`-j N`) and NDJSON
+## Parallel sync (`-j N`)
 
-With `-j N` (`N > 1`), Phase 2 fans out across a bounded worker pool, and
-`--json` switches from one envelope document at the end (serial, the default:
-`{"$schema": "<url>", "outcomes": [...]}`) to NDJSON: one line per per-repo
-outcome as each worker finishes, each with its own `"$schema"`, plus a line
-for each record the envelope carries beside `outcomes` — placements
-(`placement-record.json`), replay members (`member-record.json`), and
-`sync-to`'s advance-target fast-forwards (`advance-record.json`). In both
-modes the exit status is non-zero when some per-repo outcome is `failed`,
-and when a prune was refused: the op completes, reports a `prune-refused`
-member record, and exits 1. The envelope's `complete` field is true when the
-op ran its last phase and cleared its op-state, false when a phase parked
-it; NDJSON carries no `complete`.
+With `-j N` (`N > 1`), Phase 2 fans out across a bounded worker pool. The
+default is `-j 1`. `--json` prints the same envelope whatever `-j` is, once
+the op is done: `{"$schema": "<url>", "outcomes": [...]}`, with `outcomes`
+in manifest order however the workers finished, beside `placements`, replay
+`members`, and `complete`. The exit status is non-zero when some per-repo
+outcome is `failed`, and when a prune was refused: the op completes,
+reports a `prune-refused` member record, and exits 1. The envelope's
+`complete` field is true when the op ran its last phase and cleared its
+op-state, false when a phase parked it.
 
 ## Auto-target
 

@@ -34,22 +34,21 @@ rwv explain <verb>       # markdown bundle: purpose, flags, exit codes, and JSON
 
 Every `rwv explain <verb>` bundle is compiled into the binary from `docs/reference/explain/` and embeds the exact JSON Schema for `--json`-capable verbs.
 
-## Consume `--json` and NDJSON output
+## Consume `--json` output
 
-Every `--json`-capable verb emits a self-describing document carrying a `$schema` URL:
+Every `--json`-capable verb prints one JSON object, `{ "$schema": "<url>", "<key>": [...] }`, once it is done. `-j` sets how many repos run at once and never changes that shape, so a harness parses stdout as one document whatever worker count it passes or the host defaults to:
 
-| Verb | Envelope key (`-j 1`) | Default `-j` worker count |
+| Verb | Envelope key | Default `-j` worker count |
 |---|---|---|
-| `rwv status --json` | `repos` | `1` (envelope) |
-| `rwv doctor --json` | `violations` | `1` (envelope) |
-| `rwv fetch --json` | `outcomes` (+ `placements`) | `min(nproc, 8)` (NDJSON on multi-core; pass `-j 1` for envelope) |
-| `rwv update --json` | `repos` (+ `placements`) | `min(nproc, 8)` (NDJSON on multi-core; pass `-j 1` for envelope) |
-| `rwv push --json` | `outcomes` | `1` (envelope; pass `-j N > 1` for NDJSON) |
-| `rwv sync --json` | `outcomes` (+ `placements`) | `1` (envelope; pass `-j N > 1` for NDJSON) |
-| `rwv sync-to --json` | `outcomes` (+ `placements`) | `1` (envelope; pass `-j N > 1` for NDJSON) |
+| `rwv status --json` | `repos` | — |
+| `rwv doctor --json` | `violations` | — |
+| `rwv fetch --json` | `outcomes` (+ `placements`) | `min(nproc, 8)` |
+| `rwv update --json` | `repos` (+ `placements`) | `min(nproc, 8)` |
+| `rwv push --json` | `outcomes` | `1` |
+| `rwv sync --json` | `outcomes` (+ `placements`) | `1` |
+| `rwv sync-to --json` | `outcomes` (+ `placements`) | `1` |
 
-- **Serial / envelope mode (`-j 1`):** One JSON object `{ "$schema": "<url>", "<key>": [...] }` written at completion.
-- **Parallel / NDJSON mode (`-j N` where `N > 1`):** One self-describing JSON line streamed per completed unit of work, each carrying its own `$schema` field. Because `rwv fetch` and `rwv update` default to `min(nproc, 8)` workers, pass `-j 1` when your harness wants a single JSON envelope from those two verbs, or branch on whether the first line is a complete JSON object.
+Per-repo records are in manifest order whatever order the workers finished in. To follow repos as they finish, run the command through `rwv each` with `--joblog` or `--results`.
 
 ## Isolate agent work in a workweave
 
