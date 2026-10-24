@@ -16,7 +16,7 @@ A review workweave is never landed: do not run `rwv sync-to` from it. `sync-to` 
 
 ## What `rwv doctor` reports while you review
 
-`rwv status` shows the PR member as `ahead` of `rwv.lock`, with no branch. `rwv doctor` exits 1 with a `stale-lock` error for that member and a `branch-discipline` / `detached` warning for its checkout. Both are expected in a review workweave. Leave their remedies alone here: `rwv lock` would pin the PR commits, and `rwv doctor --fix --adopt-detached-checkouts` would put the ephemeral branch on the PR tip.
+`rwv status` shows the PR member as `ahead` of `rwv.lock`, with no branch. `rwv doctor` exits 1 with a `stale-lock` error for that member and a `branch-discipline` / `detached-off-ephemeral-branch` warning for its checkout. Both are expected in a review workweave. Leave their remedies alone here: `rwv lock` would pin the PR commits, and the checkout is meant to stay detached on the PR, which keeps `web-app--pr-42` at the parent's locked revision. [`detached-off-ephemeral-branch`](../reference/doctor-findings.md#detached-off-ephemeral-branch) describes the way back to the branch, for when you want it.
 
 ## Preview what the PR introduces
 
