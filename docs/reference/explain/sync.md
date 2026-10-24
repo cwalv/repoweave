@@ -97,11 +97,9 @@ rwv sync <source> [--json] [--strategy <ff|rebase>] [-j <N>] [--allow-stale-lock
   flag to be re-supplied.
 - `-j <N>` runs up to `N` per-repo manifest syncs (Phase 2) in parallel.
   Default is `1` (serial), unlike `rwv fetch` / `rwv update` whose default
-  auto-resolves to a small worker pool. Sync's default is `1` so that
-  the `--json` envelope shape is the unsurprising default and the
-  envelope/NDJSON switch only happens when the user opts in with `-j > 1`.
-  Phase 1' (project repo) and Phase 3 (re-lock + commit) are inherently
-  serial and run on the caller thread regardless of `-j`.
+  auto-resolves to a small worker pool. Phase 1' (project repo) and Phase 3
+  (re-lock + commit) are inherently serial and run on the caller thread
+  regardless of `-j`.
 
 Run `rwv sync --help` for the full clap surface.
 
@@ -111,8 +109,7 @@ Default text output is one line per repo summarizing the outcome, plus a
 trailing `note:` line naming `rwv materialize` when delivered changes
 touched materialized inputs (text output only).
 
-Under `--json` with `-j 1` (default) or `--json` alone, output is the
-pretty-printed envelope:
+Under `--json`, output is the pretty-printed envelope, whatever `-j` is:
 
 ```
 {
@@ -124,6 +121,7 @@ pretty-printed envelope:
 }
 ```
 
+`outcomes` lists the repos in manifest order, however the workers finished.
 Outcome `kind` tags include `converged`, `already-ahead`, `no-op`, and
 `failed`. The `failed` variant carries a nested `failure` record whose own
 `kind` tells you what failed (`head-unreadable`, `ff-impossible`,
@@ -158,23 +156,7 @@ is empty, not absent, when there are none.
 `complete` is true when the op ran its last phase and cleared its op-state,
 leaving nothing to `--continue` or `rwv abort`, and false when a phase
 stopped it with op-state held. It is what tells a complete op that exited 1
-over a `prune-refused` record from a parked one. NDJSON has no envelope to
-carry it; `rwv status` reports whether an op is still in progress.
-
-Under `--json -j N` with `N > 1`, the envelope is dropped and output
-switches to NDJSON — one JSON record per line, streamed to stdout the
-moment each repo's sync completes. Lines arrive in completion order (not
-input order); consumers demux by `path`. Every line is self-describing:
-each record embeds its own `"$schema"` URL alongside the per-repo fields,
-so a consumer can identify any line without out-of-band context. A
-placement is streamed as its own line when it happens, often after its
-repo's outcome line; its `$schema` names `placement-record.json`. A member
-record is streamed as its own line too, with `$schema` naming
-`member-record.json`. Lines
-are mutex-guarded so concurrent workers can't tear a single record's
-bytes. The text-prefix Reporter wrapper (`[<repo>] <line>`) used by
-`fetch`/`update` under `-j > 1` is **bypassed** in JSON mode — workers
-never call into the subprocess Reporter, so JSON output is pristine.
+over a `prune-refused` record from a parked one.
 
 Schema:
 
@@ -182,7 +164,7 @@ Schema:
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "SyncJsonOutput",
-  "description": "Top-level envelope for `rwv sync --json` (serial mode).",
+  "description": "Top-level envelope for `rwv sync --json`.",
   "type": "object",
   "required": [
     "$schema",
@@ -197,7 +179,7 @@ Schema:
       "type": "string"
     },
     "advisories": {
-      "description": "Standing advisories raised during this sync (e.g. delivered changes touching a materialized input). Empty, not absent, when there are none — a consumer branches on length rather than presence.\n\nPresent only in this envelope: `-j N` with `N > 1` streams NDJSON instead, one self-describing per-repo line with no envelope for an advisory to sit in, so a parallel `--json` sync carries no advisory at all. Run `-j 1` (or omit `-j`) to receive one.",
+      "description": "Standing advisories raised during this sync (e.g. delivered changes touching a materialized input). Empty, not absent, when there are none — a consumer branches on length rather than presence.",
       "type": "array",
       "items": {
         "$ref": "#/definitions/AdvisoryOutput"
@@ -215,6 +197,7 @@ Schema:
       }
     },
     "outcomes": {
+      "description": "One record per repo, in manifest order whatever `-j` is.",
       "type": "array",
       "items": {
         "$ref": "#/definitions/SyncOutcomeOutput"

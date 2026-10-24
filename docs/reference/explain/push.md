@@ -43,10 +43,11 @@ rwv push [--json] [-j <N>] [--dry-run] [--force] [--role <role>] [--repo <select
 
 - `--json` emits machine-readable output (see Output below).
 - `-j <N>` runs up to `N` member-repo pushes in parallel. Default is `1`
-  (serial), so the `--json` envelope shape is the unsurprising default and
-  the envelope/NDJSON switch only happens when the user opts in with `-j > 1`.
-  The project-repo push always runs serially as the last step regardless of
-  `-j`.
+  (serial): every push authenticates and runs the repo's `pre-push` hook, so
+  concurrent pushes would share one terminal's credential prompts and run
+  those hooks side by side, and the default push set is already narrowed to
+  the writable roles. The project-repo push always runs serially as the last
+  step regardless of `-j`.
 - `--dry-run` prints the push plan without executing any pushes.
 - `--force` force-pushes every repo in the operation.
 - `--role` / `--repo` narrow the member-repo push loop (union semantics)
@@ -64,7 +65,7 @@ Run `rwv push --help` for the full clap surface.
 
 Default text output is one line per repo and a summary.
 
-Under `--json` with `-j 1` (default), output is the pretty-printed envelope:
+Under `--json`, output is the pretty-printed envelope, whatever `-j` is:
 
 ```
 {
@@ -79,20 +80,13 @@ uses kind `project-repo-pushed` or `project-repo-failed` — its kind tag is the
 only way to distinguish it from member-repo records in the flat array. Failed
 records carry a `message` field with the free-form error from the git push.
 
-Under `--json -j N` with `N > 1`, the envelope is dropped and output switches
-to NDJSON — one JSON record per line, streamed to stdout as each repo's push
-completes. Every line is self-describing: each record embeds its own `"$schema"`
-URL alongside the per-repo fields. The project-repo record is appended last
-(after all manifest outcomes). Lines are mutex-guarded so concurrent workers
-cannot tear a single record's bytes.
-
 Schema:
 
 ```json
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "PushJsonOutput",
-  "description": "Top-level envelope for `rwv push --json` (serial mode, `jobs == 1`).\n\nShape: `{ \"$schema\": \"<url>\", \"outcomes\": [<PushOutcomeOutput>, ...] }`. Member-repo records appear first, sorted by repo path; the project-repo record is appended last (reflecting push ordering). Consumers can distinguish the project-repo record by checking `kind` for `\"project-repo-pushed\"` or `\"project-repo-failed\"`.",
+  "description": "Top-level envelope for `rwv push --json`.\n\nShape: `{ \"$schema\": \"<url>\", \"outcomes\": [<PushOutcomeOutput>, ...] }`. Member-repo records appear first, sorted by repo path; the project-repo record is appended last (reflecting push ordering). Consumers can distinguish the project-repo record by checking `kind` for `\"project-repo-pushed\"` or `\"project-repo-failed\"`.",
   "type": "object",
   "required": [
     "$schema",
@@ -122,7 +116,7 @@ Schema:
   },
   "definitions": {
     "PushOutcomeOutput": {
-      "description": "One per-repo outcome record in `rwv push --json` output.\n\nMember-repo records use `kind` values `pushed`, `skipped`, and `failed`. The project-repo record uses `kind` values `project-repo-pushed` and `project-repo-failed`, making it distinguishable from member-repo records in the same flat `outcomes` array.\n\nChoosing option (a) — a `kind` field — over option (b) (two separate arrays) because: a single flat array supports uniform streaming in NDJSON mode without requiring consumers to merge two streams; the `kind` tag already carries all the type information consumers need; and the kebab-case kind-tag convention matches sync/status/doctor precedent.",
+      "description": "One per-repo outcome record in `rwv push --json` output.\n\nMember-repo records use `kind` values `pushed`, `skipped`, and `failed`. The project-repo record uses `kind` values `project-repo-pushed` and `project-repo-failed`, making it distinguishable from member-repo records in the same flat `outcomes` array.",
       "oneOf": [
         {
           "description": "Member repo was pushed successfully.",
@@ -328,10 +322,10 @@ Identify the project-repo record:
 rwv push --json | jq '.outcomes[] | select(.kind | startswith("project-repo-"))'
 ```
 
-Parallel push, stream outcomes as NDJSON:
+Push four member repos at a time:
 
 ```
-rwv push --json -j 4 | jq -c 'select(.kind == "failed" or .kind == "project-repo-failed")'
+rwv push -j 4
 ```
 
 ## Common errors
