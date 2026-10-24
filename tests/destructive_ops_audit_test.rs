@@ -270,8 +270,12 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git.rs",
         pattern: "\"worktree\", \"remove\"",
-        count: 1,
-        callers: &[("remove_worktree", 4), ("prune_orphan_worktrees_for", 3)],
+        count: 2,
+        callers: &[
+            ("remove_worktree", 4),
+            ("prune_orphan_worktrees_for", 3),
+            ("prune_stale_worktree_registration", 2),
+        ],
         justification: "remove_worktree. NOTE the `--force`: git will remove \
             a DIRTY worktree here, so what protects each caller has to be \
             named per caller — the previous blanket \"every caller checks \
@@ -304,7 +308,16 @@ const ALLOWLIST: &[Allowed] = &[
             prune_orphan_worktrees_for is false for every pair and only \
             `worktree prune` (admin entries for absent dirs) actually runs. \
             (5) create --replace-existing's orphan prune: behind that \
-            branch's at_risk dirty-walk refusal.",
+            branch's at_risk dirty-walk refusal. \
+            The second site is prune_stale_worktree_registration, WITHOUT \
+            `--force`, and only after it has read the registration as \
+            unlocked and found nothing at its path, so git drops the \
+            administrative entry alone; a locked registration or a standing \
+            directory makes git refuse even if those reads were wrong. Its \
+            callers are doctor --fix's two registration repairs: \
+            fix_state_hygiene for a stale-worktree-registration finding, and \
+            prune_gone_registrations ahead of the stale ephemeral branch \
+            delete.",
     },
     Allowed {
         file: "git.rs",

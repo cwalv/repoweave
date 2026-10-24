@@ -1466,6 +1466,10 @@ fn repair_bindings() -> Vec<(&'static str, Binding)> {
             Findings(&["branch-discipline/stale-ephemeral-branch-safe"]),
         ),
         (
+            "pruned the registration of removed worktree",
+            Findings(&["branch-discipline/stale-ephemeral-branch-safe"]),
+        ),
+        (
             "re-pointed dangling parent",
             Findings(&["workweave-tree-integrity/dangling-parent"]),
         ),
