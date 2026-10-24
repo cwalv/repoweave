@@ -352,7 +352,15 @@ fn a_canonical_clone_fetch_creates_from_a_workweave_is_born_at_the_primarys_pin(
 fn an_unpinned_symlinked_member_gets_a_worktree_at_the_canonical_head_and_the_lock_is_left() {
     let tmp = common::tempdir().unwrap();
     let (weave, seat) = make_weave(tmp.path());
-    let (_, upstream, head) = publish(&weave.tmp, "late");
+    let (source, upstream, head) = publish(&weave.tmp, "late");
+    commit(&source, "LATER");
+    common::git_in(&source, &["push", &upstream.to_string_lossy(), "main"]);
+    add_late_member(
+        &weave.primary.join("projects").join(PROJECT),
+        &weave.owned_upstream,
+        &upstream,
+        Some(&head),
+    );
     let project_dir = seat.join("projects").join(PROJECT);
     add_late_member(&project_dir, &weave.owned_upstream, &upstream, None);
     let canonical = weave.primary.join(LATE_PATH);
@@ -373,6 +381,12 @@ fn an_unpinned_symlinked_member_gets_a_worktree_at_the_canonical_head_and_the_lo
     assert!(fetched.status.success(), "{}", describe(&fetched));
     let checkout = seat.join(LATE_PATH);
     assert!(!checkout.is_symlink() && checkout.join(".git").is_file());
+    assert_eq!(common::git_in(&canonical, &["rev-parse", "HEAD"]), head);
+    assert_ne!(
+        common::git_in(&canonical, &["rev-parse", "origin/main"]),
+        head,
+        "fixture: the canonical clone's HEAD is not its remote's tip"
+    );
     assert_eq!(common::git_in(&checkout, &["rev-parse", "HEAD"]), head);
     assert_eq!(doctor_about(&seat, LATE_PATH).0, Vec::<String>::new());
     assert_eq!(
