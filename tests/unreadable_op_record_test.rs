@@ -64,6 +64,14 @@ fn succeed(dir: &Path, args: &[&str]) -> Output {
     out
 }
 
+fn assert_routes_to(stderr: &str, token: &str) {
+    let routed: Vec<&str> = stderr
+        .lines()
+        .filter_map(|l| l.strip_prefix("rwv explain "))
+        .collect();
+    assert_eq!(routed, vec![token], "stderr was:\n{stderr}");
+}
+
 fn stderr_of(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
@@ -312,12 +320,12 @@ fn removing_a_record_that_names_no_op_leaves_only_what_its_error_names() {
         let out = rwv(dir, args);
         let stderr = stderr_of(&out);
         assert!(!out.status.success(), "{}", transcript(&out));
+        assert_routes_to(&stderr, "dead-op-lease");
         assert!(
-            stderr.contains("rwv explain dead-op-lease")
-                && stderr.contains(&format!(
-                    "`rwv doctor --fix` run in {} releases the lease",
-                    target.display()
-                )),
+            stderr.contains(&format!(
+                "`rwv doctor --fix` run in {} releases the lease",
+                target.display()
+            )),
             "rwv {args:?} must name the lease's own remedy, not `rwv abort`:\n{}",
             transcript(&out)
         );

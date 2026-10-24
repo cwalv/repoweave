@@ -896,10 +896,11 @@ fn abort_foreign_tip_shows_blocking_commits() {
 }
 
 /// A tip slot holding a name rather than a commit id is a corrupt record.
-/// It is refused where the record is read: before any repo is classified,
-/// and so before abort writes a pre-abort ref anywhere.
+/// Abort reads only its header, so the name is never resolved: the repo the
+/// tag points at is not attributed to the op and is refused as foreign, its
+/// tip captured by the pre-abort ref and left in place.
 #[test]
-fn abort_refuses_an_owner_record_whose_tip_slot_holds_a_tag_name() {
+fn abort_never_resolves_a_tag_name_in_an_owner_records_tip_slot() {
     let tmp = common::tempdir().unwrap();
     let ws = make_fixture(tmp.path(), "primary");
 
@@ -932,8 +933,13 @@ fn abort_refuses_an_owner_record_whose_tip_slot_holds_a_tag_name() {
         "the refusal names the value in the slot.\nstderr:\n{stderr}"
     );
     assert!(
-        pre_abort_ref_sha(&ws.server_dir, op_id).is_none(),
-        "a record refused at load classifies no repo, so no pre-abort ref is written"
+        stderr.contains("foreign-tip violation"),
+        "the tagged tip is not attributed to the op.\nstderr:\n{stderr}"
+    );
+    assert_eq!(
+        pre_abort_ref_sha(&ws.server_dir, op_id).as_deref(),
+        Some(server_converged.as_str()),
+        "rail 1 captures the refused tip"
     );
     assert_eq!(
         common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]),

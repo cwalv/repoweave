@@ -901,15 +901,21 @@ pub fn read_owner(workspace_dir: &Path) -> anyhow::Result<Option<OwnerRecord>> {
         Some(OwnerReading::HeaderOnly {
             header,
             parse_error,
-        }) => Err(anyhow::anyhow!(
-            "failed to parse owner record at {path}: {parse_error}. This rwv cannot resume \
-             the {verb} op it records; `rwv abort` still discards it, because the op's id \
-             and workspaces parse: it restores the repos it can attribute from the op's \
-             savepoints and refuses the rest by name",
-            path = OwnerRecord::path_in(workspace_dir),
-            verb = header.verb,
+        }) => Err(unparseable_record(
+            &OwnerRecord::path_in(workspace_dir),
+            &parse_error,
+            &format!(
+                "This rwv cannot resume the {verb} op it records; `rwv abort` still discards \
+                 it, because the op's id and workspaces parse: it restores the repos it can \
+                 attribute from the op's savepoints and refuses the rest by name",
+                verb = header.verb,
+            ),
         )),
     }
+}
+
+fn unparseable_record(path: &StatePath, parse_error: &str, advice: &str) -> anyhow::Error {
+    anyhow::anyhow!("failed to parse owner record at {path}: {parse_error}. {advice}")
 }
 
 /// Read the `.rwv-op` file from `workspace_dir` as `rwv abort` needs it.
@@ -933,14 +939,15 @@ pub fn read_owner_for_abort(workspace_dir: &Path) -> anyhow::Result<Option<Owner
             header,
             parse_error: format!("{whole_error:#}"),
         })),
-        Err(_) => Err(anyhow::anyhow!(
-            "failed to parse owner record at {path}: {whole_error:#}. It names no op this rwv \
-             can read, so neither resuming nor `rwv abort` can use it. Removing the file \
-             discards the op and leaves what it did in place: repos it left mid-rebase or \
-             mid-merge, which `rwv status` marks and git's own `rebase --abort` or \
-             `merge --abort` returns to their branch; the lease it holds on the workspace \
-             the record names as `target`, which `rwv doctor --fix` run there releases; \
-             and its savepoints, which `rwv doctor` lists"
+        Err(_) => Err(unparseable_record(
+            &path,
+            &format!("{whole_error:#}"),
+            "It names no op this rwv can read, so neither resuming nor `rwv abort` can use \
+             it. Removing the file discards the op and leaves what it did in place: repos it \
+             left mid-rebase or mid-merge, which `rwv status` marks and git's own \
+             `rebase --abort` or `merge --abort` returns to their branch; the lease it holds \
+             on the workspace the record names as `target`, which `rwv doctor --fix` run \
+             there releases; and its savepoints, which `rwv doctor` lists",
         )),
     }
 }
@@ -1050,63 +1057,56 @@ pub fn check_no_op_in_progress(workspace_dirs: &[&Path]) -> anyhow::Result<()> {
 /// Split out of [`check_no_op_in_progress`] so [`acquire_op`] can emit the
 /// identical refusal shape on an atomic-create `AlreadyExists`.
 fn in_flight_refusal_for(dir: &Path) -> anyhow::Result<Option<anyhow::Error>> {
-    Ok(
-        in_flight_sentence_for(dir)?
-            .map(|(kind, sentence)| crate::refusal::refusal(kind, sentence)),
-    )
+    Ok(match in_flight_sentence_for(dir)? {
+        None => None,
+        Some(InFlight::Op(sentence)) => {
+            Some(crate::refusal::refusal(RefusalKind::OpInProgress, sentence))
+        }
+        Some(InFlight::DeadLease(sentence)) => {
+            Some(crate::refusal::refusal(RefusalKind::DeadOpLease, sentence))
+        }
+    })
 }
 
-fn in_flight_sentence_for(dir: &Path) -> anyhow::Result<Option<(RefusalKind, String)>> {
+enum InFlight {
+    Op(String),
+    DeadLease(String),
+}
+
+fn in_flight_sentence_for(dir: &Path) -> anyhow::Result<Option<InFlight>> {
     // Owner record: full detail is right here.
     if let Some(record) = read_owner(dir)? {
         let elapsed = elapsed_since(&record.started_at);
-        return Ok(Some((
-            RefusalKind::OpInProgress,
-            format!(
-                "{verb} in progress (started {elapsed} ago, mid `{phase}`) at {dir}.\n\
+        return Ok(Some(InFlight::Op(format!(
+            "{verb} in progress (started {elapsed} ago, mid `{phase}`) at {dir}.\n\
              Rerun with `{resume}` from that workspace after resolving, \
              or `rwv abort` to discard.",
-                verb = record.verb,
-                phase = record.phase,
-                dir = dir.display(),
-                resume = resume_command(record.verb),
-            ),
-        )));
+            verb = record.verb,
+            phase = record.phase,
+            dir = dir.display(),
+            resume = resume_command(record.verb),
+        ))));
     }
     // Lease: follow the pointer to the owner record so the refusal carries
     // the same op / age / phase detail and names where `--continue` runs.
     if let Some(lease) = read_lease(dir)? {
-        let owner = read_owner(lease.owner.as_path()).map_err(|e| {
-            anyhow::anyhow!(
-                "{} is leased to op {}, owned by {}: {e:#}",
-                dir.display(),
-                lease.id,
-                lease.owner.as_path().display()
-            )
-        })?;
-        match owner {
+        match read_owner(lease.owner.as_path())? {
             Some(record) if record.id == lease.id => {
                 let elapsed = elapsed_since(&record.started_at);
-                return Ok(Some((
-                    RefusalKind::OpInProgress,
-                    format!(
-                        "{verb} in progress (started {elapsed} ago, mid `{phase}`); this \
+                return Ok(Some(InFlight::Op(format!(
+                    "{verb} in progress (started {elapsed} ago, mid `{phase}`); this \
                      workspace ({dir}) is leased to it. Owner workspace: {owner}.\n\
                      Rerun with `{resume}` from the owner workspace after \
                      resolving, or `rwv abort` to discard.",
-                        verb = record.verb,
-                        phase = record.phase,
-                        dir = dir.display(),
-                        owner = lease.owner.as_path().display(),
-                        resume = resume_command(record.verb),
-                    ),
-                )));
+                    verb = record.verb,
+                    phase = record.phase,
+                    dir = dir.display(),
+                    owner = lease.owner.as_path().display(),
+                    resume = resume_command(record.verb),
+                ))));
             }
             _ => {
-                return Ok(Some((
-                    RefusalKind::DeadOpLease,
-                    dead_lease_sentence(dir, &lease),
-                )));
+                return Ok(Some(InFlight::DeadLease(dead_lease_sentence(dir, &lease))));
             }
         }
     }

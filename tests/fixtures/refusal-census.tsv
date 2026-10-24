@@ -64,8 +64,8 @@ src/lock.rs	(untokened:environment-passthrough)	-	2
 src/lock.rs	dirty-checkout	tests/refusal_arrival_test.rs	2
 src/manifest.rs	legacy-manifest-format	tests/refusal_arrival_test.rs	1
 src/op_state.rs	(untokened:UNCLASSIFIED)	-	1
-src/op_state.rs	(untokened:internal-invariant)	-	3
-src/op_state.rs	dead-op-lease	-	1
+src/op_state.rs	(untokened:internal-invariant)	-	2
+src/op_state.rs	dead-op-lease	tests/unreadable_op_record_test.rs	2
 src/op_state.rs	no-op-recorded	tests/refusal_arrival_test.rs	1
 src/op_state.rs	op-acquisition-raced	-	2
 src/op_state.rs	op-in-progress	tests/refusal_arrival_test.rs	1
