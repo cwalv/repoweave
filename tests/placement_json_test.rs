@@ -315,12 +315,8 @@ fn sync_to_places_a_member_it_creates_in_the_target_under_either_worker_count() 
         assert!(seat.join(EXTRA).is_dir() && !target.join(EXTRA).exists());
 
         let target_arg = target.to_string_lossy();
-        let (records, placements) = outcomes_and_placements(
-            &seat,
-            &["sync-to", &target_arg, "--json"],
-            "outcomes",
-            jobs,
-        );
+        let (records, placements) =
+            outcomes_and_placements(&seat, &["sync-to", &target_arg, "--json"], "outcomes", jobs);
         let context = format!("-j {jobs}\n{records:#?}\n{placements:#?}");
         assert!(target.join(EXTRA).is_dir(), "{context}");
         let placement = placement_of(&placements, &target.join(EXTRA), &context);

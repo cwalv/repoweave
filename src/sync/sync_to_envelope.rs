@@ -10,8 +10,8 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use super::{
-    in_manifest_order, ContainmentOutput, MemberOutput, OpCoordinates, OutputHandler, RepoSyncOutcome,
-    RetiredWorkweave, Step3AdvanceOutput, SyncOutcomeOutput, SyncToJsonOutput,
+    in_manifest_order, ContainmentOutput, MemberOutput, OpCoordinates, OutputHandler,
+    RepoSyncOutcome, RetiredWorkweave, Step3AdvanceOutput, SyncOutcomeOutput, SyncToJsonOutput,
     SYNC_TO_JSON_SCHEMA_URL,
 };
 use crate::manifest::{RepoKey, WorkweaveName};

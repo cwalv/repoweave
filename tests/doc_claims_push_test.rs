@@ -779,7 +779,11 @@ fn push_json_envelope_under_parallel_mode() {
         .iter()
         .filter_map(|o| o["kind"].as_str())
         .collect();
-    assert_eq!(kinds, ["pushed", "pushed", "project-repo-pushed"], "{stdout}");
+    assert_eq!(
+        kinds,
+        ["pushed", "pushed", "project-repo-pushed"],
+        "{stdout}"
+    );
 }
 
 // ===========================================================================

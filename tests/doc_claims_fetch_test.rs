@@ -693,7 +693,9 @@ fn fetch_json_envelope_under_parallel_jobs() {
         schema_val.ends_with("/docs/reference/schemas/fetch.json"),
         "$schema must end with /docs/reference/schemas/fetch.json; got: {schema_val}"
     );
-    let outcomes = parsed["outcomes"].as_array().expect("outcomes must be array");
+    let outcomes = parsed["outcomes"]
+        .as_array()
+        .expect("outcomes must be array");
     let paths: Vec<&str> = outcomes.iter().filter_map(|o| o["path"].as_str()).collect();
     assert_eq!(paths, ["local/org/aa", "local/org/bb"], "{stdout}");
     for outcome in outcomes {
