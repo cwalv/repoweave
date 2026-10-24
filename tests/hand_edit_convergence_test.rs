@@ -657,8 +657,8 @@ fn a_refused_url_add_in_a_workweave_names_its_worktree_and_its_clone() {
 }
 
 /// The branch a workweave's `remove --delete` retires is one holding nothing
-/// the canonical clone's checkout lacks: a commit made on it and then left by
-/// the worktree keeps the branch, and its receipt, in place.
+/// the workweave's parent or the primary weave lacks: a commit made on it and
+/// then left by the worktree keeps the branch, and its receipt, in place.
 #[test]
 fn remove_delete_in_a_workweave_keeps_its_branch_when_it_holds_commits() {
     let weave = Weave::new();
@@ -677,8 +677,10 @@ fn remove_delete_in_a_workweave_keeps_its_branch_when_it_holds_commits() {
     let out = succeed(&["remove", &beta, "--delete"], &workweave);
 
     assert!(!worktree.exists());
+    let stderr = stderr_of(&out);
     assert!(
-        stderr_of(&out).contains("warning: kept branch `demo--feat`"),
+        stderr.contains("branch demo--feat is rwv's but holds commits no baseline contains")
+            && !stderr.contains("is not recorded as rwv's"),
         "{}",
         describe(&out)
     );

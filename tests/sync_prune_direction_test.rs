@@ -508,6 +508,109 @@ fn json_records_a_pruned_member() {
     assert!(!common::under(&s1, EXTRA).exists());
 }
 
+const SEAT_BRANCH: &str = "app--s1";
+
+fn branch_exists(store: &Path, branch: &str) -> bool {
+    !common::git_in(store, &["branch", "--list", branch]).is_empty()
+}
+
+fn registered_worktrees(store: &Path) -> usize {
+    common::git_in(store, &["worktree", "list", "--porcelain"])
+        .lines()
+        .filter(|line| line.starts_with("worktree "))
+        .count()
+}
+
+/// After the seat's prune the primary's clone holds nothing of the seat's —
+/// no worktree registration, no branch, no receipt — so `rwv remove --delete`
+/// in the primary deletes it.
+fn assert_the_clone_is_released(weave: &Weave) {
+    let clone = common::under(&weave.root, EXTRA);
+    assert_eq!(
+        registered_worktrees(&clone),
+        1,
+        "only the clone's own checkout may stay registered:\n{}",
+        common::git_in(&clone, &["worktree", "list", "--porcelain"])
+    );
+    assert!(
+        !branch_exists(&clone, SEAT_BRANCH),
+        "the prune must retire the branch the seat was given in the clone"
+    );
+    succeed(&weave.root, &["remove", EXTRA, "--delete"]);
+    assert!(!clone.exists());
+}
+
+#[test]
+fn pruning_a_member_the_source_dropped_releases_the_primarys_clone() {
+    let weave = weave();
+    let s1 = seat_behind_a_drop(&weave);
+    assert!(
+        branch_exists(&common::under(&weave.root, EXTRA), SEAT_BRANCH),
+        "fixture: the seat holds a branch in the clone"
+    );
+
+    let stdout = succeed(&s1, &["sync", "primary"]);
+    assert!(
+        stdout.contains(&format!("{EXTRA}: pruned (dropped from lock)")),
+        "{stdout}"
+    );
+    assert_the_clone_is_released(&weave);
+}
+
+#[test]
+fn pruning_a_member_only_the_seat_added_releases_the_primarys_clone() {
+    let weave = weave();
+    let s1 = seat(&weave, &weave.root, "s1");
+    add_and_commit(&s1, &weave.extra_url, "owned");
+
+    let stdout = succeed(&s1, &["sync", "primary", "--discard-local-commits"]);
+    assert!(
+        stdout.contains(&format!("{EXTRA}: pruned (dropped from lock)")),
+        "{stdout}"
+    );
+    assert_the_clone_is_released(&weave);
+}
+
+/// The seat's branch holds a commit no baseline contains while its checkout
+/// sits detached on the clone's tip: the prune removes the checkout, but the
+/// branch and its receipt stay, and the warning names the branch.
+#[test]
+fn pruning_keeps_a_seat_branch_that_holds_commits_nothing_else_has() {
+    let weave = weave();
+    let s1 = seat_behind_a_drop(&weave);
+    let checkout = common::under(&s1, EXTRA);
+    commit_note(&checkout, "only on the seat's branch\n");
+    let kept = head(&checkout);
+    common::git_in(&checkout, &["checkout", "-q", "--detach", "HEAD~1"]);
+
+    let out = run(&s1, &["sync", "primary"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stdout}\n{stderr}");
+    assert!(!checkout.exists(), "{stdout}\n{stderr}");
+    let clone = common::under(&weave.root, EXTRA);
+    assert_eq!(
+        common::git_in(&clone, &["rev-parse", SEAT_BRANCH]),
+        kept,
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "  warning: {EXTRA}: branch {SEAT_BRANCH} is rwv's but holds commits no baseline \
+             contains; left in place."
+        )) && !stderr.contains("is not recorded as rwv's"),
+        "{stderr}"
+    );
+    let out = run(&weave.root, &["remove", EXTRA, "--delete"]);
+    assert!(
+        !out.status.success()
+            && String::from_utf8_lossy(&out.stderr)
+                .contains(&format!("ownership receipt for branch {SEAT_BRANCH}")),
+        "the receipt still claims the clone:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 /// A seat behind a drop whose checkout of the dropped member holds untracked
 /// work, so replay's prune of it is refused.
 fn seat_with_an_unprunable_drop(weave: &Weave) -> PathBuf {

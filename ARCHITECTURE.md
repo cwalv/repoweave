@@ -338,7 +338,11 @@ for a member that manifest names, the source's lock names, and CWD lacks;
 then the Phase 2 fan-out over the member repos; then `prune_dropped_repo`
 for a member the pre-op manifest named and the replayed one does not. The
 pre-op manifest is read at the project repo's savepoint, so a `--continue`
-weighs the same set the interrupted run did. Relock regenerates the lock
+weighs the same set the interrupted run did. In a workweave the prune takes
+the checkout out of the primary's clone through `release_checkout`
+(`src/workweave.rs`), the same release `delete_workweave` runs for each
+member: the worktree is unregistered and the workweave's recorded branch
+retired there. Relock regenerates the lock
 from the same replayed manifest, so the checkouts and the lock agree by
 construction.
 

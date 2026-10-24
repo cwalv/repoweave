@@ -1971,6 +1971,13 @@ pub(crate) enum RemovalCause {
 }
 
 impl RemovalCause {
+    fn releaser(self) -> crate::workweave::Releaser {
+        match self {
+            Self::DroppedFromLock => crate::workweave::Releaser::Prune,
+            Self::RemoveDelete => crate::workweave::Releaser::Remove,
+        }
+    }
+
     fn situation(self) -> &'static str {
         match self {
             Self::DroppedFromLock => "dropped from lock",
@@ -2003,10 +2010,12 @@ pub(crate) struct CheckoutRemoval(Removal);
 
 enum Removal {
     Absent,
-    /// A worktree registered against the canonical clone at `store`.
+    /// A workweave's worktree registered against the canonical clone in the
+    /// primary weave, released from it the way deleting the workweave would.
     RegisteredWorktree {
-        store: PathBuf,
-        checkout: PathBuf,
+        checkout: crate::workweave::WorkweaveCheckout,
+        registry: crate::workweave_index::RefRegistry,
+        releaser: crate::workweave::Releaser,
     },
     /// A workspace linked into a store elsewhere; only its working tree goes.
     LinkedWorkspace(PathBuf),
@@ -2022,10 +2031,20 @@ impl CheckoutRemoval {
     pub(crate) fn perform(self, vcs: &dyn Vcs, repo_path: &RepoPath) -> anyhow::Result<()> {
         match self.0 {
             Removal::Absent => {}
-            Removal::RegisteredWorktree { store, checkout } => {
-                vcs.remove_worktree(&store, &checkout)
-                    .with_context(|| format!("worktree remove for {repo_path} failed"))?;
-                let _ = vcs.worktree_prune(&store);
+            Removal::RegisteredWorktree {
+                checkout,
+                mut registry,
+                releaser,
+            } => {
+                crate::workweave::release_checkout(
+                    vcs,
+                    &mut registry,
+                    &checkout,
+                    repo_path.as_str(),
+                    None,
+                    releaser,
+                )
+                .with_context(|| format!("worktree remove for {repo_path} failed"))?;
             }
             Removal::LinkedWorkspace(dest) | Removal::Store(dest) => {
                 std::fs::remove_dir_all(&dest)
@@ -2059,7 +2078,9 @@ pub(crate) fn plan_checkout_removal(
     }
 
     match &ctx.checkout {
-        Checkout::Workweave { .. } => {
+        Checkout::Workweave {
+            name, dir, project, ..
+        } => {
             // Diverged-from-canonical check: refuse if local commits would be lost.
             let canonical = ctx.primary_path().join(repo_path.as_path());
             if canonical.exists() {
@@ -2077,9 +2098,26 @@ pub(crate) fn plan_checkout_removal(
                         }
                     }
                 }
+                let workweave = crate::manifest::WorkweaveId {
+                    project: project.clone(),
+                    name: name.require(dir.as_path(), project)?.clone(),
+                };
+                let store = crate::workweave::receipt_store_for(vcs, &canonical);
                 Ok(CheckoutRemoval(Removal::RegisteredWorktree {
-                    store: canonical,
-                    checkout: dest,
+                    checkout: crate::workweave::WorkweaveCheckout::of_live_workweave(
+                        vcs,
+                        ctx.primary_path(),
+                        dir.as_path(),
+                        &workweave,
+                        store,
+                        dest,
+                        &repo_path.as_path(),
+                    ),
+                    registry: crate::workweave_index::RefRegistry::for_project(
+                        ctx.primary_path(),
+                        project,
+                    ),
+                    releaser: cause.releaser(),
                 }))
             } else {
                 // No canonical at the primary-side slot. That is a fact about

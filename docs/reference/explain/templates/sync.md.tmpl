@@ -45,6 +45,14 @@ re-deriving it is. The note prints only in a checkout that materializes the
 synced project (a workweave always; a primary only for the active project)
 and only when an input actually moved: source-only deliveries stay quiet.
 
+In a workweave, a pruned checkout leaves the primary weave's clone of the repo
+as it would if the workweave were deleted: its worktree is unregistered there,
+and the branch the workweave was given in that clone is deleted, with its
+ownership receipt, once the workweave's parent or the primary weave holds its
+commits. A branch holding commits neither holds stays, receipt and all, and a
+warning names it. The clone itself stays; `rwv remove <path> --delete` in the
+primary weave removes it.
+
 `role: reference` repos sync like every other member: each is a worktree on
 the workweave's ephemeral branch. A member the source's lock pins and this
 workspace lacks is created at the revision replay aims it at. A workweave

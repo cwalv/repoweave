@@ -131,7 +131,7 @@ const ALLOWLIST: &[Allowed] = &[
             (2) WORKWEAVE arm — a checkout removal, and it is one because \
             the arm proves it rather than inferring it. The divergence \
             refusal covers only the `canonical.exists()` branch, which ends \
-            at remove_worktree; the remove_dir_all is in the `else`, where \
+            at workweave::release_checkout; the remove_dir_all is in the `else`, where \
             there is no canonical to compare against and that check is not \
             available. So before deleting, the else branch resolves the \
             checkout's actual store (workweave::resolved_worktree_parent, \
@@ -271,23 +271,28 @@ const ALLOWLIST: &[Allowed] = &[
         file: "git.rs",
         pattern: "\"worktree\", \"remove\"",
         count: 1,
-        callers: &[("remove_worktree", 5), ("prune_orphan_worktrees_for", 3)],
+        callers: &[("remove_worktree", 4), ("prune_orphan_worktrees_for", 3)],
         justification: "remove_worktree. NOTE the `--force`: git will remove \
             a DIRTY worktree here, so what protects each caller has to be \
             named per caller — the previous blanket \"every caller checks \
             for uncommitted changes and unique commits first\" was measured \
             false for the rollback callers, which check neither. \
-            (1) delete_workweave (manifest repos, and the project repo): \
-            behind the dirty refusal unless --discard-uncommitted and the \
-            unmerged refusal unless DiscardUnmergedConsent (see the \
-            workweave.rs/remove_dir_all entry). It also resolves each \
-            worktree's actual canonical-store parent \
-            (Vcs::resolve_canonical_store) and refuses when that checkout is \
-            itself a canonical store with dependents outside the workweave — \
-            the tier-0 topology precondition, not bypassable by any waiver. \
-            (2) prune_dropped_repo: behind the uncommitted-changes refusal, \
-            and on the only arm that reaches remove_worktree also behind the \
-            divergence refusal (that arm is the `canonical.exists()` one). \
+            (1) workweave::release_checkout, the one release of a \
+            workweave's member checkout, reached two ways. From \
+            delete_workweave's member loop: behind the dirty refusal unless \
+            --discard-uncommitted and the unmerged refusal unless \
+            DiscardUnmergedConsent (see the workweave.rs/remove_dir_all \
+            entry), after resolving each worktree's actual canonical-store \
+            parent (Vcs::resolve_canonical_store) and refusing when that \
+            checkout is itself a canonical store with dependents outside the \
+            workweave — the tier-0 topology precondition, not bypassable by \
+            any waiver. From CheckoutRemoval::perform's RegisteredWorktree \
+            arm, for prune_dropped_repo and for rwv remove --delete in a \
+            workweave: plan_checkout_removal is that arm's only constructor, \
+            and builds it only behind the uncommitted-changes refusal and \
+            the divergence refusal of its `canonical.exists()` branch. \
+            (2) delete_workweave's project repo: behind the same two \
+            refusals as (1)'s delete route. \
             (3) create rollback — CreateRollbackGuard::drop and \
             rollback_and_collect_failures: NO dirty check, and none is \
             wanted. These iterate `self.registered_worktrees`, which holds \

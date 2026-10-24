@@ -12,10 +12,7 @@ use crate::registry::{
     builtin_registries, recorded_remote, resolve_to_clone_info, CloneUrl, CreationParamError,
     ParamKind, ParamMap, RecordedRemote, RegistryName, Upstream,
 };
-use crate::vcs::{
-    vcs_for, DeletionWarrant, EphemeralRefName, HeadAttachment, RemoteBranchCopies, TrackingRef,
-    Vcs,
-};
+use crate::vcs::{vcs_for, HeadAttachment, RemoteBranchCopies, TrackingRef, Vcs};
 use crate::workspace::{project_dir, Checkout, WorkspaceContext};
 use crate::workweave_index::RefRegistry;
 use anyhow::Context;
@@ -944,21 +941,6 @@ pub fn run_remove(
     };
     let vcs = vcs_for(vcs_type);
 
-    let workweave_ref = match &ctx.checkout {
-        Checkout::Workweave {
-            name, dir, project, ..
-        } if removal.deletes_checkout() => Some((
-            project,
-            EphemeralRefName::mint(
-                &crate::manifest::WorkweaveId {
-                    project: project.clone(),
-                    name: name.require(dir.as_path(), project)?.clone(),
-                }
-                .flat(),
-            ),
-        )),
-        _ => None,
-    };
     let plan = if removal.deletes_checkout() {
         if let Checkout::Primary { .. } = ctx.checkout {
             refuse_shared_clone_delete(
@@ -1011,68 +993,8 @@ pub fn run_remove(
         if deleted {
             eprintln!("Deleted '{}'", checkout.display());
         }
-        if let Some((project, ephemeral)) = workweave_ref {
-            let canonical = ctx.primary_path().join(repo_path.as_path());
-            retire_workweave_ref(
-                vcs.as_ref(),
-                ctx.primary_path(),
-                project,
-                ephemeral,
-                &canonical,
-            )
-            .with_context(|| {
-                format!(
-                    "'{}' is out of this workweave, but the branch the workweave held in \
-                     {} could not be deleted",
-                    repo_path.as_str(),
-                    canonical.display()
-                )
-            })?;
-        }
     }
 
-    Ok(())
-}
-
-/// Once a workweave's checkout of the repo whose canonical clone is
-/// `canonical` is gone, destroy the branch `ephemeral` the workweave was given
-/// there and retract its receipt, so nothing of the workweave's still claims
-/// the clone. A branch carrying commits the clone's checkout does not contain
-/// is left in place with its receipt, and said so.
-fn retire_workweave_ref(
-    vcs: &dyn Vcs,
-    primary_root: &Path,
-    project: &ProjectName,
-    ephemeral: EphemeralRefName,
-    canonical: &Path,
-) -> anyhow::Result<()> {
-    if !vcs.is_repo(canonical) {
-        return Ok(());
-    }
-    let store = crate::workweave::receipt_store_for(vcs, canonical);
-    let raw = ephemeral.to_raw();
-    let mut registry = RefRegistry::for_project(primary_root, project);
-    let Some(owned) = registry.lookup(&store, &raw)? else {
-        return Ok(());
-    };
-    vcs.worktree_prune(&store)?;
-    if vcs.resolve_local_branch_tip(&store, &raw)?.is_some() {
-        let warrant = vcs
-            .head_revision(canonical)
-            .ok()
-            .and_then(|head| DeletionWarrant::merged(vcs, &owned, &head))
-            .or_else(|| DeletionWarrant::unmoved(vcs, &owned));
-        let Some(warrant) = warrant else {
-            eprintln!(
-                "warning: kept branch `{owned}` in {}: it holds commits the clone's \
-                 checkout does not",
-                store.display()
-            );
-            return Ok(());
-        };
-        vcs.delete_owned_ref(&owned, warrant)?;
-    }
-    registry.retract(&store, &raw)?;
     Ok(())
 }
 

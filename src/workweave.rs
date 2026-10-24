@@ -3059,6 +3059,7 @@ fn baseline_tips_in_store(
 /// Receipts are retracted **after** the ref they describe is gone, never
 /// before: the reverse order would leave an unreceipted ref, which R2 disowns
 /// permanently. Retraction is what later lets R4 pass for `prune_dropped_repo`.
+#[allow(clippy::too_many_arguments)]
 fn retire_recorded_refs(
     vcs: &dyn Vcs,
     registry: &mut RefRegistry,
@@ -3067,17 +3068,21 @@ fn retire_recorded_refs(
     label: &str,
     baseline_tips: &[ResolvedRevisionId],
     discard_unmerged: Option<DiscardUnmergedConsent>,
+    releaser: Releaser,
 ) {
+    let say = releaser.prefix();
     let raw = ephemeral.to_raw();
-    match registry.lookup(store, &raw) {
+    let receipt = registry.lookup(store, &raw);
+    let receipt_absent = matches!(receipt, Ok(None));
+    match receipt {
         Ok(Some(owned)) => match vcs.resolve_local_branch_tip(store, &raw) {
             Ok(None) => {
                 // Recorded, but the ref is already gone. Nothing to destroy;
                 // retract the dangling receipt so the store can later satisfy R4.
                 if let Err(e) = registry.retract(store, &raw) {
                     eprintln!(
-                        "rwv workweave delete: warning: {label}: branch {owned} is already \
-                         gone but its ownership receipt could not be retracted ({e:#}); run \
+                        "{say}warning: {label}: branch {owned} is already gone but its \
+                         ownership receipt could not be retracted ({e:#}); run \
                          `rwv doctor --fix`"
                     );
                 }
@@ -3094,55 +3099,165 @@ fn retire_recorded_refs(
                             Ok(()) => {
                                 if let Err(e) = registry.retract(store, &raw) {
                                     eprintln!(
-                                        "rwv workweave delete: warning: {label}: branch \
-                                         {owned} deleted ({why}) but its ownership receipt \
-                                         could not be retracted ({e:#}); run `rwv doctor --fix`"
+                                        "{say}warning: {label}: branch {owned} deleted \
+                                         ({why}) but its ownership receipt could not be \
+                                         retracted ({e:#}); run `rwv doctor --fix`"
                                     );
                                 }
                             }
                             Err(e) => eprintln!(
-                                "rwv workweave delete: warning: {label}: could not delete \
-                                 branch {owned} ({why}): {e:#}"
+                                "{say}warning: {label}: could not delete branch {owned} \
+                                 ({why}): {e:#}"
                             ),
                         }
                     }
                     None => eprintln!(
-                        "rwv workweave delete: warning: {label}: branch {owned} is rwv's but \
-                         holds commits no baseline contains; left in place. Merge it, or \
-                         re-run with --discard-unmerged-commits to consent to losing it."
+                        "{say}warning: {label}: branch {owned} is rwv's but holds commits no \
+                         baseline contains; left in place.{}",
+                        releaser.unmerged_remedy()
                     ),
                 }
             }
         },
         Ok(None) => {}
         Err(e) => eprintln!(
-            "rwv workweave delete: warning: {label}: could not read the ownership receipts \
-             in {}: {e:#}",
+            "{say}warning: {label}: could not read the ownership receipts in {}: {e:#}",
             store.display()
         ),
     }
 
-    // Report-only. Anything still standing in this workweave's namespace is a
-    // ref rwv did not record creating, so under R2 it is not rwv's to delete —
-    // it is the operator's, and the only useful thing to do with it is say so.
-    match vcs.list_branch_names_with_prefix(store, ephemeral.to_raw().as_str()) {
+    // Report-only. Anything else still standing in this workweave's namespace
+    // is a ref rwv did not record creating, so under R2 it is not rwv's to
+    // delete — it is the operator's, and the only useful thing to do with it is
+    // say so. The recorded name is one of those only when the registry said so:
+    // kept above, or unreadable, it is not unrecorded.
+    match vcs.list_branch_names_with_prefix(store, raw.as_str()) {
         Ok(observed) => {
             for branch in observed {
-                if is_this_workweaves_namespace(&branch, ephemeral) {
+                if is_this_workweaves_namespace(&branch, ephemeral)
+                    && (branch != raw || receipt_absent)
+                {
                     eprintln!(
-                        "rwv workweave delete: {label}: branch {branch} is not recorded as \
-                         rwv's; left in place (delete it yourself with \
-                         `git -C {repo} branch -d {branch}` if you no longer want it)",
+                        "{say}{label}: branch {branch} is not recorded as rwv's; left in place \
+                         (delete it yourself with `git -C {repo} branch -d {branch}` if you no \
+                         longer want it)",
                         repo = store.display(),
                     );
                 }
             }
         }
         Err(e) => eprintln!(
-            "rwv workweave delete: warning: {label}: could not list branches in {}: {e:#}",
+            "{say}warning: {label}: could not list branches in {}: {e:#}",
             store.display()
         ),
     }
+}
+
+/// The verb taking a workweave's checkout out of its store, as the lines about
+/// the branch it retires there say it.
+#[derive(Clone, Copy)]
+pub(crate) enum Releaser {
+    Delete,
+    Prune,
+    Remove,
+}
+
+impl Releaser {
+    fn prefix(self) -> &'static str {
+        match self {
+            Self::Delete => "rwv workweave delete: ",
+            Self::Prune => "  ",
+            Self::Remove => "",
+        }
+    }
+
+    fn unmerged_remedy(self) -> &'static str {
+        match self {
+            Self::Delete => {
+                " Merge it, or re-run with --discard-unmerged-commits to consent to losing it."
+            }
+            Self::Prune | Self::Remove => "",
+        }
+    }
+}
+
+/// A workweave's checkout of one repo, on its way out of the store it links
+/// into, with the branch the workweave was given there and the tips that
+/// count as having landed that branch.
+pub(crate) struct WorkweaveCheckout {
+    store: PathBuf,
+    path: PathBuf,
+    ephemeral: EphemeralRefName,
+    baseline_tips: Vec<ResolvedRevisionId>,
+}
+
+impl WorkweaveCheckout {
+    /// `baselines` are the workspaces whose checkout of `rel` counts as
+    /// landed work ([`merge_baselines`]); only those sharing `store` vouch.
+    fn new(
+        vcs: &dyn Vcs,
+        store: PathBuf,
+        path: PathBuf,
+        workweave: &WorkweaveId,
+        baselines: &[PathBuf],
+        rel: &Path,
+    ) -> Self {
+        Self {
+            baseline_tips: baseline_tips_in_store(vcs, &store, baselines, rel),
+            ephemeral: EphemeralRefName::mint(&workweave.flat()),
+            store,
+            path,
+        }
+    }
+
+    /// For a workweave that stays: what lands its work is its parent's
+    /// lineage and the primary weave's.
+    pub(crate) fn of_live_workweave(
+        vcs: &dyn Vcs,
+        primary_root: &Path,
+        workweave_dir: &Path,
+        workweave: &WorkweaveId,
+        store: PathBuf,
+        path: PathBuf,
+        rel: &Path,
+    ) -> Self {
+        let baselines = merge_baselines(workweave_dir, &CanonicalPath::of(primary_root), None);
+        Self::new(vcs, store, path, workweave, &baselines, rel)
+    }
+}
+
+/// Take one of a workweave's checkouts out of the store it links into: remove
+/// the worktree, drop its registration, and retire the branch the workweave
+/// was given in that store.
+///
+/// The ref pass runs whatever the removal did: a branch still held by a
+/// checkout that would not come off is reported by the retire, not skipped.
+/// The removal's own failure is what returns.
+pub(crate) fn release_checkout(
+    vcs: &dyn Vcs,
+    registry: &mut RefRegistry,
+    checkout: &WorkweaveCheckout,
+    label: &str,
+    discard_unmerged: Option<DiscardUnmergedConsent>,
+    releaser: Releaser,
+) -> Result<(), VcsError> {
+    let removed = if checkout.path.exists() {
+        vcs.remove_worktree(&checkout.store, &checkout.path)
+    } else {
+        Ok(())
+    };
+    let _ = vcs.worktree_prune(&checkout.store);
+    retire_recorded_refs(
+        vcs,
+        registry,
+        &checkout.store,
+        &checkout.ephemeral,
+        label,
+        &checkout.baseline_tips,
+        discard_unmerged,
+        releaser,
+    );
+    removed
 }
 
 /// Delete a workweave: remove worktrees (including project repo) and delete
@@ -3276,13 +3391,11 @@ fn delete_workweave_inner_at(
     let project_vcs = project_vcs();
     let manifest = load_manifest(ws_root, project)?;
     let workweave_dir = workweave_dir.to_path_buf();
-    let ephemeral = EphemeralRefName::mint(
-        &WorkweaveId {
-            project: project.clone(),
-            name: name.clone(),
-        }
-        .flat(),
-    );
+    let workweave_id = WorkweaveId {
+        project: project.clone(),
+        name: name.clone(),
+    };
+    let ephemeral = EphemeralRefName::mint(&workweave_id.flat());
     let mut registry = RefRegistry::for_project(ws_root, project);
 
     refuse_symlinked_members(&workweave_dir, project)?;
@@ -3399,50 +3512,36 @@ fn delete_workweave_inner_at(
         // a stale registration. See docs/explanation/joints/clone-topology.md.
         let fallback_repo_abs = ws_root.join(repo_path.as_path());
         let repo_store = resolved_worktree_parent(vcs.as_ref(), &worktree_path, &fallback_repo_abs);
-        let repo_abs = repo_store.as_path().to_path_buf();
 
-        if worktree_path.exists() {
-            // Detect "checkout is its own canonical store" — `git worktree
-            // remove` would fail with "is a main working tree". The
-            // `refuse_if_checkouts_host_foreign_worktrees` precondition
-            // above has already rejected the unsafe (with-dependents)
-            // case; reaching this branch means the canonical-checkout is
-            // lone, and removing the workweave dir is sufficient. Skip
-            // the registration cleanup (there is no parent to clean) and
-            // also the prune / branch-delete loop (nothing else can know
-            // about this store's refs once the dir is gone).
-            let is_lone_canonical = repo_store == CanonicalPath::of(&worktree_path);
-            if is_lone_canonical {
-                // Nothing to unregister; the dir-removal at the end of
-                // delete_workweave will clean up the on-disk store.
-                continue;
-            }
-            if let Err(e) = vcs.remove_worktree(&repo_abs, &worktree_path) {
-                let msg = format!("{}: {e:#}", checkout.label());
-                eprintln!("rwv workweave delete: error: {msg}");
-                errors.push(msg);
-                // Fall through to the ref pass anyway: the receipt set
-                // does not depend on whether the worktree could be removed,
-                // and a ref left standing because its branch is still checked
-                // out gets reported rather than silently skipped.
-            }
+        // A checkout that is its own canonical store has no parent to
+        // unregister from, and nothing else can know about its refs once the
+        // directory is gone. `refuse_if_checkouts_host_foreign_worktrees`
+        // above has already refused one with dependents, so removing the
+        // workweave directory is all this one needs.
+        if worktree_path.exists() && repo_store == CanonicalPath::of(&worktree_path) {
+            continue;
         }
 
-        // Prune stale worktree metadata, then retire the recorded refs.
-        // Same resolved-parent rationale applies — pruning the wrong repo
-        // leaves the actual canonical store's stale entries in place.
-        let _ = vcs.worktree_prune(&repo_abs);
-        let baseline_tips =
-            baseline_tips_in_store(vcs.as_ref(), &repo_abs, &baselines, &repo_path.as_path());
-        retire_recorded_refs(
+        let leaving = WorkweaveCheckout::new(
+            vcs.as_ref(),
+            repo_store.into_path_buf(),
+            worktree_path,
+            &workweave_id,
+            &baselines,
+            &repo_path.as_path(),
+        );
+        if let Err(e) = release_checkout(
             vcs.as_ref(),
             &mut registry,
-            &repo_abs,
-            &ephemeral,
+            &leaving,
             &checkout.label(),
-            &baseline_tips,
             discard_unmerged,
-        );
+            Releaser::Delete,
+        ) {
+            let msg = format!("{}: {e:#}", checkout.label());
+            eprintln!("rwv workweave delete: error: {msg}");
+            errors.push(msg);
+        }
     }
 
     // Remove the project repo worktree.
@@ -3490,6 +3589,7 @@ fn delete_workweave_inner_at(
         &project_rel_path(project),
         &project_baseline_tips,
         discard_unmerged,
+        Releaser::Delete,
     );
 
     // Remove the workweave directory itself. A process's working directory
@@ -4786,6 +4886,7 @@ mod tests {
             "github/org/repo",
             &[fake_rev('b')],
             None,
+            Releaser::Delete,
         );
 
         assert!(
@@ -4826,6 +4927,7 @@ mod tests {
             "github/org/repo",
             &[fake_rev('b')],
             None,
+            Releaser::Delete,
         );
 
         assert!(fake.branch_tip(&store, &raw).is_none());

@@ -12,6 +12,26 @@ When the `go.work` at the weave root could not be read, `go-work` treated it as
 having no `use` entries, so entries for repos no longer in the project stayed
 in it. The unreadable file is now an error that names it.
 
+### A member a workweave's sync prunes no longer keeps the primary's clone claimed
+
+When `rwv sync` or `rwv sync-to` pruned a member's checkout in a workweave,
+it removed the worktree but left the branch the workweave was given in the
+primary weave's clone, and rwv's ownership receipt for it. `rwv remove <path>
+--delete` in the primary then refused with `store-still-claimed` for as long
+as the workweave existed. The prune now releases the clone as `rwv workweave
+delete` does: the branch is deleted, with its receipt, once the workweave's
+parent or the primary weave holds its commits. A branch holding commits
+neither holds stays, and a warning names it.
+
+`rwv remove <path> --delete` in a workweave releases the clone the same way.
+It deleted the branch when the clone's own checkout held its commits or when
+nothing had been committed on it since rwv created it; it now deletes it when
+the workweave's parent or the primary weave holds its commits, and otherwise
+keeps it with a warning. That warning reads as `rwv workweave delete`'s does.
+
+`rwv workweave delete` no longer follows its warning about a branch it keeps
+with a second line calling the same branch one rwv did not record.
+
 ### On Windows, `rwv explain` and `rwv prime` print LF line endings
 
 The pages `rwv explain` and `rwv prime` print are built into the binary. The
