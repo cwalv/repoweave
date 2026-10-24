@@ -25,9 +25,9 @@ a worktree.
 
 The symlink shape went because it broke the first rule of §2: it changed
 behavior, not just cost. A symlinked member read the live canonical clone rather
-than the revision the seat's lock pins, so a fetch in the primary changed every
-seat's copy under it; a write through the link landed in the primary; its
-absolute target stranded every seat when the weave moved; it needed privilege on
+than the revision the workweave's lock pins, so a fetch in the primary changed every
+workweave's copy under it; a write through the link landed in the primary; its
+absolute target stranded every workweave when the weave moved; it needed privilege on
 Windows; and every verb that walks members had to branch on which shape it was
 looking at. The disk it saved is what §4's placement modes save instead, on
 filesystems that support them.
@@ -146,7 +146,7 @@ the check and the placement yields a repaired file, never a wrong one.
 ### Sources
 
 Every other workspace of the same repository is a candidate, found through
-`Vcs::list_worktrees`: the primary's checkout and every seat's. They are tried
+`Vcs::list_worktrees`: the primary's checkout and every workweave's. They are tried
 in order — workspaces already at the target revision, then the primary, then
 the rest — and the walk stops once every wanted file is covered. A file is
 taken from a source only if `files_holding_recorded_content` reports the
@@ -212,8 +212,8 @@ mode (`--json -j N`, `N > 1`) streams a placement line as each placement
 happens, beside the verb's own per-repo lines; its `$schema` names
 `docs/reference/schemas/placement-record.json`, which every verb shares and is
 how a consumer tells the two kinds of line apart. Outcome records never carry counts, because a placement need
-not be of the checkout an outcome names: `sync-to` re-shares a repo in the seat
-and in the target, and `fetch` in a workweave creates the seat's worktree while
+not be of the checkout an outcome names: `sync-to` re-shares a repo in the workweave
+and in the target, and `fetch` in a workweave creates its worktree while
 its outcome names the canonical clone. Only the placement's own
 `absolute_path` says which checkout it was.
 
@@ -239,7 +239,7 @@ is shared; nothing rwv makes is shared there only because no backend declares
 the hardlink mode on Windows. A Windows declaration needs a link count first.
 
 Every verb that writes or moves a member's files ends by settling it, in the
-primary and in seats alike: `fetch` and `update` (through `settle_moved`),
+primary and in workweaves alike: `fetch` and `update` (through `settle_moved`),
 `add`, `workweave create` and every `materialize_member`, `sync` and `sync-to`
 (materialized members, then `settle_members` over every member after replay
 and after advancing the target), `abort` after its restore, `rwv role`, and
@@ -250,7 +250,7 @@ stands. Doctor backstops it with the `member-permissions` finding — a
 with read-only ones — whose `--fix` settles.
 
 **The primary is not special.** Its reference checkouts are read-only and are a
-source like any seat's. A role is per project, and one canonical clone in the
+source like any workweave's. A role is per project, and one canonical clone in the
 primary can serve several projects, so its files hold one role for all of
 them: `reference` only where every project listing it declares `reference`,
 and otherwise the first other role a project declares. `Listing` in
@@ -300,7 +300,7 @@ Windows reads a file's creation time as its ctime. rwv accepts that cost and
 sets no `core.trustctime`: the alternative is per-worktree git configuration
 that would have to follow the role through settle, `rwv role`, doctor and a
 migration, plus a repository extension in every store that has a reference
-member. If seats ever report status latency after seat creation, it is added
+member. If workweaves ever report status latency after workweave creation, it is added
 as one change — a `Vcs` question settle sets on entering `reference` and
 clears on leaving, plus a doctor finding.
 
@@ -332,7 +332,7 @@ and writes nothing.
 A hand edit of `rwv.toml` stays valid: the next `sync` or `sync-to` settles
 every member for the role its manifest gives it, `abort` settles after
 restoring an older manifest, and `doctor --fix` settles whatever
-`member-permissions` reports. A role change made in a seat is local until it
+`member-permissions` reports. A role change made in a workweave is local until it
 lands; other workspaces follow when they sync.
 
 ## 8. Migration from symlinked members
@@ -358,7 +358,7 @@ the canonical clone. rwv no longer operates on that shape:
   canonical clone, cloning it if absent, then creates the worktree in place of
   the link.
 - **Existing checkouts.** A `reference` checkout made before read-only
-  settling, in the primary or a seat, is writable; `doctor` reports it as
+  settling, in the primary or a workweave, is writable; `doctor` reports it as
   `member-permissions`, and `--fix` settles it.
 
 The operator-facing entries for both tokens are in
