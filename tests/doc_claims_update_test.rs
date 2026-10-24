@@ -476,7 +476,7 @@ fn update_json_emits_envelope_under_j1() {
 // 5. update --json -j N emits the envelope (N > 1)
 //
 // Doc claim: `rwv update --json` prints one envelope whatever `-j` is, with
-// `repos` in manifest order.
+// `repos` sorted by repo path.
 // ===========================================================================
 
 #[test]

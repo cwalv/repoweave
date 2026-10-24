@@ -112,7 +112,7 @@ How `rwv fetch` handles each manifest repository:
 The lock is **read-only** for covered entries. To advance tips and re-snapshot, use `rwv update`.
 
 `--json` emits the envelope `{ "$schema": "...", "outcomes": [...] }` once
-every repo is done, with `outcomes` in manifest order, whatever `-j` is. See
+every repo is done, with `outcomes` sorted by repo path, whatever `-j` is. See
 [JSON envelope convention](#--json-envelope-convention).
 
 ### `rwv update [...]`
@@ -672,7 +672,7 @@ Schemas live at `docs/reference/schemas/<verb>.json` and are also embedded as fe
 
 ### The envelope and `-j`
 
-`-j` changes how a verb runs, never what `--json` prints: the envelope is the same under `-j 1` and `-j N`, printed once the verb is done, with its per-repo records in manifest order (`push`'s project-repo record last). Nothing streams on stdout. For per-repo progress as each repo finishes, use [`rwv each`](./rwv-each.md)'s `--joblog` and `--results`.
+`-j` changes how a verb runs, never what `--json` prints: the envelope is the same under `-j 1` and `-j N`, printed once the verb is done, with its per-repo records sorted by repo path (`push`'s project-repo record last). Nothing streams on stdout. For per-repo progress as each repo finishes, use [`rwv each`](./rwv-each.md)'s `--joblog` and `--results`.
 
 Exit semantics under `--json` match the text mode: non-zero when at least one per-repo outcome is `failed`, when a refusal stopped the verb, and for `sync` and `sync-to` when a checkout replay could not prune is left on disk. The envelope still prints in that last case.
 

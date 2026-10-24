@@ -207,7 +207,7 @@ self-describing record per line as each repo finished, under `-j N` with
 `N > 1`. `fetch`, `update` and `each` default to `min(nproc, 8)` workers, so
 `--json` without `-j` streamed on a multi-core machine and printed an envelope
 on a single-core one. Each verb now prints its envelope under every `-j`, once
-it is done, with its per-repo records in manifest order.
+it is done, with its per-repo records sorted by repo path.
 
 The stream is gone, with no flag to bring it back, and so are the nine schemas
 that described its lines: `fetch-record.json`, `update-record.json`,

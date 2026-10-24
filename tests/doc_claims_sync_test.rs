@@ -201,7 +201,7 @@ fn sync_json_serial_emits_envelope_with_schema_and_outcomes() {
 // 2. Envelope shape under `-j N` (N > 1)
 //
 // Doc claim: `-j` changes how the work runs, never the shape: under `-j 2`
-// `--json` still prints one envelope, its `outcomes` in manifest order.
+// `--json` still prints one envelope, its `outcomes` sorted by repo path.
 // ===========================================================================
 
 #[test]

@@ -121,7 +121,7 @@ Under `--json`, output is the pretty-printed envelope, whatever `-j` is:
 }
 ```
 
-`outcomes` lists the repos in manifest order, however the workers finished.
+`outcomes` lists the repos sorted by repo path, however the workers finished.
 Outcome `kind` tags include `converged`, `already-ahead`, `no-op`, and
 `failed`. The `failed` variant carries a nested `failure` record whose own
 `kind` tells you what failed (`head-unreadable`, `ff-impossible`,
@@ -197,7 +197,7 @@ Schema:
       }
     },
     "outcomes": {
-      "description": "One record per repo, in manifest order whatever `-j` is.",
+      "description": "One record per repo, sorted by repo path whatever `-j` is.",
       "type": "array",
       "items": {
         "$ref": "#/definitions/SyncOutcomeOutput"

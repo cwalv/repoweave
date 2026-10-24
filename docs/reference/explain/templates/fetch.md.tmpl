@@ -205,7 +205,7 @@ finish, whatever `-j` is:
 }
 ```
 
-`outcomes` lists the repos in manifest order, however the workers finished.
+`outcomes` lists the repos sorted by repo path, however the workers finished.
 Each record has the shape: `path` (manifest-relative), `absolute_path` (on-disk), `status`
 (`ok` / `skipped` / `failed`), `message` (human-readable detail; absent
 for `ok`, present for `skipped` and `failed`), and, on a `failed` record whose

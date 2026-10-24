@@ -109,7 +109,7 @@ pub struct UpdateJsonOutput {
 /// the derived change is never separated from the change that caused it.
 /// When `project_override` is `Some`, that project is updated instead of
 /// the active one (one-shot; does not change `.rwv-active`).
-/// Under `--json`, one envelope reaches stdout, in manifest order.
+/// Under `--json`, one envelope reaches stdout, its records sorted by repo path.
 ///
 /// `jobs` is the resolved worker count (post-[`crate::parallel::resolve_jobs`]).
 /// `jobs == 1` runs serially with no prefix; `jobs > 1` runs the per-repo

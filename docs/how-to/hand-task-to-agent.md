@@ -48,7 +48,7 @@ Every `--json`-capable verb prints one JSON object, `{ "$schema": "<url>", "<key
 | `rwv sync --json` | `outcomes` (+ `placements`) | `1` |
 | `rwv sync-to --json` | `outcomes` (+ `placements`) | `1` |
 
-Per-repo records are in manifest order whatever order the workers finished in. To follow repos as they finish, run the command through `rwv each` with `--joblog` or `--results`.
+Per-repo records are sorted by repo path whatever order the workers finished in. To follow repos as they finish, run the command through `rwv each` with `--joblog` or `--results`.
 
 ## Isolate agent work in a workweave
 

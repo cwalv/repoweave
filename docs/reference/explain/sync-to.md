@@ -198,7 +198,7 @@ Under `--json`, output is the pretty-printed envelope, whatever `-j` is:
 }
 ```
 
-Outcome `kind` tags, and the manifest order of `outcomes`, are identical to
+Outcome `kind` tags, and the order of `outcomes` (sorted by repo path), are identical to
 `rwv sync` — only the `$schema` URL differs (pointing at
 `docs/reference/schemas/sync-to.json`). Each advance-target fast-forward that
 moved a branch pointer is reported as its repo's `step3_advance`, or as
@@ -256,7 +256,7 @@ Schema:
       }
     },
     "outcomes": {
-      "description": "One record per repo, in manifest order whatever `-j` is.",
+      "description": "One record per repo, sorted by repo path whatever `-j` is.",
       "type": "array",
       "items": {
         "$ref": "#/definitions/SyncOutcomeOutput"

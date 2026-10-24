@@ -226,7 +226,7 @@ enum FetchOutcome {
 /// happen serially.
 ///
 /// Under `--json`, one `{ "$schema": ..., "outcomes": [...] }` envelope
-/// reaches stdout after all repos complete, in manifest order.
+/// reaches stdout after all repos complete, its records sorted by repo path.
 #[allow(clippy::too_many_arguments)]
 pub fn run_fetch(
     source: &str,

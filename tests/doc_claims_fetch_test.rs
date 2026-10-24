@@ -632,7 +632,7 @@ fn fetch_json_envelope_shape() {
 // Test 7 — --json -j N envelope assertion
 //
 // Doc claim: `rwv fetch -j 2 --json` emits the same single envelope as
-// `-j 1`, whatever `-j` is, with `outcomes` in manifest order.
+// `-j 1`, whatever `-j` is, with `outcomes` sorted by repo path.
 // ============================================================================
 
 #[test]

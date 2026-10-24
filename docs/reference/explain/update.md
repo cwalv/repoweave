@@ -111,7 +111,7 @@ Under `--json`, output is the envelope, whatever `-j` is:
 }
 ```
 
-`repos` lists the repos in manifest order, however the workers finished.
+`repos` lists the repos sorted by repo path, however the workers finished.
 Each record carries:
 - `path` — manifest-relative repo path.
 - `absolute_path` — fully resolved on-disk path.

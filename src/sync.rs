@@ -686,7 +686,7 @@ impl SyncOutcomeOutput {
 pub struct SyncJsonOutput {
     #[serde(rename = "$schema")]
     pub schema: String,
-    /// One record per repo, in manifest order whatever `-j` is.
+    /// One record per repo, sorted by repo path whatever `-j` is.
     pub outcomes: Vec<SyncOutcomeOutput>,
     /// How the files of each checkout the sync created or moved were placed.
     /// Empty, not absent, when it placed none.
@@ -758,7 +758,7 @@ pub struct SyncToJsonOutput {
     /// `rwv status --json` in the target workspace.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resumed: Option<op_state::OpPhase>,
-    /// One record per repo, in manifest order whatever `-j` is.
+    /// One record per repo, sorted by repo path whatever `-j` is.
     pub outcomes: Vec<SyncOutcomeOutput>,
     /// How the files of each checkout the op created or moved were placed, in
     /// this workspace and in the target, each under its own `absolute_path`.

@@ -53,7 +53,7 @@ Every JSON-capable verb emits a self-describing envelope:
 
 The key is verb-specific (`repos` for status, `violations` for doctor, `outcomes` for sync). Schemas live at `docs/reference/schemas/<verb>.json` and are also embedded inside the corresponding `rwv explain <verb>` bundle. Agents resolve `$schema` once and cache the schema; they don't assume any shape.
 
-`-j` never changes the shape: under `rwv sync -j N` the envelope is the same as under `-j 1`, its records in manifest order, so one parser serves every worker count.
+`-j` never changes the shape: under `rwv sync -j N` the envelope is the same as under `-j 1`, its records sorted by repo path, so one parser serves every worker count.
 
 ### Roles as a safety boundary
 

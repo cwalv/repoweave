@@ -28,7 +28,7 @@
       }
     },
     "outcomes": {
-      "description": "One record per repo, in manifest order whatever `-j` is.",
+      "description": "One record per repo, sorted by repo path whatever `-j` is.",
       "type": "array",
       "items": {
         "$ref": "#/definitions/SyncOutcomeOutput"

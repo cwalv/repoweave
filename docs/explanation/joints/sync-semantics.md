@@ -202,7 +202,7 @@ savepoint tombstone.
 With `-j N` (`N > 1`), Phase 2 fans out across a bounded worker pool. The
 default is `-j 1`. `--json` prints the same envelope whatever `-j` is, once
 the op is done: `{"$schema": "<url>", "outcomes": [...]}`, with `outcomes`
-in manifest order however the workers finished, beside `placements`, replay
+sorted by repo path however the workers finished, beside `placements`, replay
 `members`, and `complete`. The exit status is non-zero when some per-repo
 outcome is `failed`, and when a prune was refused: the op completes,
 reports a `prune-refused` member record, and exits 1. The envelope's

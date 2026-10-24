@@ -796,7 +796,7 @@ fn landing_hook(verb: &str) -> &'static str {
 }
 
 /// Hold the first repo's landing until the second repo's has landed, and then
-/// a second longer, so a parallel run's workers finish out of manifest order.
+/// a second longer, so a parallel run's workers finish out of repo-path order.
 /// Each hook appends its repo to `log` the first time it fires. The wait is
 /// bounded: a git that runs no hooks leaves an empty log, not a hang.
 fn land_first_repo_last(primary: &Workspace, verb: &str, log: &Path) {
