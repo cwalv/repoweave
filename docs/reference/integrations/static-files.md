@@ -27,7 +27,7 @@ Each file listed in `files` must exist in the project directory (e.g., `projects
 |---|---|
 | `"turbo.json"` | this weave's `projects/<project>/turbo.json` |
 | `{ path = "turbo.json" }` | the same as the plain string |
-| `{ path = ".beads", from = "primary" }` | the primary's `projects/<project>/.beads`, from every workweave of the project |
+| `{ path = ".tracker", from = "primary" }` | the primary's `projects/<project>/.tracker`, from every workweave of the project |
 
 A table takes `path` (required) and `from` (optional). `"primary"` is the only value `from` accepts. A table with any other key or value is reported as `malformed-settings` rather than read as a plain entry.
 
@@ -144,15 +144,15 @@ Nx discovers packages from `pnpm-workspace.yaml` and reads task configuration fr
 
 #### Shared issue-tracker state
 
-A tracker that keeps its database in a directory beside the project's files, such as beads' `.beads`, needs every workweave to reach the primary's copy. A workweave's own checkout carries only the tracked configuration:
+An issue tracker that keeps its database in a directory beside the project's files, here `.tracker`, needs every workweave to reach the primary's copy. A workweave's own checkout carries only the tracked configuration:
 
 ```toml
 [integrations.static-files]
 enabled = true
-files = ["CLAUDE.md", { path = ".beads", from = "primary" }]
+files = ["CLAUDE.md", { path = ".tracker", from = "primary" }]
 ```
 
-At the primary, `.beads` links `projects/<project>/.beads`. In every workweave of the project, `.beads` links the primary's `projects/<project>/.beads` directly, so a tool that finds `.beads` by searching upward from its working directory reaches the same database from anywhere in the workweave. `CLAUDE.md` stays branch content: each workweave sees its own edits.
+At the primary, `.tracker` links `projects/<project>/.tracker`. In every workweave of the project, `.tracker` links the primary's `projects/<project>/.tracker` directly, so a tool that finds `.tracker` by searching upward from its working directory reaches the same database from anywhere in the workweave. `CLAUDE.md` stays branch content: each workweave sees its own edits.
 
 #### Toolchain versions (`.mise.toml`)
 

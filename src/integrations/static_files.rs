@@ -10,7 +10,7 @@
 //! ```toml
 //! [integrations.static-files]
 //! enabled = true
-//! files = ["turbo.json", ".prettierrc", { path = ".beads", from = "primary" }]
+//! files = ["turbo.json", ".prettierrc", { path = ".tracker", from = "primary" }]
 //! ```
 //!
 //! A plain entry links the weave's own project checkout. An entry with

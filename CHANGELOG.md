@@ -666,7 +666,7 @@ even under a filter that matched a warning.
   output of `rwv fetch`, `update`, `sync` and `sync-to` lists a `placements`
   record per checkout.
 - A `static-files` entry can read the primary's copy:
-  `{ path = ".beads", from = "primary" }` links every workweave to the primary
+  `{ path = ".tracker", from = "primary" }` links every workweave to the primary
   weave's `projects/<project>/<path>`, so state that every workweave shares has
   one copy.
 - New doctor findings:
