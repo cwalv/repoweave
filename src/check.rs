@@ -41,6 +41,10 @@ pub enum CheckViolation {
     DanglingReference {
         project: ProjectName,
         repo: RepoPath,
+        /// The path the entry's URL places it at, when a clone of that remote
+        /// stands there and no entry of the project names the path: the
+        /// entry's checkout, moved to its placement ahead of the re-key.
+        clone_at_placement: Option<RepoPath>,
     },
 
     /// A member checkout whose tracked regular files do not hold the
@@ -2145,6 +2149,11 @@ pub enum ViolationOutput {
         path: String,
         absolute_path: WirePath,
         project: ProjectName,
+        /// The path the entry's URL places it at, when a clone of the same
+        /// remote stands there and no entry of the project names it; `null`
+        /// otherwise. Present, the repair is to re-key the entry to it and run
+        /// `rwv lock`; absent, it is `rwv fetch`.
+        clone_at_placement: Option<String>,
     },
     MemberPermissions {
         path: String,
@@ -2548,10 +2557,15 @@ impl ViolationOutput {
                 first,
                 second,
             },
-            CheckViolation::DanglingReference { project, repo } => Self::DanglingReference {
+            CheckViolation::DanglingReference {
+                project,
+                repo,
+                clone_at_placement,
+            } => Self::DanglingReference {
                 absolute_path: abs(workspace_dir, &repo),
                 path: repo.to_string(),
                 project: project.clone(),
+                clone_at_placement: clone_at_placement.map(|placed| placed.to_string()),
             },
             CheckViolation::MemberPermissions {
                 workweave,
@@ -7596,12 +7610,46 @@ pub struct CheckInput {
     /// appear here. The split out of `Project.lock` (which stays raw)
     /// keeps the parse/resolve boundary explicit at the type level.
     pub resolved_locks: std::collections::HashMap<ProjectName, crate::manifest::ResolvedLockFile>,
+    /// For a manifest entry absent from disk, keyed by its project and path:
+    /// the path its URL places it at, when a clone of the same remote stands
+    /// there and no entry of the project names that path. Such a clone is
+    /// accounted for by its entry, not orphaned.
+    pub clones_at_placement: std::collections::HashMap<(ProjectName, RepoPath), RepoPath>,
     /// When `false`, the orphan-clone check is skipped. Orphan detection is
     /// inherently weave-wide (a repo is only "orphaned" if it belongs to *no*
     /// project), so running it in single-project mode would produce false
     /// positives for repos that belong to other projects. Set to `true` only
     /// when all projects have been loaded into `projects` (i.e. `--all` mode).
     pub check_orphans: bool,
+}
+
+/// The path `entry`'s URL places it at, when a clone of the same remote stands
+/// there in `workspace_dir` and no entry of `manifest` names the path — where
+/// `repo`'s checkout went if it was moved to its placement before the entry was
+/// re-keyed.
+fn clone_at_placement(
+    workspace_dir: &Path,
+    manifest: &Manifest,
+    repo: &RepoPath,
+    entry: &crate::manifest::RepoEntry,
+) -> Option<RepoPath> {
+    use crate::registry::{recorded_remote, resolve_to_clone_info, RecordedRemote};
+    let placed = crate::registry::placement(&entry.url)?;
+    if &placed == repo || manifest.get_entry(&placed).is_some() {
+        return None;
+    }
+    let vcs = crate::vcs::vcs_for(entry.vcs_type);
+    let clone = workspace_dir.join(placed.as_path());
+    if !vcs.is_repo(&clone) {
+        return None;
+    }
+    let declared = resolve_to_clone_info(&entry.url).ok()?.url;
+    match recorded_remote(vcs.as_ref(), &clone) {
+        Ok(Some(RecordedRemote::Url(actual))) if declared.names_same_remote(&actual) => {
+            Some(placed)
+        }
+        _ => None,
+    }
 }
 
 /// Collect all convention violations from the check inputs.
@@ -7617,8 +7665,9 @@ pub fn find_violations(input: &CheckInput) -> Vec<CheckViolation> {
     // In single-project mode, a repo absent from the active project may still
     // belong to another project — flagging it as orphaned would be a false positive.
     if input.check_orphans {
+        let accounted: BTreeSet<&RepoPath> = input.clones_at_placement.values().collect();
         for repo_path in &input.repos_on_disk {
-            if !input.known_repos.contains(repo_path) {
+            if !input.known_repos.contains(repo_path) && !accounted.contains(repo_path) {
                 violations.push(CheckViolation::OrphanedClone {
                     path: repo_path.clone(),
                 });
@@ -7646,6 +7695,10 @@ pub fn find_violations(input: &CheckInput) -> Vec<CheckViolation> {
                 violations.push(CheckViolation::DanglingReference {
                     project: project.name.clone(),
                     repo: repo_path.clone(),
+                    clone_at_placement: input
+                        .clones_at_placement
+                        .get(&(project.name.clone(), repo_path.clone()))
+                        .cloned(),
                 });
             }
         }
@@ -7993,16 +8046,28 @@ impl CheckViolation {
                      there, and run `rwv add --adopt` with that path; or remove the directory \
                      manually"
             ),
-            // `rwv fetch` (no SOURCE) re-clones missing manifest
-            // members of the active project — the settled repair verb
-            // for dangling references. See fetch::run_fetch_in_place.
             // `doctor --fix` intentionally does NOT auto-clone: network
             // side effects stay behind an explicit verb.
-            CheckViolation::DanglingReference { project, repo } => format!(
+            CheckViolation::DanglingReference {
+                project,
+                repo,
+                clone_at_placement: None,
+            } => format!(
                 "dangling reference in {project}: {repo} — \
                      listed in rwv.toml but not cloned on disk; \
                      run `rwv fetch` from the workspace to re-materialize \
                      missing manifest members, then re-run `rwv doctor` to verify"
+            ),
+            CheckViolation::DanglingReference {
+                project,
+                repo,
+                clone_at_placement: Some(placed),
+            } => format!(
+                "dangling reference in {project}: {repo} — listed in rwv.toml but not \
+                     cloned on disk, while a clone of its URL stands at `{placed}`, where \
+                     that URL places it; re-key the entry in rwv.toml from `{repo}` to \
+                     `{placed}` and run `rwv lock` (`rwv fetch` would clone it a second time \
+                     at `{repo}`)"
             ),
             CheckViolation::MemberPermissions {
                 workweave,
@@ -10872,9 +10937,25 @@ fn load_doctor_world(
     let unknown_segment_repos =
         crate::workspace::scan_unknown_segment_repos(&workspace_dir, vcs.as_ref());
 
+    let clones_at_placement = projects
+        .iter()
+        .flat_map(|project| {
+            project
+                .manifest
+                .iter_entries()
+                .filter(|(repo, _)| !session.repos_on_disk().contains(repo))
+                .filter_map(|(repo, entry)| {
+                    clone_at_placement(&workspace_dir, &project.manifest, repo, entry)
+                        .map(|placed| ((project.name.clone(), repo.clone()), placed))
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+
     let input = CheckInput {
         known_repos,
         repos_on_disk: session.repos_on_disk().to_vec(),
+        clones_at_placement,
         unknown_segment_repos,
         projects,
         head_revisions,

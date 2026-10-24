@@ -248,6 +248,14 @@ leaves this one standing. Or remove the directory yourself.
 **What to do:** `rwv fetch` re-materializes it in place, or drop the entry
 from the manifest if the repo is genuinely gone.
 
+When a clone of the entry's URL stands at the path that URL places it at, and
+no entry of the project names that path, the checkout was moved there ahead of
+the re-key [`placement-disagreement`](#placement-disagreement) asks for. The
+record's `clone_at_placement` names that path, and the message names the
+repair: re-key the entry in `rwv.toml` to it and run `rwv lock`. That clone is
+not reported as an [`orphaned-clone`](#orphaned-clone). `rwv fetch` there would
+clone the URL a second time at the recorded path.
+
 ### `unparseable-project`
 
 **Error. Report-only.** A project directory exists but does not load: either

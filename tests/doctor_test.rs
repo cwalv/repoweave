@@ -1582,6 +1582,7 @@ mod doctor_json {
             path: String,
             absolute_path: String,
             project: String,
+            clone_at_placement: Option<String>,
         },
         MemberPermissions {
             path: String,

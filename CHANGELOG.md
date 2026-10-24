@@ -6,6 +6,16 @@ claim that nothing changed in them.
 
 ## Unreleased
 
+### `dangling-reference` names the re-key when the checkout moved to its placement
+
+An entry whose checkout was moved to the path its URL places it at, before the
+entry was re-keyed, was reported as a `dangling-reference` advising
+`rwv fetch`, which clones the URL a second time at the recorded path, and the
+moved checkout as an `orphaned-clone`. The `dangling-reference` now names the
+re-key and `rwv lock`, its `--json` record carries the path as
+`clone_at_placement` (`null` otherwise), and the moved checkout is no longer
+reported as an orphan.
+
 ### `orphaned-clone` names `rwv add --adopt` at the clone's placement
 
 `rwv doctor`'s `orphaned-clone` advised `rwv add <url>`, which registers a

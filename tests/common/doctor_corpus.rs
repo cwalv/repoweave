@@ -288,6 +288,7 @@ pub fn corpus() -> Vec<CheckViolation> {
         CheckViolation::DanglingReference {
             project: project(),
             repo: repo(),
+            clone_at_placement: None,
         },
         CheckViolation::RoleDisagreement {
             repo: repo(),
