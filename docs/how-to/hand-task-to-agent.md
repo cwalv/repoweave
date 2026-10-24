@@ -59,6 +59,8 @@ When creating a workweave for an agent (`rwv workweave web-app create agent-task
 - isolated tool state (`node_modules/`, `.venv/`, `target/`), installed by the integration install hooks `create` runs, and its own `rwv.lock`
 - a `.rwv-workweave` marker pointing back to the parent workspace
 
+A workweave created by `claude --worktree`, through the `WorktreeCreate` hook `rwv setup claude` registers, is handed over even when an install hook fails: the failure is a warning on stderr naming `rwv materialize`, and the agent's tool state is incomplete until someone runs `rwv materialize` inside the workweave. A manual `rwv workweave create` exits 1 in the same case, and keeps the workweave.
+
 When the agent finishes committing across member repos, `rwv sync-to --retire` auto-relocks CWD, replays the work onto the parent workspace, fast-forwards the parent, and deletes the workweave. If a conflict occurs, the workweave is preserved so the agent or operator can resolve it and run `rwv sync-to --continue`.
 
 ## Filter repos with selectors
