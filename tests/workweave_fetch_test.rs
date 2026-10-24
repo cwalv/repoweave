@@ -381,3 +381,20 @@ fn an_unpinned_symlinked_member_gets_a_worktree_at_the_canonical_head_and_the_lo
         "the workweave's lock records its worktrees; fetch does not write it"
     );
 }
+
+#[test]
+fn fetch_in_a_workweave_with_no_lock_writes_none() {
+    let tmp = common::tempdir().unwrap();
+    let (_weave, seat) = make_weave(tmp.path());
+    let lock = seat.join("projects").join(PROJECT).join("rwv.lock");
+    std::fs::remove_file(&lock).unwrap();
+
+    let fetched = fetch_in(&seat);
+
+    assert!(fetched.status.success(), "{}", describe(&fetched));
+    assert!(
+        !lock.exists(),
+        "a lock bootstrapped here would record the primary's HEADs, not this \
+         workweave's worktrees"
+    );
+}
