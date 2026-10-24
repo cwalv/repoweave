@@ -102,7 +102,7 @@ pub fn generate_lock(
         if !dirty && !vcs.tracked_dirty_file_names(repo_dir)?.is_empty() {
             crate::refuse!(
                 RefusalKind::DirtyCheckout,
-                "repo {} has uncommitted tracked changes; commit or use --dirty to override",
+                "repo {} has uncommitted changes to tracked files; commit or use --dirty to override",
                 repo_path
             );
         }

@@ -603,7 +603,7 @@ fn lock_refuses_a_tracked_change_as_dirty_checkout() {
         .current_dir(&project_dir)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("uncommitted tracked changes"))
+        .stderr(predicate::str::contains("uncommitted changes to tracked files"))
         .stderr(predicate::str::contains("rwv explain dirty-checkout"));
 }
 
