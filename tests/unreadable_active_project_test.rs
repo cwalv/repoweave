@@ -145,3 +145,62 @@ fn activate_replaces_it() {
         "web-app\n"
     );
 }
+
+/// docs/reference/doctor-findings.md, `unreadable-active-project`: verbs that
+/// do not select a project, `abort` and `-w` addressing among them, are not
+/// affected.
+#[test]
+fn abort_does_not_read_the_pointer() {
+    let tmp = common::tempdir().unwrap();
+    let ws = weave(tmp.path(), "two words\n");
+    let out = run(&ws, &["abort"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("no operation in progress"), "{stderr}");
+    assert_routes_to(&stderr, "no-op-recorded");
+}
+
+/// A primary holding an unreadable pointer, and a workweave of its project.
+fn primary_and_workweave_with_unreadable_pointer(
+    pointer: &str,
+) -> (common::PushWorkspace, PathBuf) {
+    let ws = common::build_workspace("web-app", &[("local/org/a", "owned")]);
+    let created = run(&ws.workspace, &["workweave", "web-app", "create", "ww"]);
+    assert!(
+        created.status.success(),
+        "{}",
+        String::from_utf8_lossy(&created.stderr)
+    );
+    let workweave = ws
+        .workspace
+        .parent()
+        .unwrap()
+        .join(".workweaves/web-app--ww");
+    assert!(workweave.is_dir());
+    std::fs::write(ws.workspace.join(".rwv-active"), pointer).unwrap();
+    (ws, workweave)
+}
+
+#[test]
+fn workweave_addressing_does_not_read_the_pointer() {
+    let (ws, _workweave) = primary_and_workweave_with_unreadable_pointer("two words\n");
+    let out = run(&ws.workspace, &["-w", "web-app--ww", "status"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// docs/reference/explain/templates/doctor.md.tmpl: from a workweave, `rwv doctor --fix` clears the
+/// primary's unreadable pointer.
+#[test]
+fn doctor_fix_from_a_workweave_removes_the_primarys_pointer() {
+    let (ws, workweave) = primary_and_workweave_with_unreadable_pointer("two words\n");
+    let out = run(&workweave, &["doctor", "--fix"]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("it named no project rwv can select"),
+        "{stdout}"
+    );
+    assert!(!ws.workspace.join(".rwv-active").exists());
+}
