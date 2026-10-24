@@ -274,6 +274,13 @@ pub enum Commands {
         /// flag, `--fix` reports both tips and leaves the checkout alone.
         #[arg(long)]
         adopt_detached_checkouts: bool,
+        /// With `--fix`, relink a workweave checkout whose link dangles and
+        /// whose pinned revision and branch are in no clone onto the
+        /// workweave's branch created at the canonical clone's HEAD, keeping
+        /// every file: the pinned commits are given up, and their changes
+        /// stand as edits. Without this flag, `--fix` reports the checkout.
+        #[arg(long)]
+        abandon_lost_pins: bool,
         /// Filter the report to the named finding kind (repeatable). Kind names are the wire spellings `--json` emits for violations and integration issues (e.g. `branch-discipline`, `orphaned-savepoint`, `tool-missing`); an unknown name refuses, listing the valid set. Kinds whose classes normally collapse to a per-class count line render itemized under the filter — this is the drill-down. The exit code reflects the filtered view; with `--json`, any finding in it exits non-zero, warnings included.
         #[arg(long = "kind", value_name = "KIND", conflicts_with_all = ["locked", "fix"])]
         kind: Vec<String>,

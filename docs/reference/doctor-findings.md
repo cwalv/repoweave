@@ -91,7 +91,8 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`workweave-tree-integrity`](#workweave-tree-integrity) / `dangling-parent`, `unregistered-workweave`, `stale-registry-entry` | Warning | Auto-fixable |
 | [`workweave-tree-integrity`](#workweave-tree-integrity) / `parent-chain-anomaly`, `unregistered-dir`, `foreign-primary`, `foreign-primary-other-workspace`, `tracked-index`, `unreadable-marker`, `misnamed-dir`, `nested-workweave-dir` | Warning | Report-only |
 | [`workweave-drift`](#workweave-drift) / `missing`, `symlink`, `dangling-link` | Error | Auto-fixable |
-| [`workweave-drift`](#workweave-drift) / `missing-unfetched`, `symlink-unfetched`, `dangling-link-unfetched` | Error | Report-only |
+| [`workweave-drift`](#workweave-drift) / `missing-unfetched`, `symlink-unfetched` | Error | Report-only |
+| [`workweave-drift`](#workweave-drift) / `dangling-link-unfetched` | Error | Report-only by default (`--abandon-lost-pins`) |
 | [`workweave-drift`](#workweave-drift) / `extra` | Warning | Report-only |
 | [`member-permissions`](#member-permissions) (`writable-reference`, `read-only-member`) | Warning | Auto-fixable |
 | [`role-disagreement`](#role-disagreement) | Warning | Report-only |
@@ -865,12 +866,21 @@ branch tip, so files that differ from it read as edits.
 
 #### `dangling-link-unfetched`
 
-**Error. Report-only.** As `dangling-link`, and the canonical clone holds
-neither its registration of the checkout, the workweave's branch nor the
-pinned revision.
+**Error. Report-only by default (`--abandon-lost-pins`).** As `dangling-link`,
+and the canonical clone holds neither its registration of the checkout, the
+workweave's branch nor the pinned revision.
 
-**What to do:** run `rwv fetch --project <project>` at the primary weave, then
-`rwv doctor --fix`. A canonical clone that is not on disk at all is reported as
+**What to do:** if the pinned revision is on the remote, run
+`rwv fetch --project <project>` at the primary weave, then `rwv doctor --fix`,
+which relinks the checkout onto it. If it is in no clone — the workweave
+committed it and the clone holding it was deleted before it was pushed —
+`rwv doctor --fix --abandon-lost-pins` relinks the checkout onto the
+workweave's branch created at the canonical clone's HEAD. Every file stays, so
+the lost commits' changes stand as edits against that HEAD; commit them and
+run `rwv lock` in the workweave. The receipt for the workweave's branch is
+kept until then, and is not reported as a
+[`dangling-ref-receipt`](#dangling-ref-receipt). A canonical clone that is not
+on disk at all is reported as
 [`missing-canonical-clone`](#missing-canonical-clone) instead.
 
 #### `extra`

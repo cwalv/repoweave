@@ -6,6 +6,19 @@ claim that nothing changed in them.
 
 ## Unreleased
 
+### A workweave checkout whose pinned commits went with a deleted clone can be relinked
+
+When the canonical clone was deleted while a workweave's lock pinned a commit
+it had not pushed, no clone held that commit again. `rwv fetch --project` then
+`rwv doctor --fix` reported `workweave-drift/dangling-link-unfetched` with the
+same advice forever, and `--fix` retracted the ownership receipt for the
+workweave's branch. The finding now says the pinned revision may be in no
+clone, and `rwv doctor --fix --abandon-lost-pins` relinks the checkout onto the
+workweave's branch created at the canonical clone's HEAD, keeping every file,
+so the lost commits' changes stand as edits. The receipt is kept: a receipt
+whose workweave holds a checkout of the store with a dangling link is no
+longer a `dangling-ref-receipt`.
+
 ### `rwv fetch` in a workweave no longer moves the primary's branches
 
 Run in a workweave, `rwv fetch` aligned the primary's canonical clones to the

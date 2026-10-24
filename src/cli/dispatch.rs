@@ -1003,6 +1003,7 @@ pub fn run() -> anyhow::Result<()> {
             all,
             reattach_checkouts,
             adopt_detached_checkouts,
+            abandon_lost_pins,
             kind,
             project,
         }) => {
@@ -1020,6 +1021,7 @@ pub fn run() -> anyhow::Result<()> {
             // for giving up a legacy branch's name to make room for it.
             let adopt_detached_checkouts =
                 consent::AdoptDetachedConsent::from_flag(adopt_detached_checkouts);
+            let abandon_lost_pins = consent::AbandonLostPinsConsent::from_flag(abandon_lost_pins);
             // Validated at the boundary: an unknown kind refuses here,
             // before any scan runs, naming the valid set.
             let kind_filter = if kind.is_empty() {
@@ -1042,6 +1044,7 @@ pub fn run() -> anyhow::Result<()> {
                     scope,
                     reattach_checkouts,
                     adopt_detached_checkouts,
+                    abandon_lost_pins,
                     kind_filter.as_ref(),
                 )?
             };

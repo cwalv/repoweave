@@ -780,10 +780,10 @@ impl CheckViolation {
             },
             CheckViolation::WorkweaveDrift { kind, .. } => match kind {
                 DriftKind::Missing | DriftKind::Symlink | DriftKind::DanglingLink => Auto,
-                DriftKind::MissingUnfetched
-                | DriftKind::SymlinkUnfetched
-                | DriftKind::DanglingLinkUnfetched
-                | DriftKind::Extra => ReportOnly,
+                DriftKind::MissingUnfetched | DriftKind::SymlinkUnfetched | DriftKind::Extra => {
+                    ReportOnly
+                }
+                DriftKind::DanglingLinkUnfetched => Consented("--abandon-lost-pins"),
             },
             CheckViolation::IndexDrift { kind, .. } => match kind {
                 IndexDriftKind::SafeToFix => Auto,
@@ -5823,7 +5823,8 @@ fn scan_dangling_receipts(
             if matches!(
                 vcs.resolve_local_branch_tip(owned.store(), owned.name()),
                 Ok(None)
-            ) {
+            ) && !held_by_dangling_checkout(ws_root, &project, &owned)
+            {
                 out.push(CheckViolation::DanglingRefReceipt {
                     project: project.clone(),
                     store_path: owned.store().to_path_buf(),
@@ -5832,6 +5833,33 @@ fn scan_dangling_receipts(
             }
         }
     }
+}
+
+/// Whether the workweave whose ephemeral branch `owned` names holds a
+/// checkout of `owned`'s store whose link dangles. Its branch went with a
+/// deleted clone, and the relink that gives the checkout back records the
+/// branch afresh: the receipt is that workweave's claim, not crash residue.
+fn held_by_dangling_checkout(
+    ws_root: &Path,
+    project: &ProjectName,
+    owned: &crate::vcs::OwnedRef,
+) -> bool {
+    let store = CanonicalPath::of(owned.store());
+    crate::workweave::list_workweave_dirs(ws_root)
+        .into_iter()
+        .filter(|(id, _)| {
+            &id.project == project
+                && &crate::vcs::EphemeralRefName::mint(&id.flat()).to_raw() == owned.name()
+        })
+        .any(|(id, dir)| {
+            Manifest::from_path(&project_dir(&dir, &id.project).join(Manifest::FILE_NAME))
+                .is_ok_and(|manifest| {
+                    manifest.iter_repo_paths().any(|repo| {
+                        CanonicalPath::of(&ws_root.join(repo.as_path())) == store
+                            && crate::workweave::is_dangling_link(&dir.join(repo.as_path()))
+                    })
+                })
+        })
 }
 
 /// Scan every project's receipt registry for receipts naming a pre-flat ref
@@ -6423,18 +6451,38 @@ fn scan_leftover_checkouts(
 
 /// `--fix` for the [`MemberGap`]s the canonical clone can close on its own,
 /// through [`crate::workweave::materialize_member`]. One it cannot is left
-/// for `rwv fetch`, which doctor does not run.
+/// for `rwv fetch`, which doctor does not run — except a dangling checkout
+/// under `abandon_lost_pins`, which is relinked onto the workweave's branch
+/// created at the canonical clone's HEAD, its pinned commits given up.
 fn repair_member_gaps(
     ctx: &crate::workspace::WorkspaceContext,
     project_scope: Option<&ProjectName>,
+    abandon_lost_pins: Option<crate::cli::consent::AbandonLostPinsConsent>,
     fix_errors: &mut Vec<String>,
 ) {
     for gap in scan_member_gaps(ctx, project_scope) {
-        if !gap.local {
-            continue;
-        }
-        let revision = gap.revision.as_deref().unwrap_or_default();
         let vcs = crate::vcs::vcs_for(gap.vcs_type);
+        let abandoned = match (gap.local, gap.slot, abandon_lost_pins) {
+            (true, _, _) => None,
+            (false, GapSlot::DanglingLink, Some(_)) => {
+                match vcs.head_revision(&ctx.primary_path().join(gap.repo.as_path())) {
+                    Ok(head) => Some(head),
+                    Err(e) => {
+                        fix_errors.push(format!(
+                            "workweave-drift fix failed for {}/{}: the canonical clone's \
+                             HEAD is unreadable: {e:#}",
+                            gap.workweave, gap.repo
+                        ));
+                        continue;
+                    }
+                }
+            }
+            (false, _, _) => continue,
+        };
+        let revision = match &abandoned {
+            Some(head) => head.id().as_str(),
+            None => gap.revision.as_deref().unwrap_or_default(),
+        };
         match crate::workweave::materialize_member(
             vcs.as_ref(),
             ctx.primary_path(),
@@ -6447,6 +6495,18 @@ fn repair_member_gaps(
             revision,
             crate::workweave::ReceiptedBranch::Attach,
         ) {
+            Ok(born) if abandoned.is_some() => outln!(
+                "[fixed] core: relinked the worktree for {repo} in workweave {ww}: {how}, the \
+                 canonical clone's HEAD; its pinned revision {pin} is in no clone and was given \
+                 up, and the checkout's files stand as edits against that HEAD",
+                repo = gap.repo,
+                ww = gap.workweave,
+                how = born.summary(),
+                pin = gap
+                    .revision
+                    .as_deref()
+                    .map_or("(none)", crate::vcs::short_revision),
+            ),
             Ok(born) if gap.slot == GapSlot::DanglingLink => outln!(
                 "[fixed] core: relinked the worktree for {repo} in workweave {ww}: {how}",
                 repo = gap.repo,
@@ -8274,10 +8334,14 @@ impl CheckViolation {
                 repo,
             } => {
                 let fetch_then_fix = format!(
-                    " — git cannot open it, and the canonical clone is not on disk or \
-                         holds neither the workweave's branch nor the revision rwv.lock \
-                         pins; run `rwv fetch --project {}` at the primary weave, then \
-                         `rwv doctor --fix`, which relinks it keeping its files",
+                    " — git cannot open it, and the canonical clone holds neither the \
+                         workweave's branch nor the revision rwv.lock pins. If that revision \
+                         is on the remote, run `rwv fetch --project {}` at the primary weave, \
+                         then `rwv doctor --fix`, which relinks it onto that revision. If it is \
+                         in no clone — its commits went with a deleted clone — \
+                         `rwv doctor --fix --abandon-lost-pins` relinks it onto the \
+                         workweave's branch created at the canonical clone's HEAD, keeping \
+                         every file, so those commits' changes stand as edits",
                     workweave
                         .as_ref()
                         .map_or_else(|| "<project>".to_owned(), |ww| ww.project.to_string())
@@ -9369,7 +9433,8 @@ impl CheckViolation {
                          (expected at {}), so git cannot open this worktree; run \
                          `rwv fetch --project {project}` at the primary weave to clone it \
                          again, then `rwv doctor --fix` there, which relinks this checkout \
-                         keeping its files",
+                         keeping its files — where its pinned commits went with the deleted \
+                         clone, the finding that follows names `--abandon-lost-pins`",
                     canonical_path.display(),
                     project = workweave.project,
                 )
@@ -10865,6 +10930,7 @@ pub fn run_check(
     scope: Scope,
     reattach: Option<crate::cli::consent::ReattachConsent>,
     adopt_detached: Option<crate::cli::consent::AdoptDetachedConsent>,
+    abandon_lost_pins: Option<crate::cli::consent::AbandonLostPinsConsent>,
     kind_filter: Option<&KindFilter>,
 ) -> anyhow::Result<Verdict> {
     use crate::integration::Severity;
@@ -10883,7 +10949,7 @@ pub fn run_check(
             Scope::Weave => None,
             Scope::ActiveProject => ctx.active_project(),
         };
-        repair_member_gaps(ctx, project_scope, &mut fix_errors);
+        repair_member_gaps(ctx, project_scope, abandon_lost_pins, &mut fix_errors);
         repair_standalone_members(ctx, project_scope, &mut fix_errors);
         repair_uninitialized_submodules(ctx, project_scope);
     }

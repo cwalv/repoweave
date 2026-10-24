@@ -500,3 +500,134 @@ fn a_locked_registration_of_a_removed_checkout_is_left_and_named() {
     rwv(&w.workweave, &["fetch"]);
     assert_eq!(status(&w.checkout()), format!("## {BRANCH}\n"));
 }
+
+// ---------------------------------------------------------------------------
+// The canonical clone is deleted while the workweave's lock pins a commit it
+// never pushed: no clone holds the pin or the branch again. The finding
+// names the consent that relinks the checkout without them.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_pin_lost_with_the_deleted_clone_is_given_up_under_consent_keeping_the_files() {
+    let w = Weave::new();
+    w.commit_unlanded();
+    rwv(&w.workweave, &["lock", "--commit"]);
+    std::fs::write(w.checkout().join("extra"), "uncommitted\n").unwrap();
+    std::fs::remove_dir_all(w.canonical()).unwrap();
+
+    let printed = advice(&w.primary, &["doctor", "--all"], "canonical clone for");
+    assert_names(
+        &printed,
+        &[
+            "`rwv fetch --project demo`",
+            "`rwv doctor --fix` there",
+            "`--abandon-lost-pins`",
+        ],
+    );
+    rwv(&w.primary, &["fetch", "--project", "demo"]);
+    let fixed = doctor_fix(&w.primary);
+    assert!(
+        !fixed.contains("retracted dangling ownership receipt"),
+        "the workweave's claim on its branch is kept: {fixed}"
+    );
+    let found = findings(&w.primary, true);
+    assert!(
+        found.contains(&format!("workweave-drift/dangling-link-unfetched {MEMBER}"))
+            && !found.iter().any(|f| f.starts_with("dangling-ref-receipt")),
+        "{found:?}"
+    );
+    let printed = advice(
+        &w.primary,
+        &["doctor"],
+        "worktree link to a missing git directory",
+    );
+    assert_names(
+        &printed,
+        &[
+            "in no clone",
+            "`rwv doctor --fix --abandon-lost-pins`",
+            "keeping every file",
+        ],
+    );
+
+    let out = common::rwv()
+        .args(["doctor", "--fix", "--abandon-lost-pins"])
+        .current_dir(&w.primary)
+        .output()
+        .unwrap();
+    let relinked = text(&out);
+    assert!(
+        relinked.contains("the canonical clone's HEAD; its pinned revision")
+            && relinked.contains("was given up"),
+        "{relinked}"
+    );
+
+    let canonical_head = head(&w.canonical());
+    assert_eq!(w.branch_tip(), canonical_head);
+    assert_eq!(head(&w.checkout()), canonical_head);
+    let after = status(&w.checkout());
+    for kept in ["?? extra", "?? unlanded"] {
+        assert!(after.contains(kept), "every file is kept: {after}");
+    }
+    assert_eq!(
+        std::fs::read_to_string(w.checkout().join("unlanded")).unwrap(),
+        "work\n"
+    );
+
+    common::git_in(w.checkout(), &["add", "-A"]);
+    common::git_in(w.checkout(), &["commit", "--quiet", "-m", "recommitted"]);
+    rwv(&w.workweave, &["lock", "--commit"]);
+    assert_eq!(findings(&w.workweave, false), Vec::<String>::new());
+    assert_eq!(findings(&w.primary, true), Vec::<String>::new());
+}
+
+// ---------------------------------------------------------------------------
+// A create over a receipted branch that moved refuses; following its
+// `git branch -m` exit keeps the commits under the new name and lets the
+// create through.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_create_over_a_moved_branch_succeeds_after_its_branch_m_advice_and_keeps_the_commits() {
+    let w = Weave::new();
+    let unlanded = w.commit_unlanded();
+    std::fs::remove_dir_all(&w.workweave).unwrap();
+    doctor_fix(&w.primary);
+
+    let out = common::rwv()
+        .args(["workweave", "demo", "create", "feat"])
+        .current_dir(&w.primary)
+        .output()
+        .unwrap();
+    let refusal = text(&out);
+    assert!(!out.status.success(), "{refusal}");
+    let advised = refusal
+        .split('`')
+        .find(|span| span.starts_with("git -C ") && span.contains(" branch -m "))
+        .unwrap_or_else(|| panic!("no `git -C … branch -m` exit: {refusal}"));
+    let words: Vec<String> = advised
+        .replace("<new-name>", "keep-feat")
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(words[..2], ["git", "-C"]);
+    let out = common::git()
+        .args(&words[1..])
+        .current_dir(&w.primary)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", text(&out));
+
+    rwv(&w.primary, &["workweave", "demo", "create", "feat"]);
+    common::git_in(
+        w.canonical(),
+        &[
+            "merge-base",
+            "--is-ancestor",
+            &unlanded,
+            "refs/heads/keep-feat",
+        ],
+    );
+    assert_eq!(status(&w.checkout()), format!("## {BRANCH}\n"));
+    assert_eq!(findings(&w.workweave, false), Vec::<String>::new());
+}

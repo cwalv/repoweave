@@ -250,6 +250,24 @@ impl AdoptDetachedConsent {
     }
 }
 
+/// Proof that the operator consented to giving up a workweave member's
+/// pinned commits that are in no clone, relinking its checkout onto the
+/// workweave's branch created at the canonical clone's HEAD. Minted from
+/// `--abandon-lost-pins`.
+///
+/// `Copy`: see [`DetachConsent`]'s doc comment.
+#[derive(Debug, Clone, Copy)]
+pub struct AbandonLostPinsConsent(());
+
+impl AbandonLostPinsConsent {
+    /// Mint from the parsed `--abandon-lost-pins` value: `Some` iff the
+    /// operator passed it. `pub(in crate::cli)`: see
+    /// [`DetachConsent::from_flag`]'s doc comment.
+    pub(in crate::cli) fn from_flag(abandon_lost_pins: bool) -> Option<Self> {
+        abandon_lost_pins.then_some(Self(()))
+    }
+}
+
 /// Proof that the operator consented to discarding the current content of
 /// an rwv-attested generated file and regenerating it from the current
 /// inputs. Minted from `--regenerate-drifted`.
