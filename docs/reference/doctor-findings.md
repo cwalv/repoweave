@@ -917,7 +917,7 @@ from the primary, every registered workweave of the projects in scope. It
 prints:
 
 ```
-[fixed] core: replaced the full clone of <repo> in workweave <project>--<name> with a worktree of the canonical clone at <sha>
+[fixed] core: replaced the full clone of <repo> in workweave <project>--<name> with a worktree of the canonical clone at <sha> (<n> reflinked, <n> hardlinked, <n> written)
 ```
 
 The repair removes the full clone, so it refuses, changing nothing, while the

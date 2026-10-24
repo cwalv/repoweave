@@ -231,14 +231,27 @@ fn doctor_fix_replaces_the_clone_with_a_worktree_at_the_commit_it_had_checked_ou
         !out.contains("clone-topology"),
         "doctor --fix must repair the member:\n{out}"
     );
-    assert!(
-        out.contains(&format!(
-            "[fixed] core: replaced the full clone of {MEMBER} in workweave {PROJECT}--{SEAT} with a \
-             worktree of the canonical clone at {}",
-            &checked_out[..12]
-        )),
-        "{out}"
+    let fixed = format!(
+        "[fixed] core: replaced the full clone of {MEMBER} in workweave {PROJECT}--{SEAT} with a \
+         worktree of the canonical clone at {} (",
+        &checked_out[..12]
     );
+    let counts = out
+        .lines()
+        .find_map(|line| line.strip_prefix(fixed.as_str()))
+        .unwrap_or_else(|| panic!("no `{fixed}` line:\n{out}"));
+    let counts = counts
+        .strip_suffix(')')
+        .unwrap_or_else(|| panic!("the line must end with its file counts:\n{out}"));
+    let words: Vec<&str> = counts
+        .split(", ")
+        .map(|part| {
+            let (n, word) = part.split_once(' ').expect("`<n> <how>`");
+            n.parse::<usize>().expect("a count");
+            word
+        })
+        .collect();
+    assert_eq!(words, ["reflinked", "hardlinked", "written"], "{out}");
 
     assert!(
         weave.clone.join(".git").is_file(),
