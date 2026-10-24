@@ -69,7 +69,15 @@ fn setup_workspace_with_project(
     tmp: &tempfile::TempDir,
     repos: &[(&str, &str)],
 ) -> (std::path::PathBuf, std::path::PathBuf) {
-    let workspace = tmp.path().join("ws");
+    setup_named_workspace_with_project(tmp, "ws", repos)
+}
+
+fn setup_named_workspace_with_project(
+    tmp: &tempfile::TempDir,
+    weave_dir: &str,
+    repos: &[(&str, &str)],
+) -> (std::path::PathBuf, std::path::PathBuf) {
+    let workspace = tmp.path().join(weave_dir);
     std::fs::create_dir_all(&workspace).unwrap();
 
     let project_dir = workspace.join("projects").join("test-project");
@@ -654,8 +662,17 @@ fn add_new_local_registry_creates_a_bare_upstream_and_clones_the_member() {
     // 5. A second weave `rwv fetch`ing that manifest materializes the member
     // from that URL — the assertion that actually depends on the upstream
     // being real rather than merely named.
+    let recorded_url = toml::from_str::<toml::Table>(&manifest_content).unwrap()["repositories"]
+        ["local/acme/fresh"]["url"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let (workspace2, _project_dir2) =
-        setup_workspace_with_project(&tmp, &[("local/acme/fresh", &expected_url)]);
+        setup_named_workspace_with_project(&tmp, "ws2", &[("local/acme/fresh", &recorded_url)]);
+    assert_ne!(
+        workspace2, workspace,
+        "the second weave must be a separate directory"
+    );
     rwv()
         .args(["fetch"])
         .current_dir(&workspace2)
