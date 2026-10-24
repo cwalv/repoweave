@@ -5,7 +5,8 @@
   "type": "object",
   "required": [
     "$schema",
-    "repos"
+    "repos",
+    "unreadable_projects"
   ],
   "properties": {
     "$schema": {
@@ -38,6 +39,13 @@
           "type": "null"
         }
       ]
+    },
+    "unreadable_projects": {
+      "description": "Projects whose `rwv.toml` or `rwv.lock` did not load: none of their repos is in `repos`.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/UnreadableProject"
+      }
     }
   },
   "definitions": {
@@ -376,6 +384,22 @@
           ]
         }
       ]
+    },
+    "UnreadableProject": {
+      "type": "object",
+      "required": [
+        "error",
+        "project"
+      ],
+      "properties": {
+        "error": {
+          "description": "The load error, as the warning on stderr prints it.",
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        }
+      }
     },
     "WirePath": {
       "description": "Absolute path, `/`-separated on every platform.",

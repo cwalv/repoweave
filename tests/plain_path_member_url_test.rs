@@ -110,7 +110,7 @@ fn doctor_names_only_the_respelling_and_following_it_lets_fetch_clone() {
     let report = String::from_utf8_lossy(&out.stdout);
     let file_url = common::file_url(&weave.bare);
     assert!(
-        report.contains(&format!("`{file_url}`")) && !report.contains("dangling reference"),
+        report.contains(&format!("`{file_url}`")) && !report.contains("dangling-reference"),
         "{}",
         text(&out)
     );

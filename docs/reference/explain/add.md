@@ -201,10 +201,12 @@ error says `rwv.toml` was updated; re-running the add re-runs them. A failed
 hook is not a refused add: the member stands.
 
 A refused add accounts for what it had created by then. A clone it fetched,
-and a workweave worktree it made, stay on disk: the error names each one,
-says that re-running the same add after fixing the cause reuses it, and names
-`rwv remove <path> --delete` as the way to remove it instead (in the
-workweave for its worktree, then in the primary weave for the clone). What
+and a workweave worktree it made, stay on disk: the error names each one and
+says that once the cause is fixed, re-running the same add reuses it, or
+`rwv remove <path> --delete` removes it instead (in the workweave for its
+worktree, then in the primary weave for the clone). Fix the cause first either
+way: the remove regenerates the project's files too, so it refuses for the same
+reason while the cause stands. What
 `--new` created — the bare upstream under `--param root`, the new member, and
 any directory made to hold them — holds nothing but what the add put there,
 so the refused add removes it and says so.

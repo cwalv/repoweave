@@ -47,6 +47,7 @@ Under `--json`, output is the envelope:
 {
   "$schema": "<url>",
   "repos": [ { "path": "...", ... }, ... ],
+  "unreadable_projects": [ { "project": "...", "error": "..." } ],
   "op": { "id": "...", "verb": "sync", "phase": "replay", ... }
 }
 ```
@@ -57,6 +58,11 @@ The `$schema` URL points to the committed schema artifact. Each element of
 (`ok`/`ahead`/`behind`/`diverged`/`no-lock`/`unknown`/`missing`/`unreachable`),
 `mid_op` (`mid-rebase`/`mid-merge`/`mid-cherry-pick`/`mid-bisect`, or `null`),
 `role`, `url`, `project`.
+
+`unreadable_projects` lists each project whose `rwv.toml` or `rwv.lock` did
+not load, with the load `error` naming the file and line; none of its repos is
+in `repos`. The table prints a warning for each instead, and the exit code is
+still 0. Empty, not absent, when every project loaded.
 
 `op` is present only when this workspace owns or leases an in-flight op: an
 `OpStatus` record carrying `id`, `verb` (`sync`/`sync-to`), `phase`
@@ -74,7 +80,8 @@ Schema:
   "type": "object",
   "required": [
     "$schema",
-    "repos"
+    "repos",
+    "unreadable_projects"
   ],
   "properties": {
     "$schema": {
@@ -107,6 +114,13 @@ Schema:
           "type": "null"
         }
       ]
+    },
+    "unreadable_projects": {
+      "description": "Projects whose `rwv.toml` or `rwv.lock` did not load: none of their repos is in `repos`.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/UnreadableProject"
+      }
     }
   },
   "definitions": {
@@ -446,6 +460,22 @@ Schema:
         }
       ]
     },
+    "UnreadableProject": {
+      "type": "object",
+      "required": [
+        "error",
+        "project"
+      ],
+      "properties": {
+        "error": {
+          "description": "The load error, as the warning on stderr prints it.",
+          "type": "string"
+        },
+        "project": {
+          "type": "string"
+        }
+      }
+    },
     "WirePath": {
       "description": "Absolute path, `/`-separated on every platform.",
       "type": "string"
@@ -458,8 +488,8 @@ Schema:
 
 - `0` — status rendered successfully (independent of whether repos are
   drifted, ahead, behind, or mid-op — those are data, not failures).
-- non-zero — workspace could not be resolved, manifest parse failure, or an
-  I/O error.
+- non-zero — workspace could not be resolved, or an I/O error. A project
+  whose manifest does not parse is skipped with a warning, not a failure.
 
 ## Examples
 
