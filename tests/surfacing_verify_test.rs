@@ -173,3 +173,73 @@ fn doctor_clean_when_surfacing_intact() {
         "doctor should not flag surfacing when intact, got:\n{out}"
     );
 }
+
+/// A name two integrations declare is one path in the surfacing union: it is
+/// surfaced once, nothing refuses, and its findings carry the first
+/// declarer's label. `vscode-workspace` and a `static-files` entry both
+/// declare `alpha.code-workspace`; `vscode-workspace` comes first in the
+/// built-in order.
+#[test]
+fn a_name_two_integrations_declare_is_surfaced_once_under_the_first_declarer() {
+    let tmp = common::tempdir().unwrap();
+    let ws = tmp.path().join("ws");
+    std::fs::create_dir_all(ws.join("github")).unwrap();
+    let project_dir = ws.join("projects").join("alpha");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::write(
+        project_dir.join("rwv.toml"),
+        "[repositories]\n\n[integrations.static-files]\nenabled = true\nfiles = [\"alpha.code-workspace\"]\n\n[integrations.go-work]\nenabled = false\n",
+    )
+    .unwrap();
+    std::fs::write(
+        project_dir.join("alpha.code-workspace"),
+        "{\"folders\": []}\n",
+    )
+    .unwrap();
+    run_git(&["init", "-b", "main"], &project_dir);
+    run_git(&["add", "."], &project_dir);
+    run_git(&["commit", "-m", "init"], &project_dir);
+
+    rwv()
+        .args(["activate", "alpha", "--no-materialize"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+    let link = ws.join("alpha.code-workspace");
+    assert_eq!(
+        std::fs::read_link(&link).unwrap(),
+        Path::new("projects/alpha/alpha.code-workspace")
+    );
+
+    std::fs::remove_file(&link).unwrap();
+    let out = rwv()
+        .args(["doctor", "--json"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let doc: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_else(|e| {
+        panic!(
+            "doctor --json parses: {e}\n{}",
+            String::from_utf8_lossy(&out.stdout)
+        )
+    });
+    let surfacing: Vec<&serde_json::Value> = doc["issues"]
+        .as_array()
+        .expect("issues is an array")
+        .iter()
+        .filter(|i| {
+            i["kind"] == "surfacing"
+                && i["message"]
+                    .as_str()
+                    .is_some_and(|m| m.contains("alpha.code-workspace"))
+        })
+        .collect();
+    assert_eq!(
+        surfacing
+            .iter()
+            .map(|i| i["integration"].as_str().unwrap_or_default())
+            .collect::<Vec<_>>(),
+        vec!["vscode-workspace"],
+        "one surfacing finding, labeled by the first declarer: {doc}"
+    );
+}

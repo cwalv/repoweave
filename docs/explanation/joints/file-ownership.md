@@ -30,8 +30,8 @@ Consequences:
   files whose source exists — so an integration reading through it inspects another project's file,
   or names a path that exists in neither view for a file that is simply absent.
 - A root symlink is removed only when its name is in the owning integration's declared file set
-  **and** its `read_link` target resolves to `projects/<project>/<file>`. A name claimed by two
-  integrations is an error, raised before any symlink mutation.
+  **and** its `read_link` target resolves to `projects/<project>/<file>`. A name declared by two
+  integrations is surfaced once; the first declarer labels it in `rwv doctor`'s findings.
 - Surfacing is checked **framework-side**, not per-integration. The same
   `generated_files() ∪ managed_files()` union that drives symlink creation has a second consumer:
   `rwv doctor` asserts every file in the union exists at the weave root as a symlink resolving to
