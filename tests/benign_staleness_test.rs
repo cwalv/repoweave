@@ -1467,6 +1467,99 @@ fn dirty_source_untracked_file_is_ignored() {
     );
 }
 
+fn assert_source_refusal_changed_nothing(f: &Fixture, stderr: &str, state: &str) {
+    assert!(
+        stderr.contains("\nrwv explain head-not-on-branch\n"),
+        "expected the head-not-on-branch route token; got:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("source workweave is not on a branch in:")
+            && stderr.contains(state)
+            && stderr.contains(&format!(
+                "Attach a branch in the source ({}) with `git switch <branch>` or \
+                 `git switch -c <new>`, then re-run.",
+                f.ww.root.display()
+            )),
+        "the refusal must name the repo, its state and the fix; got:\n{stderr}"
+    );
+    assert!(savepoint_refs(&f.main.project_dir).is_empty());
+    assert!(savepoint_refs(&f.main.manifest_repo).is_empty());
+    assert!(savepoint_refs(&f.ww.project_dir).is_empty());
+    assert!(savepoint_refs(&f.ww.manifest_repo).is_empty());
+    assert!(!f.ww.root.join(".rwv-op").exists());
+    assert!(!f.main.root.join(".rwv-op").exists());
+    assert!(!f.main.root.join(".rwv-op-lease").exists());
+}
+
+fn unborn(repo: &Path) {
+    common::git_in(repo, &["checkout", "-q", "--orphan", "unborn-src"]);
+    common::git_in(repo, &["rm", "-rfq", "."]);
+}
+
+fn sync_to_main_refusal(f: &Fixture) -> String {
+    let assert = rwv()
+        .args(["sync-to", &f.main.root.to_string_lossy()])
+        .current_dir(&f.ww.root)
+        .assert()
+        .failure();
+    String::from_utf8_lossy(&assert.get_output().stderr).into_owned()
+}
+
+#[test]
+fn detached_source_member_refuses_before_any_side_effect() {
+    let f = fixture();
+    common::git_in(&f.ww.manifest_repo, &["checkout", "-q", "--detach"]);
+    let tips = (
+        head(&f.main.project_dir),
+        head(&f.main.manifest_repo),
+        head(&f.ww.manifest_repo),
+    );
+    let stderr = sync_to_main_refusal(&f);
+    assert_source_refusal_changed_nothing(
+        &f,
+        &stderr,
+        &format!("{MANIFEST_REPO_PATH} (detached HEAD at "),
+    );
+    assert_eq!(tips.0, head(&f.main.project_dir));
+    assert_eq!(tips.1, head(&f.main.manifest_repo));
+    assert_eq!(tips.2, head(&f.ww.manifest_repo));
+}
+
+#[test]
+fn unborn_source_member_refuses_before_any_side_effect() {
+    let f = fixture();
+    unborn(&f.ww.manifest_repo);
+    let tips = (head(&f.main.project_dir), head(&f.main.manifest_repo));
+    let stderr = sync_to_main_refusal(&f);
+    assert_source_refusal_changed_nothing(
+        &f,
+        &stderr,
+        &format!("{MANIFEST_REPO_PATH} (unborn branch 'unborn-src', no commits yet)"),
+    );
+    assert_eq!(tips.0, head(&f.main.project_dir));
+    assert_eq!(tips.1, head(&f.main.manifest_repo));
+}
+
+#[test]
+fn detached_source_project_repo_refuses_before_any_side_effect() {
+    let f = fixture();
+    common::git_in(&f.ww.project_dir, &["checkout", "-q", "--detach"]);
+    let tips = (
+        head(&f.main.project_dir),
+        head(&f.main.manifest_repo),
+        head(&f.ww.project_dir),
+    );
+    let stderr = sync_to_main_refusal(&f);
+    assert_source_refusal_changed_nothing(&f, &stderr, "(detached HEAD at ");
+    assert!(
+        stderr.contains("  (project) (detached HEAD at "),
+        "names the project repo; got:\n{stderr}"
+    );
+    assert_eq!(tips.0, head(&f.main.project_dir));
+    assert_eq!(tips.1, head(&f.main.manifest_repo));
+    assert_eq!(tips.2, head(&f.ww.project_dir));
+}
+
 /// Carve-out: a project repo dirty ONLY in `rwv.lock` is NOT dirt (it is the
 /// auto-relock's own input). sync-to proceeds and commits the regenerated lock.
 #[test]

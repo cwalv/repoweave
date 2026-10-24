@@ -148,6 +148,14 @@ stopped in the checkout. A `sync-to` parked on a member's rebase conflict drew
 a `git switch` that git refuses mid-rebase, beside `stale-op-state`'s own
 `--continue` and `rwv abort`.
 
+### `rwv sync-to` refuses a source checkout that is on no branch
+
+`rwv sync-to` already refused a target repo with a detached or unborn HEAD. It
+now refuses the same state in the source: the project repo or any member repo of
+the workweave being landed. The refusal is `head-not-on-branch`, raised before
+anything changes, and it names each repo and the fix (`git switch <branch>` or
+`git switch -c <new>`).
+
 ### On Windows, `rwv explain` and `rwv prime` print LF line endings
 
 The pages `rwv explain` and `rwv prime` print are built into the binary. The

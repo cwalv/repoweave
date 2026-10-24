@@ -310,14 +310,16 @@ first. Reusing the directory is not offered here — see
 ### `head-not-on-branch`
 
 **Condition.** HEAD is detached, unborn, or unreadable in a repo the verb must
-land on or move.
+land on or move. `rwv sync-to` checks both ends: every repo of the target, and
+the project repo and every member repo of the source workweave.
 
 **Why.** Landing work means advancing a branch. A detached HEAD names no
 branch to advance, and an unborn one has no commit to advance from, so the
 verb has nowhere to put the result.
 
-**Exits.** Check out the branch you meant. For an unborn branch, make an
-initial commit first. For push specifically, the canonical branch is the one
+**Exits.** Check out the branch you meant (`git switch <branch>`, or `git
+switch -c <new>` to give detached commits a branch). For an unborn branch, make
+an initial commit first. For push specifically, the canonical branch is the one
 publishing requires — see `project-repo-off-canonical-branch`.
 
 **Where this sits.** [Workweave lifecycle](../explanation/joints/workweave-lifecycle.md).

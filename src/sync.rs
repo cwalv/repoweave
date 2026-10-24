@@ -3011,6 +3011,7 @@ fn run_preconditions_after_acquire(
             // sync-to preflights (all refuse before any side effects):
             //   - dirty-source: CWD-side tracked dirt would go stale mid-rebase.
             //   - dirty-target: the target's uncommitted work advance-target overwrites.
+            //   - detached-source: the work to land would sit on no branch.
             //   - detached-target: advance-target would have no branch to land on.
             // Source before target: the operator's own workspace is the first thing they
             // can fix, and a dirty source is the state we most want to define away.
@@ -3018,6 +3019,12 @@ fn run_preconditions_after_acquire(
                 Project::from_dir(cwd_project_dir, cwd_project_name.clone())
                     .context("failed to load CWD project for sync-to preflights")?;
             check_dirty_source_preflight(
+                project_vcs,
+                &cwd_project_preflight,
+                cwd_workspace_dir,
+                cwd_project_dir,
+            )?;
+            check_detached_source_preflight(
                 project_vcs,
                 &cwd_project_preflight,
                 cwd_workspace_dir,
@@ -4122,6 +4129,51 @@ fn check_dirty_target_preflight(
                 .collect::<Vec<_>>()
                 .join("\n  "),
             target_path.display(),
+        );
+    }
+    Ok(())
+}
+
+/// sync-to detached-source preflight: refuse if the source project repo or any
+/// source member repo is not on a branch. The work being landed must sit on a
+/// branch of its own; `--retire` deletes the source branches, and a detached
+/// HEAD leaves nothing but the landing to hold the commits.
+fn check_detached_source_preflight(
+    project_vcs: &dyn Vcs,
+    cwd_project: &Project,
+    cwd_workspace_dir: &Path,
+    cwd_project_dir: &Path,
+) -> anyhow::Result<()> {
+    let unattached = |vcs: &dyn Vcs, repo: &Path| match vcs.head_attachment(repo) {
+        Ok(HeadAttachment::Attached(_)) => None,
+        Ok(HeadAttachment::Detached(d)) => Some(format!("detached HEAD at {}", d.at())),
+        Ok(HeadAttachment::Unborn(u)) => Some(format!("unborn branch '{u}', no commits yet")),
+        Err(e) => Some(format!("HEAD unreadable: {e:#}")),
+    };
+
+    let mut detached: Vec<String> = Vec::new();
+    for (repo_path, entry) in cwd_project.manifest.iter_entries() {
+        let repo = cwd_workspace_dir.join(repo_path.as_path());
+        if !repo.exists() {
+            continue;
+        }
+        if let Some(state) = unattached(vcs_for(entry.vcs_type).as_ref(), &repo) {
+            detached.push(format!("{repo_path} ({state})"));
+        }
+    }
+    if let Some(state) = unattached(project_vcs, cwd_project_dir) {
+        detached.push(format!("{} ({state})", RepoKey::Project));
+    }
+    if !detached.is_empty() {
+        crate::refuse!(
+            RefusalKind::HeadNotOnBranch,
+            "sync-to precondition failed: source workweave is not on a branch in:\n  {}\n\
+             \n\
+             sync-to lands the work of the branch each source repo is on; a detached or unborn \
+             HEAD has none. Attach a branch in the source ({}) with `git switch <branch>` or \
+             `git switch -c <new>`, then re-run.",
+            detached.join("\n  "),
+            cwd_workspace_dir.display(),
         );
     }
     Ok(())
