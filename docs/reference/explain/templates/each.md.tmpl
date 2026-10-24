@@ -46,11 +46,10 @@ Default text output streams each line prefixed `[<path>] `; `--group` holds
 a repo's output and prints it whole under a `[<path>]` header. When any repo
 did not succeed, a summary on stderr lists each one with its exit status.
 
-Under `--json` with `-j 1`, output is one envelope once every repo is done,
-outcomes in manifest order, each command's stdout and stderr captured into
-its record. Under `--json -j N` with `N > 1`, output is NDJSON: one record
-per line as each repo finishes, each carrying its own `"$schema"`
-(`each-record.json`).
+Under `--json`, whatever `-j` is, output is one envelope once every repo is
+done, outcomes sorted by repo path, each command's stdout and stderr captured
+into its record. For a record of each repo as it finishes, use `--joblog` and
+`--results`.
 
 `status` is one of `ok`, `failed`, `timed-out`, `not-run`, `not-present`.
 
