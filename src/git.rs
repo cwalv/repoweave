@@ -3128,7 +3128,7 @@ impl GitVcs {
 /// leaf of a stale registration no longer exists.
 fn same_location(registered: &Path, asked: &Path) -> bool {
     let resolved = |path: &Path| {
-        let parent = std::fs::canonicalize(path.parent()?).ok()?;
+        let parent = crate::path_spelling::resolve(path.parent()?).ok()?;
         Some(parent.join(path.file_name()?))
     };
     registered == asked || resolved(registered).is_some_and(|r| Some(r) == resolved(asked))
