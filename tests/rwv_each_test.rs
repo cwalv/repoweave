@@ -90,6 +90,8 @@ fn path_with_bins() -> OsString {
 
 const MARK: &[&str] = &["git", "config", "each.ran", "yes"];
 
+const JOBLOG_HEADER: &str = "Seq\tRepo\tStarttime\tJobRuntime\tExitval\tSignal\tCommand";
+
 fn stdout(o: &Output) -> String {
     String::from_utf8_lossy(&o.stdout).into_owned()
 }
@@ -820,6 +822,162 @@ fn outside_any_workspace_addressing_one_with_minus_c_runs_there() {
     assert!(w.ran(APP) && w.ran(LIB));
 }
 
+/// docs/reference/rwv-each.md, Synopsis: "`--` is accepted but never
+/// required"; everything from the first non-option word on, options included,
+/// belongs to the command.
+#[test]
+fn the_command_needs_no_double_dash_and_keeps_its_own_options() {
+    let w = Weave::standard();
+    let out = w.each(&["--repo", APP, "git", "log", "--format=%s", "-1"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(
+        stdout(&out).contains(&format!("[{APP}] init")),
+        "{}",
+        stdout(&out)
+    );
+
+    let out = w.each(&["--repo", APP, "--", "git", "log", "--format=%s", "-1"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+}
+
+/// docs/reference/rwv-each.md, Running: "-j N ... Default `min(nproc, 8)`",
+/// and the how-to's "default: min(nproc, 8)". Ten repos, so the cap is what
+/// limits the concurrency whenever the machine has eight or more cores.
+#[test]
+fn the_default_job_count_is_the_core_count_capped_at_eight() {
+    let repos: Vec<(String, &str)> = (0..10).map(|i| (format!("r/{i}"), "owned")).collect();
+    let refs: Vec<(&str, &str)> = repos.iter().map(|(p, r)| (p.as_str(), *r)).collect();
+    let w = Weave::new(&refs);
+    let log = w.ws.join("concurrency.log");
+    let line = format!(
+        "echo start >> '{log}'; sleep 1; echo end >> '{log}'",
+        log = log.display()
+    );
+    let out = w.each(&["--shell", &line]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let (mut running, mut peak) = (0usize, 0usize);
+    for event in std::fs::read_to_string(&log).unwrap().lines() {
+        match event {
+            "start" => running += 1,
+            _ => running -= 1,
+        }
+        peak = peak.max(running);
+    }
+    let cores = std::thread::available_parallelism().unwrap().get();
+    assert_eq!(peak, cores.min(8));
+}
+
+/// docs/reference/rwv-each.md, Running: under `--fail-fast` "repos already
+/// running finish".
+#[test]
+fn fail_fast_lets_repos_already_running_finish() {
+    let w = Weave::new(&[(APP, "owned"), (LIB, "owned")]);
+    let script =
+        format!(r#"if [ "$RWV_REPO" = {APP} ]; then exit 1; fi; sleep 1; git config each.ran yes"#);
+    let out = w.each(&["-j", "2", "--fail-fast", "--shell", &script]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(w.ran(LIB), "the repo running beside the failure finishes");
+    assert!(
+        !stderr(&out).contains(&format!("{LIB}:")),
+        "{}",
+        stderr(&out)
+    );
+}
+
+/// docs/reference/rwv-each.md, Running: a command that could not be started
+/// "is failed", and Records and logs: `exit_code` is `null` when it does not
+/// apply.
+#[test]
+fn a_command_that_cannot_be_started_is_failed_with_no_exit_code() {
+    let w = Weave::new(&[(APP, "owned")]);
+    let out = w.each(&["--json", "-j", "1", "--", "./no-such-program"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    let envelope = envelope(&out);
+    let outcome = outcome_of(&envelope, APP);
+    assert_eq!(outcome["status"], "failed");
+    assert_eq!(outcome["exit_code"], Value::Null);
+    assert_eq!(outcome["signal"], Value::Null);
+}
+
+/// docs/reference/rwv-each.md, `--joblog`: "`Exitval` is `-1` when the command
+/// left no exit code".
+#[test]
+fn the_joblog_records_exitval_minus_one_when_the_command_left_no_exit_code() {
+    let w = Weave::new(&[(APP, "owned")]);
+    let log = w.ws.join("job.log");
+    let out = w.each(&[
+        "-j",
+        "1",
+        "--joblog",
+        log.to_str().unwrap(),
+        "--",
+        "./no-such-program",
+    ]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    let text = std::fs::read_to_string(&log).unwrap();
+    let row: Vec<&str> = text.lines().nth(1).expect("a row").split('\t').collect();
+    assert_eq!(row[4], "-1", "{text}");
+}
+
+/// docs/reference/rwv-each.md, `--joblog`: "Repos that never started have no
+/// line" — neither those a `--fail-fast` halt skipped nor a checkout absent
+/// from disk — and "FILE is replaced if it exists".
+#[test]
+fn the_joblog_has_no_line_for_repos_that_never_started_and_replaces_the_file() {
+    let gone = "github/org/gone";
+    let w = Weave::with_missing(&[(APP, "owned"), (LIB, "owned")], &[(gone, "owned")]);
+    let log = w.ws.join("job.log");
+    let log_arg = log.to_str().unwrap();
+    let repos_logged = || -> Vec<String> {
+        let text = std::fs::read_to_string(&log).unwrap();
+        let mut lines = text.lines();
+        assert_eq!(lines.next(), Some(JOBLOG_HEADER), "{text}");
+        lines
+            .map(|l| l.split('\t').nth(1).unwrap().to_owned())
+            .collect()
+    };
+
+    std::fs::write(&log, "left over from an earlier run\n").unwrap();
+    w.each(&["-j", "1", "--joblog", log_arg, "--shell", "exit 0"]);
+    assert_eq!(repos_logged(), [APP, LIB]);
+
+    w.each(&[
+        "-j",
+        "1",
+        "--fail-fast",
+        "--joblog",
+        log_arg,
+        "--shell",
+        "exit 1",
+    ]);
+    assert_eq!(repos_logged(), [APP]);
+}
+
+/// docs/reference/rwv-each.md, Exit status: exit `1` when "the selection could
+/// not be resolved".
+#[test]
+fn a_selection_that_cannot_be_resolved_exits_1_and_runs_nothing() {
+    let w = Weave::standard();
+    let out = w.each(&args_then(&["--repo", "re:(", "--"], MARK));
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(!w.ran(APP) && !w.ran(LIB) && !w.ran(DOCS));
+}
+
+/// docs/reference/rwv-each.md, Which checkout, which repos: "The project repo
+/// is not a manifest member and is never run in."
+#[test]
+fn the_project_repo_is_never_run_in() {
+    let w = Weave::standard();
+    let out = w.each(&["--repo", "re:.*", "--dry-run", "--", "true"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let text = stdout(&out);
+    for repo in [APP, LIB, DOCS] {
+        assert!(text.contains(&format!("  {repo}: would run")), "{text}");
+    }
+    assert_eq!(text.matches("would run").count(), 3, "{text}");
+    assert!(!text.contains("projects/demo"), "{text}");
+}
+
 #[test]
 fn job_helper() {
     common::job::serve();
@@ -1021,5 +1179,156 @@ mod unix {
         };
         assert!(run("1").contains("got:typed"), "{}", run("1"));
         assert!(run("2").contains("got:\n"), "{}", run("2"));
+    }
+
+    /// docs/reference/rwv-each.md, Synopsis: everything after the first word
+    /// that is not an option "is passed to the command unchanged", including
+    /// words `rwv each` itself spells as options.
+    #[test]
+    fn options_after_the_command_word_belong_to_the_command() {
+        let w = Weave::new(&[(APP, "owned")]);
+        let out = w.each(&[
+            "--repo",
+            APP,
+            "sh",
+            "-c",
+            "echo \"$@\"",
+            "_",
+            "-j",
+            "1",
+            "--json",
+            "--group",
+        ]);
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(stdout(&out), format!("[{APP}] -j 1 --json --group\n"));
+    }
+
+    /// docs/reference/rwv-each.md, Output: "Under `-j 1`, `--results` and
+    /// `--progress` also detach the terminal: output is read line by line,
+    /// under the header, unprefixed."
+    #[test]
+    fn one_job_with_results_or_progress_gives_the_command_no_stdin_and_a_plain_header() {
+        let w = Weave::new(&[(APP, "owned")]);
+        let results = w.ws.join("results");
+        let script = "read line; echo \"got:$line\"";
+        for flags in [
+            vec!["--results", results.to_str().unwrap()],
+            vec!["--progress"],
+        ] {
+            let mut args = vec!["-j", "1"];
+            args.extend(&flags);
+            args.extend(["--shell", script]);
+            let mut child = w
+                .each_cmd(&args)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap();
+            child.stdin.take().unwrap().write_all(b"typed\n").unwrap();
+            let out = stdout(&child.wait_with_output().unwrap());
+            assert_eq!(out, format!("[{APP}]\ngot:\n"), "{flags:?}");
+        }
+    }
+
+    /// docs/reference/rwv-each.md, Exit status and interrupts: "A command that
+    /// leaves something running after a normal exit keeps it."
+    #[test]
+    fn a_process_left_running_after_a_normal_exit_is_kept() {
+        struct Reap(u32);
+        impl Drop for Reap {
+            fn drop(&mut self) {
+                let _ = nix::sys::signal::kill(
+                    nix::unistd::Pid::from_raw(self.0 as i32),
+                    nix::sys::signal::Signal::SIGKILL,
+                );
+            }
+        }
+        let w = Weave::new(&[(APP, "owned")]);
+        let pid_file = w.ws.join("left.pid");
+        let script = format!(
+            "sleep 60 >/dev/null 2>&1 </dev/null & echo $! > '{}'",
+            pid_file.display()
+        );
+        let out = w.each(&["--shell", &script]);
+        assert!(out.status.success(), "{}", stderr(&out));
+        let left = Reap(common::job::recorded_pid(
+            &pid_file,
+            Duration::from_secs(10),
+        ));
+        std::thread::sleep(Duration::from_millis(500));
+        assert!(
+            common::job::alive(left.0),
+            "the left-behind process was ended"
+        );
+    }
+
+    /// docs/reference/rwv-each.md, Output and the how-to's `-j 1` recipe: under
+    /// `-j 1` on a terminal, "colors, prompts and pagers work" because the
+    /// command's process group is handed the terminal. A command that changes
+    /// the terminal's modes and reads it is stopped by the kernel, and never
+    /// answers, when it is not the foreground group.
+    #[test]
+    fn one_job_on_a_terminal_lets_the_command_prompt_and_set_terminal_modes() {
+        use std::os::unix::process::CommandExt;
+        use std::sync::{Arc, Mutex};
+
+        let w = Weave::new(&[(APP, "owned")]);
+        let pty = nix::pty::openpty(None, None).expect("a pseudo-terminal");
+        let script = "stty -echo; printf 'ok? '; read a; echo \"answer=$a\"";
+        let mut cmd = w.each_cmd(&["-j", "1", "--shell", script]);
+        cmd.stdin(pty.slave.try_clone().unwrap())
+            .stdout(pty.slave.try_clone().unwrap())
+            .stderr(pty.slave.try_clone().unwrap());
+        // SAFETY: only async-signal-safe calls run between fork and exec.
+        unsafe {
+            cmd.pre_exec(|| {
+                nix::unistd::setsid()?;
+                if nix::libc::ioctl(0, nix::libc::TIOCSCTTY as _, 0) == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let mut child = cmd.spawn().unwrap();
+        drop(cmd);
+        drop(pty.slave);
+
+        let screen = Arc::new(Mutex::new(String::new()));
+        let mut master = std::fs::File::from(pty.master);
+        let mut typing = master.try_clone().unwrap();
+        let mirror = Arc::clone(&screen);
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            while let Ok(n) = std::io::Read::read(&mut master, &mut buf) {
+                if n == 0 {
+                    break;
+                }
+                mirror
+                    .lock()
+                    .unwrap()
+                    .push_str(&String::from_utf8_lossy(&buf[..n]));
+            }
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let wait_for = |what: &str| {
+            while !screen.lock().unwrap().contains(what) {
+                if Instant::now() > deadline {
+                    let _ = nix::sys::signal::killpg(
+                        nix::unistd::Pid::from_raw(child.id() as i32),
+                        nix::sys::signal::Signal::SIGKILL,
+                    );
+                    panic!(
+                        "never saw {what:?}; terminal showed {:?}",
+                        screen.lock().unwrap()
+                    );
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        };
+        wait_for("ok? ");
+        typing.write_all(b"yes\n").unwrap();
+        wait_for("answer=yes");
+        assert!(child.wait().unwrap().success());
     }
 }
