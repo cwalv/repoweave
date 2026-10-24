@@ -372,14 +372,13 @@ fn a_submodule_git_declines_is_neither_fetched_nor_reported() {
     assert!(findings(&seat).is_empty());
 }
 
-#[test]
-fn fetch_brings_a_commit_only_a_workweave_records() {
-    let weave = weave();
+/// A weave whose seat `one` records, at an empty [`SUB`], a commit of the
+/// upstream sub that the canonical clone's copy lacks; returns the seat, the
+/// member path and the commit.
+fn seat_records_a_newer_sub(weave: &Weave) -> (PathBuf, String, String) {
     let member = weave.add();
     weave.lock_and_commit();
     let seat = weave.seat("one");
-    let canonical = weave.canonical(&member);
-    let canonical_head = git(&canonical, &["rev-parse", "HEAD"]);
     std::fs::write(weave.upstream_sub.join("lib.txt"), "moved\n").unwrap();
     git(&weave.upstream_sub, &["commit", "-am", "move"]);
     let moved = git(&weave.upstream_sub, &["rev-parse", "HEAD"]);
@@ -401,6 +400,15 @@ fn fetch_brings_a_commit_only_a_workweave_records() {
     );
     git(&checkout, &["commit", "-m", "bump sub in the seat only"]);
     rwv(&seat, &["lock", "--commit"]);
+    (seat, member, moved)
+}
+
+#[test]
+fn fetch_brings_a_commit_only_a_workweave_records() {
+    let weave = weave();
+    let (seat, member, moved) = seat_records_a_newer_sub(&weave);
+    let canonical = weave.canonical(&member);
+    let canonical_head = git(&canonical, &["rev-parse", "HEAD"]);
     assert_eq!(sole_finding(&seat)["sub_kind"], "unfetched");
 
     let out = rwv(
@@ -415,11 +423,42 @@ fn fetch_brings_a_commit_only_a_workweave_records() {
     assert_eq!(git(&canonical, &["rev-parse", "HEAD"]), canonical_head);
     assert_eq!(sole_finding(&seat)["sub_kind"], "fetched");
     rwv(&seat, &["doctor", "--fix"]);
+    let checkout = seat.join(&member);
     assert_eq!(git(&checkout.join(SUB), &["rev-parse", "HEAD"]), moved);
     assert_eq!(
         common::read_normalized(checkout.join(SUB).join("lib.txt")),
         "moved\n"
     );
+}
+
+#[test]
+fn fetch_brings_nothing_for_a_submodule_git_declines() {
+    let weave = weave();
+    let (seat, member, moved) = seat_records_a_newer_sub(&weave);
+    let canonical = weave.canonical(&member);
+    git(
+        &canonical,
+        &["config", &format!("submodule.{SUB}.update"), "none"],
+    );
+
+    let out = rwv(
+        &weave.primary,
+        &["fetch", "--project", PROJECT, "--repo", &member],
+    );
+
+    assert!(!out.contains("submodule fetched"), "{out}");
+    let copy = canonical.join(".git/modules").join(SUB);
+    let held = common::git()
+        .args(["cat-file", "-e", &format!("{moved}^{{commit}}")])
+        .current_dir(&copy)
+        .status()
+        .unwrap()
+        .success();
+    assert!(
+        !held,
+        "the declined submodule's copy should not have been fetched into"
+    );
+    assert!(findings(&seat).is_empty());
 }
 
 /// Seats `one` and `two` from an empty project, with `one` having added the
