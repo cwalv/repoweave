@@ -195,3 +195,69 @@ fn a_go_work_whose_settings_do_not_parse_authors_nothing() {
         "go.work must not be authored from a setting that did not parse:\n{out}"
     );
 }
+
+/// docs/reference/doctor-findings.md, `malformed-settings`: "`rwv activate`
+/// withholds its install hooks", for every key of every integration.
+#[test]
+fn activate_withholds_its_install_hooks_over_a_setting_of_the_wrong_type_for_every_key() {
+    let mut failures = Vec::new();
+
+    for integration in &builtin_integrations() {
+        for key in integration.settings_keys() {
+            let tmp = common::tempdir().unwrap();
+            let ws = weave_with_setting(tmp.path(), integration.name(), key);
+
+            let (ok, stdout, stderr) = rwv(&["activate", "app"], &ws);
+            let out = format!("{stdout}\n{stderr}");
+
+            let withheld_naming_both = !ok
+                && out.contains("the install hooks were not run")
+                && out.contains(&format!("{}: ", integration.name()))
+                && out.contains(&format!("`{key}`"));
+            if !withheld_naming_both {
+                failures.push(format!(
+                    "{} `{key} = 7`: activate must withhold its hooks and name both; ok={ok}:\n{out}",
+                    integration.name()
+                ));
+            }
+        }
+    }
+
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// docs/reference/doctor-findings.md, `malformed-settings`: "the intent verbs
+/// refuse and leave `rwv.toml` unchanged", for every key of every integration.
+#[test]
+fn an_intent_verb_refuses_over_a_setting_of_the_wrong_type_for_every_key_and_leaves_the_manifest() {
+    let mut failures = Vec::new();
+
+    for integration in &builtin_integrations() {
+        for key in integration.settings_keys() {
+            let tmp = common::tempdir().unwrap();
+            let ws = weave_with_setting(tmp.path(), integration.name(), key);
+            let manifest_path = ws.join("projects/app/rwv.toml");
+            let before = std::fs::read(&manifest_path).unwrap();
+            let upstream = tmp.path().join("up.git");
+            common::init_bare_repo_with_commit(&upstream);
+
+            let (ok, stdout, stderr) = rwv(&["add", &common::file_url(&upstream)], &ws);
+            let out = format!("{stdout}\n{stderr}");
+
+            let refused_naming_both = !ok
+                && out.contains("rwv.toml is unchanged")
+                && out.contains(&format!("{}: ", integration.name()))
+                && out.contains(&format!("`{key}`"));
+            let unchanged = std::fs::read(&manifest_path).unwrap() == before;
+            if !refused_naming_both || !unchanged {
+                failures.push(format!(
+                    "{} `{key} = 7`: add must refuse, leave rwv.toml and name both; \
+                     ok={ok} unchanged={unchanged}:\n{out}",
+                    integration.name()
+                ));
+            }
+        }
+    }
+
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
