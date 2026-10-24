@@ -1413,3 +1413,30 @@ mod unix {
         assert!(child.wait().unwrap().success());
     }
 }
+
+#[test]
+fn an_unreadable_manifest_is_named_and_fixing_it_lets_the_run_proceed() {
+    let w = Weave::standard();
+    let manifest = w.ws.join("projects/demo/rwv.toml");
+    let pristine = std::fs::read_to_string(&manifest).unwrap();
+    std::fs::write(
+        &manifest,
+        format!("{pristine}[integrations.gita]\nenabled = \"false\"\n"),
+    )
+    .unwrap();
+
+    let refused = w.each(&["--", MARK[0], MARK[1], MARK[2], MARK[3]]);
+    let err = stderr(&refused);
+    assert!(
+        !refused.status.success()
+            && err.contains("project demo's rwv.toml or rwv.lock did not load")
+            && err.contains("`enabled` in `[integrations.gita]`")
+            && !err.contains("--role"),
+        "{err}"
+    );
+
+    std::fs::write(&manifest, pristine).unwrap();
+    let ran = w.each(&["--", MARK[0], MARK[1], MARK[2], MARK[3]]);
+    assert!(ran.status.success(), "{}", stderr(&ran));
+    assert!(w.ran(APP) && w.ran(LIB));
+}

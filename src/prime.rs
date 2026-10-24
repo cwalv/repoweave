@@ -89,11 +89,17 @@ pub fn render_context(ctx: &WorkspaceContext) -> String {
 
     // -- Repository table -------------------------------------------------------
     if let Some(p) = project {
-        let manifest_path = project_dir(ctx.primary_path(), p).join(Manifest::FILE_NAME);
-        if let Ok(manifest) = Manifest::from_path(&manifest_path) {
-            out.push('\n');
-            render_repo_table(&mut out, &manifest);
-            render_integrations(&mut out, &manifest);
+        let manifest_path = project_dir(ctx.active_path(), p).join(Manifest::FILE_NAME);
+        match Manifest::from_path(&manifest_path) {
+            Ok(manifest) => {
+                out.push('\n');
+                render_repo_table(&mut out, &manifest);
+                render_integrations(&mut out, &manifest);
+            }
+            Err(e) => {
+                eprintln!("{}", crate::manifest::unreadable_project_warning(p, &e));
+                render_unreadable_manifest(&mut out, &e);
+            }
         }
     }
 
@@ -126,6 +132,15 @@ pub fn render_context(ctx: &WorkspaceContext) -> String {
     out.push_str("- **Schemas:** committed at `docs/reference/schemas/<verb>.json`. Each `--json` output embeds a `$schema` URL pointing here.\n");
 
     out
+}
+
+fn render_unreadable_manifest(out: &mut String, error: &anyhow::Error) {
+    out.push_str("\n## Repositories\n\n");
+    out.push_str(
+        "Unknown: `rwv.toml` did not load, so no repository or integration is listed \
+         here. Fix the line the error names (`rwv doctor` names it too):\n\n",
+    );
+    out.push_str(&format!("```\n{error:#}\n```\n"));
 }
 
 /// Render the repository table from the manifest.

@@ -2034,6 +2034,15 @@ impl ResolvedLockFile {
     }
 }
 
+/// The line a verb that reads every project prints, in place of refusing, for
+/// one whose files do not load.
+pub fn unreadable_project_warning(name: &ProjectName, error: &anyhow::Error) -> String {
+    format!(
+        "warning: skipping project {name}: manifest unreadable ({error:#}); \
+         run `rwv doctor` for details"
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Project — a resolved project on disk
 // ---------------------------------------------------------------------------

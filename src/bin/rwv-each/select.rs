@@ -67,6 +67,12 @@ impl Envelope {
 #[derive(Debug, Deserialize)]
 struct StatusEnvelope {
     repos: Vec<StatusRepo>,
+    unreadable_projects: Vec<UnreadableProject>,
+}
+
+#[derive(Debug, Deserialize)]
+struct UnreadableProject {
+    project: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -118,6 +124,9 @@ pub fn select(
     }
     let status: StatusEnvelope = serde_json::from_slice(&output.stdout)
         .context("`rwv status --json` printed output this rwv-each cannot read")?;
+    if let Some(unreadable) = status.unreadable_projects.first() {
+        bail!("{}", manifest_unreadable(&unreadable.project));
+    }
     let repos = apply_default_scope(status.repos, roles.is_empty() && selectors.is_empty());
     if repos.is_empty() {
         bail!("{}", nothing_matched(roles, selectors));
@@ -136,6 +145,12 @@ fn apply_default_scope(repos: Vec<StatusRepo>, default_scope: bool) -> Vec<Repo>
             dir: r.absolute_path,
         })
         .collect()
+}
+
+fn manifest_unreadable(project: &str) -> String {
+    format!(
+        "no repo to run in: project {project}'s rwv.toml or rwv.lock did not load, so which repos it has is unknown; fix the line the warning above names (`rwv doctor` names it too), then run this again"
+    )
 }
 
 fn nothing_matched(roles: &[String], selectors: &[String]) -> String {
@@ -169,7 +184,7 @@ mod tests {
 
     fn status_json(role: &str, relation: &str) -> String {
         format!(
-            r#"{{"repos": [{{"path": "a", "role": "{role}", "absolute_path": "/ws/a", "relation": "{relation}"}}]}}"#
+            r#"{{"repos": [{{"path": "a", "role": "{role}", "absolute_path": "/ws/a", "relation": "{relation}"}}], "unreadable_projects": []}}"#
         )
     }
 

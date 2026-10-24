@@ -7802,9 +7802,12 @@ pub fn find_violations(input: &CheckInput) -> Vec<CheckViolation> {
         for (repo_path, entry) in project.manifest.iter_entries() {
             // Dangling reference: in manifest but not on disk.
             // Reference repos are allowed to be missing (e.g. after fetch --no-reference).
+            // A url no clone can use is reported as unresolvable-url alone: fetch
+            // cannot repair it until the url is respelled.
             if !input.repos_on_disk.contains(repo_path)
                 && !input.dangling_links.contains(repo_path)
                 && entry.role != Role::Reference
+                && crate::registry::resolve_to_clone_info(&entry.url).is_ok()
             {
                 violations.push(CheckViolation::DanglingReference {
                     project: project.name.clone(),
@@ -9578,12 +9581,7 @@ pub fn run_check_locked(ctx: &crate::workspace::WorkspaceContext) -> anyhow::Res
         let project = match Project::from_dir(&project_dir, pname.clone()) {
             Ok(p) => p,
             Err(e) => {
-                // Warn and skip; `rwv doctor` surfaces the canonical
-                // `unparseable-project` violation for this project.
-                eprintln!(
-                    "warning: skipping project {pname}: manifest unreadable ({e:#}); \
-                     run `rwv doctor` for details"
-                );
+                eprintln!("{}", crate::manifest::unreadable_project_warning(pname, &e));
                 continue;
             }
         };

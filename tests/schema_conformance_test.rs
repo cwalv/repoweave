@@ -367,6 +367,8 @@ fn fetch_outcomes() -> Vec<FetchOutcomeOutput> {
         FetchOutcomeOutput {
             path: REPO.to_owned(),
             absolute_path: wire(ABS),
+            refusal: (status == FetchOutcomeStatus::Failed)
+                .then(|| "unresolvable-repo-source".to_owned()),
             status,
             message,
         }
@@ -542,6 +544,7 @@ fn status_corpus() -> Vec<(&'static str, Value)> {
             value(StatusJsonOutput {
                 schema_url: STATUS_SCHEMA_URL.to_owned(),
                 repos: status_repos(),
+                unreadable_projects: Vec::new(),
                 resolution: Some(resolution()),
                 op: None,
             }),
@@ -551,7 +554,21 @@ fn status_corpus() -> Vec<(&'static str, Value)> {
             value(StatusJsonOutput {
                 schema_url: STATUS_SCHEMA_URL.to_owned(),
                 repos: Vec::new(),
+                unreadable_projects: Vec::new(),
                 resolution: None,
+                op: None,
+            }),
+        ),
+        (
+            "unreadable-project",
+            value(StatusJsonOutput {
+                schema_url: STATUS_SCHEMA_URL.to_owned(),
+                repos: Vec::new(),
+                unreadable_projects: vec![repoweave::status::UnreadableProject {
+                    project: repoweave::manifest::ProjectName::new("app").unwrap(),
+                    error: "failed to parse rwv.toml".to_owned(),
+                }],
+                resolution: Some(resolution()),
                 op: None,
             }),
         ),
@@ -573,6 +590,7 @@ fn status_corpus() -> Vec<(&'static str, Value)> {
             value(StatusJsonOutput {
                 schema_url: STATUS_SCHEMA_URL.to_owned(),
                 repos: Vec::new(),
+                unreadable_projects: Vec::new(),
                 resolution: Some(primary_resolution()),
                 op: Some(op_status(verb, phase)),
             }),

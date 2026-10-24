@@ -621,6 +621,42 @@ fn a_refused_url_add_names_the_clone_it_keeps_and_the_command_that_removes_it() 
 }
 
 #[test]
+fn a_url_add_refused_over_a_malformed_setting_names_the_fix_before_the_remove() {
+    let weave = Weave::new();
+    let beta_url = weave.origin("beta");
+    let beta = placed("beta");
+    let pristine = std::fs::read_to_string(manifest(&weave.ws)).unwrap();
+    std::fs::write(
+        manifest(&weave.ws),
+        format!("{pristine}\n[integrations.go-work]\ngo-version = 1.22\n"),
+    )
+    .unwrap();
+
+    let out = run(&["add", &beta_url], &weave.ws);
+    let stderr = stderr_of(&out);
+    assert!(!out.status.success(), "{}", describe(&out));
+    let clone = common::under(&weave.ws, &beta);
+    assert!(
+        clone.join(".git").is_dir()
+            && stderr.contains(&format!(
+                "kept the clone it made at {}: once the cause below is fixed",
+                clone.display()
+            )),
+        "{stderr}"
+    );
+
+    let early = run(&["remove", &beta, "--delete"], &weave.ws);
+    assert!(
+        !early.status.success() && clone.exists(),
+        "the order the advice names is the one that works; {}",
+        describe(&early)
+    );
+    std::fs::write(manifest(&weave.ws), pristine).unwrap();
+    succeed(&["remove", &beta, "--delete"], &weave.ws);
+    assert!(!clone.exists(), "{stderr}");
+}
+
+#[test]
 fn a_refused_url_add_in_a_workweave_names_its_worktree_and_its_clone() {
     let weave = Weave::new();
     let workweave = weave.workweave("feat");

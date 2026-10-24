@@ -34,6 +34,7 @@ fn fetch_json_envelope_round_trips() {
                 )),
                 status: FetchOutcomeStatus::Ok,
                 message: None,
+                refusal: None,
             },
             FetchOutcomeOutput {
                 path: "github/org/beta".into(),
@@ -42,6 +43,7 @@ fn fetch_json_envelope_round_trips() {
                 )),
                 status: FetchOutcomeStatus::Skipped,
                 message: Some("skipped github/org/beta".into()),
+                refusal: None,
             },
         ],
         placements: Vec::new(),
@@ -92,6 +94,7 @@ fn fetch_outcome_failed_serializes() {
         )),
         status: FetchOutcomeStatus::Failed,
         message: Some("clone failed: connection refused".into()),
+        refusal: None,
     };
     let v = serde_json::to_value(&record).expect("serializes");
     assert_eq!(v["status"], "failed");

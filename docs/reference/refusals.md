@@ -1253,7 +1253,10 @@ characters and the rule each one protects.
 **Condition.** The source parses as neither a URL nor a known shorthand. For
 `rwv add` and `rwv fetch` this includes a plain path, relative or absolute, and
 so does a member's `url` in `rwv.toml` when `rwv fetch` or `rwv sync` clones
-it.
+it. For a member, `rwv fetch` names this token after that member's error line
+and in its `--json` record's `refusal`, and the run as a whole ends with
+`partial-run-aborted`. `rwv doctor` reports every such member as
+`provenance` / `unresolvable-url` before any clone is attempted.
 
 **Why.** A plain path could name a remote to clone from or, for `rwv add`, a
 clone already on disk to register. Guessing between them clones from somewhere

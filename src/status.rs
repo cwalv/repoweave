@@ -25,6 +25,9 @@ pub struct StatusJsonOutput {
     #[serde(rename = "$schema")]
     pub schema_url: String,
     pub repos: Vec<RepoStatus>,
+    /// Projects whose `rwv.toml` or `rwv.lock` did not load: none of their
+    /// repos is in `repos`.
+    pub unreadable_projects: Vec<UnreadableProject>,
     /// Resolved workspace coordinates (weave root, optional workweave
     /// identity, project). Absent when no project is resolved.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -35,6 +38,13 @@ pub struct StatusJsonOutput {
     /// attempt a mutation to learn it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub op: Option<OpStatus>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct UnreadableProject {
+    pub project: ProjectName,
+    /// The load error, as the warning on stderr prints it.
+    pub error: String,
 }
 
 /// The in-flight op recorded at this workspace (owner) or the workspace this
@@ -261,18 +271,21 @@ pub fn run_status(
     };
 
     let mut entries: Vec<RepoStatus> = Vec::new();
+    let mut unreadable_projects: Vec<UnreadableProject> = Vec::new();
 
     for pname in project_names_for_ctx(ctx) {
         let project_dir = project_dir(&workspace_dir, &pname);
         let project = match Project::from_dir(&project_dir, pname.clone()) {
             Ok(p) => p,
             Err(e) => {
-                // Warn and skip; run `rwv doctor` to get the canonical
-                // `unparseable-project` violation with full detail.
                 eprintln!(
-                    "warning: skipping project {pname}: manifest unreadable ({e:#}); \
-                     run `rwv doctor` for details"
+                    "{}",
+                    crate::manifest::unreadable_project_warning(&pname, &e)
                 );
+                unreadable_projects.push(UnreadableProject {
+                    project: pname,
+                    error: format!("{e:#}"),
+                });
                 continue;
             }
         };
@@ -427,6 +440,7 @@ pub fn run_status(
         let envelope = StatusJsonOutput {
             schema_url: STATUS_SCHEMA_URL.to_string(),
             repos: entries,
+            unreadable_projects,
             resolution: Some(ctx.resolution()),
             op: op.as_ref().map(OpStatus::from),
         };
@@ -543,6 +557,7 @@ mod tests {
     fn status_json_envelope_round_trips() {
         let envelope = StatusJsonOutput {
             schema_url: STATUS_SCHEMA_URL.to_string(),
+            unreadable_projects: Vec::new(),
             repos: vec![RepoStatus {
                 path: "github/org/repo".into(),
                 branch: Some("main".into()),
@@ -605,6 +620,7 @@ mod tests {
         let envelope = StatusJsonOutput {
             schema_url: STATUS_SCHEMA_URL.to_string(),
             repos: vec![],
+            unreadable_projects: Vec::new(),
             resolution: None,
             op: Some(OpStatus {
                 id: "1779769917405921588".into(),
@@ -643,6 +659,7 @@ mod tests {
     fn status_json_parent_field_round_trips() {
         let envelope = StatusJsonOutput {
             schema_url: STATUS_SCHEMA_URL.to_string(),
+            unreadable_projects: Vec::new(),
             repos: vec![RepoStatus {
                 path: "github/org/repo".into(),
                 branch: Some("app--wwb/app--wwa/main".into()),

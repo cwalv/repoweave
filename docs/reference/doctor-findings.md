@@ -243,7 +243,10 @@ leaves this one standing. Or remove the directory yourself.
 
 ### `dangling-reference`
 
-**Error. Report-only.** An `rwv.toml` entry whose path is not on disk.
+**Error. Report-only.** An `rwv.toml` entry whose path is not on disk. An
+entry whose `url` names no remote is reported as
+[`unresolvable-url`](#unresolvable-url) instead, because `rwv fetch` cannot
+clone it until the `url` is rewritten.
 
 **What to do:** `rwv fetch` re-materializes it in place, or drop the entry
 from the manifest if the repo is genuinely gone.
@@ -1142,7 +1145,8 @@ clone with `no-remote-url`.
 shorthand, such as a plain path, so it names no remote. Every clone of the
 member refuses with `unresolvable-repo-source`: `rwv fetch` on another machine,
 and `rwv sync` into a weave without it. Doctor reports it whether or not a clone
-is on disk.
+is on disk; when none is, this is the only finding for the entry, with no
+`dangling-reference` beside it.
 
 **What to do:** write the `url` in `rwv.toml` as a URL. The message names the
 `file://` spelling of an absolute path, which is how a local remote is written.

@@ -102,7 +102,8 @@ fn the_plugin_reads_every_role_and_relation_the_library_reports() {
         })
         .collect();
 
-    let (ok, stdout, stderr) = run_each_against(&json!({ "repos": repos }));
+    let (ok, stdout, stderr) =
+        run_each_against(&json!({ "repos": repos, "unreadable_projects": [] }));
     assert!(ok, "the plugin refused library output: {stderr}");
     for path in &paths {
         assert!(stdout.contains(path.as_str()), "{path} missing:\n{stdout}");
@@ -116,8 +117,9 @@ fn a_role_or_relation_the_library_does_not_define_is_refused_naming_it() {
         ("owned", "stale", "stale"),
         ("primary", "ok", "primary"),
     ] {
-        let (ok, stdout, stderr) =
-            run_each_against(&json!({ "repos": [repo("github/org/a", role, relation)] }));
+        let (ok, stdout, stderr) = run_each_against(
+            &json!({ "repos": [repo("github/org/a", role, relation)], "unreadable_projects": [] }),
+        );
         assert!(!ok, "{unknown} was read as a repo:\n{stdout}");
         assert!(stderr.contains(unknown), "{unknown}: {stderr}");
     }

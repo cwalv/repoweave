@@ -1072,7 +1072,18 @@ pub fn run() -> anyhow::Result<()> {
                 project_override,
                 use_workweave_flag,
             )?;
-            refuse_symlinked_members_here(&ctx)?;
+            // A project whose manifest does not load is status's to warn about
+            // and skip, not to refuse over.
+            let manifest_loads = ctx.active_project().is_none_or(|project| {
+                crate::manifest::Manifest::from_path(
+                    &crate::workspace::project_dir(ctx.active_path(), project)
+                        .join(crate::manifest::Manifest::FILE_NAME),
+                )
+                .is_ok()
+            });
+            if manifest_loads {
+                refuse_symlinked_members_here(&ctx)?;
+            }
             let filter = selector.parse_filter()?;
             status::run_status(&ctx, OutputMode::from_flag(json), &filter)?;
         }

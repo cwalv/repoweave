@@ -207,8 +207,11 @@ finish, whatever `-j` is:
 
 `outcomes` lists the repos in manifest order, however the workers finished.
 Each record has the shape: `path` (manifest-relative), `absolute_path` (on-disk), `status`
-(`ok` / `skipped` / `failed`), and `message` (human-readable detail; absent
-for `ok`, present for `skipped` and `failed`).
+(`ok` / `skipped` / `failed`), `message` (human-readable detail; absent
+for `ok`, present for `skipped` and `failed`), and, on a `failed` record whose
+cause is a refusal, `refusal`: its token, which `rwv explain <token>` resolves.
+In text mode the same token follows the repo's error line as
+`rwv explain <token>`.
 
 File counts are never on an outcome. Each checkout whose files the fetch
 placed gets a placement record: `path`, `absolute_path` (the checkout the

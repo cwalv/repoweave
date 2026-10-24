@@ -44,6 +44,10 @@ pub struct FetchOutcomeOutput {
     pub status: FetchOutcomeStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    /// The refusal token of a `failed` repo, resolvable with `rwv explain
+    /// <token>`. Absent when the failure carries no classified refusal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<String>,
 }
 
 impl FetchOutcomeOutput {
@@ -197,8 +201,10 @@ enum FetchOutcome {
     /// Repo intentionally skipped (e.g. `--no-reference` on a reference
     /// repo). Not counted as failure; not counted as success.
     Skipped,
-    /// Repo failed; `msg` carries the aggregated-error-report message.
-    Failed { msg: String },
+    /// Repo failed. Its `{:#}` rendering is the aggregated-error-report
+    /// message, and a refusal tagged anywhere in its chain names the record's
+    /// `refusal`.
+    Failed(anyhow::Error),
 }
 
 /// Run the fetch command: clone a project source, then align repos to the
@@ -735,12 +741,7 @@ fn fetch_project_repos(
                         before.as_ref(),
                     ) {
                         Ok(settled) => (outcome, settled.files),
-                        Err(e) => (
-                            FetchOutcome::Failed {
-                                msg: format!("{}: {e:#}", repo_path.as_str()),
-                            },
-                            None,
-                        ),
+                        Err(e) => (FetchOutcome::Failed(e.context(repo_path.to_string())), None),
                     }
                 }
                 other => (other, None),
@@ -787,6 +788,7 @@ fn fetch_project_repos(
                         absolute_path: abs_path,
                         status: FetchOutcomeStatus::Ok,
                         message: None,
+                        refusal: None,
                     });
                     if let Some(files) = files {
                         envelope
@@ -802,22 +804,29 @@ fn fetch_project_repos(
                         absolute_path: abs_path,
                         status: FetchOutcomeStatus::Skipped,
                         message: Some(format!("skipped {}", repo_path.as_str())),
+                        refusal: None,
                     });
                 }
             }
-            FetchOutcome::Failed { msg } => {
+            FetchOutcome::Failed(error) => {
+                let msg = format!("{error:#}");
+                let refusal = crate::refusal::kind_of(error).map(RefusalKind::token);
                 if output == OutputMode::Text {
                     eprintln!("rwv fetch: error: {msg}");
+                    if let Some(token) = &refusal {
+                        eprintln!("rwv explain {token}");
+                    }
                 }
-                errors.push(msg.clone());
                 if output.is_json() {
                     envelope_records.push(FetchOutcomeOutput {
                         path: repo_path.to_string(),
                         absolute_path: abs_path,
                         status: FetchOutcomeStatus::Failed,
                         message: Some(msg.clone()),
+                        refusal,
                     });
                 }
+                errors.push(msg);
             }
         }
     }
@@ -1133,8 +1142,8 @@ fn fetch_one(
             let birth = primary_lock
                 .and_then(|l| l.get_entry(repo_path))
                 .or(lock_entry.as_ref());
-            if let Err(msg) = clone_member(vcs, repo_path, entry, &dest, birth, &emit) {
-                return FetchOutcome::Failed { msg };
+            if let Err(error) = clone_member(vcs, repo_path, entry, &dest, birth, &emit) {
+                return FetchOutcome::Failed(error);
             }
         }
         return match lock_entry {
@@ -1153,19 +1162,17 @@ fn fetch_one(
             let resolved = match vcs.resolve_revision(&dest, lock_entry.version.as_str()) {
                 Ok(r) => r,
                 Err(e) => {
-                    return FetchOutcome::Failed {
-                        msg: format!(
-                            "{}: failed to resolve {}: {e:#}",
-                            repo_path.as_str(),
-                            lock_entry.version,
-                        ),
-                    };
+                    return FetchOutcome::Failed(anyhow::Error::from(e).context(format!(
+                        "{}: failed to resolve {}",
+                        repo_path.as_str(),
+                        lock_entry.version,
+                    )));
                 }
             };
             if let Err(msg) =
                 realign_present_clone(vcs, repo_path, entry, &dest, &resolved, detach_checkouts)
             {
-                return FetchOutcome::Failed { msg };
+                return FetchOutcome::Failed(anyhow::anyhow!(msg));
             }
             return FetchOutcome::Ok { add_to_lock: None };
         } else if existing_lock.is_some() {
@@ -1192,8 +1199,8 @@ fn fetch_one(
     }
 
     let pinned = lock_entry.is_some();
-    if let Err(msg) = clone_member(vcs, repo_path, entry, &dest, lock_entry.as_ref(), &emit) {
-        return FetchOutcome::Failed { msg };
+    if let Err(error) = clone_member(vcs, repo_path, entry, &dest, lock_entry.as_ref(), &emit) {
+        return FetchOutcome::Failed(error);
     }
     if !pinned && existing_lock.is_some() {
         emit(&format!(
@@ -1217,15 +1224,15 @@ fn clone_member(
     dest: &Path,
     birth: Option<&LockEntry>,
     emit: &dyn Fn(&str),
-) -> Result<(), String> {
+) -> anyhow::Result<()> {
     let clone_url = registry::resolve_to_clone_info(&entry.url)
-        .map_err(|e| format!("{}: {e:#}", repo_path.as_str()))?
+        .with_context(|| repo_path.to_string())?
         .url;
 
     if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| {
+        std::fs::create_dir_all(parent).with_context(|| {
             format!(
-                "{}: failed to create directory {}: {e:#}",
+                "{}: failed to create directory {}",
                 repo_path.as_str(),
                 parent.display()
             )
@@ -1250,22 +1257,21 @@ fn clone_member(
             repo_path.as_str(),
             birth.version,
         ));
-        return vcs
-            .clone_attached_at(&clone_url, dest, &counterpart, &birth.version)
-            .map_err(|e| {
+        vcs.clone_attached_at(&clone_url, dest, &counterpart, &birth.version)
+            .with_context(|| {
                 format!(
-                    "{}: failed to materialize {} at {}: {e:#}",
+                    "{}: failed to materialize {} at {}",
                     repo_path.as_str(),
                     clone_url,
                     birth.version,
                 )
-            })
-            .map(|_| ());
+            })?;
+        return Ok(());
     }
 
-    vcs.clone_repo(&clone_url, dest).map_err(|e| {
+    vcs.clone_repo(&clone_url, dest).with_context(|| {
         format!(
-            "{}: failed to clone {} into {}: {e:#}",
+            "{}: failed to clone {} into {}",
             repo_path.as_str(),
             clone_url,
             dest.display()
@@ -1290,23 +1296,19 @@ fn make_pin_local(
         repo_path.as_str()
     ));
     if let Err(e) = vcs.fetch_remote(store) {
-        return FetchOutcome::Failed {
-            msg: format!(
-                "{}: failed to fetch {} into the canonical clone: {e:#}",
-                repo_path.as_str(),
-                vcs.conventional_remote_name(),
-            ),
-        };
+        return FetchOutcome::Failed(anyhow::Error::from(e).context(format!(
+            "{}: failed to fetch {} into the canonical clone",
+            repo_path.as_str(),
+            vcs.conventional_remote_name(),
+        )));
     }
     match vcs.resolve_revision(store, pin.as_str()) {
         Ok(_) => FetchOutcome::Ok { add_to_lock: None },
-        Err(e) => FetchOutcome::Failed {
-            msg: format!(
-                "{}: {pin} is not on {} either: {e:#}",
-                repo_path.as_str(),
-                vcs.conventional_remote_name(),
-            ),
-        },
+        Err(e) => FetchOutcome::Failed(anyhow::Error::from(e).context(format!(
+            "{}: {pin} is not on {} either",
+            repo_path.as_str(),
+            vcs.conventional_remote_name(),
+        ))),
     }
 }
 

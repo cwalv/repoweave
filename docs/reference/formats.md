@@ -114,7 +114,7 @@ So does an `enabled` that is not `true` or `false`, such as `enabled = "false"`,
 `enabled` in `[integrations.cargo-workspace]`: invalid type: string "false", expected `true` or `false`
 ```
 
-Like any manifest parse error, it stops every verb that loads the manifest: `rwv doctor` reports the project as [`unparseable-project`](./doctor-findings.md#unparseable-project), and `rwv status` skips it with a warning. A value of the wrong type for a `cargo-workspace`, `go-work`, `static-files` or `vscode-workspace` key the integration does read, and an unknown key nested deeper (inside `[integrations.cargo-workspace.members."<repo>"]`), are reported by `rwv doctor` as [`malformed-settings`](./doctor-findings.md#malformed-settings) instead.
+Like any manifest parse error, it stops every verb that loads the manifest: `rwv doctor` reports the project as [`unparseable-project`](./doctor-findings.md#unparseable-project), and `rwv status` and `rwv prime` skip it with a warning. A value of the wrong type for a `cargo-workspace`, `go-work`, `static-files` or `vscode-workspace` key the integration does read, and an unknown key nested deeper (inside `[integrations.cargo-workspace.members."<repo>"]`), are reported by `rwv doctor` as [`malformed-settings`](./doctor-findings.md#malformed-settings) instead.
 
 ### `workweave` block
 

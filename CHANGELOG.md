@@ -294,6 +294,37 @@ plugin found on `PATH`, `rwv explain <name>` now points at
 `rwv <name> --help` even when the name is a typo's distance from something
 `rwv explain` serves, where before the suggestion took its place.
 
+### A manifest that does not load is named wherever a verb skips it
+
+`rwv prime` printed its context with no repository table and no warning when
+the project's `rwv.toml` did not parse. It now prints `rwv status`'s
+`skipping project` warning on stderr, and in its place in the context a note
+that the manifest did not load, with the error naming the line. In a workweave
+it reads the workweave's own `rwv.toml`, not the primary weave's.
+
+`rwv status` in a workweave refused over such a manifest; it now skips the
+project with the warning, as it does in the primary weave. `rwv status --json`
+lists each skipped project under `unreadable_projects`, with its load error.
+
+`rwv each` over such a project said the project had no repo outside role
+`reference` and advised `--role reference`, which could not help. It now says
+the manifest did not load.
+
+### `rwv fetch` names a member's refusal
+
+When a member fails with a refusal, such as `unresolvable-repo-source` for a
+`url` no clone can use, `rwv fetch` prints `rwv explain <token>` after that
+member's error line, and its `--json` record carries the token as `refusal`.
+The run as a whole still ends with `partial-run-aborted`.
+
+### A refused `rwv add` names the order its cleanup works in
+
+A refused add keeps the clone it made, and advised `rwv remove <path> --delete`
+to remove it. That remove regenerates the project's files too, so it refused
+for the same reason as the add, such as a malformed integration setting, until
+the cause was fixed. The advice now says to fix the cause first, then re-run
+the add or remove the clone.
+
 ### On Windows, `rwv explain` and `rwv prime` print LF line endings
 
 The pages `rwv explain` and `rwv prime` print are built into the binary. The
@@ -488,8 +519,10 @@ absolute path still names a directory.
 
 A member `url` that is neither a URL nor registry shorthand, such as a plain
 path, is reported as `provenance` / `unresolvable-url`, an error naming the
-`file://` spelling to write. Every clone of such a member refuses, and doctor
-used to say nothing about it.
+`file://` spelling to write, before any clone of the member is attempted (see
+"Breaking: a member `url` that is a plain path refuses every clone"). For a
+member with no clone it is the only finding, with no `dangling-reference`
+beside it: `rwv fetch` cannot clone the member until the `url` is rewritten.
 
 A clone whose remote is a relative path is reported as `provenance` /
 `relative-remote`, a warning naming the `git remote set-url` command that gives
@@ -551,6 +584,18 @@ refuse, naming the key. Write `go-version = "1.22"`.
 A repo with no `rwv.lock` entry has `relation` `no-lock` in `rwv status --json`,
 the spelling the table and the docs already used; it was `no_lock`.
 
+### Breaking: a member `url` that is a plain path refuses every clone
+
+A member `url` in `rwv.toml` written as a plain path, such as
+`url = "/srv/repos/alpha.git"`, was handed to git, so `rwv fetch` and `rwv sync`
+cloned from it. Every clone of such a member now refuses with
+`unresolvable-repo-source`: a plain path does not say whether it names a remote
+or a clone on disk, and `rwv add` already refused one. Write it as a URL,
+`file:///srv/repos/alpha.git` for a local remote. `rwv doctor` reports each
+affected member as `provenance` / `unresolvable-url`, naming the `file://`
+spelling. `rwv add` never records a plain path, so only a hand-written `url`
+is affected.
+
 ### Breaking: `enabled` must be `true` or `false`
 
 An `enabled` in an `[integrations.<name>]` table that is not a boolean, such as
@@ -558,7 +603,8 @@ An `enabled` in an `[integrations.<name>]` table that is not a boolean, such as
 integration written off that way kept running at its default. It now fails the
 manifest load like any other malformed key: every verb that reads the manifest
 refuses it, naming the key, the table and the line, and `rwv doctor` reports the
-project as `unparseable-project`. Write `enabled = true` or `enabled = false`.
+project as `unparseable-project`. `rwv status` and `rwv prime` skip the project
+with a warning instead. Write `enabled = true` or `enabled = false`.
 
 ### Windows: paths carry no `\\?\` prefix, a weave on a network share included
 
@@ -632,9 +678,7 @@ removed, and `rwv sync` bringing the member into a weave without it. Every
 clone now resolves a member's `url` through the built-in registries the way
 `rwv add` does, and `rwv fetch` names the URL it clones from.
 
-A member `url` that is a plain path refuses with `unresolvable-repo-source`
-when a clone needs it, naming the `file://` spelling to write instead; git used
-to be handed the path. An SCP-style URL on a host with no built-in registry
+An SCP-style URL on a host with no built-in registry
 (`git@git.example.com:org/repo`) reads as a URL, not as `owner/repo`
 shorthand, so `rwv fetch` and `rwv init --adopt` clone it as written rather
 than a GitHub URL built from it.

@@ -749,8 +749,9 @@ impl AddLeftovers {
         }
         if let Some(worktree) = &self.worktree {
             lines.push(format!(
-                "kept the worktree it made at {}: `{rerun}` reuses it, and \
-                 `rwv remove {repo_path} --delete` in this workweave removes it",
+                "kept the worktree it made at {}: once the cause below is fixed, \
+                 `{rerun}` reuses it, or `rwv remove {repo_path} --delete` in this \
+                 workweave removes it",
                 worktree.display()
             ));
         }
@@ -761,8 +762,9 @@ impl AddLeftovers {
                 ""
             };
             lines.push(format!(
-                "kept the clone it made at {}: `{rerun}` reuses it, and \
-                 `rwv remove {repo_path} --delete` in the primary weave removes it{after_worktree}",
+                "kept the clone it made at {}: once the cause below is fixed, \
+                 `{rerun}` reuses it, or `rwv remove {repo_path} --delete` in the primary \
+                 weave removes it{after_worktree}",
                 clone.display()
             ));
         }

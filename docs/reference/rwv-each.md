@@ -33,7 +33,7 @@ Options come before the command. The first word that is not an option starts the
 
 `--role` and `--repo` are the [selector grammar](./cli.md#selector-grammar) of `rwv status`, `fetch`, `update` and `push`, with the same union rule. A selector *replaces* the default scope rather than narrowing it: `--role reference` and a `--repo` naming a reference repo both include it. The project repo is not a manifest member and is never run in.
 
-A selection that matches no repo is an error naming the selectors that matched nothing, and nothing runs.
+A selection that matches no repo is an error naming the selectors that matched nothing, and nothing runs. When the project's `rwv.toml` or `rwv.lock` does not load, the error says so instead, after `rwv status`'s warning naming the line; fix it and run again.
 
 ## Running
 
