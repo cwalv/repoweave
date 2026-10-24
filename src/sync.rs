@@ -3028,6 +3028,7 @@ fn run_preconditions_after_acquire(
             check_detached_source_preflight(
                 project_vcs,
                 &cwd_project_preflight,
+                cwd_ctx,
                 cwd_workspace_dir,
                 cwd_project_dir,
             )?;
@@ -4139,45 +4140,119 @@ fn check_dirty_target_preflight(
 /// source member repo is not on a branch. The work being landed must sit on a
 /// branch of its own; `--retire` deletes the source branches, and a detached
 /// HEAD leaves nothing but the landing to hold the commits.
+///
+/// Each refused repo carries the reattach that strands no commit, chosen by
+/// how HEAD stands against the workweave's branch.
 fn check_detached_source_preflight(
     project_vcs: &dyn Vcs,
     cwd_project: &Project,
+    cwd_ctx: &WorkspaceContext,
     cwd_workspace_dir: &Path,
     cwd_project_dir: &Path,
 ) -> anyhow::Result<()> {
-    let unattached = |vcs: &dyn Vcs, repo: &Path| match vcs.head_attachment(repo) {
-        Ok(HeadAttachment::Attached(_)) => None,
-        Ok(HeadAttachment::Detached(d)) => Some(format!("detached HEAD at {}", d.at())),
-        Ok(HeadAttachment::Unborn(u)) => Some(format!("unborn branch '{u}', no commits yet")),
-        Err(e) => Some(format!("HEAD unreadable: {e:#}")),
+    let ephemeral = match &cwd_ctx.checkout {
+        Checkout::Workweave {
+            name, dir, project, ..
+        } => name.require(dir.as_path(), project).ok().map(|name| {
+            crate::vcs::EphemeralRefName::mint(
+                &crate::manifest::WorkweaveId {
+                    project: project.clone(),
+                    name: name.clone(),
+                }
+                .flat(),
+            )
+        }),
+        Checkout::Primary { .. } => None,
     };
 
     let mut detached: Vec<String> = Vec::new();
+    let mut report = |label: String, vcs: &dyn Vcs, repo: &Path| {
+        let finding = match vcs.head_attachment(repo) {
+            Ok(HeadAttachment::Attached(_)) => return,
+            Ok(HeadAttachment::Detached(d)) => format!(
+                "{label} (detached HEAD at {})\n    {}",
+                d.at(),
+                reattach_detached_source(vcs, repo, ephemeral.as_ref(), d.at()),
+            ),
+            Ok(HeadAttachment::Unborn(u)) => format!(
+                "{label} (unborn branch '{u}', no commits yet)\n    {}",
+                match &ephemeral {
+                    Some(branch) => format!(
+                        "`git -C {at} switch {branch}` if it exists, else make an initial \
+                         commit",
+                        at = repo.display()
+                    ),
+                    None => "make an initial commit".to_string(),
+                },
+            ),
+            Err(e) => format!("{label} (HEAD unreadable: {e:#})"),
+        };
+        detached.push(finding);
+    };
     for (repo_path, entry) in cwd_project.manifest.iter_entries() {
         let repo = cwd_workspace_dir.join(repo_path.as_path());
-        if !repo.exists() {
-            continue;
-        }
-        if let Some(state) = unattached(vcs_for(entry.vcs_type).as_ref(), &repo) {
-            detached.push(format!("{repo_path} ({state})"));
+        if repo.exists() {
+            report(
+                repo_path.to_string(),
+                vcs_for(entry.vcs_type).as_ref(),
+                &repo,
+            );
         }
     }
-    if let Some(state) = unattached(project_vcs, cwd_project_dir) {
-        detached.push(format!("{} ({state})", RepoKey::Project));
-    }
+    report(RepoKey::Project.to_string(), project_vcs, cwd_project_dir);
     if !detached.is_empty() {
         crate::refuse!(
             RefusalKind::HeadNotOnBranch,
             "sync-to precondition failed: source workweave is not on a branch in:\n  {}\n\
              \n\
              sync-to lands the work of the branch each source repo is on; a detached or unborn \
-             HEAD has none. Attach a branch in the source ({}) with `git switch <branch>` or \
-             `git switch -c <new>`, then re-run.",
+             HEAD has none. Run the command under each repo in the source ({}), then re-run. \
+             Switching to a branch alone would leave detached commits on no branch, so the \
+             command is chosen by how HEAD stands against the workweave's branch.",
             detached.join("\n  "),
             cwd_workspace_dir.display(),
         );
     }
     Ok(())
+}
+
+fn reattach_detached_source(
+    vcs: &dyn Vcs,
+    repo: &Path,
+    ephemeral: Option<&crate::vcs::EphemeralRefName>,
+    head: &crate::vcs::ResolvedRevisionId,
+) -> String {
+    use crate::check::DetachedAncestry;
+
+    let at = repo.display();
+    let Some(branch) = ephemeral else {
+        return format!(
+            "`git -C {at} switch -c <new-branch>` puts HEAD's commits on a branch to land"
+        );
+    };
+    let Some(tip) = vcs
+        .resolve_local_branch_tip(repo, &branch.to_raw())
+        .ok()
+        .flatten()
+    else {
+        return format!(
+            "`git -C {at} switch -c {branch}` puts HEAD's commits on the workweave's branch"
+        );
+    };
+    match DetachedAncestry::observe(vcs, repo, head, &tip) {
+        DetachedAncestry::Equal | DetachedAncestry::HeadBehind => {
+            format!("`git -C {at} switch {branch}`")
+        }
+        DetachedAncestry::HeadAhead => format!(
+            "`git -C {at} switch {branch}`, then `git -C {at} merge --ff-only {}`",
+            head.id()
+        ),
+        DetachedAncestry::Diverged => format!(
+            "`git -C {at} switch -c <new-branch>`, then `git -C {at} rebase {branch}`, then \
+             `git -C {at} switch {branch}`, then `git -C {at} merge --ff-only <new-branch>`; \
+             the workweave ends on {branch}"
+        ),
+    }
 }
 
 /// sync-to detached-target preflight: refuse if any target repo is not on a

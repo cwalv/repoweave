@@ -332,9 +332,15 @@ the project repo and every member repo of the source workweave.
 branch to advance, and an unborn one has no commit to advance from, so the
 verb has nowhere to put the result.
 
-**Exits.** Check out the branch you meant (`git switch <branch>`, or `git
-switch -c <new>` to give detached commits a branch). For an unborn branch, make
-an initial commit first. For push specifically, the canonical branch is the one
+**Exits.** Check out the branch you meant. For a detached repo in the source of
+`rwv sync-to`, the refusal prints the command, chosen by how HEAD stands
+against the workweave's branch: `git switch <branch>` where the branch carries
+HEAD; `git switch <branch>` then `git merge --ff-only <HEAD>` where HEAD is
+ahead, since switching alone would leave HEAD's commits on no branch; and where
+the two have diverged, `git switch -c <new-branch>`, then a rebase onto the
+workweave's branch and a fast-forward of that branch to `<new-branch>`, which
+leaves the workweave on its own branch rather than on a shared one. For an
+unborn branch, make an initial commit first. For push specifically, the canonical branch is the one
 publishing requires — see `project-repo-off-canonical-branch`.
 
 **Where this sits.** [Workweave lifecycle](../explanation/joints/workweave-lifecycle.md).

@@ -1476,8 +1476,7 @@ fn assert_source_refusal_changed_nothing(f: &Fixture, stderr: &str, state: &str)
         stderr.contains("source workweave is not on a branch in:")
             && stderr.contains(state)
             && stderr.contains(&format!(
-                "Attach a branch in the source ({}) with `git switch <branch>` or \
-                 `git switch -c <new>`, then re-run.",
+                "Run the command under each repo in the source ({}), then re-run.",
                 f.ww.root.display()
             )),
         "the refusal must name the repo, its state and the fix; got:\n{stderr}"
@@ -1558,6 +1557,142 @@ fn detached_source_project_repo_refuses_before_any_side_effect() {
     assert_eq!(tips.0, head(&f.main.project_dir));
     assert_eq!(tips.1, head(&f.main.manifest_repo));
     assert_eq!(tips.2, head(&f.ww.project_dir));
+}
+
+/// Runs every `git -C ...` command the refusal advises, in order, with
+/// `<new-branch>` spelled as `landing`.
+fn follow_advised_git(stderr: &str) {
+    let steps: Vec<String> = stderr
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .filter(|span| span.starts_with("git -C "))
+        .map(|span| span.replace("<new-branch>", "landing"))
+        .collect();
+    assert!(!steps.is_empty(), "no git command advised in:\n{stderr}");
+    for step in steps {
+        let out = common::run_advised(&step, &std::env::current_dir().unwrap());
+        assert!(
+            out.status.success(),
+            "advised `{step}` failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
+fn lands_after_following_advice(f: &Fixture, stderr: &str, commits: &[&str]) {
+    follow_advised_git(stderr);
+    rwv()
+        .args(["sync-to", &f.main.root.to_string_lossy()])
+        .current_dir(&f.ww.root)
+        .assert()
+        .success();
+    for sha in commits {
+        let contained = std::process::Command::new("git")
+            .args(["merge-base", "--is-ancestor", sha, "HEAD"])
+            .current_dir(&f.main.manifest_repo)
+            .status()
+            .unwrap();
+        assert!(
+            contained.success(),
+            "commit {sha} did not land in the target's manifest repo"
+        );
+    }
+}
+
+fn ephemeral_branch(f: &Fixture) -> String {
+    common::git_in(&f.ww.manifest_repo, &["branch", "--show-current"])
+}
+
+#[test]
+fn detached_source_equal_to_its_branch_lands_after_the_advised_switch() {
+    let f = fixture();
+    let branch = ephemeral_branch(&f);
+    let tip = commit_file(&f.ww.manifest_repo, "a.txt", "a\n", "ww: a");
+    common::git_in(&f.ww.manifest_repo, &["checkout", "-q", "--detach"]);
+    let stderr = sync_to_main_refusal(&f);
+    assert!(stderr.contains(&format!("switch {branch}`")), "{stderr}");
+    lands_after_following_advice(&f, &stderr, &[&tip]);
+}
+
+#[test]
+fn detached_source_behind_its_branch_lands_after_the_advised_switch() {
+    let f = fixture();
+    let branch = ephemeral_branch(&f);
+    commit_file(&f.ww.manifest_repo, "a.txt", "a\n", "ww: a");
+    let tip = commit_file(&f.ww.manifest_repo, "b.txt", "b\n", "ww: b");
+    common::git_in(
+        &f.ww.manifest_repo,
+        &["checkout", "-q", "--detach", "HEAD~1"],
+    );
+    let stderr = sync_to_main_refusal(&f);
+    assert!(
+        stderr.contains(&format!("switch {branch}`")) && !stderr.contains("merge --ff-only"),
+        "{stderr}"
+    );
+    lands_after_following_advice(&f, &stderr, &[&tip]);
+}
+
+#[test]
+fn detached_source_ahead_of_its_branch_lands_after_the_advised_switch_and_merge() {
+    let f = fixture();
+    let branch = ephemeral_branch(&f);
+    common::git_in(&f.ww.manifest_repo, &["checkout", "-q", "--detach"]);
+    let work = commit_file(&f.ww.manifest_repo, "d.txt", "d\n", "ww: detached work");
+    let stderr = sync_to_main_refusal(&f);
+    assert!(
+        stderr.contains(&format!("switch {branch}`"))
+            && stderr.contains(&format!("merge --ff-only {work}`")),
+        "{stderr}"
+    );
+    lands_after_following_advice(&f, &stderr, &[&work]);
+    assert_eq!(ephemeral_branch(&f), branch);
+}
+
+#[test]
+fn detached_source_diverged_from_its_branch_lands_both_sides_and_ends_on_its_branch() {
+    let f = fixture();
+    let branch = ephemeral_branch(&f);
+    let on_branch = commit_file(&f.ww.manifest_repo, "c.txt", "c\n", "ww: on branch");
+    common::git_in(
+        &f.ww.manifest_repo,
+        &["checkout", "-q", "--detach", "HEAD~1"],
+    );
+    let work = commit_file(&f.ww.manifest_repo, "d.txt", "d\n", "ww: detached work");
+    let stderr = sync_to_main_refusal(&f);
+    assert!(stderr.contains("switch -c <new-branch>`"), "{stderr}");
+    follow_advised_git(&stderr);
+    rwv()
+        .args(["sync-to", &f.main.root.to_string_lossy()])
+        .current_dir(&f.ww.root)
+        .assert()
+        .success();
+    assert_eq!(ephemeral_branch(&f), branch);
+    let landed = |name: &str| {
+        std::process::Command::new("git")
+            .args(["cat-file", "-e", &format!("HEAD:{name}")])
+            .current_dir(&f.main.manifest_repo)
+            .status()
+            .unwrap()
+            .success()
+    };
+    assert!(
+        landed("c.txt"),
+        "the branch's commit {on_branch} did not land"
+    );
+    assert!(landed("d.txt"), "the detached commit {work} did not land");
+}
+
+#[test]
+fn detached_source_whose_branch_is_gone_lands_after_the_advised_switch_c() {
+    let f = fixture();
+    let branch = ephemeral_branch(&f);
+    common::git_in(&f.ww.manifest_repo, &["checkout", "-q", "--detach"]);
+    let work = commit_file(&f.ww.manifest_repo, "d.txt", "d\n", "ww: detached work");
+    common::git_in(&f.ww.manifest_repo, &["branch", "-D", &branch]);
+    let stderr = sync_to_main_refusal(&f);
+    assert!(stderr.contains(&format!("switch -c {branch}`")), "{stderr}");
+    lands_after_following_advice(&f, &stderr, &[&work]);
 }
 
 /// Carve-out: a project repo dirty ONLY in `rwv.lock` is NOT dirt (it is the

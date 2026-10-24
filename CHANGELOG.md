@@ -243,8 +243,14 @@ a `git switch` that git refuses mid-rebase, beside `stale-op-state`'s own
 `rwv sync-to` already refused a target repo with a detached or unborn HEAD. It
 now refuses the same state in the source: the project repo or any member repo of
 the workweave being landed. The refusal is `head-not-on-branch`, raised before
-anything changes, and it names each repo and the fix (`git switch <branch>` or
-`git switch -c <new>`).
+anything changes, and it names each repo and the command that reattaches it
+without leaving a commit on no branch. The command follows how a detached HEAD
+stands against the workweave's branch, the same choice `rwv doctor` makes:
+`git switch <branch>` where the branch carries HEAD; `git switch <branch>` then
+`git merge --ff-only <HEAD>` where HEAD is ahead; and, where they have diverged,
+`git switch -c <new-branch>`, a rebase onto the branch and a fast-forward of the
+branch, which leaves the workweave on its own branch. Where the workweave's
+branch is gone, `git switch -c <branch>` recreates it.
 
 ### `rwv lock` no longer refuses over untracked files
 

@@ -2129,7 +2129,7 @@ pub enum DetachedAncestry {
 }
 
 impl DetachedAncestry {
-    fn observe(
+    pub(crate) fn observe(
         vcs: &dyn crate::vcs::Vcs,
         store: &Path,
         head: &ResolvedRevisionId,
