@@ -171,8 +171,9 @@ carries uncommitted changes. The sites:
 
 - `rwv sync` and `rwv sync-to` find tracked changes in a repo they would
   rebase or fast-forward: in CWD, and for `sync-to` in the target too.
-- `rwv lock` (without `--dirty`) finds uncommitted changes in a member repo,
-  untracked files included.
+- `rwv lock` (without `--dirty`) finds tracked changes in a member repo.
+  Untracked files do not refuse it: a lock records HEAD, which they cannot
+  change.
 - `rwv lock --commit` and `rwv update --commit` find changes in the project
   repo outside `rwv.lock` and `rwv.toml`, which they commit.
 - `rwv push` finds a staged or unstaged change to a tracked file in the

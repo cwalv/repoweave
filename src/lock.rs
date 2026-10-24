@@ -80,8 +80,8 @@ fn build_commit_message(
 /// already carries the canonical SHA — there is no parse step in this
 /// path that could leave the value unresolved.
 ///
-/// When `dirty` is false, each repo is checked for uncommitted changes and
-/// an error is returned if any are found. When `dirty` is true, the check
+/// When `dirty` is false, each repo is checked for uncommitted tracked changes
+/// (untracked files cannot change HEAD) and an error is returned if any are found. When `dirty` is true, the check
 /// is skipped.
 pub fn generate_lock(
     manifest: &Manifest,
@@ -99,10 +99,10 @@ pub fn generate_lock(
         let vcs = vcs_for(entry.vcs_type);
 
         // Check for uncommitted changes unless --dirty is set.
-        if !dirty && vcs.has_uncommitted_changes(repo_dir)? {
+        if !dirty && !vcs.tracked_dirty_file_names(repo_dir)?.is_empty() {
             crate::refuse!(
                 RefusalKind::DirtyCheckout,
-                "repo {} has uncommitted changes; commit or use --dirty to override",
+                "repo {} has uncommitted tracked changes; commit or use --dirty to override",
                 repo_path
             );
         }

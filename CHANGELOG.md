@@ -156,6 +156,13 @@ the workweave being landed. The refusal is `head-not-on-branch`, raised before
 anything changes, and it names each repo and the fix (`git switch <branch>` or
 `git switch -c <new>`).
 
+### `rwv lock` no longer refuses over untracked files
+
+`rwv lock` refused with `dirty-checkout` when a member repo held only untracked
+files, which blocked `rwv lock` and `rwv push` over a scratch file even though a
+lock records HEAD and untracked files cannot change it. It now refuses only
+tracked changes, the same rule `rwv sync-to` applies. `--dirty` still waives it.
+
 ### On Windows, `rwv explain` and `rwv prime` print LF line endings
 
 The pages `rwv explain` and `rwv prime` print are built into the binary. The

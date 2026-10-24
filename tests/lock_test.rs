@@ -459,7 +459,7 @@ fn lock_errors_on_uncommitted_changes() {
 
     // Create an uncommitted change in the repo
     let repo_dir = root.join(repo_path);
-    std::fs::write(repo_dir.join("dirty.txt"), "uncommitted\n").unwrap();
+    std::fs::write(repo_dir.join("README.md"), "uncommitted\n").unwrap();
 
     // `rwv lock` should fail because the repo has uncommitted changes
     rwv_cmd()
@@ -530,7 +530,7 @@ fn lock_dirty_flag_bypasses_uncommitted_check() {
 
     // Create an uncommitted change
     let repo_dir = root.join(repo_path);
-    std::fs::write(repo_dir.join("dirty.txt"), "uncommitted\n").unwrap();
+    std::fs::write(repo_dir.join("README.md"), "uncommitted\n").unwrap();
 
     // `rwv lock --dirty` should succeed despite uncommitted changes
     rwv_cmd()
@@ -551,6 +551,60 @@ fn lock_dirty_flag_bypasses_uncommitted_check() {
         .get_entry(&repoweave::manifest::RepoPath::new(repo_path).expect("known-safe literal"))
         .expect("lock should contain repo");
     assert_eq!(entry.version.as_str(), &sha);
+}
+
+#[test]
+fn lock_ignores_untracked_files_and_records_head() {
+    let tmp = common::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_path = "github/acme/server";
+    let sha = init_git_repo(&root.join(repo_path));
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+
+    std::fs::write(root.join(repo_path).join("scratch.txt"), "untracked\n").unwrap();
+
+    rwv_cmd()
+        .arg("lock")
+        .current_dir(&project_dir)
+        .assert()
+        .success();
+
+    let lock = repoweave::manifest::LockFile::from_path(&project_dir.join("rwv.lock")).unwrap();
+    let entry = lock
+        .get_entry(&repoweave::manifest::RepoPath::new(repo_path).expect("known-safe literal"))
+        .expect("lock should contain repo");
+    assert_eq!(entry.version.as_str(), &sha);
+}
+
+#[test]
+fn lock_refuses_a_tracked_change_as_dirty_checkout() {
+    let tmp = common::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_path = "github/acme/server";
+    init_git_repo(&root.join(repo_path));
+
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+
+    std::fs::write(root.join(repo_path).join("README.md"), "edited\n").unwrap();
+
+    rwv_cmd()
+        .arg("lock")
+        .current_dir(&project_dir)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("uncommitted tracked changes"))
+        .stderr(predicate::str::contains("rwv explain dirty-checkout"));
 }
 
 // ---------------------------------------------------------------------------

@@ -143,11 +143,11 @@ A repo that fails to advance fails the run: the repos that did advance stay wher
 
 Checkpoint current local state into `rwv.lock`. No network access.
 
-Reads HEAD from each repo and records its resolved 40-character hex commit SHA in `rwv.lock` (never a tag or branch name, even when a tag points at HEAD). Errors on uncommitted changes (use `--dirty` to bypass).
+Reads HEAD from each repo and records its resolved 40-character hex commit SHA in `rwv.lock` (never a tag or branch name, even when a tag points at HEAD). Errors on uncommitted changes to tracked files; untracked files are fine (use `--dirty` to bypass).
 
 | Flag | Effect |
 |---|---|
-| `--dirty` | Allow locking repos with uncommitted changes |
+| `--dirty` | Allow locking repos with uncommitted changes to tracked files |
 | `--commit` | Commit `rwv.lock` after writing it, together with `rwv.toml` when it is modified or has never been committed. Other uncommitted changes in the project repo refuse (`dirty-checkout`) |
 | `-m` / `--message <msg>` | The commit message for `--commit`, in place of the generated summary. Without `--commit` it is a usage error (exit 2) |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
