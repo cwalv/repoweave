@@ -459,8 +459,9 @@ pub fn render(err: &anyhow::Error) -> String {
 /// the headline, then each cause under `Caused by:`, numbered when there are
 /// several, every line of a cause indented under its first.
 fn headline_and_causes(err: &anyhow::Error) -> String {
-    let mut out = err.to_string();
-    let causes: Vec<String> = err.chain().skip(1).map(ToString::to_string).collect();
+    let mut links = err.chain().map(ToString::to_string);
+    let mut out = links.next().unwrap_or_default();
+    let causes: Vec<String> = links.collect();
     if causes.is_empty() {
         return out;
     }
