@@ -8271,10 +8271,9 @@ impl CheckViolation {
                     DriftKind::MissingUnfetched => (
                         "missing worktree",
                         " — the canonical clone does not hold the revision rwv.lock \
-                             pins; `rwv fetch` run in that workweave clones a canonical \
-                             clone that is not on disk and creates the worktree, while one \
-                             on disk needs the revision fetched into it before \
-                             `rwv doctor --fix` can",
+                             pins, or is not on disk; `rwv fetch` run in that workweave \
+                             fetches the revision into it, cloning it first if need be, and \
+                             creates the worktree",
                     ),
                     DriftKind::Symlink => (
                         "symlink instead of a worktree at",
@@ -8285,11 +8284,10 @@ impl CheckViolation {
                     DriftKind::SymlinkUnfetched => (
                         "symlink instead of a worktree at",
                         " — rwv no longer operates on a symlinked member, and the \
-                             canonical clone does not hold the revision rwv.lock pins; \
-                             `rwv fetch` run in that workweave clones a canonical clone that \
-                             is not on disk and replaces the link with a worktree, while one \
-                             on disk needs the revision fetched into it before \
-                             `rwv doctor --fix` can",
+                             canonical clone does not hold the revision rwv.lock pins, or is \
+                             not on disk; `rwv fetch` run in that workweave fetches the \
+                             revision into it, cloning it first if need be, and replaces the \
+                             link with a worktree",
                     ),
                     DriftKind::Extra => (
                         "leftover checkout of",

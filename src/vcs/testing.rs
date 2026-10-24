@@ -590,6 +590,10 @@ impl Vcs for FakeVcs {
         unsupported("fetch_objects_from")
     }
 
+    fn fetch_remote(&self, _repo: &Path) -> Result<(), VcsError> {
+        unsupported("fetch_remote")
+    }
+
     fn refresh_index_to_head_if_safe(&self, _repo: &Path) {
         unsupported("refresh_index_to_head_if_safe")
     }

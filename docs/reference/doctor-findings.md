@@ -824,11 +824,10 @@ network is involved.
 clone holds neither the workweave's branch nor the pinned revision, or is not
 on disk.
 
-**What to do:** where the canonical clone is not on disk, `rwv fetch` run in
-the workweave clones it at the pinned revision and creates the worktree. Where
-it is on disk, `rwv fetch` refuses — it aligns a present clone only to
-revisions already in it — so fetch the revision into that clone with git, then
-`rwv doctor --fix`. Doctor never fetches.
+**What to do:** `rwv fetch` run in the workweave fetches the pinned revision
+into the canonical clone, cloning the canonical clone first where it is not on
+disk, and creates the worktree. It moves no branch of the primary's. Doctor
+never fetches.
 
 #### `symlink`
 

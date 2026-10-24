@@ -7,7 +7,7 @@
 use crate::activate::ActivateOptions;
 use crate::cli::consent::DetachConsent;
 use crate::lock;
-use crate::manifest::{LockFile, Manifest, RepoEntry, RepoPath, Role};
+use crate::manifest::{LockEntry, LockFile, Manifest, RepoEntry, RepoPath, Role};
 use crate::parallel::{run_in_parallel, OutputMode, Reporter};
 use crate::placement::PlacementOutput;
 use crate::refusal::{refusal, RefusalKind};
@@ -15,7 +15,8 @@ use crate::registry;
 use crate::selector::RepoFilter;
 use crate::skipped::{SkipReason, SkippedEffect};
 use crate::vcs::{
-    project_vcs, vcs_for, HeadAttachment, ReplayExclusionState, ResolvedRevisionId, Vcs, VcsError,
+    project_vcs, vcs_for, HeadAttachment, RawRevisionId, ReplayExclusionState, ResolvedRevisionId,
+    Vcs, VcsError,
 };
 use crate::workspace::{
     observe_root, project_dir, projects_dir, Checkout, Resolution, RootObservation,
@@ -298,6 +299,7 @@ pub fn run_fetch(
         // Source-mode fetch runs before any WorkspaceContext is resolved; no
         // resolution block is available at this point.
         None,
+        CloneDuty::Checkouts,
     )?
     .envelope;
     if output.is_json() {
@@ -369,6 +371,26 @@ pub fn run_fetch_in_place(
     // to write clones at `<primary>/<repo_path>/`, even when CWD is inside a
     // workweave. See docs/explanation/joints/clone-topology.md.
     let workspace_root = ctx.primary_path();
+    let primary_lock = match &ctx.checkout {
+        Checkout::Workweave { .. } => {
+            let path = LockFile::path_in(&crate::workspace::project_dir(workspace_root, &name));
+            if path.exists() {
+                Some(
+                    LockFile::from_state(&path)
+                        .with_context(|| format!("failed to read lock file at {path}"))?,
+                )
+            } else {
+                None
+            }
+        }
+        Checkout::Primary { .. } => None,
+    };
+    let duty = match &ctx.checkout {
+        Checkout::Workweave { .. } => CloneDuty::SharedStore {
+            primary_lock: primary_lock.as_ref(),
+        },
+        Checkout::Primary { .. } => CloneDuty::Checkouts,
+    };
 
     let FetchRun {
         mut envelope,
@@ -384,6 +406,7 @@ pub fn run_fetch_in_place(
         output,
         None,
         Some(ctx.resolution()),
+        duty,
     )?;
 
     let created = match &ctx.checkout {
@@ -403,8 +426,8 @@ pub fn run_fetch_in_place(
         ),
         Checkout::Primary { .. } => Ok(false),
     };
-    // In a workweave the clones fetch moves are the primary's; only a worktree
-    // it created is a checkout of this workweave's.
+    // In a workweave the only clones fetch changes are canonical clones it
+    // created for the primary; only a worktree it created is this workweave's.
     let checkout_changed = match &ctx.checkout {
         Checkout::Workweave { .. } => matches!(created, Ok(true)),
         Checkout::Primary { .. } => moved_or_created,
@@ -456,12 +479,13 @@ fn sole_unselected_project(ctx: &WorkspaceContext) -> Option<crate::manifest::Pr
     }
 }
 
-/// Give the workweave the worktree of each member its `rwv.lock` pins and it
-/// lacks — nothing at the slot, a symlink, or a checkout whose link dangles —
-/// through [`crate::workweave::materialize_member`], once the fetch above
-/// has put the pinned revisions in the canonical clones, returning whether it
-/// created any. How each one's files were placed is added to `placements` for
-/// the envelope.
+/// Give the workweave the worktree of each member it lacks — nothing at the
+/// slot while its `rwv.lock` pins the member, a symlink, or a checkout whose
+/// link dangles — through [`crate::workweave::materialize_member`], once the
+/// fetch above has put the pinned revisions in the canonical clones, returning
+/// whether it created any. A symlinked member the lock does not pin starts at
+/// the canonical clone's HEAD, which is what the link showed. How each one's
+/// files were placed is added to `placements` for the envelope.
 #[allow(clippy::too_many_arguments)]
 fn materialize_workweave_members(
     ctx: &WorkspaceContext,
@@ -474,24 +498,20 @@ fn materialize_workweave_members(
 ) -> anyhow::Result<bool> {
     let manifest = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME))?;
     let lock_path = LockFile::path_in(project_dir);
-    if !lock_path.exists() {
-        return Ok(false);
-    }
-    let lock = LockFile::from_state(&lock_path)?;
+    let lock = if lock_path.exists() {
+        Some(LockFile::from_state(&lock_path)?)
+    } else {
+        None
+    };
     let mut failures: Vec<String> = Vec::new();
     let mut created = false;
     for (repo_path, entry) in manifest.iter_entries() {
         if !selection.covers(repo_path, entry.role) {
             continue;
         }
-        let Some(pin) = lock.get_entry(repo_path) else {
-            continue;
-        };
         let slot = ctx.active_path().join(repo_path.as_path());
-        if !crate::workweave::is_symlinked_member(&slot)
-            && !crate::workweave::is_dangling_link(&slot)
-            && slot.exists()
-        {
+        let symlinked = crate::workweave::is_symlinked_member(&slot);
+        if !symlinked && !crate::workweave::is_dangling_link(&slot) && slot.exists() {
             if crate::workweave::scan_uninitialized_submodules(&slot).is_empty() {
                 continue;
             }
@@ -505,8 +525,23 @@ fn materialize_workweave_members(
             );
             continue;
         }
+        let vcs = vcs_for(entry.vcs_type);
+        let start = match lock.as_ref().and_then(|lock| lock.get_entry(repo_path)) {
+            Some(pin) => pin.version.as_str().to_owned(),
+            None if symlinked => {
+                let canonical = ctx.primary_path().join(repo_path.as_path());
+                match vcs.head_revision(&canonical) {
+                    Ok(head) => head.id().as_str().to_owned(),
+                    Err(e) => {
+                        failures.push(format!("{repo_path}: {e:#}"));
+                        continue;
+                    }
+                }
+            }
+            None => continue,
+        };
         match crate::workweave::materialize_member(
-            vcs_for(entry.vcs_type).as_ref(),
+            vcs.as_ref(),
             ctx.primary_path(),
             ctx.active_path(),
             project,
@@ -514,7 +549,7 @@ fn materialize_workweave_members(
             repo_path,
             entry.role,
             entry.submodules,
-            pin.version.as_str(),
+            &start,
             crate::workweave::ReceiptedBranch::Attach,
         ) {
             Ok(born) => {
@@ -541,8 +576,8 @@ fn materialize_workweave_members(
     }
     crate::refuse!(
         RefusalKind::PartialRunAborted,
-        "fetch aligned the canonical clones but could not create {} worktree(s) in this \
-         workweave:\n  {}",
+        "fetch brought the pinned revisions into the canonical clones but could not \
+         create {} worktree(s) in this workweave:\n  {}",
         failures.len(),
         failures.join("\n  ")
     )
@@ -578,6 +613,7 @@ fn fetch_project_repos(
     output: OutputMode,
     auto_activate: Option<ActivateOptions>,
     resolution: Option<Resolution>,
+    duty: CloneDuty<'_>,
 ) -> anyhow::Result<FetchRun> {
     // Read the manifest
     let manifest_path = project_dir.join(Manifest::FILE_NAME);
@@ -674,6 +710,7 @@ fn fetch_project_repos(
                 entry,
                 workspace_root,
                 existing_lock.as_ref(),
+                duty,
                 selection,
                 detach_checkouts,
                 &reporter,
@@ -826,7 +863,10 @@ fn fetch_project_repos(
     // the lock-write entirely under a filter: the filtered fetch is a
     // targeted-sync operation, not a lock-bumping one. Use `rwv update` or
     // unfiltered `rwv fetch` to refresh the lock.
-    if mode == FetchMode::Default && selection.names_every_member() {
+    if mode == FetchMode::Default
+        && selection.names_every_member()
+        && matches!(duty, CloneDuty::Checkouts)
+    {
         let needs_bootstrap = existing_lock.is_none();
         let has_additions = !added_to_lock.is_empty();
 
@@ -907,6 +947,20 @@ fn fetch_project_repos(
         envelope,
         moved_or_created,
     })
+}
+
+/// What the clones under a fetch's store root are to the workspace whose lock
+/// it reads.
+#[derive(Clone, Copy)]
+enum CloneDuty<'a> {
+    /// They are its checkouts: aligned to its lock, which records them.
+    Checkouts,
+    /// They are the primary's canonical clones, which a workweave's worktrees
+    /// share. The workweave's pins are fetched into them and nothing they have
+    /// checked out moves; the primary's lock, not the workweave's, says where a
+    /// clone not on disk is born. The workweave's lock records its worktrees,
+    /// so this fetch does not write it.
+    SharedStore { primary_lock: Option<&'a LockFile> },
 }
 
 /// What [`fetch_project_repos`] did, beyond what its envelope reports.
@@ -1047,6 +1101,7 @@ fn fetch_one(
     entry: &RepoEntry,
     workspace_root: &Path,
     existing_lock: Option<&LockFile>,
+    duty: CloneDuty<'_>,
     selection: &MemberSelection,
     detach_checkouts: Option<DetachConsent>,
     reporter: &Reporter<'_>,
@@ -1072,6 +1127,21 @@ fn fetch_one(
     let dest: PathBuf = workspace_root.join(repo_path.as_path());
 
     let lock_entry = existing_lock.and_then(|l| l.get_entry(repo_path).cloned());
+
+    if let CloneDuty::SharedStore { primary_lock } = duty {
+        if !dest.exists() {
+            let birth = primary_lock
+                .and_then(|l| l.get_entry(repo_path))
+                .or(lock_entry.as_ref());
+            if let Err(msg) = clone_member(vcs, repo_path, entry, &dest, birth, &emit) {
+                return FetchOutcome::Failed { msg };
+            }
+        }
+        return match lock_entry {
+            Some(pin) => make_pin_local(vcs, repo_path, &dest, &pin.version, &emit),
+            None => FetchOutcome::Ok { add_to_lock: None },
+        };
+    }
 
     if dest.exists() {
         if let Some(lock_entry) = lock_entry {
@@ -1121,26 +1191,45 @@ fn fetch_one(
         }
     }
 
-    let clone_url = match registry::resolve_to_clone_info(&entry.url) {
-        Ok(info) => info.url,
-        Err(e) => {
-            return FetchOutcome::Failed {
-                msg: format!("{}: {e:#}", repo_path.as_str()),
-            };
-        }
-    };
+    let pinned = lock_entry.is_some();
+    if let Err(msg) = clone_member(vcs, repo_path, entry, &dest, lock_entry.as_ref(), &emit) {
+        return FetchOutcome::Failed { msg };
+    }
+    if !pinned && existing_lock.is_some() {
+        emit(&format!(
+            "rwv fetch: cloned {} at branch HEAD (additive — no lock entry)",
+            repo_path.as_str()
+        ));
+        return FetchOutcome::Ok {
+            add_to_lock: Some(repo_path.clone()),
+        };
+    }
+    FetchOutcome::Ok { add_to_lock: None }
+}
 
-    // Create parent directories
+/// Clone the member at `repo_path` into `dest`: born attached at `birth` on
+/// the local counterpart of the branch the manifest declares, or, with no
+/// `birth`, at the remote's branch HEAD.
+fn clone_member(
+    vcs: &dyn Vcs,
+    repo_path: &RepoPath,
+    entry: &RepoEntry,
+    dest: &Path,
+    birth: Option<&LockEntry>,
+    emit: &dyn Fn(&str),
+) -> Result<(), String> {
+    let clone_url = registry::resolve_to_clone_info(&entry.url)
+        .map_err(|e| format!("{}: {e:#}", repo_path.as_str()))?
+        .url;
+
     if let Some(parent) = dest.parent() {
-        if let Err(e) = std::fs::create_dir_all(parent) {
-            return FetchOutcome::Failed {
-                msg: format!(
-                    "{}: failed to create directory {}: {e:#}",
-                    repo_path.as_str(),
-                    parent.display()
-                ),
-            };
-        }
+        std::fs::create_dir_all(parent).map_err(|e| {
+            format!(
+                "{}: failed to create directory {}: {e:#}",
+                repo_path.as_str(),
+                parent.display()
+            )
+        })?;
     }
 
     emit(&format!(
@@ -1150,58 +1239,75 @@ fn fetch_one(
         entry.role
     ));
 
-    let mut add_to_lock: Option<RepoPath> = None;
     // A lock-pinned clone is born ATTACHED AT THE PIN — one operation, not a
     // clone followed by an align. Cloning to the remote tip and then moving
     // to the pin would leave the member detached, which is not a state a
     // fetch is entitled to put an operator's checkout in.
-    if let Some(lock_entry) = lock_entry {
+    if let Some(birth) = birth {
         let counterpart = entry.version.local_counterpart();
         emit(&format!(
             "rwv fetch: cloning {} onto {counterpart} at {}",
             repo_path.as_str(),
-            lock_entry.version,
+            birth.version,
         ));
-        if let Err(e) = vcs.clone_attached_at(&clone_url, &dest, &counterpart, &lock_entry.version)
-        {
-            return FetchOutcome::Failed {
-                msg: format!(
+        return vcs
+            .clone_attached_at(&clone_url, dest, &counterpart, &birth.version)
+            .map_err(|e| {
+                format!(
                     "{}: failed to materialize {} at {}: {e:#}",
                     repo_path.as_str(),
                     clone_url,
-                    lock_entry.version,
-                ),
-            };
-        }
-        return FetchOutcome::Ok { add_to_lock };
+                    birth.version,
+                )
+            })
+            .map(|_| ());
     }
 
-    if let Err(e) = vcs.clone_repo(&clone_url, &dest) {
+    vcs.clone_repo(&clone_url, dest).map_err(|e| {
+        format!(
+            "{}: failed to clone {} into {}: {e:#}",
+            repo_path.as_str(),
+            clone_url,
+            dest.display()
+        )
+    })
+}
+
+/// Make `pin` resolvable in the canonical clone at `store`, fetching from its
+/// remote only when it is not already there. Nothing checked out moves.
+fn make_pin_local(
+    vcs: &dyn Vcs,
+    repo_path: &RepoPath,
+    store: &Path,
+    pin: &RawRevisionId,
+    emit: &dyn Fn(&str),
+) -> FetchOutcome {
+    if vcs.resolve_revision(store, pin.as_str()).is_ok() {
+        return FetchOutcome::Ok { add_to_lock: None };
+    }
+    emit(&format!(
+        "rwv fetch: fetching {pin} into the canonical clone of {}",
+        repo_path.as_str()
+    ));
+    if let Err(e) = vcs.fetch_remote(store) {
         return FetchOutcome::Failed {
             msg: format!(
-                "{}: failed to clone {} into {}: {e:#}",
+                "{}: failed to fetch {} into the canonical clone: {e:#}",
                 repo_path.as_str(),
-                clone_url,
-                dest.display()
+                vcs.conventional_remote_name(),
             ),
         };
     }
-
-    if existing_lock.is_some() {
-        // Lock exists but doesn't cover this repo — leave at branch HEAD
-        // (where the clone landed) and mark for additive lock entry. Emit
-        // a message so the additive path is observable to the operator —
-        // matches the "adding … to lock at branch HEAD" text the
-        // dest-already-exists arm above emits.
-        emit(&format!(
-            "rwv fetch: cloned {} at branch HEAD (additive — no lock entry)",
-            repo_path.as_str()
-        ));
-        add_to_lock = Some(repo_path.clone());
+    match vcs.resolve_revision(store, pin.as_str()) {
+        Ok(_) => FetchOutcome::Ok { add_to_lock: None },
+        Err(e) => FetchOutcome::Failed {
+            msg: format!(
+                "{}: {pin} is not on {} either: {e:#}",
+                repo_path.as_str(),
+                vcs.conventional_remote_name(),
+            ),
+        },
     }
-    // else: bootstrap, will be picked up wholesale below.
-
-    FetchOutcome::Ok { add_to_lock }
 }
 
 #[cfg(test)]

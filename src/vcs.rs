@@ -2246,6 +2246,11 @@ pub trait Vcs: Send + Sync {
     /// named something else is one every later resolution here would miss.
     fn clone_repo(&self, url: &CloneUrl, dest: &Path) -> Result<(), VcsError>;
 
+    /// Bring the conventional remote's branches and tags into `repo`'s object
+    /// store, updating only its remote-tracking refs: no local branch and no
+    /// checkout moves.
+    fn fetch_remote(&self, repo: &Path) -> Result<(), VcsError>;
+
     /// What this backend calls the remote every method here acts on.
     ///
     /// For operator output only. No method on this trait accepts a remote

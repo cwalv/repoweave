@@ -1472,6 +1472,11 @@ impl Vcs for GitVcs {
         Ok(())
     }
 
+    fn fetch_remote(&self, repo: &Path) -> Result<(), VcsError> {
+        Self::run(["fetch", "--tags", GIT_DEFAULT_REMOTE_NAME], repo)?;
+        Ok(())
+    }
+
     fn conventional_remote_name(&self) -> &str {
         GIT_DEFAULT_REMOTE_NAME
     }

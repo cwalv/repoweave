@@ -6,6 +6,23 @@ claim that nothing changed in them.
 
 ## Unreleased
 
+### `rwv fetch` in a workweave no longer moves the primary's branches
+
+Run in a workweave, `rwv fetch` aligned the primary's canonical clones to the
+workweave's `rwv.lock`. Once the primary's branch had moved past the
+workweave's pin, the fetch refused as "not a fast-forward"; with the
+workweave's pin ahead, it fast-forwarded the primary's branch to it. It also
+fetched nothing into a canonical clone that was on disk but lacked the pinned
+revision, so the `workweave-drift` / `missing-unfetched` and
+`symlink-unfetched` advice did not work when followed.
+
+A fetch in a workweave now moves no branch or checkout in the primary. Where a
+canonical clone lacks a revision the workweave pins, it fetches from that
+clone's remote, and where one is not on disk, it clones it at the primary's
+own pin. It then creates the workweave's missing worktrees, as before, and
+does not rewrite the workweave's `rwv.lock`. Both findings now name that one
+step.
+
 ### A workweave checkout that is gone or cannot be opened is given back on its own branch
 
 A workweave member checkout removed by hand, or left unopenable when its
