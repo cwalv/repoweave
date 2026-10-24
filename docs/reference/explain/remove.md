@@ -6,7 +6,7 @@ Remove a repo from the active project's `rwv.toml` and re-run integration
 activation so ecosystem files (Cargo workspace, npm workspace, etc.) are
 updated to no longer include the removed member.
 
-`remove` is an **intent verb**: it mutates the manifest and regenerates
+`remove` is an **authoring verb**: it mutates the manifest and regenerates
 integration-managed content so the resulting files can be committed alongside
 the `rwv.toml` change.
 
