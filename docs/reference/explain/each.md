@@ -60,7 +60,7 @@ Schema:
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "EachJsonOutput",
-  "description": "The envelope `rwv each --json -j 1` prints once every repo is done: `{ \"$schema\": \"<url>\", \"outcomes\": [<Outcome>, ...] }`, in manifest order.",
+  "description": "The envelope `rwv each --json` prints once every repo is done, whatever `-j` is: `{ \"$schema\": \"<url>\", \"outcomes\": [<Outcome>, ...] }`, sorted by repo path.",
   "type": "object",
   "required": [
     "$schema",
