@@ -62,7 +62,10 @@ fn doctor_issues(ws: &Path) -> Vec<(String, String)> {
         .map(|issue| {
             (
                 issue["kind"].as_str().unwrap_or_default().to_string(),
-                issue["integration"].as_str().unwrap_or_default().to_string(),
+                issue["integration"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
             )
         })
         .collect()
@@ -135,7 +138,10 @@ fn the_missing_file_line(verb: &str, run: &Run) -> (String, String) {
     let (path, after) = rest
         .split_once("; ")
         .unwrap_or_else(|| panic!("`{verb}` printed no remedy after the path: {line}"));
-    (format!("{before}{MISSING}<path>; {after}"), path.to_string())
+    (
+        format!("{before}{MISSING}<path>; {after}"),
+        path.to_string(),
+    )
 }
 
 #[test]
@@ -158,7 +164,10 @@ fn activate_materialize_and_workweave_create_report_a_missing_managed_file_alike
                           missing: <path>; run rwv doctor --fix to regenerate";
     for (verb, run, path) in reports {
         let (shape, named) = the_missing_file_line(verb, run);
-        assert_eq!(shape, expected_shape, "`{verb}` words the report differently");
+        assert_eq!(
+            shape, expected_shape,
+            "`{verb}` words the report differently"
+        );
         assert_eq!(
             named,
             path.display().to_string(),
@@ -194,5 +203,67 @@ fn vscode_workspace_reports_its_missing_file_once() {
     assert_eq!(
         missing_in_doctor, 1,
         "`rwv doctor` should carry one managed-file-missing finding for the .code-workspace"
+    );
+}
+
+/// A one-crate source repo with no dependencies, so `cargo` writes its lock
+/// without reaching a registry.
+fn crate_repo(dir: &Path) {
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("Cargo.toml"),
+        "[package]\nname = \"lib\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("src/lib.rs"), "").unwrap();
+    common::git_in(dir, &["init", "-q"]);
+    common::git_in(dir, &["add", "-A"]);
+    common::git_in(
+        dir,
+        &[
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "-m",
+            "lib",
+        ],
+    );
+}
+
+/// The install hook is what writes a missing `Cargo.lock`, so a report taken
+/// after it has nothing to say about that file.
+#[test]
+fn activate_does_not_report_the_lock_its_install_hook_writes() {
+    if common::skip_without_tool("cargo") {
+        return;
+    }
+    let tmp = common::tempdir().unwrap();
+    let source = tmp.path().join("src/lib");
+    crate_repo(&source);
+    let ws = tmp.path().join("ws");
+    std::fs::create_dir_all(&ws).unwrap();
+    run(&["init", "myapp"], &ws);
+    run(&["add", &common::file_url(&source)], &ws);
+    let lock = ws.join("projects/myapp/Cargo.lock");
+    assert!(lock.exists(), "`rwv add` should leave a Cargo.lock behind");
+    std::fs::remove_file(&lock).unwrap();
+
+    let activate = run(&["activate", "myapp"], &ws);
+
+    assert!(
+        lock.exists(),
+        "`rwv activate`'s install hook writes the lock"
+    );
+    let lock_warnings: Vec<&str> = warning_lines(&activate.stderr)
+        .into_iter()
+        .filter(|line| line.contains("Cargo.lock"))
+        .collect();
+    assert!(
+        lock_warnings.is_empty(),
+        "`rwv activate` should not report the lock its hook writes; got:\n{}",
+        activate.stderr
     );
 }
