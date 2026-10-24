@@ -674,9 +674,10 @@ even under a filter that matched a warning.
     registry and no manifest names, build output under `node_modules/` and
     `target/` excepted. It names `rwv add --adopt` with the path the clone's
     origin URL places it at, moving it there first.
-  - `placement-disagreement`: a manifest path that its own URL does not derive
-    to. It names moving the checkout to the path its URL places at, unless it
-    is already there, re-keying the entry in `rwv.toml`, and `rwv lock`.
+  - `placement-disagreement`: an `owned` or `dependency` member's manifest
+    path that its own URL does not derive to. It names moving the checkout to
+    the path its URL places at, unless it is already there, re-keying the
+    entry in `rwv.toml`, and `rwv lock`.
   - `lock-pinned-by-name`: a lock entry holding a tag or branch name, which
     `rwv status --json` also marks as `lock_pinned_by_name`.
   - `workweave-drift` sub-kinds for a member a workweave lacks or still holds
