@@ -1571,7 +1571,7 @@ fn follow_advised_git(stderr: &str) {
         .collect();
     assert!(!steps.is_empty(), "no git command advised in:\n{stderr}");
     for step in steps {
-        let out = common::run_advised(&step, &std::env::current_dir().unwrap());
+        let out = common::run_advised(&step, std::env::current_dir().unwrap());
         assert!(
             out.status.success(),
             "advised `{step}` failed: {}",
