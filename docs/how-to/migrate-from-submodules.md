@@ -67,7 +67,7 @@ git -C projects/web-app add -A && git -C projects/web-app commit -m "Initialize 
 
 `rwv lock --commit` commits `rwv.lock` and `rwv.toml`; the `git` commit carries `.gitattributes` and the generated workspace files.
 
-To start from the exact commits the superproject's gitlinks pinned rather than from branch tips, check out each pinned commit in its canonical clone (`git -C github/chatly/server checkout --detach <gitlink-sha>`) and run `rwv lock --commit`. While a member is detached, `rwv lock` warns, `rwv doctor` reports it, `rwv push` refuses to push it, and a teammate's `rwv fetch` checks it out detached. When ready, re-attach with `git -C github/chatly/server switch main` and run `rwv lock --commit` again.
+To start from the exact commits the superproject's gitlinks pinned rather than from branch tips, check out each pinned commit in its canonical clone (`git -C github/chatly/server checkout --detach <gitlink-sha>`) and run `rwv lock --commit`. While a member is detached, `rwv lock` warns, `rwv doctor` reports it, `rwv push` refuses to push it, and a teammate's `rwv fetch` puts the member on the branch `rwv.toml` declares, at the pinned commit. When ready, re-attach with `git -C github/chatly/server switch main` and run `rwv lock --commit` again.
 
 ### 5. Publish the project repository
 
