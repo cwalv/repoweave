@@ -2143,6 +2143,19 @@ pub enum DiscardOutcome {
     HoldsUncapturedChange,
 }
 
+/// What [`Vcs::prune_stale_worktree_registration`] did with one registration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegistrationPrune {
+    /// The registration is gone; its directory already was.
+    Pruned,
+    /// Left alone: the registration is locked.
+    Locked,
+    /// Left alone: something stands at the registered path.
+    DirectoryPresent,
+    /// The store registers no worktree at that path.
+    NotRegistered,
+}
+
 /// What a checkout writes at one tracked path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrackedFile {
@@ -3051,6 +3064,20 @@ pub trait Vcs: Send + Sync {
     ///
     /// [`worktree_prune`]: Vcs::worktree_prune
     fn list_stale_worktree_registrations(&self, repo: &Path) -> Result<Vec<PathBuf>, VcsError>;
+
+    /// Drop `repo`'s registration of the worktree at `worktree` when nothing
+    /// stands at that path and the registration is not locked; otherwise
+    /// leave it and say why. A path whose directory is gone is free for a
+    /// new worktree only once its registration is.
+    ///
+    /// For git: reads `git worktree list --porcelain`, then runs
+    /// `git worktree remove` without `--force` on the registered path, which
+    /// on a missing directory deletes the administrative entry alone.
+    fn prune_stale_worktree_registration(
+        &self,
+        repo: &Path,
+        worktree: &Path,
+    ) -> Result<RegistrationPrune, VcsError>;
 
     /// The local branch each **live** worktree of `repo` has checked out —
     /// the complement of [`list_stale_worktree_registrations`] over the same

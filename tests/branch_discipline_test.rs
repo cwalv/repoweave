@@ -1187,6 +1187,126 @@ fn a_dead_seats_branch_is_still_classified_stale() {
     );
 }
 
+fn registered_worktrees(store: &Path) -> String {
+    String::from_utf8_lossy(
+        &git()
+            .args(["worktree", "list", "--porcelain"])
+            .current_dir(store)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .into_owned()
+}
+
+fn registers(store: &Path, worktree: &Path) -> bool {
+    registered_worktrees(store)
+        .lines()
+        .filter_map(|line| line.strip_prefix("worktree "))
+        .any(|registered| Path::new(registered) == worktree)
+}
+
+/// A seat's checkout in a store no manifest lists, holding a receipted
+/// branch the store's tip has passed.
+fn seat_in_an_orphaned_store(tmp: &Path) -> (PathBuf, PathBuf, PathBuf) {
+    let ws = make_primary(tmp);
+    let canonical = ws.join("github").join("acme").join("repo");
+    init_repo_with_commit(&canonical);
+    let seat = tmp.join("elsewhere").join("unrelated-name");
+    write_marker(&seat, &ws, "myproj", &ws);
+    let seat_checkout = seat.join("github").join("acme").join("repo");
+    std::fs::create_dir_all(seat_checkout.parent().unwrap()).unwrap();
+    worktree_add(&canonical, &seat_checkout, "myproj--seat");
+    record_receipt(&ws, "myproj", "seat", &canonical);
+    add_commit(&canonical, "f2.txt", "second");
+    (ws, canonical, seat_checkout)
+}
+
+/// git refuses to delete a branch a registration holds even when the
+/// registration's directory is gone, and a store no manifest lists gets no
+/// `stale-worktree-registration` finding to prune it. The branch fix prunes
+/// it itself, says so, and then deletes.
+#[test]
+fn a_hand_deleted_seats_branch_in_an_orphaned_store_is_deleted_by_fix() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, canonical, seat_checkout) = seat_in_an_orphaned_store(tmp.path());
+    std::fs::remove_dir_all(seat_checkout.parent().unwrap()).unwrap();
+    assert!(
+        registered_worktrees(&canonical).contains("prunable"),
+        "fixture: the registration outlives its directory"
+    );
+
+    let out = rwv()
+        .args(["doctor", "--fix", "--all"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    assert!(
+        stdout.lines().any(|line| line
+            .starts_with("[fixed] core: pruned the registration of removed worktree ")
+            && line.contains("unrelated-name")),
+        "{stdout}"
+    );
+    assert!(!branch_exists(&canonical, "myproj--seat"), "{stdout}");
+    assert!(!registers(&canonical, &seat_checkout), "{stdout}");
+    assert!(!receipt_recorded(&ws, "myproj", "myproj--seat"), "{stdout}");
+}
+
+/// A locked registration is the operator saying its directory will be back:
+/// it survives `--fix` with its directory gone, and so does the branch it
+/// holds.
+#[test]
+fn a_locked_registration_and_its_branch_survive_fix() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, canonical, seat_checkout) = seat_in_an_orphaned_store(tmp.path());
+    git_in(
+        &canonical,
+        &["worktree", "lock", seat_checkout.to_str().unwrap()],
+    );
+    std::fs::remove_dir_all(seat_checkout.parent().unwrap()).unwrap();
+
+    let out = rwv()
+        .args(["doctor", "--fix", "--all"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    assert!(registers(&canonical, &seat_checkout), "{stdout}");
+    assert!(branch_exists(&canonical, "myproj--seat"), "{stdout}");
+    assert!(!stdout.contains("pruned the registration"), "{stdout}");
+}
+
+/// git calls a registration prunable once its path stops leading back to
+/// the store, and that includes a directory standing there again without
+/// the link. Whatever is in that directory is not rwv's to orphan: the
+/// registration, the directory and the branch all survive `--fix`.
+#[test]
+fn a_registration_whose_directory_stands_survives_fix() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, canonical, seat_checkout) = seat_in_an_orphaned_store(tmp.path());
+    std::fs::remove_file(seat_checkout.join(".git")).unwrap();
+    std::fs::write(seat_checkout.join("work.txt"), "keep\n").unwrap();
+    assert!(
+        registered_worktrees(&canonical).contains("prunable"),
+        "fixture: git calls the registration prunable"
+    );
+
+    let out = rwv()
+        .args(["doctor", "--fix", "--all"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+
+    assert!(registers(&canonical, &seat_checkout), "{stdout}");
+    assert!(seat_checkout.join("work.txt").exists(), "{stdout}");
+    assert!(branch_exists(&canonical, "myproj--seat"), "{stdout}");
+    assert!(!stdout.contains("pruned the registration"), "{stdout}");
+}
+
 /// The ordinary route to the fixture above — no `--dir`, no hand-edited
 /// index — reached by driving `rwv workweave create` and then `rm -rf`ing
 /// the seat the way an operator removes one without `rwv workweave delete`.

@@ -1,10 +1,10 @@
 use repoweave::git::git_vcs;
 use repoweave::vcs::{
-    ConflictOp, DerivedContentPolicy, DiscardOutcome, MidOperation, RawRefName, RemoteRef,
-    ReplayExclusionState, ResolvedRevisionId, TrackingRef, VcsError,
+    ConflictOp, DerivedContentPolicy, DiscardOutcome, MidOperation, RawRefName, RegistrationPrune,
+    RemoteRef, ReplayExclusionState, ResolvedRevisionId, TrackingRef, VcsError,
 };
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 mod common;
@@ -1772,4 +1772,92 @@ fn discard_captured_change_never_discards_what_was_not_captured() {
         "staged",
         "the staged version must survive"
     );
+}
+
+// ============================================================================
+// prune_stale_worktree_registration
+// ============================================================================
+
+/// A store at `<tmp>/store` with a worktree registered at `<tmp>/wt`.
+fn store_with_a_worktree() -> (TempDir, PathBuf, PathBuf) {
+    let tmp = common::tempdir().unwrap();
+    let store = tmp.path().join("store");
+    fs::create_dir(&store).unwrap();
+    common::git_in(&store, &["init"]);
+    common::git_in(&store, &["config", "user.email", "test@test.com"]);
+    common::git_in(&store, &["config", "user.name", "Test"]);
+    common::git_in(&store, &["commit", "--allow-empty", "-m", "initial"]);
+    let worktree = tmp.path().join("wt");
+    common::git_in(
+        &store,
+        &["worktree", "add", "-b", "wt", worktree.to_str().unwrap()],
+    );
+    (tmp, store, worktree)
+}
+
+fn registers(store: &Path, worktree: &Path) -> bool {
+    common::git_in(store, &["worktree", "list", "--porcelain"])
+        .lines()
+        .filter_map(|line| line.strip_prefix("worktree "))
+        .any(|registered| Path::new(registered) == worktree)
+}
+
+#[test]
+fn prune_drops_the_registration_of_a_removed_worktree() {
+    let (_tmp, store, worktree) = store_with_a_worktree();
+    fs::remove_dir_all(&worktree).unwrap();
+
+    let outcome = git_vcs()
+        .prune_stale_worktree_registration(&store, &worktree)
+        .unwrap();
+
+    assert_eq!(outcome, RegistrationPrune::Pruned);
+    assert!(!registers(&store, &worktree));
+    common::git_in(&store, &["branch", "-d", "wt"]);
+}
+
+#[test]
+fn prune_keeps_a_locked_registration() {
+    let (_tmp, store, worktree) = store_with_a_worktree();
+    common::git_in(&store, &["worktree", "lock", worktree.to_str().unwrap()]);
+    fs::remove_dir_all(&worktree).unwrap();
+
+    let outcome = git_vcs()
+        .prune_stale_worktree_registration(&store, &worktree)
+        .unwrap();
+
+    assert_eq!(outcome, RegistrationPrune::Locked);
+    assert!(registers(&store, &worktree));
+}
+
+#[test]
+fn prune_keeps_a_registration_whose_directory_stands() {
+    let (_tmp, store, worktree) = store_with_a_worktree();
+    fs::remove_file(worktree.join(".git")).unwrap();
+    fs::write(worktree.join("work.txt"), "keep").unwrap();
+    assert!(
+        common::git_in(&store, &["worktree", "list", "--porcelain"]).contains("prunable"),
+        "fixture: git calls the registration prunable"
+    );
+
+    let outcome = git_vcs()
+        .prune_stale_worktree_registration(&store, &worktree)
+        .unwrap();
+
+    assert_eq!(outcome, RegistrationPrune::DirectoryPresent);
+    assert!(registers(&store, &worktree));
+    assert!(worktree.join("work.txt").exists());
+}
+
+#[test]
+fn prune_of_an_unregistered_path_changes_nothing() {
+    let (tmp, store, worktree) = store_with_a_worktree();
+    fs::remove_dir_all(&worktree).unwrap();
+
+    let outcome = git_vcs()
+        .prune_stale_worktree_registration(&store, &tmp.path().join("elsewhere"))
+        .unwrap();
+
+    assert_eq!(outcome, RegistrationPrune::NotRegistered);
+    assert!(registers(&store, &worktree));
 }

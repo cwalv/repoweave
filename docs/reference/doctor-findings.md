@@ -871,9 +871,10 @@ in every project listing it, with `rwv role --project <name> <repo> <role>`.
 **Warning. Auto-fixable.** A git worktree registration pointing at a directory
 that no longer exists.
 
-**What to do:** `rwv doctor --fix` runs `git worktree prune`. The repair is
+**What to do:** `rwv doctor --fix` drops the registration. The repair is
 information-preserving by construction: the only state dropped is a pointer to
-a directory that already is not there.
+a directory that already is not there. A locked registration, or one whose path
+holds a directory again, is left in place and still reported.
 
 ---
 
@@ -1302,7 +1303,11 @@ classes — a branch a live checkout is sitting on is never reported here.
 reachable from the store's tip, so it carries no unique commits.
 
 **What to do:** `rwv doctor --fix` deletes it under a merged warrant, with no
-information loss.
+information loss. git will not delete a branch a registered worktree is on, even
+one whose directory is gone, so before its first delete in a store the fix
+drops that store's registrations of removed worktrees, whether or not any
+manifest lists the store, and prints each one it drops. A locked registration
+stays, and so does the branch it holds.
 
 #### `stale-ephemeral-branch-live`
 

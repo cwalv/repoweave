@@ -7,10 +7,10 @@ use crate::vcs::{
     CommitId, CommitSummary, ConflictOp, ContentIdentity, DerivedContentPolicy,
     DerivedContentResolution, DiscardOutcome, Force, ForeignTipPolicy, HeadAttachment,
     HeadObservation, LocalRefName, MidOperation, PreAbortRef, PublishRef, RawRefName,
-    RawRevisionId, RecordedSubmodule, RefOrigin, RemoteBranchCopies, RemoteDefaultBranch,
-    RemoteRef, ReplayExclusionState, ResolvedRevisionId, SavepointListing, SubmoduleBirth,
-    TrackedFile, TrackedFileKind, UniqueDiff, Vcs, VcsError, VerifiedRestoreOutcome,
-    WorkspacePopulation,
+    RawRevisionId, RecordedSubmodule, RefOrigin, RegistrationPrune, RemoteBranchCopies,
+    RemoteDefaultBranch, RemoteRef, ReplayExclusionState, ResolvedRevisionId, SavepointListing,
+    SubmoduleBirth, TrackedFile, TrackedFileKind, UniqueDiff, Vcs, VcsError,
+    VerifiedRestoreOutcome, WorkspacePopulation,
 };
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
@@ -2560,75 +2560,41 @@ impl Vcs for GitVcs {
     }
 
     fn list_stale_worktree_registrations(&self, repo: &Path) -> Result<Vec<PathBuf>, VcsError> {
-        // `git worktree list --porcelain` emits one record per registration,
-        // separated by blank lines. The lines we care about within a record:
-        //   `worktree <path>`  — the registered worktree path
-        //   `prunable <reason>` — present when the path no longer exists
-        //                         (or the gitdir file points to a missing
-        //                         location); marks the record for pruning.
-        // We collect the `worktree` path of every record that carries a
-        // `prunable` line.
-        let output = Self::run_trimmed_awaiting_peers(["worktree", "list", "--porcelain"], repo)?;
-        let mut stale: Vec<PathBuf> = Vec::new();
-        let mut current_path: Option<PathBuf> = None;
-        let mut current_prunable = false;
-        for line in output.lines() {
-            if line.is_empty() {
-                if current_prunable {
-                    if let Some(p) = current_path.take() {
-                        stale.push(p);
-                    }
-                }
-                current_path = None;
-                current_prunable = false;
-                continue;
-            }
-            if let Some(rest) = line.strip_prefix("worktree ") {
-                current_path = Some(PathBuf::from(rest));
-            } else if line == "prunable" || line.starts_with("prunable ") {
-                current_prunable = true;
-            }
-        }
-        // Flush the final record (porcelain output may not end with a blank line).
-        if current_prunable {
-            if let Some(p) = current_path.take() {
-                stale.push(p);
-            }
-        }
-        Ok(stale)
+        Ok(Self::worktree_records(repo)?
+            .into_iter()
+            .filter(|record| record.prunable)
+            .map(|record| record.path)
+            .collect())
     }
 
     fn live_worktree_branches(&self, repo: &Path) -> Result<Vec<RawRefName>, VcsError> {
-        // Same records as `list_stale_worktree_registrations`, read for the
-        // other two lines: `branch <fullref>`, absent on a detached record,
-        // and `prunable`, which disqualifies the registration.
-        let output = Self::run_trimmed_awaiting_peers(["worktree", "list", "--porcelain"], repo)?;
-        let mut held: Vec<RawRefName> = Vec::new();
-        let mut current_branch: Option<RawRefName> = None;
-        let mut current_prunable = false;
-        for line in output.lines() {
-            if line.is_empty() {
-                let branch = current_branch.take();
-                if !current_prunable {
-                    held.extend(branch);
-                }
-                current_prunable = false;
-                continue;
-            }
-            if let Some(rest) = line
-                .strip_prefix("branch ")
-                .and_then(|full| full.strip_prefix(LOCAL_BRANCH_NAMESPACE))
-            {
-                current_branch = Some(RawRefName::new(rest));
-            } else if line == "prunable" || line.starts_with("prunable ") {
-                current_prunable = true;
-            }
+        Ok(Self::worktree_records(repo)?
+            .into_iter()
+            .filter(|record| !record.prunable)
+            .filter_map(|record| record.branch)
+            .collect())
+    }
+
+    fn prune_stale_worktree_registration(
+        &self,
+        repo: &Path,
+        worktree: &Path,
+    ) -> Result<RegistrationPrune, VcsError> {
+        let Some(record) = Self::worktree_records(repo)?
+            .into_iter()
+            .find(|record| same_location(&record.path, worktree))
+        else {
+            return Ok(RegistrationPrune::NotRegistered);
+        };
+        if record.locked {
+            return Ok(RegistrationPrune::Locked);
         }
-        // Flush the final record (porcelain output may not end with a blank line).
-        if !current_prunable {
-            held.extend(current_branch.take());
+        if record.path.symlink_metadata().is_ok() || worktree.symlink_metadata().is_ok() {
+            return Ok(RegistrationPrune::DirectoryPresent);
         }
-        Ok(held)
+        let registered = GitArg::from_path(&record.path, "worktree path")?;
+        Self::run_awaiting_peers(Argv::from(["worktree", "remove"]).path(&registered), repo)?;
+        Ok(RegistrationPrune::Pruned)
     }
 
     fn list_savepoints(&self, repo: &Path) -> Result<SavepointListing, VcsError> {
@@ -3112,6 +3078,60 @@ impl GitVcs {
         self.drop_savepoint(repo, key);
         Ok(outcome)
     }
+}
+
+/// One record of `git worktree list --porcelain`.
+struct WorktreeRecord {
+    path: PathBuf,
+    branch: Option<RawRefName>,
+    /// git marks a registration prunable when it no longer leads to a
+    /// worktree, unless it is locked.
+    prunable: bool,
+    locked: bool,
+}
+
+impl GitVcs {
+    fn worktree_records(repo: &Path) -> Result<Vec<WorktreeRecord>, VcsError> {
+        let output = Self::run_trimmed_awaiting_peers(["worktree", "list", "--porcelain"], repo)?;
+        let mut records = Vec::new();
+        for block in output.split("\n\n") {
+            let mut record = WorktreeRecord {
+                path: PathBuf::new(),
+                branch: None,
+                prunable: false,
+                locked: false,
+            };
+            for line in block.lines() {
+                if let Some(path) = line.strip_prefix("worktree ") {
+                    record.path = PathBuf::from(path);
+                } else if let Some(name) = line
+                    .strip_prefix("branch ")
+                    .and_then(|full| full.strip_prefix(LOCAL_BRANCH_NAMESPACE))
+                {
+                    record.branch = Some(RawRefName::new(name));
+                } else if line == "prunable" || line.starts_with("prunable ") {
+                    record.prunable = true;
+                } else if line == "locked" || line.starts_with("locked ") {
+                    record.locked = true;
+                }
+            }
+            if !record.path.as_os_str().is_empty() {
+                records.push(record);
+            }
+        }
+        Ok(records)
+    }
+}
+
+/// Whether `registered` and `asked` name one place, though one is spelled
+/// through a symlinked or relative parent. Only the parents resolve: the
+/// leaf of a stale registration no longer exists.
+fn same_location(registered: &Path, asked: &Path) -> bool {
+    let resolved = |path: &Path| {
+        let parent = std::fs::canonicalize(path.parent()?).ok()?;
+        Some(parent.join(path.file_name()?))
+    };
+    registered == asked || resolved(registered).is_some_and(|r| Some(r) == resolved(asked))
 }
 
 /// How far past tracked files a `git status` read looks.

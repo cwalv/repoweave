@@ -614,6 +614,14 @@ impl Vcs for FakeVcs {
         unsupported("list_stale_worktree_registrations")
     }
 
+    fn prune_stale_worktree_registration(
+        &self,
+        _repo: &Path,
+        _worktree: &Path,
+    ) -> Result<RegistrationPrune, VcsError> {
+        unsupported("prune_stale_worktree_registration")
+    }
+
     fn live_worktree_branches(&self, _repo: &Path) -> Result<Vec<RawRefName>, VcsError> {
         unsupported("live_worktree_branches")
     }

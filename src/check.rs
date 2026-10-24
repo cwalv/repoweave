@@ -6366,7 +6366,8 @@ pub struct StateHygieneOpStateTarget {
 ///
 /// - **stale-worktree-registration**: produced by
 ///   [`crate::vcs::Vcs::list_stale_worktree_registrations`]. `--fix` (in `run_check`)
-///   runs [`crate::vcs::Vcs::worktree_prune`]; this scanner only reports.
+///   runs [`crate::vcs::Vcs::prune_stale_worktree_registration`]; this scanner
+///   only reports.
 /// - **stale-op-state**: an in-tree `.rwv-op` file (any one). Reported
 ///   with its `started_at` field intact. **Never auto-fixed** — another
 ///   terminal may be mid-conflict-resolution and rwv has no daemon to
@@ -6629,20 +6630,24 @@ fn branch_discipline_path_in_scope(
 /// `--all`). Pass `None` to apply the deletion weave-wide (matches the
 /// `--all` path).
 ///
-/// Returns `(deleted, errors)` so the caller can render `[fixed]` lines
-/// for successful deletions and surface failures as issues.
+/// git refuses to delete a branch a registered worktree is on, even one
+/// whose directory is gone. Before its first delete in a store, the store's
+/// registrations whose directories are gone are pruned, locked ones excepted,
+/// whether or not a manifest lists the store.
 pub fn fix_stale_ephemeral_branches(
     ws_root: &Path,
     vcs: &dyn crate::vcs::Vcs,
     projects: &[Project],
     active_project: Option<&ProjectName>,
     known_repos: &BTreeSet<RepoPath>,
-) -> (Vec<(PathBuf, String)>, Vec<String>) {
+) -> EphemeralBranchRepair {
     use crate::vcs::{DeletionWarrant, RawRefName};
     use crate::workweave_index::RefRegistry;
 
     let mut deleted = Vec::new();
     let mut errors = Vec::new();
+    let mut pruned = Vec::new();
+    let mut swept_stores = BTreeSet::new();
     let recorded = RecordedRefs::new(ws_root);
 
     // Re-scan so each delete sees the latest disk state and re-verifies
@@ -6703,6 +6708,16 @@ pub fn fix_stale_ephemeral_branches(
             continue;
         };
 
+        if swept_stores.insert(store_path.clone()) {
+            match prune_gone_registrations(vcs, &store_path) {
+                Ok(gone) => pruned.extend(gone.into_iter().map(|w| (store_path.clone(), w))),
+                Err(e) => errors.push(format!(
+                    "could not prune the registrations of removed worktrees in {}: {e:#}",
+                    store_path.display()
+                )),
+            }
+        }
+
         match vcs.delete_owned_ref(&rec.owned, warrant) {
             Ok(()) => {
                 if let Err(e) =
@@ -6726,7 +6741,37 @@ pub fn fix_stale_ephemeral_branches(
         }
     }
 
-    (deleted, errors)
+    EphemeralBranchRepair {
+        pruned,
+        deleted,
+        errors,
+    }
+}
+
+/// What [`fix_stale_ephemeral_branches`] did.
+pub struct EphemeralBranchRepair {
+    /// `(store, worktree)` for each registration pruned.
+    pub pruned: Vec<(PathBuf, PathBuf)>,
+    /// `(store, branch)` for each branch deleted.
+    pub deleted: Vec<(PathBuf, String)>,
+    pub errors: Vec<String>,
+}
+
+/// Prune each of `store`'s worktree registrations whose directory is gone
+/// and which is not locked, returning the worktree paths pruned.
+fn prune_gone_registrations(
+    vcs: &dyn crate::vcs::Vcs,
+    store: &Path,
+) -> Result<Vec<PathBuf>, crate::vcs::VcsError> {
+    let mut pruned = Vec::new();
+    for worktree in vcs.list_stale_worktree_registrations(store)? {
+        if vcs.prune_stale_worktree_registration(store, &worktree)?
+            == crate::vcs::RegistrationPrune::Pruned
+        {
+            pruned.push(worktree);
+        }
+    }
+    Ok(pruned)
 }
 
 /// Apply the migration pass — the flat-name cutover's other half.
@@ -7326,9 +7371,10 @@ pub fn fix_pre_flat_receipts(
 /// The accepted `--fix` paths are deliberately narrow:
 ///
 /// - [`CheckViolation::StaleWorktreeRegistration`] →
-///   [`crate::vcs::Vcs::worktree_prune`] in the registering repo. Information-
-///   preserving by construction (the only state being dropped is a
-///   pointer to a directory that already does not exist).
+///   [`crate::vcs::Vcs::prune_stale_worktree_registration`] of the missing
+///   path in the registering repo. Information-preserving by construction:
+///   the only state dropped is a pointer to a directory that does not exist,
+///   and a locked registration is kept.
 /// - [`CheckViolation::OrphanedSavepoint`] with
 ///   [`OrphanedSavepointKind::Redundant`] → [`crate::vcs::Vcs::drop_savepoint`].
 ///   The ref tip is reachable from the current branch, so dropping the
@@ -7351,10 +7397,11 @@ pub fn fix_state_hygiene(
     repo_abs: &Path,
 ) -> anyhow::Result<bool> {
     match violation {
-        CheckViolation::StaleWorktreeRegistration { .. } => {
-            vcs.worktree_prune(repo_abs)
+        CheckViolation::StaleWorktreeRegistration { missing_path, .. } => {
+            let outcome = vcs
+                .prune_stale_worktree_registration(repo_abs, missing_path)
                 .with_context(|| format!("worktree prune failed in {}", repo_abs.display()))?;
-            Ok(true)
+            Ok(outcome == crate::vcs::RegistrationPrune::Pruned)
         }
         CheckViolation::OrphanedSavepoint {
             key,
@@ -9551,10 +9598,9 @@ fn apply_finding_repairs(
         None => format!("{repo}"),
     };
 
-    // A stale worktree registration is what makes git refuse the branch
-    // delete below: pruned here, ahead of fix_stale_ephemeral_branches,
-    // rather than in the loop past it, so the delete never meets that
-    // guard within the same --fix pass.
+    // Ahead of fix_stale_ephemeral_branches, which prunes the same
+    // registrations in the stores it deletes from: run after it, these
+    // findings would meet registrations already gone and stay reported.
     let (registrations, violations): (Vec<_>, Vec<_>) = violations
         .into_iter()
         .partition(|v| matches!(v, CheckViolation::StaleWorktreeRegistration { .. }));
@@ -9589,13 +9635,24 @@ fn apply_finding_repairs(
         }
     }
 
-    let (deleted, delete_errs) = fix_stale_ephemeral_branches(
+    let EphemeralBranchRepair {
+        pruned,
+        deleted,
+        errors: delete_errs,
+    } = fix_stale_ephemeral_branches(
         ctx.primary_path(),
         vcs,
         &world.input.projects,
         world.project_scope(),
         &world.input.known_repos,
     );
+    for (store, worktree) in &pruned {
+        outln!(
+            "[fixed] core: pruned the registration of removed worktree {} in {}",
+            worktree.display(),
+            store.display()
+        );
+    }
     for (repo_path, branch) in &deleted {
         outln!(
             "[fixed] core: deleted safe-class stale ephemeral branch `{}` in {}",
