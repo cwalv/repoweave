@@ -53,11 +53,15 @@ Each member repo named in any project's `rwv.toml` has exactly one
 the repo. Nothing under `<parent>/.workweaves/` is a standalone clone of
 any member repo.
 
-`repo_path` here is a given, not a choice this joint makes: it is derived
-from a clone source's identity — the registry set on
+`repo_path` here is a given, not a choice this joint makes. `rwv add <url>`
+derives it from the clone source's identity — the registry set on
 [formats](../../reference/formats.md) maps a URL's host, or a matched
-registry's own name, to the first path segment — never asserted by a verb
-from an operator-typed path.
+registry's own name, to the first path segment — and records it as the
+`rwv.toml` key every other verb reads. `rwv add --adopt <path>` records the
+path where the clone already sits instead, and `rwv doctor` reports
+[`placement-disagreement`](../../reference/doctor-findings.md#placement-disagreement)
+for an `owned` or `dependency` member whose key differs from the path its URL
+derives.
 
 Operationally: when `rwv add` materializes a new member repo, the
 canonical store always lands at primary's `<weave>/<repo_path>`, even
