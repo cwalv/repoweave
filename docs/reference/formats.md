@@ -76,9 +76,11 @@ The role for your own code is spelled `role = "owned"`; a manifest spelling it `
 
 When rwv creates a checkout of a member — `rwv workweave create`, or a member a workweave lacks created by `rwv fetch`, `rwv add`, `rwv sync`, `rwv sync-to` or `rwv doctor --fix` — it checks out each submodule the member records from the copy of that submodule's repository the canonical clone already holds, nested submodules included. It never uses the network for this. The files are cloned or linked from the same submodule in the weave's other checkouts where the filesystem allows, as a member's own files are. A `reference` member's submodule files are read-only like the rest of its files.
 
-A submodule whose recorded commit the canonical clone does not hold stays empty, and `rwv doctor` reports it as [`uninitialized-submodule`](./doctor-findings.md#uninitialized-submodule) / `unfetched`. Fetch the commit into the canonical clone (for example `git submodule update --init` there), then run `rwv doctor --fix`.
+The canonical clone gets that copy from the network verbs. When `rwv add` or `rwv fetch` clones a member or finds it present, it checks out every submodule whose directory in the canonical clone is empty, nested ones included, from its upstream remote, and fetches into a copy it already holds any commit a checkout of the member records that the copy lacks. A copy's own checkout in the canonical clone is not moved by that fetch.
 
-`submodules = "skip"` leaves a member's submodules empty in every checkout rwv creates, and doctor does not report them.
+A submodule whose recorded commit the canonical clone does not hold stays empty, and `rwv doctor` reports it as [`uninitialized-submodule`](./doctor-findings.md#uninitialized-submodule) / `unfetched`. `rwv fetch --project <project> --repo <path>` in the primary weave fetches it, then `rwv doctor --fix` checks it out.
+
+`submodules = "skip"` leaves a member's submodules empty in the canonical clone and in every checkout rwv creates, and doctor does not report them. So does git's own `submodule.<name>.update = none`, from `.gitmodules` or the repository's config, for that one submodule.
 
 The repo set is modeled on vcstool's `.repos` format, extended with `role` and optional `integrations` and `workweave` tables.
 

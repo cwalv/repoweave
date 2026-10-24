@@ -11,8 +11,8 @@
 use crate::manifest::{RepoPath, Role};
 use crate::path_spelling::CanonicalPath;
 use crate::vcs::{
-    BornRef, OwnedRef, RecordedSubmodule, ResolvedRevisionId, SubmoduleBirth, TrackedFile, Vcs,
-    VcsError, WorkspacePopulation,
+    BornRef, OwnedRef, RecordedSubmodule, ResolvedRevisionId, SubmoduleBirth, SubmoduleCheckout,
+    TrackedFile, Vcs, VcsError, WorkspacePopulation,
 };
 use anyhow::Context;
 use schemars::JsonSchema;
@@ -523,7 +523,7 @@ fn populate_level(
     for submodule in submodules {
         let shown = format!("{}{}", level.shown_as, submodule.path);
         let dest = level.workspace.join(&submodule.path);
-        if !is_empty_or_absent(&dest) {
+        if submodule.checkout == SubmoduleCheckout::Declined || !is_empty_or_absent(&dest) {
             continue;
         }
         let source = match population.create_unpopulated_submodule(
@@ -580,6 +580,160 @@ fn populate_level(
             }
         }
     }
+}
+
+/// What [`fetch_submodules`] did, one line per submodule at any depth, each
+/// named by its path from the canonical clone's root.
+#[derive(Debug, Default)]
+pub(crate) struct SubmoduleFetch {
+    /// Checked out in the canonical clone from upstream, nested ones with them.
+    pub(crate) checked_out: Vec<String>,
+    /// Given a recorded commit its copy lacked.
+    pub(crate) fetched: Vec<String>,
+    /// Still lacking a recorded commit, with why.
+    pub(crate) left: Vec<(String, String)>,
+}
+
+impl SubmoduleFetch {
+    /// One stderr line per submodule, each opening with `prefix` and naming
+    /// it under `member`.
+    pub(crate) fn report(&self, prefix: &str, member: &RepoPath) {
+        for path in &self.checked_out {
+            eprintln!("{prefix}{member}/{path}: submodule checked out from upstream");
+        }
+        for path in &self.fetched {
+            eprintln!("{prefix}{member}/{path}: submodule fetched");
+        }
+        for (path, why) in &self.left {
+            eprintln!("{prefix}warning: {member}/{path}: submodule not fetched: {why}");
+        }
+    }
+}
+
+/// Give the canonical clone at `canonical` the commits its checkouts record
+/// for their submodules, at depth, from upstream: an empty submodule of its
+/// own is checked out, with every one nested in it, and settled for `role`;
+/// a copy it already holds is fetched into wherever a commit a checkout
+/// records is missing. A submodule its configuration declines is left alone.
+pub(crate) fn fetch_submodules(vcs: &dyn Vcs, canonical: &Path, role: Role) -> SubmoduleFetch {
+    let mut done = SubmoduleFetch::default();
+    let Some(population) = vcs.population() else {
+        return done;
+    };
+    let mut recorders = vec![canonical.to_path_buf()];
+    recorders.extend(vcs.list_worktrees(canonical).unwrap_or_default());
+    recorders.retain(|r| records_submodules(r));
+    if recorders.is_empty() {
+        return done;
+    }
+    fetch_level(vcs, population, canonical, "", &recorders, role, &mut done);
+    done
+}
+
+fn fetch_level(
+    vcs: &dyn Vcs,
+    population: &dyn WorkspacePopulation,
+    workspace: &Path,
+    shown_as: &str,
+    recorders: &[PathBuf],
+    role: Role,
+    done: &mut SubmoduleFetch,
+) {
+    let Some(module_data) = vcs.resolve_canonical_store(workspace) else {
+        return;
+    };
+    let own = if records_submodules(workspace) {
+        population.recorded_submodules(workspace)
+    } else {
+        Ok(Vec::new())
+    };
+    let own = match own {
+        Ok(own) => own,
+        Err(e) => {
+            let shown = shown_as.trim_end_matches('/');
+            let shown = if shown.is_empty() { "." } else { shown };
+            done.left.push((shown.to_owned(), format!("{e:#}")));
+            return;
+        }
+    };
+    let wanted = |s: &RecordedSubmodule| s.checkout == SubmoduleCheckout::Wanted;
+    for submodule in own.iter().filter(|s| wanted(s)) {
+        let dest = workspace.join(&submodule.path);
+        if !is_empty_or_absent(&dest) {
+            continue;
+        }
+        let shown = format!("{shown_as}{}", submodule.path);
+        let checked_out = population
+            .check_out_submodule_from_upstream(workspace, submodule)
+            .map_err(anyhow::Error::from)
+            .and_then(|()| settle_submodule_tree(vcs, population, &dest, role));
+        match checked_out {
+            Ok(()) => done.checked_out.push(shown),
+            Err(e) => done.left.push((shown, format!("{e:#}"))),
+        }
+    }
+    let mut recorded: Vec<RecordedSubmodule> = recorders
+        .iter()
+        .flat_map(|r| population.recorded_submodules(r).unwrap_or_default())
+        .filter(|s| wanted(s))
+        .collect();
+    recorded.sort_by(|a, b| (&a.name, &a.commit).cmp(&(&b.name, &b.commit)));
+    recorded.dedup_by(|a, b| a.name == b.name && a.commit == b.commit);
+    for submodule in recorded {
+        if population.module_data_holds(&module_data, &submodule) {
+            continue;
+        }
+        let shown = format!("{shown_as}{}", submodule.path);
+        match population.fetch_into_module_data(&module_data, &submodule) {
+            Ok(()) if population.module_data_holds(&module_data, &submodule) => {
+                done.fetched.push(shown)
+            }
+            Ok(()) => done.left.push((
+                shown,
+                format!(
+                    "commit {} is not on its upstream remote",
+                    submodule.commit.short()
+                ),
+            )),
+            Err(e) => done.left.push((shown, format!("{e:#}"))),
+        }
+    }
+    for submodule in own.iter().filter(|s| wanted(s)) {
+        let dest = workspace.join(&submodule.path);
+        if vcs.is_repo(&dest) {
+            fetch_level(
+                vcs,
+                population,
+                &dest,
+                &format!("{shown_as}{}/", submodule.path),
+                std::slice::from_ref(&dest),
+                role,
+                done,
+            );
+        }
+    }
+}
+
+fn records_submodules(checkout: &Path) -> bool {
+    checkout.join(".gitmodules").is_file()
+}
+
+/// [`crate::settle::settle`] a submodule checkout and every checkout nested
+/// in it.
+fn settle_submodule_tree(
+    vcs: &dyn Vcs,
+    population: &dyn WorkspacePopulation,
+    checkout: &Path,
+    role: Role,
+) -> anyhow::Result<()> {
+    crate::settle::settle(vcs, checkout, role)?;
+    for nested in population.recorded_submodules(checkout)? {
+        let dest = checkout.join(&nested.path);
+        if vcs.is_repo(&dest) {
+            settle_submodule_tree(vcs, population, &dest, role)?;
+        }
+    }
+    Ok(())
 }
 
 /// The checkouts of `submodule` inside `parents`, those at its recorded

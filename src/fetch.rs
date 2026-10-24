@@ -488,6 +488,17 @@ fn materialize_workweave_members(
         };
         let slot = ctx.active_path().join(repo_path.as_path());
         if !crate::workweave::is_symlinked_member(&slot) && slot.exists() {
+            if crate::workweave::scan_uninitialized_submodules(&slot).is_empty() {
+                continue;
+            }
+            crate::workweave::populate_member_submodules(
+                vcs_for(entry.vcs_type).as_ref(),
+                &slot,
+                repo_path,
+                entry.role,
+                entry.submodules,
+                "rwv fetch: ",
+            );
             continue;
         }
         match crate::workweave::materialize_member(
@@ -663,6 +674,16 @@ fn fetch_project_repos(
                 &reporter,
                 output,
             );
+            if matches!(outcome, FetchOutcome::Ok { .. }) {
+                crate::workweave::fetch_member_submodules(
+                    vcs.as_ref(),
+                    &member,
+                    repo_path,
+                    entry.role,
+                    entry.submodules,
+                    "rwv fetch: ",
+                );
+            }
             let (outcome, files) = match outcome {
                 FetchOutcome::Ok { .. } => {
                     match crate::settle::settle_moved(

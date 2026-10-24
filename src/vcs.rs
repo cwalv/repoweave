@@ -3916,6 +3916,26 @@ pub trait WorkspacePopulation: Send + Sync {
         workspace: &Path,
         submodule: &RecordedSubmodule,
     ) -> Result<(), VcsError>;
+
+    /// Check out `submodule`, whose directory in `workspace` is empty, and
+    /// every submodule nested in it, from their upstream remotes, keeping
+    /// each repository in the store where a checkout of `workspace`'s
+    /// repository looks for it. The one population question that reaches
+    /// the network.
+    fn check_out_submodule_from_upstream(
+        &self,
+        workspace: &Path,
+        submodule: &RecordedSubmodule,
+    ) -> Result<(), VcsError>;
+
+    /// Fetch `submodule`'s recorded commit from its upstream remote into the
+    /// copy of its repository held under `module_data`, leaving every
+    /// checkout as it is.
+    fn fetch_into_module_data(
+        &self,
+        module_data: &Path,
+        submodule: &RecordedSubmodule,
+    ) -> Result<(), VcsError>;
 }
 
 /// A repository a workspace records as checked out at `path`, at `commit`.
@@ -3924,6 +3944,16 @@ pub struct RecordedSubmodule {
     pub name: String,
     pub path: String,
     pub commit: CommitId,
+    pub checkout: SubmoduleCheckout,
+}
+
+/// Whether the repository's own configuration asks for a submodule to be
+/// checked out. A declined one is left empty and is not reported.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubmoduleCheckout {
+    Wanted,
+    /// git: `submodule.<name>.update = none`.
+    Declined,
 }
 
 /// What [`WorkspacePopulation::create_unpopulated_submodule`] came to.

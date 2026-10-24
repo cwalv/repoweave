@@ -9,7 +9,7 @@ use crate::vcs::{
     HeadObservation, LocalRefName, MidOperation, PreAbortRef, PublishRef, RawRefName,
     RawRevisionId, RecordedSubmodule, RefOrigin, RegistrationPrune, RemoteBranchCopies,
     RemoteDefaultBranch, RemoteRef, ReplayExclusionState, ResolvedRevisionId, SavepointListing,
-    SubmoduleBirth, TrackedFile, TrackedFileKind, UniqueDiff, Vcs, VcsError,
+    SubmoduleBirth, SubmoduleCheckout, TrackedFile, TrackedFileKind, UniqueDiff, Vcs, VcsError,
     VerifiedRestoreOutcome, WorkspacePopulation,
 };
 use std::borrow::Cow;
@@ -3873,7 +3873,12 @@ impl WorkspacePopulation for GitVcs {
         if gitlinks.is_empty() {
             return Ok(Vec::new());
         }
-        let names = Self::submodule_names_by_path(workspace)?;
+        let names: HashMap<String, String> = Self::submodule_settings(workspace, true, "path")?
+            .into_iter()
+            .map(|(name, path)| (path, name))
+            .collect();
+        let mut updates = Self::submodule_settings(workspace, true, "update")?;
+        updates.extend(Self::submodule_settings(workspace, false, "update")?);
         gitlinks
             .into_iter()
             .filter_map(|entry| {
@@ -3881,6 +3886,10 @@ impl WorkspacePopulation for GitVcs {
                 is_confined_submodule_name(name).then(|| (name.clone(), entry))
             })
             .map(|(name, entry)| {
+                let checkout = match updates.get(&name).map(String::as_str) {
+                    Some("none") => SubmoduleCheckout::Declined,
+                    _ => SubmoduleCheckout::Wanted,
+                };
                 Ok(RecordedSubmodule {
                     commit: commit_id_printed(
                         &entry.blob,
@@ -3889,6 +3898,7 @@ impl WorkspacePopulation for GitVcs {
                     )?,
                     name,
                     path: entry.path,
+                    checkout,
                 })
             })
             .collect()
@@ -4009,6 +4019,50 @@ impl WorkspacePopulation for GitVcs {
         }
         Ok(())
     }
+
+    fn check_out_submodule_from_upstream(
+        &self,
+        workspace: &Path,
+        submodule: &RecordedSubmodule,
+    ) -> Result<(), VcsError> {
+        Self::run(
+            Argv::from([
+                "submodule",
+                "--quiet",
+                "update",
+                "--init",
+                "--recursive",
+                "--",
+            ])
+            .text(&submodule.path),
+            workspace,
+        )
+        .map(|_| ())
+    }
+
+    fn fetch_into_module_data(
+        &self,
+        module_data: &Path,
+        submodule: &RecordedSubmodule,
+    ) -> Result<(), VcsError> {
+        let source = module_repository(module_data, submodule);
+        Self::run(["fetch", "--quiet"], &source)?;
+        if self.module_data_holds(module_data, submodule) {
+            return Ok(());
+        }
+        // A commit no branch or tag of the remote reaches is fetched by name,
+        // as `git submodule update` does.
+        Self::run(
+            [
+                "fetch",
+                "--quiet",
+                GIT_DEFAULT_REMOTE_NAME,
+                submodule.commit.as_str(),
+            ],
+            &source,
+        )
+        .map(|_| ())
+    }
 }
 
 /// The copy of `submodule`'s repository kept under `module_data`.
@@ -4029,33 +4083,38 @@ fn is_confined_submodule_name(name: &str) -> bool {
 
 impl GitVcs {
     /// `submodule path` → `submodule name`, from the checkout's `.gitmodules`.
-    fn submodule_names_by_path(workspace: &Path) -> Result<HashMap<String, String>, VcsError> {
-        if !workspace.join(".gitmodules").is_file() {
+    /// `submodule.<name>.<setting>` by name, from `.gitmodules` or, where git
+    /// lets the repository's own config override it, from that.
+    fn submodule_settings(
+        workspace: &Path,
+        from_gitmodules: bool,
+        setting: &str,
+    ) -> Result<HashMap<String, String>, VcsError> {
+        if from_gitmodules && !workspace.join(".gitmodules").is_file() {
             return Ok(HashMap::new());
         }
-        let listing = match Self::run(
-            [
-                "config",
-                "--file",
-                ".gitmodules",
-                "-z",
-                "--get-regexp",
-                r"^submodule\..*\.path$",
-            ],
-            workspace,
-        ) {
+        let pattern = format!(r"^submodule\..*\.{setting}$");
+        let mut args = vec!["config"];
+        if from_gitmodules {
+            args.extend(["--file", ".gitmodules"]);
+        }
+        args.extend(["-z", "--get-regexp", &pattern]);
+        let listing = match Self::run(args, workspace) {
             Ok(listing) => listing,
             Err(VcsError::CommandFailed { stderr, .. }) if stderr.trim().is_empty() => {
                 return Ok(HashMap::new())
             }
             Err(e) => return Err(e),
         };
+        let suffix = format!(".{setting}");
         Ok(listing
             .split_terminator('\0')
             .filter_map(|record| {
-                let (key, path) = record.split_once('\n')?;
-                let name = key.strip_prefix("submodule.")?.strip_suffix(".path")?;
-                Some((path.to_owned(), name.to_owned()))
+                let (key, value) = record.split_once('\n')?;
+                let name = key
+                    .strip_prefix("submodule.")?
+                    .strip_suffix(suffix.as_str())?;
+                Some((name.to_owned(), value.to_owned()))
             })
             .collect())
     }

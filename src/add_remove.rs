@@ -335,6 +335,14 @@ pub fn run_add(
             );
             clone_into(vcs.as_ref(), &declared, &dest)?;
         }
+        crate::workweave::fetch_member_submodules(
+            vcs.as_ref(),
+            &dest,
+            &repo_path,
+            existing.role,
+            existing.submodules,
+            "rwv add: ",
+        );
         place_member(
             vcs.as_ref(),
             ctx,
@@ -392,6 +400,14 @@ pub fn run_add(
             submodules: crate::manifest::Submodules::Local,
         };
         manifest.insert_repo(repo_path.clone(), entry);
+        crate::workweave::fetch_member_submodules(
+            vcs.as_ref(),
+            &dest,
+            &repo_path,
+            role,
+            Submodules::Local,
+            "rwv add: ",
+        );
 
         // In a workweave, also create a worktree at the workweave so the new
         // repo is materialized there. Before the manifest names it, because the

@@ -665,7 +665,8 @@ pub enum CheckViolation {
 
     /// A member checkout in a workweave whose manifest entry does not opt
     /// out with `submodules = "skip"` has a `.gitmodules` file, and one or
-    /// more of its listed submodule paths are empty directories (or absent).
+    /// more of its listed submodule paths that git does not decline are
+    /// empty directories (or absent).
     ///
     /// Warning severity. Detection reads only local data. The paths are
     /// split by [`SubmoduleCommitKind`] into one finding per sub-kind.
@@ -1207,8 +1208,8 @@ pub enum SubmoduleCommitKind {
     /// The canonical clone's copy of the submodule holds it. Auto-fixable:
     /// `--fix` checks the submodule out from there without the network.
     Fetched,
-    /// Nothing local holds it, so only a fetch into the canonical clone can.
-    /// Report-only.
+    /// Nothing local holds it. Report-only: `rwv fetch` in the primary
+    /// weave fetches it into the canonical clone.
     Unfetched,
 }
 
@@ -5809,52 +5810,49 @@ fn scan_pre_flat_receipts(
     }
 }
 
-/// Scan every workweave repo checkout for uninitialized submodules.
+/// Scan the member checkouts of every workweave [`workweaves_in_scope`]
+/// names for uninitialized submodules.
 ///
-/// A member whose manifest entry says `submodules = "skip"` is left out: its
-/// empty submodule directories are what the operator asked for. Each checkout
-/// yields up to two findings, one per [`SubmoduleCommitKind`].
+/// A member whose manifest entry says `submodules = "skip"` is left out, and
+/// so is a submodule its repository's own configuration declines: their
+/// empty directories are what the operator asked for. Each checkout yields
+/// up to two findings, one per [`SubmoduleCommitKind`].
 ///
 /// **Cost**: one `Path::exists` call per repo per workweave when `.gitmodules`
 /// is absent (the common case). No network I/O.
-///
-/// **Scope**: workweave checkouts only.
-pub fn scan_uninitialized_submodules_in_workweaves(
-    ws_root: &Path,
-    projects: &[crate::manifest::Project],
+fn scan_uninitialized_submodules_in_workweaves(
+    ctx: &crate::workspace::WorkspaceContext,
+    project_scope: Option<&ProjectName>,
 ) -> Vec<CheckViolation> {
     let mut violations = Vec::new();
 
-    for (workweave, workweave_dir) in crate::workweave::list_workweave_dirs(ws_root) {
-        for project in projects {
-            for (repo_path, entry) in project.manifest.iter_entries() {
-                if entry.submodules == crate::manifest::Submodules::Skip {
-                    continue;
-                }
-                let worktree = workweave_dir.join(repo_path.as_path());
-                if crate::workweave::is_symlinked_member(&worktree) || !worktree.is_dir() {
-                    continue;
-                }
-                let empty_paths = crate::workweave::scan_uninitialized_submodules(&worktree);
-                if empty_paths.is_empty() {
-                    continue;
-                }
-                let vcs = crate::vcs::vcs_for(entry.vcs_type);
-                let (fetched, unfetched): (Vec<String>, Vec<String>) = empty_paths
-                    .into_iter()
-                    .partition(|path| submodule_commit_is_local(vcs.as_ref(), &worktree, path));
-                for (sub_kind, empty_paths) in [
-                    (SubmoduleCommitKind::Fetched, fetched),
-                    (SubmoduleCommitKind::Unfetched, unfetched),
-                ] {
-                    if !empty_paths.is_empty() {
-                        violations.push(CheckViolation::UninitializedSubmodule {
-                            workweave: workweave.clone(),
-                            repo: repo_path.clone(),
-                            sub_kind,
-                            empty_paths,
-                        });
-                    }
+    for (workweave, workweave_dir, loaded) in workweaves_in_scope(ctx, project_scope) {
+        for (repo_path, entry) in loaded.manifest.iter_entries() {
+            if entry.submodules == crate::manifest::Submodules::Skip {
+                continue;
+            }
+            let worktree = workweave_dir.join(repo_path.as_path());
+            if crate::workweave::is_symlinked_member(&worktree) || !worktree.is_dir() {
+                continue;
+            }
+            let empty_paths = crate::workweave::scan_uninitialized_submodules(&worktree);
+            if empty_paths.is_empty() {
+                continue;
+            }
+            let vcs = crate::vcs::vcs_for(entry.vcs_type);
+            let (fetched, unfetched) =
+                partition_uninitialized(vcs.as_ref(), &worktree, empty_paths);
+            for (sub_kind, empty_paths) in [
+                (SubmoduleCommitKind::Fetched, fetched),
+                (SubmoduleCommitKind::Unfetched, unfetched),
+            ] {
+                if !empty_paths.is_empty() {
+                    violations.push(CheckViolation::UninitializedSubmodule {
+                        workweave: workweave.clone(),
+                        repo: repo_path.clone(),
+                        sub_kind,
+                        empty_paths,
+                    });
                 }
             }
         }
@@ -5863,22 +5861,39 @@ pub fn scan_uninitialized_submodules_in_workweaves(
     violations
 }
 
-/// Whether the submodule `worktree` records at `path` has its recorded commit
-/// in the canonical clone's copy of it.
-fn submodule_commit_is_local(vcs: &dyn crate::vcs::Vcs, worktree: &Path, path: &str) -> bool {
-    let Some(population) = vcs.population() else {
-        return false;
-    };
-    let (Some(store), Ok(recorded)) = (
-        vcs.resolve_canonical_store(worktree),
-        population.recorded_submodules(worktree),
-    ) else {
-        return false;
-    };
-    recorded
-        .iter()
-        .find(|submodule| submodule.path == path)
-        .is_some_and(|submodule| population.module_data_holds(&store, submodule))
+/// The empty submodule directories of `worktree` its configuration does not
+/// decline, split by whether the canonical clone's copy holds the recorded
+/// commit.
+fn partition_uninitialized(
+    vcs: &dyn crate::vcs::Vcs,
+    worktree: &Path,
+    empty_paths: Vec<String>,
+) -> (Vec<String>, Vec<String>) {
+    let recorded = vcs
+        .population()
+        .and_then(|population| population.recorded_submodules(worktree).ok())
+        .unwrap_or_default();
+    let store = vcs.resolve_canonical_store(worktree);
+    let mut fetched = Vec::new();
+    let mut unfetched = Vec::new();
+    for path in empty_paths {
+        let submodule = recorded.iter().find(|s| s.path == path);
+        if submodule.is_some_and(|s| s.checkout == crate::vcs::SubmoduleCheckout::Declined) {
+            continue;
+        }
+        let held = match (vcs.population(), &store, submodule) {
+            (Some(population), Some(store), Some(submodule)) => {
+                population.module_data_holds(store, submodule)
+            }
+            _ => false,
+        };
+        if held {
+            fetched.push(path);
+        } else {
+            unfetched.push(path);
+        }
+    }
+    (fetched, unfetched)
 }
 
 /// `--fix` for `uninitialized-submodule` / `fetched` in the workweaves
@@ -9076,8 +9091,9 @@ impl CheckViolation {
                     }
                     SubmoduleCommitKind::Unfetched => format!(
                         "their recorded commits are not in the canonical clone's copies; \
-                             fetch them there (`git -C {repo} submodule update --init` at the \
-                             primary), then run `rwv doctor --fix`"
+                             `rwv fetch --project {project} --repo {repo}` run in the primary \
+                             weave fetches them there, then `rwv doctor --fix` checks them out",
+                        project = workweave.project,
                     ),
                 };
                 format!(
@@ -11050,16 +11066,10 @@ fn collect_doctor_violations(
         }
     }
 
-    // `git worktree add` does not init submodules, so a workweave forked from
-    // a repo with submodules carries empty submodule dirs when the create-time
-    // init failed. Reachable only from primary, which is where the workweave
-    // dirs are enumerated.
-    if matches!(ctx.checkout, Checkout::Primary { .. }) {
-        violations.extend(scan_uninitialized_submodules_in_workweaves(
-            ctx.primary_path(),
-            &input.projects,
-        ));
-    }
+    violations.extend(scan_uninitialized_submodules_in_workweaves(
+        ctx,
+        project_scope,
+    ));
 
     violations.extend(scan_clone_topology(
         vcs,

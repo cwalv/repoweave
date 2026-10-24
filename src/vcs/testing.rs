@@ -794,6 +794,22 @@ impl WorkspacePopulation for FakeVcs {
     ) -> Result<(), VcsError> {
         unsupported("discard_submodule")
     }
+
+    fn check_out_submodule_from_upstream(
+        &self,
+        _workspace: &Path,
+        _submodule: &RecordedSubmodule,
+    ) -> Result<(), VcsError> {
+        unsupported("check_out_submodule_from_upstream")
+    }
+
+    fn fetch_into_module_data(
+        &self,
+        _module_data: &Path,
+        _submodule: &RecordedSubmodule,
+    ) -> Result<(), VcsError> {
+        unsupported("fetch_into_module_data")
+    }
 }
 
 #[cfg(test)]

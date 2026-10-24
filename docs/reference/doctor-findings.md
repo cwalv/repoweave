@@ -1010,8 +1010,11 @@ it.
 
 A member checkout in a workweave has a `.gitmodules` file, but one or more of
 its listed submodule paths are empty. A member whose manifest entry says
-`submodules = "skip"` is not reported. Detection reads only local data. See
-[Submodules](./formats.md#submodules) for how rwv checks submodules out.
+`submodules = "skip"` is not reported, nor is a submodule git's own
+`submodule.<name>.update = none` declines. Detection reads only local data.
+Doctor reports it from the primary weave for every workweave, and from inside
+a workweave for that one. See [Submodules](./formats.md#submodules) for how
+rwv checks submodules out.
 
 #### `fetched`
 
@@ -1026,8 +1029,12 @@ network is involved.
 **Warning. Report-only.** The canonical clone holds no copy of each listed
 submodule with the commit the member records.
 
-**What to do:** fetch the commits into the canonical clone, for example with
-`git submodule update --init` there, then run `rwv doctor --fix`.
+**What to do:** run the `rwv fetch --project <project> --repo <path>` the
+message names in the primary weave. It fetches the commits into the canonical
+clone, checking out there any submodule whose directory is empty, without
+moving one already checked out. Then `rwv doctor --fix` checks them out in the
+workweave. `--fix` itself never reaches the network, so it leaves this
+finding as it is.
 
 ### `provenance`
 

@@ -948,6 +948,22 @@ pub(crate) fn populate_member_submodules(
     populated.left.len()
 }
 
+/// [`crate::share::fetch_submodules`] for the canonical clone of a member
+/// whose manifest entry asks for `submodules`, reporting each under `prefix`.
+pub(crate) fn fetch_member_submodules(
+    vcs: &dyn Vcs,
+    canonical: &Path,
+    repo_path: &RepoPath,
+    role: Role,
+    submodules: Submodules,
+    prefix: &str,
+) {
+    if submodules == Submodules::Skip {
+        return;
+    }
+    crate::share::fetch_submodules(vcs, canonical, role).report(prefix, repo_path);
+}
+
 /// Scan `.gitmodules` in `worktree_path` and return the submodule `path =`
 /// values whose on-disk directory is empty (or absent), indicating that
 /// submodules were never initialized.
@@ -2028,7 +2044,7 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
     if !submodule_warnings.is_empty() {
         eprintln!(
             "rwv workweave create: warning: submodules not initialized in {} repo(s): {}; \
-             once the canonical clone holds what they record, `rwv doctor --fix` checks them out",
+             `rwv fetch` in the primary weave fetches what they record, then `rwv doctor --fix` checks them out",
             submodule_warnings.len(),
             submodule_warnings.join(", ")
         );

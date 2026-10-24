@@ -530,11 +530,24 @@ Every way rwv creates a member checkout (`rwv workweave create`, `rwv fetch`,
 `rwv add`, `rwv sync`, `rwv sync-to`, `rwv doctor --fix`) checks out its
 submodules, nested ones included, from what the canonical clone already holds,
 never from the network, and places their files by reflink where the filesystem
-supports it. A submodule whose recorded commit the canonical clone lacks stays
-empty, and `rwv doctor` reports `uninitialized-submodule`, now with a
-`sub_kind`: `fetched` (`--fix` checks it out locally) or `unfetched` (report
-only). `submodules = "skip"` on a `[repositories."<path>"]` entry leaves a
-member's submodules empty and unreported.
+supports it.
+
+The network verbs fill the canonical clone. `rwv add` and `rwv fetch` check out
+every submodule whose directory in the canonical clone is empty, nested ones
+included, from its upstream remote, and fetch into a copy the canonical clone
+already holds any commit one of the member's checkouts records that it lacks,
+without moving that copy's checkout. So the primary's own checkout of a member
+has its submodules too, and a canonical clone made by an earlier release gets
+them on the next `rwv fetch`. A submodule that cannot be fetched is a warning.
+
+A submodule whose recorded commit the canonical clone lacks stays empty, and
+`rwv doctor` reports `uninitialized-submodule`, from the primary and now from
+inside a workweave too, with a `sub_kind`: `fetched` (`--fix` checks it out
+locally) or `unfetched` (`rwv fetch --project <project> --repo <path>` in the
+primary weave fetches it, then `--fix` checks it out). `submodules = "skip"` on
+a `[repositories."<path>"]` entry leaves a member's submodules empty, unfetched
+and unreported, and git's own `submodule.<name>.update = none` does the same
+for one submodule.
 
 ### Breaking: unknown keys in a `[repositories]` entry are refused
 

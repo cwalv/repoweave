@@ -64,8 +64,9 @@ the lock covers it:
 - **There is no lock at all** (first-time bootstrap). The clone is left
   exactly as it is, and the lock is written from the on-disk HEADs.
 
-Realignment is a *local* operation: nothing is fetched over the network for a
-clone that is already present. If the locked revision is not in that clone's
+Realignment is a *local* operation: nothing of the member's own history is
+fetched over the network for a clone that is already present (its submodules
+are another matter; see below). If the locked revision is not in that clone's
 object store, the repo fails with `revision ... not found` rather than being
 re-fetched — run `git fetch` in that repo and re-run, or re-lock to a
 reachable revision (see the reconcile-repos how-to).
@@ -73,6 +74,22 @@ reachable revision (see the reconcile-repos how-to).
 A newly cloned repo is *born* on that same branch, positioned at the lock
 revision rather than at the remote tip — so bootstrapping a weave from a
 lock that is behind `origin` leaves every member attached, not detached.
+
+### Submodules
+
+For every member it clones or finds present, `fetch` gives the canonical clone
+what the member's checkouts record for their submodules, from upstream: a
+submodule whose directory in the canonical clone is empty is checked out there,
+nested ones included, and a commit a checkout records that the canonical
+clone's copy lacks is fetched into that copy without moving its checkout. A
+member whose manifest entry says `submodules = "skip"` is left alone, and so
+is a submodule git's `submodule.<name>.update = none` declines. A submodule
+that cannot be fetched is a warning, not a failure.
+
+Run in a workweave, `fetch` also checks out the empty submodules of the
+workweave's members from the canonical clone's copies. This is the repair
+`rwv doctor` names for `uninitialized-submodule` / `unfetched`, run in the
+primary weave and followed by `rwv doctor --fix`.
 
 ### Realignment refuses to change what HEAD is attached to
 

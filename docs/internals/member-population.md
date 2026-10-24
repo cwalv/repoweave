@@ -376,7 +376,25 @@ commits are held locally (`uninitialized-submodule` / `fetched`).
 **The data is local or it is not used.** A submodule is checked out only from
 the copy of its repository the canonical store already holds. One whose
 recorded commit is not there stays empty, and doctor reports it
-(`uninitialized-submodule` / `unfetched`). Nothing in this path fetches.
+(`uninitialized-submodule` / `unfetched`), from the primary for every
+workweave and from a workweave for itself. Nothing in this path fetches.
+
+**The network verbs fill the store.** `rwv add` and `rwv fetch` call
+`fetch_submodules` in `src/share.rs` on the canonical clone of every member
+they clone or find present, unless its entry says `submodules = "skip"`. At
+each level, an empty submodule directory of the canonical clone's own is
+checked out from upstream with everything nested in it
+(`check_out_submodule_from_upstream`; git: `submodule update --init
+--recursive`) and settled for the member's role; then every commit the
+canonical clone or any of its worktrees records that the store's copy lacks
+is fetched into that copy (`fetch_into_module_data`; git: `fetch`, then
+`fetch origin <commit>`), which moves no checkout. Nested levels walk the
+canonical clone's own checked-out submodules.
+
+**git's own opt-out holds everywhere.** `recorded_submodules` reports, per
+submodule, whether the repository's config or `.gitmodules` says
+`submodule.<name>.update = none` (`SubmoduleCheckout::Declined`). A declined
+submodule is not fetched, not populated and not reported.
 
 **Each checkout has a repository of its own, where git keeps it.** The
 submodule's repository lives at the checkout's own `modules/<name>`, which for
@@ -396,14 +414,17 @@ itself, and the other then reads the wrong tree.
 `extensions.worktreeConfig` does not prevent it: a `git submodule update` in
 the canonical checkout writes `core.worktree` back into the shared config.
 
-**The questions.** `WorkspacePopulation` adds five:
+**The questions.** `WorkspacePopulation` adds seven:
 
 - `recorded_submodules`: every submodule a workspace records, with its name,
-  path and recorded commit. A name that could leave `modules/` is omitted.
+  path, recorded commit, and whether git declines it. A name that could leave
+  `modules/` is omitted.
 - `module_data_holds`: whether a store holds the recorded commit.
 - `create_unpopulated_submodule`: the checkout with no tracked file written.
 - `connect_submodule_upstream`: the remotes of the copy it was made from.
 - `discard_submodule`: the undo.
+- `check_out_submodule_from_upstream` and `fetch_into_module_data`: the two
+  that reach the network, used only by `fetch_submodules`.
 
 Git:
 
