@@ -216,6 +216,35 @@ fn a_typed_repo_path_error_routes_to_its_token() {
     assert_routes_to(&stderr, "backslash-in-repo-path");
 }
 
+/// `(project)` names the project repo wherever a repo is a key, so a clone
+/// adopted at that path is refused, and a manifest keying a repo on it fails
+/// to parse.
+#[test]
+fn a_repo_path_of_project_routes_to_reserved_repo_path() {
+    let tmp = common::tempdir().unwrap();
+    let ws = plain_weave(tmp.path());
+    std::fs::create_dir_all(ws.join("(project)")).unwrap();
+    std::fs::write(ws.join("(project)/README"), "x\n").unwrap();
+    git_init_with_commit(&ws.join("(project)"));
+
+    let stderr = refusal_stderr(&["add", "--adopt", "(project)"], &ws);
+    assert_routes_to(&stderr, "reserved-repo-path");
+
+    std::fs::write(
+        ws.join("projects/web-app/rwv.toml"),
+        "[repositories.\"(project)\"]\ntype = \"git\"\n\
+         url = \"https://github.com/example/server\"\nversion = \"main\"\nrole = \"owned\"\n",
+    )
+    .unwrap();
+    let stderr = refusal_stderr(&["lock"], &ws);
+    assert!(
+        stderr.contains("failed to parse rwv.toml")
+            && stderr
+                .contains("`(project)` names the project repo, so no member can live at that path"),
+        "the manifest must fail to load, naming why the key is refused:\n{stderr}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // The rwv add --new creation surface
 // ---------------------------------------------------------------------------
