@@ -12,7 +12,7 @@ Before pushing any remote, and under `--dry-run` too, `rwv push` refuses unless 
 
 - **Primary weave only:** `rwv push` refuses when invoked inside a workweave (`push-from-workweave`) so ephemeral workweave branches are never pushed to shared remotes. Land workweave changes into the primary weave with `rwv sync-to` first.
 - **Canonical branch in the project repo:** `projects/<project>/` must be on its tracked branch; a detached or unborn `HEAD` refuses with `head-not-on-branch`, and any other branch with `project-repo-off-canonical-branch`.
-- **`origin/HEAD` recorded:** the project repo must know its remote's default branch (`no-remote-default-branch`). A clone made by `rwv fetch` has it; after creating the remote yourself, run `git -C projects/<project> remote set-head origin main`.
+- **`origin/HEAD` recorded:** the project repo must know its remote's default branch (`no-remote-default-branch`). A clone made by `rwv fetch` has it; after creating the remote yourself, run `git -C projects/<project> remote set-head origin -a`, which the refusal also names, to record the branch the remote reports as its default.
 - **Committed project repo:** `projects/<project>/` must have no uncommitted changes to tracked files and no untracked `rwv.toml` or `rwv.lock` (`dirty-checkout`), because push publishes the project repo's last commit. Commit with `rwv lock --commit`, `rwv update --commit`, or `git -C projects/<project> commit`.
 - **Lock agreement:** Every member repository's `HEAD` must match the revision pinned in `rwv.lock` (`lock-state-mismatch`).
 - **Attached member branches:** every member repository in scope must be on a branch, not a detached `HEAD` (`unpushable-repo-branch`).
