@@ -817,8 +817,8 @@ beside `rwv`.
 
 If you wrote your own `rwv-each`, as the v0.23.0 and v0.24.0 docs showed at
 `~/.local/bin/rwv-each`, rename it to another verb before upgrading (for
-example `rwv-myeach`, run as `rwv myeach`). `pip install` replaces it without a
-word. The install script, `uv tool install` and `cargo install` refuse and
+example `rwv-myeach`, run as `rwv myeach`). `pip install` and a hand copy from
+a release archive replace it without a word. The install script, `uv tool install` and `cargo install` refuse and
 install nothing; Homebrew installs into its own prefix. A copy left earlier on
 `PATH` shadows the bundled plugin; `rwv doctor --json` marks it in `plugins`.
 

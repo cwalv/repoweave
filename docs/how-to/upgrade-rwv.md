@@ -43,6 +43,7 @@ What each channel does with a file you wrote at the path it installs `rwv-each` 
 |---|---|
 | Install script | Refuses before installing anything, and names the file |
 | `pip install`, `pip install --user` | **Replaced without a word** |
+| Release archive, copied by hand | **Replaced**, as any copy over an existing file is |
 | `uv tool install` | Refuses (`Executable already exists`) and links neither executable |
 | `cargo install --git` | Refuses (`binary already exists in destination`) and installs neither executable |
 | Homebrew | Installs into its own prefix, never `~/.local/bin`; `brew link` refuses a file already at its own target |
