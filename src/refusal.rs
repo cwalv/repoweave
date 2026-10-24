@@ -25,10 +25,9 @@ use serde::Serialize;
 /// Some variants deliberately mint a token a `rwv doctor` finding or a
 /// `VcsError` already publishes, because a token names one condition wherever
 /// it appears and a refusal that reports the state a finding reports is that
-/// same state. Those are marked below, and renaming one half of such a pair
-/// splits a condition in two under the reader's feet — the spellings move
-/// together or not at all. `docs/reference/doctor-findings.md` carries the
-/// finding side.
+/// same state. Renaming one half of such a pair splits a condition in two
+/// under the reader's feet — the spellings move together or not at all.
+/// `tests/token_register_agreement_test.rs` asserts which variants they are.
 ///
 /// The derived schema is the register's enumeration: it lists every variant
 /// under the token serde writes for it.
@@ -101,36 +100,28 @@ pub enum RefusalKind {
     /// abort rather than a different strategy.
     TargetDivergedMidOp,
 
-    /// A workweave's recorded parent is gone. Shared with the finding.
+    /// A workweave's recorded parent is gone.
     DanglingParent,
     /// The replay exclusion a workweave needs is absent or legacy-spelled.
-    /// Shared with the finding.
     MissingReplayExclusion,
-    /// The canonical clone a checkout is derived from is missing. Shared with
-    /// the finding.
+    /// The canonical clone a checkout is derived from is missing.
     MissingCanonicalClone,
-    /// A clone sits in a topology rwv does not maintain. Shared with the
-    /// finding.
+    /// A clone sits in a topology rwv does not maintain.
     CloneTopology,
     /// The repository is mid-rebase, mid-merge or otherwise mid-operation.
-    /// Shared with the VCS error.
     MidOperation,
-    /// A lock entry names a revision that does not resolve. Shared with the
-    /// finding.
+    /// A lock entry names a revision that does not resolve.
     UnresolvableLockEntry,
-    /// The lock↔HEAD relation is not `ok`. Shared with the finding.
+    /// The lock↔HEAD relation is not `ok`.
     StaleLock,
-    /// A project directory does not parse as a project. Shared with the
-    /// finding.
+    /// A project directory does not parse as a project.
     UnparseableProject,
-    /// An untracked file stands where the operation must write. Shared with
-    /// the VCS error.
+    /// An untracked file stands where the operation must write.
     UntrackedCollision,
-    /// An op-state lease outlived the process that took it. Shared with the
-    /// finding.
+    /// An op-state lease outlived the process that took it.
     DeadOpLease,
     /// A workweave lacks the worktree a member needs; a symlink in the slot
-    /// counts. Shared with the finding.
+    /// counts.
     WorkweaveDrift,
 
     /// No project is selected and none was supplied.
@@ -188,39 +179,30 @@ pub enum RefusalKind {
     /// Two paths both claim to be this workweave.
     RegistryPathDisagreement,
 
-    /// A marker-bearing workweave no registry entry records. Shared with the
-    /// finding.
+    /// A marker-bearing workweave no registry entry records.
     UnregisteredWorkweave,
-    /// A recorded name → path that no longer round-trips. Shared with the
-    /// finding.
+    /// A recorded name → path that no longer round-trips.
     StaleRegistryEntry,
-    /// `.rwv-active` names a project directory that is not on disk. Shared
-    /// with the finding.
+    /// `.rwv-active` names a project directory that is not on disk.
     DanglingActiveProject,
     /// `.rwv-active` is empty, unreadable, or holds text that is not a project
-    /// name. Shared with the finding.
+    /// name.
     UnreadableActiveProject,
     /// A `.rwv-workweave-index` written before ownership receipts existed.
-    /// Shared with the finding.
     LegacyWorkweaveIndex,
-    /// A `.rwv-workweave` marker in the YAML shape `--fix` migrates. Shared
-    /// with the finding.
+    /// A `.rwv-workweave` marker in the YAML shape `--fix` migrates.
     LegacyWorkweaveMarker,
     /// A `.rwv-workweave` marker that parses as neither current nor
-    /// migratable. Shared with the finding.
+    /// migratable.
     UnreadableMarker,
-    /// A marker's `primary:` names no workspace root. Shared with the finding,
-    /// which carries this same defect value on its wire.
+    /// A marker's `primary:` names no workspace root.
     DanglingPrimary,
     /// A weave root carries both the marker and the active-project pointer.
-    /// Shared with the finding.
     WeaveRootIdentityConflict,
     /// A branch in this workweave's namespace carries the pre-flat shape.
-    /// Shared with the finding.
     UnmigratedEphemeralBranch,
     /// A checkout inside a workweave is a full clone rather than a worktree of
-    /// the canonical clone, and the verb will not remove it. Shared with the
-    /// finding.
+    /// the canonical clone, and the verb will not remove it.
     StandaloneInWorkweave,
     /// No registry recognizes the argument, in either direction.
     NoMatchingRegistry,
@@ -273,6 +255,9 @@ pub enum RefusalKind {
     UnknownVerb,
     /// `rwv explain` has no page for the name.
     NoExplainEntry,
+    /// `rwv explain` was given a sub-kind that heads an entry under more than
+    /// one finding kind.
+    AmbiguousExplainToken,
     /// `--kind` names nothing in the doctor wire vocabulary.
     UnknownFindingKind,
     /// A role value names no role rwv accepts.

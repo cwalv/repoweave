@@ -38,7 +38,7 @@ const REFUSALS_PAGE: &str = include_str!("../docs/reference/refusals.md");
 const DOCTOR_FINDINGS_PAGE: &str = include_str!("../docs/reference/doctor-findings.md");
 const VCS_ERRORS_PAGE: &str = include_str!("../docs/reference/vcs-errors.md");
 
-/// The published pages an entry can live on, in resolution order.
+/// The published pages an entry can live on.
 ///
 /// A token names one condition, so it has one entry wherever that entry
 /// already lives — a refusal reporting a state `rwv doctor` also reports is
@@ -67,40 +67,63 @@ const VCS_ERRORS_PAGE: &str = include_str!("../docs/reference/vcs-errors.md");
 /// is what makes another page a listing rather than a special case.
 const ENTRY_PAGES: &[&str] = &[REFUSALS_PAGE, DOCTOR_FINDINGS_PAGE, VCS_ERRORS_PAGE];
 
-/// The heading level of `line` when it is a heading titled exactly `` `token` ``.
-fn entry_heading_level(line: &str, token: &str) -> Option<usize> {
+fn heading_level(line: &str) -> Option<usize> {
     let hashes = line.len() - line.trim_start_matches('#').len();
-    (hashes >= 2 && line[hashes..].trim() == format!("`{token}`")).then_some(hashes)
+    (hashes > 0 && line[hashes..].starts_with(' ')).then_some(hashes)
 }
 
-/// The entry for `token` on `page`: its heading, and everything under it up to
-/// the next heading at the same level or above.
+/// The token a heading's title opens with, when it opens with one in backticks.
+fn opening_token(title: &str) -> Option<&str> {
+    title.trim().strip_prefix('`')?.split('`').next()
+}
+
+/// One entry: the slice of its page from its heading to the next heading at
+/// the same level or above, and the finding kind whose section it sits in.
 ///
 /// Sliced rather than copied, so what `rwv explain` prints and what the page
 /// publishes cannot drift into two spellings — they are the same bytes.
-fn entry_on_page(page: &'static str, token: &str) -> Option<&'static str> {
-    let mut start = None;
-    let mut level = 0;
-    for (offset, line) in line_offsets(page) {
-        match start {
-            None => {
-                if let Some(l) = entry_heading_level(line, token) {
-                    start = Some(offset);
-                    level = l;
-                }
-            }
-            Some(from) => {
-                let hashes = line.len() - line.trim_start_matches('#').len();
-                if hashes > 0 && hashes <= level && line[hashes..].starts_with(' ') {
-                    return Some(page[from..offset].trim_end_matches('\n'));
-                }
-            }
-        }
-    }
-    start.map(|from| page[from..].trim_end_matches('\n'))
+struct Entry {
+    kind: Option<&'static str>,
+    text: &'static str,
 }
 
-fn line_offsets(text: &str) -> impl Iterator<Item = (usize, &str)> {
+/// Every entry headed exactly `` `token` ``, on every page.
+///
+/// A sub-kind entry's kind is the token the nearest heading above it at a
+/// shallower level opens with; that is how a page nests a sub-kind under its
+/// kind, including under a heading that goes on to qualify the kind in words.
+fn entries_headed(token: &str) -> Vec<Entry> {
+    let mut found = Vec::new();
+    for page in ENTRY_PAGES {
+        let headings: Vec<(usize, usize, &'static str)> = line_offsets(page)
+            .filter_map(|(offset, line)| {
+                let level = heading_level(line)?;
+                Some((offset, level, &line[level..]))
+            })
+            .collect();
+        for (i, &(start, level, title)) in headings.iter().enumerate() {
+            if level < 2 || title.trim() != format!("`{token}`") {
+                continue;
+            }
+            let end = headings[i + 1..]
+                .iter()
+                .find(|&&(_, l, _)| l <= level)
+                .map_or(page.len(), |&(offset, _, _)| offset);
+            let kind = headings[..i]
+                .iter()
+                .rev()
+                .find(|&&(_, l, _)| l < level)
+                .and_then(|&(_, _, title)| opening_token(title));
+            found.push(Entry {
+                kind,
+                text: page[start..end].trim_end_matches('\n'),
+            });
+        }
+    }
+    found
+}
+
+fn line_offsets(text: &'static str) -> impl Iterator<Item = (usize, &'static str)> {
     let mut offset = 0;
     text.split_inclusive('\n').map(move |raw| {
         let at = offset;
@@ -109,11 +132,65 @@ fn line_offsets(text: &str) -> impl Iterator<Item = (usize, &str)> {
     })
 }
 
-/// The entry for `token`, from whichever published page documents it.
+/// What `rwv explain` finds for a name that is not a verb.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Lookup {
+    /// The one entry the name reaches.
+    Entry(&'static str),
+    /// A sub-kind that more than one finding kind has an entry for, with every
+    /// `<kind>/<sub-kind>` spelling that reaches one of those entries.
+    Ambiguous(Vec<String>),
+    /// No entry on any page.
+    Unknown,
+}
+
+/// The entry for `name`: a token as an entry heading spells it, or a finding's
+/// `<kind>/<sub-kind>`.
+///
+/// A qualified name reaches the sub-kind's own entry in its kind's section,
+/// or the kind's entry for a kind whose one entry covers all its sub-kinds.
+/// A page gives either every sub-kind of a kind an entry or none of them, so
+/// the kind's entry is never served for a sub-kind it does not cover. A bare
+/// name heading entries under two kinds reaches neither: which one the reader
+/// meant is not written in it.
+pub fn lookup(name: &str) -> Lookup {
+    if let Some((kind, sub_kind)) = name.split_once('/') {
+        let carried = crate::check::finding_sub_kinds()
+            .get(kind)
+            .is_some_and(|sub_kinds| sub_kinds.contains(sub_kind));
+        if !carried {
+            return Lookup::Unknown;
+        }
+        return match entries_headed(sub_kind)
+            .into_iter()
+            .find(|entry| entry.kind == Some(kind))
+        {
+            Some(entry) => Lookup::Entry(entry.text),
+            None => match lookup(kind) {
+                Lookup::Entry(text) => Lookup::Entry(text),
+                Lookup::Ambiguous(_) | Lookup::Unknown => Lookup::Unknown,
+            },
+        };
+    }
+    let mut entries = entries_headed(name);
+    match entries.len() {
+        0 => Lookup::Unknown,
+        1 => Lookup::Entry(entries.remove(0).text),
+        _ => Lookup::Ambiguous(
+            entries
+                .iter()
+                .filter_map(|entry| Some(format!("{}/{name}", entry.kind?)))
+                .collect(),
+        ),
+    }
+}
+
+/// The entry `rwv explain` serves for `token`, if it serves exactly one.
 pub fn entry_for_token(token: &str) -> Option<&'static str> {
-    ENTRY_PAGES
-        .iter()
-        .find_map(|page| entry_on_page(page, token))
+    match lookup(token) {
+        Lookup::Entry(text) => Some(text),
+        Lookup::Ambiguous(_) | Lookup::Unknown => None,
+    }
 }
 
 /// Every token the published entry pages document, derived by reading them.
@@ -163,11 +240,6 @@ const VERB_BUNDLES: &[(&str, &str)] = &[
     ("init", INIT_EXPLAIN),
 ];
 
-/// Whether `name` is a core verb `rwv explain` serves a bundle for.
-fn is_known_verb(name: &str) -> bool {
-    VERB_BUNDLES.iter().any(|&(v, _)| v == name)
-}
-
 /// The complete set of verbs recognized by `rwv explain`, in index order.
 pub fn known_verbs() -> impl Iterator<Item = &'static str> {
     VERB_BUNDLES.iter().map(|&(name, _)| name)
@@ -201,8 +273,9 @@ fn levenshtein(a: &str, b: &str) -> usize {
     prev[n]
 }
 
-/// Return the closest verb from [`known_verbs`] if its edit distance from
-/// `input` is within the suggestion threshold, otherwise `None`.
+/// The nearest thing `rwv explain` could have served — a verb, a documented
+/// token, or a finding's `<kind>/<sub-kind>` — when its edit distance from
+/// `input` is within the suggestion threshold.
 ///
 /// Threshold: distance ≤ 2. This accepts single-character typos up to
 /// two-character transpositions while excluding completely unrelated words
@@ -216,16 +289,22 @@ fn levenshtein(a: &str, b: &str) -> usize {
 /// it answers for inputs it has nothing to do with — and it answers *first*,
 /// because a spurious match here suppresses the external-command pointer that
 /// an unrecognized name is owed.
-/// The nearest thing `rwv explain` could have served, over both the verbs and
-/// the documented tokens — the two vocabularies a reader types into it.
-fn suggest(input: &str) -> Option<&'static str> {
+fn suggest(input: &str) -> Option<String> {
     const THRESHOLD: usize = 2;
+    let qualified = crate::check::finding_sub_kinds()
+        .into_iter()
+        .flat_map(|(kind, subs)| subs.into_iter().map(move |sub| format!("{kind}/{sub}")));
     known_verbs()
         .chain(documented_tokens())
-        .map(|v| (v, levenshtein(input, v)))
-        .filter(|&(v, d)| d <= THRESHOLD && d < v.chars().count())
-        .min_by_key(|&(_, d)| d)
-        .map(|(v, _)| v)
+        .map(str::to_owned)
+        .chain(qualified)
+        .map(|candidate| {
+            let distance = levenshtein(input, &candidate);
+            (candidate, distance)
+        })
+        .filter(|(candidate, d)| *d <= THRESHOLD && *d < candidate.chars().count())
+        .min_by_key(|(_, d)| *d)
+        .map(|(candidate, _)| candidate)
 }
 
 /// The line every served `explain` page opens with: the same string `rwv
@@ -243,45 +322,55 @@ fn emit(page: &str) -> anyhow::Result<()> {
         .context("failed to write the explain page to stdout")
 }
 
-/// Print the explain bundle for the requested verb, or the index when none given.
+/// Print the explain bundle for the requested verb, the entry for a token, or
+/// the index when none given.
 ///
-/// Returns an error only when an unknown verb is requested (matches the
-/// "unknown subcommand" UX agents already understand).
+/// Returns an error only when the name reaches no page, or reaches more than
+/// one entry.
 pub fn explain(cmd: Option<&str>) -> anyhow::Result<()> {
-    match cmd {
-        None => emit(&format!("{}{INDEX_EXPLAIN}", version_banner()))?,
-        // A verb first, then a token. Verbs win a collision because that is
-        // the name the reader typed a command with a moment ago.
-        Some(verb) if entry_for_token(verb).is_some() && !is_known_verb(verb) => {
-            let entry = entry_for_token(verb).expect("just matched");
-            emit(&format!("{}{entry}\n", version_banner()))?;
-        }
-        Some(verb) => match VERB_BUNDLES.iter().find(|&&(name, _)| name == verb) {
-            Some(&(_, bundle)) => emit(&format!("{}{bundle}", version_banner()))?,
-            // Non-core verb: explain is reflection over core's committed,
-            // CI-checked surfaces. Extending it to exec third-party binaries
-            // would make rwv's reflection surface only as trustworthy as the
-            // least trustworthy thing on `$PATH`, so explain never touches
-            // PATH content. A close-typo hint still fires when the input is
-            // within edit distance of a core verb — that's an operator help,
-            // not a plugin dispatch. Any other name is redirected to the
-            // plugin's own `--help`, which is the plugin's responsibility to
-            // document.
-            None => {
-                if let Some(candidate) = suggest(verb) {
-                    crate::refuse!(
-                        crate::refusal::RefusalKind::NoExplainEntry,
-                        "no explain entry for '{verb}'; did you mean: {candidate}? \
-                         Try `rwv explain` for the full index."
-                    );
-                } else {
-                    crate::refuse!(
-                        crate::refusal::RefusalKind::NoExplainEntry,
-                        "external command; try `rwv {verb} --help`"
-                    );
-                }
-            }
+    let Some(name) = cmd else {
+        return emit(&format!("{}{INDEX_EXPLAIN}", version_banner()));
+    };
+    // A verb first, then a token. Verbs win a collision because that is
+    // the name the reader typed a command with a moment ago.
+    if let Some(&(_, bundle)) = VERB_BUNDLES.iter().find(|&&(verb, _)| verb == name) {
+        return emit(&format!("{}{bundle}", version_banner()));
+    }
+    match lookup(name) {
+        Lookup::Entry(entry) => emit(&format!("{}{entry}\n", version_banner())),
+        Lookup::Ambiguous(spellings) => crate::refuse!(
+            crate::refusal::RefusalKind::AmbiguousExplainToken,
+            "`{name}` is a sub-kind of more than one finding kind, each with its own \
+             entry; name the one you mean: {}",
+            spellings
+                .iter()
+                .map(|spelling| format!("`rwv explain {spelling}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        // Non-core verb: explain is reflection over core's committed,
+        // CI-checked surfaces. Extending it to exec third-party binaries
+        // would make rwv's reflection surface only as trustworthy as the
+        // least trustworthy thing on `$PATH`, so explain never touches
+        // PATH content. A close-typo hint still fires when the input is
+        // within edit distance of a core verb — that's an operator help,
+        // not a plugin dispatch. Any other name is redirected to the
+        // plugin's own `--help`, which is the plugin's responsibility to
+        // document; a name with a `/` in it is no plugin's.
+        Lookup::Unknown => match suggest(name) {
+            Some(candidate) => crate::refuse!(
+                crate::refusal::RefusalKind::NoExplainEntry,
+                "no explain entry for '{name}'; did you mean: {candidate}? \
+                 Try `rwv explain` for the full index."
+            ),
+            None if name.contains('/') => crate::refuse!(
+                crate::refusal::RefusalKind::NoExplainEntry,
+                "no explain entry for '{name}'. Try `rwv explain` for the full index."
+            ),
+            None => crate::refuse!(
+                crate::refusal::RefusalKind::NoExplainEntry,
+                "external command; try `rwv {name} --help`"
+            ),
         },
     }
-    Ok(())
 }

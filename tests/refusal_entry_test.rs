@@ -207,10 +207,9 @@ fn misplaced_shared_entries(
 }
 
 /// A token has one entry per condition it names — one, but for a sub-kind
-/// several kinds share. `rwv explain` serves the first entry it finds, in an
-/// order that puts the refusals page first, so a second entry is not merely
-/// redundant: on the refusals page it shadows the entry the reader was meant
-/// to get.
+/// several kinds share. A second entry is not merely redundant: `rwv explain`
+/// refuses a bare name that heads two entries, so it takes the token's one
+/// entry out of reach of the name every refusal prints.
 #[test]
 fn every_token_has_one_entry_per_condition_across_the_pages() {
     let pages = entry_pages();

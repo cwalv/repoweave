@@ -163,6 +163,18 @@ files, which blocked `rwv lock` and `rwv push` over a scratch file even though a
 lock records HEAD and untracked files cannot change it. It now refuses only
 tracked changes, the same rule `rwv sync-to` applies. `--dirty` still waives it.
 
+### Breaking: a sub-kind two finding kinds carry is looked up as `<kind>/<sub-kind>`
+
+`safe-to-fix` is a sub-kind of both `index-drift` and `working-tree-drift`, and
+`docs/reference/doctor-findings.md` has an entry for each, with different
+repairs. `rwv explain safe-to-fix` served the `index-drift`
+entry, so the `working-tree-drift` one could not be reached. `rwv explain
+<kind>/<sub-kind>` now serves a finding's sub-kind entry, as in `rwv explain
+working-tree-drift/safe-to-fix`, or its kind's entry where one entry covers
+every sub-kind of that kind. `rwv explain safe-to-fix` refuses with the new
+token `ambiguous-explain-token` and lists the spelling for each kind. A
+sub-kind only one kind carries still resolves on its own.
+
 ### On Windows, `rwv explain` and `rwv prime` print LF line endings
 
 The pages `rwv explain` and `rwv prime` print are built into the binary. The

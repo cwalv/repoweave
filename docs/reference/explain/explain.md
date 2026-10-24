@@ -24,10 +24,16 @@ match. CI fails on drift between Rust types and committed artifacts.
 
 ```
 rwv explain [<verb>]
+rwv explain <token>
+rwv explain <kind>/<sub-kind>
 ```
 
 - With no argument, prints the index of explainable verbs.
 - With a verb, prints that verb's markdown bundle.
+- With a refusal token, a `rwv doctor` finding kind or sub-kind, or a VCS
+  error kind, prints that token's entry.
+- With a finding's `<kind>/<sub-kind>`, prints the sub-kind's entry, or the
+  kind's entry where one entry covers all its sub-kinds.
 - Unknown verbs return non-zero with a friendly pointer to the index.
 
 Run `rwv explain --help` for the full clap surface.
@@ -42,8 +48,9 @@ verbs (`fetch`, `update`, `prime`, `explain`), no schema block is included.
 
 ## Exit codes
 
-- `0` — bundle (or index) printed successfully.
-- non-zero — unknown verb requested.
+- `0` — bundle, entry or index printed successfully.
+- non-zero — the name reaches nothing, or is a sub-kind more than one finding
+  kind carries.
 
 ## Examples
 
@@ -71,6 +78,9 @@ cat docs/reference/schemas/doctor.json
   isn't in the explain registry, but its spelling is within edit distance
   of a known core verb. Try the suggestion, or run `rwv explain` (no args)
   for the full index.
+- *`<sub-kind>` is a sub-kind of more than one finding kind* — the
+  refusal lists `rwv explain <kind>/<sub-kind>` for each kind; run the one
+  for the finding you met.
 - *external command; try `rwv <verb> --help`* — the verb isn't a core
   verb. `explain` reflects over `rwv`'s CI-checked surfaces only and never
   execs PATH content, so third-party `rwv-<verb>` executables document

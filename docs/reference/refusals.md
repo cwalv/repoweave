@@ -55,6 +55,20 @@ position, so there is nothing to record.
 **Exits.** Name the clone by a path inside the weave: relative to where you
 run `rwv`, or absolute.
 
+### `ambiguous-explain-token`
+
+**Condition.** `rwv explain` was given a sub-kind that is a sub-kind of more
+than one finding kind, and [Doctor findings](./doctor-findings.md) has an entry
+for it under each. `safe-to-fix` is one: `index-drift` and
+`working-tree-drift` both carry it, with different repairs.
+
+**Why.** The name means one thing under each kind, and nothing in it says
+which kind you meant. Serving one of the entries would answer a question you
+may not have asked.
+
+**Exits.** Run one of the commands the refusal lists. Each names the kind
+before the sub-kind, as `rwv doctor` prints a finding's token.
+
 ### `ambiguous-workweave-address`
 
 **Condition.** Two recorded `(project, workweave)` pairs render the same flat

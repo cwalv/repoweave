@@ -923,7 +923,8 @@ fn render_index(verbs: &[Verb]) -> String {
     out.push('\n');
     out.push_str(
         "`rwv explain <token>` serves the entry for a refusal token, a `rwv doctor` \
-         finding kind, or a VCS error kind.\n",
+         finding kind, or a VCS error kind. `rwv explain <kind>/<sub-kind>` serves \
+         the entry for a finding's sub-kind.\n",
     );
     out
 }
@@ -4076,9 +4077,9 @@ fn not_a_subcommand(path: &[&str], word: &str) -> String {
 }
 
 /// The check an invocation's token argument faces, if it has one: what
-/// `rwv explain` is asked to serve must be a verb it explains or a condition
-/// token, and what `rwv doctor --kind` is asked to filter on must be a
-/// finding kind. A placeholder is not read.
+/// `rwv explain` is asked to serve must be a verb it explains or a name it
+/// serves an entry for, and what `rwv doctor --kind` is asked to filter on
+/// must be a finding kind. A placeholder is not read.
 fn invocation_argument(
     path: &[&str],
     words: &[&str],
@@ -4091,12 +4092,20 @@ fn invocation_argument(
         ["explain"] => {
             let at = words.iter().position(|w| *w == "explain")?;
             let token = *words[at + 1..].iter().find(|w| !w.starts_with('-'))?;
-            checked(
-                token,
-                vocab.explain_verbs.contains(token) || vocab.is_condition(token),
-                format!(
+            let message = match explain::lookup(token) {
+                explain::Lookup::Ambiguous(spellings) => format!(
+                    "`rwv explain {token}` refuses: `{token}` is a sub-kind of more than one \
+                     kind; cite one of {spellings:?}"
+                ),
+                _ => format!(
                     "`rwv explain {token}` serves nothing: `{token}` is neither a verb nor a token"
                 ),
+            };
+            checked(
+                token,
+                vocab.explain_verbs.contains(token)
+                    || matches!(explain::lookup(token), explain::Lookup::Entry(_)),
+                message,
             )
         }
         ["doctor"] => {
@@ -8373,7 +8382,8 @@ mod tests {
     /// One seed per recognition branch the shipped inventions do not reach:
     /// a failure kind, a verb at the root, a subcommand after a positional, a
     /// subcommand in a fenced block, a real sub-kind under the wrong kind, and
-    /// the token arguments of `rwv explain` and `rwv doctor --kind`.
+    /// the token arguments of `rwv explain`, a shared sub-kind among them, and
+    /// of `rwv doctor --kind`.
     #[test]
     fn a_phantom_on_each_remaining_branch_is_reported() {
         let page = concat!(
@@ -8385,7 +8395,7 @@ mod tests {
             // rwv-advice: not-an-invocation
             "Then `rwv workweave web-app add pr-42`.\n",
             "The row reads `weave-root-identity-conflict` / `detached`.\n",
-            "Read `rwv explain integration-file-drifted`, then\n",
+            "Read `rwv explain integration-file-drifted` and `rwv explain safe-to-fix`, then\n",
             "`rwv doctor --kind fully-owned-digest-mismatch` and `rwv doctor --kind=stale-lok`.\n",
             "\n",
             "```bash\n",
@@ -8403,6 +8413,9 @@ mod tests {
                 "docs/page.md:5: `rwv workweave web-app add` is not a command",
                 "docs/page.md:6: `detached` is not a sub-kind of `weave-root-identity-conflict`",
                 "docs/page.md:7: `rwv explain integration-file-drifted` serves nothing",
+                "docs/page.md:7: `rwv explain safe-to-fix` refuses: `safe-to-fix` is a sub-kind of \
+                 more than one kind; cite one of [\"index-drift/safe-to-fix\", \
+                 \"working-tree-drift/safe-to-fix\"]",
                 "docs/page.md:8: `rwv doctor --kind fully-owned-digest-mismatch` refuses",
                 "docs/page.md:8: `rwv doctor --kind stale-lok` refuses",
                 // rwv-advice: not-an-invocation
@@ -8429,6 +8442,7 @@ mod tests {
             // rwv-advice: not-an-invocation
             "create`, `rwv tidy` from `rwv-tidy`, no `rwv commit`, `rwv <verb>`,\n",
             "`rwv --help`, `rwv explain stale-lock`, `rwv explain sync-to`,\n",
+            "`rwv explain working-tree-drift/safe-to-fix`, `rwv explain live-staged`,\n",
             // rwv-advice: not-an-invocation
             "`rwv explain <token>`, `rwv doctor --kind tool-missing`, `rwv check-mid-op && rwv sync-to`.\n",
             "`sync-to`, `set-container`, `allow-stale-lock`, `cargo-config`, `up-to-date`, `web-app`,\n",

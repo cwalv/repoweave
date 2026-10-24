@@ -29,4 +29,4 @@ rwv explain <verb>
 - **materialize** — settle drift, clean up disabled integrations, repair weave-root symlinks, and run integration install hooks for the presented project, without selecting anything
 - **init** — create a new project (or adopt an existing repo) and auto-activate it
 
-`rwv explain <token>` serves the entry for a refusal token, a `rwv doctor` finding kind, or a VCS error kind.
+`rwv explain <token>` serves the entry for a refusal token, a `rwv doctor` finding kind, or a VCS error kind. `rwv explain <kind>/<sub-kind>` serves the entry for a finding's sub-kind.

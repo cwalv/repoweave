@@ -17,8 +17,8 @@ The tag is not printed in the default text output. Ask for it:
 ```bash
 rwv doctor --json | jq -r '.violations[] | .kind + (
     if .sub_kind == null then ""
-    elif (.sub_kind | type) == "string" then " / " + .sub_kind
-    else " / " + (.sub_kind | keys[0]) end)'
+    elif (.sub_kind | type) == "string" then "/" + .sub_kind
+    else "/" + (.sub_kind | keys[0]) end)'
 ```
 
 The two `sub_kind` shapes are why that expression looks the way it does: a
@@ -40,6 +40,14 @@ Thirteen kinds carry a `sub_kind` — `branch-discipline`, `clone-topology`,
 `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`. Where the
 sub-kind decides the disposition the entry has a sub-heading per `sub_kind`;
 where it only narrows what was found, one entry covers them all.
+
+`rwv explain <kind>` serves a kind's entry. A finding with a sub-kind is
+looked up as `rwv explain <kind>/<sub-kind>`, for example
+`rwv explain working-tree-drift/safe-to-fix`: that serves the sub-kind's own
+entry, or the kind's entry where one covers them all. A sub-kind only one kind
+carries resolves on its own as well. One that several kinds carry, as
+`safe-to-fix` is, refuses with `ambiguous-explain-token` and lists the
+spelling for each kind.
 
 The full wire shape is in [Formats](./formats.md), and the committed JSON
 Schema is `docs/reference/schemas/doctor.json`.

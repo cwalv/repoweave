@@ -10433,6 +10433,46 @@ impl KindFilter {
     }
 }
 
+/// Each violation kind that carries a `sub_kind`, with every tag that field
+/// can hold, read off the wire type's schema as [`KindFilter`] reads the kinds.
+pub fn finding_sub_kinds() -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>>
+{
+    let root = serde_json::to_value(schemars::schema_for!(ViolationOutput))
+        .expect("a derived schema serializes");
+    let tags = |def: &serde_json::Value| -> std::collections::BTreeSet<String> {
+        let variants = match def["oneOf"].as_array() {
+            Some(variants) => variants.iter().collect(),
+            None => vec![def],
+        };
+        variants
+            .into_iter()
+            .flat_map(|variant| match variant["enum"].as_array() {
+                Some(values) => values.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>(),
+                None => variant["required"]
+                    .as_array()
+                    .filter(|keys| keys.len() == 1)
+                    .map(|keys| keys.iter().filter_map(|k| k.as_str()).collect())
+                    .unwrap_or_default(),
+            })
+            .map(str::to_owned)
+            .collect()
+    };
+    root["oneOf"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|variant| {
+            let kind = variant["properties"]["kind"]["enum"][0].as_str()?;
+            let sub_kind = &variant["properties"]["sub_kind"];
+            let reference = sub_kind["$ref"]
+                .as_str()
+                .or(sub_kind["allOf"][0]["$ref"].as_str())?;
+            let definition = &root["definitions"][reference.rsplit('/').next()?];
+            Some((kind.to_owned(), tags(definition)))
+        })
+        .collect()
+}
+
 /// What a `rwv doctor` run decided: whether the process exits non-zero.
 ///
 /// The three runners return it and dispatch reads the exit from it, so no

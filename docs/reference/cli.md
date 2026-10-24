@@ -521,7 +521,8 @@ Per-verb reflection — *replaces hand-maintained `--help` scraping* in agent ha
 |---|---|
 | `rwv explain` | List of explainable verbs |
 | `rwv explain <verb>` | Markdown bundle: purpose, invocation, output description, JSON Schema (for `--json`-capable verbs), exit codes, examples, common errors |
-| `rwv explain <token>` | The entry for a refusal token, a `rwv doctor` finding kind or sub-kind, or a VCS error kind, as [Refusals](./refusals.md), [Doctor findings](./doctor-findings.md) and [VCS errors](./vcs-errors.md) print it. An unknown name refuses (`no-explain-entry`), suggesting a near match |
+| `rwv explain <token>` | The entry for a refusal token, a `rwv doctor` finding kind or sub-kind, or a VCS error kind, as [Refusals](./refusals.md), [Doctor findings](./doctor-findings.md) and [VCS errors](./vcs-errors.md) print it. An unknown name refuses (`no-explain-entry`), suggesting a near match. A sub-kind that more than one finding kind carries refuses (`ambiguous-explain-token`), naming the `<kind>/<sub-kind>` spelling for each |
+| `rwv explain <kind>/<sub-kind>` | The entry for that kind's sub-kind, or the kind's entry where one entry covers all its sub-kinds |
 
 Every page it serves opens with a `rwv <version>` line — the same string `rwv --version` prints — and a blank line, so a saved copy says which build it describes.
 
