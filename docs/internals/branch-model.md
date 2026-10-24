@@ -1854,17 +1854,13 @@ worktree_reference_on_ephemeral_branch_flows_through_normally`, and `:1518
 worktree_reference_on_shared_branch_still_fires` `[V]` — the third being the
 non-vacuity pair for the first two.
 
-Two properties must be preserved by any implementation of this model, and are:
-
-- Sync excludes `ReferenceAlias` checkouts **by construction**, not by guard —
-  every mutating phase gates on `checkout_is_syncable` (true iff the path is
-  an existing, non-symlink worktree), so the shared canonical store is
-  unreachable from all of them (`sync-semantics.md:55-62`) `[V]`.
-- **The exclusion keys on alias-ness, never on role.** A reference repo
-  created with `--worktree-references` is a real worktree on its own ephemeral
-  branch; "sync only ever moves *that* branch, never the canonical's shared
-  `main`" (`sync-semantics.md:64-69`) `[V]`. Under this model it gets a
-  receipt like any other worktree repo, and nothing keys on `role`.
+The two properties the carve-out existed to keep hold without it. Sync
+moves only a workweave's own ephemeral branch, never the canonical clone's
+shared branch, for a `reference` member as for any other, because every
+member is a worktree on that branch. And nothing keys on `role`: a
+`reference` member gets a receipt like any other worktree repo. There is no
+`ReferenceAlias` checkout kind and no `--worktree-references` flag; the
+flag's spelling is refused with a message saying it was removed.
 
 ### 5.3 The version-relatedness guard
 
@@ -2189,7 +2185,7 @@ pass-level rules first, all three implemented:
   attachment states.** The objects R2/R3 govern are branches; a pass keyed
   on `head_attachment` alone silently disowns a commit-bearing legacy
   branch that a fetch left behind. Enumeration covers every
-  worktree-materialized repo (skipping `ReferenceAlias` checkouts, §5.2)
+  member worktree, `reference` members included (§5.2),
   **and the project-repo checkout**, which the member walker does not
   reach (`scan_repos_on_disk`, `workspace.rs:335-383`). The migration's
   enumerator is `workweave_checkouts` (`check.rs:3267-3283`), which appends
