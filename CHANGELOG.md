@@ -521,10 +521,11 @@ on Windows, count as the same repo.
 An `[integrations.<name>]` table whose name is not a built-in integration, or
 that carries a key its integration does not read, fails to load on every verb
 that reads the manifest, the way an unknown top-level key does. The error names
-the line, the accepted names or keys, and the nearest one: `hide-dotfile` gets
-"did you mean `hide-dotfiles`?". Such a table or key used to be ignored. An
-unknown key inside `[integrations.cargo-workspace.members."<repo>"]` is reported
-as `malformed-settings`.
+the line, the accepted names or keys, and the nearest one when one is close:
+`hide-dotfile` gets "did you mean `hide-dotfiles`?". Such a table or key used to
+be ignored. An unknown key inside
+`[integrations.cargo-workspace.members."<repo>"]` is reported as
+`malformed-settings`.
 
 ### Breaking: `rwv workweave create` runs the install hooks
 

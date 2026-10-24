@@ -16,7 +16,7 @@ rwv doctor --fix      # author managed files for newly enabled integrations
 rwv materialize       # strip disabled-integration artifacts and run install hooks
 ```
 
-`cargo-workspace`, `npm-workspaces`, `go-work`, and `uv-workspace` are enabled by default and act only when a member repo carries their manifest; `vscode-workspace` is enabled by default and authors its file for every project. `pnpm-workspaces`, `gita`, and `static-files` are opt-in. A misspelled integration name or key (`[integrations.cargo]`, `hide-dotfile`) is refused when `rwv.toml` is parsed, with the nearest valid name. See [Integrations reference](../reference/integrations/index.md) for the full list and per-integration settings.
+`cargo-workspace`, `npm-workspaces`, `go-work`, and `uv-workspace` are enabled by default and act only when a member repo carries their manifest; `vscode-workspace` is enabled by default and authors its file for every project. `pnpm-workspaces`, `gita`, and `static-files` are opt-in. A misspelled integration name or key (`[integrations.cargo-workspaces]`, `hide-dotfile`) is refused when `rwv.toml` is parsed; the error lists the accepted names and suggests the nearest one when it is close. See [Integrations reference](../reference/integrations/index.md) for the full list and per-integration settings.
 
 ## Switch ecosystems (`npm` → `pnpm`)
 
