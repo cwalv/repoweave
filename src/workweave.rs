@@ -2224,11 +2224,17 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
     }
 
     if !submodule_warnings.is_empty() {
+        let selectors: Vec<String> = submodule_warnings
+            .iter()
+            .map(|repo| format!("--repo {repo}"))
+            .collect();
         eprintln!(
             "rwv workweave create: warning: submodules not initialized in {} repo(s): {}; \
-             `rwv fetch` in the primary weave fetches what they record, then `rwv doctor --fix` checks them out",
+             `rwv fetch {}` run in {} fetches what they record and checks them out",
             submodule_warnings.len(),
-            submodule_warnings.join(", ")
+            submodule_warnings.join(", "),
+            selectors.join(" "),
+            workweave_dir.display(),
         );
     }
 

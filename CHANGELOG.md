@@ -746,7 +746,9 @@ A submodule whose recorded commit the canonical clone lacks stays empty, and
 `rwv doctor` reports `uninitialized-submodule`, from the primary and now from
 inside a workweave too, with a `sub_kind`: `fetched` (`--fix` checks it out
 locally) or `unfetched` (`rwv fetch --repo <path>` run in that workweave
-fetches it and checks it out). `submodules = "skip"` on
+fetches it and checks it out). `rwv workweave create` names the same command,
+and the new workweave to run it in, when it leaves a member's submodules
+empty. `submodules = "skip"` on
 a `[repositories."<path>"]` entry leaves a member's submodules empty, unfetched
 and unreported, and git's own `submodule.<name>.update = none` does the same
 for one submodule.

@@ -560,3 +560,48 @@ fn the_advised_fetch_in_the_workweave_brings_and_checks_out_a_commit_only_it_rec
     assert_eq!(git(&checkout.join(SUB), &["rev-parse", "HEAD"]), moved);
     assert_eq!(git(&canonical, &["rev-parse", "HEAD"]), canonical_head);
 }
+
+#[test]
+fn the_fetch_workweave_create_advises_for_unfetched_submodules_populates_the_checkout() {
+    let weave = weave();
+    let member = weave.add();
+    weave.forget_module_data(&member);
+    weave.lock_and_commit();
+
+    let out = rwv(&weave.primary, &["workweave", PROJECT, "create", "one"]);
+
+    let warning = out
+        .lines()
+        .find(|l| l.contains("submodules not initialized in"))
+        .unwrap_or_else(|| panic!("workweave create warned of nothing:\n{out}"));
+    let fetch = common::advised_command(warning, "rwv fetch");
+    let (_, rest) = warning
+        .split_once(&format!("`{fetch}` run in "))
+        .unwrap_or_else(|| panic!("the warning names no workspace to run it in: {warning}"));
+    let run_in = PathBuf::from(rest.split(" fetches what").next().unwrap());
+    let seat = weave
+        .primary
+        .parent()
+        .unwrap()
+        .join(".workweaves")
+        .join(format!("{PROJECT}--one"));
+    assert_eq!(
+        repoweave::path_spelling::resolve(&run_in).unwrap(),
+        repoweave::path_spelling::resolve(&seat).unwrap()
+    );
+    assert_eq!(
+        fetch
+            .split(' ')
+            .skip(1)
+            .map(str::to_owned)
+            .collect::<Vec<_>>(),
+        advised_fetch(&seat, &member),
+        "workweave create and doctor name one route"
+    );
+    assert!(is_empty(&seat.join(&member).join(SUB)));
+
+    rwv(&run_in, &fetch.split(' ').skip(1).collect::<Vec<_>>());
+
+    assert_populated(&seat.join(&member));
+    assert!(findings(&seat).is_empty());
+}
