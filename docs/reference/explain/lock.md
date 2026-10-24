@@ -68,10 +68,11 @@ rwv lock [--dirty] [--commit [-m <MSG>]] [--project <name>]
 ```
 
 - `--dirty` — skip the uncommitted-changes check. By default, `lock` refuses
-  to snapshot any repo with uncommitted changes (staged, unstaged) — their
-  content has no SHA and cannot be reproducibly recovered. `--dirty` bypasses
-  this check; use only when you deliberately want to snapshot an in-flight state
-  (e.g., a workweave that hasn't been cleaned up yet).
+  to snapshot any repo with uncommitted changes to tracked files (staged,
+  unstaged), because that content has no SHA and cannot be reproducibly
+  recovered. Untracked files never refuse: they cannot change HEAD. `--dirty`
+  bypasses the check; use only when you deliberately want to snapshot an
+  in-flight state (e.g., a workweave that hasn't been cleaned up yet).
 - `--commit` — after writing `rwv.lock`, stage and commit it from the project
   directory, with an auto-generated message listing which repos advanced or were dropped. A
   `rwv.toml` with uncommitted changes, or one never committed, goes into the
@@ -130,8 +131,8 @@ rwv lock --dirty
 
 ## Common errors
 
-- *repo has uncommitted changes; commit or use --dirty to override* — one or
-  more repos have staged or unstaged edits. Commit the changes, or pass
+- *repo has uncommitted changes to tracked files; commit or use --dirty to override* — one or
+  more repos have staged or unstaged edits to tracked files. Commit the changes, or pass
   `--dirty` to snapshot the committed portion of HEAD anyway.
 - *project repo has uncommitted changes outside rwv.lock and rwv.toml* —
   `--commit` was passed but the project repo has work-in-progress beyond the
