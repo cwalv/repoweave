@@ -28,5 +28,6 @@ rwv explain <verb>
 - **activate** — set the active project, create symlinks, run integration install hooks
 - **materialize** — settle drift, clean up disabled integrations, repair weave-root symlinks, and run integration install hooks for the presented project, without selecting anything
 - **init** — create a new project (or adopt an existing repo) and auto-activate it
+- **each** — run one command in each repo of the checkout (bundled plugin) (`--json` available)
 
 `rwv explain <token>` serves the entry for a refusal token, a `rwv doctor` finding kind, or a VCS error kind. `rwv explain <kind>/<sub-kind>` serves the entry for a finding's sub-kind.

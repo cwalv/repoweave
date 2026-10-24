@@ -120,16 +120,20 @@ mod each_wire;
 /// The bundled plugins' source trees, which must never name the library.
 const PLUGIN_SOURCE_DIRS: &[&str] = &["src/bin/rwv-each"];
 
+/// The verb a bundled plugin's source tree builds: `rwv-<verb>`, less `rwv-`.
+fn bundled_plugin_verb(dir: &str) -> Option<&str> {
+    Path::new(dir)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_prefix("rwv-"))
+}
+
 /// True if `verb` is a bundled plugin's, which every release channel installs
 /// beside `rwv`.
 fn is_bundled_plugin(verb: &str) -> bool {
-    PLUGIN_SOURCE_DIRS.iter().any(|dir| {
-        Path::new(dir)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .and_then(|name| name.strip_prefix("rwv-"))
-            == Some(verb)
-    })
+    PLUGIN_SOURCE_DIRS
+        .iter()
+        .any(|dir| bundled_plugin_verb(dir) == Some(verb))
 }
 
 /// One explainable verb.
@@ -285,6 +289,11 @@ fn doctor_workweave_tree_integrity_subkind_list_md() -> String {
         .join(", ")
 }
 
+fn schema_each() -> String {
+    let schema = schema_for!(each_wire::EachJsonOutput);
+    serde_json::to_string_pretty(&schema).expect("each schema serializes")
+}
+
 fn schema_sync() -> String {
     let schema = schema_for!(SyncJsonOutput);
     serde_json::to_string_pretty(&schema).expect("sync schema serializes")
@@ -401,6 +410,11 @@ fn verbs() -> Vec<Verb> {
             name: "init",
             summary: "create a new project (or adopt an existing repo) and auto-activate it",
             schema: None,
+        },
+        Verb {
+            name: "each",
+            summary: "run one command in each repo of the checkout (bundled plugin)",
+            schema: Some(schema_each),
         },
     ]
 }
@@ -1255,6 +1269,23 @@ fn check_registry_coverage(
     errors
 }
 
+/// Every verb an explain page is owed for: the core CLI's top-level verbs,
+/// and the verb each bundled plugin in `plugin_dirs` ships as. A bundled
+/// plugin is rwv's own surface, installed beside it on every channel, so it is
+/// held to the same coverage as a core verb.
+fn registry_inventory(cli_top_level: &[String], plugin_dirs: &[&str]) -> Vec<String> {
+    cli_top_level
+        .iter()
+        .cloned()
+        .chain(
+            plugin_dirs
+                .iter()
+                .filter_map(|dir| bundled_plugin_verb(dir))
+                .map(str::to_owned),
+        )
+        .collect()
+}
+
 /// Run both coverage checks (cli-md + registry) and return all errors.
 ///
 /// `root` is the repository root; `verbs` is the already-constructed verb
@@ -1272,8 +1303,9 @@ fn check_registry_coverage(
 /// `workweave log`). Restricting to headings avoids false positives from
 /// incidental body text. See [`span_covers_path`] for the token-level rule.
 ///
-/// **Registry check**: a top-level verb is covered iff it appears as a `name`
-/// field in the `verbs()` list in this file. Nested subcommands are not
+/// **Registry check**: a top-level verb, or a bundled plugin's verb, is
+/// covered iff it appears as a `name` field in the `verbs()` list in this
+/// file. Nested subcommands are not
 /// separately required in the registry — explain pages are per top-level verb.
 fn run_coverage_checks(root: &Path, verbs: &[Verb]) -> anyhow::Result<Vec<String>> {
     let allowlist_path = root.join("docs/cli-coverage-allowlist.txt");
@@ -1299,7 +1331,11 @@ fn run_coverage_checks(root: &Path, verbs: &[Verb]) -> anyhow::Result<Vec<String
         &cli_md_content,
         &cli_md_allow,
     ));
-    errors.extend(check_registry_coverage(&top_level, verbs, &registry_allow));
+    errors.extend(check_registry_coverage(
+        &registry_inventory(&top_level, PLUGIN_SOURCE_DIRS),
+        verbs,
+        &registry_allow,
+    ));
 
     Ok(errors)
 }
@@ -4561,10 +4597,6 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-    let mut each = serde_json::to_string_pretty(&schema_for!(each_wire::EachJsonOutput))
-        .expect("each schema serializes");
-    each.push('\n');
-    write_if_changed(&schemas_dir.join("each.json"), &each)?;
 
     // Sanity-check schema URLs the binary embeds match the artifact paths we
     // just wrote. If a URL drifts (e.g. someone changes the crate version
@@ -5373,6 +5405,30 @@ mod tests {
             combined.contains("generate-explain.rs"),
             "error should name the file to fix, got:\n{combined}"
         );
+    }
+
+    /// A bundled plugin is in the inventory: with its `Verb` entry gone, the
+    /// check names it, and with the entry present it is quiet.
+    #[test]
+    fn registry_coverage_fails_for_a_bundled_plugin_without_a_page() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let without_each: Vec<Verb> = verbs().into_iter().filter(|v| v.name != "each").collect();
+        let errors = run_coverage_checks(root, &without_each).expect("the inputs are readable");
+        assert_eq!(errors.len(), 1, "{errors:#?}");
+        assert!(errors[0].contains("`each`"), "{errors:#?}");
+        let errors = run_coverage_checks(root, &verbs()).expect("the inputs are readable");
+        assert!(errors.is_empty(), "{errors:#?}");
+
+        let (_, allow) =
+            load_coverage_allowlist(&root.join("docs/cli-coverage-allowlist.txt")).unwrap();
+        let top_level: Vec<String> = collect_subcommand_paths(&Cli::command())
+            .into_iter()
+            .filter(|p| !p.contains(' '))
+            .collect();
+        let inventory = registry_inventory(&top_level, &["src/bin/rwv-each", "src/bin/rwv-lint"]);
+        let errors = check_registry_coverage(&inventory, &verbs(), &allow);
+        assert_eq!(errors.len(), 1, "{errors:#?}");
+        assert!(errors[0].contains("`lint`"), "{errors:#?}");
     }
 
     /// An allowlisted verb is not reported even when absent from verbs().

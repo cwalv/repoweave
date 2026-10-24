@@ -438,3 +438,61 @@ fn msg_auto_relock_splice_resolves_and_matches_code() {
         unresolved.join("\n")
     );
 }
+
+/// `each` ships beside `rwv` on every channel, so its page is rwv's own
+/// surface: served, not pointed at, and never mistaken for a typo of `fetch`.
+#[test]
+fn explain_serves_the_bundled_plugins_page() {
+    let assert = rwv().args(["explain", "each"]).assert().success();
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(
+        common::strip_version_banner(&stdout).starts_with("# rwv each\n"),
+        "{stdout}"
+    );
+    rwv()
+        .arg("explain")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("- **each** — "));
+}
+
+/// `PATH` with `dir` searched first.
+fn path_with(dir: &std::path::Path) -> std::ffi::OsString {
+    let inherited = std::env::var_os("PATH").unwrap_or_default();
+    std::env::join_paths(
+        std::iter::once(dir.to_path_buf()).chain(std::env::split_paths(&inherited)),
+    )
+    .expect("the test's PATH joins")
+}
+
+/// A plugin is a verb the reader really has, so its name is not a typo of
+/// whatever core verb it happens to sit near: one edit from `fetch` and two
+/// from `sync`, each is pointed at its own `--help`. The control runs the same
+/// names with no such plugin on `PATH`, where the suggestion is the answer.
+#[test]
+fn a_path_plugin_near_a_core_verb_gets_the_external_command_pointer() {
+    let plugins = common::tempdir().unwrap();
+    for (name, near) in [("fech", "fetch"), ("sinq", "sync")] {
+        rwv()
+            .args(["explain", name])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(format!("did you mean: {near}?")));
+
+        common::write_plugin(
+            plugins.path(),
+            &format!("rwv-{name}"),
+            "exit 0\n",
+            "exit /b 0",
+        );
+        rwv()
+            .args(["explain", name])
+            .env("PATH", path_with(plugins.path()))
+            .assert()
+            .failure()
+            .stderr(
+                predicate::str::contains(format!("external command; try `rwv {name} --help`"))
+                    .and(predicate::str::contains("did you mean").not()),
+            );
+    }
+}

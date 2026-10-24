@@ -30,6 +30,7 @@ const LOCK_EXPLAIN: &str = include_str!("../docs/reference/explain/lock.md");
 const ACTIVATE_EXPLAIN: &str = include_str!("../docs/reference/explain/activate.md");
 const MATERIALIZE_EXPLAIN: &str = include_str!("../docs/reference/explain/materialize.md");
 const INIT_EXPLAIN: &str = include_str!("../docs/reference/explain/init.md");
+const EACH_EXPLAIN: &str = include_str!("../docs/reference/explain/each.md");
 
 // Hand-written entry pages. Unlike the bundles above these are not generated:
 // an entry says why a rule exists and which exit applies when, which is not
@@ -238,6 +239,7 @@ const VERB_BUNDLES: &[(&str, &str)] = &[
     ("activate", ACTIVATE_EXPLAIN),
     ("materialize", MATERIALIZE_EXPLAIN),
     ("init", INIT_EXPLAIN),
+    ("each", EACH_EXPLAIN),
 ];
 
 /// The complete set of verbs recognized by `rwv explain`, in index order.
@@ -307,6 +309,13 @@ fn suggest(input: &str) -> Option<String> {
         .map(|(candidate, _)| candidate)
 }
 
+/// Whether `name` is the verb of a plugin `rwv <name>` would find on `PATH`.
+fn is_path_plugin(name: &str) -> bool {
+    crate::plugins::discover_plugins(None)
+        .iter()
+        .any(|plugin| plugin.name == name)
+}
+
 /// The line every served `explain` page opens with: the same string `rwv
 /// --version` reports, so a committed page can go stale with the release that
 /// cut it without lying about which binary printed it.
@@ -348,15 +357,17 @@ pub fn explain(cmd: Option<&str>) -> anyhow::Result<()> {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
-        // Non-core verb: explain is reflection over core's committed,
-        // CI-checked surfaces. Extending it to exec third-party binaries
-        // would make rwv's reflection surface only as trustworthy as the
-        // least trustworthy thing on `$PATH`, so explain never touches
-        // PATH content. A close-typo hint still fires when the input is
-        // within edit distance of a core verb — that's an operator help,
-        // not a plugin dispatch. Any other name is redirected to the
-        // plugin's own `--help`, which is the plugin's responsibility to
-        // document; a name with a `/` in it is no plugin's.
+        // Explain is reflection over rwv's own committed, CI-checked
+        // surfaces, a bundled plugin's included. Running a binary found on
+        // `$PATH` would make it only as trustworthy as the least trustworthy
+        // thing there, so a plugin is recognized by name and pointed at its
+        // own `--help`, never run. A plugin the reader named is a real verb
+        // and not a typo, so no suggestion preempts that pointer.
+        Lookup::Unknown if is_path_plugin(name) => crate::refuse!(
+            crate::refusal::RefusalKind::NoExplainEntry,
+            "external command; try `rwv {name} --help`"
+        ),
+        // A name with a `/` in it is no plugin's.
         Lookup::Unknown => match suggest(name) {
             Some(candidate) => crate::refuse!(
                 crate::refusal::RefusalKind::NoExplainEntry,

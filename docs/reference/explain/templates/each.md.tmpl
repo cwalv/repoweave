@@ -1,0 +1,84 @@
+# rwv each
+
+## Purpose
+
+Run one command in each repo of the checkout `rwv` resolved, in parallel,
+and report how every repo fared. `each` is a bundled plugin: an executable
+named `rwv-each` that every release channel installs beside `rwv`, and that
+`rwv` dispatches the way it dispatches any plugin. If `rwv each` is refused
+as `unknown-verb`, `rwv-each` is not on `PATH`; put the one from the same
+release next to `rwv`.
+
+The full reference is `docs/reference/rwv-each.md` in the published book.
+
+## Invocation
+
+```
+rwv [-C <path> | -w <project>--<name>] each [--role <role>]... [--repo <selector>]...
+    [-j <N>] [--group] [--fail-fast] [--dry-run] [--json] [--timeout <duration>]
+    [--joblog <file>] [--results <dir>] [--progress] [--] <command> [<args>...]
+rwv [-C <path> | -w <project>--<name>] each [options] --shell '<command string>'
+```
+
+- Options come before the command. The first word that is not an option
+  starts the command; everything after it is passed through unchanged.
+- With neither `--role` nor `--repo`, every member repo except role
+  `reference` runs. Either selector replaces that default scope, with the
+  union semantics of `rwv status`, `fetch`, `update` and `push`. The project
+  repo never runs.
+- `-j <N>` runs up to `N` repos at once (default `min(nproc, 8)`). `-j 1`
+  hands the terminal to each command in turn.
+- `--shell` runs the string through `sh -c` (Unix) or `cmd /C` (Windows).
+  Without it the command is executed directly, with no shell between.
+- `--fail-fast` starts no new repo after the first failure.
+- `--timeout <duration>` kills a repo's process tree after `<duration>`
+  (`90`, `1m30s`, `2h`) and counts the repo as `timed-out`.
+- `--dry-run` prints each selected repo and the command it would run, and
+  runs nothing.
+- Each command runs in the repo's checkout with `RWV_REPO`,
+  `RWV_REPO_ROLE` and `RWV_REPO_PATH` set.
+
+Run `rwv each --help` for the full clap surface.
+
+## Output
+
+Default text output streams each line prefixed `[<path>] `; `--group` holds
+a repo's output and prints it whole under a `[<path>]` header. When any repo
+did not succeed, a summary on stderr lists each one with its exit status.
+
+Under `--json` with `-j 1`, output is one envelope once every repo is done,
+outcomes in manifest order, each command's stdout and stderr captured into
+its record. Under `--json -j N` with `N > 1`, output is NDJSON: one record
+per line as each repo finishes, each carrying its own `"$schema"`
+(`each-record.json`).
+
+`status` is one of `ok`, `failed`, `timed-out`, `not-run`, `not-present`.
+
+Schema:
+
+{{SCHEMA}}
+
+## Exit codes
+
+- `0` — every selected repo's command exited 0.
+- `1` — any repo did not succeed, nothing matched the selectors, or the
+  selection could not be resolved.
+- `2` — usage error.
+- `130` — interrupted.
+
+A command's own exit code is reported in the summary and under `--json`,
+never propagated.
+
+## Examples
+
+Run the tests in every owned repo, four at a time:
+
+```
+rwv each --role owned -j 4 -- cargo test
+```
+
+List the repos whose command failed:
+
+```
+rwv each --json -j 1 -- make lint | jq -r '.outcomes[] | select(.status != "ok") | .path'
+```

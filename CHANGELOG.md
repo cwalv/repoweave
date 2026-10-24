@@ -195,6 +195,15 @@ twenty lines or more. A refusal now prints its message and its route line
 and nothing else. An error that is not a refusal keeps the backtrace
 `RUST_BACKTRACE` asks for.
 
+### `rwv explain each` serves the page for `rwv each`
+
+`rwv each` ships beside `rwv` on every release channel, but `rwv explain
+each` answered `did you mean: fetch?`, and the `rwv explain` index did not
+list it. It now serves an explain page, and the index lists `each`. For a
+plugin found on `PATH`, `rwv explain <name>` now points at
+`rwv <name> --help` even when the name is a typo's distance from something
+`rwv explain` serves, where before the suggestion took its place.
+
 ### On Windows, `rwv explain` and `rwv prime` print LF line endings
 
 The pages `rwv explain` and `rwv prime` print are built into the binary. The
