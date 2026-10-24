@@ -278,10 +278,7 @@ impl Integration for GoWork {
         // (`./<repo-path>` entries). The shared helper sorts + dedups both
         // sides before comparing and dispatches USER-HELD → DRIFT → CLEAN.
         let expected: Vec<String> = repo_paths.iter().map(|p| format!("./{}", p)).collect();
-        // `read_current_uses_from_file` returns an empty vec when the use block
-        // is absent (never `None`); pre-lift compared that empty vec directly,
-        // so pass `Some`.
-        let on_disk = read_current_uses_from_file(&path);
+        let on_disk = read_current_uses_from_file(&path)?;
 
         Ok(drift_issues(
             self.name(),
@@ -447,6 +444,9 @@ fn activate_via_go_tool(
         std::fs::copy(go_work_path, &work_tmp)?;
     }
     // If neither exists, `go work init` (below) will create work_tmp.
+    if work_tmp.exists() {
+        read_current_uses_from_file(&work_tmp)?;
+    }
 
     // Which releases of the `go` tool stamp the toolchain they ran under into
     // a go.work they rewrite is not stable: 1.24 and earlier write the line,
@@ -504,7 +504,7 @@ fn activate_via_go_tool(
     };
 
     // Read the current `use` entries so we can dropuse stale ones.
-    let current_uses = read_current_uses_from_file(&work_tmp);
+    let current_uses = read_current_uses_from_file(&work_tmp)?;
 
     // Add all new paths (relative to workspace_root).
     for p in new_paths {
@@ -578,13 +578,12 @@ fn activate_via_go_tool(
 }
 
 /// Read the current `use` paths from go.work using [`GoWorkDoc::current_uses`].
-fn read_current_uses_from_file(path: &Path) -> Vec<String> {
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return vec![];
-    };
-    GoWorkDoc::parse(&text)
-        .map(|doc| doc.current_uses())
-        .unwrap_or_default()
+fn read_current_uses_from_file(path: &Path) -> anyhow::Result<Vec<String>> {
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("reading {} for its use entries", path.display()))?;
+    let doc = GoWorkDoc::parse(&text)
+        .with_context(|| format!("parsing {} for its use entries", path.display()))?;
+    Ok(doc.current_uses())
 }
 
 /// Put the go directive rwv is accountable for back into `path`, undoing what
@@ -1479,6 +1478,45 @@ mod tests {
     // requirement as a side effect of adding the module. DefaultOnly says an
     // existing go-line is preserved unconditionally — on BOTH paths.
     // -----------------------------------------------------------------------
+
+    #[test]
+    fn regression_go_tool_path_refuses_a_workspace_root_go_work_that_cannot_be_read() {
+        if !require_go() {
+            return;
+        }
+        let tmp = crate::tempdir().unwrap();
+        let root = tmp.path();
+        write_file(
+            root,
+            "github/test/repoweave/go.mod",
+            "module example.com/repoweave\n\ngo 1.21\n",
+        );
+        std::fs::write(root.join("go.work"), b"use ./github/test/stale\n\xff\xfe\n").unwrap();
+        let manifest = make_manifest_local(vec![("github/test/repoweave", Role::Owned)]);
+        let project = ProjectName::new("test-project").unwrap();
+        let config = IntegrationConfig::default();
+        let cache = HashMap::new();
+        std::fs::create_dir_all(root.join("projects/test-project")).unwrap();
+        let session = WorkspaceSession::new(root);
+        let base = IntegrationContextBase::new(&session, &project, &cache, None);
+        let ctx = base.build_context(&config, &manifest);
+
+        let err = GoWork.activate(&ctx).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("reading"),
+            "the unreadable go.work must be named, got: {err:#}"
+        );
+    }
+
+    #[test]
+    fn current_uses_of_a_go_work_that_cannot_be_read_is_an_error() {
+        let tmp = crate::tempdir().unwrap();
+        let path = tmp.path().join("go.work");
+        std::fs::write(&path, b"use ./a\n\xff\xfe\n").unwrap();
+        assert!(read_current_uses_from_file(&path).is_err());
+        std::fs::write(&path, "use (\n\t./a\n)\n").unwrap();
+        assert_eq!(read_current_uses_from_file(&path).unwrap(), vec!["./a"]);
+    }
 
     #[test]
     fn regression_go_tool_path_preserves_existing_go_line() {

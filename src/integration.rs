@@ -1068,4 +1068,34 @@ mod tests {
             "cargo-workspace"
         );
     }
+
+    #[test]
+    fn no_settings_struct_widens_its_keys_past_its_field_list() {
+        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files = vec![src.join("manifest.rs")];
+        for entry in std::fs::read_dir(src.join("integrations")).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_some_and(|e| e == "rs") {
+                files.push(path);
+            }
+        }
+        let widening = ["flat", "ten"].concat();
+        let renaming = ["ali", "as"].concat();
+        let mut offenders = Vec::new();
+        for file in files {
+            let text = std::fs::read_to_string(&file).unwrap();
+            for (start, _) in text.match_indices("#[serde(") {
+                let attr = &text[start..start + text[start..].find(")]").unwrap_or(0)];
+                if attr.contains(&widening) || attr.contains(&renaming) {
+                    let line = text[..start].matches('\n').count() + 1;
+                    offenders.push(format!("{}:{line}", file.display()));
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "settings_struct_keys reads the field list serde hands a deserializer; a key \
+             accepted through either attribute is refused at parse: {offenders:?}"
+        );
+    }
 }

@@ -6,6 +6,12 @@ claim that nothing changed in them.
 
 ## Unreleased
 
+### A `go.work` that cannot be read stops `go-work` activation
+
+When the `go.work` at the weave root could not be read, `go-work` treated it as
+having no `use` entries, so entries for repos no longer in the project stayed
+in it. The unreadable file is now an error that names it.
+
 ### On Windows, `rwv explain` and `rwv prime` print LF line endings
 
 The pages `rwv explain` and `rwv prime` print are built into the binary. The
