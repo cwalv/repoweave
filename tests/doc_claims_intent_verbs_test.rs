@@ -9,8 +9,8 @@
 //!   - `rwv add` / `rwv remove` author only when every active repo the
 //!     manifest declares is on disk; over a partial member set they record
 //!     the membership change and leave the managed files alone
-//!   - `rwv fetch`, `rwv activate`, workweave-create, `rwv init`, and
-//!     `rwv init --adopt` do not author (context mode)
+//!   - `rwv fetch`, `rwv activate`, `rwv materialize`, workweave-create,
+//!     `rwv init`, and `rwv init --adopt` do not author (context mode)
 //!   - `rwv init --adopt` additionally must not re-author what the
 //!     authoring path owns, even when the adopted repo committed it: it
 //!     clones only the one repo, so re-authoring there would recompute
@@ -332,7 +332,7 @@ fn remove_does_not_overwrite_managed_content_from_a_partial_member_set() {
 }
 
 // ===========================================================================
-// Context verbs: fetch / activate / workweave-create / init do not author
+// Context verbs: fetch / activate / materialize / workweave-create / init do not author
 // ===========================================================================
 
 #[test]
@@ -380,6 +380,33 @@ fn activate_does_not_author_managed_content() {
     assert!(
         !code_workspace(&project_dir, "myapp").exists(),
         "`rwv activate` is a context verb; it must not author managed content"
+    );
+}
+
+#[test]
+fn materialize_does_not_author_managed_content() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path());
+    let project_dir = ws.join("projects/myapp");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    write_manifest(&project_dir, &[]);
+
+    rwv()
+        .args(["activate", "myapp", "--no-materialize"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+    assert!(!code_workspace(&project_dir, "myapp").exists());
+
+    rwv()
+        .args(["materialize"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    assert!(
+        !code_workspace(&project_dir, "myapp").exists(),
+        "`rwv materialize` is a context verb; it must not author managed content"
     );
 }
 
