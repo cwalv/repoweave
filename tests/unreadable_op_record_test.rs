@@ -313,9 +313,12 @@ fn removing_a_record_that_names_no_op_leaves_only_what_its_error_names() {
 
     std::fs::remove_file(record_path(&parked)).unwrap();
 
+    let seat = parked.seat.root.to_string_lossy().into_owned();
     for (dir, args) in [
         (&parked.seat.root, &["sync-to"][..]),
         (&target, &["abort"][..]),
+        (&target, &["status"][..]),
+        (&target, &["sync", seat.as_str()][..]),
     ] {
         let out = rwv(dir, args);
         let stderr = stderr_of(&out);
