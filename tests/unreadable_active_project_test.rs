@@ -61,6 +61,18 @@ fn a_verb_reading_the_pointer_refuses_one_that_holds_no_project_name() {
 }
 
 #[test]
+fn a_pointer_that_cannot_be_read_refuses_instead_of_selecting_nothing() {
+    let tmp = common::tempdir().unwrap();
+    let ws = weave(tmp.path(), "web-app\n");
+    let pointer = ws.join(".rwv-active");
+    std::fs::remove_file(&pointer).unwrap();
+    std::fs::create_dir(&pointer).unwrap();
+
+    assert_refused_naming_the_repairs(&ws, &["lock"]);
+    assert_refused_naming_the_repairs(&ws, &["status"]);
+}
+
+#[test]
 fn a_verb_given_its_project_does_not_read_the_pointer() {
     let tmp = common::tempdir().unwrap();
     let ws = weave(tmp.path(), "two words\n");

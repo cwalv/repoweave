@@ -10,13 +10,10 @@
 //! carries the ecosystem's manifest, activated with an empty `PATH`, so the
 //! hook runs, finds nothing, and the verb must still succeed.
 
-#[cfg(unix)]
 mod common;
 
-#[cfg(unix)]
 use std::path::Path;
 
-#[cfg(unix)]
 struct Case {
     integration: &'static str,
     tool: &'static str,
@@ -25,7 +22,6 @@ struct Case {
     enabled_by_default: bool,
 }
 
-#[cfg(unix)]
 const CASES: &[Case] = &[
     Case {
         integration: "npm-workspaces",
@@ -57,7 +53,6 @@ const CASES: &[Case] = &[
     },
 ];
 
-#[cfg(unix)]
 fn weave(root: &Path, case: &Case) -> std::path::PathBuf {
     let ws = root.join("ws");
     let project_dir = ws.join("projects/app");
@@ -93,7 +88,6 @@ fn weave(root: &Path, case: &Case) -> std::path::PathBuf {
     ws
 }
 
-#[cfg(unix)]
 #[test]
 fn a_hook_that_cannot_find_its_tool_names_the_tool_its_integration_declares() {
     let mut failures = Vec::new();

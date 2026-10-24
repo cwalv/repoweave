@@ -1795,6 +1795,49 @@ fn lock_commit_message_names_a_manifest_only_change() {
     );
 }
 
+fn remove_from_manifest(project_dir: &std::path::Path, repos: &[&str]) {
+    let manifest_path = project_dir.join("rwv.toml");
+    let manifest = std::fs::read_to_string(&manifest_path).unwrap();
+    let mut kept = Vec::new();
+    let mut skipping = false;
+    for line in manifest.lines() {
+        if line.starts_with('[') {
+            skipping = repos.iter().any(|repo| line.contains(repo));
+        }
+        if !skipping {
+            kept.push(line);
+        }
+    }
+    std::fs::write(&manifest_path, kept.join("\n") + "\n").unwrap();
+}
+
+/// Several repos removed from the manifest and dropped from the lock in one
+/// commit are counted in the subject and each listed in the body.
+#[test]
+fn lock_commit_message_counts_and_lists_several_dropped_repos() {
+    let ws = common::build_workspace(
+        "alpha",
+        &[
+            ("local/org/a", "owned"),
+            ("local/org/b", "owned"),
+            ("local/org/c", "owned"),
+        ],
+    );
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    remove_from_manifest(&project_dir, &["local/org/b", "local/org/c"]);
+
+    rwv_cmd()
+        .args(["lock", "--commit"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+
+    assert_eq!(
+        common::git_in(&project_dir, &["log", "-1", "--format=%B"]),
+        "lock: drop 2 repos, record rwv.toml\n\n  - local/org/b: dropped\n  - local/org/c: dropped"
+    );
+}
+
 /// A repo removed from the manifest and dropped from the lock in one commit
 /// is named in the subject and listed in the body.
 #[test]
@@ -1804,22 +1847,7 @@ fn lock_commit_message_names_a_dropped_repo() {
         &[("local/org/a", "owned"), ("local/org/b", "owned")],
     );
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
-    let manifest_path = project_dir.join("rwv.toml");
-    let manifest = std::fs::read_to_string(&manifest_path).unwrap();
-    let kept: Vec<&str> = {
-        let mut out = Vec::new();
-        let mut skipping = false;
-        for line in manifest.lines() {
-            if line.starts_with('[') {
-                skipping = line.contains("local/org/b");
-            }
-            if !skipping {
-                out.push(line);
-            }
-        }
-        out
-    };
-    std::fs::write(&manifest_path, kept.join("\n") + "\n").unwrap();
+    remove_from_manifest(&project_dir, &["local/org/b"]);
 
     rwv_cmd()
         .args(["lock", "--commit"])

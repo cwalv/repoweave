@@ -100,6 +100,11 @@ fn a_backslash_in_a_directory_name_refuses_naming_the_rename() {
         stderr.contains("'a\\b'") && stderr.contains("Rename the directory"),
         "the refusal names the directory and the rename; stderr was:\n{stderr}"
     );
+    assert!(
+        stderr.contains("holds a `\\`, which no member path can hold")
+            && !stderr.contains("not Unicode"),
+        "the refusal states the backslash as its reason; stderr was:\n{stderr}"
+    );
     manifest_unchanged(&ws);
 }
 

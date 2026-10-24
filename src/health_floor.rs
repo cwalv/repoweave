@@ -222,6 +222,24 @@ mod tests {
     }
 
     #[test]
+    fn a_floor_whose_tip_is_not_a_commit_id_reads_as_absent() {
+        let tmp = crate::tempdir().unwrap();
+        let record =
+            |tip: &str| format!(r#"{{"version":"0.18.0","project_tips":{{"app":"{tip}"}}}}"#);
+        let write = |tip: &str| {
+            floor_path(tmp.path())
+                .publish(record(tip).as_bytes())
+                .unwrap()
+        };
+
+        write(&"ab".repeat(20));
+        assert!(read(tmp.path()).is_some(), "a commit id reads as a floor");
+
+        write("v1.0");
+        assert!(read(tmp.path()).is_none(), "a tag name is not a tip");
+    }
+
+    #[test]
     fn a_floor_at_or_above_the_minimum_passes() {
         assert!(enforce_with(Some(&floor("0.18.0")), &REQ).is_ok());
         assert!(enforce_with(Some(&floor("0.19.2")), &REQ).is_ok());

@@ -2572,9 +2572,11 @@ fn a_pre_flat_branch_naming_no_commit_has_a_null_tip_in_json() {
         serde_json::json!("myproj--feat-a/main"),
         "{detached}"
     );
-    assert!(
-        detached["legacy_branch"]["tip_sha"].is_null(),
-        "a tip that names no commit is null: {detached}"
+    let legacy = detached["legacy_branch"].as_object().unwrap();
+    assert_eq!(
+        legacy.get("tip_sha"),
+        Some(&serde_json::Value::Null),
+        "a tip that names no commit is a present `null`, not an absent key: {detached}"
     );
 }
 
