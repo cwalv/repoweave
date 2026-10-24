@@ -37,11 +37,15 @@ it, as `rwv activate` would; with zero or several projects it refuses
 (`no-active-project`) and names `--project`.
 
 Run in a workweave, in-place `fetch` aligns the canonical clones and then
-creates the workweave's worktree for every member its `rwv.lock` pins and the
-workweave lacks — nothing at the slot, or a symlink there, which is replaced.
-It is the repair `rwv doctor` names for a `workweave-drift` finding whose
-canonical clone is not on disk; one whose canonical clone holds the pinned
-revision, `rwv doctor --fix` creates without the network.
+gives the workweave its worktree for every member its `rwv.lock` pins and the
+workweave lacks — nothing at the slot, a symlink there, which is replaced, or
+a checkout whose worktree link dangles, which keeps its files. The worktree
+goes on the workweave's own branch at its own tip where that branch survives,
+and on that branch created at the pinned revision where it does not; no branch
+is moved or deleted. It is the repair `rwv doctor` names for a
+`workweave-drift` finding whose canonical clone is not on disk; one whose
+canonical clone holds what the worktree needs, `rwv doctor --fix` gives back
+without the network.
 
 ### What happens to a clone that is already present
 

@@ -456,8 +456,9 @@ fn sole_unselected_project(ctx: &WorkspaceContext) -> Option<crate::manifest::Pr
     }
 }
 
-/// Create the worktree for each member the workweave's `rwv.lock` pins and the
-/// workweave lacks — nothing at the slot, or a symlink — once the fetch above
+/// Give the workweave the worktree of each member its `rwv.lock` pins and it
+/// lacks — nothing at the slot, a symlink, or a checkout whose link dangles —
+/// through [`crate::workweave::materialize_member`], once the fetch above
 /// has put the pinned revisions in the canonical clones, returning whether it
 /// created any. How each one's files were placed is added to `placements` for
 /// the envelope.
@@ -487,7 +488,10 @@ fn materialize_workweave_members(
             continue;
         };
         let slot = ctx.active_path().join(repo_path.as_path());
-        if !crate::workweave::is_symlinked_member(&slot) && slot.exists() {
+        if !crate::workweave::is_symlinked_member(&slot)
+            && !crate::workweave::is_dangling_link(&slot)
+            && slot.exists()
+        {
             if crate::workweave::scan_uninitialized_submodules(&slot).is_empty() {
                 continue;
             }
@@ -511,12 +515,13 @@ fn materialize_workweave_members(
             entry.role,
             entry.submodules,
             pin.version.as_str(),
+            crate::workweave::ReceiptedBranch::Attach,
         ) {
             Ok(born) => {
                 created = true;
                 let line = format!(
-                    "rwv fetch: created the worktree for {repo_path} in this workweave at {}{}",
-                    born.at.id().short(),
+                    "rwv fetch: gave this workweave its worktree for {repo_path}: {}{}",
+                    born.summary(),
                     crate::share::files_note(born.files),
                 );
                 if output == OutputMode::Text {

@@ -41,7 +41,7 @@ use crate::share::{FilePlacement, FilePrimitives, Filesystem};
 use crate::symlink::LinkTarget;
 use crate::vcs::{
     project_vcs, vcs_for, BornRef, CommitId, DeletionWarrant, EphemeralRefName, OwnedRef,
-    RawRefName, ResolvedRevisionId, Vcs, VcsError,
+    RawRefName, RegistrationPrune, ResolvedRevisionId, Vcs, VcsError,
 };
 use crate::workspace::{
     project_dir, project_rel_dir, project_rel_path, workweave_name_in, WorkweaveMarker,
@@ -59,6 +59,15 @@ use std::path::{Path, PathBuf};
 /// it. [`Path::is_symlink`] does not follow the link, so a dangling one counts.
 pub fn is_symlinked_member(path: &Path) -> bool {
     path.is_symlink()
+}
+
+/// Whether the checkout at `path` is a worktree whose link names a git
+/// directory that is not there: git cannot open it, though its files stand.
+pub fn is_dangling_link(path: &Path) -> bool {
+    matches!(
+        crate::git::git_dir_link(path),
+        Some(crate::git::GitDirLink::Linked(git_dir)) if !git_dir.exists()
+    )
 }
 
 /// The members of the workweave at `workweave_dir` whose slot is a symlink.
@@ -1027,10 +1036,23 @@ pub fn scan_uninitialized_submodules(worktree_path: &Path) -> Vec<String> {
 pub(crate) struct BirthOutcome {
     owned: OwnedRef,
     birth: RefBirth,
+    receipted: ReceiptedBranch,
     pub(crate) failure: Option<anyhow::Error>,
     /// How the born worktree's files were placed, when they were shared and
     /// the backend could say.
     pub(crate) placement: Option<FilePlacement>,
+}
+
+/// What a birth does with a branch of its name that an ownership receipt
+/// covers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReceiptedBranch {
+    /// A workweave being created: a leftover still at its recorded tip is
+    /// replaced, and one that moved is refused.
+    Replace,
+    /// A workweave's own member being restored: the branch is checked out
+    /// where it stands, never moved or deleted.
+    Attach,
 }
 
 /// Where a born worktree's tracked files come from.
@@ -1054,6 +1076,10 @@ impl BirthOutcome {
     /// up later.
     pub(crate) fn into_authored(self, registry: &mut RefRegistry) -> anyhow::Result<()> {
         match self.birth {
+            RefBirth::Adopted if self.receipted == ReceiptedBranch::Attach => match self.failure {
+                Some(e) => Err(e),
+                None => Ok(()),
+            },
             RefBirth::Adopted => {
                 let store = self.owned.store().to_path_buf();
                 registry.retract(&store, self.owned.name())?;
@@ -1090,18 +1116,64 @@ pub(crate) fn receipt_store_for(vcs: &dyn Vcs, checkout: &Path) -> PathBuf {
 
 /// A member worktree [`materialize_member`] gave a workweave.
 pub(crate) struct Materialized {
-    /// The revision it was born at.
+    /// The revision its HEAD stands at.
     pub(crate) at: ResolvedRevisionId,
     /// How its files were placed, when the backend could say.
     pub(crate) files: Option<FilePlacement>,
+    /// What survived in the canonical clone for it, and so what was done.
+    pub(crate) relink: Relink,
+    /// The workweave's ephemeral branch it is on.
+    pub(crate) branch: EphemeralRefName,
+}
+
+/// How [`materialize_member`] gave a workweave its member's worktree, decided
+/// by what the canonical clone still held for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Relink {
+    /// The clone still registered the checkout; only its link was rewritten,
+    /// so HEAD, index and files are as they were.
+    Repaired,
+    /// The workweave's branch survived and the checkout was put on it where
+    /// it stands.
+    Attached,
+    /// Neither survived: the branch was created at the revision asked for.
+    Created,
+}
+
+impl Materialized {
+    /// What was done, for a line naming the checkout before it.
+    pub(crate) fn summary(&self) -> String {
+        let at = self.at.id().short();
+        let branch = &self.branch;
+        match self.relink {
+            Relink::Repaired => format!(
+                "relinked through the registration the canonical clone kept, on `{branch}` at \
+                 {at}"
+            ),
+            Relink::Attached => format!("attached to its branch `{branch}` at its own tip {at}"),
+            Relink::Created => format!("on branch `{branch}`, created at {at}"),
+        }
+    }
 }
 
 /// Give the workweave at `workweave_dir` the workspace it lacks for
-/// `repo_path`: an ephemeral worktree of the canonical clone under
-/// `primary_root`, born at `start` with its files shared where they can be,
-/// settled for `role`, and its submodules populated as `submodules` asks. A
-/// symlink in the slot, dangling or not, is unlinked first; what it pointed
-/// at is never touched.
+/// `repo_path`: nothing at the slot, a symlink there (unlinked first; what it
+/// pointed at is never touched), or a checkout whose link to the canonical
+/// clone under `primary_root` dangles.
+///
+/// What the canonical clone still holds decides how, and no ref is moved or
+/// deleted to get there:
+/// - a registration of the slot: the link is repaired;
+/// - the workweave's ephemeral branch: the worktree is attached to it at its
+///   own tip, which may hold commits the lock does not;
+/// - neither: the branch is created at `start`.
+///
+/// A registration whose directory is gone is dropped first, unless it is
+/// locked. A dangling checkout keeps its files: they are registered in place.
+///
+/// With [`ReceiptedBranch::Replace`] a surviving branch is not attached: the
+/// worktree must stand at `start`, so the branch is replaced as a workweave
+/// create would replace it, and refused if it moved.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn materialize_member(
     vcs: &dyn Vcs,
@@ -1113,6 +1185,7 @@ pub(crate) fn materialize_member(
     role: Role,
     submodules: Submodules,
     start: &str,
+    receipted: ReceiptedBranch,
 ) -> anyhow::Result<Materialized> {
     let canonical = primary_root.join(repo_path.as_path());
     if !canonical.exists() {
@@ -1124,9 +1197,6 @@ pub(crate) fn materialize_member(
             canonical.display()
         );
     }
-    let start = vcs
-        .resolve_revision(&canonical, start)
-        .with_context(|| format!("failed to resolve {start} in canonical clone"))?;
     let dest = workweave_dir.join(repo_path.as_path());
     if is_symlinked_member(&dest) {
         crate::symlink::remove(&dest)
@@ -1136,30 +1206,134 @@ pub(crate) fn materialize_member(
         std::fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
+    let branch = EphemeralRefName::mint(
+        &WorkweaveId {
+            project: project.clone(),
+            name: workweave.clone(),
+        }
+        .flat(),
+    );
+    let in_place = is_dangling_link(&dest);
+    if in_place {
+        if let Some(registration) = vcs.worktree_registration(&canonical, &dest)? {
+            vcs.reattach_registered_worktree(&canonical, &dest, &registration)
+                .with_context(|| format!("cannot relink {repo_path}"))?;
+            return Ok(Materialized {
+                at: vcs.head_revision(&dest)?,
+                files: None,
+                relink: Relink::Repaired,
+                branch,
+            });
+        }
+    } else if vcs.prune_stale_worktree_registration(&canonical, &dest)? == RegistrationPrune::Locked
+    {
+        crate::refuse!(
+            RefusalKind::WorkweaveDrift,
+            "{repo_path}: the canonical clone at {} holds a locked registration of {}, whose \
+             directory is gone, so no worktree can be made there. Unlock it with `git -C {} \
+             worktree unlock {}` if nothing else uses it, then re-run.",
+            canonical.display(),
+            dest.display(),
+            canonical.display(),
+            dest.display(),
+        );
+    }
+
     let mut registry = RefRegistry::for_project(primary_root, project);
-    let outcome = birth_ephemeral_worktree(
-        vcs,
-        &mut registry,
-        &canonical,
-        &dest,
-        &EphemeralRefName::mint(
-            &WorkweaveId {
-                project: project.clone(),
-                name: workweave.clone(),
-            }
-            .flat(),
+    let store = receipt_store_for(vcs, &canonical);
+    let raw = branch.to_raw();
+    let surviving = match receipted {
+        ReceiptedBranch::Attach => vcs.resolve_local_branch_tip(&store, &raw)?,
+        ReceiptedBranch::Replace => None,
+    };
+    let (at, relink) = match surviving {
+        Some(tip) => (tip, Relink::Attached),
+        None => (
+            vcs.resolve_revision(&canonical, start)
+                .with_context(|| format!("failed to resolve {start} in canonical clone"))?,
+            Relink::Created,
         ),
-        start.clone(),
-        WorktreeFiles::Shared(&Filesystem, role),
-    )
-    .with_context(|| format!("cannot materialize {repo_path}"))?;
-    let files = outcome.placement;
-    outcome
-        .into_authored(&mut registry)
-        .with_context(|| format!("worktree add for {repo_path} failed"))?;
+    };
+    let files = if in_place {
+        attach_in_place(
+            vcs,
+            &mut registry,
+            &store,
+            &canonical,
+            &dest,
+            &branch,
+            &at,
+            relink,
+        )
+        .with_context(|| format!("cannot relink {repo_path}"))?;
+        None
+    } else {
+        let outcome = birth_ephemeral_worktree(
+            vcs,
+            &mut registry,
+            &canonical,
+            &dest,
+            &branch,
+            at.clone(),
+            WorktreeFiles::Shared(&Filesystem, role),
+            receipted,
+        )
+        .with_context(|| format!("cannot materialize {repo_path}"))?;
+        let files = outcome.placement;
+        outcome
+            .into_authored(&mut registry)
+            .with_context(|| format!("worktree add for {repo_path} failed"))?;
+        files
+    };
     crate::settle::settle(vcs, &dest, role)?;
     populate_member_submodules(vcs, &dest, repo_path, role, submodules, "rwv: ");
-    Ok(Materialized { at: start, files })
+    Ok(Materialized {
+        at,
+        files,
+        relink,
+        branch,
+    })
+}
+
+/// Register the files standing at `dest` as a worktree on `branch`: attached
+/// at `at`, its tip, when it exists, created there under a fresh receipt
+/// otherwise. A branch rwv holds no receipt for is not rwv's to check out.
+#[allow(clippy::too_many_arguments)]
+fn attach_in_place(
+    vcs: &dyn Vcs,
+    registry: &mut RefRegistry,
+    store: &Path,
+    canonical: &Path,
+    dest: &Path,
+    branch: &EphemeralRefName,
+    at: &ResolvedRevisionId,
+    relink: Relink,
+) -> anyhow::Result<()> {
+    let raw = branch.to_raw();
+    let receipt = registry.lookup(store, &raw)?;
+    match relink {
+        Relink::Attached => {
+            if receipt.is_none() {
+                crate::refuse!(
+                    RefusalKind::UnownedBranchInNamespace,
+                    "branch `{branch}` exists in {} at {} and rwv holds no ownership receipt \
+                     for it, so it is not rwv's to check out.\n\n\
+                     Rename or delete that branch yourself, then re-run.",
+                    store.display(),
+                    at.display_str(),
+                );
+            }
+            vcs.register_worktree_in_place(canonical, dest, &raw, None)?;
+        }
+        Relink::Created | Relink::Repaired => {
+            if receipt.is_some() {
+                registry.retract(store, &raw)?;
+            }
+            registry.record_created(store, branch.clone(), at.clone())?;
+            vcs.register_worktree_in_place(canonical, dest, &raw, Some(at))?;
+        }
+    }
+    Ok(())
 }
 
 /// Whether `store`, the store the VCS resolved for `checkout`, is the one
@@ -1221,6 +1395,7 @@ pub(crate) fn replace_standalone_member(
                 role,
                 submodules,
                 at.id().as_str(),
+                ReceiptedBranch::Replace,
             )
         });
     match born {
@@ -1407,6 +1582,7 @@ fn is_hook_rejection(e: &anyhow::Error) -> bool {
 /// - **receipt, no ref** — a dangling receipt (crash between the receipt and
 ///   the ref). Retract it and record afresh, so `created_at` describes the ref
 ///   this call is about to write rather than a previous attempt's start point.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn birth_ephemeral_worktree(
     vcs: &dyn Vcs,
     registry: &mut RefRegistry,
@@ -1415,6 +1591,7 @@ pub(crate) fn birth_ephemeral_worktree(
     ephemeral: &EphemeralRefName,
     start: ResolvedRevisionId,
     files: WorktreeFiles<'_>,
+    receipted: ReceiptedBranch,
 ) -> anyhow::Result<BirthOutcome> {
     let store = receipt_store_for(vcs, source_repo);
     let raw = ephemeral.to_raw();
@@ -1460,6 +1637,7 @@ pub(crate) fn birth_ephemeral_worktree(
             tip = tip.display_str(),
             start = start.display_str(),
         ),
+        (Some(_), Some(_)) if receipted == ReceiptedBranch::Attach => {}
         (Some(recorded), Some(tip)) => match DeletionWarrant::unmoved(vcs, &recorded) {
             Some(warrant) => {
                 // Stale leftover of a previous failed create: the ref is still
@@ -1472,8 +1650,10 @@ pub(crate) fn birth_ephemeral_worktree(
                 "branch `{ephemeral}` in {store} is recorded as rwv's but has moved since \
                  rwv created it: recorded at {recorded_tip}, now at {tip}. Refusing to \
                  destroy it to make room for a new workweave.\n\n\
-                 Merge or delete those commits, then re-run; the create would have \
-                 started the branch at {start}.",
+                 Create the workweave under a different name, or keep those commits \
+                 under another branch name (`git -C {store} branch -m {ephemeral} \
+                 <new-name>`) and re-run. Deleting the branch instead discards them. The \
+                 create would have started the branch at {start}.",
                 store = store.display(),
                 recorded_tip = recorded.created_at().display_str(),
                 tip = tip.display_str(),
@@ -1514,6 +1694,7 @@ pub(crate) fn birth_ephemeral_worktree(
     Ok(BirthOutcome {
         owned,
         birth,
+        receipted,
         failure,
         placement,
     })
@@ -1970,6 +2151,7 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
                         &ephemeral,
                         start,
                         WorktreeFiles::Shared(&Filesystem, entry.role),
+                        ReceiptedBranch::Replace,
                     )
                 }) {
                 Ok(outcome) => {
@@ -2079,6 +2261,7 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
                     &ephemeral,
                     start,
                     WorktreeFiles::Written,
+                    ReceiptedBranch::Replace,
                 )
             }) {
             Ok(outcome) => {
@@ -3895,7 +4078,8 @@ pub struct WorkweaveLogOutput {
 
 fn missing_checkout_note(which: &str, path: &Path) -> String {
     format!(
-        "{which} checkout missing at {}; run `rwv fetch` in that workweave to re-materialize it",
+        "{which} checkout missing at {}; run `rwv fetch` in that weave to restore it, then \
+         `rwv doctor --fix` at the primary weave to relink any workweave checkouts of it",
         path.display()
     )
 }
@@ -3956,6 +4140,14 @@ pub fn workweave_log(
     }
 
     let manifest = load_manifest(ctx.primary_path(), &project)?;
+    let branch = EphemeralRefName::mint(
+        &WorkweaveId {
+            project: project.clone(),
+            name: ww_name.clone(),
+        }
+        .flat(),
+    )
+    .to_raw();
 
     let mut repos: Vec<WorkweaveLogRepo> = Vec::new();
     for (repo_path, entry) in manifest.iter_entries() {
@@ -4005,33 +4197,42 @@ pub fn workweave_log(
         let mut diff_base: Option<CommitId> = None;
         let mut diff_text: Option<String> = None;
 
-        if let Some(parent_rev) = &parent_tip {
-            if head.is_some() {
-                if diff {
-                    // The workweave's unique work vs the parent, anchored at
-                    // their common ancestor so a parent that advanced after
-                    // the fork does not show phantom reversals.
-                    match vcs.unique_diff(&ww_repo, parent_rev) {
-                        Ok(ud) => {
-                            diff_base = ud.base;
-                            diff_text = Some(ud.text);
-                        }
-                        Err(e) => note = Some(format!("diff failed: {e:#}")),
+        let canonical = ctx.primary_path().join(&repo_rel);
+        let tip_and_store = match &head {
+            Some(head) => Some((head.clone(), ww_repo.clone())),
+            None if !ww_repo.exists() => vcs
+                .resolve_local_branch_tip(&canonical, &branch)
+                .ok()
+                .flatten()
+                .map(|tip| (tip, canonical.clone())),
+            None => None,
+        };
+
+        if let (Some(parent_rev), Some((tip, store))) = (&parent_tip, &tip_and_store) {
+            if !diff {
+                match vcs.unique_commits(store, tip, parent_rev) {
+                    Ok(entries) => {
+                        unique_commits = entries
+                            .into_iter()
+                            .map(|c| WorkweaveLogCommit {
+                                short: c.id.short().to_owned(),
+                                sha: c.id,
+                                subject: c.subject,
+                            })
+                            .collect();
                     }
-                } else {
-                    match vcs.unique_commits(&ww_repo, parent_rev) {
-                        Ok(entries) => {
-                            unique_commits = entries
-                                .into_iter()
-                                .map(|c| WorkweaveLogCommit {
-                                    short: c.id.short().to_owned(),
-                                    sha: c.id,
-                                    subject: c.subject,
-                                })
-                                .collect();
-                        }
-                        Err(e) => note = Some(format!("log failed: {e:#}")),
+                    Err(e) => note = Some(format!("log failed: {e:#}")),
+                }
+            } else if head.is_some() {
+                // The workweave's unique work vs the parent, anchored at
+                // their common ancestor so a parent that advanced after
+                // the fork does not show phantom reversals.
+                match vcs.unique_diff(&ww_repo, parent_rev) {
+                    Ok(ud) => {
+                        diff_base = ud.base;
+                        diff_text = Some(ud.text);
                     }
+                    Err(e) => note = Some(format!("diff failed: {e:#}")),
                 }
             }
         }
@@ -4079,7 +4280,7 @@ pub fn workweave_log(
         let mut diff_text: Option<String> = None;
 
         if let Some(parent_rev) = &parent_tip {
-            if head.is_some() {
+            if let Some(head) = &head {
                 if diff {
                     match vcs.unique_diff(&ww_project, parent_rev) {
                         Ok(ud) => {
@@ -4089,7 +4290,7 @@ pub fn workweave_log(
                         Err(e) => note = Some(format!("diff failed: {e:#}")),
                     }
                 } else {
-                    match vcs.unique_commits(&ww_project, parent_rev) {
+                    match vcs.unique_commits(&ww_project, head, parent_rev) {
                         Ok(entries) => {
                             unique_commits = entries
                                 .into_iter()
@@ -4384,6 +4585,7 @@ mod tests {
             Role::Owned,
             Submodules::Local,
             "main",
+            ReceiptedBranch::Attach,
         )
         .err()
         .expect("a member with no canonical clone is refused");
@@ -4762,6 +4964,7 @@ mod tests {
             &ephemeral,
             fake_rev('a'),
             WorktreeFiles::Written,
+            ReceiptedBranch::Replace,
         )
         .unwrap();
 
@@ -4811,6 +5014,7 @@ mod tests {
             &ephemeral,
             fake_rev('a'),
             WorktreeFiles::Written,
+            ReceiptedBranch::Replace,
         ) {
             Err(e) => e,
             Ok(_) => panic!("a ref rwv holds no receipt for must refuse, not be adopted"),
@@ -4829,6 +5033,96 @@ mod tests {
             "the refusal must land before anything is written"
         );
         assert!(registry.lookup(&store, &raw).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_create_over_a_receipted_branch_that_moved_names_the_exits_that_keep_it_first() {
+        let (_tmp, primary, project, store) = fake_weave();
+        let mut registry = RefRegistry::for_project(&primary, &project);
+        let ephemeral = EphemeralRefName::mint(
+            &crate::manifest::WorkweaveId {
+                project: project.clone(),
+                name: WorkweaveName::new("ww").unwrap(),
+            }
+            .flat(),
+        );
+        registry
+            .record_created(&store, ephemeral.clone(), fake_rev('a'))
+            .unwrap();
+        let fake = FakeVcs::new();
+        fake.put_branch(&store, &ephemeral.to_raw(), fake_rev('c'));
+
+        let err = match birth_ephemeral_worktree(
+            &fake,
+            &mut registry,
+            &store,
+            &primary.join("wt"),
+            &ephemeral,
+            fake_rev('a'),
+            WorktreeFiles::Written,
+            ReceiptedBranch::Replace,
+        ) {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("a receipted branch that moved must refuse a create"),
+        };
+        let discards = err
+            .find("Deleting the branch instead discards them")
+            .unwrap_or_else(|| panic!("{err}"));
+        for exit in ["under a different name", "branch -m"] {
+            assert!(
+                err.find(exit).is_some_and(|at| at < discards),
+                "`{exit}` comes before deleting: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn restoring_a_member_attaches_its_receipted_branch_where_it_stands() {
+        let (_tmp, primary, project, store) = fake_weave();
+        let mut registry = RefRegistry::for_project(&primary, &project);
+        let ephemeral = EphemeralRefName::mint(
+            &crate::manifest::WorkweaveId {
+                project: project.clone(),
+                name: WorkweaveName::new("ww").unwrap(),
+            }
+            .flat(),
+        );
+        let raw = ephemeral.to_raw();
+        registry
+            .record_created(&store, ephemeral.clone(), fake_rev('a'))
+            .unwrap();
+        let fake = FakeVcs::new();
+        fake.put_branch(&store, &raw, fake_rev('c'));
+
+        let outcome = birth_ephemeral_worktree(
+            &fake,
+            &mut registry,
+            &store,
+            &primary.join("wt"),
+            &ephemeral,
+            fake_rev('c'),
+            WorktreeFiles::Written,
+            ReceiptedBranch::Attach,
+        )
+        .unwrap();
+        outcome.into_authored(&mut registry).unwrap();
+
+        assert!(
+            !fake.calls().contains(&VcsCall::DestroyLocalRef),
+            "restoring never deletes the branch"
+        );
+        assert_eq!(
+            fake.resolve_local_branch_tip(&store, &raw).unwrap(),
+            Some(fake_rev('c'))
+        );
+        assert_eq!(
+            registry
+                .lookup(&store, &raw)
+                .unwrap()
+                .map(|r| r.created_at().clone()),
+            Some(fake_rev('a')),
+            "the receipt is the one rwv recorded, kept"
+        );
     }
 
     #[test]
@@ -4858,6 +5152,7 @@ mod tests {
             &ephemeral,
             fake_rev('a'),
             WorktreeFiles::Written,
+            ReceiptedBranch::Replace,
         )
         .unwrap();
         assert!(outcome.failure.is_some());

@@ -626,6 +626,33 @@ impl Vcs for FakeVcs {
         unsupported("live_worktree_branches")
     }
 
+    fn worktree_registration(
+        &self,
+        _store: &Path,
+        _checkout: &Path,
+    ) -> Result<Option<PathBuf>, VcsError> {
+        unsupported("worktree_registration")
+    }
+
+    fn reattach_registered_worktree(
+        &self,
+        _store: &Path,
+        _checkout: &Path,
+        _registration: &Path,
+    ) -> Result<(), VcsError> {
+        unsupported("reattach_registered_worktree")
+    }
+
+    fn register_worktree_in_place(
+        &self,
+        _store: &Path,
+        _checkout: &Path,
+        _branch: &RawRefName,
+        _create_at: Option<&ResolvedRevisionId>,
+    ) -> Result<(), VcsError> {
+        unsupported("register_worktree_in_place")
+    }
+
     fn list_savepoints(&self, _repo: &Path) -> Result<SavepointListing, VcsError> {
         unsupported("list_savepoints")
     }
@@ -660,6 +687,7 @@ impl Vcs for FakeVcs {
     fn unique_commits(
         &self,
         _repo: &Path,
+        _tip: &ResolvedRevisionId,
         _parent_tip: &ResolvedRevisionId,
     ) -> Result<Vec<CommitSummary>, VcsError> {
         unsupported("unique_commits")

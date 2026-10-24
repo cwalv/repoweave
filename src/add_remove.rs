@@ -97,6 +97,7 @@ fn create_worktree_in_workweave(
         role,
         submodules,
         start.id().as_str(),
+        crate::workweave::ReceiptedBranch::Attach,
     )
     .with_context(|| {
         format!(

@@ -89,8 +89,8 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`unreadable-workweave-index`](#unreadable-workweave-index) | Error | Report-only |
 | [`workweave-tree-integrity`](#workweave-tree-integrity) / `dangling-parent`, `unregistered-workweave`, `stale-registry-entry` | Warning | Auto-fixable |
 | [`workweave-tree-integrity`](#workweave-tree-integrity) / `parent-chain-anomaly`, `unregistered-dir`, `foreign-primary`, `foreign-primary-other-workspace`, `tracked-index`, `unreadable-marker`, `misnamed-dir`, `nested-workweave-dir` | Warning | Report-only |
-| [`workweave-drift`](#workweave-drift) / `missing`, `symlink` | Error | Auto-fixable |
-| [`workweave-drift`](#workweave-drift) / `missing-unfetched`, `symlink-unfetched` | Error | Report-only |
+| [`workweave-drift`](#workweave-drift) / `missing`, `symlink`, `dangling-link` | Error | Auto-fixable |
+| [`workweave-drift`](#workweave-drift) / `missing-unfetched`, `symlink-unfetched`, `dangling-link-unfetched` | Error | Report-only |
 | [`workweave-drift`](#workweave-drift) / `extra` | Warning | Report-only |
 | [`member-permissions`](#member-permissions) (`writable-reference`, `read-only-member`) | Warning | Auto-fixable |
 | [`role-disagreement`](#role-disagreement) | Warning | Report-only |
@@ -792,18 +792,37 @@ not operate on one, so the verbs that walk a workweave's members refuse with
 this token until it is replaced. Replacing it unlinks the symlink and never
 touches what it pointed at.
 
+A checkout whose worktree link names a git directory that is not there also
+counts as no worktree: git cannot open it, though its files stand. Doctor
+reports it as such, never as live edits.
+
+Every repair here gives the member back through what the canonical clone
+still holds for it, and moves or deletes no branch:
+
+- a registration of the checkout: only the link is rewritten, so HEAD, index
+  and files are as they were;
+- the workweave's branch: the worktree is put on it at its own tip, which may
+  hold commits `rwv.lock` does not;
+- neither: the branch is created at the revision `rwv.lock` pins, and `--fix`
+  says so.
+
+A registration of a removed checkout directory is dropped first, unless it is
+locked. `rwv fetch` run in the workweave takes the same path.
+
 #### `missing`
 
 **Error. Auto-fixable.** Nothing is at the member's slot, and the canonical
-clone holds the revision `rwv.lock` pins.
+clone holds the workweave's branch or the revision `rwv.lock` pins.
 
-**What to do:** `rwv doctor --fix` creates the worktree at that revision. No
+**What to do:** `rwv doctor --fix` creates the worktree on the workweave's
+branch at its own tip, or at the pinned revision where the branch is gone. No
 network is involved.
 
 #### `missing-unfetched`
 
 **Error. Report-only.** Nothing is at the member's slot, and the canonical
-clone does not hold the pinned revision, or is not on disk.
+clone holds neither the workweave's branch nor the pinned revision, or is not
+on disk.
 
 **What to do:** where the canonical clone is not on disk, `rwv fetch` run in
 the workweave clones it at the pinned revision and creates the worktree. Where
@@ -826,6 +845,29 @@ revision.
 clone does not hold the pinned revision, or is not on disk.
 
 **What to do:** as for `missing-unfetched`; the worktree replaces the link.
+
+#### `dangling-link`
+
+**Error. Auto-fixable.** A checkout stands at the member's slot, but its link
+to the canonical clone names a git directory that is not there: the canonical
+clone was cloned again, or its registration was removed. The canonical clone
+holds its registration of the checkout, the workweave's branch, or the pinned
+revision.
+
+**What to do:** `rwv doctor --fix` relinks the checkout, from the workweave or
+from the primary weave, keeping every file in place. Where it is put on the
+branch rather than through a surviving registration, the index is read from the
+branch tip, so files that differ from it read as edits.
+
+#### `dangling-link-unfetched`
+
+**Error. Report-only.** As `dangling-link`, and the canonical clone holds
+neither its registration of the checkout, the workweave's branch nor the
+pinned revision.
+
+**What to do:** run `rwv fetch --project <project>` at the primary weave, then
+`rwv doctor --fix`. A canonical clone that is not on disk at all is reported as
+[`missing-canonical-clone`](#missing-canonical-clone) instead.
 
 #### `extra`
 
@@ -1019,9 +1061,15 @@ primary-weave clone it was linked from — is gone from disk. git commands in
 the dependent worktree then fail opaquely; this finding names the true root
 cause instead of letting the failure be misread as live local edits.
 
-**What to do:** `rwv fetch` re-materializes the canonical in place, then
-re-run `rwv doctor`. There is no auto-fix because doctor never clones —
-network access stays behind explicit verbs.
+Doctor reports it from the primary weave and from inside the workweave.
+
+**What to do:** run `rwv fetch --project <project>` at the primary weave to
+clone it again, then `rwv doctor --fix` there, which relinks every workweave
+checkout of it as [`dangling-link`](#dangling-link) describes, keeping their
+files. A branch that lived only in the deleted clone is gone with it, so the
+workweave's branch is created again at the pinned revision. There is no
+auto-fix for the clone itself because doctor never clones — network access
+stays behind explicit verbs.
 
 A verb that needs the canonical clone to give a workweave its worktree
 refuses with this token, and `rwv doctor --fix` gives the same cause as a

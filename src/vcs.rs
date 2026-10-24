@@ -3097,6 +3097,38 @@ pub trait Vcs: Send + Sync {
     /// [`list_stale_worktree_registrations`]: Vcs::list_stale_worktree_registrations
     fn live_worktree_branches(&self, repo: &Path) -> Result<Vec<RawRefName>, VcsError>;
 
+    /// The administrative record through which `store` registers a worktree
+    /// at `checkout`, found from the record's own note of where its checkout
+    /// is, so it answers whether or not `checkout`'s link still resolves.
+    fn worktree_registration(
+        &self,
+        store: &Path,
+        checkout: &Path,
+    ) -> Result<Option<PathBuf>, VcsError>;
+
+    /// Point `checkout` back at `registration`, a record of `store` that
+    /// names `checkout` as its worktree. HEAD, index and files are kept as
+    /// they stand: the checkout is relinked, not checked out.
+    fn reattach_registered_worktree(
+        &self,
+        store: &Path,
+        checkout: &Path,
+        registration: &Path,
+    ) -> Result<(), VcsError>;
+
+    /// Register `checkout`, a directory of files whose link to a store
+    /// resolves nowhere, as a worktree of `store` on branch `branch`:
+    /// created at `create_at` when given, attached where it stands
+    /// otherwise. No file in `checkout` is written, so what differs from the
+    /// branch tip reads as an edit.
+    fn register_worktree_in_place(
+        &self,
+        store: &Path,
+        checkout: &Path,
+        branch: &RawRefName,
+        create_at: Option<&ResolvedRevisionId>,
+    ) -> Result<(), VcsError>;
+
     /// Everything the savepoint namespace of `repo` holds: the key of every
     /// savepoint rwv filed, and the refs under the namespace that no key
     /// names.
@@ -3173,8 +3205,8 @@ pub trait Vcs: Send + Sync {
     /// Returns `(0, 0)` on any VCS error.
     fn ahead_behind(&self, repo: &Path, savepoint: &CommitId, tip: &CommitId) -> (usize, usize);
 
-    /// List the commits reachable from `repo`'s current tip but NOT from
-    /// `parent_tip`, newest first.
+    /// List the commits reachable from `tip` but NOT from `parent_tip`,
+    /// newest first, read from `repo`'s store.
     ///
     /// These are the workweave's UNIQUE commits: the work that landed on top
     /// of the parent. Returns an empty vec when nothing landed on top of the
@@ -3188,6 +3220,7 @@ pub trait Vcs: Send + Sync {
     fn unique_commits(
         &self,
         repo: &Path,
+        tip: &ResolvedRevisionId,
         parent_tip: &ResolvedRevisionId,
     ) -> Result<Vec<CommitSummary>, VcsError>;
 

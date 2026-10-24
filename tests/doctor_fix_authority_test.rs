@@ -1386,6 +1386,10 @@ fn repair_bindings() -> Vec<(&'static str, Binding)> {
             "created the worktree for",
             Findings(&["workweave-drift/missing", "workweave-drift/symlink"]),
         ),
+        (
+            "relinked the worktree for",
+            Findings(&["workweave-drift/dangling-link"]),
+        ),
         // --- repair_standalone_members ---------------------------------
         (
             "replaced the full clone of",

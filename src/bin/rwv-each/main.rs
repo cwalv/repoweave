@@ -60,8 +60,9 @@ fn execute(cli: &Cli) -> anyhow::Result<u8> {
                 ));
             } else {
                 say(format!(
-                    "  {}: not present on disk; run `rwv fetch`",
-                    repo.path
+                    "  {}: not present on disk; {}",
+                    repo.path,
+                    report::RESTORE
                 ));
             }
         }

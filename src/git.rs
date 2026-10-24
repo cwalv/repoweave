@@ -2597,6 +2597,108 @@ impl Vcs for GitVcs {
         Ok(RegistrationPrune::Pruned)
     }
 
+    fn worktree_registration(
+        &self,
+        store: &Path,
+        checkout: &Path,
+    ) -> Result<Option<PathBuf>, VcsError> {
+        let common = Self::run_trimmed(
+            ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            &Self::work_dir_for_store(store),
+        )?;
+        let Ok(registrations) = std::fs::read_dir(Path::new(&common).join("worktrees")) else {
+            return Ok(None);
+        };
+        let link = store_path_in(checkout);
+        Ok(registrations
+            .flatten()
+            .map(|r| r.path())
+            .find(|registration| {
+                std::fs::read_to_string(registration.join("gitdir"))
+                    .is_ok_and(|named| same_location(Path::new(named.trim()), &link))
+            }))
+    }
+
+    fn reattach_registered_worktree(
+        &self,
+        store: &Path,
+        checkout: &Path,
+        registration: &Path,
+    ) -> Result<(), VcsError> {
+        let link = store_path_in(checkout);
+        std::fs::write(&link, format!("gitdir: {}\n", registration.display())).map_err(|e| {
+            VcsError::Io {
+                ctx: format!("failed to write {}", link.display()),
+                source: e,
+            }
+        })?;
+        let checkout_arg = GitArg::from_path(checkout, "worktree path")?;
+        Self::run(
+            Argv::from(["worktree", "repair"]).path(&checkout_arg),
+            &Self::work_dir_for_store(store),
+        )?;
+        Ok(())
+    }
+
+    fn register_worktree_in_place(
+        &self,
+        store: &Path,
+        checkout: &Path,
+        branch: &RawRefName,
+        create_at: Option<&ResolvedRevisionId>,
+    ) -> Result<(), VcsError> {
+        let store = Self::work_dir_for_store(store);
+        let io = |ctx: String| move |source| VcsError::Io { ctx, source };
+        let (Some(parent), Some(leaf)) = (checkout.parent(), checkout.file_name()) else {
+            return Err(io(format!("{} names no directory", checkout.display()))(
+                std::io::Error::from(std::io::ErrorKind::InvalidInput),
+            ));
+        };
+        // `git worktree add` will not register a directory that already holds
+        // files, so the registration is made on an empty sibling under the
+        // same leaf name and its link moved into `checkout`.
+        let staging = parent.join(format!(".{}.rwv-relink", leaf.to_string_lossy()));
+        let staged = staging.join(leaf);
+        std::fs::create_dir(&staging).map_err(io(format!(
+            "failed to create {} to register {}",
+            staging.display(),
+            checkout.display()
+        )))?;
+        let staged_arg = GitArg::from_path(&staged, "worktree path")?;
+        let add = Argv::from(["worktree", "add", "--no-checkout"]);
+        let add = match create_at {
+            Some(at) => add
+                .text("-b")
+                .text(branch.as_str())
+                .path(&staged_arg)
+                .text(at.id().as_str()),
+            None => add.path(&staged_arg).text(branch.as_str()),
+        };
+        if let Err(e) = Self::run_awaiting_peers(add, &store) {
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(e);
+        }
+        let link = store_path_in(checkout);
+        if std::fs::symlink_metadata(&link).is_ok() {
+            std::fs::remove_file(&link)
+                .map_err(io(format!("failed to remove {}", link.display())))?;
+        }
+        std::fs::rename(store_path_in(&staged), &link).map_err(io(format!(
+            "failed to move the new link into {}",
+            link.display()
+        )))?;
+        std::fs::remove_dir(&staged)
+            .and_then(|()| std::fs::remove_dir(&staging))
+            .map_err(io(format!("failed to remove {}", staging.display())))?;
+        let checkout_arg = GitArg::from_path(checkout, "worktree path")?;
+        Self::run(
+            Argv::from(["worktree", "repair"]).path(&checkout_arg),
+            &store,
+        )?;
+        Self::run(["reset", "--quiet"], checkout)?;
+        Ok(())
+    }
+
     fn list_savepoints(&self, repo: &Path) -> Result<SavepointListing, VcsError> {
         let prefix = format!("{SAVEPOINT_NAMESPACE}/");
         let output = Self::run_trimmed(["for-each-ref", "--format=%(refname)", &prefix], repo)?;
@@ -2663,13 +2765,12 @@ impl Vcs for GitVcs {
     fn unique_commits(
         &self,
         repo: &Path,
+        tip: &ResolvedRevisionId,
         parent_tip: &ResolvedRevisionId,
     ) -> Result<Vec<CommitSummary>, VcsError> {
-        // Resolve this workweave's current tip, then list `parent..tip`. The
-        // range excludes anything the parent already has, so a parent that
-        // advanced after the fork does not pollute the result.
-        let tip = Self::rev_parse(repo, "HEAD")?;
-        Self::log_range(repo, parent_tip.id(), &tip, None)
+        // `parent..tip` excludes anything the parent already has, so a parent
+        // that advanced after the fork does not pollute the result.
+        Self::log_range(repo, parent_tip.id(), tip.id(), None)
     }
 
     fn unique_diff(

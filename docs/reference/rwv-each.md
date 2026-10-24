@@ -53,7 +53,7 @@ The command runs with the repo's checkout as its working directory. Each command
 | `RWV_REPO_ROLE` | The repo's role |
 | `RWV_REPO_PATH` | The absolute path of the repo's checkout |
 
-A member repo whose checkout is absent from disk is not run; it is reported as not present and counts as a failure — `rwv fetch` restores it.
+A member repo whose checkout is absent from disk is not run; it is reported as not present and counts as a failure. `rwv fetch` restores it, and `rwv doctor --fix` then relinks the workweave checkouts of a canonical clone that `rwv fetch` cloned again.
 
 A bare command name is looked up on `PATH` once, before any repo runs, so every repo runs the same program and a typo fails once rather than once per repo. A relative `PATH` entry is read from the directory `rwv` was invoked from, or the `-C`/`-w` directory, never from a repo's checkout. A command spelled with a directory (`./scripts/test.sh`) is resolved inside each repo.
 

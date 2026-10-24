@@ -6,6 +6,29 @@ claim that nothing changed in them.
 
 ## Unreleased
 
+### A workweave checkout that is gone or cannot be opened is given back on its own branch
+
+A workweave member checkout removed by hand, or left unopenable when its
+canonical clone was deleted and cloned again, could not be restored by the
+advice rwv printed. `rwv fetch` in the workweave and `rwv doctor --fix` refused
+with `owned-branch-moved` and told the operator to delete the workweave's
+commits, or failed on the stale worktree registration; after
+`missing-canonical-clone`'s `rwv fetch`, the checkout stayed broken and doctor
+reported it as live edits.
+
+Both verbs now give the checkout back through what the canonical clone still
+holds for it, moving and deleting no branch: its registration of the checkout,
+whose link alone is rewritten; else the workweave's branch at its own tip,
+commits the lock does not hold included; else that branch created at the
+pinned revision, which `--fix` says. A checkout that keeps its files keeps
+them. Doctor reports an unopenable checkout as the new `workweave-drift`
+sub-kinds `dangling-link` and `dangling-link-unfetched`, never as live edits,
+and from inside the workweave too. `missing-canonical-clone` names
+`rwv fetch --project <project>` at the primary weave, then `rwv doctor --fix`.
+`rwv workweave log` lists a branch's unique commits while its checkout is
+missing, and it and `rwv each` name a repair that works. `owned-branch-moved`
+names keeping the commits before deleting them.
+
 ### `placement-disagreement` retires the workweaves holding the clone before the move
 
 Moving a canonical clone to the path its URL places it at strands every

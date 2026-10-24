@@ -182,11 +182,16 @@ impl<'a> Reporter<'a> {
     }
 }
 
+/// The repair for a member checkout that is not on disk, in the weave or the
+/// workweave `rwv each` ran in. In a workweave `rwv fetch` restores it on its
+/// own branch; in the primary weave it clones the member again, and the
+/// workweave checkouts of the deleted clone are relinked by `rwv doctor --fix`.
+pub const RESTORE: &str = "run `rwv fetch` to restore it, then `rwv doctor --fix` to relink any \
+                       workweave checkouts of it";
+
 fn text_note(outcome: &Outcome, failure: Option<&str>) -> Option<String> {
     match outcome.status {
-        EachOutcomeStatus::NotPresent => {
-            Some("not present on disk; run `rwv fetch` to restore it".to_owned())
-        }
+        EachOutcomeStatus::NotPresent => Some(format!("not present on disk; {RESTORE}")),
         EachOutcomeStatus::TimedOut => Some("timed out; its process tree was killed".to_owned()),
         _ => failure.map(str::to_owned),
     }
@@ -244,9 +249,7 @@ pub fn summary(outcomes: &[&Outcome], interrupted: bool) -> Option<String> {
         let why = match (outcome.status, outcome.exit_code, outcome.signal) {
             (EachOutcomeStatus::TimedOut, _, _) => "timed out".to_owned(),
             (EachOutcomeStatus::NotRun, _, _) => "not run".to_owned(),
-            (EachOutcomeStatus::NotPresent, _, _) => {
-                "not present on disk; run `rwv fetch`".to_owned()
-            }
+            (EachOutcomeStatus::NotPresent, _, _) => format!("not present on disk; {RESTORE}"),
             (_, Some(code), _) => format!("exit {code}"),
             (_, None, Some(signal)) => format!("killed by signal {signal}"),
             (_, None, None) => "failed to run".to_owned(),

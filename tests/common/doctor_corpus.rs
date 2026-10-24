@@ -124,6 +124,8 @@ pub fn case_token(v: &CheckViolation) -> String {
             DriftKind::Symlink => "workweave-drift/symlink".into(),
             DriftKind::SymlinkUnfetched => "workweave-drift/symlink-unfetched".into(),
             DriftKind::Extra => "workweave-drift/extra".into(),
+            DriftKind::DanglingLink => "workweave-drift/dangling-link".into(),
+            DriftKind::DanglingLinkUnfetched => "workweave-drift/dangling-link-unfetched".into(),
         },
         CheckViolation::IndexDrift { kind, .. } => match kind {
             IndexDriftKind::SafeToFix => "index-drift/safe-to-fix".into(),
@@ -347,6 +349,16 @@ pub fn corpus() -> Vec<CheckViolation> {
         CheckViolation::WorkweaveDrift {
             workweave: Some(workweave()),
             kind: DriftKind::Extra,
+            repo: repo(),
+        },
+        CheckViolation::WorkweaveDrift {
+            workweave: Some(workweave()),
+            kind: DriftKind::DanglingLink,
+            repo: repo(),
+        },
+        CheckViolation::WorkweaveDrift {
+            workweave: Some(workweave()),
+            kind: DriftKind::DanglingLinkUnfetched,
             repo: repo(),
         },
         CheckViolation::IndexDrift {

@@ -1738,6 +1738,7 @@ fn materialize_missing_repo(
                 entry.role,
                 entry.submodules,
                 start,
+                crate::workweave::ReceiptedBranch::Attach,
             )?
             .files);
         }
@@ -5734,6 +5735,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                         entry.role,
                         entry.submodules,
                         cwd_tip.id().as_str(),
+                        crate::workweave::ReceiptedBranch::Attach,
                     )
                 }) {
                     Ok(born) => {

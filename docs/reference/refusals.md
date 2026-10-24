@@ -726,8 +726,11 @@ a more specific entry than this one.
 moved since the receipt was written may carry someone else's work, and
 retracting it would destroy commits rwv never accounted for.
 
-**Exits.** Inspect the ref. If the new commits are wanted, move them somewhere
-that survives; if they are not, reset the ref to the recorded tip and re-run.
+**Exits.** For a workweave create, use a different workweave name, or keep
+the commits under another branch name (`git branch -m`) and re-run. Only when
+the commits are not wanted, reset the ref to the recorded tip and re-run.
+Restoring a member of an existing workweave never meets this refusal: it puts
+the worktree on the workweave's own branch where it stands.
 
 **Where this sits.** [Shared refs and drift](../explanation/joints/shared-refs-drift.md).
 

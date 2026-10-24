@@ -654,9 +654,9 @@ pub enum CheckViolation {
     /// `classify_working_tree_drift` would misattribute the failure as
     /// `LiveEdits`. This variant surfaces the true root cause instead.
     ///
-    /// Repair: `rwv fetch` (in-place, no SOURCE) re-materializes the canonical
-    /// (same as [`CheckViolation::DanglingReference`]), then re-run `rwv doctor` to verify.
-    /// No auto-fix — doctor never clones (network stays behind explicit verbs).
+    /// Repair: `rwv fetch --project <p>` at the primary weave clones it again,
+    /// and `rwv doctor --fix` there relinks this worktree. No auto-fix of the
+    /// clone itself — doctor never clones (network stays behind explicit verbs).
     MissingCanonicalClone {
         /// This finding only fires for workweave worktrees, never for
         /// primary-weave repos.
@@ -777,10 +777,11 @@ impl CheckViolation {
                 SubmoduleCommitKind::Unfetched => ReportOnly,
             },
             CheckViolation::WorkweaveDrift { kind, .. } => match kind {
-                DriftKind::Missing | DriftKind::Symlink => Auto,
-                DriftKind::MissingUnfetched | DriftKind::SymlinkUnfetched | DriftKind::Extra => {
-                    ReportOnly
-                }
+                DriftKind::Missing | DriftKind::Symlink | DriftKind::DanglingLink => Auto,
+                DriftKind::MissingUnfetched
+                | DriftKind::SymlinkUnfetched
+                | DriftKind::DanglingLinkUnfetched
+                | DriftKind::Extra => ReportOnly,
             },
             CheckViolation::IndexDrift { kind, .. } => match kind {
                 IndexDriftKind::SafeToFix => Auto,
@@ -910,7 +911,9 @@ impl CheckViolation {
                 DriftKind::Missing
                 | DriftKind::MissingUnfetched
                 | DriftKind::Symlink
-                | DriftKind::SymlinkUnfetched => Error,
+                | DriftKind::SymlinkUnfetched
+                | DriftKind::DanglingLink
+                | DriftKind::DanglingLinkUnfetched => Error,
             },
             CheckViolation::Provenance { sub_kind, .. } => match sub_kind {
                 ProvenanceKind::OriginUrlMismatch { .. }
@@ -1166,6 +1169,15 @@ pub enum DriftKind {
     /// A checkout exists for a path `rwv.lock` names and the manifest does
     /// not: a member removed by hand from `rwv.toml`.
     Extra,
+    /// A checkout at the slot whose link to the canonical clone names a git
+    /// directory that is not there, so git cannot open it; the canonical
+    /// clone holds what relinking it needs — its registration, the
+    /// workweave's branch, or the pinned revision.
+    DanglingLink,
+    /// A checkout at the slot whose link dangles, and the canonical clone is
+    /// not on disk, or holds neither the workweave's branch nor the pinned
+    /// revision.
+    DanglingLinkUnfetched,
 }
 
 /// Which spelling of the replay exclusion the project repo carries, which
@@ -4372,7 +4384,7 @@ pub fn scan_provenance(
         for (repo_path, entry) in project.manifest.iter_entries() {
             let vcs = vcs_for(entry.vcs_type);
             let repo_abs = workspace_dir.join(repo_path.as_path());
-            if !repo_abs.is_dir() {
+            if !repo_abs.is_dir() || crate::workweave::is_dangling_link(&repo_abs) {
                 continue;
             }
 
@@ -4422,7 +4434,7 @@ pub fn scan_provenance(
                 .map(|e| vcs_for(e.vcs_type))
                 .unwrap_or_else(crate::vcs::probe_vcs);
             let repo_abs = workspace_dir.join(repo_path.as_path());
-            if !repo_abs.is_dir() {
+            if !repo_abs.is_dir() || crate::workweave::is_dangling_link(&repo_abs) {
                 continue;
             }
 
@@ -6078,7 +6090,11 @@ fn member_slots(
     let mut push = |workweave: Option<WorkweaveId>, dir: &Path, project: &Project| {
         for (repo, entry) in project.manifest.iter_entries() {
             let checkout = dir.join(repo.as_path());
-            if checkout.is_symlink() || !checkout.is_dir() || !seen.insert(checkout.clone()) {
+            if checkout.is_symlink()
+                || !checkout.is_dir()
+                || crate::workweave::is_dangling_link(&checkout)
+                || !seen.insert(checkout.clone())
+            {
                 continue;
             }
             slots.push(MemberSlot {
@@ -6209,8 +6225,17 @@ fn repair_member_permissions(
         .collect()
 }
 
-/// A member of a workweave with no worktree there: nothing at its slot while
-/// the workweave's `rwv.lock` pins it, or a symlink.
+/// What stands at a [`MemberGap`]'s slot.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GapSlot {
+    Empty,
+    Symlink,
+    DanglingLink,
+}
+
+/// A member of a workweave with no usable worktree there, while the
+/// workweave's `rwv.lock` pins it: nothing at its slot, a symlink, or a
+/// checkout whose link dangles.
 struct MemberGap {
     workweave: WorkweaveId,
     workweave_dir: PathBuf,
@@ -6218,19 +6243,24 @@ struct MemberGap {
     vcs_type: crate::manifest::VcsType,
     role: Role,
     submodules: crate::manifest::Submodules,
-    symlinked: bool,
-    /// The pinned revision, when the canonical clone holds it; the worktree
-    /// can then be created without the network.
-    local_revision: Option<ResolvedRevisionId>,
+    slot: GapSlot,
+    /// The revision a worktree created afresh starts at.
+    revision: Option<String>,
+    /// Whether the canonical clone holds what the worktree needs — its
+    /// registration of the slot, the workweave's branch, or `revision` —
+    /// so `--fix` can make it without the network.
+    local: bool,
 }
 
 impl MemberGap {
     fn finding(&self) -> CheckViolation {
-        let kind = match (self.symlinked, self.local_revision.is_some()) {
-            (false, true) => DriftKind::Missing,
-            (false, false) => DriftKind::MissingUnfetched,
-            (true, true) => DriftKind::Symlink,
-            (true, false) => DriftKind::SymlinkUnfetched,
+        let kind = match (self.slot, self.local) {
+            (GapSlot::Empty, true) => DriftKind::Missing,
+            (GapSlot::Empty, false) => DriftKind::MissingUnfetched,
+            (GapSlot::Symlink, true) => DriftKind::Symlink,
+            (GapSlot::Symlink, false) => DriftKind::SymlinkUnfetched,
+            (GapSlot::DanglingLink, true) => DriftKind::DanglingLink,
+            (GapSlot::DanglingLink, false) => DriftKind::DanglingLinkUnfetched,
         };
         CheckViolation::WorkweaveDrift {
             workweave: Some(self.workweave.clone()),
@@ -6254,12 +6284,22 @@ fn scan_member_gaps(
 ) -> Vec<MemberGap> {
     let mut gaps = Vec::new();
     for (workweave, workweave_dir, loaded) in workweaves_in_scope(ctx, project_scope) {
+        let branch = crate::vcs::EphemeralRefName::mint(&workweave.flat()).to_raw();
         for (repo, entry) in loaded.manifest.iter_entries() {
-            let slot = workweave_dir.join(repo.as_path());
-            let symlinked = crate::workweave::is_symlinked_member(&slot);
-            if !symlinked && slot.exists() {
+            let slot_path = workweave_dir.join(repo.as_path());
+            let slot = if crate::workweave::is_symlinked_member(&slot_path) {
+                GapSlot::Symlink
+            } else if crate::workweave::is_dangling_link(&slot_path) {
+                if !ctx.primary_path().join(repo.as_path()).exists() {
+                    continue;
+                }
+                GapSlot::DanglingLink
+            } else if slot_path.exists() {
                 continue;
-            }
+            } else {
+                GapSlot::Empty
+            };
+            let symlinked = slot == GapSlot::Symlink;
             let vcs = crate::vcs::vcs_for(entry.vcs_type);
             let canonical = ctx.primary_path().join(repo.as_path());
             let canonical_is_repo = vcs.is_repo(&canonical);
@@ -6276,9 +6316,17 @@ fn scan_member_gaps(
                     .map(|rev| rev.id().as_str().to_owned()),
                 None => continue,
             };
-            let local_revision = revision
-                .filter(|_| canonical_is_repo)
-                .and_then(|rev| vcs.resolve_revision(&canonical, &rev).ok());
+            let local = canonical_is_repo
+                && (revision
+                    .as_ref()
+                    .is_some_and(|rev| vcs.resolve_revision(&canonical, rev).is_ok())
+                    || vcs
+                        .resolve_local_branch_tip(&canonical, &branch)
+                        .is_ok_and(|tip| tip.is_some())
+                    || (slot == GapSlot::DanglingLink
+                        && vcs
+                            .worktree_registration(&canonical, &slot_path)
+                            .is_ok_and(|r| r.is_some())));
             gaps.push(MemberGap {
                 workweave: workweave.clone(),
                 workweave_dir: workweave_dir.clone(),
@@ -6286,8 +6334,9 @@ fn scan_member_gaps(
                 vcs_type: entry.vcs_type,
                 role: entry.role,
                 submodules: entry.submodules,
-                symlinked,
-                local_revision,
+                slot,
+                revision,
+                local,
             });
         }
     }
@@ -6353,18 +6402,19 @@ fn scan_leftover_checkouts(
     found
 }
 
-/// `--fix` for the [`MemberGap`]s whose revision is local: create each
-/// worktree at that revision. One whose revision is not local is left for
-/// `rwv fetch`, which doctor does not run.
+/// `--fix` for the [`MemberGap`]s the canonical clone can close on its own,
+/// through [`crate::workweave::materialize_member`]. One it cannot is left
+/// for `rwv fetch`, which doctor does not run.
 fn repair_member_gaps(
     ctx: &crate::workspace::WorkspaceContext,
     project_scope: Option<&ProjectName>,
     fix_errors: &mut Vec<String>,
 ) {
     for gap in scan_member_gaps(ctx, project_scope) {
-        let Some(revision) = &gap.local_revision else {
+        if !gap.local {
             continue;
-        };
+        }
+        let revision = gap.revision.as_deref().unwrap_or_default();
         let vcs = crate::vcs::vcs_for(gap.vcs_type);
         match crate::workweave::materialize_member(
             vcs.as_ref(),
@@ -6375,14 +6425,21 @@ fn repair_member_gaps(
             &gap.repo,
             gap.role,
             gap.submodules,
-            revision.id().as_str(),
+            revision,
+            crate::workweave::ReceiptedBranch::Attach,
         ) {
-            Ok(born) => outln!(
-                "[fixed] core: created the worktree for {repo} in workweave {ww} at {at}{was}{files}",
+            Ok(born) if gap.slot == GapSlot::DanglingLink => outln!(
+                "[fixed] core: relinked the worktree for {repo} in workweave {ww}: {how}",
                 repo = gap.repo,
                 ww = gap.workweave,
-                at = born.at.id().short(),
-                was = if gap.symlinked {
+                how = born.summary(),
+            ),
+            Ok(born) => outln!(
+                "[fixed] core: created the worktree for {repo} in workweave {ww}: {how}{was}{files}",
+                repo = gap.repo,
+                ww = gap.workweave,
+                how = born.summary(),
+                was = if gap.slot == GapSlot::Symlink {
                     ", replacing its symlink"
                 } else {
                     ""
@@ -7643,6 +7700,10 @@ pub struct CheckInput {
     pub known_repos: BTreeSet<RepoPath>,
     /// All git repos found on disk under registry directories.
     pub repos_on_disk: Vec<RepoPath>,
+    /// Manifest entries whose checkout stands but whose worktree link
+    /// dangles: on disk, though git cannot open them. workweave-drift and
+    /// missing-canonical-clone report them, not dangling-reference.
+    pub dangling_links: BTreeSet<RepoPath>,
     /// Git repos found on disk under a top-level directory
     /// `scannable_registry_segments` does not cover — see
     /// [`crate::workspace::scan_unknown_segment_repos`]. Always
@@ -7741,7 +7802,10 @@ pub fn find_violations(input: &CheckInput) -> Vec<CheckViolation> {
         for (repo_path, entry) in project.manifest.iter_entries() {
             // Dangling reference: in manifest but not on disk.
             // Reference repos are allowed to be missing (e.g. after fetch --no-reference).
-            if !input.repos_on_disk.contains(repo_path) && entry.role != Role::Reference {
+            if !input.repos_on_disk.contains(repo_path)
+                && !input.dangling_links.contains(repo_path)
+                && entry.role != Role::Reference
+            {
                 violations.push(CheckViolation::DanglingReference {
                     project: project.name.clone(),
                     repo: repo_path.clone(),
@@ -8175,11 +8239,34 @@ impl CheckViolation {
                 kind,
                 repo,
             } => {
+                let fetch_then_fix = format!(
+                    " — git cannot open it, and the canonical clone is not on disk or \
+                         holds neither the workweave's branch nor the revision rwv.lock \
+                         pins; run `rwv fetch --project {}` at the primary weave, then \
+                         `rwv doctor --fix`, which relinks it keeping its files",
+                    workweave
+                        .as_ref()
+                        .map_or_else(|| "<project>".to_owned(), |ww| ww.project.to_string())
+                );
                 let (kind_str, hint) = match kind {
                     DriftKind::Missing => (
                         "missing worktree",
-                        " — the canonical clone holds the revision rwv.lock pins; \
-                             `rwv doctor --fix` creates the worktree there",
+                        " — the canonical clone holds the workweave's branch or the \
+                             revision rwv.lock pins; `rwv doctor --fix` creates the worktree \
+                             on that branch at its own tip, or at that revision where the \
+                             branch is gone",
+                    ),
+                    DriftKind::DanglingLink => (
+                        "worktree link to a missing git directory at",
+                        " — git cannot open the checkout, though its files stand; \
+                             `rwv doctor --fix` relinks it through the registration the \
+                             canonical clone kept, else onto the workweave's branch at its \
+                             own tip, else onto that branch created at the revision rwv.lock \
+                             pins, leaving every file in place",
+                    ),
+                    DriftKind::DanglingLinkUnfetched => (
+                        "worktree link to a missing git directory at",
+                        fetch_then_fix.as_str(),
                     ),
                     DriftKind::MissingUnfetched => (
                         "missing worktree",
@@ -9234,17 +9321,15 @@ impl CheckViolation {
                 repo,
                 canonical_path,
             } => {
-                // The canonical clone for this repo is gone; the worktree
-                // cannot be classified. Do NOT advise commit/stash — the
-                // git layer is broken and commands will fail anyway. Point
-                // at the same manual re-clone repair as DanglingReference.
                 safe_to_fix = false;
                 format!(
                     "{workweave}/{repo}: canonical clone for `{repo}` is absent \
-                         (expected at {}) — this worktree cannot be classified; \
-                         run `rwv fetch` from the weave root to \
-                         re-materialize it, then re-run `rwv doctor` to verify",
-                    canonical_path.display()
+                         (expected at {}), so git cannot open this worktree; run \
+                         `rwv fetch --project {project}` at the primary weave to clone it \
+                         again, then `rwv doctor --fix` there, which relinks this checkout \
+                         keeping its files",
+                    canonical_path.display(),
+                    project = workweave.project,
                 )
             }
             CheckViolation::UninitializedSubmodule {
@@ -10985,7 +11070,11 @@ fn load_doctor_world(
                 if let Some(raw_lock) = project.lock.clone() {
                     let (resolved, failures) = raw_lock.resolve_versions(&workspace_dir);
                     for (unresolved, _raw_rev) in failures {
-                        lock_resolve_failures.push((project.name.clone(), unresolved));
+                        if !crate::workweave::is_dangling_link(
+                            &workspace_dir.join(unresolved.as_path()),
+                        ) {
+                            lock_resolve_failures.push((project.name.clone(), unresolved));
+                        }
                     }
                     resolved_locks.insert(project.name.clone(), resolved);
                 }
@@ -11029,9 +11118,17 @@ fn load_doctor_world(
         })
         .collect();
 
+    let dangling_links = projects
+        .iter()
+        .flat_map(|project| project.manifest.iter_repo_paths())
+        .filter(|repo| crate::workweave::is_dangling_link(&workspace_dir.join(repo.as_path())))
+        .cloned()
+        .collect();
+
     let input = CheckInput {
         known_repos,
         repos_on_disk: session.repos_on_disk().to_vec(),
+        dangling_links,
         clones_at_placement,
         unknown_segment_repos,
         projects,
@@ -11380,6 +11477,10 @@ fn collect_doctor_violations(
     }
     drop(scan_seen);
 
+    let this_workweave = workweaves_in_scope(ctx, None)
+        .into_iter()
+        .find(|_| matches!(ctx.checkout, Checkout::Workweave { .. }))
+        .map(|(workweave, _, _)| workweave);
     let total_scans = index_scan.len();
     let progress_every = total_scans.div_ceil(20).max(1);
     if progress == ScanProgress::Heartbeat && total_scans > 0 {
@@ -11391,19 +11492,21 @@ fn collect_doctor_violations(
         {
             eprintln!("doctor: scanned {}/{total_scans}", i + 1);
         }
-        // A linked worktree whose canonical store was removed out-of-band
-        // fails every git command in it; classifying first would misreport
-        // that as live edits. Only workweave entries can have one — a primary
-        // entry IS the canonical store.
-        if let Some(ww) = ww_label {
-            if let Some(canonical_path) = worktree_canonical_clone_missing(repo_abs) {
+        // A worktree whose link names a git directory that is gone fails
+        // every git command in it, so classifying it would misreport that as
+        // live edits. It is reported as missing-canonical-clone when the
+        // store it named is gone, and as workweave-drift otherwise.
+        if crate::workweave::is_dangling_link(repo_abs) {
+            let workweave = ww_label.clone().or_else(|| this_workweave.clone());
+            let canonical_path = ctx.primary_path().join(repo_path.as_path());
+            if let (Some(workweave), false) = (workweave, canonical_path.exists()) {
                 violations.push(CheckViolation::MissingCanonicalClone {
-                    workweave: ww.clone(),
+                    workweave,
                     repo: repo_path.clone(),
                     canonical_path,
                 });
-                continue;
             }
+            continue;
         }
 
         let (idx_drift, wt_drift) = classify_drift(repo_abs);

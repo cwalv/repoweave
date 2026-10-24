@@ -354,6 +354,18 @@ the canonical clone. rwv no longer operates on that shape:
   first: `rwv fetch` run in the workweave brings the pinned revision into the
   canonical clone, cloning it if absent, then creates the worktree in place of
   the link.
+- **Relink.** `materialize_member` is also the repair for a member whose
+  checkout is gone or whose worktree link dangles (`workweave-drift`
+  `missing` and `dangling-link`, and `rwv fetch` in the workweave). It acts on
+  what the canonical clone still holds: a registration of the slot is
+  reattached (`Vcs::reattach_registered_worktree`, git's `worktree repair`);
+  else the workweave's receipted branch is checked out where it stands
+  (`ReceiptedBranch::Attach` in `birth_ephemeral_worktree`, or
+  `Vcs::register_worktree_in_place` for a slot that keeps its files); else the
+  branch is created at the start revision under a fresh receipt. A stale
+  registration of a removed slot is dropped first
+  (`Vcs::prune_stale_worktree_registration`), never a locked one. No branch is
+  deleted or moved on any of these paths.
 - **Existing checkouts.** A `reference` checkout made before read-only
   settling, in the primary or a workweave, is writable; `doctor` reports it as
   `member-permissions`, and `--fix` settles it.
