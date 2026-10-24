@@ -25,8 +25,8 @@
 use repoweave::check::{
     BranchDisciplineKind, CheckViolation, CloneTopologyKind, DeadOpLeaseKind, DetachedAncestry,
     DriftKind, IndexDriftKind, LegacyRefAtTip, OrphanedSavepointKind, PermissionsKind,
-    ProvenanceKind, ReplayExclusionKind, SubmoduleCommitKind, WeaveRootIdentityConflictKind,
-    WorkingTreeDriftKind, WorkweaveTreeIntegrityKind,
+    PlacementConvergence, ProvenanceKind, ReplayExclusionKind, SubmoduleCommitKind,
+    WeaveRootIdentityConflictKind, WorkingTreeDriftKind, WorkweaveTreeIntegrityKind,
 };
 use repoweave::integration::{Issue, IssueKind, IssueSource, Severity};
 use repoweave::integration::{MemberIncompatibility, Observed};
@@ -599,6 +599,9 @@ pub fn corpus() -> Vec<CheckViolation> {
             repo: repo(),
             sub_kind: ProvenanceKind::PlacementDisagreement {
                 expected_path: "github/other/repo".into(),
+                converge: PlacementConvergence::Here {
+                    retire_first: vec![workweave()],
+                },
             },
         },
         CheckViolation::CloneTopology {

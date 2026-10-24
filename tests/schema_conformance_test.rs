@@ -65,7 +65,10 @@
 mod common;
 
 use common::json_schema;
-use repoweave::check::{BranchDisciplineKind, CheckViolation, DetachedAncestry, DOCTOR_SCHEMA_URL};
+use repoweave::check::{
+    BranchDisciplineKind, CheckViolation, DetachedAncestry, PlacementConvergence, ProvenanceKind,
+    DOCTOR_SCHEMA_URL,
+};
 use repoweave::fetch::{FetchJsonOutput, FetchOutcomeOutput, FetchOutcomeStatus, FETCH_SCHEMA_URL};
 use repoweave::integration::{Issue, IssueKind, IssueSource, Severity};
 use repoweave::integration::{MemberIncompatibility, MissingTool, Observed};
@@ -279,6 +282,14 @@ fn doctor_corpus_supplement() -> (Vec<CheckViolation>, Vec<Issue>) {
             },
         }),
     );
+    violations.push(CheckViolation::Provenance {
+        project: common::doctor_corpus::project(),
+        repo: common::doctor_corpus::repo(),
+        sub_kind: ProvenanceKind::PlacementDisagreement {
+            expected_path: "github/other/repo".into(),
+            converge: PlacementConvergence::FromPrimary,
+        },
+    });
     let issues = vec![Issue {
         source: IssueSource::integration("go-work"),
         severity: Severity::Error,

@@ -91,7 +91,11 @@ fn rekey(ws: &Path, from: &str, to: &str) {
     let manifest = ws.join("projects").join("demo").join("rwv.toml");
     let text = std::fs::read_to_string(&manifest).unwrap();
     let quoted = format!("\"{from}\"");
-    assert_eq!(text.matches(&quoted).count(), 1, "one key to re-key:\n{text}");
+    assert_eq!(
+        text.matches(&quoted).count(),
+        1,
+        "one key to re-key:\n{text}"
+    );
     std::fs::write(&manifest, text.replace(&quoted, &format!("\"{to}\""))).unwrap();
 }
 
@@ -128,8 +132,11 @@ fn a_checkout_gone_from_disk_is_fetched_back() {
 
     assert_eq!(kinds(&ws), Vec::new());
     assert_eq!(
-        common::git_in(common::under(&ws, "local/acme/new"), &["remote", "get-url", "origin"])
-            .trim(),
+        common::git_in(
+            common::under(&ws, "local/acme/new"),
+            &["remote", "get-url", "origin"]
+        )
+        .trim(),
         url
     );
 }

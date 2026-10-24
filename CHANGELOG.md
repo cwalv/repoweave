@@ -6,6 +6,16 @@ claim that nothing changed in them.
 
 ## Unreleased
 
+### `placement-disagreement` retires the workweaves holding the clone before the move
+
+Moving a canonical clone to the path its URL places it at strands every
+workweave worktree of it: git can no longer open the checkout, and the
+workweave cannot take the re-key. In the primary weave the finding now names
+each workweave holding a worktree of the clone and puts landing and retiring
+it (`rwv sync-to --retire`, after committing or stashing its edits) before the
+move, re-key and `rwv lock`. In a workweave it no longer advises a move, and
+points at the primary weave. The `--json` record carries this as `converge`.
+
 ### `dangling-reference` names the re-key when the checkout moved to its placement
 
 An entry whose checkout was moved to the path its URL places it at, before the

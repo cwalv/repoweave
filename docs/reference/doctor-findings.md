@@ -1137,6 +1137,15 @@ the recorded path to the derived one, and run `rwv lock`, which re-keys
 alone, with the checkout elsewhere, leaves a `dangling-reference` at the
 derived path.
 
+A workweave's checkout of the member is a worktree of the canonical clone, so
+moving the canonical clone strands it. In the primary weave, when workweaves
+hold worktrees of the clone, the message names each one and puts landing and
+retiring it first: commit or stash its edits and run `rwv sync-to --retire`
+from it, which lands its commits on the primary weave's branch. The `--json`
+record's `converge` carries those workweaves as `{"here": {"retire_first":
+[...]}}`. In a workweave, the finding names no move: `converge` is
+`"from-primary"`, and the steps run in the primary weave.
+
 ---
 
 ## Branches and ownership receipts

@@ -1625,7 +1625,21 @@ pub enum ProvenanceKind {
         /// The path `placement(entry.url)` derives — where the manifest key
         /// would need to be for the two to agree.
         expected_path: String,
+        /// Where the move, re-key and `rwv lock` run, and what goes first.
+        converge: PlacementConvergence,
     },
+}
+
+/// Where a [`ProvenanceKind::PlacementDisagreement`] is converged. Moving a
+/// canonical clone strands every workweave worktree of it, so the move runs
+/// in the primary weave, after each such workweave is landed and retired.
+#[derive(Debug, Serialize, JsonSchema, Clone)]
+#[serde(rename_all = "kebab-case")]
+pub enum PlacementConvergence {
+    /// In this primary weave, once each workweave listed is retired.
+    Here { retire_first: Vec<WorkweaveId> },
+    /// From the primary weave; this is a workweave.
+    FromPrimary,
 }
 
 /// Discriminator for [`CheckViolation::CloneTopology`] findings.
@@ -4247,6 +4261,33 @@ pub fn scan_cargo_ecosystem(
     Ok(violations)
 }
 
+/// Where the clone at `clone` converges a placement disagreement: from the
+/// primary weave when doctor runs in a workweave, and otherwise here, after
+/// every workweave holding a worktree of it.
+fn placement_convergence(
+    ctx: &crate::workspace::WorkspaceContext,
+    clone: &Path,
+    vcs_type: crate::manifest::VcsType,
+) -> PlacementConvergence {
+    if !matches!(ctx.checkout, crate::workspace::Checkout::Primary { .. }) {
+        return PlacementConvergence::FromPrimary;
+    }
+    let worktrees = crate::vcs::vcs_for(vcs_type)
+        .list_worktrees(clone)
+        .unwrap_or_default();
+    let retire_first = crate::workweave::list_workweave_dirs(ctx.primary_path())
+        .into_iter()
+        .filter(|(_, dir)| {
+            let dir = CanonicalPath::of(dir);
+            worktrees
+                .iter()
+                .any(|worktree| dir.contains(&CanonicalPath::of(worktree)))
+        })
+        .map(|(workweave, _)| workweave)
+        .collect();
+    PlacementConvergence::Here { retire_first }
+}
+
 /// Scan all repos in `projects` for provenance violations.
 ///
 /// Checks performed:
@@ -4278,7 +4319,11 @@ pub fn scan_cargo_ecosystem(
 /// 5. **`relative-remote`** — the clone records its remote as a relative
 ///    path, which names no one remote. Warning severity; report-only. It
 ///    takes the place of the `origin-url-mismatch` comparison for that clone.
-pub fn scan_provenance(workspace_dir: &Path, projects: &[Project]) -> Vec<CheckViolation> {
+pub fn scan_provenance(
+    ctx: &crate::workspace::WorkspaceContext,
+    workspace_dir: &Path,
+    projects: &[Project],
+) -> Vec<CheckViolation> {
     use crate::manifest::Role;
     use crate::registry::{recorded_remote, resolve_to_clone_info, RecordedRemote};
     use crate::vcs::vcs_for;
@@ -4300,6 +4345,11 @@ pub fn scan_provenance(workspace_dir: &Path, projects: &[Project]) -> Vec<CheckV
                     repo: repo_path.clone(),
                     sub_kind: ProvenanceKind::PlacementDisagreement {
                         expected_path: expected.as_str().to_string(),
+                        converge: placement_convergence(
+                            ctx,
+                            &workspace_dir.join(repo_path.as_path()),
+                            entry.vcs_type,
+                        ),
                     },
                 });
             }
@@ -8560,13 +8610,40 @@ impl CheckViolation {
                          revision — refresh it from its remote (fetch, not sync)",
                     crate::vcs::short_revision(&sha),
                 ),
-                ProvenanceKind::PlacementDisagreement { expected_path } => format!(
+                ProvenanceKind::PlacementDisagreement {
+                    expected_path,
+                    converge: PlacementConvergence::FromPrimary,
+                } => format!(
+                    "{project}: {repo}: recorded at `{repo}`, but its URL places at \
+                         `{expected_path}` under the canonical layout (report-only; converge \
+                         it in the primary weave, where `rwv doctor` names the steps — moving \
+                         the checkout here breaks it, since it is a worktree of the canonical \
+                         clone; a `reference` or `fork` role exempts this comparison)",
+                ),
+                ProvenanceKind::PlacementDisagreement {
+                    expected_path,
+                    converge: PlacementConvergence::Here { retire_first },
+                } => format!(
                     "{project}: {repo}: recorded at `{repo}`, but its URL places at \
                          `{expected_path}` under the canonical layout (report-only; to \
-                         converge, move the checkout to `{expected_path}` unless it is already \
-                         there, re-key the entry in rwv.toml from `{repo}` to \
+                         converge, {retire}move the checkout to `{expected_path}` unless it is \
+                         already there, re-key the entry in rwv.toml from `{repo}` to \
                          `{expected_path}`, and run `rwv lock` — a `reference` or `fork` role \
                          exempts this comparison)",
+                    retire = if retire_first.is_empty() {
+                        String::new()
+                    } else {
+                        format!(
+                            "first land and retire each workweave holding a worktree of it, \
+                             which the move would strand ({}): commit or stash its edits and \
+                             run `rwv sync-to --retire` from it; then ",
+                            retire_first
+                                .iter()
+                                .map(|w| format!("`{w}`"))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                    },
                 ),
             },
             CheckViolation::CloneTopology {
@@ -11200,7 +11277,7 @@ fn collect_doctor_violations(
         ctx.primary_path(),
         &input.projects,
     ));
-    violations.extend(scan_provenance(workspace_dir, &input.projects));
+    violations.extend(scan_provenance(ctx, workspace_dir, &input.projects));
     violations.extend(scan_phantom_merge_drivers(workspace_dir, &input.projects));
 
     // Warning severity throughout, so `--json` reports them while the default

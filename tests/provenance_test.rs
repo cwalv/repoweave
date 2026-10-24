@@ -838,6 +838,85 @@ fn re_keying_alone_clears_placement_disagreement_once_the_checkout_is_already_th
     );
 }
 
+fn commit_project(ws: &Path, message: &str) {
+    let project = ws.join("projects").join("demo");
+    common::git_in(&project, &["add", "-A"]);
+    common::git_in(&project, &["commit", "--quiet", "-m", message]);
+}
+
+fn create_workweave(ws: &Path, name: &str) -> PathBuf {
+    rwv()
+        .args(["workweave", "demo", "create", name])
+        .current_dir(ws)
+        .assert()
+        .success();
+    ws.parent()
+        .unwrap()
+        .join(".workweaves")
+        .join(format!("demo--{name}"))
+}
+
+/// A workweave holds a worktree of the misplaced clone, so moving the clone
+/// would strand it. The primary's advice names that workweave and has it
+/// landed and retired first; the workweave's own advice points at the
+/// primary instead of advising a move.
+#[test]
+fn a_workweave_holding_the_clone_is_landed_and_retired_before_the_move() {
+    let tmp = common::tempdir().unwrap();
+    let ws = weave_with_misplaced_member(tmp.path());
+    commit_project(&ws, "init");
+    let ww = create_workweave(&ws, "feat");
+    let checkout = common::under(&ww, MISPLACED);
+    std::fs::write(checkout.join("work"), "unlanded\n").unwrap();
+    common::git_in(&checkout, &["add", "work"]);
+    common::git_in(&checkout, &["commit", "--quiet", "-m", "unlanded"]);
+    let unlanded = common::git_in(&checkout, &["rev-parse", "HEAD"])
+        .trim()
+        .to_owned();
+
+    let in_workweave = placement_advice(&ww);
+    assert!(
+        in_workweave.contains("converge it in the primary weave")
+            && !in_workweave.contains("move the checkout to"),
+        "a workweave must point at the primary, not advise a move: {in_workweave}"
+    );
+    let in_primary = placement_advice(&ws);
+    for step in [
+        "land and retire each workweave holding a worktree of it",
+        "`demo--feat`",
+        "commit or stash its edits and run `rwv sync-to --retire` from it",
+        "then move the checkout to",
+    ] {
+        assert!(
+            in_primary.contains(step),
+            "must advise `{step}`: {in_primary}"
+        );
+    }
+
+    rwv()
+        .args(["sync-to", "--retire"])
+        .current_dir(&ww)
+        .assert()
+        .success();
+    assert!(!ww.exists(), "the workweave is retired");
+    assert!(
+        !placement_advice(&ws).contains("retire"),
+        "with no workweave left holding it, the move comes first"
+    );
+    move_checkout(&ws);
+    re_key(&ws);
+    rwv().arg("lock").current_dir(&ws).assert().success();
+    commit_project(&ws, "re-key");
+
+    let placed = common::under(&ws, PLACED);
+    common::git_in(&placed, &["merge-base", "--is-ancestor", &unlanded, "HEAD"]);
+    assert_eq!(all_violations(&ws), Vec::<String>::new());
+    let fresh = create_workweave(&ws, "next");
+    assert!(common::under(&fresh, PLACED).join("work").is_file());
+    assert_eq!(all_violations(&fresh), Vec::<String>::new());
+    assert_eq!(all_violations(&ws), Vec::<String>::new());
+}
+
 // ===========================================================================
 // 4. unresolvable-url
 // ===========================================================================
