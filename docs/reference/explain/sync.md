@@ -150,8 +150,14 @@ same, but removing the checkout was refused). A `prune-refused` record
 carries the refusal's `refusal` token and the full `message`; its checkout is
 left on disk with no manifest naming it. The op still runs to completion and
 clears its op-state, then exits 1, so `rwv abort` does not apply and
-re-running the sync does not prune the checkout: remove it by hand. The list
-is empty, not absent, when there are none.
+re-running the sync does not prune the checkout: remove it by hand. A
+`materialize-failed` record is a member the source's lock names with no
+checkout here, whose checkout could not be created: it has no per-repo
+outcome, carries the `refusal` token when the failure is a refusal (as
+`unresolvable-repo-source` is for a `url` written as a plain path) and the full
+`message`, and the op parks. The text output prints `rwv explain <token>` after
+the member's `materialize failed` line. The list is empty, not absent, when
+there are none.
 
 `complete` is true when the op ran its last phase and cleared its op-state,
 leaving nothing to `--continue` or `rwv abort`, and false when a phase
@@ -503,6 +509,41 @@ Schema:
             },
             "refusal": {
               "description": "The refusal token, resolvable with `rwv explain <token>`. Absent when the removal failed without a classified refusal.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        {
+          "description": "The source's lock names this member and no checkout of it is on disk here, but creating one failed. It gets no per-repo outcome, and the op parks.",
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "kind",
+            "message",
+            "path"
+          ],
+          "properties": {
+            "absolute_path": {
+              "$ref": "#/definitions/WirePath"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "materialize-failed"
+              ]
+            },
+            "message": {
+              "description": "Free-form display message, the full cause chain. Not a typed discriminant.",
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "refusal": {
+              "description": "The refusal token, resolvable with `rwv explain <token>`. Absent when the failure carries no classified refusal.",
               "type": [
                 "string",
                 "null"

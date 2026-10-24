@@ -346,6 +346,41 @@
               ]
             }
           }
+        },
+        {
+          "description": "The source's lock names this member and no checkout of it is on disk here, but creating one failed. It gets no per-repo outcome, and the op parks.",
+          "type": "object",
+          "required": [
+            "absolute_path",
+            "kind",
+            "message",
+            "path"
+          ],
+          "properties": {
+            "absolute_path": {
+              "$ref": "#/definitions/WirePath"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "materialize-failed"
+              ]
+            },
+            "message": {
+              "description": "Free-form display message, the full cause chain. Not a typed discriminant.",
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "refusal": {
+              "description": "The refusal token, resolvable with `rwv explain <token>`. Absent when the failure carries no classified refusal.",
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
         }
       ]
     },
