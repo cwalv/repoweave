@@ -196,16 +196,13 @@ fn a_default_scope_holding_only_reference_repos_fails_saying_how_to_include_them
         stderr(&out)
     );
 
-    let out = w.each(&[
-        "--json",
-        "-j",
-        "1",
-        "--role",
-        "reference",
-        "--",
-        "git",
-        "status",
-    ]);
+    let message = stderr(&out);
+    let role = message
+        .split("pass --role ")
+        .nth(1)
+        .and_then(|rest| rest.split_whitespace().next())
+        .expect("the refusal says which role to pass");
+    let out = w.each(&["--json", "-j", "1", "--role", role, "--", "git", "status"]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     assert_eq!(paths_in(&envelope(&out)), [DOCS]);
 }

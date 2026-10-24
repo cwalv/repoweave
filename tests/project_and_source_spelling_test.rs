@@ -240,6 +240,7 @@ fn adopt_refuses_a_path_with_no_clone_including_a_bare_remote() {
         let stderr = refusal_stderr(&["add", "--adopt", path], &ws);
         assert_routes_to(&stderr, "no-clone-to-adopt");
         assert!(stderr.contains("file://"), "{stderr}");
+        assert!(stderr.contains("drop --adopt"), "{stderr}");
     }
     assert_eq!(project_files(&ws), before);
 
