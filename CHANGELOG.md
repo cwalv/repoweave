@@ -42,8 +42,10 @@ them. Doctor reports an unopenable checkout as the new `workweave-drift`
 sub-kinds `dangling-link` and `dangling-link-unfetched`, never as live edits,
 and from inside the workweave too. `missing-canonical-clone` names
 `rwv fetch --project <project>` at the primary weave, then `rwv doctor --fix`.
-`rwv workweave log` lists a branch's unique commits while its checkout is
-missing, and it and `rwv each` name a repair that works. `owned-branch-moved`
+`rwv workweave log` reports a member checkout missing from the workweave or
+its parent as missing, not as a failure to run git, lists the branch's unique
+commits while its checkout is missing, and with `rwv each` names a repair that
+works. `owned-branch-moved`
 names keeping the commits before deleting them.
 
 ### `placement-disagreement` retires the workweaves holding the clone before the move
@@ -82,16 +84,13 @@ It now prints `git -C <repo> update-ref -d <ref>` with the repository's
 absolute path. A ref seen by the primary and its workweaves, which share one
 ref store, is reported once instead of once per checkout.
 
-### `rwv each` with no project selected names `rwv activate`
+### A plugin run with no project selected receives the workspace
 
 At a primary with no project selected, including the state `rwv doctor --fix`
-leaves after removing an unreadable `.rwv-active`, `rwv each` refused with
-"no workspace resolved" and advised `-C <path>` or `-w`, neither of which
-selects a project. It now refuses with "no project resolved" and names
-`rwv activate <project>`. Plugins in that state receive `RWV_WORKSPACE`
-without `RWV_PROJECT`, where before they received neither, and the
-`resolution` block in `--json` output carries `workspace` without `project`,
-where before it was absent.
+leaves after removing an unreadable `.rwv-active`, plugins receive
+`RWV_WORKSPACE` without `RWV_PROJECT`, where before they received neither, and
+the `resolution` block in `--json` output carries `workspace` without
+`project`, where before it was absent.
 
 ### An op record rwv cannot parse no longer traps the weave in a loop
 
@@ -155,18 +154,19 @@ keeps it with a warning. That warning reads as `rwv workweave delete`'s does.
 `rwv workweave delete` no longer follows its warning about a branch it keeps
 with a second line calling the same branch one rwv did not record.
 
-### `rwv remove --delete-shared-clone` without `--delete` is a usage error
+### Breaking: `rwv remove --delete-shared-clone` without `--delete` is a usage error
 
 `rwv remove <path> --delete-shared-clone` without `--delete` is refused as a
 usage error, exit 2, naming the missing `--delete`. v0.24.0 accepted the
 combination and went on to look the path up in the manifest.
 
-### `reserved-repo-path` refuses a repo path of `(project)`
+### Breaking: a repo path of `(project)` is refused, and a manifest keying one does not load
 
-A repo path of `(project)` is refused with the new refusal `reserved-repo-path`.
 `(project)` is how the project repo is named wherever a repo is a key, so a
-member at that path could not be told from it. The refusal is listed in
-`docs/reference/refusals.md`.
+member at that path could not be told from it. `rwv add` refuses the path with
+the new refusal `reserved-repo-path`, listed in `docs/reference/refusals.md`,
+and an `rwv.toml` with a `[repositories."(project)"]` entry fails to parse,
+naming the key; rename the member's path.
 
 ### A new project starts with no integration warnings
 
@@ -201,19 +201,21 @@ reference, and `rwv fetch` clones it back to that path.
 
 ### Breaking: `--json` prints one envelope whatever `-j` is
 
-`rwv fetch`, `rwv update`, `rwv push`, `rwv sync`, `rwv sync-to` and `rwv each`
-printed one JSON envelope under `-j 1` and switched to NDJSON, one
-self-describing record per line as each repo finished, under `-j N` with
-`N > 1`. `fetch`, `update` and `each` default to `min(nproc, 8)` workers, so
+`rwv fetch`, `rwv update`, `rwv push`, `rwv sync` and `rwv sync-to` printed
+one JSON envelope under `-j 1` and switched to NDJSON, one self-describing
+record per line as each repo finished, under `-j N` with `N > 1`. `fetch` and
+`update` default to `min(nproc, 8)` workers, so
 `--json` without `-j` streamed on a multi-core machine and printed an envelope
 on a single-core one. Each verb now prints its envelope under every `-j`, once
 it is done, with its per-repo records sorted by repo path.
 
-The stream is gone, with no flag to bring it back, and so are the nine schemas
+The stream is gone, with no flag to bring it back, and so are the eight schemas
 that described its lines: `fetch-record.json`, `update-record.json`,
 `push-record.json`, `sync-record.json`, `sync-to-record.json`,
-`member-record.json`, `advance-record.json`, `placement-record.json` and
-`each-record.json`. To follow repos as they finish, run the command through
+`member-record.json`, `advance-record.json` and `placement-record.json`. A
+record's `$schema` URL points into the `main` branch on GitHub, so once this
+release is on `main` the URLs that earlier releases print on their NDJSON
+lines stop resolving. To follow repos as they finish, run the command through
 `rwv each` with `--joblog FILE`, one line per repo as it finishes, or
 `--results DIR`, each repo's output and outcome. The `-j` defaults are
 unchanged.
@@ -291,12 +293,9 @@ twenty lines or more. A refusal now prints its message and its route line
 and nothing else. An error that is not a refusal keeps the backtrace
 `RUST_BACKTRACE` asks for.
 
-### `rwv explain each` serves the page for `rwv each`
+### `rwv explain` points a plugin at its own `--help`
 
-`rwv each` ships beside `rwv` on every release channel, but `rwv explain
-each` answered `did you mean: fetch?`, and the `rwv explain` index did not
-list it. It now serves an explain page, and the index lists `each`. For a
-plugin found on `PATH`, `rwv explain <name>` now points at
+For a plugin found on `PATH`, `rwv explain <name>` points at
 `rwv <name> --help` even when the name is a typo's distance from something
 `rwv explain` serves, where before the suggestion took its place.
 
@@ -311,10 +310,6 @@ it reads the workweave's own `rwv.toml`, not the primary weave's.
 `rwv status` in a workweave refused over such a manifest; it now skips the
 project with the warning, as it does in the primary weave. `rwv status --json`
 lists each skipped project under `unreadable_projects`, with its load error.
-
-`rwv each` over such a project said the project had no repo outside role
-`reference` and advised `--role reference`, which could not help. It now says
-the manifest did not load.
 
 ### `rwv fetch` names a member's refusal
 
@@ -785,11 +780,6 @@ them.
 A lock commit that drops a member's entry says so in its subject (`lock: drop
 <path>`, or `lock: drop N repos`) and lists each dropped entry in its body.
 
-### `rwv workweave log` names a missing checkout
-
-A member checkout missing from the workweave or its parent is reported as
-missing, naming `rwv fetch`, instead of as a failure to run git.
-
 ### `rwv each` ships with rwv
 
 `rwv each` runs a command in every repo of the checkout you are in, in
@@ -804,7 +794,12 @@ repo runs, and every repo runs that program. `--json`, `--fail-fast`,
 are described in the `rwv each` reference. Ctrl-C and `--timeout` end a
 command's whole process tree, including anything the command left running when
 it exited. `--joblog` and `--results` refuse `-`, since stdout carries the
-commands' output; `./-` names a file called `-`.
+commands' output; `./-` names a file called `-`. Under `--json` it prints one
+envelope once every repo is done, whatever `-j` is, with its records sorted by
+repo path. At a primary with no project selected it refuses with "no project
+resolved" and names `rwv activate <project>`; over a project whose `rwv.toml`
+does not load it says the manifest did not load. `rwv explain each` serves
+its page, and the `rwv explain` index lists it.
 
 ### Every release channel installs `rwv-each` beside `rwv`, and no longer `generate-explain`
 
