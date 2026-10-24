@@ -262,7 +262,7 @@ fn workweave_create_does_not_overwrite_a_tracked_wrapper_config() {
     );
     common::git_in(&project_dir, &["add", "-A"]);
     common::git_in(&project_dir, &["commit", "-m", "activate"]);
-    let tracked_bytes = std::fs::read(&config).unwrap();
+    let tracked = common::read_normalized(&config);
 
     // Dirty, uncommitted edit — never committed, so the worktree checkout
     // below cannot see it.
@@ -287,9 +287,9 @@ fn workweave_create_does_not_overwrite_a_tracked_wrapper_config() {
         "fixture: workweave create failed:\n{create}"
     );
     assert_eq!(
-        std::fs::read(&seat_config).unwrap(),
-        tracked_bytes,
-        "the seat should hold the tracked, committed bytes, not the source's \
+        common::read_normalized(&seat_config),
+        tracked,
+        "the seat should hold the tracked, committed content, not the source's \
          dirty uncommitted edit — a tracked file is never a carry target"
     );
 }
