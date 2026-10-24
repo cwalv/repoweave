@@ -866,7 +866,7 @@ branch tip, so files that differ from it read as edits.
 
 #### `dangling-link-unfetched`
 
-**Error. Report-only by default (`--abandon-lost-pins`).** As `dangling-link`,
+**Error. Report-only by default.** As `dangling-link`,
 and the canonical clone holds neither its registration of the checkout, the
 workweave's branch nor the pinned revision.
 

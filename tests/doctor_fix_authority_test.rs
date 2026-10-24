@@ -341,8 +341,8 @@ fn the_page_walk_actually_reads_the_page() {
         "only {auto} findings are auto-fixable; the register has stopped classifying"
     );
     assert_eq!(
-        consented, 2,
-        "exactly two findings are repaired behind a consent flag; got {consented}"
+        consented, 3,
+        "the findings repaired behind a consent flag are pinned at 3; got {consented}"
     );
     for expected in [
         "index-drift/safe-to-fix",

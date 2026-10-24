@@ -26,7 +26,7 @@ fn the_harness_can_ask_doctor_in_named_terms_and_read_a_verdict() {
         use repoweave::check::{run_check, run_check_json, run_check_locked, Repair, Scope, Verdict};
         use repoweave::workspace::WorkspaceContext;
         pub fn failed(ctx: &WorkspaceContext) -> bool {
-            let text = run_check(ctx, Repair::Report, Scope::Weave, None, None, None);
+            let text = run_check(ctx, Repair::Report, Scope::Weave, None, None, None, None);
             let json = run_check_json(ctx, Scope::ActiveProject, None);
             let locked = run_check_locked(ctx);
             [text, json, locked]
@@ -49,7 +49,7 @@ fn no_runner_takes_its_scope_as_a_bool() {
         use repoweave::check::{run_check, run_check_json, Repair};
         use repoweave::workspace::WorkspaceContext;
         pub fn run(ctx: &WorkspaceContext) {
-            let _ = run_check(ctx, Repair::Report, true, None, None, None);
+            let _ = run_check(ctx, Repair::Report, true, None, None, None, None);
             let _ = run_check_json(ctx, true, None);
         }
         "#,
@@ -65,7 +65,7 @@ fn run_check_does_not_take_fix_as_a_bool() {
         use repoweave::check::{run_check, Scope};
         use repoweave::workspace::WorkspaceContext;
         pub fn run(ctx: &WorkspaceContext) {
-            let _ = run_check(ctx, true, Scope::Weave, None, None, None);
+            let _ = run_check(ctx, true, Scope::Weave, None, None, None, None);
         }
         "#,
     );
@@ -81,7 +81,7 @@ fn no_runner_answers_with_a_bool() {
         use repoweave::check::{run_check, run_check_json, run_check_locked, Repair, Scope};
         use repoweave::workspace::WorkspaceContext;
         pub fn run(ctx: &WorkspaceContext) -> Result<bool, ()> {
-            let a: bool = run_check(ctx, Repair::Report, Scope::Weave, None, None, None).map_err(|_| ())?;
+            let a: bool = run_check(ctx, Repair::Report, Scope::Weave, None, None, None, None).map_err(|_| ())?;
             let b: bool = run_check_json(ctx, Scope::Weave, None).map_err(|_| ())?;
             let c: bool = run_check_locked(ctx).map_err(|_| ())?;
             Ok(a || b || c)
