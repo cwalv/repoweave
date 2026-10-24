@@ -277,6 +277,106 @@ fn an_unusable_creation_param_routes_to_its_token() {
     assert_routes_to(&stderr, "unusable-creation-param");
 }
 
+/// docs/reference/refusals.md, `unusable-creation-param`: an empty `root`
+/// refuses, and the message says what it got.
+#[test]
+fn an_empty_creation_root_refuses_naming_what_it_got() {
+    let tmp = common::tempdir().unwrap();
+    let ws = plain_weave(tmp.path());
+
+    let stderr = refusal_stderr(
+        &[
+            "add",
+            "local",
+            "--new",
+            "--param",
+            "root=",
+            "--param",
+            "owner=acme",
+            "--param",
+            "repo=fresh",
+        ],
+        &ws,
+    );
+    assert!(
+        stderr.contains("creation parameter 'root' must name a path") && stderr.contains("got ''"),
+        "{stderr}"
+    );
+    assert_routes_to(&stderr, "unusable-creation-param");
+}
+
+/// docs/reference/refusals.md, `unusable-creation-param`: a relative `root`
+/// "resolves against the directory rwv runs in (the `-C` or `-w` directory
+/// when one is given), and the messages name the absolute path it resolved
+/// to".
+#[test]
+fn a_relative_creation_root_is_named_by_the_absolute_path_under_c() {
+    let tmp = common::tempdir().unwrap();
+    let ws = plain_weave(tmp.path());
+    let outside = tmp.path().join("outside");
+    std::fs::create_dir_all(outside.join("repos")).unwrap();
+
+    let stderr = refusal_stderr(
+        &[
+            "-C",
+            ws.to_str().unwrap(),
+            "add",
+            "local",
+            "--new",
+            "--param",
+            "root=repos",
+            "--param",
+            "owner=acme",
+            "--param",
+            "repo=fresh",
+        ],
+        &outside,
+    );
+    assert!(
+        stderr.contains(&format!(
+            "the root '{}' does not exist",
+            ws.join("repos").display()
+        )),
+        "{stderr}"
+    );
+}
+
+/// A Windows-looking `root` on a Unix host is a relative path whose first
+/// component happens to be `C:\x`, so it is read from the directory rwv runs
+/// in and not as an absolute path.
+#[cfg(unix)]
+#[test]
+fn a_windows_looking_creation_root_is_relative_on_unix() {
+    let tmp = common::tempdir().unwrap();
+    let ws = plain_weave(tmp.path());
+    let outside = tmp.path().join("outside");
+    std::fs::create_dir_all(outside.join(r"C:\x")).unwrap();
+
+    let stderr = refusal_stderr(
+        &[
+            "-C",
+            ws.to_str().unwrap(),
+            "add",
+            "local",
+            "--new",
+            "--param",
+            r"root=C:\x",
+            "--param",
+            "owner=acme",
+            "--param",
+            "repo=fresh",
+        ],
+        &outside,
+    );
+    assert!(
+        stderr.contains(&format!(
+            "the root '{}' does not exist",
+            ws.join(r"C:\x").display()
+        )),
+        "{stderr}"
+    );
+}
+
 /// AC2 row 4: a `root` inside the weave refuses — the degenerate case is an
 /// upstream that is also walked, deletable, and reportable as one of the
 /// weave's own members.

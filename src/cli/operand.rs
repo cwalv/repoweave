@@ -117,6 +117,13 @@ mod tests {
         assert_eq!(located, base().0.join("sub/dir"));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_windows_drive_spelling_is_a_relative_operand_on_unix() {
+        let located = Operand(OsString::from(r"C:\x")).locate(&base());
+        assert_eq!(located, base().0.join(r"C:\x"));
+    }
+
     #[test]
     fn an_absolute_operand_names_itself() {
         let absolute = if cfg!(windows) {
