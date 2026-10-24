@@ -7,6 +7,11 @@ root, and run integration install hooks (`npm install`, `uv sync`,
 `cargo fetch`, etc.). The hooks materialize what current membership implies;
 they never move a version an existing lock file pins.
 
+`rwv activate <project>` is project selection plus materialization:
+`rwv materialize` is the materialization step alone, for the project the
+weave root already presents, and reports the integration files it leaves the
+same way.
+
 `activate` **never authors integration content**: it surfaces the files
 already committed in the project directory and wires up the workspace for
 use. Regeneration belongs to the verbs that change what those files are
@@ -31,17 +36,13 @@ previous state.
 
 ### Integration file generation and ownership
 
-`activate` does not regenerate integration files — it surfaces them. Unless
-`--no-materialize` is passed, the host-dependent settings are brought to this
-host's answer first, so the verification pass does not report as drift what
-this run settles. Then the flow:
+`activate` does not rewrite integration workspace files to pick up
+`rwv.toml` changes — it surfaces them. Unless `--no-materialize` is passed,
+the host-dependent settings are brought to this host's answer first, so the
+verification pass does not report as drift what this run settles. Then the
+flow:
 
-1. **Verification pass:** the integrations' `verify()` is called to detect
-   drift between on-disk generated content and what they would produce now
-   (Axis-2 content drift). Drift is reported as a warning
-   (`warning (drift): ...`), not an error — `activate` never authors
-   content; the recovery hatch is `rwv doctor --fix`.
-2. **Symlink removal:** any root-level symlinks from the previous activation
+1. **Symlink removal:** any root-level symlinks from the previous activation
    that are owned by the integrations are removed (owner-scoped predicate:
    unlinked only if the symlink target resolves to
    `projects/<some-project>/<that-file>`). Before anything is removed, every
@@ -56,12 +57,12 @@ this run settles. Then the flow:
    version control nor rwv's record holds it, the switch is refused with
    nothing changed (`conflicting-root-write`). `add`, `remove`, `update`,
    `materialize` and `rwv doctor --fix` take it in and restore the link.
-3. **Symlink creation:** new symlinks are created at the weave root pointing
+2. **Symlink creation:** new symlinks are created at the weave root pointing
    to `projects/<project>/<file>` for each file in the active integrations'
    union of `generated_files()` and `managed_files()` (Axis-1 surfacing). If
-   one cannot be created, every link steps 2 and 3 had removed or created is
+   one cannot be created, every link steps 1 and 2 had removed or created is
    put back before the error is reported.
-4. **Install hooks:** integration install commands run against the now-in-place
+3. **Install hooks:** integration install commands run against the now-in-place
    symlinks. A hook whose tool is not on `PATH` is skipped with a
    `tool-missing` warning and the other hooks still run; a hook that runs and
    fails is an error. Suppressed by `--no-materialize`, and withheld while a generated
@@ -69,16 +70,23 @@ this run settles. Then the flow:
    generator and records what it produces as accepted, which would answer that
    fork on the operator's behalf. Settle it with `rwv materialize
    --adopt-drifted` or `rwv materialize --regenerate-drifted`, then rerun.
+4. **Verification pass:** the integrations' checks and `verify()` run against
+   what the steps above left — after the hooks, which are what write a
+   generated lock file — to detect drift between on-disk generated content and
+   what they would produce now (Axis-2 content drift). Drift is reported as a
+   warning (`warning (drift): ...`), not an error — `activate` never authors
+   content; the recovery hatch is `rwv doctor --fix`. The pass runs whether or
+   not a hook failed.
 5. **Write `.rwv-active`.**
 
-The per-integration `verify()` pass (step 1) covers Axis-2 content drift
+The per-integration `verify()` pass (step 4) covers Axis-2 content drift
 only — it does not assert that the surfacing symlinks themselves are present
 and resolve correctly. The framework-level **Axis-1 surfacing check** is a
 separate pass in `rwv doctor`: it asserts every file in the
 `generated_files() ∪ managed_files()` union has a valid symlink at the weave
 root. This distinction matters inside a workweave: `rwv activate` is refused
 there (the project is fixed at creation), but `rwv doctor --fix` re-runs the
-step-2 surfacing primitive (`surface_symlinks`) bound to the workweave
+step-1 and step-2 surfacing primitive (`surface_symlinks`) bound to the workweave
 directory — it creates missing or mis-resolved symlinks without re-selecting
 the project, so it is safe and valid in a workweave. Use `rwv doctor --fix`
 as the in-workweave recourse for any surfacing-symlink drift (e.g. a file
@@ -110,9 +118,11 @@ Run `rwv activate --help` for the full clap surface.
 
 ## Output
 
-Integration verification drift (if any) is reported as warnings on stderr:
+Integration check findings and verification drift (if any) are reported as
+warnings on stderr, after the install hooks' output:
 
 ```
+[warning] <integration>: <message>
 [warning (drift)] <integration>: <message>
 ```
 

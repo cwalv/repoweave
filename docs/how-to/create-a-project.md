@@ -11,7 +11,7 @@ rwv add https://github.com/chatly/shared-types.git --role dependency
 rwv lock --commit
 ```
 
-`rwv init web-app` creates `projects/web-app/` as a git repository containing `rwv.toml` and `.gitattributes` (with `rwv.lock merge=rwv-ours`), configures the local `merge.rwv-ours` git driver, and activates `web-app` by writing `.rwv-active`. Each `rwv add` clones the repo, records it in `rwv.toml`, and regenerates the integration files; `rwv lock --commit` then writes `rwv.lock` and commits it together with `rwv.toml`.
+`rwv init web-app` creates `projects/web-app/` as a git repository containing `rwv.toml`, `.gitattributes` (with `rwv.lock merge=rwv-ours`) and `web-app.code-workspace`, configures the local `merge.rwv-ours` git driver, and activates `web-app` by writing `.rwv-active`. Each `rwv add` clones the repo, records it in `rwv.toml`, and regenerates the integration files; `rwv lock --commit` then writes `rwv.lock` and commits it together with `rwv.toml`.
 
 ## Enable ecosystem integrations
 

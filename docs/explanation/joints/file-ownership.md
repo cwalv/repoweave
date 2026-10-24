@@ -146,7 +146,7 @@ workspace config file.
 The marker does double duty as an ownership signal and a **generate-vs-verify switch** — the
 same mechanism for all six hybrid integrations:
 
-- **Marker present, or managed key absent:** rwv *owns* the key and *authors* it on intent verbs.
+- **Marker present, or managed key absent:** rwv *owns* the key and *authors* it on the authoring verbs.
   Managed key absent → rwv creates the key and the marker; manages from that point forward.
 - **Managed key present but unmarked:** the user took the pen (e.g. replaced rwv's list with a
   native glob `members = ["github/*/*"]`). rwv *does not author* the key; it only
@@ -162,13 +162,14 @@ the switch.
 The hybrid-merge contract governs *how* rwv authors managed keys. A separate, orthogonal question
 is *when* it authors them. In brief:
 
-| Verb class | Verbs | Action on managed region |
-|---|---|---|
-| **Intent** | `add`, `remove`, `update`, `role` | Regenerate, for the operator to commit alongside the `rwv.toml`/`rwv.lock` change |
-| **Context** | `activate`, `materialize`, `fetch`, workweave-create, `lock`, `init`, `init --adopt` | Surface (symlink, always) + verify-and-warn; never author (`materialize` also runs install hooks, cleans up disabled-integration artifacts, and settles drifted attested generated files via `--regenerate-drifted` / `--adopt-drifted`) |
-| **Recovery** | `rwv doctor` / `rwv doctor --fix` | Report Axis-2 content drift **and** Axis-1 surfacing gaps; `--fix` regenerates content and re-surfaces symlinks |
+| Verbs | Action on managed region |
+|---|---|
+| `add`, `remove`, `update`, `role` (the authoring verbs) | Regenerate, for the operator to commit alongside the `rwv.toml`/`rwv.lock` change |
+| `init <name>` | Author the files the new project's empty manifest implies, before activating it |
+| `activate`, `materialize`, `fetch`, workweave-create, `lock`, `init --adopt` | Surface (symlink, always) + verify-and-warn; never rewrite integration workspace files to pick up `rwv.toml` changes (`materialize` also runs install hooks, cleans up disabled-integration artifacts, and settles drifted attested generated files via `--regenerate-drifted` / `--adopt-drifted`) |
+| `rwv doctor` / `rwv doctor --fix` | Report Axis-2 content drift **and** Axis-1 surfacing gaps; `--fix` regenerates content and re-surfaces symlinks |
 
-rwv writes the regenerated files into the project directory; it never commits them. An intent verb
+rwv writes the regenerated files into the project directory; it never commits them. An authoring verb
 also **withholds** regeneration when a repo the manifest declares active has no directory on disk —
 authoring from a partial member set would drop the absent repos from every managed file. The
 manifest change still lands; `rwv fetch` then `rwv doctor --fix` regenerates once the member set is
@@ -176,13 +177,13 @@ whole.
 
 `activate` creates the symlink unconditionally (Axis-1 surfacing). It never authors the committed
 file. The committed file is always consistent with committed `rwv.toml` + `rwv.lock` by
-construction, because regeneration is tied to the intent verb that changed them.
+construction, because regeneration is tied to the authoring verb that changed them.
 
-### Install hooks at context verbs: lockfiles may be rewritten
+### Install hooks at the verbs that do not author: lockfiles may be rewritten
 
 "Never author" is a claim about the **authoring path** — the managed regions and rwv-computed
-artifacts that intent verbs regenerate. It is not a claim that a context verb leaves every byte on
-disk untouched. The context verbs that run activation (`activate`, `materialize`, `init`,
+artifacts that the authoring verbs regenerate. It is not a claim that a verb off that path leaves
+every byte on disk untouched. The verbs that run activation (`activate`, `materialize`, `init`,
 `init --adopt`, workweave-create, and a `fetch` that activates a project — the first fetch of a
 source, or an in-place fetch selecting the weave's only project — but not `lock`, which runs no
 activation) still fire the integration **install hooks** unless the verb's `--no-materialize`
@@ -197,13 +198,13 @@ is not a re-resolve: an existing `Cargo.lock` is materialized with `cargo fetch`
 the versions it already records. `cargo generate-lockfile`, which rebuilds a lock with the latest
 compatible version of every package, runs only where no lock exists.) The adopt-time no-clobber guarantee is
 exactly the authoring-path guarantee: managed regions, rwv-computed generated artifacts (a
-`.code-workspace`, gita CSVs — written only by intent-mode `activate()`), and static-files entries
+`.code-workspace`, gita CSVs — written only by an authoring verb), and static-files entries
 (surfaced, never written) all survive an adopt byte-for-byte.
 
 The license is keyed on **ownership**, not on `generated_files()` membership: static-files entries
-ride `generated_files()` for Axis-1 surfacing while remaining fully user-owned, and no verb —
-context or intent — may write them. Conversely `go.work.sum` is hook-owned in principle, but
-go-work has no install hook, so nothing rewrites it at a context verb.
+ride `generated_files()` for Axis-1 surfacing while remaining fully user-owned, and no verb,
+authoring or not, may write them. Conversely `go.work.sum` is hook-owned in principle, but
+go-work has no install hook, so no verb's hooks rewrite it.
 
 A license to rewrite is not an obligation to. A hook whose inputs are not on disk yet **defers**
 rather than failing: `init --adopt` clones only the project repo, so an adopted manifest that
@@ -221,7 +222,7 @@ Within a hybrid document, each managed key path (addressed as a sequence of path
 keys containing literal dots, like VS Code's `["settings", "files.exclude"]`, remain unambiguous)
 operates in one of three states:
 
-- **`Author`:** `rwv` writes the key on every intent verb and strips it on deactivation.
+- **`Author`:** `rwv` writes the key on every authoring verb and strips it on deactivation.
 - **`DefaultOnly`:** `rwv` seeds the key only when it is absent (for example, Cargo's
   `workspace.resolver = "2"`) and never overwrites or strips it afterwards. Once seeded, the value
   is the operator's to adjust; a modified `DefaultOnly` value is clean, not drift.

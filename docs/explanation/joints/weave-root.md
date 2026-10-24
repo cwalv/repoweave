@@ -64,7 +64,7 @@ consequence of the first-ancestor-wins rule.
 | `github/<org>/<repo>/` | that repo — its own history, its own remote |
 | `projects/<name>/` | the project repo — committed intent (`rwv.toml`, `rwv.lock`) plus every surfaced file |
 | root symlinks (`Cargo.toml`, `go.work`, …) | rwv — the delivery layer of surfacing |
-| derived views the links resolve to | regenerated from committed intent by intent verbs |
+| derived views the links resolve to | regenerated from committed intent by the authoring verbs |
 | `.rwv-active` (or `.rwv-workweave`) | rwv — machine-local pointer state (while `.workweaves/` lives outside the root as a sibling directory by default) |
 
 A repo at the root would be a repo whose every tracked path is either another

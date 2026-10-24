@@ -1,13 +1,16 @@
 //! Project initialization: `rwv init`.
 //!
 //! Creates a new project directory under `projects/`, runs `git init`,
-//! writes an empty `rwv.toml`, and auto-activates the project. Optionally
-//! configures a git remote when `--provider` is given.
+//! writes an empty `rwv.toml`, authors the integration files it implies, and
+//! auto-activates the project. Optionally configures a git remote when
+//! `--provider` is given.
 //!
 //! `rwv init --adopt SOURCE` clones an existing repo as a project. The source
 //! can be a URL or a shorthand (`owner/repo` or `registry/owner/repo`). The
 //! cloned repo is placed under `projects/{name}/`, an `rwv.toml` is written if
-//! missing, and the project is activated.
+//! missing, and the project is activated. It authors nothing: its members are
+//! not on disk yet, and authoring from the repos it can see would rewrite the
+//! adopted project's committed files without the rest.
 //!
 //! ## Empty-directory bootstrap
 //!
@@ -88,7 +91,8 @@ fn bootstrap_workspace_if_empty(cwd: &Path) -> anyhow::Result<()> {
 /// - Runs `git init` in the new directory.
 /// - Writes an empty `rwv.toml` (`repositories: {}`).
 /// - If `provider` is given (e.g., `"github/owner"`), configures a git remote.
-/// - Activates the project (writes `.rwv-active` and generates ecosystem files).
+/// - Authors the integration files the empty manifest implies, then
+///   activates the project (writes `.rwv-active` and surfaces them).
 pub fn init(
     name: &crate::manifest::ProjectName,
     provider: Option<&str>,
@@ -167,7 +171,7 @@ pub fn init(
         project_dir.display()
     );
 
-    // Auto-activate the newly created project.
+    crate::activate::author_integration_files(ctx.primary_path(), name)?;
     crate::activate::activate(name, &ctx)?;
 
     Ok(())

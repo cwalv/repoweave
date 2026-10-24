@@ -75,9 +75,9 @@ pub enum ActivationMode {
     /// authors content**.
     Context,
     /// Only the hooks: the ecosystem state implied by current membership and
-    /// the recorded pins is made real on disk. No authoring, no verify pass,
-    /// and no claim on the weave root's shared names — the project acted on is
-    /// the one the root already presents, so there is nothing to select.
+    /// the recorded pins is made real on disk. No authoring, and no claim on
+    /// the weave root's shared names — the project acted on is the one the
+    /// root already presents, so there is nothing to select.
     ///
     /// Carries the operator's [`DriftConsent`] because arriving at an attested
     /// generated file whose content rwv never accepted is a fork this mode
@@ -154,6 +154,24 @@ pub fn activate_intent(
     ctx: &WorkspaceContext,
 ) -> anyhow::Result<Vec<SkippedEffect>> {
     activate_intent_with_options(project, ctx, ActivateOptions::default())
+}
+
+/// Author `project`'s integration files into its own directory and stop: no
+/// surfacing, no install hooks, no selection.
+pub(crate) fn author_integration_files(root: &Path, project: &ProjectName) -> anyhow::Result<()> {
+    let manifest_path = project_dir(root, project).join(Manifest::FILE_NAME);
+    let manifest = Manifest::from_path(&manifest_path)?;
+    let session = WorkspaceSession::new(root);
+    let builtin = builtin_integrations();
+    let integrations: Vec<&dyn Integration> = builtin.iter().map(|b| b.as_ref()).collect();
+    let detection_cache = build_detection_cache(&integrations, root, manifest.iter_entries());
+    let ctx_base = IntegrationContextBase::new(
+        &session,
+        project,
+        &detection_cache,
+        manifest.workweave.as_ref(),
+    );
+    report_and_check_activation_issues(&run_activations(&integrations, &manifest, &ctx_base))
 }
 
 /// Run **intent-mode** activation bound to an explicit weave directory.
@@ -763,7 +781,7 @@ fn activate_in_phases(
         skipped.iter().for_each(SkippedEffect::report);
         return Ok(skipped);
     };
-    run_hooks(
+    let hooks = run_hooks(
         project_vcs.as_ref(),
         &integrations,
         &manifest,
@@ -771,8 +789,34 @@ fn activate_in_phases(
         skip,
         mode,
         &noticed,
-    )
-    .map_err(ActivationFailure::AtHooks)
+    );
+    match mode {
+        ActivationMode::Context | ActivationMode::Materialize(_) => {
+            warn_integration_findings(&integrations, &manifest, &ctx_base);
+        }
+        ActivationMode::Intent => {}
+    }
+    hooks.map_err(ActivationFailure::AtHooks)
+}
+
+/// Print every enabled integration's check and verify findings as warnings,
+/// whatever their severity: a verb that authors nothing reports what it left
+/// for `rwv doctor --fix` and goes on.
+///
+/// After the hooks, because they are what write a generated lock: ahead of
+/// them this reports missing the lock they are about to write, including one
+/// `--regenerate-drifted` has just discarded for them to rewrite.
+fn warn_integration_findings(
+    integrations: &[&dyn Integration],
+    manifest: &Manifest,
+    ctx_base: &IntegrationContextBase,
+) {
+    for issue in run_checks(integrations, manifest, ctx_base) {
+        eprintln!("[warning] {}: {}", issue.source, issue.message);
+    }
+    for issue in run_verifications(integrations, manifest, ctx_base) {
+        eprintln!("[warning (drift)] {}: {}", issue.source, issue.message);
+    }
 }
 
 /// The integration content step for `mode`, then the weave root's surfacing,
@@ -799,33 +843,6 @@ fn author_and_surface(
             // this materialization is about to settle.
             if materializing {
                 fit_to_host(integrations, manifest, ctx_base)?;
-            }
-            // Two passes:
-            //   - run_checks: environment/config preconditions (cargo not on
-            //     PATH, declared static file missing, etc.). Same call as
-            //     `rwv doctor`. Surfaces as warnings; does not bail.
-            //   - run_verifications: drift between intent (rwv.toml/.lock)
-            //     and on-disk managed/generated content. Empty by default;
-            //     ports override `verify()` to opt in.
-            // Context verbs **never author content**, so even Severity::Error
-            // findings are surfaced as warnings and the activation proceeds —
-            // the recovery hatch is `rwv doctor --fix`. Bailing here would
-            // defeat the spec's unqualified "activate never authors" contract.
-            let check_issues = run_checks(integrations, manifest, ctx_base);
-            for issue in &check_issues {
-                let prefix = match issue.severity {
-                    Severity::Warning => "warning",
-                    Severity::Error => "warning",
-                };
-                eprintln!("[{prefix}] {}: {}", issue.source, issue.message);
-            }
-            let verify_issues = run_verifications(integrations, manifest, ctx_base);
-            for issue in &verify_issues {
-                let prefix = match issue.severity {
-                    Severity::Warning => "warning (drift)",
-                    Severity::Error => "warning (drift)",
-                };
-                eprintln!("[{prefix}] {}: {}", issue.source, issue.message);
             }
         }
         ActivationMode::Materialize(consent) => {

@@ -368,9 +368,11 @@ files = ["turbo.json"]
         .current_dir(&root)
         .assert()
         .success()
-        .stdout(predicate::str::contains(
-            "[warning] vscode-workspace: my-app.code-workspace does not exist",
-        ))
+        .stdout(predicate::str::contains(format!(
+            "[warning] vscode-workspace: vscode-workspace managed file missing: {}; \
+             run rwv doctor --fix to regenerate",
+            project_dir.join("my-app.code-workspace").display()
+        )))
         .stdout(predicate::str::contains(
             "[warning] static-files: declared file 'turbo.json' not found in project directory",
         ))

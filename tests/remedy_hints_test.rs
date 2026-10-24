@@ -464,7 +464,8 @@ fn missing_canonical_clone_names_the_fetch_of_the_workweaves_own_project() {
     let seat = tmp.path().join(".workweaves").join("pb--w");
     let x = origin_with_commit(tmp.path(), "x");
     rwv_ok(&ws, &["add", &x]);
-    rwv_ok(&ws, &["lock", "--commit"]);
+    rwv_ok(&ws, &["lock"]);
+    commit_project(&ws, "pb");
     rwv_ok(&ws, &["activate", "pa"]);
     let canonical = common::under(&ws, "local/origins/x");
     std::fs::remove_dir_all(&canonical).unwrap();

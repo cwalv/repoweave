@@ -59,7 +59,7 @@ A weave can hold multiple projects. Only one is active at a time. The active pro
 
 Selection is primary-only. A workweave's project is fixed when the workweave is created and cannot be switched, so a workweave root carries a `.rwv-workweave` marker naming its project *instead of* a pointer — the two files are mutually exclusive, and `rwv doctor` reports a root carrying both as a `weave-root-identity-conflict`.
 
-Intent verbs (`rwv add`, `rwv remove`, `rwv update`, `rwv role`, and `rwv doctor --fix`) author and merge managed keys into ecosystem workspace files in the project directory (`package.json` workspaces, `go.work`, `Cargo.toml` with `[workspace]`, `pyproject.toml` with `[tool.uv.workspace]`), preserving user-authored content in each file. Then `rwv activate <project>` makes that project live at the primary weave root:
+The authoring verbs (`rwv add`, `rwv remove`, `rwv update`, `rwv role`, and `rwv doctor --fix`) author and merge managed keys into ecosystem workspace files in the project directory (`package.json` workspaces, `go.work`, `Cargo.toml` with `[workspace]`, `pyproject.toml` with `[tool.uv.workspace]`), preserving user-authored content in each file. Then `rwv activate <project>` makes that project live at the primary weave root:
 
 1. Updates `.rwv-active`.
 2. Verifies integration files in `projects/<project>/` and surfaces symlinks at the weave root so ecosystem tools see them where they expect.
@@ -67,7 +67,7 @@ Intent verbs (`rwv add`, `rwv remove`, `rwv update`, `rwv role`, and `rwv doctor
 
 This is the antidote to manual wiring hell:
 
-- **No `npm link`.** You don't have to manually link packages every time you open a terminal. Intent verbs keep `package.json` workspaces (or `go.work`, or `Cargo.toml`) aligned with `rwv.toml`, and `rwv activate` surfaces them at the weave root.
+- **No `npm link`.** You don't have to manually link packages every time you open a terminal. The authoring verbs keep `package.json` workspaces (or `go.work`, or `Cargo.toml`) aligned with `rwv.toml`, and `rwv activate` surfaces them at the weave root.
 - **Deterministic paths.** Build tools see a consistent view. Two projects that use different versions of a shared library can't accidentally cross-contaminate.
 - **Low overhead.** Symlinks are cheap and ephemeral — losing one costs nothing, because the source of truth always remains in the project repo. `rwv activate` re-creates them at the weave root; inside a workweave, where `activate` is refused, `rwv doctor --fix` re-surfaces them and `rwv materialize` runs install hooks.
 
@@ -118,7 +118,7 @@ Integrations (`npm-workspaces`, `go-work`, `cargo-workspace`, `uv-workspace`, `p
 
 ## The shape, in one paragraph
 
-A project repo lives at `projects/{name}/` and carries `rwv.toml` (which repos, with what roles), `rwv.lock` (pinned 40-character commit SHAs), and any cross-cutting docs. Member repos live at `{registry}/{owner}/{repo}/` as regular clones. Intent verbs (`add`, `remove`, `update`, `role`) merge managed keys into ecosystem workspace files in `projects/{name}/`, preserving user-authored content; one project is *active* in a primary weave at a time (`.rwv-active`), and `rwv activate` surfaces those workspace files to the weave root via symlinks and runs install hooks. The lock is derived state — output of `rwv lock`, never an input to merge. Roles tag each repo's change resistance, doing triple duty as a human cognitive aid, an agent safety boundary, and a build-graph membership flag.
+A project repo lives at `projects/{name}/` and carries `rwv.toml` (which repos, with what roles), `rwv.lock` (pinned 40-character commit SHAs), and any cross-cutting docs. Member repos live at `{registry}/{owner}/{repo}/` as regular clones. The authoring verbs (`add`, `remove`, `update`, `role`) merge managed keys into ecosystem workspace files in `projects/{name}/`, preserving user-authored content; one project is *active* in a primary weave at a time (`.rwv-active`), and `rwv activate` surfaces those workspace files to the weave root via symlinks and runs install hooks. The lock is derived state — output of `rwv lock`, never an input to merge. Roles tag each repo's change resistance, doing triple duty as a human cognitive aid, an agent safety boundary, and a build-graph membership flag.
 
 ## Related
 

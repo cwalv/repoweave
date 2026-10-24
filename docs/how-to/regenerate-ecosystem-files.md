@@ -20,7 +20,7 @@ Repoweave separates authoring workspace config files, selecting the active proje
 
 ## After editing `rwv.toml` by hand
 
-Intent verbs (`rwv add`, `rwv remove`, `rwv update`, `rwv role`) update managed workspace files automatically. When you edit `rwv.toml` directly — for example, changing an integration setting or enabling a new integration — run:
+The authoring verbs (`rwv add`, `rwv remove`, `rwv update`, `rwv role`) update managed workspace files automatically. When you edit `rwv.toml` directly — for example, changing an integration setting or enabling a new integration — run:
 
 ```bash
 rwv doctor --fix
@@ -28,7 +28,7 @@ rwv doctor --fix
 
 `rwv doctor --fix` regenerates when `rwv doctor` reports something it can fix — a newly enabled integration's files missing, or managed content that differs from what `rwv.toml` implies. It updates the `rwv`-managed sections of hybrid files (`Cargo.toml`, `package.json`, `pnpm-workspace.yaml`, `go.work`, `pyproject.toml`, `<project>.code-workspace`) while preserving user-authored keys, rewrites the fully-owned `gita/` CSVs, runs the install hooks, and repairs any missing surfacing symlinks in the current workspace. A clean `rwv doctor` means `--fix` has nothing to do.
 
-Three settings are not compared by `rwv doctor`, so `rwv doctor --fix` alone does not pick up a change to them: `cargo-workspace`'s `patch` mode with the default `patch-surface = "manifest"`, `workspace-package`, and a `patch-surface` switch back to `manifest`. Any intent verb (`rwv add`, `remove`, `update`, `role`) always re-applies them, because it re-authors unconditionally; otherwise the change lands only at the next `rwv doctor --fix` that regenerates for another reason.
+Three settings are not compared by `rwv doctor`, so `rwv doctor --fix` alone does not pick up a change to them: `cargo-workspace`'s `patch` mode with the default `patch-surface = "manifest"`, `workspace-package`, and a `patch-surface` switch back to `manifest`. Any authoring verb (`rwv add`, `remove`, `update`, `role`) always re-applies them, because it re-authors unconditionally; otherwise the change lands only at the next `rwv doctor --fix` that regenerates for another reason.
 
 If your `rwv.toml` edit disabled an integration (`enabled = false`), follow up with `rwv materialize` to strip the disabled integration's managed blocks or files and run install hooks:
 
@@ -67,7 +67,7 @@ rwv materialize --remove-undeclared-links
 
 ## Files that `rwv` never overwrites on its own
 
-- **User-owned keys in hybrid files:** `rwv doctor --fix` and intent verbs only touch keys marked by `rwv`'s sentinel comments or metadata keys, leaving your custom `[profile.*]`, `scripts`, `replace`, or `[tool.ruff]` settings intact.
+- **User-owned keys in hybrid files:** `rwv doctor --fix` and the authoring verbs only touch keys marked by `rwv`'s sentinel comments or metadata keys, leaving your custom `[profile.*]`, `scripts`, `replace`, or `[tool.ruff]` settings intact.
 - **Ecosystem lockfiles (`Cargo.lock`, `package-lock.json`, `pnpm-lock.yaml`, `uv.lock`, `go.work.sum`):** Updated by the ecosystem's own tool during install hooks (or when `go` commands run against `go.work`).
 - **Compiled native extensions (`maturin` / `PyO3`):** `uv sync` reacts to dependency resolution changes, not edits to `.rs` source files inside an already-installed package. See [uv-workspace: a compiled extension can go stale](../reference/integrations/uv-workspace.md#polyglot-cargouv-a-compiled-extension-can-go-stale) for the `maturin-import-hook` setup.
 

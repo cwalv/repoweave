@@ -54,10 +54,16 @@ materializing. One word names the operation on both sides.
    now-in-place symlinks. A hook whose tool is not on `PATH` is skipped with a
    `tool-missing` warning and the others still run; a hook that runs and
    fails is an error.
+6. **Report.** The integrations' checks and verification run against what
+   the steps above left, and print as `[warning]` and `[warning (drift)]`
+   lines — the same pass, worded the same way, as `rwv activate` and
+   `rwv workweave create` run.
 
-Beyond the host-dependent settings, it does **not** author managed content.
-If an integration's managed file is missing, its hook refuses and names
-`rwv doctor --fix`, which is the verb that authors.
+Beyond the host-dependent settings, it does **not** author managed content: it
+does not rewrite integration workspace files to pick up `rwv.toml` changes. A
+missing or drifted managed file is reported in step 6 as a warning naming
+`rwv doctor --fix`, which is the verb that authors; a hook that cannot run
+without one refuses and names the same verb.
 
 ### Removing what a disabled integration left
 

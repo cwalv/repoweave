@@ -5,12 +5,13 @@
 //!
 //! Doc claims pinned here, checked behaviorally against a content-derived
 //! generated file rather than by grepping comments:
-//!   - `rwv add` / `rwv remove` author (intent mode)
+//!   - `rwv add` / `rwv remove` author (intent mode), and so does
+//!     `rwv init <name>`, before it activates
 //!   - `rwv add` / `rwv remove` author only when every active repo the
 //!     manifest declares is on disk; over a partial member set they record
 //!     the membership change and leave the managed files alone
-//!   - `rwv fetch`, `rwv activate`, `rwv materialize`, workweave-create,
-//!     `rwv init`, and `rwv init --adopt` do not author (context mode)
+//!   - `rwv fetch`, `rwv activate`, `rwv materialize`, workweave-create
+//!     and `rwv init --adopt` do not author (context mode)
 //!   - `rwv init --adopt` additionally must not re-author what the
 //!     authoring path owns, even when the adopted repo committed it: it
 //!     clones only the one repo, so re-authoring there would recompute
@@ -158,7 +159,7 @@ fn go_work(project_dir: &Path) -> PathBuf {
 }
 
 // ===========================================================================
-// Intent verbs: add / remove author managed content
+// Intent verbs: add / remove author managed content, and init <name> does
 // ===========================================================================
 
 #[test]
@@ -221,6 +222,28 @@ fn remove_authors_managed_content() {
     assert!(
         code_workspace(&project_dir, "myapp").exists(),
         "`rwv remove` is an intent verb; it must author the vscode-workspace file"
+    );
+}
+
+/// A new project's manifest declares no repos, and the integrations that do
+/// not wait for members still have a file to write for it.
+#[test]
+fn init_authors_the_integration_files_its_empty_manifest_implies() {
+    let tmp = common::tempdir().unwrap();
+    let ws = tmp.path().join("ws");
+    std::fs::create_dir_all(&ws).unwrap();
+
+    rwv()
+        .args(["init", "myapp"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let project_dir = ws.join("projects/myapp");
+    assert!(project_dir.join("rwv.toml").exists());
+    assert!(
+        code_workspace(&project_dir, "myapp").exists(),
+        "`rwv init <name>` must author the vscode-workspace file"
     );
 }
 
@@ -332,7 +355,7 @@ fn remove_does_not_overwrite_managed_content_from_a_partial_member_set() {
 }
 
 // ===========================================================================
-// Context verbs: fetch / activate / materialize / workweave-create / init do not author
+// Context verbs: fetch / activate / materialize / workweave-create / init --adopt do not author
 // ===========================================================================
 
 #[test]
@@ -431,26 +454,6 @@ fn workweave_create_does_not_author_managed_content() {
     assert!(
         !code_workspace(&ww_project_dir, "myapp").exists(),
         "workweave-create is a context verb; it must not author managed content"
-    );
-}
-
-#[test]
-fn init_does_not_author_managed_content() {
-    let tmp = common::tempdir().unwrap();
-    let ws = tmp.path().join("ws");
-    std::fs::create_dir_all(&ws).unwrap();
-
-    rwv()
-        .args(["init", "myapp"])
-        .current_dir(&ws)
-        .assert()
-        .success();
-
-    let project_dir = ws.join("projects/myapp");
-    assert!(project_dir.join("rwv.toml").exists());
-    assert!(
-        !code_workspace(&project_dir, "myapp").exists(),
-        "`rwv init` is a context verb; it must not author managed content"
     );
 }
 

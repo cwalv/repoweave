@@ -271,7 +271,7 @@ table in `Cargo.toml`, marked as its own:
 [workspace.package]
 ```
 
-`rwv` writes no keys into the table. An intent verb (`add`, `remove`,
+`rwv` writes no keys into the table. An authoring verb (`add`, `remove`,
 `role`, `update`) authors it as soon as the knob is set; `rwv doctor --fix`
 authors it only when other drift already makes it regenerate. Disabling the
 integration and running `rwv materialize` strips the table and its marker.
@@ -368,7 +368,7 @@ Strips only the `# managed by rwv`-marked keys (`[workspace].members` and its `#
 
 ## Diagnostics
 
-Reported by `rwv doctor`. Verify rows also print on the context verbs listed under [Hook points](./index.md#hook-points).
+Reported by `rwv doctor`. Verify rows also print as warnings on `rwv activate`, `rwv materialize`, `rwv workweave create` and the activation a `rwv fetch` performs; see [Hook points](./index.md#hook-points).
 
 | Kind | Severity | Condition | Repair |
 |---|---|---|---|

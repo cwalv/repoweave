@@ -857,8 +857,8 @@ impl Integration for CargoWorkspace {
         let managed = ctx.output_dir().join("Cargo.toml");
         if !managed.exists() {
             anyhow::bail!(
-                "cargo-workspace managed file missing: {}; \
-                 activate is a context verb and does not author managed content — \
+                "cargo-workspace managed file missing: {}; this command does not \
+                 rewrite integration workspace files to pick up rwv.toml changes — \
                  run `rwv doctor --fix` to regenerate",
                 managed.display()
             );

@@ -1649,8 +1649,8 @@ on, and the only repair `--fix` has for this project regenerates from the very
 settings that did not read — so it is withheld rather than attempted and
 reported as failed. The other verbs stop on the same block, each naming it and
 the field: `rwv materialize` refuses before its first step, changing nothing;
-the intent verbs refuse and leave `rwv.toml` unchanged; and `rwv activate`
-withholds its install hooks.
+`rwv add`, `rwv remove`, `rwv role` and `rwv update` refuse and leave
+`rwv.toml` unchanged; and `rwv activate` withholds its install hooks.
 
 Everything that integration would otherwise have reported for this project is
 missing from the run alongside it. A hook that cannot read its own

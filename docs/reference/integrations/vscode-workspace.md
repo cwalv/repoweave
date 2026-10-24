@@ -77,12 +77,12 @@ The file is deleted only when nothing user-authored remains after stripping: no 
 
 ## Diagnostics
 
-Reported by `rwv doctor`. Verify rows also print on the context verbs listed under [Hook points](./index.md#hook-points).
+Reported by `rwv doctor`. Verify rows also print as warnings on `rwv activate`, `rwv materialize`, `rwv workweave create` and the activation a `rwv fetch` performs; see [Hook points](./index.md#hook-points).
 
 | Kind | Severity | Condition | Repair |
 |---|---|---|---|
 | [`malformed-settings`](../doctor-findings.md#malformed-settings) | error | A value of the wrong type in `[integrations.vscode-workspace]`, such as `hide-dotfiles = "yes"`. | Correct the field the message names. |
-| [`managed-file-missing`](../doctor-findings.md#managed-file-missing) | warning | `projects/<project>/{project}.code-workspace` does not exist. Both the check and the verify pass report it. | `rwv doctor --fix` |
+| [`managed-file-missing`](../doctor-findings.md#managed-file-missing) | warning | `projects/<project>/{project}.code-workspace` does not exist. `rwv init <name>` writes it for a new project; `rwv init --adopt` leaves an adopted project's absent. | `rwv doctor --fix` |
 | [`managed-file-drift`](../doctor-findings.md#managed-file-drift) | warning | `"rwv.generated"` is present, but `folders[0]` or the managed `settings.files.exclude` keys differ from what `rwv` would write in the current container. | `rwv doctor --fix` |
 | [`managed-file-user-held`](../doctor-findings.md#managed-file-user-held) | warning | `folders` is present without the `"rwv.generated"` marker. | Add the marker back, or leave the file as yours. |
 | [`disabled-integration-artifact`](../doctor-findings.md#disabled-integration-artifact) | warning | The integration is disabled, and a `.code-workspace` file still carrying `"rwv.generated"` is in the project directory. `rwv doctor --fix` does not act on it. | `rwv materialize` |

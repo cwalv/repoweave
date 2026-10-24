@@ -6,7 +6,7 @@ Change a repo's `role` in this workspace's `rwv.toml`, regenerate the
 integration-managed files from the edited manifest, and settle the repo's
 files for its new role.
 
-`role` is an **intent verb**, in the family of `add` and `remove`: it mutates
+`role` is an **authoring verb**, in the family of `add` and `remove`: it mutates
 the manifest and regenerates the integrations' files so the result can be
 committed alongside the `rwv.toml` change. The regeneration matters because a
 `reference` repo is excluded from every ecosystem's build graph, so making a

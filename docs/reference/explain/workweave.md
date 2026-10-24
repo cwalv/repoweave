@@ -106,8 +106,10 @@ is the standard "ensure workweave exists" path.
    sync-to target for bare `rwv sync-to` from inside the workweave. No
    `.rwv-active` is written beside it: selection is primary-only, and a
    workweave's project is fixed here at creation.
-5. Integration activation (context verb: surfaces symlinks, then runs the
-   install hooks in the new workweave unless `--no-materialize` is passed).
+5. Integration activation: surfaces symlinks, runs the install hooks in the
+   new workweave unless `--no-materialize` is passed, then reports a missing
+   or drifted integration file as a warning naming `rwv doctor --fix`; it
+   authors none.
    A hook whose tool is not on `PATH` is skipped with a `tool-missing`
    warning. A hook that fails leaves the workweave created and registered,
    and the command exits non-zero naming `rwv materialize`, which finishes it

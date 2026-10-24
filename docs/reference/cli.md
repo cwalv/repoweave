@@ -160,7 +160,7 @@ Pure git SHA snapshot — no integration hooks fire. To refresh ecosystem lockfi
 
 ### `rwv activate <project>`
 
-Switch the active project in the primary weave: updates `.rwv-active`, surfaces weave-root symlinks for the project's existing integration and static files, and runs integration install hooks (`npm install`, `pnpm install`, `uv sync`, `cargo fetch`). Does not author or regenerate integration workspace files in the project directory; it reports a missing or drifted one as a warning and names `rwv doctor --fix`.
+Switch the active project in the primary weave. `rwv activate <project>` is project selection plus materialization: it updates `.rwv-active`, then does what [`rwv materialize`](#rwv-materialize-) does for the project the weave root now presents — surfaces weave-root symlinks for the project's existing integration and static files and runs integration install hooks (`npm install`, `pnpm install`, `uv sync`, `cargo fetch`). It does not rewrite integration workspace files to pick up `rwv.toml` changes: after the hooks it reports a missing or drifted one as a warning naming `rwv doctor --fix`, as `rwv materialize` and `rwv workweave create` do.
 
 | Flag | Effect |
 |---|---|
@@ -176,7 +176,7 @@ Refuses if an operation elsewhere holds op-state covering this workspace (`op-in
 
 ### `rwv materialize [...]`
 
-Reconcile integration-managed workspace files, weave-root symlinks, and install hooks for the project this checkout already presents. Valid in both a primary weave (for `.rwv-active`) and a workweave (for `.rwv-workweave`). Takes no project name; at a primary with no active project it refuses and points to `rwv activate <project>`. Refuses if an operation elsewhere holds op-state covering this workspace (`op-in-progress`).
+Reconcile integration-managed workspace files, weave-root symlinks, and install hooks for the project this checkout already presents: the materialization step of `rwv activate`, without the project selection. Valid in both a primary weave (for `.rwv-active`) and a workweave (for `.rwv-workweave`). Takes no project name; at a primary with no active project it refuses and points to `rwv activate <project>`. Refuses if an operation elsewhere holds op-state covering this workspace (`op-in-progress`).
 
 `rwv materialize` runs these steps in order:
 
@@ -189,9 +189,9 @@ Reconcile integration-managed workspace files, weave-root symlinks, and install 
 | 5. Host settings | Fits host-dependent settings, such as the cargo `rustc-wrapper` key, to this machine |
 | 6. Install hooks | Runs each enabled integration's non-advancing install command (`npm install`, `pnpm install`, `uv sync`, `cargo fetch`) without moving existing dependency pins. A generated lock file whose inputs changed (`derived-state-stale`) is re-derived here, by the tool that writes it |
 
-`rwv materialize` authors no integration workspace file: a missing or drifted `package.json`, `go.work` or `Cargo.toml` region is `rwv doctor --fix`'s to regenerate.
+`rwv materialize` does not rewrite integration workspace files to pick up `rwv.toml` changes: after the install hooks it reports a missing or drifted `package.json`, `go.work` or `Cargo.toml` region as a warning naming `rwv doctor --fix`, which regenerates it.
 
-Every step reads what the project's integrations declare, so an integration that cannot read its own `[integrations.<name>]` block can stop the verb before its first step. For example, an unknown key in a `cargo-workspace` `members` entry makes `rwv materialize` refuse, changing nothing (`materialize: nothing here was changed`), and list the block with the field to correct. Over the same block the intent verbs (`add`, `remove`, `role`, `update`) refuse and leave `rwv.toml` unchanged, and `rwv activate` withholds its install hooks.
+Every step reads what the project's integrations declare, so an integration that cannot read its own `[integrations.<name>]` block can stop the verb before its first step. For example, an unknown key in a `cargo-workspace` `members` entry makes `rwv materialize` refuse, changing nothing (`materialize: nothing here was changed`), and list the block with the field to correct. Over the same block `rwv add`, `rwv remove`, `rwv role` and `rwv update` refuse and leave `rwv.toml` unchanged, and `rwv activate` withholds its install hooks.
 
 | Flag | Effect |
 |---|---|
@@ -203,11 +203,11 @@ Passing both `--regenerate-drifted` and `--adopt-drifted` is refused. The bare r
 
 ### `rwv init <name-or-source> [--provider <registry>/<owner>] [--adopt]`
 
-Create a new project repo at `projects/<name>/` with an empty `rwv.toml`, configure `rwv.lock merge=rwv-ours` in `.gitattributes` and the `merge.rwv-ours` git driver in the project repo's config (checked by `rwv doctor` as `missing-replay-exclusion` and `missing-merge-driver-config`), and activate the project. With `--provider`, configures the project repo's remote URL.
+Create a new project repo at `projects/<name>/` with an empty `rwv.toml`, configure `rwv.lock merge=rwv-ours` in `.gitattributes` and the `merge.rwv-ours` git driver in the project repo's config (checked by `rwv doctor` as `missing-replay-exclusion` and `missing-merge-driver-config`), author the integration files an empty manifest implies (`<name>.code-workspace` with the default integrations), and activate the project. A new project starts with nothing for `rwv doctor` to report. With `--provider`, configures the project repo's remote URL.
 
 When invoked in an **empty directory**, `init` bootstraps that directory as a weave root (no pre-existing `rwv.toml` required) and creates the project inside it. Running in a non-empty directory without an existing workspace refuses.
 
-With `--adopt`, `<name-or-source>` is a URL or `owner/repo` shorthand: `init` clones the project repo from that source instead of `git init`-ing a new one (brownfield adoption of an existing project repo), and runs the adopted project's install hooks as it activates it. `--no-materialize` skips those hooks; without `--adopt` it is a usage error (exit 2), since a new project has no members for a hook to act on.
+With `--adopt`, `<name-or-source>` is a URL or `owner/repo` shorthand: `init` clones the project repo from that source instead of `git init`-ing a new one (brownfield adoption of an existing project repo), and runs the adopted project's install hooks as it activates it. It authors no integration file: the adopted project's members are not on disk until `rwv fetch`, and `rwv doctor --fix` regenerates once they are. `--no-materialize` skips those hooks; without `--adopt` it is a usage error (exit 2), since a new project has no members for a hook to act on.
 
 ### `rwv add <url> [...]`
 
@@ -404,7 +404,7 @@ Create an isolated workweave for `<project>`:
 
 1. **Manifest worktrees** — creates a git worktree on an ephemeral `<project>--<name>` branch for every member repo (`owned`, `fork`, `dependency`, and `reference`), with `reference` repos' tracked regular files set read-only (`chmod -w`, preserving symlinks).
 2. **Project worktree & marker** — creates the project worktree at `projects/<project>/` on `<project>--<name>` and writes `.rwv-workweave` at the workweave root.
-3. **Activation** — verifies the existing integration files in `projects/<project>/` (a missing or drifted one is reported as a warning naming `rwv doctor --fix`; `create` authors none), surfaces workweave-root symlinks, fits host settings such as the cargo `rustc-wrapper` key, and runs the integration install hooks (`npm install`, `uv sync`, `cargo fetch`, …) in the new workweave. `--no-materialize` skips the hooks; `rwv materialize` inside the workweave runs them later.
+3. **Activation** — surfaces workweave-root symlinks, fits host settings such as the cargo `rustc-wrapper` key, runs the integration install hooks (`npm install`, `uv sync`, `cargo fetch`, …) in the new workweave, then verifies the integration files in `projects/<project>/`: a missing or drifted one is reported as a warning naming `rwv doctor --fix`, and `create` authors none. `--no-materialize` skips the hooks; `rwv materialize` inside the workweave runs them later.
 
 A failure before the install hooks rolls the workweave back. An install hook that fails after the workweave is created and registered does not: the workweave is kept, and `create` exits 1 with `workweave created at <path>; only its install hooks did not complete. Fix the cause, then run rwv materialize inside it`. Under `--hook-mode` and `--claude-hook` the same failure is a warning on stderr and `create` exits 0, so the agent runtime that asked for the workweave still gets its path. A missing tool is a `tool-missing` warning in every mode.
 

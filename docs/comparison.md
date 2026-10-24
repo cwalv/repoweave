@@ -100,7 +100,7 @@ Earlier tools split into two dataflows:
 
 repoweave uses a third dataflow: **the lock is derived on mutation and authoritative only at materialization (`rwv fetch` / `rwv sync`)**:
 
-- **Reconciliation is built into the verbs:** intent verbs (`add`, `remove`, `update`, `role`) author ecosystem workspace files and `activate` surfaces them at the weave root; `sync` and `sync-to` recompute `rwv.lock` in Phase 3 ([lock-as-derived](explanation/joints/lock-as-derived.md)), making lock merge conflicts impossible.
+- **Reconciliation is built into the verbs:** the authoring verbs (`add`, `remove`, `update`, `role`) author ecosystem workspace files and `activate` surfaces them at the weave root; `sync` and `sync-to` recompute `rwv.lock` in Phase 3 ([lock-as-derived](explanation/joints/lock-as-derived.md)), making lock merge conflicts impossible.
 - **Drift is detectable and repairable:** `rwv doctor`, including each integration's own checks, reports divergence, and `rwv abort` rolls back mid-operation sync state via `refs/rwv/pre-op/<id>` savepoints.
 - **Ordinary git stays first-class:** there is no `rwv commit` or wrapped git porcelain ([verb-vs-composition](explanation/joints/verb-vs-composition.md)).
 

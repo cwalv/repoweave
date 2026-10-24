@@ -4,12 +4,14 @@
 
 Create a new project in the workspace, or adopt an existing repo as a project.
 `init` is the day-0 verb: it bootstraps the workspace (if needed), creates
-`projects/<name>/`, writes a skeletal `rwv.toml`, and auto-activates the project.
+`projects/<name>/`, writes a skeletal `rwv.toml`, authors the integration
+files it implies, and auto-activates the project.
 
-`init` writes the manifest and the project directory, but **never authors
-integration content**. A new project has an empty manifest with nothing to
-generate from, and `init --adopt` clones only the project repo — its members
-are not on disk until `rwv fetch`, so generating at that point would overwrite
+`rwv init <name>` authors what an empty manifest implies — with the default
+integrations, `<name>.code-workspace` — before it activates, so a new project
+starts with nothing for `rwv doctor` to report. `init --adopt` **never authors
+integration content**: it clones only the project repo, and its members are
+not on disk until `rwv fetch`, so generating at that point would overwrite
 the adopted project's committed workspace files from an empty member set. To
 regenerate an adopted project, run `rwv fetch`, then `rwv doctor --fix`.
 
@@ -45,7 +47,9 @@ project directory inside the existing workspace.
    correctly from the first commit.
 8. If `--provider` is given, adds a git remote named `origin` using the
    registry's clone URL pattern.
-9. Auto-activates the project (writes `.rwv-active`, surfaces symlinks).
+9. Authors the integration files the empty manifest implies into
+   `projects/<name>/`.
+10. Auto-activates the project (writes `.rwv-active`, surfaces symlinks).
 
 ### Adopt form (`rwv init <source> --adopt`)
 

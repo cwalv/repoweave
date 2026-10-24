@@ -13,10 +13,7 @@
 //! and `verify` go through it — regeneration and drift detection cannot
 //! disagree about what the region should hold.
 
-use crate::integration::{
-    Integration, IntegrationContext, Issue, IssueKind, IssueSource, OwnedPath, Severity,
-    SurfacedFile,
-};
+use crate::integration::{Integration, IntegrationContext, Issue, OwnedPath, SurfacedFile};
 use crate::integrations::merge::{
     drift_issues, holds_owned_region, keypath, missing_issue, JsonDoc, JsonMarker, ManagedDoc,
     Remedy, RwvGeneratedMarker,
@@ -535,24 +532,10 @@ impl Integration for VscodeWorkspace {
     }
 
     fn check(&self, ctx: &IntegrationContext) -> anyhow::Result<Vec<Issue>> {
-        if let Err(issue) = ctx.settings_or_issue::<VscodeConfig>(self.name()) {
-            return Ok(vec![issue]);
+        match ctx.settings_or_issue::<VscodeConfig>(self.name()) {
+            Ok(_) => Ok(Vec::new()),
+            Err(issue) => Ok(vec![issue]),
         }
-
-        let filename = workspace_file_name(&ctx.project().flat());
-        let filepath = ctx.output_dir().join(&filename);
-
-        let mut issues = Vec::new();
-        if !filepath.is_file() {
-            issues.push(Issue {
-                source: IssueSource::integration(self.name()),
-                severity: Severity::Warning,
-                message: format!("{} does not exist", filename).into(),
-                kind: IssueKind::ManagedFileMissing,
-                safe_to_fix: true,
-            });
-        }
-        Ok(issues)
     }
 
     /// Content-correct check (Axis-2) for `<project>.code-workspace`.
@@ -697,7 +680,7 @@ impl Integration for VscodeWorkspace {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::integration::IntegrationContextBase;
+    use crate::integration::{IntegrationContextBase, IssueKind};
     use crate::manifest::{IntegrationConfig, Manifest, ProjectName};
     use crate::workspace::WorkspaceSession;
 

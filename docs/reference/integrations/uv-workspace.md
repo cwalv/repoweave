@@ -82,7 +82,7 @@ Gated on the `# managed by rwv` marker on `[tool.uv.workspace].members`: strips 
 
 ## Diagnostics
 
-Reported by `rwv doctor`. Verify rows also print on the context verbs listed under [Hook points](./index.md#hook-points).
+Reported by `rwv doctor`. Verify rows also print as warnings on `rwv activate`, `rwv materialize`, `rwv workweave create` and the activation a `rwv fetch` performs; see [Hook points](./index.md#hook-points).
 
 | Kind | Severity | Condition | Repair |
 |---|---|---|---|

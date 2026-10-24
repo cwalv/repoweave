@@ -59,6 +59,26 @@ A repo path of `(project)` is refused with the new refusal `reserved-repo-path`.
 member at that path could not be told from it. The refusal is listed in
 `docs/reference/refusals.md`.
 
+### A new project starts with no integration warnings
+
+`rwv init <name>` printed two warnings about the project's
+`<name>.code-workspace` as soon as it created the project, because nothing had
+written that file yet. It now writes the integration files an empty manifest
+implies before it activates the project, so a fresh project, and the `init`,
+`add`, `fetch`, `activate` sequence that follows, prints no warning and leaves
+`rwv doctor` nothing to report. `rwv init --adopt` still writes none: the
+adopted project's members are not on disk until `rwv fetch`. A missing
+`.code-workspace` is reported once rather than twice, by `rwv doctor` and every
+other verb that reports it.
+
+### `rwv materialize` reports missing and drifted integration files
+
+`rwv activate` and `rwv workweave create` warned about an integration file that
+was missing or had drifted, and `rwv materialize` said nothing. All three now
+run the same report and word it the same way, naming `rwv doctor --fix`. It
+runs after the install hooks, so a lock file the hooks write is no longer
+reported missing just before they write it.
+
 ### On Windows, `rwv explain` and `rwv prime` print LF line endings
 
 The pages `rwv explain` and `rwv prime` print are built into the binary. The

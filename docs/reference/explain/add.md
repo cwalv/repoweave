@@ -6,7 +6,7 @@ Clone a repo and register it in the active project's `rwv.toml`, then
 re-run integration activation so ecosystem files (Cargo workspace, npm
 workspace, etc.) are updated to include the new member.
 
-`add` is an **intent verb**: it mutates the manifest and regenerates
+`add` is an **authoring verb**: it mutates the manifest and regenerates
 integration-managed content so the resulting files can be committed alongside
 the `rwv.toml` change.
 

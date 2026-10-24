@@ -187,12 +187,14 @@ fn deactivation_preserves_handwritten_code_workspace_files() {
     );
 }
 
+/// `verify()` reports a missing `.code-workspace` with its path and repair
+/// (`s7_vscode_doctor_missing_reports_finding`); `check()` reporting it too
+/// makes every verb that runs both print the one absence twice.
 #[test]
-fn check_validates_workspace_file_exists() {
+fn check_leaves_a_missing_workspace_file_to_verify() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path();
 
-    // No .code-workspace file present
     let manifest = make_manifest(vec![("github/acme/server", Role::Owned)]);
     let project = ProjectName::new("test-project").unwrap();
     let config = IntegrationConfig::default();
@@ -204,9 +206,15 @@ fn check_validates_workspace_file_exists() {
 
     let integration = VscodeWorkspace;
     let issues = integration.check(&ctx).unwrap();
-    assert!(issues.iter().any(
-        |i| i.severity == Severity::Warning && i.message.to_string().contains("code-workspace")
-    ));
+    assert!(
+        issues.is_empty(),
+        "check() should report nothing for a missing file, got: {issues:?}"
+    );
+    assert_eq!(
+        integration.verify(&ctx).unwrap().len(),
+        1,
+        "verify() should report the missing file"
+    );
 }
 
 #[test]
