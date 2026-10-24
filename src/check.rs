@@ -5105,7 +5105,13 @@ fn scan_workweave_repo_branches(
 
     let flat = EphemeralRefName::mint(&workweave.flat());
     let expected_ref = flat.to_string();
-    let op_owns_workweave = crate::op_state::check_no_op_in_progress(&[workweave_dir]).is_err();
+    let op_owns_workweave = !matches!(
+        (
+            crate::op_state::read_owner(workweave_dir),
+            crate::op_state::read_lease(workweave_dir),
+        ),
+        (Ok(None), Ok(None))
+    );
 
     for abs in workweave_checkouts(vcs, workweave_dir, &workweave.project) {
         // The receipt, if any, lives in this checkout's canonical store —
