@@ -1067,6 +1067,20 @@ Schema:
           "enum": [
             "extra"
           ]
+        },
+        {
+          "description": "A checkout at the slot whose link to the canonical clone names a git directory that is not there, so git cannot open it; the canonical clone holds what relinking it needs — its registration, the workweave's branch, or the pinned revision.",
+          "type": "string",
+          "enum": [
+            "dangling-link"
+          ]
+        },
+        {
+          "description": "A checkout at the slot whose link dangles, and the canonical clone is not on disk, or holds neither the workweave's branch nor the pinned revision.",
+          "type": "string",
+          "enum": [
+            "dangling-link-unfetched"
+          ]
         }
       ]
     },
@@ -1327,6 +1341,43 @@ Schema:
         }
       ]
     },
+    "PlacementConvergence": {
+      "description": "Where a `ProvenanceKind::PlacementDisagreement` is converged. Moving a canonical clone strands every workweave worktree of it, so the move runs in the primary weave, after each such workweave is landed and retired.",
+      "oneOf": [
+        {
+          "description": "In this primary weave, once each workweave listed is retired.",
+          "type": "object",
+          "required": [
+            "here"
+          ],
+          "properties": {
+            "here": {
+              "type": "object",
+              "required": [
+                "retire_first"
+              ],
+              "properties": {
+                "retire_first": {
+                  "type": "array",
+                  "items": {
+                    "description": "A workweave's identity: its project and its name there, as `<project>--<name>`.",
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "From the primary weave; this is a workweave.",
+          "type": "string",
+          "enum": [
+            "from-primary"
+          ]
+        }
+      ]
+    },
     "PluginRecord": {
       "description": "A discovered external command (`rwv-<verb>`) on `PATH`.\n\nRecords are sorted by `(name, path)` for deterministic output. When several files dispatch as the same name, the one dispatch runs wins; the others are marked `shadowed = true` and carry `shadowed_by` pointing at the winning binary.",
       "type": "object",
@@ -1504,9 +1555,18 @@ Schema:
             "placement-disagreement": {
               "type": "object",
               "required": [
+                "converge",
                 "expected_path"
               ],
               "properties": {
+                "converge": {
+                  "description": "Where the move, re-key and `rwv lock` run, and what goes first.",
+                  "allOf": [
+                    {
+                      "$ref": "#/definitions/PlacementConvergence"
+                    }
+                  ]
+                },
                 "expected_path": {
                   "description": "The path `placement(entry.url)` derives — where the manifest key would need to be for the two to agree.",
                   "type": "string"
@@ -1697,6 +1757,13 @@ Schema:
           "properties": {
             "absolute_path": {
               "$ref": "#/definitions/WirePath"
+            },
+            "clone_at_placement": {
+              "description": "The path the entry's URL places it at, when a clone of the same remote stands there and no entry of the project names it; `null` otherwise. Present, the repair is to re-key the entry to it and run `rwv lock`; absent, it is `rwv fetch`.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "kind": {
               "type": "string",
@@ -3535,8 +3602,9 @@ rwv doctor --fix
 - *index-drift* with `sub_kind: live-staged` — the user has staged content
   that doesn't match a known tree. `--fix` will refuse; resolve manually.
 - *orphaned-clone* — a directory under a registry path that isn't listed in
-  any `rwv.toml`. Only surfaced under `--all`. Either add it to a manifest
-  or remove it.
+  any `rwv.toml`. Only surfaced under `--all`. Either move it to the path its
+  remote's URL places it at under the primary weave root and run
+  `rwv add --adopt` with that path, or remove it.
 - *surfacing: `<file>` is not surfaced* (or *symlink resolves to …*) — the
   framework Axis-1 surfacing check found a missing or mis-resolved symlink
   in the active project's surfacing set. Run `rwv doctor --fix` to
