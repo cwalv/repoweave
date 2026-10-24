@@ -4,14 +4,11 @@
 //! 1. Library-level: round-trip the `UpdateJsonOutput` envelope type through
 //!    serde so the wire shape (`$schema`, `repos` array, per-record fields)
 //!    is pinned independent of the live update path.
-//! 2. End-to-end: drive `rwv update --json` and `rwv update --json -j 2`
-//!    through the binary, parse stdout, assert envelope / NDJSON shape.
+//! 2. End-to-end: drive `rwv update --json` through the binary, parse stdout,
+//!    assert the envelope shape whatever `-j` is.
 
 use assert_cmd::Command;
-use repoweave::placement::PLACEMENT_RECORD_SCHEMA_URL;
-use repoweave::update::{
-    RepoUpdateRecord, UpdateJsonOutput, UpdateKind, UPDATE_RECORD_SCHEMA_URL, UPDATE_SCHEMA_URL,
-};
+use repoweave::update::{RepoUpdateRecord, UpdateJsonOutput, UpdateKind, UPDATE_SCHEMA_URL};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
@@ -338,91 +335,32 @@ fn update_json_envelope_emitted_under_j1() {
 }
 
 // ===========================================================================
-// End-to-end: `rwv update --json -j 2` emits NDJSON
+// End-to-end: the worker count does not choose the shape
 // ===========================================================================
 
 #[test]
-fn update_json_ndjson_emitted_under_j_gt_1() {
+fn update_json_is_one_envelope_whatever_the_worker_count() {
     let repos = [
         ("local/org/a", "owned"),
         ("local/org/b", "owned"),
         ("local/org/c", "owned"),
     ];
-    let ws = build_workspace("beta", &repos);
-
-    // Advance each bare so all three have something to update.
-    let mut new_shas: Vec<(String, String)> = Vec::new();
-    for (rp, bare) in &ws.manifest_bares {
-        let sha = advance_bare_main(bare);
-        new_shas.push((rp.clone(), sha));
-    }
-
-    let assert = rwv()
-        .args(["update", "--dirty", "--json", "-j", "2"])
-        .current_dir(&ws.workspace)
-        .assert()
-        .success();
-
-    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
-
-    // Acceptance: the whole stdout must NOT parse as one JSON document.
-    assert!(
-        serde_json::from_str::<Value>(&stdout).is_err(),
-        "NDJSON stdout must not parse as one document; got:\n{stdout}"
-    );
-
-    // Every non-empty line is a self-describing JSON object.
-    let lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
-    assert!(
-        lines.len() >= repos.len(),
-        "expected >= {} NDJSON lines, got {}:\n{stdout}",
-        repos.len(),
-        lines.len()
-    );
-
-    let mut seen_paths = std::collections::BTreeSet::new();
-    for line in &lines {
-        let v: Value = serde_json::from_str(line)
-            .unwrap_or_else(|e| panic!("line not valid JSON ({e}): {line}"));
-        let obj = v.as_object().unwrap();
-        let schema = obj.get("$schema").and_then(Value::as_str);
-        if schema == Some(PLACEMENT_RECORD_SCHEMA_URL) {
-            assert!(obj.contains_key("files"), "missing files: {line}");
-            continue;
+    let shape_under = |project: &str, jobs: &str| {
+        let ws = build_workspace(project, &repos);
+        for (_, bare) in &ws.manifest_bares {
+            advance_bare_main(bare);
         }
-        assert_eq!(
-            schema,
-            Some(UPDATE_RECORD_SCHEMA_URL),
-            "every NDJSON record must embed $schema: {line}"
-        );
-        assert!(obj.contains_key("kind"), "missing kind: {line}");
-        assert!(obj.contains_key("path"), "missing path: {line}");
-        assert!(
-            obj.contains_key("absolute_path"),
-            "missing absolute_path: {line}"
-        );
-        assert!(obj.contains_key("branch"), "missing branch: {line}");
-        if let Some(path) = obj.get("path").and_then(Value::as_str) {
-            seen_paths.insert(path.to_string());
-        }
-    }
-
-    // All three manifest repos must appear in the stream.
-    for (rp, _) in &repos {
-        assert!(
-            seen_paths.contains(*rp),
-            "expected path {rp} in NDJSON stream; got {seen_paths:?}\nstdout:\n{stdout}"
-        );
-    }
-
-    // Each record must not start with a `[<prefix>]` wrapper.
-    for line in &lines {
-        let trimmed = line.trim_start();
-        assert!(
-            trimmed.starts_with('{'),
-            "NDJSON line must start with '{{' (no Reporter prefix): {line}"
-        );
-    }
+        let out = rwv()
+            .args(["update", "--dirty", "--json", "-j", jobs])
+            .current_dir(&ws.workspace)
+            .assert()
+            .success();
+        common::envelope_shape(&out.get_output().stdout, UPDATE_SCHEMA_URL, "repos")
+    };
+    let serial = shape_under("beta", "1");
+    let manifest_order: Vec<&str> = repos.iter().map(|(path, _)| *path).collect();
+    assert_eq!(serial.1, manifest_order, "records follow the manifest");
+    assert_eq!(shape_under("beta", "4"), serial);
 }
 
 // ===========================================================================

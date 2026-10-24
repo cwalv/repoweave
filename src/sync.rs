@@ -15,7 +15,7 @@ use crate::manifest::{
 use crate::op_state::{
     self, OpId, OpVerb, Override, Overrides, OwnerRecord, SavepointKey, SyncStrategy,
 };
-use crate::parallel::{run_in_parallel, JsonShape, OutputMode};
+use crate::parallel::{run_in_parallel, OutputMode};
 use crate::path_spelling::CanonicalPath;
 use crate::placement::PlacementOutput;
 use crate::refusal::RefusalKind;
@@ -661,6 +661,15 @@ impl SyncOutcomeOutput {
         matches!(self, Self::Failed { .. })
     }
 
+    fn path(&self) -> &str {
+        match self {
+            Self::Converged { path, .. }
+            | Self::AlreadyAhead { path, .. }
+            | Self::NoOp { path, .. }
+            | Self::Failed { path, .. } => path,
+        }
+    }
+
     /// Return a mutable reference to the `step3_advance` field regardless of variant.
     fn step3_advance_mut(&mut self) -> &mut Option<Step3AdvanceOutput> {
         match self {
@@ -672,11 +681,12 @@ impl SyncOutcomeOutput {
     }
 }
 
-/// Top-level envelope for `rwv sync --json` (serial mode).
+/// Top-level envelope for `rwv sync --json`.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct SyncJsonOutput {
     #[serde(rename = "$schema")]
     pub schema: String,
+    /// One record per repo, in manifest order whatever `-j` is.
     pub outcomes: Vec<SyncOutcomeOutput>,
     /// How the files of each checkout the sync created or moved were placed.
     /// Empty, not absent, when it placed none.
@@ -695,11 +705,6 @@ pub struct SyncJsonOutput {
     /// Standing advisories raised during this sync (e.g. delivered changes
     /// touching a materialized input). Empty, not absent, when there are
     /// none — a consumer branches on length rather than presence.
-    ///
-    /// Present only in this envelope: `-j N` with `N > 1` streams NDJSON
-    /// instead, one self-describing per-repo line with no envelope for an
-    /// advisory to sit in, so a parallel `--json` sync carries no advisory
-    /// at all. Run `-j 1` (or omit `-j`) to receive one.
     pub advisories: Vec<AdvisoryOutput>,
     /// Resolved workspace coordinates (weave root, optional workweave
     /// identity, project). Absent when no project is resolved.
@@ -707,7 +712,7 @@ pub struct SyncJsonOutput {
     pub resolution: Option<Resolution>,
 }
 
-/// Top-level envelope for `rwv sync-to --json` (serial mode).
+/// Top-level envelope for `rwv sync-to --json`.
 ///
 /// Extends [`SyncJsonOutput`] with sync-to-specific observability fields:
 /// - `source_workweave` — the workweave the op is rooted in (null when that is
@@ -753,6 +758,7 @@ pub struct SyncToJsonOutput {
     /// `rwv status --json` in the target workspace.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resumed: Option<op_state::OpPhase>,
+    /// One record per repo, in manifest order whatever `-j` is.
     pub outcomes: Vec<SyncOutcomeOutput>,
     /// How the files of each checkout the op created or moved were placed, in
     /// this workspace and in the target, each under its own `absolute_path`.
@@ -778,29 +784,6 @@ pub struct SyncToJsonOutput {
     /// identity, project). Absent when no project is resolved.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolution: Option<Resolution>,
-}
-
-/// One NDJSON record emitted by `rwv sync --json -j N` with `N > 1`.
-///
-/// Under NDJSON streaming mode, the envelope wrapper is dropped and each
-/// per-repo outcome becomes its own self-describing line. Every NDJSON
-/// record carries its own `$schema` URL (pointing at `sync-record.json`) so
-/// consumers can identify a line without out-of-band context.
-///
-/// Serialized with `#[serde(flatten)]` on the inner outcome so the wire
-/// shape is a single flat object: `{"$schema": "...", "kind": "...", ...}`,
-/// not a nested wrapper.
-///
-/// `$schema` names `docs/reference/schemas/sync-record.json`, not the
-/// envelope artifact (`sync.json`), because the two documents have different
-/// shapes: the envelope wraps an `outcomes` array; each streamed line is one
-/// flat per-repo object.
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct SyncOutcomeNdjsonRecord<'a> {
-    #[serde(rename = "$schema")]
-    pub schema: &'a str,
-    #[serde(flatten)]
-    pub outcome: &'a SyncOutcomeOutput,
 }
 
 /// What replay did with a member checkout outside its per-repo strategy: the
@@ -862,78 +845,13 @@ impl MemberOutput {
     }
 }
 
-/// One member line streamed by `rwv sync --json -j N` and `rwv sync-to --json
-/// -j N` with `N > 1`, beside the per-repo lines: a flat object whose `$schema`
-/// names `member-record.json`.
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct MemberNdjsonRecord<'a> {
-    #[serde(rename = "$schema")]
-    pub schema: &'a str,
-    #[serde(flatten)]
-    pub member: &'a MemberOutput,
-}
-
-/// One advance-target fast-forward that moved a branch pointer in the target.
-#[derive(Debug, Clone, Serialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
-pub enum AdvanceOutput {
-    /// A member repo; the envelope carries it as that repo's
-    /// `step3_advance`.
-    Step3Advance {
-        path: String,
-        /// Target repo's HEAD SHA before the fast-forward.
-        from_sha: String,
-        /// Target repo's HEAD SHA after the fast-forward (== CWD's tip).
-        to_sha: String,
-    },
-    /// The project repo; the envelope carries it as `project_repo_advance`.
-    ProjectRepoAdvance {
-        /// Target project repo's HEAD SHA before the fast-forward.
-        from_sha: String,
-        /// Target project repo's HEAD SHA after the fast-forward.
-        to_sha: String,
-    },
-}
-
-/// One advance line streamed by `rwv sync-to --json -j N` with `N > 1`: a flat
-/// object whose `$schema` names `advance-record.json`.
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct AdvanceNdjsonRecord<'a> {
-    #[serde(rename = "$schema")]
-    pub schema: &'a str,
-    #[serde(flatten)]
-    pub advance: &'a AdvanceOutput,
-}
-
-/// Schema URL embedded in each streamed member line. Pins to
-/// `docs/reference/schemas/member-record.json`.
-pub const MEMBER_RECORD_SCHEMA_URL: &str = crate::schema_url::schema_url!("member-record");
-
-/// Schema URL embedded in each streamed advance line. Pins to
-/// `docs/reference/schemas/advance-record.json`.
-pub const ADVANCE_RECORD_SCHEMA_URL: &str = crate::schema_url::schema_url!("advance-record");
-
-fn stream_ndjson_line(stdout_lock: &Mutex<()>, record: &impl Serialize) {
-    crate::stdout::stream_record(stdout_lock, record);
-}
-
 /// Schema URL embedded in `rwv sync --json` output. Pins to the committed
 /// artifact under `docs/reference/schemas/sync.json`.
 pub const SYNC_JSON_SCHEMA_URL: &str = crate::schema_url::schema_url!("sync");
 
-/// Schema URL embedded in each `rwv sync --json -j N` NDJSON record line.
-/// Pins to `docs/reference/schemas/sync-record.json`, which describes the
-/// flat per-repo wire shape — distinct from the serial envelope (`sync.json`).
-pub const SYNC_RECORD_SCHEMA_URL: &str = crate::schema_url::schema_url!("sync-record");
-
 /// Schema URL embedded in `rwv sync-to --json` output. Pins to the committed
 /// artifact under `docs/reference/schemas/sync-to.json`.
 pub const SYNC_TO_JSON_SCHEMA_URL: &str = crate::schema_url::schema_url!("sync-to");
-
-/// Schema URL embedded in each `rwv sync-to --json -j N` NDJSON record line.
-/// Pins to `docs/reference/schemas/sync-to-record.json`, which describes the
-/// flat per-repo wire shape — distinct from the serial envelope (`sync-to.json`).
-pub const SYNC_TO_RECORD_SCHEMA_URL: &str = crate::schema_url::schema_url!("sync-to-record");
 
 /// The clause naming where the source's own checkout stood against the tip
 /// replay measured this repo against.
@@ -2306,8 +2224,7 @@ pub trait OutputHandler: Send + Sync {
     ///
     /// Default implementation is a no-op: text-mode handlers print the
     /// advisory's human rendering directly at the call site instead, and
-    /// handlers whose envelope carries no `advisories` field (sync-to,
-    /// NDJSON — no envelope to place it in) have nothing to buffer it into.
+    /// sync-to's envelope carries no `advisories` field to buffer it into.
     fn record_advisory(&self, _advisory: AdvisoryOutput) {}
 
     /// Record the coordinates the machine resolved for this op. Called once,
@@ -2417,9 +2334,9 @@ impl OutputHandler for TextHandler<'_> {
     }
 }
 
-/// Envelope-mode handler: buffers all records so the caller can emit a single
-/// `{ "$schema": ..., "outcomes": [...] }` JSON object after the sync
-/// completes. Used by `rwv sync --json` with `-j 1` (or unspecified).
+/// Envelope handler for `rwv sync --json`: buffers all records so the caller
+/// can emit a single `{ "$schema": ..., "outcomes": [...] }` JSON object after
+/// the sync completes.
 ///
 /// Text chatter is suppressed (`emit_text` returns `false`).
 pub struct JsonEnvelopeHandler<'a> {
@@ -2469,85 +2386,6 @@ impl OutputHandler for JsonEnvelopeHandler<'_> {
 
     fn record_complete(&self) {
         self.complete.store(true, Ordering::Relaxed);
-    }
-}
-
-/// NDJSON streaming handler: writes one self-describing JSON line per record
-/// to stdout as it arrives, and also buffers into `records` so post-loop
-/// callers can check `any_failure`. Used by `rwv sync --json -j N` with
-/// `N > 1`.
-///
-/// `stdout_lock` serializes concurrent writes so parallel workers cannot
-/// interleave bytes. Text chatter is suppressed (`emit_text` returns `false`).
-///
-/// A placement, a member and an advance-target fast-forward are each streamed
-/// as their own line when recorded.
-pub struct JsonNdjsonHandler<'a> {
-    stdout_lock: &'a Mutex<()>,
-    records: &'a Mutex<Vec<SyncOutcomeOutput>>,
-    schema_url: &'a str,
-}
-
-impl OutputHandler for JsonNdjsonHandler<'_> {
-    fn emit_text(&self) -> bool {
-        false
-    }
-
-    fn record(
-        &self,
-        path: &str,
-        abs_path: &Path,
-        outcome: &RepoSyncOutcome,
-        containment: Option<ContainmentOutput>,
-    ) {
-        let out = SyncOutcomeOutput::from_outcome(
-            path.to_owned(),
-            crate::path_spelling::WirePath::of(abs_path),
-            outcome,
-            containment,
-        );
-        stream_ndjson_line(
-            self.stdout_lock,
-            &SyncOutcomeNdjsonRecord {
-                schema: self.schema_url,
-                outcome: &out,
-            },
-        );
-        let mut guard = self.records.lock().unwrap_or_else(|e| e.into_inner());
-        guard.push(out);
-    }
-
-    fn record_placement(&self, placement: PlacementOutput) {
-        placement.stream(self.stdout_lock);
-    }
-
-    fn record_member(&self, member: MemberOutput) {
-        stream_ndjson_line(
-            self.stdout_lock,
-            &MemberNdjsonRecord {
-                schema: MEMBER_RECORD_SCHEMA_URL,
-                member: &member,
-            },
-        );
-    }
-
-    fn record_step3_advance(&self, repo: &RepoKey, from_sha: &str, to_sha: &str) {
-        let (from_sha, to_sha) = (from_sha.to_owned(), to_sha.to_owned());
-        let advance = match repo {
-            RepoKey::Project => AdvanceOutput::ProjectRepoAdvance { from_sha, to_sha },
-            RepoKey::Member(path) => AdvanceOutput::Step3Advance {
-                path: path.to_string(),
-                from_sha,
-                to_sha,
-            },
-        };
-        stream_ndjson_line(
-            self.stdout_lock,
-            &AdvanceNdjsonRecord {
-                schema: ADVANCE_RECORD_SCHEMA_URL,
-                advance: &advance,
-            },
-        );
     }
 }
 
@@ -2786,15 +2624,6 @@ pub enum SyncRequest {
     },
 }
 
-impl SyncRequest {
-    pub(crate) fn jobs(&self) -> usize {
-        match self {
-            Self::Fresh { jobs, .. } => *jobs,
-            Self::Continue { .. } => 1,
-        }
-    }
-}
-
 /// Execute `rwv sync <source>`.
 ///
 /// `request.source` is required; there is no bare `rwv sync` that absorbs
@@ -2808,9 +2637,9 @@ pub fn run_sync(
     request: SyncRequest,
     output: OutputMode,
 ) -> anyhow::Result<()> {
-    match output.json_shape() {
-        Some(shape) => run_sync_json(ctx, request, shape),
-        None => {
+    match output {
+        OutputMode::Json => run_sync_json(ctx, request),
+        OutputMode::Text => {
             let stdout_lock: Mutex<()> = Mutex::new(());
             let handler = TextHandler {
                 stdout_lock: &stdout_lock,
@@ -5060,9 +4889,8 @@ fn display_count(n: Option<usize>) -> String {
 //
 // Runs Phase 1' (project repo), materializes the members its manifest names,
 // replays the manifest repos, then prunes the members that manifest no longer
-// names. Per-repo parallelism and
-// partial-failure reporting live inside this phase — the `--json` / NDJSON
-// contracts are byte-compatible with the pre-restructure shape.
+// names. Per-repo parallelism and partial-failure reporting live inside this
+// phase.
 //
 // **Re-entry rule:** per-repo state is derived from the VCS itself:
 // - repo at its savepoint → redo the strategy (no-op for already-clean cases);
@@ -7198,30 +7026,16 @@ fn print_abort_noise_summary(summary: &AbortNoiseSummary) {
     }
 }
 
-/// Run `rwv sync --json`.
+/// Run `rwv sync --json`: collect all per-repo outcomes, then emit
+/// `{ "$schema": "...", "outcomes": [...] }` pretty-printed to stdout on
+/// completion, whatever `-j` is.
 ///
-/// Two emission shapes, selected by `jobs`:
-///
-/// - **Serial / envelope** (`jobs == 1`): collect all per-repo outcomes,
-///   then emit `{ "$schema": "...", "outcomes": [...] }` pretty-printed to
-///   stdout on completion.
-/// - **Parallel / NDJSON** (`jobs > 1`): each per-repo outcome is streamed
-///   as one JSON line to stdout the moment its worker finishes. Every line
-///   embeds its own `$schema` so consumers can identify a record without
-///   out-of-band context. No envelope is emitted — one self-describing
-///   record per line.
-///
-/// In both modes the text-mode per-repo chatter that `run_sync` produces
-/// is suppressed; stderr-side diagnostic warnings (e.g. `(project):
-/// re-locked after sync from ...`, `--retire` messages) flow through.
-/// Reporter prefix wrapping is bypassed under NDJSON: workers don't run
-/// subprocesses through `parallel::Reporter`, so there's no
-/// `[<prefix>] <line>` text to interleave with JSON output.
+/// The text-mode per-repo chatter that `run_sync` produces is suppressed;
+/// stderr-side diagnostic warnings (e.g. `(project): re-locked after sync
+/// from ...`, `--retire` messages) flow through.
 ///
 /// Exit semantics: when any per-repo outcome has kind `failed`, exits with
-/// code 1 directly (under envelope mode after emitting the envelope;
-/// under NDJSON the failing record was already streamed). The
-/// `process::exit` avoids anyhow's stderr error display swallowing the
+/// code 1 directly after emitting the envelope. The `process::exit` avoids anyhow's stderr error display swallowing the
 /// JSON. When all repos succeed, returns `Ok(())` and main exits 0.
 ///
 /// Project-level errors raised before any per-repo work (lock freshness,
@@ -7231,42 +7045,27 @@ fn print_abort_noise_summary(summary: &AbortNoiseSummary) {
 /// can't even reach the per-repo loop, there are no per-repo outcomes to
 /// emit, so the structured channel has nothing to say.
 #[allow(clippy::too_many_arguments)]
-fn run_sync_json(
-    ctx: &WorkspaceContext,
-    request: SyncRequest,
-    shape: JsonShape,
-) -> anyhow::Result<()> {
+fn run_sync_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Result<()> {
     let records: Mutex<Vec<SyncOutcomeOutput>> = Mutex::new(Vec::new());
     let advisories: Mutex<Vec<AdvisoryOutput>> = Mutex::new(Vec::new());
     let placements: Mutex<Vec<PlacementOutput>> = Mutex::new(Vec::new());
     let members: Mutex<Vec<MemberOutput>> = Mutex::new(Vec::new());
     let complete = AtomicBool::new(false);
-    let stdout_lock: Mutex<()> = Mutex::new(());
-    let project_level_result = if shape == JsonShape::Ndjson {
-        let handler = JsonNdjsonHandler {
-            stdout_lock: &stdout_lock,
-            records: &records,
-            schema_url: SYNC_RECORD_SCHEMA_URL,
-        };
-        run_machine(MachineVerb::Sync, ctx, request, &handler)
-    } else {
-        let handler = JsonEnvelopeHandler {
-            records: &records,
-            advisories: &advisories,
-            placements: &placements,
-            members: &members,
-            complete: &complete,
-        };
-        run_machine(MachineVerb::Sync, ctx, request, &handler)
+    let handler = JsonEnvelopeHandler {
+        records: &records,
+        advisories: &advisories,
+        placements: &placements,
+        members: &members,
+        complete: &complete,
     };
+    let project_level_result = run_machine(MachineVerb::Sync, ctx, request, &handler);
 
-    let records = records.into_inner().unwrap_or_else(|e| e.into_inner());
+    let records = in_manifest_order(records.into_inner().unwrap_or_else(|e| e.into_inner()));
     let advisories = advisories.into_inner().unwrap_or_else(|e| e.into_inner());
     let placements = placements.into_inner().unwrap_or_else(|e| e.into_inner());
     let members = members.into_inner().unwrap_or_else(|e| e.into_inner());
 
     run_sync_json_impl(
-        shape,
         records,
         advisories,
         placements,
@@ -7281,7 +7080,7 @@ fn run_sync_json(
 
 /// Shared JSON exit/return tail for `run_sync_json_impl` and `run_sync_to_json`.
 ///
-/// After serialization is done (or skipped for NDJSON), both callers share
+/// After serialization is done, both callers share
 /// the same exit logic: exit 1 when any per-repo outcome failed, otherwise
 /// propagate `project_level_result`. Factored here so the logic lives in
 /// exactly one place.
@@ -7310,8 +7109,7 @@ fn json_exit_tail(
 
 /// Post-machine JSON emitter for `rwv sync --json`.
 ///
-/// Emits the envelope (serial mode) or a no-op (NDJSON already streamed each
-/// record as it arrived), then delegates to [`json_exit_tail`] for exit/return.
+/// Emits the envelope, then delegates to [`json_exit_tail`] for exit/return.
 ///
 /// When `emit_empty_envelope` is true, an envelope with an empty `outcomes`
 /// array is emitted even when `records` is empty (used by sync-to where
@@ -7319,7 +7117,6 @@ fn json_exit_tail(
 /// When false (sync's behavior), empty records propagates the error.
 #[allow(clippy::too_many_arguments)]
 fn run_sync_json_impl(
-    shape: JsonShape,
     records: Vec<SyncOutcomeOutput>,
     advisories: Vec<AdvisoryOutput>,
     placements: Vec<PlacementOutput>,
@@ -7337,27 +7134,26 @@ fn run_sync_json_impl(
     }
 
     let any_failure = records.iter().any(SyncOutcomeOutput::is_failure);
-
-    // Under envelope mode we still need to emit the envelope to stdout
-    // (NDJSON streamed each record as it arrived, so there's nothing
-    // extra to write). Per the spec, NDJSON does NOT emit an
-    // envelope wrapper around the stream.
-    if shape == JsonShape::Envelope {
-        let payload = SyncJsonOutput {
-            schema: schema_url.to_owned(),
-            outcomes: records,
-            placements,
-            members,
-            complete,
-            advisories,
-            resolution,
-        };
-        let out =
-            serde_json::to_string_pretty(&payload).context("failed to serialize sync output")?;
-        outln!("{out}");
-    }
+    let payload = SyncJsonOutput {
+        schema: schema_url.to_owned(),
+        outcomes: records,
+        placements,
+        members,
+        complete,
+        advisories,
+        resolution,
+    };
+    let out = serde_json::to_string_pretty(&payload).context("failed to serialize sync output")?;
+    outln!("{out}");
 
     json_exit_tail(any_failure, project_level_result)
+}
+
+/// Workers record outcomes as they finish, so under `-j N` the buffer holds
+/// them in completion order; the envelope lists them as the lock does.
+fn in_manifest_order(mut records: Vec<SyncOutcomeOutput>) -> Vec<SyncOutcomeOutput> {
+    records.sort_by(|a, b| a.path().cmp(b.path()));
+    records
 }
 
 // ---------------------------------------------------------------------------
@@ -7390,9 +7186,9 @@ pub fn run_sync_to(
     request: SyncRequest,
     output: OutputMode,
 ) -> anyhow::Result<()> {
-    match output.json_shape() {
-        Some(shape) => run_sync_to_json(ctx, request, shape),
-        None => {
+    match output {
+        OutputMode::Json => run_sync_to_json(ctx, request),
+        OutputMode::Text => {
             let stdout_lock: Mutex<()> = Mutex::new(());
             let handler = TextHandler {
                 stdout_lock: &stdout_lock,
@@ -7408,12 +7204,8 @@ pub fn run_sync_to(
 /// `source_workweave`, `target`, `retired`, per-outcome `step3_advance`, and
 /// `project_repo_advance`. These fields are absent from the plain
 /// `rwv sync --json` envelope ([`SyncJsonOutput`]).
-fn run_sync_to_json(
-    ctx: &WorkspaceContext,
-    request: SyncRequest,
-    shape: JsonShape,
-) -> anyhow::Result<()> {
-    let run = sync_to_json_run(ctx, request, shape);
+fn run_sync_to_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Result<()> {
+    let run = sync_to_json_run(ctx, request);
     if let Some(envelope) = &run.envelope {
         let out =
             serde_json::to_string_pretty(envelope).context("failed to serialize sync-to output")?;
@@ -7429,9 +7221,8 @@ fn run_sync_to_json(
 /// caller that wants the machine's own answers does not have to capture fd 1,
 /// and does not lose the process to the failure exit.
 pub struct SyncToJsonRun {
-    /// The envelope to print. `None` when there is nothing to print: NDJSON
-    /// streamed each record as it arrived, and a machine that refused before
-    /// resolving its coordinates has no op to describe.
+    /// The envelope to print. `None` when there is nothing to print: a machine
+    /// that refused before resolving its coordinates has no op to describe.
     pub envelope: Option<SyncToJsonOutput>,
     /// Whether any per-repo outcome failed — what decides the exit code.
     pub any_failure: bool,
@@ -7447,27 +7238,7 @@ pub struct SyncToJsonRun {
 /// resolved, and the witness retire's delete returned. On a resumed op those
 /// differ from what the invocation carries — the op is owned by a workspace
 /// the caller need not be in, and its target is in the op record.
-pub fn sync_to_json_run(
-    ctx: &WorkspaceContext,
-    request: SyncRequest,
-    shape: JsonShape,
-) -> SyncToJsonRun {
-    if shape == JsonShape::Ndjson {
-        let records: Mutex<Vec<SyncOutcomeOutput>> = Mutex::new(Vec::new());
-        let stdout_lock: Mutex<()> = Mutex::new(());
-        let handler = JsonNdjsonHandler {
-            stdout_lock: &stdout_lock,
-            records: &records,
-            schema_url: SYNC_TO_RECORD_SCHEMA_URL,
-        };
-        let project_level_result = run_machine(MachineVerb::SyncTo, ctx, request, &handler);
-        let records = records.into_inner().unwrap_or_else(|e| e.into_inner());
-        return SyncToJsonRun {
-            envelope: None,
-            any_failure: records.iter().any(SyncOutcomeOutput::is_failure),
-            project_level_result,
-        };
-    }
+pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJsonRun {
     let recorder = sync_to_envelope::SyncToRecorder::default();
     let project_level_result = run_machine(MachineVerb::SyncTo, ctx, request, &recorder);
     let outcome = recorder.into_outcome();
@@ -7691,17 +7462,12 @@ mod tests {
         let text = TextHandler {
             stdout_lock: &stdout_lock,
         };
-        let records = Mutex::new(Vec::new());
-        let ndjson = JsonNdjsonHandler {
-            stdout_lock: &stdout_lock,
-            records: &records,
-            schema_url: SYNC_RECORD_SCHEMA_URL,
-        };
+        let recorder = sync_to_envelope::SyncToRecorder::default();
 
         assert!(settle_speaks(None), "`rwv abort` has no handler and speaks");
         assert!(settle_speaks(Some(&text)));
         assert!(
-            !settle_speaks(Some(&ndjson)),
+            !settle_speaks(Some(&recorder)),
             "a JSON run keeps stdout JSON"
         );
     }
@@ -9516,13 +9282,13 @@ mod tests {
     // ---------------------------------------------------------------------------
     // Extensibility acceptance test
     //
-    // Verifies that a fourth output mode can be added by implementing
-    // OutputHandler without modifying TextHandler, JsonEnvelopeHandler, or
-    // JsonNdjsonHandler.  A CountingHandler is constructed entirely in this test;
+    // Verifies that another output mode can be added by implementing
+    // OutputHandler without modifying TextHandler or JsonEnvelopeHandler.
+    // A CountingHandler is constructed entirely in this test;
     // no existing handler or orchestration code is touched.
     // ---------------------------------------------------------------------------
 
-    /// A minimal fourth-mode handler that just counts how many outcomes were
+    /// A minimal extra-mode handler that just counts how many outcomes were
     /// recorded.  Demonstrates that OutputHandler is open for extension.
     struct CountingHandler {
         count: std::sync::Mutex<usize>,

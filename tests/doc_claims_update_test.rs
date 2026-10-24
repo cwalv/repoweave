@@ -11,7 +11,7 @@
 //!   - update -j N runs the per-repo advance loop in parallel and still
 //!     writes a single coherent lock at the end
 //!   - update --json emits an envelope { "$schema": ..., "repos": [...] }
-//!   - update --json -j N (N > 1) streams NDJSON, one record per repo
+//!   - update --json -j N (N > 1) emits the same envelope as -j 1
 //!   - update --commit lands the regenerated integration content in the
 //!     same commit as the lock bump that caused it, and nothing else:
 //!     unrelated work in progress still refuses, a filtered run (which
@@ -28,8 +28,7 @@
 //! reason this file exists at all.
 
 use assert_cmd::Command;
-use repoweave::placement::PLACEMENT_RECORD_SCHEMA_URL;
-use repoweave::update::{UPDATE_RECORD_SCHEMA_URL, UPDATE_SCHEMA_URL};
+use repoweave::update::UPDATE_SCHEMA_URL;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
@@ -474,19 +473,17 @@ fn update_json_emits_envelope_under_j1() {
 }
 
 // ===========================================================================
-// 5. update --json -j N emits NDJSON (N > 1)
+// 5. update --json -j N emits the envelope (N > 1)
 //
-// Doc claim: `rwv update --json -j N` with N > 1 streams NDJSON. Each
-// line is a self-describing JSON record with `$schema` embedded. No
-// envelope wrapper is emitted.
+// Doc claim: `rwv update --json` prints one envelope whatever `-j` is, with
+// `repos` in manifest order.
 // ===========================================================================
 
 #[test]
-fn update_json_emits_ndjson_under_j_gt_1() {
+fn update_json_emits_the_envelope_under_j_gt_1() {
     let repos = [("local/org/a", "owned"), ("local/org/b", "owned")];
     let ws = build_workspace("alpha", &repos);
 
-    // Advance each remote.
     for (_, bare) in &ws.manifest_bares {
         advance_bare_main(bare);
     }
@@ -497,53 +494,9 @@ fn update_json_emits_ndjson_under_j_gt_1() {
         .assert()
         .success();
 
-    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
-
-    // The whole stdout must NOT parse as one JSON document (proves NDJSON).
-    assert!(
-        serde_json::from_str::<Value>(&stdout).is_err(),
-        "NDJSON stdout must not parse as one document:\n{stdout}"
-    );
-
-    let lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
-    assert!(
-        lines.len() >= repos.len(),
-        "expected >= {} NDJSON lines, got {}:\n{stdout}",
-        repos.len(),
-        lines.len()
-    );
-
-    let mut seen_paths = std::collections::BTreeSet::new();
-    for line in &lines {
-        let v: Value = serde_json::from_str(line)
-            .unwrap_or_else(|e| panic!("NDJSON line not valid JSON ({e}): {line}"));
-        let obj = v.as_object().unwrap();
-        let schema = obj.get("$schema").and_then(Value::as_str);
-        if schema == Some(PLACEMENT_RECORD_SCHEMA_URL) {
-            assert!(obj.contains_key("files"), "missing files: {line}");
-            continue;
-        }
-        assert_eq!(
-            schema,
-            Some(UPDATE_RECORD_SCHEMA_URL),
-            "every NDJSON record must embed $schema: {line}"
-        );
-        assert!(obj.contains_key("kind"), "missing kind: {line}");
-        assert!(obj.contains_key("path"), "missing path: {line}");
-        assert!(
-            obj.contains_key("absolute_path"),
-            "missing absolute_path: {line}"
-        );
-        if let Some(p) = obj.get("path").and_then(Value::as_str) {
-            seen_paths.insert(p.to_string());
-        }
-    }
-    for (rp, _) in &repos {
-        assert!(
-            seen_paths.contains(*rp),
-            "expected {rp} in NDJSON stream; got {seen_paths:?}"
-        );
-    }
+    let (_, paths) =
+        common::envelope_shape(&assert.get_output().stdout, UPDATE_SCHEMA_URL, "repos");
+    assert_eq!(paths, ["local/org/a", "local/org/b"]);
 }
 
 // ===========================================================================

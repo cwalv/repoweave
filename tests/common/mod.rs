@@ -892,6 +892,43 @@ pub fn strip_version_banner(stdout: &str) -> &str {
         .unwrap_or_else(|| panic!("expected stdout to open with {banner:?}; got:\n{stdout}"))
 }
 
+/// What a `--json` run printed, read as the one envelope `--json` promises:
+/// its top-level keys, and the `path` of each record under `records_key` in
+/// the order printed. Panics, quoting stdout, when stdout is not a single JSON
+/// document whose `$schema` is `schema_url`.
+pub fn envelope_shape(
+    stdout: &[u8],
+    schema_url: &str,
+    records_key: &str,
+) -> (std::collections::BTreeSet<String>, Vec<String>) {
+    let text = String::from_utf8_lossy(stdout);
+    let doc: serde_json::Value = serde_json::from_str(&text)
+        .unwrap_or_else(|e| panic!("stdout is not one JSON document ({e}):\n{text}"));
+    assert_eq!(
+        doc["$schema"].as_str(),
+        Some(schema_url),
+        "the envelope must name its schema:\n{text}"
+    );
+    let keys = doc
+        .as_object()
+        .unwrap_or_else(|| panic!("the envelope must be an object:\n{text}"))
+        .keys()
+        .cloned()
+        .collect();
+    let paths = doc[records_key]
+        .as_array()
+        .unwrap_or_else(|| panic!("`{records_key}` must be an array:\n{text}"))
+        .iter()
+        .map(|record| {
+            record["path"]
+                .as_str()
+                .unwrap_or_else(|| panic!("a record without `path`: {record}"))
+                .to_owned()
+        })
+        .collect();
+    (keys, paths)
+}
+
 /// [`rwv`] as a `std::process::Command`, for a test that spawns the binary
 /// and acts on it while it runs, which `assert_cmd` cannot.
 #[allow(dead_code)]

@@ -57,8 +57,7 @@ rwv update [--dirty] [--commit [-m <MSG>]] [--detach-checkouts] [--project <name
   attached to: materialize the tip on a detached HEAD instead of refusing.
   The branch it leaves behind is not moved.
 - `--json` emits machine-readable output (see Output below).
-- `-j N` runs per-repo advances in parallel. Under `--json -j N` with `N > 1`,
-  output switches to NDJSON (one JSON record per repo, streamed as repos finish).
+- `-j N` runs per-repo advances in parallel. Default: `min(nproc, 8)`.
 - `--no-materialize` — skip the integration install hooks (`npm install`,
   `uv sync`, `cargo fetch`, …) of the regeneration this runs at primary;
   `rwv materialize` runs them later. Inside a workweave the hooks are skipped
@@ -101,8 +100,7 @@ command that performs it, and nothing is said when it skipped none:
 
 The envelope records the same facts in `skipped`.
 
-Under `--json -j 1` (or `--json` with a single-repo project), output is
-the envelope:
+Under `--json`, output is the envelope, whatever `-j` is:
 
 ```
 {
@@ -113,10 +111,7 @@ the envelope:
 }
 ```
 
-Under `--json -j N` with `N > 1`, output switches to NDJSON: one
-self-describing JSON record per repo, streamed as each repo's advance
-completes. No envelope wrapper is emitted.
-
+`repos` lists the repos in manifest order, however the workers finished.
 Each record carries:
 - `path` — manifest-relative repo path.
 - `absolute_path` — fully resolved on-disk path.
@@ -130,8 +125,7 @@ Each record carries:
 File counts are never on a record. Each checkout whose files the advance
 rewrote gets a placement record: `path`, `absolute_path`, and `files`
 (`reflinked`, `hardlinked`, `written`). The envelope lists them under
-`placements`, empty when nothing was placed; NDJSON streams each as its own
-line, whose `$schema` names `placement-record.json`.
+`placements`, empty when nothing was placed.
 
 Each record in `skipped` carries `effect` (`install-hooks`,
 `integration-files`, `weave-root-links` or `activation`), `integration`
@@ -139,8 +133,7 @@ Each record in `skipped` carries `effect` (`install-hooks`,
 (`no-materialize`, `inside-workweave` or `narrowed`, or an object naming what
 it concerns: `{"tool-missing": {"tool": …}}`, `{"not-presented": {"project":
 …}}`, `{"project-already-active": {"project": …}}`) and `remedy`, the command
-that performs the effect. NDJSON output carries no `skipped` records; the lines
-on stderr still say it.
+that performs the effect.
 
 Schema:
 

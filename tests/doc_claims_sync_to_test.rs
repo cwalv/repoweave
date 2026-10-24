@@ -16,10 +16,10 @@
 //!     naming the path and leaving the op resumable via `sync-to --continue`.
 //!   - A successful sync-to leaves no pre-op savepoint on either side.
 //!
-//! Pinned elsewhere, and deliberately not duplicated here: NDJSON streaming
-//! under `-j N` with `N > 1` is driven in
-//! `tests/schema_conformance_wire_test.rs`, which validates the emitted
-//! records against the published schema rather than merely parsing them.
+//! Pinned elsewhere, and deliberately not duplicated here: the envelope under
+//! `-j N` with `N > 1` is driven in `tests/schema_conformance_wire_test.rs`,
+//! which validates it against the published schema rather than merely
+//! parsing it.
 //!
 //! `SyncToJsonOutput` is not `SyncJsonOutput` with a different URL — it adds
 //! `source_workweave`, `target`, `retired`, `resumed`,

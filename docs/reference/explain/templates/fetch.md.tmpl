@@ -146,7 +146,8 @@ rwv fetch [<source>] [--frozen] [--allow-non-empty-dir] [--no-reference]
 - `--role <role>` / `--repo <selector>` — limit the repo fetch to a subset of
   the manifest. Repeat for union. Bare strings match exactly; `re:<pat>` is
   regex; `glob:<pat>` is glob. A filtered fetch does not write the lock.
-- `-j <N>` — run up to `N` clone/checkout operations in parallel.
+- `-j <N>` — run up to `N` clone/checkout operations in parallel. Default:
+  `min(nproc, 8)`.
 - `--json` — emit machine-readable output (see Output below).
 - `--no-materialize` — a fetch that activates a project runs the integration
   install hooks: a bootstrap fetch when no project is active yet, and an
@@ -162,30 +163,20 @@ report whether each repo was cloned fresh, aligned to a lock-pinned revision,
 or skipped. Errors (including per-repo failures) are printed to
 stderr. A final summary line reports how many repos are ready.
 
-Under `--json`, output switches to machine-readable format:
+Under `--json`, the fetch emits a single JSON envelope after all repos
+finish, whatever `-j` is:
 
-- **`-j 1`** (serial / envelope mode): emits a single JSON envelope after all
-  repos finish:
+```
+{
+  "$schema": "<url>",
+  "outcomes": [ { "path": "...", ... }, ... ],
+  "placements": [ { "path": "...", "absolute_path": "...", "files": { ... } }, ... ],
+  "skipped": [ { "effect": "install-hooks", "reason": "no-materialize", "remedy": "rwv materialize" }, ... ]
+}
+```
 
-  ```
-  {
-    "$schema": "<url>",
-    "outcomes": [ { "path": "...", ... }, ... ],
-    "placements": [ { "path": "...", "absolute_path": "...", "files": { ... } }, ... ],
-    "skipped": [ { "effect": "install-hooks", "reason": "no-materialize", "remedy": "rwv materialize" }, ... ]
-  }
-  ```
-
-- **`-j N` with `N > 1`** (NDJSON streaming mode): emits one self-describing
-  JSON line per repo as workers finish, with no envelope wrapper. Each line
-  carries its own `$schema` URL.
-
-Without `-j` the worker count is `min(nproc, 8)`, so the output is NDJSON on
-any host with more than one core. Pass `-j 1` when a consumer needs the
-envelope.
-
-Each per-repo record in the `outcomes` array (or in each NDJSON line) has the
-shape: `path` (manifest-relative), `absolute_path` (on-disk), `status`
+`outcomes` lists the repos in manifest order, however the workers finished.
+Each record has the shape: `path` (manifest-relative), `absolute_path` (on-disk), `status`
 (`ok` / `skipped` / `failed`), and `message` (human-readable detail; absent
 for `ok`, present for `skipped` and `failed`).
 
@@ -195,8 +186,7 @@ files are in), and `files` (`reflinked`, `hardlinked`, `written`). A clone
 the fetch realigned gets one, and so, from a workweave, does each worktree
 the fetch creates there for a member the workweave lacks, under the
 workweave's path. The envelope lists them under `placements`, empty when
-nothing was placed; NDJSON streams each as its own line, whose `$schema`
-names `placement-record.json`.
+nothing was placed.
 
 A fetch that does not activate a project, or activates one without running its
 hooks, says so in one line naming the command that does it:
@@ -222,8 +212,7 @@ The envelope records the same facts in `skipped`. Each record carries
 skipped), `reason` (`no-materialize`, `inside-workweave` or `narrowed`, or an
 object naming what it concerns: `{"tool-missing": {"tool": …}}`,
 `{"not-presented": {"project": …}}`, `{"project-already-active": {"project":
-…}}`) and `remedy`, the command that performs the effect. NDJSON output carries
-no `skipped` records; the lines still say it.
+…}}`) and `remedy`, the command that performs the effect.
 
 The `$schema` URL points to the committed schema artifact. See the Schema
 section below.
@@ -245,7 +234,7 @@ Schema:
   lock, or the current directory is not a workspace and
   `--allow-non-empty-dir` was not passed.
   Under `--json`,
-  the envelope (or NDJSON stream) is emitted before exit even on failure, so
+  the envelope is emitted before exit even on failure, so
   consumers always get parseable output.
 
 ## Examples
@@ -280,13 +269,7 @@ Parallel clone/checkout across 8 workers:
 rwv fetch owner/myproject -j 8
 ```
 
-Fetch and emit JSON envelope (serial; guarantees envelope output):
-
-```
-rwv fetch owner/myproject -j 1 --json
-```
-
-Fetch with 4 workers and stream NDJSON as repos finish:
+Fetch with 4 workers and emit the JSON envelope:
 
 ```
 rwv fetch owner/myproject -j 4 --json
@@ -295,7 +278,7 @@ rwv fetch owner/myproject -j 4 --json
 Get absolute paths for every successfully fetched repo:
 
 ```
-rwv fetch owner/myproject -j 1 --json | jq -r '.outcomes[] | select(.status == "ok") | .absolute_path'
+rwv fetch owner/myproject --json | jq -r '.outcomes[] | select(.status == "ok") | .absolute_path'
 ```
 
 Re-materialize missing manifest members of the active project (repair verb

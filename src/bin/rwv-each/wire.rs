@@ -23,23 +23,14 @@ impl std::fmt::Display for Role {
     }
 }
 
-/// The envelope `rwv each --json -j 1` prints once every repo is done:
-/// `{ "$schema": "<url>", "outcomes": [<Outcome>, ...] }`, sorted by repo path.
+/// The envelope `rwv each --json` prints once every repo is done, whatever
+/// `-j` is: `{ "$schema": "<url>", "outcomes": [<Outcome>, ...] }`, sorted
+/// by repo path.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct EachJsonOutput {
     #[serde(rename = "$schema")]
     pub schema: String,
     pub outcomes: Vec<Outcome>,
-}
-
-/// One line of `rwv each --json -j N` output (`N > 1`): a flat outcome object
-/// carrying its own `$schema`, printed as that repo finishes.
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct EachNdjsonRecord<'a> {
-    #[serde(rename = "$schema")]
-    pub schema: &'a str,
-    #[serde(flatten)]
-    pub outcome: &'a Outcome,
 }
 
 /// What happened in one repo.

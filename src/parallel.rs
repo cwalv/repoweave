@@ -65,54 +65,28 @@ pub fn resolve_jobs(jobs: Option<usize>) -> usize {
     }
 }
 
-/// How a `--json`-capable verb shapes its structured output, decided once
-/// from the `--json` flag and the resolved worker count.
+/// Whether a `--json`-capable verb prints text or its JSON envelope. The
+/// worker count has no say: `-j` changes how the work runs, never what is
+/// printed about it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputMode {
-    /// No `--json`: human-readable text.
     Text,
-    /// `--json`, `jobs == 1`: one pretty-printed envelope after all repos
-    /// complete.
-    JsonEnvelope,
-    /// `--json`, `jobs > 1`: one self-describing NDJSON line per repo,
-    /// streamed as workers finish; no envelope wrapper.
-    Ndjson,
+    /// One pretty-printed envelope after the run completes.
+    Json,
 }
 
 impl OutputMode {
-    pub fn resolve(json: bool, jobs: usize) -> Self {
-        match (json, jobs > 1) {
-            (false, _) => OutputMode::Text,
-            (true, false) => OutputMode::JsonEnvelope,
-            (true, true) => OutputMode::Ndjson,
+    pub fn from_flag(json: bool) -> Self {
+        if json {
+            OutputMode::Json
+        } else {
+            OutputMode::Text
         }
-    }
-
-    pub fn is_ndjson(self) -> bool {
-        matches!(self, OutputMode::Ndjson)
     }
 
     pub fn is_json(self) -> bool {
-        self != OutputMode::Text
+        self == OutputMode::Json
     }
-
-    /// The shape of the `--json` output, or `None` for text.
-    pub fn json_shape(self) -> Option<JsonShape> {
-        match self {
-            OutputMode::Text => None,
-            OutputMode::JsonEnvelope => Some(JsonShape::Envelope),
-            OutputMode::Ndjson => Some(JsonShape::Ndjson),
-        }
-    }
-}
-
-/// How `--json` output is shaped, for a runner that has no text mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum JsonShape {
-    /// One pretty-printed envelope after the run completes.
-    Envelope,
-    /// One self-describing line per record, streamed as each completes.
-    Ndjson,
 }
 
 /// Output channel for per-repo progress lines.
@@ -361,22 +335,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn output_mode_resolve_no_json_is_text_regardless_of_jobs() {
-        assert_eq!(OutputMode::resolve(false, 1), OutputMode::Text);
-        assert_eq!(OutputMode::resolve(false, 8), OutputMode::Text);
-    }
-
-    #[test]
-    fn output_mode_resolve_json_jobs_one_is_envelope() {
-        assert_eq!(OutputMode::resolve(true, 1), OutputMode::JsonEnvelope);
-    }
-
-    #[test]
-    fn output_mode_resolve_json_jobs_gt_one_is_ndjson() {
-        assert_eq!(OutputMode::resolve(true, 2), OutputMode::Ndjson);
-        assert!(OutputMode::resolve(true, 2).is_ndjson());
-        assert!(!OutputMode::resolve(true, 1).is_ndjson());
-        assert!(!OutputMode::resolve(false, 2).is_ndjson());
+    fn output_mode_follows_the_flag_alone() {
+        assert_eq!(OutputMode::from_flag(false), OutputMode::Text);
+        assert_eq!(OutputMode::from_flag(true), OutputMode::Json);
     }
 
     #[test]

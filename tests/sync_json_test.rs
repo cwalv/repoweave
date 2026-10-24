@@ -1,4 +1,5 @@
-//! Tests for `rwv sync --json`.
+//! Tests for `rwv sync --json`, and for `rwv sync-to --json` where it shares
+//! the multi-repo fixture.
 //!
 //! Two layers:
 //! 1. End-to-end: drive `rwv sync --json` through the binary, parse stdout
@@ -8,11 +9,10 @@
 //!    and field names are pinned independent of the live sync path.
 
 use assert_cmd::Command as AssertCommand;
-use repoweave::placement::PLACEMENT_RECORD_SCHEMA_URL;
 use repoweave::sync::{
     Containment, ContainmentOutput, ContainmentVerdictOutput, ReplayBaseline, RepoSyncOutcome,
     SyncFailure, SyncFailureOutput, SyncJsonOutput, SyncOutcomeOutput, SYNC_JSON_SCHEMA_URL,
-    SYNC_RECORD_SCHEMA_URL,
+    SYNC_TO_JSON_SCHEMA_URL,
 };
 use repoweave::vcs::{ConflictOp, MidOperation, VcsError, VcsErrorKind, VcsErrorOutput};
 use serde_json::Value;
@@ -620,7 +620,7 @@ fn conflict_op_serializes_kebab_case() {
 }
 
 // ---------------------------------------------------------------------------
-// Parallel / NDJSON mode
+// The worker count does not choose the shape or the order
 // ---------------------------------------------------------------------------
 
 const REPO_PATHS: &[&str] = &[
@@ -753,157 +753,135 @@ fn make_multi_repo_workspaces(parent: &Path) -> (Workspace, Workspace, Vec<Strin
     (primary, ww, advanced_shas)
 }
 
-#[test]
-fn sync_json_ndjson_emits_one_record_per_line_under_jobs_gt_one() {
-    let tmp = common::tempdir().unwrap();
-    let (primary, ww, _shas) = make_multi_repo_workspaces(tmp.path());
+fn manifest_order() -> Vec<&'static str> {
+    let mut paths = REPO_PATHS.to_vec();
+    paths.sort();
+    paths
+}
 
-    // Sync primary -> ww (so ww materializes nothing new; primary just
-    // advances 4 repos to ww's tips). `-j 2 --json` should produce NDJSON.
-    let assert = rwv()
-        .args(["sync", &ww.root.to_string_lossy(), "--json", "-j", "2"])
+/// Run `verb` from the fixture's primary against its workweave, which is ahead
+/// in every repo, so each repo moves forward in the primary in its own worker:
+/// `sync` fast-forwards it, `sync-to`'s first step rebases it, which for a repo
+/// with nothing of its own is a fast-forward too.
+fn sync_from_primary(primary: &Workspace, ww: &Workspace, verb: &str, jobs: &str) -> Vec<u8> {
+    let target = ww.root.to_string_lossy();
+    rwv()
+        .args([verb, &target, "--json", "-j", jobs])
         .current_dir(&primary.root)
         .assert()
-        .success();
-    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+        .success()
+        .get_output()
+        .stdout
+        .clone()
+}
 
-    // Acceptance: NO envelope wrapper. Every non-empty line parses
-    // as a self-describing JSON record with `$schema`, `kind`, and
-    // `path` fields.
-    let lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
-    assert!(
-        lines.len() >= REPO_PATHS.len(),
-        "expected >= {} NDJSON lines, got {} in stdout:\n{stdout}",
-        REPO_PATHS.len(),
-        lines.len()
-    );
-
-    // The whole stdout must NOT parse as one big JSON document
-    // (proves it's NDJSON, not an envelope).
-    assert!(
-        serde_json::from_str::<Value>(&stdout).is_err(),
-        "NDJSON stdout must not parse as one document; got:\n{stdout}"
-    );
-
-    let mut seen_paths = std::collections::BTreeSet::new();
-    for line in &lines {
-        let v: Value = serde_json::from_str(line)
-            .unwrap_or_else(|e| panic!("line not parseable as JSON ({e}): {line}"));
-        let obj = v
-            .as_object()
-            .unwrap_or_else(|| panic!("line not an object: {line}"));
-        let schema = obj.get("$schema").and_then(Value::as_str);
-        if schema == Some(PLACEMENT_RECORD_SCHEMA_URL) {
-            assert!(obj.contains_key("files"), "missing `files`: {line}");
-            continue;
-        }
-        assert_eq!(
-            schema,
-            Some(SYNC_RECORD_SCHEMA_URL),
-            "every NDJSON record must embed `$schema`: {line}"
-        );
-        assert!(obj.contains_key("kind"), "missing `kind`: {line}");
-        assert!(obj.contains_key("path"), "missing `path`: {line}");
-        assert!(
-            obj.contains_key("absolute_path"),
-            "missing `absolute_path`: {line}"
-        );
-        if let Some(path) = obj.get("path").and_then(Value::as_str) {
-            seen_paths.insert(path.to_string());
-        }
-    }
-
-    // All four manifest repos appear in the stream.
-    for repo_path in REPO_PATHS {
-        assert!(
-            seen_paths.contains(*repo_path),
-            "expected path {repo_path} in NDJSON stream; got {:?}\nstdout:\n{stdout}",
-            seen_paths
-        );
+fn install_hook(repo: &Path, name: &str, body: &str) {
+    let hooks = repo.join(".git").join("hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    let hook = hooks.join(name);
+    std::fs::write(&hook, body).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 }
 
-#[test]
-fn sync_json_serial_emits_envelope_with_explicit_jobs_one() {
-    // Acceptance: -j 1 with --json emits the envelope (not NDJSON), even
-    // though we passed -j explicitly. This pins the "no-j or j=1" contract.
-    let tmp = common::tempdir().unwrap();
-    let (primary, ww, _shas) = make_multi_repo_workspaces(tmp.path());
+/// The hook that fires in a repo as `verb` moves it forward.
+fn landing_hook(verb: &str) -> &'static str {
+    match verb {
+        "sync" => "post-merge",
+        _ => "post-checkout",
+    }
+}
 
-    let assert = rwv()
-        .args(["sync", &ww.root.to_string_lossy(), "--json", "-j", "1"])
-        .current_dir(&primary.root)
-        .assert()
-        .success();
-    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+/// Hold the first repo's landing until the second repo's has landed, and then
+/// a second longer, so a parallel run's workers finish out of manifest order.
+/// Each hook appends its repo to `log` the first time it fires. The wait is
+/// bounded: a git that runs no hooks leaves an empty log, not a hang.
+fn land_first_repo_last(primary: &Workspace, verb: &str, log: &Path) {
+    let order = manifest_order();
+    let (first, second) = (order[0], order[1]);
+    let log = log.to_string_lossy().replace('\\', "/");
+    let once = |repo: &str| format!("#!/bin/sh\ngrep -q '{repo}' '{log}' 2>/dev/null && exit 0\n");
+    install_hook(
+        &primary.root.join(second),
+        landing_hook(verb),
+        &format!("{}echo {second} >> '{log}'\n", once(second)),
+    );
+    install_hook(
+        &primary.root.join(first),
+        landing_hook(verb),
+        &format!(
+            "{}i=0\n\
+             while ! grep -q '{second}' '{log}' 2>/dev/null && [ $i -lt 300 ]; do sleep 0.1; i=$((i+1)); done\n\
+             echo {first} >> '{log}'\nsleep 1\n",
+            once(first)
+        ),
+    );
+}
 
-    let parsed: Value = serde_json::from_str(&stdout)
-        .unwrap_or_else(|e| panic!("-j 1 must emit envelope, not NDJSON ({e}):\n{stdout}"));
-    let obj = parsed.as_object().expect("top level should be object");
+fn assert_landed_first_repo_last(log: &Path) {
+    let order = manifest_order();
     assert_eq!(
-        obj.get("$schema").and_then(Value::as_str),
-        Some(SYNC_JSON_SCHEMA_URL),
-        "envelope must include $schema URL"
+        std::fs::read_to_string(log).unwrap_or_default(),
+        format!("{}\n{}\n", order[1], order[0]),
+        "the first repo must land after the second, or this run proves nothing"
     );
-    let outcomes = obj
-        .get("outcomes")
-        .and_then(Value::as_array)
-        .expect("outcomes array");
-    assert_eq!(outcomes.len(), REPO_PATHS.len(), "all repos present");
 }
 
 #[test]
-fn sync_json_ndjson_no_text_prefix_wrapping() {
-    // Acceptance: under `--json -j > 1`, the `[<prefix>] <line>` Reporter
-    // wrapper must be bypassed. We verify by checking no line in stdout
-    // starts with `[github/...]` (the prefix format).
+fn sync_json_is_one_envelope_whatever_the_worker_count() {
     let tmp = common::tempdir().unwrap();
-    let (primary, ww, _shas) = make_multi_repo_workspaces(tmp.path());
-
-    let assert = rwv()
-        .args(["sync", &ww.root.to_string_lossy(), "--json", "-j", "4"])
-        .current_dir(&primary.root)
-        .assert()
-        .success();
-    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
-    for line in stdout.lines() {
-        let trimmed = line.trim_start();
-        assert!(
-            !trimmed.starts_with('['),
-            "NDJSON line must not start with `[` (Reporter prefix wrapper); line: {line}\nstdout:\n{stdout}"
-        );
-        // Each non-empty line should start with `{` (a JSON object).
-        if !trimmed.is_empty() {
-            assert!(
-                trimmed.starts_with('{'),
-                "NDJSON line must start with `{{`; line: {line}\nstdout:\n{stdout}"
-            );
-        }
-    }
+    let shape_under = |jobs: &str| {
+        let (primary, ww, _shas) = make_multi_repo_workspaces(&tmp.path().join(jobs));
+        let stdout = sync_from_primary(&primary, &ww, "sync", jobs);
+        common::envelope_shape(&stdout, SYNC_JSON_SCHEMA_URL, "outcomes")
+    };
+    let serial = shape_under("1");
+    assert_eq!(serial.1, manifest_order(), "outcomes follow the manifest");
+    assert_eq!(shape_under("4"), serial);
 }
 
 #[test]
-fn sync_json_ndjson_lines_are_not_interleaved() {
-    // Each NDJSON line must be a complete JSON object. The mutex guard in
-    // OutputSink::record ensures workers can't tear bytes mid-line. Parse
-    // line-by-line — any failure indicates interleaving.
+fn sync_to_json_is_one_envelope_whatever_the_worker_count() {
+    let tmp = common::tempdir().unwrap();
+    let shape_under = |jobs: &str| {
+        let (primary, ww, _shas) = make_multi_repo_workspaces(&tmp.path().join(jobs));
+        let stdout = sync_from_primary(&primary, &ww, "sync-to", jobs);
+        common::envelope_shape(&stdout, SYNC_TO_JSON_SCHEMA_URL, "outcomes")
+    };
+    let serial = shape_under("1");
+    assert_eq!(serial.1, manifest_order(), "outcomes follow the manifest");
+    assert_eq!(shape_under("4"), serial);
+}
+
+#[test]
+fn sync_json_lists_outcomes_in_manifest_order_when_workers_finish_out_of_it() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _shas) = make_multi_repo_workspaces(tmp.path());
+    let log = tmp.path().join("landed");
+    land_first_repo_last(&primary, "sync", &log);
 
-    let assert = rwv()
-        .args(["sync", &ww.root.to_string_lossy(), "--json", "-j", "4"])
-        .current_dir(&primary.root)
-        .assert()
-        .success();
-    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
-    for line in stdout.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let parsed: Value = serde_json::from_str(line)
-            .unwrap_or_else(|e| panic!("torn / interleaved line ({e}): {line}\nstdout:\n{stdout}"));
-        assert!(parsed.is_object(), "line not an object: {line}");
-    }
+    let stdout = sync_from_primary(&primary, &ww, "sync", "4");
+
+    assert_landed_first_repo_last(&log);
+    let (_, paths) = common::envelope_shape(&stdout, SYNC_JSON_SCHEMA_URL, "outcomes");
+    assert_eq!(paths, manifest_order());
+}
+
+#[test]
+fn sync_to_json_lists_outcomes_in_manifest_order_when_workers_finish_out_of_it() {
+    let tmp = common::tempdir().unwrap();
+    let (primary, ww, _shas) = make_multi_repo_workspaces(tmp.path());
+    let log = tmp.path().join("landed");
+    land_first_repo_last(&primary, "sync-to", &log);
+
+    let stdout = sync_from_primary(&primary, &ww, "sync-to", "4");
+
+    assert_landed_first_repo_last(&log);
+    let (_, paths) = common::envelope_shape(&stdout, SYNC_TO_JSON_SCHEMA_URL, "outcomes");
+    assert_eq!(paths, manifest_order());
 }
 
 #[test]

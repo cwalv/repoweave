@@ -20,7 +20,7 @@ use clap::Parser;
 
 use crate::cli::Cli;
 use crate::output::{Printer, Stream};
-use crate::report::{Json, Reporter};
+use crate::report::Reporter;
 use crate::run::{CommandSpec, Layout, Runner, INTERRUPTS};
 use crate::select::Envelope;
 
@@ -73,12 +73,7 @@ fn execute(cli: &Cli) -> anyhow::Result<u8> {
     })?;
 
     let jobs = cli.jobs.map_or_else(default_jobs, |j| j as usize);
-    let json = cli.json.then_some(if jobs > 1 {
-        Json::Ndjson
-    } else {
-        Json::Envelope
-    });
-    let layout = if json.is_some() {
+    let layout = if cli.json {
         Layout::Silent
     } else if cli.group {
         Layout::Grouped
@@ -94,7 +89,7 @@ fn execute(cli: &Cli) -> anyhow::Result<u8> {
     let reporter = Reporter::new(
         &repos,
         layout,
-        json,
+        cli.json,
         command,
         progress,
         cli.joblog.as_deref(),
@@ -104,7 +99,7 @@ fn execute(cli: &Cli) -> anyhow::Result<u8> {
         repos: &repos,
         spec: &spec,
         layout,
-        capture: json.is_some() || cli.results.is_some(),
+        capture: cli.json || cli.results.is_some(),
         timeout: cli.timeout,
         fail_fast: cli.fail_fast,
         jobs,

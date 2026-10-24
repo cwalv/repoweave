@@ -1,7 +1,7 @@
 //! Under `--json`, file counts reach a consumer only in placement records
-//! `{path, absolute_path, files}`, each naming the checkout it describes: the
-//! envelope's `placements`, or under `-j N` a line of their own whose
-//! `$schema` names `placement-record.json`. No outcome record carries them.
+//! `{path, absolute_path, files}`, each naming the checkout it describes, in
+//! the envelope's `placements` whatever `-j` is. No outcome record carries
+//! them.
 
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -161,20 +161,6 @@ fn envelope(dir: &Path, args: &[&str]) -> Value {
         .unwrap_or_else(|e| panic!("not one JSON document ({e}):\n{stdout}"))
 }
 
-fn lines(dir: &Path, args: &[&str]) -> Vec<Value> {
-    succeed(dir, args)
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| serde_json::from_str(line).unwrap())
-        .collect()
-}
-
-fn is_placement_line(line: &Value) -> bool {
-    line["$schema"]
-        .as_str()
-        .is_some_and(|url| url.ends_with("/placement-record.json"))
-}
-
 fn placed_total(placement: &Value) -> u64 {
     ["reflinked", "hardlinked", "written"]
         .iter()
@@ -209,7 +195,7 @@ fn placement_of<'a>(placements: &'a [Value], checkout: &Path, context: &str) -> 
 }
 
 fn assert_no_outcome_carries_files(records: &[Value], context: &str) {
-    for record in records.iter().filter(|r| !is_placement_line(r)) {
+    for record in records {
         assert!(
             record.get("files").is_none(),
             "an outcome record carries `files`:\n{record:#}\n{context}"
@@ -259,36 +245,20 @@ fn sync_to_places_both_workspaces_each_under_its_own_path() {
 }
 
 #[test]
-fn sync_ndjson_streams_the_end_of_op_reshare_as_its_own_line() {
+fn sync_places_the_end_of_op_reshare_under_two_workers() {
     let weave = weave();
     let seat = weave.seat("feat");
     commit(&weave.member(), &["N1", "N2"], "primary");
     succeed(&weave.primary, &["lock", "--commit"]);
 
-    let records = lines(&seat, &["sync", "primary", "--json", "-j", "2"]);
-    let context = format!("{records:#?}");
-    let outcome_at = records
-        .iter()
-        .position(|r| !is_placement_line(r) && r["path"] == MEMBER)
-        .unwrap_or_else(|| panic!("no outcome line for {MEMBER}:\n{context}"));
-    let placed: Vec<(usize, &Value)> = records
-        .iter()
-        .enumerate()
-        .filter(|(_, r)| is_placement_line(r))
-        .collect();
-    assert_eq!(placed.len(), 1, "{context}");
-    let (placed_at, placement) = placed[0];
-    assert!(
-        placed_at > outcome_at,
-        "the re-share runs at the end of the op, after the outcome line:\n{context}"
-    );
+    let doc = envelope(&seat, &["sync", "primary", "--json", "-j", "2"]);
+    let context = format!("{doc:#}");
+    let placements = doc["placements"].as_array().unwrap();
+    assert_eq!(placements.len(), 1, "{context}");
+    let placement = placement_of(placements, &seat.join(MEMBER), &context);
     assert_eq!(placement["path"], MEMBER);
-    assert!(
-        same_checkout(&placement["absolute_path"], &seat.join(MEMBER)),
-        "{context}"
-    );
     assert_eq!(placed_total(placement), 2, "{context}");
-    assert_no_outcome_carries_files(&records, &context);
+    assert_no_outcome_carries_files(doc["outcomes"].as_array().unwrap(), &context);
 }
 
 /// A seat made while the project held only [`MEMBER`], whose manifest and
@@ -336,8 +306,8 @@ fn seat_lacking_a_member_as(weave: &Weave, name: &str, role: &str) -> PathBuf {
 }
 
 #[test]
-fn sync_to_places_a_member_it_creates_in_the_target_in_both_modes() {
-    for ndjson in [false, true] {
+fn sync_to_places_a_member_it_creates_in_the_target_under_either_worker_count() {
+    for jobs in ["1", "2"] {
         let weave = weave();
         let target = weave.seat("target");
         let seat = seat_named_lacking_a_member(&weave, "feat");
@@ -349,9 +319,9 @@ fn sync_to_places_a_member_it_creates_in_the_target_in_both_modes() {
             &seat,
             &["sync-to", &target_arg, "--json"],
             "outcomes",
-            ndjson,
+            jobs,
         );
-        let context = format!("ndjson: {ndjson}\n{records:#?}\n{placements:#?}");
+        let context = format!("-j {jobs}\n{records:#?}\n{placements:#?}");
         assert!(target.join(EXTRA).is_dir(), "{context}");
         let placement = placement_of(&placements, &target.join(EXTRA), &context);
         assert_eq!(placement["path"], EXTRA);
@@ -362,23 +332,25 @@ fn sync_to_places_a_member_it_creates_in_the_target_in_both_modes() {
 
 #[test]
 fn fetch_in_a_seat_places_the_worktree_it_creates_in_the_envelope() {
-    let weave = weave();
-    let seat = seat_lacking_a_member(&weave);
+    for jobs in ["1", "2"] {
+        let weave = weave();
+        let seat = seat_lacking_a_member(&weave);
 
-    let doc = envelope(&seat, &["fetch", "--json", "-j", "1"]);
-    let context = format!("{doc:#}");
-    let placements = doc["placements"].as_array().unwrap();
-    assert_eq!(placements.len(), 1, "{context}");
-    let placement = placement_of(placements, &seat.join(EXTRA), &context);
-    assert_eq!(placement["path"], EXTRA);
-    assert_eq!(placed_total(placement), 2, "README and E1");
-    let outcomes = doc["outcomes"].as_array().unwrap();
-    let aligned = outcomes.iter().find(|o| o["path"] == EXTRA).unwrap();
-    assert!(
-        same_checkout(&aligned["absolute_path"], &weave.primary.join(EXTRA)),
-        "the outcome names the clone the fetch aligned, not the seat's worktree:\n{context}"
-    );
-    assert_no_outcome_carries_files(outcomes, &context);
+        let doc = envelope(&seat, &["fetch", "--json", "-j", jobs]);
+        let context = format!("-j {jobs}\n{doc:#}");
+        let placements = doc["placements"].as_array().unwrap();
+        assert_eq!(placements.len(), 1, "{context}");
+        let placement = placement_of(placements, &seat.join(EXTRA), &context);
+        assert_eq!(placement["path"], EXTRA);
+        assert_eq!(placed_total(placement), 2, "README and E1\n{context}");
+        let outcomes = doc["outcomes"].as_array().unwrap();
+        let aligned = outcomes.iter().find(|o| o["path"] == EXTRA).unwrap();
+        assert!(
+            same_checkout(&aligned["absolute_path"], &weave.primary.join(EXTRA)),
+            "the outcome names the clone the fetch aligned, not the seat's worktree:\n{context}"
+        );
+        assert_no_outcome_carries_files(outcomes, &context);
+    }
 }
 
 /// A `reference` member is fetched into a seat like any other, and
@@ -404,56 +376,30 @@ fn fetch_in_a_seat_creates_a_reference_member_unless_no_reference_leaves_it_out(
     }
 }
 
-#[test]
-fn fetch_in_a_seat_streams_the_worktree_it_creates_as_its_own_line() {
-    let weave = weave();
-    let seat = seat_lacking_a_member(&weave);
-
-    let records = lines(&seat, &["fetch", "--json", "-j", "2"]);
-    let context = format!("{records:#?}");
-    let placed: Vec<&Value> = records.iter().filter(|r| is_placement_line(r)).collect();
-    assert_eq!(placed.len(), 1, "{context}");
-    assert_eq!(placed[0]["path"], EXTRA);
-    assert!(
-        same_checkout(&placed[0]["absolute_path"], &seat.join(EXTRA)),
-        "{context}"
-    );
-    assert_eq!(placed_total(placed[0]), 2, "{context}");
-    assert_no_outcome_carries_files(&records, &context);
-}
-
-/// A `--json` run's outcome records and placements: from one envelope's
-/// `records_key` and `placements` arrays under `-j 1`, or from the lines
-/// `-j 2` streams.
+/// A `--json` run's outcome records and placements, from its envelope's
+/// `records_key` and `placements` arrays.
 fn outcomes_and_placements(
     dir: &Path,
     args: &[&str],
     records_key: &str,
-    ndjson: bool,
+    jobs: &str,
 ) -> (Vec<Value>, Vec<Value>) {
-    let jobs = if ndjson { "2" } else { "1" };
     let args: Vec<&str> = args.iter().copied().chain(["-j", jobs]).collect();
-    if ndjson {
-        lines(dir, &args)
-            .into_iter()
-            .partition(|r| !is_placement_line(r))
-    } else {
-        let doc = envelope(dir, &args);
-        (
-            doc[records_key].as_array().unwrap().clone(),
-            doc["placements"].as_array().unwrap().clone(),
-        )
-    }
+    let doc = envelope(dir, &args);
+    (
+        doc[records_key].as_array().unwrap().clone(),
+        doc["placements"].as_array().unwrap().clone(),
+    )
 }
 
 #[test]
-fn update_reports_the_advance_as_a_placement_in_both_modes() {
-    for ndjson in [false, true] {
+fn update_reports_the_advance_as_a_placement_under_either_worker_count() {
+    for jobs in ["1", "2"] {
         let weave = weave();
         weave.advance_origin(&["U1", "U2"]);
         let (records, placements) =
-            outcomes_and_placements(&weave.primary, &["update", "--json"], "repos", ndjson);
-        let context = format!("ndjson: {ndjson}\n{records:#?}\n{placements:#?}");
+            outcomes_and_placements(&weave.primary, &["update", "--json"], "repos", jobs);
+        let context = format!("-j {jobs}\n{records:#?}\n{placements:#?}");
         assert!(!records.is_empty(), "{context}");
         assert_eq!(placements.len(), 1, "{context}");
         let placement = placement_of(&placements, &weave.member(), &context);
@@ -464,8 +410,8 @@ fn update_reports_the_advance_as_a_placement_in_both_modes() {
 }
 
 #[test]
-fn fetch_reports_a_realigned_clone_as_a_placement_in_both_modes() {
-    for ndjson in [false, true] {
+fn fetch_reports_a_realigned_clone_as_a_placement_under_either_worker_count() {
+    for jobs in ["1", "2"] {
         let weave = weave();
         let sha = weave.advance_origin(&["F1", "F2"]);
         common::git_in(weave.member(), &["fetch", "-q", "origin"]);
@@ -474,8 +420,8 @@ fn fetch_reports_a_realigned_clone_as_a_placement_in_both_modes() {
         common::git_in(weave.project(), &["commit", "-q", "-am", "lock: upstream"]);
 
         let (records, placements) =
-            outcomes_and_placements(&weave.primary, &["fetch", "--json"], "outcomes", ndjson);
-        let context = format!("ndjson: {ndjson}\n{records:#?}\n{placements:#?}");
+            outcomes_and_placements(&weave.primary, &["fetch", "--json"], "outcomes", jobs);
+        let context = format!("-j {jobs}\n{records:#?}\n{placements:#?}");
         assert_eq!(
             common::git_in(weave.member(), &["rev-parse", "HEAD"]),
             sha,
@@ -549,7 +495,7 @@ fn file_counts_sit_only_in_placement_records_in_every_committed_schema() {
     }
     assert_eq!(
         holding,
-        ["fetch", "placement-record", "sync", "sync-to", "update"],
-        "every verb that places files reports placements, and the shared record is committed"
+        ["fetch", "sync", "sync-to", "update"],
+        "every verb that places files reports placements"
     );
 }

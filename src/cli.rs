@@ -171,10 +171,8 @@ pub enum Commands {
         /// Number of parallel per-repo workers. Default: min(nproc, 8). `-j 1` is explicit serial.
         #[arg(short = 'j', long = "jobs")]
         jobs: Option<usize>,
-        /// Emit per-repo outcomes as JSON. Under `-j 1`, emits a
-        /// `{ "$schema": ..., "outcomes": [...] }` envelope. Under `-j N` with
-        /// `N > 1`, streams NDJSON (one self-describing record per repo as workers
-        /// finish). Without `-j` the count is min(nproc, 8). See `rwv explain fetch`.
+        /// Emit per-repo outcomes as one `{ "$schema": ..., "outcomes": [...] }`
+        /// JSON envelope once every repo is done, whatever `-j` is. See `rwv explain fetch`.
         #[arg(long)]
         json: bool,
         /// Without SOURCE, operate on this project instead of the active project (does not change `.rwv-active`)
@@ -358,8 +356,7 @@ pub enum Commands {
         /// Emit per-repo outcomes as JSON (array-of-records with stable per-variant `kind`). See `rwv explain sync`.
         #[arg(long, conflicts_with = "do_continue")]
         json: bool,
-        /// Run up to N per-repo manifest syncs in parallel. Under `-j > 1` with `--json`,
-        /// output switches to NDJSON (one JSON record per repo, streamed as repos finish).
+        /// Run up to N per-repo manifest syncs in parallel. Default: 1 (serial).
         #[arg(short = 'j', long = "jobs", conflicts_with = "do_continue")]
         jobs: Option<usize>,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
@@ -420,8 +417,7 @@ pub enum Commands {
         /// interrupted op had reached. See `rwv explain sync-to`.
         #[arg(long)]
         json: bool,
-        /// Run up to N per-repo manifest syncs in parallel. Under `-j > 1` with `--json`,
-        /// output switches to NDJSON (one JSON record per repo, streamed as repos finish).
+        /// Run up to N per-repo manifest syncs in parallel. Default: 1 (serial).
         #[arg(short = 'j', long = "jobs", conflicts_with = "do_continue")]
         jobs: Option<usize>,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
@@ -456,11 +452,10 @@ pub enum Commands {
         /// Limit the push to repos matching this selector. Bare strings match exactly; `re:<pat>` matches as regex; `glob:<pat>` matches as glob. Repeat for union. Combined as a union with --role. Lock-precondition still runs against the full manifest.
         #[arg(long = "repo")]
         repos: Vec<String>,
-        /// Number of parallel per-repo workers for member-repo pushes. Default: 1 (serial), so the `--json` envelope shape is the default and the envelope/NDJSON switch only happens when `-j` > 1. Project-repo push always runs serially as the last step.
+        /// Number of parallel per-repo workers for member-repo pushes. Default: 1 (serial): every push authenticates and runs the repo's pre-push hook, so concurrent pushes would share one terminal's credential prompts and run those hooks side by side, and the default push set is already narrowed to writable roles. Project-repo push always runs serially as the last step.
         #[arg(short = 'j', long = "jobs")]
         jobs: Option<usize>,
         /// Emit per-repo outcomes as JSON (array-of-records with stable per-variant `kind`). See `rwv explain push`.
-        /// Under `-j > 1`, output switches to NDJSON (one record per line, streamed as each repo completes).
         #[arg(long)]
         json: bool,
     },
@@ -488,7 +483,7 @@ pub enum Commands {
         /// Number of parallel per-repo workers. Default: min(nproc, 8). `-j 1` is explicit serial.
         #[arg(short = 'j', long = "jobs")]
         jobs: Option<usize>,
-        /// Emit per-repo outcomes as JSON (envelope under -j 1, NDJSON under -j > 1). See `rwv explain update`.
+        /// Emit per-repo outcomes as one JSON envelope once every repo is done, whatever `-j` is. See `rwv explain update`.
         #[arg(long)]
         json: bool,
         /// Skip integration install hooks (e.g., `npm install`, `uv sync`); `rwv materialize` runs them later

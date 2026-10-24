@@ -31,11 +31,6 @@ use std::sync::Mutex;
 /// artifact under `docs/reference/schemas/fetch.json`.
 pub const FETCH_SCHEMA_URL: &str = crate::schema_url::schema_url!("fetch");
 
-/// Schema URL embedded in each `rwv fetch --json -j N` NDJSON record line.
-/// Pins to `docs/reference/schemas/fetch-record.json`, which describes the
-/// flat per-repo wire shape — distinct from the serial envelope (`fetch.json`).
-pub const FETCH_RECORD_SCHEMA_URL: &str = crate::schema_url::schema_url!("fetch-record");
-
 /// Per-repo outcome record for `rwv fetch --json`.
 ///
 /// `status` is one of `"ok"`, `"skipped"`, or `"failed"`. `message` carries
@@ -65,7 +60,7 @@ pub enum FetchOutcomeStatus {
     Failed,
 }
 
-/// Top-level envelope for `rwv fetch --json` (serial / `-j 1` mode).
+/// Top-level envelope for `rwv fetch --json`.
 ///
 /// Shape: `{ "$schema": "<url>", "outcomes": [<FetchOutcomeOutput>, ...] }`.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -93,26 +88,6 @@ impl FetchJsonOutput {
         outln!("{out}");
         Ok(())
     }
-}
-
-/// One NDJSON record emitted by `rwv fetch --json -j N` with `N > 1`.
-///
-/// Each per-repo outcome becomes its own self-describing line. Every record
-/// carries its own `$schema` URL (pointing at `fetch-record.json`) so
-/// consumers can identify a line without out-of-band context. Serialized with
-/// `#[serde(flatten)]` so the wire shape is a single flat object:
-/// `{"$schema": "...", "path": "...", ...}`.
-///
-/// `$schema` names `docs/reference/schemas/fetch-record.json`, not the
-/// envelope artifact (`fetch.json`), because the two documents have different
-/// shapes: the envelope wraps an `outcomes` array; each streamed line is one
-/// flat per-repo object.
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct FetchOutcomeNdjsonRecord<'a> {
-    #[serde(rename = "$schema")]
-    pub schema: &'a str,
-    #[serde(flatten)]
-    pub outcome: &'a FetchOutcomeOutput,
 }
 
 /// Controls how `rwv fetch` resolves repo versions.
@@ -243,11 +218,8 @@ enum FetchOutcome {
 /// validating the lock, writing the lock at the end, auto-activate) all
 /// happen serially.
 ///
-/// When `output` is a JSON mode:
-/// - `jobs == 1`: emits a single `{ "$schema": ..., "outcomes":
-///   [...] }` envelope to stdout after all repos complete.
-/// - `jobs > 1`: streams one self-describing NDJSON line per repo to stdout
-///   as each worker finishes, then emits no envelope wrapper.
+/// Under `--json`, one `{ "$schema": ..., "outcomes": [...] }` envelope
+/// reaches stdout after all repos complete, in manifest order.
 #[allow(clippy::too_many_arguments)]
 pub fn run_fetch(
     source: &str,
@@ -328,7 +300,7 @@ pub fn run_fetch(
         None,
     )?
     .envelope;
-    if output == OutputMode::JsonEnvelope {
+    if output.is_json() {
         envelope.print()?;
     }
     Ok(())
@@ -466,7 +438,7 @@ pub fn run_fetch_in_place(
         skip.report();
         envelope.skipped.push(skip);
     }
-    if output == OutputMode::JsonEnvelope {
+    if output.is_json() {
         envelope.print()?;
     }
     created.map(|_| ())
@@ -487,8 +459,8 @@ fn sole_unselected_project(ctx: &WorkspaceContext) -> Option<crate::manifest::Pr
 /// Create the worktree for each member the workweave's `rwv.lock` pins and the
 /// workweave lacks — nothing at the slot, or a symlink — once the fetch above
 /// has put the pinned revisions in the canonical clones, returning whether it
-/// created any. How each one's files were placed is streamed under NDJSON, and
-/// added to `placements` for the envelope.
+/// created any. How each one's files were placed is added to `placements` for
+/// the envelope.
 #[allow(clippy::too_many_arguments)]
 fn materialize_workweave_members(
     ctx: &WorkspaceContext,
@@ -541,13 +513,8 @@ fn materialize_workweave_members(
                 } else {
                     eprintln!("{line}");
                 }
-                if let Some(files) = born.files {
-                    let placement = PlacementOutput::new(repo_path, &slot, files);
-                    match output {
-                        OutputMode::Text => {}
-                        OutputMode::JsonEnvelope => placements.push(placement),
-                        OutputMode::Ndjson => placement.stream(&Mutex::new(())),
-                    }
+                if let (OutputMode::Json, Some(files)) = (output, born.files) {
+                    placements.push(PlacementOutput::new(repo_path, &slot, files));
                 }
             }
             Err(e) => failures.push(format!("{repo_path}: {e:#}")),
@@ -580,7 +547,7 @@ fn materialize_workweave_members(
 /// SOURCE-mode bootstrap path runs before a context is resolved).
 ///
 /// Returns the `--json` envelope for the caller to print once it has placed
-/// anything else, so it is populated only in envelope mode, with whether any
+/// anything else, so it is populated only under `--json`, with whether any
 /// checkout moved or was created. A run with failures prints the envelope
 /// here, before refusing.
 #[allow(clippy::too_many_arguments)]
@@ -676,14 +643,10 @@ fn fetch_project_repos(
     let outcomes: Vec<(FetchOutcome, Option<crate::share::FilePlacement>, bool)> =
         run_in_parallel(&work_items, jobs, |_idx, item| {
             let (repo_path, entry, vcs) = item;
+            // A parallel reporter forwards subprocess stdout to stdout, which
+            // belongs to the envelope under `--json`.
             let reporter = if parallel && output == OutputMode::Text {
-                // Text parallel mode: use prefixed reporter.
                 Reporter::parallel(repo_path.as_str().to_string(), &write_lock)
-            } else if parallel {
-                // JSON parallel mode: suppress text output entirely; JSON is
-                // emitted below. Use a no-op serial reporter so fetch_one's
-                // reporter.out() calls do nothing visible.
-                Reporter::serial()
             } else {
                 Reporter::serial()
             };
@@ -722,39 +685,6 @@ fn fetch_project_repos(
             let moved_or_created = matches!(outcome, FetchOutcome::Ok { .. })
                 && before != vcs.head_revision(&member).ok();
 
-            // NDJSON mode: emit one line per repo as soon as it finishes.
-            if output.is_ndjson() {
-                if let Some(files) = files {
-                    PlacementOutput::new(repo_path, &member, files).stream(&write_lock);
-                }
-                let abs_path = crate::path_spelling::WirePath::of(&member);
-                let record = match &outcome {
-                    FetchOutcome::Ok { .. } => FetchOutcomeOutput {
-                        path: repo_path.to_string(),
-                        absolute_path: abs_path,
-                        status: FetchOutcomeStatus::Ok,
-                        message: None,
-                    },
-                    FetchOutcome::Skipped => FetchOutcomeOutput {
-                        path: repo_path.to_string(),
-                        absolute_path: abs_path,
-                        status: FetchOutcomeStatus::Skipped,
-                        message: Some(format!("skipped {}", repo_path.as_str())),
-                    },
-                    FetchOutcome::Failed { msg } => FetchOutcomeOutput {
-                        path: repo_path.to_string(),
-                        absolute_path: abs_path,
-                        status: FetchOutcomeStatus::Failed,
-                        message: Some(msg.clone()),
-                    },
-                };
-                let ndjson_line = FetchOutcomeNdjsonRecord {
-                    schema: FETCH_RECORD_SCHEMA_URL,
-                    outcome: &record,
-                };
-                crate::stdout::stream_record(&write_lock, &ndjson_line);
-            }
-
             (outcome, files, moved_or_created)
         });
 
@@ -765,7 +695,7 @@ fn fetch_project_repos(
     let mut errors: Vec<String> = Vec::new();
     let mut added_to_lock: Vec<RepoPath> = Vec::new();
 
-    // For envelope mode (json && !ndjson), collect records in work_items order.
+    // Records follow work_items order whatever order the workers finished in.
     let mut envelope = FetchJsonOutput {
         schema: FETCH_SCHEMA_URL.to_owned(),
         outcomes: Vec::new(),
@@ -788,7 +718,7 @@ fn fetch_project_repos(
                 if let (OutputMode::Text, Some(files)) = (output, files) {
                     outln!("rwv fetch: {repo_path}: files {files}");
                 }
-                if output == OutputMode::JsonEnvelope {
+                if output.is_json() {
                     envelope_records.push(FetchOutcomeOutput {
                         path: repo_path.to_string(),
                         absolute_path: abs_path,
@@ -803,7 +733,7 @@ fn fetch_project_repos(
                 }
             }
             FetchOutcome::Skipped => {
-                if output == OutputMode::JsonEnvelope {
+                if output.is_json() {
                     envelope_records.push(FetchOutcomeOutput {
                         path: repo_path.to_string(),
                         absolute_path: abs_path,
@@ -817,7 +747,7 @@ fn fetch_project_repos(
                     eprintln!("rwv fetch: error: {msg}");
                 }
                 errors.push(msg.clone());
-                if output == OutputMode::JsonEnvelope {
+                if output.is_json() {
                     envelope_records.push(FetchOutcomeOutput {
                         path: repo_path.to_string(),
                         absolute_path: abs_path,
@@ -833,12 +763,9 @@ fn fetch_project_repos(
     let total = succeeded + errors.len();
     if !errors.is_empty() {
         if output.is_json() {
-            // In JSON mode, emit the envelope/NDJSON before exiting so
-            // consumers always get parseable output even on partial failure.
-            if output == OutputMode::JsonEnvelope {
-                let _ = envelope.print();
-            }
-            // NDJSON records were already streamed; nothing extra to emit.
+            // The envelope prints before the refusal so a partial failure
+            // still leaves parseable output.
+            let _ = envelope.print();
             crate::refuse!(
                 RefusalKind::PartialRunAborted,
                 "fetch completed with {} clone failure(s) out of {total} repo(s)",

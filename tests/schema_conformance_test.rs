@@ -48,14 +48,9 @@
 //! assumed. A new *variant* is caught by
 //! [`every_corpus_exercises_every_member_its_schema_declares`], which reads the
 //! regenerated artifact. And no envelope reaches a type through
-//! `#[serde(flatten)]`: every flatten in `src/` sits on an NDJSON record
-//! (`fetch.rs`, `push.rs`, `update.rs`, `sync.rs`). The `allOf` in
+//! `#[serde(flatten)]`: `src/` has none. The `allOf` in
 //! `docs/reference/schemas/update.json` and `doctor.json` is schemars wrapping
-//! a single `$ref` beside a description, not a flattened struct. Per-record
-//! NDJSON artifacts (`fetch-record.json`, `push-record.json`, etc.) are
-//! committed alongside their envelope counterparts; the corpus here covers the
-//! envelopes only. Wire conformance of the NDJSON records is in
-//! `tests/schema_conformance_wire_test.rs`.
+//! a single `$ref` beside a description, not a flattened struct.
 //!
 //! # Residue
 //!
@@ -71,37 +66,26 @@ mod common;
 
 use common::json_schema;
 use repoweave::check::{CheckViolation, DOCTOR_SCHEMA_URL};
-use repoweave::fetch::{
-    FetchJsonOutput, FetchOutcomeNdjsonRecord, FetchOutcomeOutput, FetchOutcomeStatus,
-    FETCH_RECORD_SCHEMA_URL, FETCH_SCHEMA_URL,
-};
+use repoweave::fetch::{FetchJsonOutput, FetchOutcomeOutput, FetchOutcomeStatus, FETCH_SCHEMA_URL};
 use repoweave::integration::{Issue, IssueKind, IssueSource, Severity};
 use repoweave::integration::{MemberIncompatibility, MissingTool, Observed};
 use repoweave::integrations::GoWork;
 use repoweave::integrations::NpmWorkspaces;
 use repoweave::op_state::{OpPhase, OpVerb, Override};
 use repoweave::path_spelling::WirePath;
-use repoweave::placement::{PlacementNdjsonRecord, PlacementOutput, PLACEMENT_RECORD_SCHEMA_URL};
-use repoweave::push::{
-    PushJsonOutput, PushOutcomeNdjsonRecord, PushOutcomeOutput, PUSH_RECORD_SCHEMA_URL,
-    PUSH_SCHEMA_URL,
-};
+use repoweave::placement::PlacementOutput;
+use repoweave::push::{PushJsonOutput, PushOutcomeOutput, PUSH_SCHEMA_URL};
 use repoweave::share::FilePlacement;
 use repoweave::skipped::{SkipReason, SkippedEffect};
 use repoweave::status::{
     LockRelation, OpStatus, ParentInfo, RepoStatus, StatusJsonOutput, STATUS_SCHEMA_URL,
 };
 use repoweave::sync::{
-    AdvanceNdjsonRecord, AdvanceOutput, ContainmentOutput, ContainmentVerdictOutput,
-    MemberNdjsonRecord, MemberOutput, ReplayBaseline, Step3AdvanceOutput, SyncFailureOutput,
-    SyncJsonOutput, SyncOutcomeNdjsonRecord, SyncOutcomeOutput, SyncToJsonOutput,
-    ADVANCE_RECORD_SCHEMA_URL, MEMBER_RECORD_SCHEMA_URL, SYNC_JSON_SCHEMA_URL,
-    SYNC_RECORD_SCHEMA_URL, SYNC_TO_JSON_SCHEMA_URL, SYNC_TO_RECORD_SCHEMA_URL,
+    ContainmentOutput, ContainmentVerdictOutput, MemberOutput, ReplayBaseline, Step3AdvanceOutput,
+    SyncFailureOutput, SyncJsonOutput, SyncOutcomeOutput, SyncToJsonOutput, SYNC_JSON_SCHEMA_URL,
+    SYNC_TO_JSON_SCHEMA_URL,
 };
-use repoweave::update::{
-    RepoUpdateRecord, UpdateJsonOutput, UpdateKind, UpdateNdjsonRecord, UPDATE_RECORD_SCHEMA_URL,
-    UPDATE_SCHEMA_URL,
-};
+use repoweave::update::{RepoUpdateRecord, UpdateJsonOutput, UpdateKind, UPDATE_SCHEMA_URL};
 use repoweave::vcs::{ConflictOp, MidOperation, VcsErrorOutput};
 use repoweave::workspace::{AdvisoryKindOutput, AdvisoryOutput, Resolution};
 use serde_json::{json, Value};
@@ -167,54 +151,9 @@ fn cases() -> Vec<VerbCase> {
             corpus: update_corpus,
         },
         VerbCase {
-            verb: "fetch-record",
-            schema_url: FETCH_RECORD_SCHEMA_URL,
-            corpus: fetch_record_corpus,
-        },
-        VerbCase {
-            verb: "push-record",
-            schema_url: PUSH_RECORD_SCHEMA_URL,
-            corpus: push_record_corpus,
-        },
-        VerbCase {
-            verb: "update-record",
-            schema_url: UPDATE_RECORD_SCHEMA_URL,
-            corpus: update_record_corpus,
-        },
-        VerbCase {
-            verb: "sync-record",
-            schema_url: SYNC_RECORD_SCHEMA_URL,
-            corpus: sync_record_corpus,
-        },
-        VerbCase {
-            verb: "sync-to-record",
-            schema_url: SYNC_TO_RECORD_SCHEMA_URL,
-            corpus: sync_to_record_corpus,
-        },
-        VerbCase {
-            verb: "placement-record",
-            schema_url: PLACEMENT_RECORD_SCHEMA_URL,
-            corpus: placement_record_corpus,
-        },
-        VerbCase {
-            verb: "member-record",
-            schema_url: MEMBER_RECORD_SCHEMA_URL,
-            corpus: member_record_corpus,
-        },
-        VerbCase {
-            verb: "advance-record",
-            schema_url: ADVANCE_RECORD_SCHEMA_URL,
-            corpus: advance_record_corpus,
-        },
-        VerbCase {
             verb: "each",
             schema_url: each_schema_url::EACH_SCHEMA_URL,
             corpus: each_corpus,
-        },
-        VerbCase {
-            verb: "each-record",
-            schema_url: each_schema_url::EACH_RECORD_SCHEMA_URL,
-            corpus: each_record_corpus,
         },
     ]
 }
@@ -998,170 +937,6 @@ fn update_corpus() -> Vec<(&'static str, Value)> {
     ]
 }
 
-// ---------------------------------------------------------------------------
-// NDJSON record corpora
-//
-// Each record is serialized directly from its production struct (with a
-// concrete lifetime) so the corpus cannot drift from the struct the verb
-// actually serializes at runtime.
-// ---------------------------------------------------------------------------
-
-fn fetch_record_corpus() -> Vec<(&'static str, Value)> {
-    fetch_outcomes()
-        .into_iter()
-        .enumerate()
-        .map(|(i, outcome)| {
-            let label: &'static str = match i {
-                0 => "ok",
-                1 => "skipped",
-                _ => "failed",
-            };
-            let v = value(FetchOutcomeNdjsonRecord {
-                schema: FETCH_RECORD_SCHEMA_URL,
-                outcome: &outcome,
-            });
-            (label, v)
-        })
-        .collect()
-}
-
-fn push_record_corpus() -> Vec<(&'static str, Value)> {
-    push_outcomes()
-        .into_iter()
-        .enumerate()
-        .map(|(i, outcome)| {
-            let label: &'static str = match i {
-                0 => "pushed",
-                1 => "skipped",
-                2 => "failed",
-                3 => "project-repo-pushed",
-                _ => "project-repo-failed",
-            };
-            let v = value(PushOutcomeNdjsonRecord {
-                schema: PUSH_RECORD_SCHEMA_URL,
-                outcome: &outcome,
-            });
-            (label, v)
-        })
-        .collect()
-}
-
-fn update_record_corpus() -> Vec<(&'static str, Value)> {
-    update_records()
-        .into_iter()
-        .enumerate()
-        .map(|(i, record)| {
-            let label: &'static str = match i {
-                0 => "updated",
-                1 => "up-to-date",
-                _ => "failed",
-            };
-            let v = value(UpdateNdjsonRecord {
-                schema: UPDATE_RECORD_SCHEMA_URL,
-                record: &record,
-            });
-            (label, v)
-        })
-        .collect()
-}
-
-fn sync_record_corpus() -> Vec<(&'static str, Value)> {
-    sync_outcomes(false)
-        .into_iter()
-        .enumerate()
-        .map(|(i, outcome)| {
-            let label: &'static str = match i {
-                0 => "converged-no-derived-drop",
-                1 => "converged-derived-drop",
-                2 => "already-ahead-3",
-                3 => "already-ahead-0",
-                4 => "no-op",
-                _ => "failed",
-            };
-            let v = value(SyncOutcomeNdjsonRecord {
-                schema: SYNC_RECORD_SCHEMA_URL,
-                outcome: &outcome,
-            });
-            (label, v)
-        })
-        .collect()
-}
-
-fn sync_to_record_corpus() -> Vec<(&'static str, Value)> {
-    sync_outcomes(true)
-        .into_iter()
-        .enumerate()
-        .map(|(i, outcome)| {
-            let label: &'static str = match i {
-                0 => "converged-with-step3",
-                1 => "converged-derived-drop-step3",
-                2 => "already-ahead-step3",
-                3 => "already-ahead-0-step3",
-                4 => "no-op-step3",
-                _ => "failed-step3",
-            };
-            let v = value(SyncOutcomeNdjsonRecord {
-                schema: SYNC_TO_RECORD_SCHEMA_URL,
-                outcome: &outcome,
-            });
-            (label, v)
-        })
-        .collect()
-}
-
-fn member_record_corpus() -> Vec<(&'static str, Value)> {
-    members()
-        .iter()
-        .zip(["kept", "pruned", "prune-refused", "prune-refused-untokened"])
-        .map(|(member, label)| {
-            let v = value(MemberNdjsonRecord {
-                schema: MEMBER_RECORD_SCHEMA_URL,
-                member,
-            });
-            (label, v)
-        })
-        .collect()
-}
-
-fn advance_record_corpus() -> Vec<(&'static str, Value)> {
-    let manifest_repo = AdvanceOutput::Step3Advance {
-        path: REPO.to_owned(),
-        from_sha: sha('a'),
-        to_sha: sha('b'),
-    };
-    let project_repo = AdvanceOutput::ProjectRepoAdvance {
-        from_sha: sha('c'),
-        to_sha: sha('d'),
-    };
-    [
-        (manifest_repo, "manifest-repo"),
-        (project_repo, "project-repo"),
-    ]
-    .iter()
-    .map(|(advance, label)| {
-        let v = value(AdvanceNdjsonRecord {
-            schema: ADVANCE_RECORD_SCHEMA_URL,
-            advance,
-        });
-        (*label, v)
-    })
-    .collect()
-}
-
-fn placement_record_corpus() -> Vec<(&'static str, Value)> {
-    placements()
-        .iter()
-        .zip(["this-workspace", "the-target"])
-        .map(|(placement, label)| {
-            let v = value(PlacementNdjsonRecord {
-                schema: PLACEMENT_RECORD_SCHEMA_URL,
-                placement,
-            });
-            (label, v)
-        })
-        .collect()
-}
-
 fn each_outcomes() -> Vec<(&'static str, each_wire::Outcome)> {
     use each_wire::EachOutcomeStatus as S;
     use each_wire::Role as R;
@@ -1213,19 +988,6 @@ fn each_corpus() -> Vec<(&'static str, Value)> {
             }),
         ),
     ]
-}
-
-fn each_record_corpus() -> Vec<(&'static str, Value)> {
-    each_outcomes()
-        .into_iter()
-        .map(|(label, outcome)| {
-            let v = value(each_wire::EachNdjsonRecord {
-                schema: each_schema_url::EACH_RECORD_SCHEMA_URL,
-                outcome: &outcome,
-            });
-            (label, v)
-        })
-        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -1292,16 +1054,9 @@ fn every_corpus_document_validates_against_its_committed_schema() {
 /// Top-level only. A nested optional field is a much larger space and this
 /// would reject corpora that are reasonable; the envelope is where a field is
 /// added.
-///
-/// Skipped for per-record schemas: those describe a single flat object, not
-/// an array-wrapping envelope, and their top-level `properties` may not list
-/// all wire fields (variant fields live inside `oneOf` branches).
 #[test]
 fn every_corpus_carries_every_envelope_field_its_schema_declares() {
     for case in cases() {
-        if is_record_schema(case.verb) {
-            continue;
-        }
         let schema = json_schema::committed_schema(case.verb);
         let declared: BTreeSet<String> = schema["properties"]
             .as_object()
@@ -1377,21 +1132,14 @@ fn every_corpus_exercises_every_member_its_schema_declares() {
 /// what turns "schemars emitted something new" into a failure here rather than
 /// into silent under-validation of the real output.
 ///
-/// Envelope schemas (e.g. `fetch.json`) wrap an array of per-repo records and
-/// are expected to be moderately large; the minimum keyword count guards
-/// against a truncated or empty schema slipping through. Per-record schemas
-/// (e.g. `fetch-record.json`) describe a single flat object and are legitimately
-/// smaller, so a proportionately lower minimum applies.
+/// The minimum keyword count guards against a truncated or empty schema
+/// slipping through.
 #[test]
 fn every_committed_schema_stays_inside_the_validator_subset() {
     for verb in json_schema::committed_verbs() {
         let census = json_schema::census(&json_schema::committed_schema(&verb));
-        // Per-record schemas describe one flat per-repo object (simpler than an
-        // envelope wrapping an array). Apply a lower floor so the guard remains
-        // meaningful without failing on correct, small schemas.
-        let min_seen = if verb.ends_with("-record") { 10 } else { 20 };
         assert!(
-            census.seen > min_seen,
+            census.seen > 20,
             "{}: the keyword walk read almost nothing: {census:?}",
             json_schema::schema_path(&verb)
         );
@@ -1445,19 +1193,7 @@ fn first_doc(case: &VerbCase) -> Value {
         .1
 }
 
-/// True for per-record NDJSON schema artifacts (e.g. `fetch-record`).
-///
-/// Record schemas describe one flat per-repo object rather than an envelope
-/// wrapping an array of records. Envelope-specific tests (renamed array key,
-/// dropped array field, etc.) do not apply to them and are skipped for these.
-fn is_record_schema(verb: &str) -> bool {
-    verb.ends_with("-record")
-}
-
-/// The array key each ENVELOPE carries its per-repo records under.
-///
-/// Only meaningful for envelope schemas; call sites gate on `!is_record_schema`
-/// before using this.
+/// The array key each envelope carries its per-repo records under.
 fn records_key(verb: &str) -> &'static str {
     match verb {
         "doctor" => "violations",
@@ -1469,11 +1205,6 @@ fn records_key(verb: &str) -> &'static str {
 #[test]
 fn a_renamed_envelope_key_is_reported_for_every_verb() {
     for case in cases() {
-        // Record schemas describe a flat per-repo object, not an envelope
-        // wrapping an array. Renaming an "array key" has no meaning for them.
-        if is_record_schema(case.verb) {
-            continue;
-        }
         let schema = json_schema::committed_schema(case.verb);
         let key = records_key(case.verb);
         let mut doc = first_doc(&case);
@@ -1518,11 +1249,6 @@ fn an_added_envelope_key_is_reported_for_every_verb() {
 #[test]
 fn a_retyped_envelope_array_is_reported_for_every_verb() {
     for case in cases() {
-        // Record schemas describe a flat per-repo object, not an envelope
-        // wrapping an array. The "retype array" failure is envelope-specific.
-        if is_record_schema(case.verb) {
-            continue;
-        }
         let schema = json_schema::committed_schema(case.verb);
         let key = records_key(case.verb);
         let mut doc = first_doc(&case);
@@ -1539,13 +1265,6 @@ fn a_retyped_envelope_array_is_reported_for_every_verb() {
 #[test]
 fn a_dropped_field_inside_a_record_is_reported_for_every_verb() {
     for case in cases() {
-        // Record schemas describe a flat per-repo object. The record IS the
-        // document (no outer envelope array to index into). Dropping a field
-        // from the top level is tested via the record's own required constraint
-        // in `every_corpus_document_validates_against_its_committed_schema`.
-        if is_record_schema(case.verb) {
-            continue;
-        }
         let schema = json_schema::committed_schema(case.verb);
         let key = records_key(case.verb);
         let mut doc = first_doc(&case);

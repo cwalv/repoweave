@@ -16,7 +16,7 @@
 //!   - push --json: emits envelope with $schema and outcomes array
 //!   - push --json: project-repo record is the last outcome and uses kind
 //!     `project-repo-pushed` (distinguishable from manifest-repo records)
-//!   - push --json -j N (N > 1): emits NDJSON (one record per line)
+//!   - push --json -j N (N > 1): emits the same envelope as -j 1
 //!   - push --help: the `-j` default is `1` (serial), not fetch/update's
 //!     min(nproc, 8)
 //!
@@ -740,14 +740,14 @@ fn push_json_project_repo_record_is_last_and_distinguishable() {
 }
 
 // ===========================================================================
-// 9. --json -j N: NDJSON streaming under parallel mode
+// 9. --json -j N: the same envelope under parallel mode
 //
-// Doc claim: under `--json -j N` with `N > 1`, output switches to NDJSON.
-// Each line is a self-describing JSON record. No envelope wrapper.
+// Doc claim: `--json` prints one envelope whatever `-j` is, the project-repo
+// record last.
 // ===========================================================================
 
 #[test]
-fn push_json_ndjson_under_parallel_mode() {
+fn push_json_envelope_under_parallel_mode() {
     let repos = [("local/org/a", "owned"), ("local/org/b", "owned")];
     let ws = build_workspace("alpha", &repos);
     let _expected = advance_all_and_relock(&ws, &repos);
@@ -765,25 +765,21 @@ fn push_json_ndjson_under_parallel_mode() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    // NDJSON: must not parse as one big JSON document.
+    let envelope: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("stdout not one JSON document ({e}): {stdout}"));
     assert!(
-        serde_json::from_str::<serde_json::Value>(&stdout).is_err(),
-        "NDJSON stdout must not parse as one envelope: {stdout}"
+        envelope["$schema"]
+            .as_str()
+            .is_some_and(|url| url.ends_with("/docs/reference/schemas/push.json")),
+        "{stdout}"
     );
-
-    // Each non-empty line must be a valid JSON object.
-    for line in stdout.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let v: serde_json::Value = serde_json::from_str(line)
-            .unwrap_or_else(|e| panic!("NDJSON line not JSON ({e}): {line}\n{stdout}"));
-        assert!(v.is_object(), "NDJSON line must be object: {line}");
-        assert!(
-            v.get("kind").is_some(),
-            "NDJSON record missing kind: {line}"
-        );
-    }
+    let kinds: Vec<&str> = envelope["outcomes"]
+        .as_array()
+        .expect("outcomes must be array")
+        .iter()
+        .filter_map(|o| o["kind"].as_str())
+        .collect();
+    assert_eq!(kinds, ["pushed", "pushed", "project-repo-pushed"], "{stdout}");
 }
 
 // ===========================================================================
@@ -1018,10 +1014,9 @@ fn push_repo_selector_overrides_default_and_pushes_named_dep() {
     );
 }
 
-/// `rwv push`'s `-j` default is 1 (serial): the `--json` envelope shape is
-/// pinned to `-j 1`, so defaulting to fetch/update's min(nproc, 8) would
-/// silently flip multi-core hosts to NDJSON. `--help` must say so, not
-/// repeat fetch/update's cap.
+/// `rwv push`'s `-j` default is 1 (serial), unlike fetch/update's
+/// min(nproc, 8): every push authenticates and runs a pre-push hook. `--help`
+/// must say so, not repeat fetch/update's cap.
 #[test]
 fn push_help_names_the_serial_default_not_fetch_updates_cap() {
     let output = rwv()

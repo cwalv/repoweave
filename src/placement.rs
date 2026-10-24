@@ -10,12 +10,6 @@ use crate::share::FilePlacement;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use std::sync::Mutex;
-
-/// Schema URL embedded in each placement line a `--json -j N` run streams.
-/// Pins to `docs/reference/schemas/placement-record.json`, shared by every
-/// verb that places files.
-pub const PLACEMENT_RECORD_SCHEMA_URL: &str = crate::schema_url::schema_url!("placement-record");
 
 /// How the files of one checkout were placed when a verb created or moved it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -36,25 +30,4 @@ impl PlacementOutput {
             files,
         }
     }
-
-    /// Write this placement to stdout as one NDJSON line, under `stdout_lock`
-    /// so concurrent writers cannot interleave.
-    pub(crate) fn stream(&self, stdout_lock: &Mutex<()>) {
-        let record = PlacementNdjsonRecord {
-            schema: PLACEMENT_RECORD_SCHEMA_URL,
-            placement: self,
-        };
-        crate::stdout::stream_record(stdout_lock, &record);
-    }
-}
-
-/// One placement line streamed by `--json -j N` with `N > 1`, beside the
-/// verb's own per-repo lines: a flat object whose `$schema` names
-/// `placement-record.json`, which is how a consumer tells the two apart.
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct PlacementNdjsonRecord<'a> {
-    #[serde(rename = "$schema")]
-    pub schema: &'a str,
-    #[serde(flatten)]
-    pub placement: &'a PlacementOutput,
 }

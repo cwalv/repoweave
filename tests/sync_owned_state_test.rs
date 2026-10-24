@@ -170,14 +170,19 @@ impl Fixture {
     /// what a `--json` consumer actually reads, and combining streams would
     /// let stderr chatter corrupt the parse.
     fn sync_json_from_primary(&self) -> serde_json::Value {
+        self.sync_json_from_primary_with(&[])
+    }
+
+    fn sync_json_from_primary_with(&self, extra: &[&str]) -> serde_json::Value {
         let output = common::rwv()
             .args(["sync", "primary", "--json"])
+            .args(extra)
             .current_dir(&self.ww_dir)
             .output()
             .expect("rwv should run");
         assert!(
             output.status.success(),
-            "rwv sync primary --json failed:\n{}",
+            "rwv sync primary --json {extra:?} failed:\n{}",
             String::from_utf8_lossy(&output.stderr)
         );
         serde_json::from_slice(&output.stdout).unwrap_or_else(|e| {
@@ -186,22 +191,6 @@ impl Fixture {
                 String::from_utf8_lossy(&output.stdout)
             )
         })
-    }
-
-    /// `rwv sync primary --json -j 2` in the workweave — NDJSON mode, one
-    /// self-describing record per line, no envelope. Returns raw stdout.
-    fn sync_ndjson_from_primary(&self) -> String {
-        let output = common::rwv()
-            .args(["sync", "primary", "--json", "-j", "2"])
-            .current_dir(&self.ww_dir)
-            .output()
-            .expect("rwv should run");
-        assert!(
-            output.status.success(),
-            "rwv sync primary --json -j 2 failed:\n{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        String::from_utf8_lossy(&output.stdout).into_owned()
     }
 }
 
@@ -655,39 +644,19 @@ fn sync_json_advisories_empty_for_non_input_deliveries() {
     );
 }
 
-/// NDJSON mode (`-j N` with `N > 1`) drops the advisory rather than
-/// surfacing it: each line is a self-describing per-repo record with no
-/// envelope for an `advisories` array to sit in, so there is nowhere for it
-/// to go. Deliberate, not an oversight — pinned here rather than left an
-/// unremarked absence, on the same delivery that DOES raise an advisory
-/// under serial `--json` (see
-/// `sync_json_advisories_carries_the_materialize_remedy_when_a_member_manifest_arrives`).
-/// A change that starts leaking the advisory into an NDJSON line, or that
-/// silently drops materialize's own line-emission behavior, should redden
-/// this.
+/// Parallel workers change nothing about the advisory: the same delivery
+/// that raises one under a serial `--json` run raises it under `-j 2`.
 #[test]
-fn sync_ndjson_carries_no_advisory_even_when_serial_json_would() {
+fn sync_json_carries_the_advisory_under_two_workers() {
     let f = fixture();
     advance_member_manifest(&f);
 
-    let stdout = f.sync_ndjson_from_primary();
-    let mut saw_a_line = false;
-    for line in stdout.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        saw_a_line = true;
-        let parsed: serde_json::Value = serde_json::from_str(line)
-            .unwrap_or_else(|e| panic!("NDJSON line not parseable ({e}): {line}"));
-        assert!(
-            parsed.get("advisories").is_none(),
-            "NDJSON has no envelope for an advisories array: {line}"
-        );
-        assert_ne!(
-            parsed.get("kind").and_then(serde_json::Value::as_str),
-            Some("derived-state-stale"),
-            "NDJSON has no per-line advisory record shape: {line}"
-        );
-    }
-    assert!(saw_a_line, "control: NDJSON must emit at least one record");
+    let envelope = f.sync_json_from_primary_with(&["-j", "2"]);
+    let kinds: Vec<&serde_json::Value> = envelope["advisories"]
+        .as_array()
+        .unwrap_or_else(|| panic!("envelope should carry an advisories array: {envelope}"))
+        .iter()
+        .map(|advisory| &advisory["kind"])
+        .collect();
+    assert_eq!(kinds, ["derived-state-stale"], "{envelope}");
 }

@@ -24,11 +24,6 @@ use std::sync::Mutex;
 /// `$schema` field of the [`PushJsonOutput`] envelope.
 pub const PUSH_SCHEMA_URL: &str = crate::schema_url::schema_url!("push");
 
-/// Schema URL embedded in each `rwv push --json -j N` NDJSON record line.
-/// Pins to `docs/reference/schemas/push-record.json`, which describes the
-/// flat per-repo wire shape — distinct from the serial envelope (`push.json`).
-pub const PUSH_RECORD_SCHEMA_URL: &str = crate::schema_url::schema_url!("push-record");
-
 // ---------------------------------------------------------------------------
 // JSON wire-output types for `rwv push --json`
 // ---------------------------------------------------------------------------
@@ -39,12 +34,6 @@ pub const PUSH_RECORD_SCHEMA_URL: &str = crate::schema_url::schema_url!("push-re
 /// The project-repo record uses `kind` values `project-repo-pushed` and
 /// `project-repo-failed`, making it distinguishable from member-repo records
 /// in the same flat `outcomes` array.
-///
-/// Choosing option (a) — a `kind` field — over option (b) (two separate
-/// arrays) because: a single flat array supports uniform streaming in NDJSON
-/// mode without requiring consumers to merge two streams; the `kind` tag
-/// already carries all the type information consumers need; and the kebab-case
-/// kind-tag convention matches sync/status/doctor precedent.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum PushOutcomeOutput {
@@ -90,7 +79,7 @@ impl PushOutcomeOutput {
     }
 }
 
-/// Top-level envelope for `rwv push --json` (serial mode, `jobs == 1`).
+/// Top-level envelope for `rwv push --json`.
 ///
 /// Shape: `{ "$schema": "<url>", "outcomes": [<PushOutcomeOutput>, ...] }`.
 /// Member-repo records appear first, sorted by repo path; the project-repo
@@ -106,23 +95,6 @@ pub struct PushJsonOutput {
     /// identity, project). Absent when no project is resolved.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolution: Option<Resolution>,
-}
-
-/// One NDJSON record for `rwv push --json -j N` with `N > 1`.
-///
-/// Each line is self-describing: the outcome's fields are flattened alongside
-/// `$schema` so a consumer can identify any single line without context.
-///
-/// `$schema` names `docs/reference/schemas/push-record.json`, not the
-/// envelope artifact (`push.json`), because the two documents have different
-/// shapes: the envelope wraps an `outcomes` array; each streamed line is one
-/// flat per-repo object.
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct PushOutcomeNdjsonRecord<'a> {
-    #[serde(rename = "$schema")]
-    pub schema: &'a str,
-    #[serde(flatten)]
-    pub outcome: &'a PushOutcomeOutput,
 }
 
 /// What `rwv push` does once its preconditions pass.
@@ -150,10 +122,8 @@ pub enum PushMode {
 /// `mode` is a dry run, which prints the plan without executing any pushes,
 /// or a publish whose [`Force`] applies to every git push in the operation.
 ///
-/// `json` enables structured output. Under `json && jobs == 1`, the result
-/// is a pretty-printed [`PushJsonOutput`] envelope. Under `json && jobs > 1`,
-/// each record is streamed as a self-describing NDJSON line as it completes;
-/// the project-repo record is appended last. Text-mode chatter (the normal
+/// Under `--json` the result is one pretty-printed [`PushJsonOutput`]
+/// envelope, the project-repo record last. Text-mode chatter (the normal
 /// "rwv push: pushing X" lines) is suppressed under `--json`.
 ///
 /// `jobs` is the resolved worker count (post-[`crate::parallel::resolve_jobs`])
@@ -480,8 +450,7 @@ pub fn run_push(
     //    `[<repo>]` prefix under parallel mode, no prefix under `-j 1`.
     //
     //    Under `--json`, text-mode output (the per-repo "rwv push: pushing
-    //    X" lines) is suppressed; the Reporter is always Serial/quiet so
-    //    stdout stays clean for the JSON envelope or NDJSON records.
+    //    X" lines) is suppressed so stdout stays clean for the envelope.
     let parallel = jobs > 1;
     let write_lock: Mutex<()> = Mutex::new(());
 
@@ -513,10 +482,6 @@ pub fn run_push(
 
     let raw_outcomes: Vec<PushOutcome> = run_in_parallel(&plan_items, jobs, |idx, item| {
         let reporter = if output.is_json() {
-            // Under --json, suppress the text-mode chatter; records come out
-            // via our own JSON/NDJSON emit after the loop. We use a silent
-            // reporter so push_one's "rwv push: pushing X" lines don't
-            // pollute the structured stdout stream.
             Reporter::silent()
         } else if parallel {
             Reporter::parallel(item.repo_path.as_str().to_string(), &write_lock)
@@ -545,7 +510,7 @@ pub fn run_push(
 
     // Emit text + JSON records for plan-time skipped repos (default filter
     // excluded non-writable roles). Under --json, these become Skipped
-    // records in the outcomes array / NDJSON stream.
+    // records in the outcomes array.
     for (repo_path, _entry) in &default_skipped_repos {
         let path_str = repo_path.as_str().to_string();
         let abs_str = crate::path_spelling::WirePath::of(&primary_root.join(repo_path.as_path()));
@@ -553,14 +518,10 @@ pub fn run_push(
             outln!("rwv push: skipped {} (non-writable role)", path_str,);
         }
         skipped += 1;
-        let wire = PushOutcomeOutput::Skipped {
+        json_outcomes.push(PushOutcomeOutput::Skipped {
             path: path_str,
             absolute_path: abs_str,
-        };
-        if output.is_ndjson() {
-            emit_ndjson_record(&write_lock, &wire);
-        }
-        json_outcomes.push(wire);
+        });
     }
 
     for ((repo_path, abs_path, _item), raw) in plan_with_paths.iter().zip(raw_outcomes) {
@@ -585,10 +546,6 @@ pub fn run_push(
             }
         };
 
-        if output.is_ndjson() {
-            // Stream each manifest-repo outcome immediately.
-            emit_ndjson_record(&write_lock, &wire);
-        }
         json_outcomes.push(wire);
     }
 
@@ -606,7 +563,7 @@ pub fn run_push(
 
         // Under --json, emit whatever outcomes we have before bailing so the
         // caller gets machine-readable failure records.
-        if output == OutputMode::JsonEnvelope {
+        if output.is_json() {
             let envelope = PushJsonOutput {
                 schema_url: PUSH_SCHEMA_URL.to_string(),
                 outcomes: json_outcomes,
@@ -666,14 +623,11 @@ pub fn run_push(
         },
     };
 
-    if output.is_ndjson() {
-        emit_ndjson_record(&write_lock, &project_wire);
-    }
     json_outcomes.push(project_wire);
 
     if let Err(e) = project_push_result {
-        // Under --json (envelope mode), emit partial outcomes before bailing.
-        if output == OutputMode::JsonEnvelope {
+        // Under --json, emit partial outcomes before bailing.
+        if output.is_json() {
             let envelope = PushJsonOutput {
                 schema_url: PUSH_SCHEMA_URL.to_string(),
                 outcomes: json_outcomes,
@@ -692,18 +646,14 @@ pub fn run_push(
 
     // Emit JSON output for the success path.
     if output.is_json() {
-        if output == OutputMode::JsonEnvelope {
-            // Envelope mode: emit once at the end.
-            let envelope = PushJsonOutput {
-                schema_url: PUSH_SCHEMA_URL.to_string(),
-                outcomes: json_outcomes,
-                resolution: ctx.resolution(),
-            };
-            let out = serde_json::to_string_pretty(&envelope)
-                .context("failed to serialize push outcomes to JSON")?;
-            outln!("{out}");
-        }
-        // NDJSON mode: already streamed each record above.
+        let envelope = PushJsonOutput {
+            schema_url: PUSH_SCHEMA_URL.to_string(),
+            outcomes: json_outcomes,
+            resolution: ctx.resolution(),
+        };
+        let out = serde_json::to_string_pretty(&envelope)
+            .context("failed to serialize push outcomes to JSON")?;
+        outln!("{out}");
     } else {
         outln!("rwv push: done");
     }
@@ -738,16 +688,6 @@ fn refuse_uncommitted_project_state(
          or `git -C projects/{project_name} commit`, then re-run `rwv push`",
         uncommitted.join(", ")
     );
-}
-
-/// Emit one NDJSON record to stdout, serialized and mutex-guarded so
-/// parallel workers cannot interleave bytes.
-fn emit_ndjson_record(write_lock: &Mutex<()>, outcome: &PushOutcomeOutput) {
-    let record = PushOutcomeNdjsonRecord {
-        schema: PUSH_RECORD_SCHEMA_URL,
-        outcome,
-    };
-    crate::stdout::stream_record(write_lock, &record);
 }
 
 /// One manifest repo's resolved plan entry — what branch it's on and which

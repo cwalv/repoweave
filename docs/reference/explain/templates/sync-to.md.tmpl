@@ -185,8 +185,7 @@ Run `rwv sync-to --help` for the full clap surface.
 
 Default text output reports each step with one line per repo.
 
-Under `--json` with `-j 1` (default) or `--json` alone, output is the
-pretty-printed envelope:
+Under `--json`, output is the pretty-printed envelope, whatever `-j` is:
 
 ```
 {
@@ -199,15 +198,11 @@ pretty-printed envelope:
 }
 ```
 
-Outcome `kind` tags and the `--json` / NDJSON shape are identical to `rwv sync`
-— only the `$schema` URL differs (pointing at `docs/reference/schemas/sync-to.json`).
-
-Under `--json -j N` with `N > 1`, each advance-target fast-forward that
-moved a branch pointer is streamed as its own line, with `$schema` naming
-`advance-record.json`: `kind: "step3-advance"` with the repo's `path`, or
-`kind: "project-repo-advance"` for the project repo, each with `from_sha` and
-`to_sha`. These are the envelope's per-outcome `step3_advance` and its
-`project_repo_advance`.
+Outcome `kind` tags, and the manifest order of `outcomes`, are identical to
+`rwv sync` — only the `$schema` URL differs (pointing at
+`docs/reference/schemas/sync-to.json`). Each advance-target fast-forward that
+moved a branch pointer is reported as its repo's `step3_advance`, or as
+`project_repo_advance` for the project repo, each with `from_sha` and `to_sha`.
 
 `complete` is as on `rwv sync`: true once every step ran and op-state is
 cleared, whatever the exit code, so a complete op prints its envelope even on
@@ -226,8 +221,7 @@ to text. The envelope's identity fields (`source_workweave`, `target`,
 carries every repo, exactly as on a fresh run. A later `resumed` value means
 replay had already completed before the interruption, so `outcomes` is empty;
 read the target's state with `rwv status --json` if per-repo confirmation is
-needed. (`-j` still conflicts with `--continue`, so a resumed `--json` run is
-always the serial envelope, never NDJSON.)
+needed. (`-j` conflicts with `--continue`: a resumed op runs serially.)
 
 Schema:
 

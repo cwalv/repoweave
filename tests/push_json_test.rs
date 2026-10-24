@@ -8,7 +8,7 @@
 //!    distinguishability requirement.
 
 use assert_cmd::Command as AssertCommand;
-use repoweave::push::{PushJsonOutput, PushOutcomeOutput, PUSH_RECORD_SCHEMA_URL, PUSH_SCHEMA_URL};
+use repoweave::push::{PushJsonOutput, PushOutcomeOutput, PUSH_SCHEMA_URL};
 use serde_json::Value;
 
 mod common;
@@ -381,173 +381,34 @@ fn push_json_project_repo_distinguishable_from_manifest_repos() {
 }
 
 // ---------------------------------------------------------------------------
-// End-to-end: NDJSON streaming under -j > 1
+// End-to-end: the worker count does not choose the shape
 // ---------------------------------------------------------------------------
 
 const PUSH_REPO_PATHS: &[&str] = &["local/org/alpha", "local/org/beta", "local/org/gamma"];
 
-/// `rwv push --json -j 2` streams NDJSON: one record per line, each
-/// self-describing with `$schema`, and the project-repo record last.
 #[test]
-fn push_json_ndjson_emits_one_record_per_line_under_jobs_gt_one() {
+fn push_json_is_one_envelope_whatever_the_worker_count() {
     let repos: Vec<(&str, &str)> = PUSH_REPO_PATHS.iter().map(|p| (*p, "owned")).collect();
-    let ws = common::build_workspace("alpha", &repos);
-    advance_all_and_relock(&ws, &repos);
-
-    let assert = rwv()
-        .args(["push", "--json", "-j", "2"])
-        .current_dir(&ws.workspace)
-        .assert()
-        .success();
-
-    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
-
-    // NDJSON: must NOT parse as one big JSON document.
-    assert!(
-        serde_json::from_str::<Value>(&stdout).is_err(),
-        "NDJSON stdout must not parse as a single envelope: {stdout}"
-    );
-
-    let lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
-
-    // 3 manifest repos + 1 project-repo = 4 records.
+    let shape_under = |jobs: &str| {
+        let ws = common::build_workspace("alpha", &repos);
+        advance_all_and_relock(&ws, &repos);
+        let out = rwv()
+            .args(["push", "--json", "-j", jobs])
+            .current_dir(&ws.workspace)
+            .assert()
+            .success();
+        common::envelope_shape(&out.get_output().stdout, PUSH_SCHEMA_URL, "outcomes")
+    };
+    let serial = shape_under("1");
     assert_eq!(
-        lines.len(),
-        PUSH_REPO_PATHS.len() + 1,
-        "expected {} NDJSON lines (repos + project-repo), got {}:\n{stdout}",
-        PUSH_REPO_PATHS.len() + 1,
-        lines.len()
+        serial.1[..PUSH_REPO_PATHS.len()],
+        *PUSH_REPO_PATHS,
+        "member records follow the manifest"
     );
-
-    let mut seen_project_repo = false;
-    let mut seen_manifest_paths = std::collections::BTreeSet::new();
-
-    for line in &lines {
-        let v: Value =
-            serde_json::from_str(line).unwrap_or_else(|e| panic!("line not JSON ({e}): {line}"));
-        let obj = v
-            .as_object()
-            .unwrap_or_else(|| panic!("line not object: {line}"));
-
-        // Every NDJSON record must embed $schema pointing at the per-record
-        // artifact, not the serial envelope.
-        assert_eq!(
-            obj.get("$schema").and_then(Value::as_str),
-            Some(PUSH_RECORD_SCHEMA_URL),
-            "every NDJSON line must embed $schema: {line}"
-        );
-        assert!(obj.contains_key("kind"), "missing kind: {line}");
-        assert!(obj.contains_key("path"), "missing path: {line}");
-        assert!(
-            obj.contains_key("absolute_path"),
-            "missing absolute_path: {line}"
-        );
-
-        let kind = obj["kind"].as_str().unwrap();
-        if kind.starts_with("project-repo-") {
-            seen_project_repo = true;
-            assert!(
-                obj.contains_key("project"),
-                "project-repo NDJSON record must have 'project' field: {line}"
-            );
-        } else {
-            if let Some(path) = obj.get("path").and_then(Value::as_str) {
-                seen_manifest_paths.insert(path.to_string());
-            }
-        }
-    }
-
-    assert!(
-        seen_project_repo,
-        "NDJSON stream must include a project-repo record: {stdout}"
-    );
-
-    // All manifest repos appear.
-    for repo_path in PUSH_REPO_PATHS {
-        assert!(
-            seen_manifest_paths.contains(*repo_path),
-            "expected manifest repo {repo_path} in NDJSON stream; got {:?}\n{stdout}",
-            seen_manifest_paths
-        );
-    }
-}
-
-/// Under `--json -j > 1`, NDJSON lines must NOT start with `[<prefix>]`
-/// (the Reporter parallel prefix must be bypassed in JSON mode).
-#[test]
-fn push_json_ndjson_no_text_prefix_wrapping() {
-    let repos: Vec<(&str, &str)> = PUSH_REPO_PATHS.iter().map(|p| (*p, "owned")).collect();
-    let ws = common::build_workspace("alpha", &repos);
-    advance_all_and_relock(&ws, &repos);
-
-    let assert = rwv()
-        .args(["push", "--json", "-j", "4"])
-        .current_dir(&ws.workspace)
-        .assert()
-        .success();
-
-    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
-    for line in stdout.lines() {
-        let trimmed = line.trim_start();
-        assert!(
-            !trimmed.starts_with('['),
-            "NDJSON line must not start with `[` (Reporter prefix bypass): {line}\n{stdout}"
-        );
-        if !trimmed.is_empty() {
-            assert!(
-                trimmed.starts_with('{'),
-                "NDJSON line must start with `{{`: {line}\n{stdout}"
-            );
-        }
-    }
-}
-
-/// Under `--json -j 1`, output is the envelope (not NDJSON) — pins the
-/// serial-mode contract.
-#[test]
-fn push_json_serial_emits_envelope_with_explicit_jobs_one() {
-    let repos = [("local/org/a", "owned")];
-    let ws = common::build_workspace("alpha", &repos);
-    advance_all_and_relock(&ws, &repos);
-
-    let assert = rwv()
-        .args(["push", "--json", "-j", "1"])
-        .current_dir(&ws.workspace)
-        .assert()
-        .success();
-
-    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
-    let parsed: Value = serde_json::from_str(&stdout)
-        .unwrap_or_else(|e| panic!("-j 1 must emit envelope, not NDJSON ({e}):\n{stdout}"));
     assert_eq!(
-        parsed.get("$schema").and_then(Value::as_str),
-        Some(PUSH_SCHEMA_URL)
+        serial.1.len(),
+        PUSH_REPO_PATHS.len() + 1,
+        "the project-repo record comes last"
     );
-    let outcomes = parsed["outcomes"].as_array().expect("outcomes");
-    // 1 manifest repo + 1 project-repo.
-    assert_eq!(outcomes.len(), 2, "expected 2 outcomes: {stdout}");
-}
-
-/// NDJSON lines must be complete JSON objects (not interleaved).
-#[test]
-fn push_json_ndjson_lines_are_not_interleaved() {
-    let repos: Vec<(&str, &str)> = PUSH_REPO_PATHS.iter().map(|p| (*p, "owned")).collect();
-    let ws = common::build_workspace("alpha", &repos);
-    advance_all_and_relock(&ws, &repos);
-
-    let assert = rwv()
-        .args(["push", "--json", "-j", "4"])
-        .current_dir(&ws.workspace)
-        .assert()
-        .success();
-
-    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
-    for line in stdout.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let parsed: Value = serde_json::from_str(line)
-            .unwrap_or_else(|e| panic!("torn/interleaved line ({e}): {line}\n{stdout}"));
-        assert!(parsed.is_object(), "line not object: {line}");
-    }
+    assert_eq!(shape_under("4"), serial);
 }

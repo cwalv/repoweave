@@ -2,15 +2,11 @@
 //!
 //! Doc claims pinned here:
 //!
-//!   - `rwv sync --json` (serial, `-j 1` or no `-j`) emits the envelope
-//!     `{"$schema": "<url>", "outcomes": [<RepoSyncOutcome>, ...]}`.
-//!     The field is `outcomes` (we pin to the actual implementation
-//!     rather than the informal "results" phrasing in prose).
-//!   - Under `-j N` with `N > 1`, `--json` switches to NDJSON streaming:
-//!     one record per line, no envelope, each line is a complete JSON
-//!     object that embeds its own `$schema`.
-//!   - The `$schema` URL is embedded in BOTH the envelope and every NDJSON
-//!     record, pinning consumers at
+//!   - `rwv sync --json` emits the envelope
+//!     `{"$schema": "<url>", "outcomes": [<RepoSyncOutcome>, ...]}`
+//!     whatever `-j` is. The field is `outcomes` (we pin to the actual
+//!     implementation rather than the informal "results" phrasing in prose).
+//!   - The `$schema` URL is embedded in the envelope, pinning consumers at
 //!     `docs/reference/schemas/sync.json` under repoweave's main branch.
 //!   - Per-failure records carry a stable kebab-case `kind` tag at
 //!     `outcome.failure.kind` (e.g. `ff-impossible`, `rebase-failed`).
@@ -139,9 +135,6 @@ fn make_shared(parent: &Path) -> (Workspace, Workspace, String) {
 
 /// Schema fragment for the serial envelope (`-j 1`).
 const SCHEMA_FRAGMENT: &str = "docs/reference/schemas/sync.json";
-/// Schema fragment for NDJSON per-repo records (`-j N`, `N > 1`).
-const RECORD_SCHEMA_FRAGMENT: &str = "docs/reference/schemas/sync-record.json";
-const PLACEMENT_SCHEMA_FRAGMENT: &str = "docs/reference/schemas/placement-record.json";
 
 // ===========================================================================
 // 1. Envelope shape under serial mode
@@ -205,18 +198,15 @@ fn sync_json_serial_emits_envelope_with_schema_and_outcomes() {
 }
 
 // ===========================================================================
-// 2. NDJSON shape under `-j N` (N > 1)
+// 2. Envelope shape under `-j N` (N > 1)
 //
-// Doc claim: under `-j > 1` with `--json`, output switches to NDJSON: each
-// non-empty line parses as a self-describing JSON record with `$schema`,
-// `kind`, `path`, `absolute_path`. The full stdout does NOT parse as one
-// document (proves the envelope is bypassed).
+// Doc claim: `-j` changes how the work runs, never the shape: under `-j 2`
+// `--json` still prints one envelope, its `outcomes` in manifest order.
 // ===========================================================================
 
 #[test]
-fn sync_json_parallel_emits_ndjson_records_with_embedded_schema() {
-    // For NDJSON we need more than one repo to actually exercise the
-    // parallel pool and produce multiple records. Reuse the
+fn sync_json_parallel_emits_the_envelope() {
+    // Two repos, so the parallel pool runs more than one worker. Reuse the
     // sync_json_test.rs multi-repo fixture shape but inline-trimmed for
     // the four claims we need to anchor.
     let tmp = common::tempdir().unwrap();
@@ -330,56 +320,18 @@ fn sync_json_parallel_emits_ndjson_records_with_embedded_schema() {
         .success();
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
 
-    // Whole stdout must NOT parse as one document — proves NDJSON, not
-    // envelope.
-    assert!(
-        serde_json::from_str::<Value>(&stdout).is_err(),
-        "NDJSON stdout must not parse as one document; got:\n{stdout}"
-    );
-
-    let lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
-    assert!(
-        lines.len() >= repo_paths.len(),
-        "expected >= {} NDJSON lines, got {}; stdout:\n{stdout}",
-        repo_paths.len(),
-        lines.len()
-    );
-
-    let mut seen_paths = std::collections::BTreeSet::new();
-    for line in &lines {
-        let v: Value = serde_json::from_str(line)
-            .unwrap_or_else(|e| panic!("line not parseable ({e}): {line}"));
-        let obj = v
-            .as_object()
-            .unwrap_or_else(|| panic!("line not an object: {line}"));
-        // $schema embedded per-record must point at the per-record artifact.
-        let schema = obj["$schema"]
-            .as_str()
-            .unwrap_or_else(|| panic!("line missing `$schema`: {line}"));
-        if schema.contains(PLACEMENT_SCHEMA_FRAGMENT) {
-            assert!(obj.contains_key("files"), "line missing `files`: {line}");
-            continue;
-        }
-        assert!(
-            schema.contains(RECORD_SCHEMA_FRAGMENT),
-            "per-line $schema must point at {RECORD_SCHEMA_FRAGMENT}; got: {schema}"
-        );
-        // Identifying fields.
+    let parsed: Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("stdout not one JSON document ({e}):\n{stdout}"));
+    let schema = parsed["$schema"].as_str().expect("$schema missing");
+    assert!(schema.contains(SCHEMA_FRAGMENT), "got: {schema}");
+    let outcomes = parsed["outcomes"].as_array().expect("outcomes array");
+    for o in outcomes {
         for field in ["kind", "path", "absolute_path"] {
-            assert!(obj.contains_key(field), "line missing `{field}`: {line}");
-        }
-        if let Some(p) = obj["path"].as_str() {
-            seen_paths.insert(p.to_string());
+            assert!(o.get(field).is_some(), "outcome missing `{field}`: {o}");
         }
     }
-
-    for rp in &repo_paths {
-        assert!(
-            seen_paths.contains(*rp),
-            "expected {rp} in NDJSON stream; saw {:?}\nstdout:\n{stdout}",
-            seen_paths
-        );
-    }
+    let paths: Vec<&str> = outcomes.iter().filter_map(|o| o["path"].as_str()).collect();
+    assert_eq!(paths, repo_paths, "{stdout}");
 }
 
 // ===========================================================================

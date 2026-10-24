@@ -41,15 +41,11 @@
 //!     is not asserted here beyond "not a usage error": what is under test is
 //!     the bytes, and doctor emits them on both paths.
 //!
-//! # NDJSON record conformance
+//! # Under parallel workers
 //!
-//! Verbs that support parallel mode (`-j N`, `N > 1`) stream one NDJSON line
-//! per repo instead of a single envelope document. Each streamed line embeds
-//! its own `$schema` URL pointing at a per-record artifact (e.g.
-//! `fetch-record.json`, distinct from the envelope `fetch.json`). The
-//! `*_ndjson_records_conform` tests drive `-j 2` and validate every emitted
-//! line against the artifact its own `$schema` URL names, using the same
-//! self-describing mechanism as the envelope tests above.
+//! `-j` changes how many repos run at once, never what `--json` prints. The
+//! `*_under_two_workers` tests drive `-j 2`, where workers finish in any
+//! order, and validate the one envelope it prints like any other.
 
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -564,114 +560,32 @@ fn push_json_wire_output_conforms_on_project_failure() {
 }
 
 // ---------------------------------------------------------------------------
-// NDJSON record conformance (-j 2)
+// The same envelope under parallel workers (-j 2)
 // ---------------------------------------------------------------------------
 
-/// Run `rwv <args>` in `cwd` and parse stdout as NDJSON (one JSON object per
-/// non-empty line). Returns the parsed lines.
-fn emit_ndjson(cwd: &Path, args: &[&str]) -> Vec<Value> {
-    let out = common::rwv()
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .expect("rwv runs");
-    let stdout = String::from_utf8(out.stdout).expect("stdout is UTF-8");
-    assert_ne!(
-        out.status.code(),
-        Some(2),
-        "rwv {args:?} in {} was a usage error:\n{}",
-        cwd.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert!(
-        !stdout.trim().is_empty(),
-        "rwv {args:?} in {} printed nothing (exit {:?}):\n{}",
-        cwd.display(),
-        out.status.code(),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    stdout
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .map(|line| {
-            serde_json::from_str(line).unwrap_or_else(|e| {
-                panic!("rwv {args:?} printed a line that is not valid JSON: {e}\nline: {line}")
-            })
-        })
-        .collect()
-}
-
-/// Validate each NDJSON record against the committed artifact its own
-/// `$schema` URL names, asserting that artifact is `expected_record_artifact`
-/// or one of the shared records a verb streams beside its own.
-///
-/// A record URL pointing at a different artifact causes the `assert_eq` to
-/// fire, naming both the expected and the actual artifact path so the failure
-/// message is actionable without inspecting the binary.
-fn assert_ndjson_conforms(verb: &str, records: &[Value], expected_record_artifact: &str) {
-    assert!(
-        !records.is_empty(),
-        "rwv {verb} --json -j 2 emitted no records — fixture proves nothing"
-    );
-    for (i, record) in records.iter().enumerate() {
-        let url = record["$schema"].as_str().unwrap_or_else(|| {
-            panic!("rwv {verb} --json -j 2 record[{i}] has no `$schema` string:\n{record:#}")
-        });
-        let named = url
-            .rsplit('/')
-            .next()
-            .and_then(|file| file.strip_suffix(".json"))
-            .unwrap_or_else(|| {
-                panic!(
-                    "rwv {verb} --json -j 2 record[{i}] embedded `{url}`, which names no artifact"
-                )
-            });
-        assert!(
-            named == expected_record_artifact
-                || ["placement-record", "member-record", "advance-record"].contains(&named),
-            "rwv {verb} --json -j 2 record[{i}] points consumers at {}, expected {}",
-            json_schema::schema_path(named),
-            json_schema::schema_path(expected_record_artifact),
-        );
-        let schema = json_schema::committed_schema(named);
-        let (errors, walk) = json_schema::conform(record, &schema);
-        assert!(
-            errors.is_empty(),
-            "rwv {verb} --json -j 2 record[{i}] does not satisfy {}:\n  {}\n\nrecord:\n{record:#}",
-            json_schema::schema_path(named),
-            errors.join("\n  ")
-        );
-        assert!(
-            walk.properties_checked >= 2,
-            "walk on record[{i}] never reached the record's properties — pass is vacuous: \
-             {walk:?}\nrecord:\n{record:#}"
-        );
-    }
-}
-
 #[test]
-fn fetch_ndjson_records_conform() {
+fn fetch_json_wire_output_conforms_under_two_workers() {
     let weave = weave();
-    let records = emit_ndjson(&weave.primary, &["fetch", "--json", "-j", "2"]);
-    assert_ndjson_conforms("fetch", &records, "fetch-record");
+    let doc = emit(&weave.primary, &["fetch", "--json", "-j", "2"]);
+    assert_conforms("fetch", &doc, "outcomes");
 }
 
 #[test]
-fn update_ndjson_records_conform() {
+fn update_json_wire_output_conforms_under_two_workers() {
     let weave = weave();
-    let records = emit_ndjson(&weave.primary, &["update", "--json", "-j", "2"]);
-    assert_ndjson_conforms("update", &records, "update-record");
+    let doc = emit(&weave.primary, &["update", "--json", "-j", "2"]);
+    assert_conforms("update", &doc, "repos");
 }
 
 #[test]
-fn push_ndjson_records_conform() {
+fn push_json_wire_output_conforms_under_two_workers() {
     let weave = weave();
-    let records = emit_ndjson(&weave.primary, &["push", "--json", "-j", "2"]);
-    assert_ndjson_conforms("push", &records, "push-record");
+    let doc = emit(&weave.primary, &["push", "--json", "-j", "2"]);
+    assert_conforms("push", &doc, "outcomes");
 }
 
 #[test]
-fn sync_ndjson_records_conform() {
+fn sync_json_wire_output_conforms_under_two_workers() {
     let weave = weave();
     let ww = workweave(&weave);
 
@@ -692,28 +606,15 @@ fn sync_ndjson_records_conform() {
     common::git_in(weave.project(), &["commit", "-m", "lock: advance"]);
 
     let primary = weave.primary.to_string_lossy().into_owned();
-    let records = emit_ndjson(&ww, &["sync", &primary, "--json", "-j", "2"]);
-    assert_ndjson_conforms("sync", &records, "sync-record");
+    let doc = emit(&ww, &["sync", &primary, "--json", "-j", "2"]);
+    assert_conforms("sync", &doc, "outcomes");
 }
 
+/// Under parallel workers the envelope still carries each advance-target
+/// fast-forward, the target's tip before and CWD's after: a member's as its
+/// outcome's `step3_advance`, the project repo's as `project_repo_advance`.
 #[test]
-fn sync_to_ndjson_records_conform() {
-    let weave = weave();
-    let ww = workweave(&weave);
-
-    std::fs::write(ww.join(MEMBER).join("NOTES.md"), "workweave\n").unwrap();
-    common::git_in(ww.join(MEMBER), &["add", "-A"]);
-    common::git_in(ww.join(MEMBER), &["commit", "-m", "ww: advance"]);
-
-    let records = emit_ndjson(&ww, &["sync-to", "--json", "-j", "2"]);
-    assert_ndjson_conforms("sync-to", &records, "sync-to-record");
-}
-
-/// The advance-target fast-forwards a serial envelope reports as
-/// `step3_advance` and `project_repo_advance` each arrive as their own line,
-/// carrying the target's tip before and CWD's after.
-#[test]
-fn sync_to_ndjson_streams_both_advance_records() {
+fn sync_to_json_wire_output_conforms_under_two_workers_with_both_advances() {
     let weave = weave();
     let ww = workweave(&weave);
     let target_member_before = common::git_in(weave.member(), &["rev-parse", "HEAD"]);
@@ -723,37 +624,29 @@ fn sync_to_ndjson_streams_both_advance_records() {
     common::git_in(ww.join(MEMBER), &["add", "-A"]);
     common::git_in(ww.join(MEMBER), &["commit", "-m", "ww: advance"]);
 
-    let records = emit_ndjson(&ww, &["sync-to", "--json", "-j", "2"]);
-    let advances: Vec<&Value> = records
-        .iter()
-        .filter(|r| {
-            r["$schema"]
-                .as_str()
-                .is_some_and(|url| url.ends_with("/advance-record.json"))
-        })
-        .collect();
-    let of_kind = |kind: &str| -> Vec<&Value> {
-        advances
-            .iter()
-            .copied()
-            .filter(|r| r["kind"] == kind)
-            .collect()
-    };
+    let doc = emit(&ww, &["sync-to", "--json", "-j", "2"]);
+    assert_conforms("sync-to", &doc, "outcomes");
 
-    let member = of_kind("step3-advance");
-    assert_eq!(member.len(), 1, "one manifest repo advanced:\n{records:#?}");
-    assert_eq!(member[0]["path"], MEMBER);
-    assert_eq!(member[0]["from_sha"], target_member_before.as_str());
+    let member = doc["outcomes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["path"] == MEMBER)
+        .unwrap_or_else(|| panic!("no outcome for {MEMBER}:\n{doc:#}"));
     assert_eq!(
-        member[0]["to_sha"],
+        member["step3_advance"]["from_sha"],
+        target_member_before.as_str()
+    );
+    assert_eq!(
+        member["step3_advance"]["to_sha"],
         common::git_in(weave.member(), &["rev-parse", "HEAD"]).as_str()
     );
-
-    let project = of_kind("project-repo-advance");
-    assert_eq!(project.len(), 1, "the project repo advanced:\n{records:#?}");
-    assert_eq!(project[0]["from_sha"], target_project_before.as_str());
     assert_eq!(
-        project[0]["to_sha"],
+        doc["project_repo_advance"]["from_sha"],
+        target_project_before.as_str()
+    );
+    assert_eq!(
+        doc["project_repo_advance"]["to_sha"],
         common::git_in(weave.project(), &["rev-parse", "HEAD"]).as_str()
     );
 }

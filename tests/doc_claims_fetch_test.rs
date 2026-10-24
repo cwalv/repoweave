@@ -629,14 +629,14 @@ fn fetch_json_envelope_shape() {
 }
 
 // ============================================================================
-// Test 7 — --json -j N NDJSON assertion
+// Test 7 — --json -j N envelope assertion
 //
-// Doc claim: `rwv fetch -j 2 --json` streams NDJSON — one JSON object per
-// line, each carrying its own `$schema` field, no envelope wrapper.
+// Doc claim: `rwv fetch -j 2 --json` emits the same single envelope as
+// `-j 1`, whatever `-j` is, with `outcomes` in manifest order.
 // ============================================================================
 
 #[test]
-fn fetch_json_ndjson_under_parallel_jobs() {
+fn fetch_json_envelope_under_parallel_jobs() {
     let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
@@ -679,7 +679,6 @@ fn fetch_json_ndjson_under_parallel_jobs() {
     );
     let project_url = common::file_url(&project_bare);
 
-    // Run `rwv fetch -j 2 --json` → NDJSON mode.
     let assert = rwv()
         .args(["fetch", &project_url, "--json", "-j", "2"])
         .current_dir(&workspace)
@@ -687,45 +686,17 @@ fn fetch_json_ndjson_under_parallel_jobs() {
         .success();
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
 
-    // Must NOT parse as one JSON document (proves it's NDJSON).
+    let parsed: serde_json::Value = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("stdout not one JSON document ({e}):\n{stdout}"));
+    let schema_val = parsed["$schema"].as_str().expect("$schema missing");
     assert!(
-        serde_json::from_str::<serde_json::Value>(&stdout).is_err(),
-        "NDJSON stdout must not parse as one document;\nstdout:\n{stdout}"
+        schema_val.ends_with("/docs/reference/schemas/fetch.json"),
+        "$schema must end with /docs/reference/schemas/fetch.json; got: {schema_val}"
     );
-
-    let lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
-    assert!(
-        lines.len() >= 2,
-        "expected >= 2 NDJSON lines; got {} lines:\n{stdout}",
-        lines.len()
-    );
-
-    for line in &lines {
-        let v: serde_json::Value = serde_json::from_str(line)
-            .unwrap_or_else(|e| panic!("line not JSON ({e}): {line}\nstdout:\n{stdout}"));
-        let obj = v.as_object().unwrap();
-        let schema_val = obj
-            .get("$schema")
-            .and_then(serde_json::Value::as_str)
-            .expect("each NDJSON record must have $schema");
-        if schema_val.ends_with("/docs/reference/schemas/placement-record.json") {
-            assert!(
-                obj.contains_key("files"),
-                "placement line missing files: {line}"
-            );
-            continue;
-        }
-        assert!(
-            schema_val.ends_with("/docs/reference/schemas/fetch-record.json"),
-            "NDJSON $schema must end with /docs/reference/schemas/fetch-record.json; got: {schema_val}"
-        );
-        assert!(
-            obj.contains_key("path"),
-            "NDJSON record missing path: {line}"
-        );
-        assert!(
-            obj.contains_key("status"),
-            "NDJSON record missing status: {line}"
-        );
+    let outcomes = parsed["outcomes"].as_array().expect("outcomes must be array");
+    let paths: Vec<&str> = outcomes.iter().filter_map(|o| o["path"].as_str()).collect();
+    assert_eq!(paths, ["local/org/aa", "local/org/bb"], "{stdout}");
+    for outcome in outcomes {
+        assert_eq!(outcome["status"], "ok", "{stdout}");
     }
 }

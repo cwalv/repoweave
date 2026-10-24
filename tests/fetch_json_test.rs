@@ -1,18 +1,13 @@
 //! Tests for `rwv fetch --json`.
 //!
 //! Two layers:
-//! 1. Library-level: round-trip the envelope struct and NDJSON record through
-//!    serde so the wire shape (`$schema`, `outcomes` array, `status` field) is
-//!    pinned independent of the live fetch path.
-//! 2. End-to-end: drive `rwv fetch --json` / `rwv fetch -j 2 --json` through
-//!    the binary using local bare repos, parse stdout as JSON / NDJSON, and
-//!    assert the documented shape.
+//! 1. Library-level: round-trip the envelope struct through serde so the wire
+//!    shape (`$schema`, `outcomes` array, `status` field) is pinned
+//!    independent of the live fetch path.
+//! 2. End-to-end: drive `rwv fetch --json` through the binary using local bare
+//!    repos, parse stdout as JSON, and assert the documented shape.
 
-use repoweave::fetch::{
-    FetchJsonOutput, FetchOutcomeNdjsonRecord, FetchOutcomeOutput, FetchOutcomeStatus,
-    FETCH_RECORD_SCHEMA_URL, FETCH_SCHEMA_URL,
-};
-use repoweave::placement::PLACEMENT_RECORD_SCHEMA_URL;
+use repoweave::fetch::{FetchJsonOutput, FetchOutcomeOutput, FetchOutcomeStatus, FETCH_SCHEMA_URL};
 use serde_json::Value;
 use std::path::Path;
 use std::process;
@@ -103,33 +98,6 @@ fn fetch_outcome_failed_serializes() {
     assert_eq!(v["path"], "github/org/repo");
     assert_eq!(v["absolute_path"], "/abs/github/org/repo");
     assert!(v["message"].as_str().unwrap().contains("clone failed"));
-}
-
-#[test]
-fn fetch_ndjson_record_embeds_schema_and_flattens_outcome() {
-    let outcome = FetchOutcomeOutput {
-        path: "github/org/repo".into(),
-        absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new(
-            "/abs/github/org/repo",
-        )),
-        status: FetchOutcomeStatus::Ok,
-        message: None,
-    };
-    let record = FetchOutcomeNdjsonRecord {
-        schema: FETCH_RECORD_SCHEMA_URL,
-        outcome: &outcome,
-    };
-    let v = serde_json::to_value(&record).expect("serializes");
-
-    // The record must be flat: $schema, path, absolute_path, status all at top level.
-    assert_eq!(
-        v["$schema"],
-        serde_json::Value::String(FETCH_RECORD_SCHEMA_URL.to_string())
-    );
-    assert_eq!(v["path"], "github/org/repo");
-    assert_eq!(v["status"], "ok");
-    // Must NOT be nested under an "outcome" key.
-    assert!(v.get("outcome").is_none(), "must be flat, got: {v}");
 }
 
 #[test]
@@ -264,7 +232,7 @@ fn fetch_json_envelope_emits_schema_and_outcomes_array() {
         .success();
     let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
 
-    // Must parse as a single JSON document (envelope, not NDJSON).
+    // Must parse as a single JSON document.
     let parsed: Value = serde_json::from_str(&stdout)
         .unwrap_or_else(|e| panic!("stdout not parseable as JSON ({e}):\n{stdout}"));
     let obj = parsed.as_object().expect("top level must be object");
@@ -301,147 +269,41 @@ fn fetch_json_envelope_emits_schema_and_outcomes_array() {
 }
 
 // ---------------------------------------------------------------------------
-// End-to-end: `rwv fetch -j 2 --json` (NDJSON streaming mode)
+// End-to-end: the worker count does not choose the shape
 // ---------------------------------------------------------------------------
 
 #[test]
-fn fetch_json_ndjson_emits_one_record_per_line_under_jobs_gt_one() {
+fn fetch_json_is_one_envelope_whatever_the_worker_count() {
     let tmp = common::tempdir().unwrap();
-    let workspace = tmp.path().join("ws");
-    std::fs::create_dir_all(&workspace).unwrap();
-
-    // Create three manifest repos.
-    let mut repo_urls = Vec::new();
-    let mut repo_paths = Vec::new();
-    for i in 0..3 {
-        let bare = tmp.path().join(format!("repo-{i}.git"));
-        init_bare_repo_with_commit(&bare);
-        repo_urls.push(common::file_url(&bare));
-        repo_paths.push(format!("local/org/repo-{i}"));
-    }
-
+    let repo_paths: Vec<String> = (0..3).map(|i| format!("local/org/repo-{i}")).collect();
+    let repo_urls: Vec<String> = (0..3)
+        .map(|i| {
+            let bare = tmp.path().join(format!("repo-{i}.git"));
+            init_bare_repo_with_commit(&bare);
+            common::file_url(&bare)
+        })
+        .collect();
     let project_bare = tmp.path().join("project.git");
     init_bare_repo(&project_bare);
     let repo_pairs: Vec<(&str, &str)> = repo_paths
         .iter()
-        .zip(repo_urls.iter())
+        .zip(&repo_urls)
         .map(|(p, u)| (p.as_str(), u.as_str()))
         .collect();
     push_manifest_to_bare(&project_bare, &repo_pairs);
     let project_url = common::file_url(&project_bare);
 
-    // Run with -j 2 --json → NDJSON mode.
-    let assert = rwv()
-        .args(["fetch", &project_url, "--json", "-j", "2"])
-        .current_dir(&workspace)
-        .assert()
-        .success();
-    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
-
-    // Acceptance: NOT parseable as one big JSON document (NDJSON, not envelope).
-    assert!(
-        serde_json::from_str::<Value>(&stdout).is_err(),
-        "NDJSON stdout must not parse as one document; got:\n{stdout}"
-    );
-
-    let lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
-    assert!(
-        lines.len() >= 3,
-        "expected >= 3 NDJSON lines (one per manifest repo), got {} lines:\n{stdout}",
-        lines.len()
-    );
-
-    let mut seen_paths = std::collections::BTreeSet::new();
-    for line in &lines {
-        // Each non-empty line must start with '{'.
-        let trimmed = line.trim_start();
-        assert!(
-            trimmed.starts_with('{'),
-            "NDJSON line must start with `{{`; got: {line}"
-        );
-        assert!(
-            !trimmed.starts_with('['),
-            "NDJSON line must not start with `[` (Reporter prefix); got: {line}"
-        );
-
-        let v: Value = serde_json::from_str(line)
-            .unwrap_or_else(|e| panic!("line not parseable as JSON ({e}): {line}"));
-        let obj = v.as_object().expect("line must be object");
-
-        // Every NDJSON record must carry $schema pointing at the per-record
-        // artifact, not the serial envelope.
-        let schema = obj.get("$schema").and_then(Value::as_str);
-        if schema == Some(PLACEMENT_RECORD_SCHEMA_URL) {
-            assert!(obj.contains_key("files"), "missing `files`: {line}");
-            continue;
-        }
-        assert_eq!(
-            schema,
-            Some(FETCH_RECORD_SCHEMA_URL),
-            "every NDJSON record must embed $schema: {line}"
-        );
-        assert!(obj.contains_key("path"), "missing `path`: {line}");
-        assert!(
-            obj.contains_key("absolute_path"),
-            "missing `absolute_path`: {line}"
-        );
-        assert!(obj.contains_key("status"), "missing `status`: {line}");
-
-        if let Some(path) = obj.get("path").and_then(Value::as_str) {
-            seen_paths.insert(path.to_string());
-        }
-    }
-
-    // All three manifest repos appear in the stream.
-    for rp in &repo_paths {
-        assert!(
-            seen_paths.contains(rp.as_str()),
-            "expected path {rp} in NDJSON stream; seen: {seen_paths:?}\nstdout:\n{stdout}"
-        );
-    }
-}
-
-#[test]
-fn fetch_json_ndjson_lines_are_not_interleaved() {
-    // Under -j 4 --json, the Mutex stdout_lock must prevent byte interleaving.
-    // We verify by parsing every non-empty line as JSON — any torn line fails parse.
-    let tmp = common::tempdir().unwrap();
-    let workspace = tmp.path().join("ws");
-    std::fs::create_dir_all(&workspace).unwrap();
-
-    // Create four repos (enough to exercise the multi-worker path).
-    let mut repo_urls = Vec::new();
-    let mut repo_paths = Vec::new();
-    for i in 0..4 {
-        let bare = tmp.path().join(format!("repo-{i}.git"));
-        init_bare_repo_with_commit(&bare);
-        repo_urls.push(common::file_url(&bare));
-        repo_paths.push(format!("local/org/repo-{i}"));
-    }
-
-    let project_bare = tmp.path().join("project.git");
-    init_bare_repo(&project_bare);
-    let repo_pairs: Vec<(&str, &str)> = repo_paths
-        .iter()
-        .zip(repo_urls.iter())
-        .map(|(p, u)| (p.as_str(), u.as_str()))
-        .collect();
-    push_manifest_to_bare(&project_bare, &repo_pairs);
-    let project_url = common::file_url(&project_bare);
-
-    let assert = rwv()
-        .args(["fetch", &project_url, "--json", "-j", "4"])
-        .current_dir(&workspace)
-        .assert()
-        .success();
-    let stdout = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
-
-    for line in stdout.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let parsed: Value = serde_json::from_str(line)
-            .unwrap_or_else(|e| panic!("torn/interleaved line ({e}): {line}\nstdout:\n{stdout}"));
-        assert!(parsed.is_object(), "line not object: {line}");
-    }
+    let shape_under = |jobs: &str| {
+        let workspace = tmp.path().join(format!("ws-j{jobs}"));
+        std::fs::create_dir_all(&workspace).unwrap();
+        let out = rwv()
+            .args(["fetch", &project_url, "--json", "-j", jobs])
+            .current_dir(&workspace)
+            .assert()
+            .success();
+        common::envelope_shape(&out.get_output().stdout, FETCH_SCHEMA_URL, "outcomes")
+    };
+    let serial = shape_under("1");
+    assert_eq!(serial.1, repo_paths, "outcomes follow the manifest");
+    assert_eq!(shape_under("4"), serial);
 }

@@ -4,17 +4,17 @@
 //! Three prohibitions over `src/`, which no behavior distinguishes while the
 //! copies agree, and which is why they are read as source:
 //!
-//! 1. No function outside the clap definitions takes `json: bool` or
-//!    `ndjson: bool`. Each re-derived the shape of the output from the flag,
+//! 1. No function outside the clap definitions takes `json: bool`. Each
+//!    re-derived the shape of the output from the flag,
 //!    and 5c8ad7e is the one that drifted.
-//! 2. `OutputMode::resolve` is called by the dispatcher alone.
+//! 2. `OutputMode::from_flag` is called by the dispatcher alone.
 //! 3. The `reference` role is tested in one place in `fetch.rs`,
 //!    `MemberSelection::leaves_out`; the test used to be re-derived at four
 //!    sites below dispatch.
 //!
 //! **Scope**, which is also the coverage boundary: production lines of `src/`
 //! (`common::src_scan` drops comment lines and `#[cfg(test)]` items). Prohibition
-//! 1 reads parameters spelled `json: bool` or `ndjson: bool`, so a flag renamed
+//! 1 reads parameters spelled `json: bool`, so a flag renamed
 //! or carried in a struct field is invisible to it, and `src/cli.rs`, whose
 //! clap arguments are those flags, and `src/bin/`, whose plugin is not this
 //! library, are not read. Prohibition 3 reads `Role::Reference` in `fetch.rs`
@@ -26,19 +26,18 @@ use common::src_scan::{production_lines, SourceLine};
 
 /// The resolver is the one function that takes the flag: it is what turns it
 /// into the mode.
-const THE_RESOLVER: &str = "pub fn resolve(json: bool, jobs: usize) -> Self {";
+const THE_RESOLVER: &str = "pub fn from_flag(json: bool) -> Self {";
 
 fn takes_the_flag(text: &str) -> Option<&'static str> {
     if text.contains(THE_RESOLVER) {
         return None;
     }
-    ["ndjson: bool", "json: bool"]
-        .into_iter()
-        .find(|needle| text.contains(needle))
+    const NEEDLE: &str = "json: bool";
+    text.contains(NEEDLE).then_some(NEEDLE)
 }
 
 fn calls_resolve(text: &str) -> bool {
-    text.contains("OutputMode::resolve(")
+    text.contains("OutputMode::from_flag(")
 }
 
 fn tests_the_reference_role(text: &str) -> bool {
@@ -68,7 +67,7 @@ fn no_function_takes_the_json_flag() {
         .collect();
     assert!(
         strays.is_empty(),
-        "a verb takes the `OutputMode` the dispatcher resolved, or a `JsonShape` when it has no \
+        "a verb takes the `OutputMode` the dispatcher resolved, or no mode when it has no \
          text mode; it never takes the flag:\n{}",
         strays.join("\n")
     );
@@ -118,15 +117,12 @@ fn the_scans_flag_each_shape_they_claim_to_read() {
         takes_the_flag("pub fn run_status(ctx: &WorkspaceContext, json: bool) {"),
         Some("json: bool")
     );
-    assert_eq!(takes_the_flag("    ndjson: bool,"), Some("ndjson: bool"));
     assert_eq!(takes_the_flag("    output: OutputMode,"), None);
     assert_eq!(takes_the_flag(&format!("    {THE_RESOLVER}")), None);
     assert!(calls_resolve(
-        "let o = crate::parallel::OutputMode::resolve(json, jobs);"
+        "let o = crate::parallel::OutputMode::from_flag(json);"
     ));
-    assert!(!calls_resolve(
-        "pub fn resolve(json: bool, jobs: usize) -> Self {"
-    ));
+    assert!(!calls_resolve("pub fn from_flag(json: bool) -> Self {"));
     assert!(tests_the_reference_role(
         "self.skip_reference && role == Role::Reference"
     ));

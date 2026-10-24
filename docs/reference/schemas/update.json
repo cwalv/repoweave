@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "UpdateJsonOutput",
-  "description": "Top-level envelope for `rwv update --json` (serial / `-j 1` mode). `{ \"$schema\": \"<url>\", \"repos\": [<RepoUpdateRecord>, ...] }`",
+  "description": "Top-level envelope for `rwv update --json`. `{ \"$schema\": \"<url>\", \"repos\": [<RepoUpdateRecord>, ...] }`",
   "type": "object",
   "required": [
     "$schema",

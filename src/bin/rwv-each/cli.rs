@@ -36,7 +36,7 @@ pub struct Cli {
     #[arg(long)]
     pub dry_run: bool,
 
-    /// Emit one outcome per repo as JSON, with each command's output captured into it. `-j 1` prints one envelope at the end; `-j N` streams one record per line as repos finish.
+    /// Emit one outcome per repo as JSON, with each command's output captured into it, in one envelope printed once every repo is done, whatever `-j` is. `--joblog` and `--results` report each repo as it finishes.
     #[arg(long)]
     pub json: bool,
 

@@ -959,7 +959,7 @@ fn json_a_clean_sync_is_complete() {
 }
 
 #[test]
-fn ndjson_a_refused_prune_streams_its_line_and_exits_1() {
+fn json_under_two_workers_a_refused_prune_is_a_member_and_exits_1() {
     let weave = weave();
     let s1 = seat_with_an_unprunable_drop(&weave);
 
@@ -970,32 +970,21 @@ fn ndjson_a_refused_prune_streams_its_line_and_exits_1() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let members: Vec<serde_json::Value> = String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
-        .filter(|r| {
-            r["$schema"]
-                .as_str()
-                .is_some_and(|url| url.ends_with("/member-record.json"))
-        })
-        .collect();
-    assert_one_member(&members, "prune-refused", &s1);
+    let envelope: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(envelope["complete"], true, "{envelope:#}");
+    assert_one_member(
+        envelope["members"].as_array().unwrap(),
+        "prune-refused",
+        &s1,
+    );
 }
 
 #[test]
-fn ndjson_streams_a_member_line() {
+fn json_under_two_workers_carries_the_pruned_member() {
     let weave = weave();
     let s1 = seat_behind_a_drop(&weave);
 
     let stdout = succeed(&s1, &["sync", "primary", "--json", "-j", "2"]);
-    let members: Vec<serde_json::Value> = stdout
-        .lines()
-        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
-        .filter(|r| {
-            r["$schema"]
-                .as_str()
-                .is_some_and(|url| url.ends_with("/member-record.json"))
-        })
-        .collect();
-    assert_one_member(&members, "pruned", &s1);
+    let envelope: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_one_member(envelope["members"].as_array().unwrap(), "pruned", &s1);
 }

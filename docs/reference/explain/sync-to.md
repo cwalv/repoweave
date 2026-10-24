@@ -185,8 +185,7 @@ Run `rwv sync-to --help` for the full clap surface.
 
 Default text output reports each step with one line per repo.
 
-Under `--json` with `-j 1` (default) or `--json` alone, output is the
-pretty-printed envelope:
+Under `--json`, output is the pretty-printed envelope, whatever `-j` is:
 
 ```
 {
@@ -199,15 +198,11 @@ pretty-printed envelope:
 }
 ```
 
-Outcome `kind` tags and the `--json` / NDJSON shape are identical to `rwv sync`
-— only the `$schema` URL differs (pointing at `docs/reference/schemas/sync-to.json`).
-
-Under `--json -j N` with `N > 1`, each advance-target fast-forward that
-moved a branch pointer is streamed as its own line, with `$schema` naming
-`advance-record.json`: `kind: "step3-advance"` with the repo's `path`, or
-`kind: "project-repo-advance"` for the project repo, each with `from_sha` and
-`to_sha`. These are the envelope's per-outcome `step3_advance` and its
-`project_repo_advance`.
+Outcome `kind` tags, and the manifest order of `outcomes`, are identical to
+`rwv sync` — only the `$schema` URL differs (pointing at
+`docs/reference/schemas/sync-to.json`). Each advance-target fast-forward that
+moved a branch pointer is reported as its repo's `step3_advance`, or as
+`project_repo_advance` for the project repo, each with `from_sha` and `to_sha`.
 
 `complete` is as on `rwv sync`: true once every step ran and op-state is
 cleared, whatever the exit code, so a complete op prints its envelope even on
@@ -226,8 +221,7 @@ to text. The envelope's identity fields (`source_workweave`, `target`,
 carries every repo, exactly as on a fresh run. A later `resumed` value means
 replay had already completed before the interruption, so `outcomes` is empty;
 read the target's state with `rwv status --json` if per-repo confirmation is
-needed. (`-j` still conflicts with `--continue`, so a resumed `--json` run is
-always the serial envelope, never NDJSON.)
+needed. (`-j` conflicts with `--continue`: a resumed op runs serially.)
 
 Schema:
 
@@ -235,7 +229,7 @@ Schema:
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "SyncToJsonOutput",
-  "description": "Top-level envelope for `rwv sync-to --json` (serial mode).\n\nExtends `SyncJsonOutput` with sync-to-specific observability fields: - `source_workweave` — the workweave the op is rooted in (null when that is the primary weave). - `target` — the absolute path of the target workspace that was advanced. - `retired` — true iff the workweave was deleted. - `resumed` — the phase a `--continue` resumed from; absent on a fresh run. - `project_repo_advance` — step-3 advance of `projects/<project>/.git`; omitted when the project repo was already at CWD's tip (no-op advance). - per-outcome `step3_advance` — step-3 advance SHA pair for each member repo; omitted on a no-op advance. - `placements` — file placements in both workspaces, the target's included.\n\nKept as a separate type so the generated schema artifact (`docs/reference/schemas/sync-to.json`) has its own title/description.",
+  "description": "Top-level envelope for `rwv sync-to --json`.\n\nExtends `SyncJsonOutput` with sync-to-specific observability fields: - `source_workweave` — the workweave the op is rooted in (null when that is the primary weave). - `target` — the absolute path of the target workspace that was advanced. - `retired` — true iff the workweave was deleted. - `resumed` — the phase a `--continue` resumed from; absent on a fresh run. - `project_repo_advance` — step-3 advance of `projects/<project>/.git`; omitted when the project repo was already at CWD's tip (no-op advance). - per-outcome `step3_advance` — step-3 advance SHA pair for each member repo; omitted on a no-op advance. - `placements` — file placements in both workspaces, the target's included.\n\nKept as a separate type so the generated schema artifact (`docs/reference/schemas/sync-to.json`) has its own title/description.",
   "type": "object",
   "required": [
     "$schema",
@@ -262,6 +256,7 @@ Schema:
       }
     },
     "outcomes": {
+      "description": "One record per repo, in manifest order whatever `-j` is.",
       "type": "array",
       "items": {
         "$ref": "#/definitions/SyncOutcomeOutput"

@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "SyncJsonOutput",
-  "description": "Top-level envelope for `rwv sync --json` (serial mode).",
+  "description": "Top-level envelope for `rwv sync --json`.",
   "type": "object",
   "required": [
     "$schema",
@@ -16,7 +16,7 @@
       "type": "string"
     },
     "advisories": {
-      "description": "Standing advisories raised during this sync (e.g. delivered changes touching a materialized input). Empty, not absent, when there are none — a consumer branches on length rather than presence.\n\nPresent only in this envelope: `-j N` with `N > 1` streams NDJSON instead, one self-describing per-repo line with no envelope for an advisory to sit in, so a parallel `--json` sync carries no advisory at all. Run `-j 1` (or omit `-j`) to receive one.",
+      "description": "Standing advisories raised during this sync (e.g. delivered changes touching a materialized input). Empty, not absent, when there are none — a consumer branches on length rather than presence.",
       "type": "array",
       "items": {
         "$ref": "#/definitions/AdvisoryOutput"
@@ -34,6 +34,7 @@
       }
     },
     "outcomes": {
+      "description": "One record per repo, in manifest order whatever `-j` is.",
       "type": "array",
       "items": {
         "$ref": "#/definitions/SyncOutcomeOutput"

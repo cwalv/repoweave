@@ -27,11 +27,6 @@ use std::sync::Mutex;
 /// under `docs/reference/schemas/update.json`.
 pub const UPDATE_SCHEMA_URL: &str = crate::schema_url::schema_url!("update");
 
-/// Schema URL embedded in each `rwv update --json -j N` NDJSON record line.
-/// Pins to `docs/reference/schemas/update-record.json`, which describes the
-/// flat per-repo wire shape — distinct from the serial envelope (`update.json`).
-pub const UPDATE_RECORD_SCHEMA_URL: &str = crate::schema_url::schema_url!("update-record");
-
 /// Per-repo outcome kind for `rwv update --json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
@@ -72,7 +67,7 @@ pub struct RepoUpdateRecord {
     pub error: Option<String>,
 }
 
-/// Top-level envelope for `rwv update --json` (serial / `-j 1` mode).
+/// Top-level envelope for `rwv update --json`.
 /// `{ "$schema": "<url>", "repos": [<RepoUpdateRecord>, ...] }`
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct UpdateJsonOutput {
@@ -90,23 +85,6 @@ pub struct UpdateJsonOutput {
     /// command that performs it. Empty, not absent, when it skipped none.
     #[serde(default)]
     pub skipped: Vec<crate::skipped::SkippedEffect>,
-}
-
-/// One NDJSON record emitted by `rwv update --json -j N` with `N > 1`.
-///
-/// Each record is a flat JSON object with `$schema` embedded so consumers
-/// can identify it without out-of-band context.
-///
-/// `$schema` names `docs/reference/schemas/update-record.json`, not the
-/// envelope artifact (`update.json`), because the two documents have different
-/// shapes: the envelope wraps a `repos` array; each streamed line is one
-/// flat per-repo object.
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct UpdateNdjsonRecord<'a> {
-    #[serde(rename = "$schema")]
-    pub schema: &'a str,
-    #[serde(flatten)]
-    pub record: &'a RepoUpdateRecord,
 }
 
 /// Run `rwv update` for the current workspace context.
@@ -131,8 +109,7 @@ pub struct UpdateNdjsonRecord<'a> {
 /// the derived change is never separated from the change that caused it.
 /// When `project_override` is `Some`, that project is updated instead of
 /// the active one (one-shot; does not change `.rwv-active`).
-/// When `json` is true, structured output is emitted: an envelope under
-/// `jobs == 1`, NDJSON under `jobs > 1`.
+/// Under `--json`, one envelope reaches stdout, in manifest order.
 ///
 /// `jobs` is the resolved worker count (post-[`crate::parallel::resolve_jobs`]).
 /// `jobs == 1` runs serially with no prefix; `jobs > 1` runs the per-repo
@@ -287,7 +264,6 @@ fn update_for_project(
 
     // Build JSON records if requested. We zip work_items with outcomes by
     // position (run_in_parallel preserves input order in its output).
-    let stdout_lock: Mutex<()> = Mutex::new(());
     let mut json_records: Vec<RepoUpdateRecord> = Vec::new();
     let mut placements: Vec<PlacementOutput> = Vec::new();
 
@@ -340,17 +316,6 @@ fn update_for_project(
             placed.map(|files| PlacementOutput::new(&item.repo_path, item.checkout.path(), files));
 
         if output.is_json() {
-            if output.is_ndjson() {
-                if let Some(placement) = &placement {
-                    placement.stream(&stdout_lock);
-                }
-                // Stream one line per record to stdout as we build.
-                let line_record = UpdateNdjsonRecord {
-                    schema: UPDATE_RECORD_SCHEMA_URL,
-                    record: &record,
-                };
-                crate::stdout::stream_record(&stdout_lock, &line_record);
-            }
             json_records.push(record);
             placements.extend(placement);
         }
@@ -376,19 +341,16 @@ fn update_for_project(
     // Under text mode with failures: already bailed above.
     // Under JSON mode without failures: fall through to lock write.
     if output.is_json() && !errors.is_empty() {
-        // Emit envelope (NDJSON already streamed above).
-        if output == OutputMode::JsonEnvelope {
-            let envelope = UpdateJsonOutput {
-                schema_url: UPDATE_SCHEMA_URL.to_string(),
-                repos: json_records,
-                placements,
-                resolution: ctx.resolution(),
-                skipped: Vec::new(),
-            };
-            let out = serde_json::to_string_pretty(&envelope)
-                .context("failed to serialize update output")?;
-            outln!("{out}");
-        }
+        let envelope = UpdateJsonOutput {
+            schema_url: UPDATE_SCHEMA_URL.to_string(),
+            repos: json_records,
+            placements,
+            resolution: ctx.resolution(),
+            skipped: Vec::new(),
+        };
+        let out =
+            serde_json::to_string_pretty(&envelope).context("failed to serialize update output")?;
+        outln!("{out}");
         crate::refuse!(
             crate::refusal::RefusalKind::PartialRunAborted,
             "update aborted with {} failure(s); lock not written",
@@ -468,8 +430,8 @@ fn update_for_project(
     }
 
     // Emit JSON envelope after lock write (so the lock is coherent before
-    // consumers read the envelope). NDJSON was already streamed above.
-    if output == OutputMode::JsonEnvelope {
+    // consumers read the envelope).
+    if output.is_json() {
         let envelope = UpdateJsonOutput {
             schema_url: UPDATE_SCHEMA_URL.to_string(),
             repos: json_records,

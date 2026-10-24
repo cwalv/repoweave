@@ -9,11 +9,9 @@
 //! would end rwv wherever it writes to a subprocess's stdin that has already
 //! exited, so neither does this job. Any other write error is still an error.
 
-use serde::Serialize;
 use std::fmt;
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
 
 static READER_GONE: AtomicBool = AtomicBool::new(false);
 
@@ -60,16 +58,6 @@ pub(crate) fn flush() -> io::Result<()> {
 pub(crate) fn print(args: fmt::Arguments<'_>, newline: bool) {
     if let Err(e) = write(args, newline) {
         panic!("failed printing to stdout: {e:#}");
-    }
-}
-
-/// Stream one NDJSON record. The lock keeps parallel workers' records from
-/// interleaving; a record that cannot be written is dropped, since the records
-/// are a report and the work they report is done either way.
-pub(crate) fn stream_record(lock: &Mutex<()>, record: &impl Serialize) {
-    if let Ok(line) = serde_json::to_string(record) {
-        let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
-        let _ = write(format_args!("{line}"), true).and_then(|()| flush());
     }
 }
 

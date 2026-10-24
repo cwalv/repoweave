@@ -12,6 +12,8 @@ mod common;
 
 const APP: &str = "github/org/app";
 const LIB: &str = "github/org/lib";
+const EACH_SCHEMA_URL: &str =
+    "https://raw.githubusercontent.com/cwalv/repoweave/main/docs/reference/schemas/each.json";
 const DOCS: &str = "github/ref/docs";
 
 struct Weave {
@@ -94,13 +96,6 @@ fn stdout(o: &Output) -> String {
 
 fn stderr(o: &Output) -> String {
     String::from_utf8_lossy(&o.stderr).into_owned()
-}
-
-fn json_lines(o: &Output) -> Vec<Value> {
-    stdout(o)
-        .lines()
-        .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("{e}: {l}")))
-        .collect()
 }
 
 fn envelope(o: &Output) -> Value {
@@ -442,19 +437,16 @@ fn json_under_one_job_is_one_envelope_with_captured_output_even_on_failure() {
 }
 
 #[test]
-fn json_under_many_jobs_streams_one_self_describing_record_per_repo() {
+fn json_is_one_envelope_whatever_the_worker_count() {
     let w = Weave::standard();
-    let out = w.each(&["--json", "-j", "2", "--", "git", "status", "--short"]);
-    assert_eq!(out.status.code(), Some(0));
-    let records = json_lines(&out);
-    assert_eq!(records.len(), 2, "{}", stdout(&out));
-    for record in &records {
-        assert!(record["$schema"]
-            .as_str()
-            .unwrap()
-            .ends_with("/docs/reference/schemas/each-record.json"));
-        assert_eq!(record["status"], "ok");
-    }
+    let shape_under = |jobs: &str| {
+        let out = w.each(&["--json", "-j", jobs, "--", "git", "status", "--short"]);
+        assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+        common::envelope_shape(&out.stdout, EACH_SCHEMA_URL, "outcomes")
+    };
+    let serial = shape_under("1");
+    assert_eq!(serial.1, [APP, LIB]);
+    assert_eq!(shape_under("2"), serial);
 }
 
 #[test]
@@ -770,8 +762,10 @@ fn a_timeout_kills_the_whole_tree_grandchildren_included() {
         .unwrap();
     assert!(start.elapsed() < Duration::from_secs(30));
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
-    for record in json_lines(&out) {
-        assert_eq!(record["status"], "timed-out", "{record}");
+    let outcomes = envelope(&out)["outcomes"].as_array().unwrap().clone();
+    assert_eq!(outcomes.len(), 2, "{}", stdout(&out));
+    for outcome in outcomes {
+        assert_eq!(outcome["status"], "timed-out", "{outcome}");
     }
     for path in [APP, LIB] {
         let pid = common::job::leaf_pid(&w.ws.join(path), Duration::ZERO);

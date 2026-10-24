@@ -8,20 +8,14 @@ use anyhow::Context;
 
 use crate::output::{Printer, Progress, Stream};
 use crate::run::{Finished, Layout};
-use crate::schema_url::{EACH_RECORD_SCHEMA_URL, EACH_SCHEMA_URL};
+use crate::schema_url::EACH_SCHEMA_URL;
 use crate::select::Repo;
-use crate::wire::{EachJsonOutput, EachNdjsonRecord, EachOutcomeStatus, Outcome};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Json {
-    Envelope,
-    Ndjson,
-}
+use crate::wire::{EachJsonOutput, EachOutcomeStatus, Outcome};
 
 pub struct Reporter<'a> {
     repos: &'a [Repo],
     layout: Layout,
-    json: Option<Json>,
+    json: bool,
     command: String,
     printer: Mutex<Printer<Stdout, Stderr>>,
     joblog: Option<Mutex<File>>,
@@ -35,7 +29,7 @@ impl<'a> Reporter<'a> {
     pub fn new(
         repos: &'a [Repo],
         layout: Layout,
-        json: Option<Json>,
+        json: bool,
         command: String,
         progress: bool,
         joblog: Option<&Path>,
@@ -99,7 +93,7 @@ impl<'a> Reporter<'a> {
                     finished.grouped.iter().map(|(s, l)| (*s, l.as_slice())),
                 );
             }
-            if self.json.is_none() {
+            if !self.json {
                 if let Some(note) = text_note(outcome, finished.failure.as_deref()) {
                     let prefix = (self.layout == Layout::Prefixed).then_some(repo.path.as_str());
                     let note = match prefix {
@@ -108,14 +102,6 @@ impl<'a> Reporter<'a> {
                     };
                     printer.line(prefix, Stream::Err, note.as_bytes());
                 }
-            }
-            if self.json == Some(Json::Ndjson) {
-                let record = EachNdjsonRecord {
-                    schema: EACH_RECORD_SCHEMA_URL,
-                    outcome,
-                };
-                let line = serde_json::to_string(&record).expect("an outcome serializes");
-                printer.line(None, Stream::Out, line.as_bytes());
             }
         }
         if finished.started.is_some() {
@@ -128,33 +114,17 @@ impl<'a> Reporter<'a> {
     pub fn finish(&self, all: &[Finished], interrupted: bool) -> u8 {
         let mut printer = self.printer.lock().unwrap();
         printer.finish_progress();
-        match self.json {
-            Some(Json::Envelope) => {
-                let envelope = EachJsonOutput {
-                    schema: EACH_SCHEMA_URL.to_owned(),
-                    outcomes: all.iter().map(|f| f.outcome.clone()).collect(),
-                };
-                let text = serde_json::to_string_pretty(&envelope).expect("an envelope serializes");
-                printer.line(None, Stream::Out, text.as_bytes());
-            }
-            Some(Json::Ndjson) => {
-                for finished in all
-                    .iter()
-                    .filter(|f| f.outcome.status == EachOutcomeStatus::NotRun)
-                {
-                    let record = EachNdjsonRecord {
-                        schema: EACH_RECORD_SCHEMA_URL,
-                        outcome: &finished.outcome,
-                    };
-                    let line = serde_json::to_string(&record).expect("an outcome serializes");
-                    printer.line(None, Stream::Out, line.as_bytes());
-                }
-            }
-            None => {
-                let outcomes: Vec<&Outcome> = all.iter().map(|f| &f.outcome).collect();
-                if let Some(summary) = summary(&outcomes, interrupted) {
-                    printer.line(None, Stream::Err, summary.as_bytes());
-                }
+        if self.json {
+            let envelope = EachJsonOutput {
+                schema: EACH_SCHEMA_URL.to_owned(),
+                outcomes: all.iter().map(|f| f.outcome.clone()).collect(),
+            };
+            let text = serde_json::to_string_pretty(&envelope).expect("an envelope serializes");
+            printer.line(None, Stream::Out, text.as_bytes());
+        } else {
+            let outcomes: Vec<&Outcome> = all.iter().map(|f| &f.outcome).collect();
+            if let Some(summary) = summary(&outcomes, interrupted) {
+                printer.line(None, Stream::Err, summary.as_bytes());
             }
         }
         let errors = self.errors.lock().unwrap();

@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use super::{
-    ContainmentOutput, MemberOutput, OpCoordinates, OutputHandler, RepoSyncOutcome,
+    in_manifest_order, ContainmentOutput, MemberOutput, OpCoordinates, OutputHandler, RepoSyncOutcome,
     RetiredWorkweave, Step3AdvanceOutput, SyncOutcomeOutput, SyncToJsonOutput,
     SYNC_TO_JSON_SCHEMA_URL,
 };
@@ -54,17 +54,10 @@ impl SyncToOutcome {
         let mut step3_advances = self.step3_advances;
         // A resume that re-entered downstream of replay records no outcomes,
         // so an advance it performs has no record to ride on.
-        let outcomes = self
-            .records
+        let outcomes = in_manifest_order(self.records)
             .into_iter()
             .map(|mut outcome| {
-                let path = match &outcome {
-                    SyncOutcomeOutput::Converged { path, .. }
-                    | SyncOutcomeOutput::AlreadyAhead { path, .. }
-                    | SyncOutcomeOutput::NoOp { path, .. }
-                    | SyncOutcomeOutput::Failed { path, .. } => path.clone(),
-                };
-                if let Some(advance) = step3_advances.remove(&path) {
+                if let Some(advance) = step3_advances.remove(outcome.path()) {
                     *outcome.step3_advance_mut() = Some(advance);
                 }
                 outcome

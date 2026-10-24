@@ -783,10 +783,8 @@ pub fn run() -> anyhow::Result<()> {
             // Mint once from the parsed flag; the token threads down to
             // fetch_one, where it gates the realign-detach refusal.
             let detach_checkouts = consent::DetachConsent::from_flag(detach_checkouts);
-            // The default resolves to min(nproc, 8), so --json without -j is
-            // NDJSON on a multi-core host; the envelope needs an explicit -j 1.
             let jobs = crate::parallel::resolve_jobs(jobs);
-            let output = OutputMode::resolve(json, jobs);
+            let output = OutputMode::from_flag(json);
             let selection = fetch::MemberSelection::new(selector.parse_filter()?, no_reference);
             match source {
                 Some(src) => {
@@ -981,7 +979,7 @@ pub fn run() -> anyhow::Result<()> {
                         }
                     }
                     Some(WorkweaveAction::Log { diff, json }) => {
-                        crate::workweave::workweave_log(&ctx, diff, OutputMode::resolve(json, 1))?;
+                        crate::workweave::workweave_log(&ctx, diff, OutputMode::from_flag(json))?;
                     }
                     Some(WorkweaveAction::SetContainer { path }) => {
                         let recorded = crate::workweave_index::set_container(
@@ -1076,7 +1074,7 @@ pub fn run() -> anyhow::Result<()> {
             )?;
             refuse_symlinked_members_here(&ctx)?;
             let filter = selector.parse_filter()?;
-            status::run_status(&ctx, OutputMode::resolve(json, 1), &filter)?;
+            status::run_status(&ctx, OutputMode::from_flag(json), &filter)?;
         }
         Some(Commands::Abort {
             abandon_foreign_tip,
@@ -1100,12 +1098,6 @@ pub fn run() -> anyhow::Result<()> {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
             let ctx =
                 resolve_project_scoped(origin_dir, project_override.clone(), use_workweave_flag)?;
-            // sync's default is serial (jobs=1). This differs from fetch/update
-            // (which auto-resolve to min(nproc, 8)) because sync's `--json`
-            // contract pins envelope output under `-j 1` and NDJSON under
-            // `-j > 1`; defaulting to auto would silently switch envelope ->
-            // NDJSON on multi-core hosts. No `-j` or `-j 1` emits the
-            // pretty envelope.
             let jobs = match jobs {
                 Some(n) => crate::parallel::resolve_jobs(Some(n)),
                 None => 1,
@@ -1131,10 +1123,7 @@ pub fn run() -> anyhow::Result<()> {
                     jobs,
                 }
             };
-            // A resumed op runs serially, so `request.jobs()` is 1 and a
-            // resumed `--json` run is an envelope whatever `-j` said.
-            let output = OutputMode::resolve(json, request.jobs());
-            sync::run_sync(&ctx, request, output)?;
+            sync::run_sync(&ctx, request, OutputMode::from_flag(json))?;
         }
         Some(Commands::SyncTo {
             target,
@@ -1203,8 +1192,7 @@ pub fn run() -> anyhow::Result<()> {
                     jobs,
                 }
             };
-            let output = OutputMode::resolve(json, request.jobs());
-            sync::run_sync_to(&ctx, request, output)?;
+            sync::run_sync_to(&ctx, request, OutputMode::from_flag(json))?;
         }
         Some(Commands::Push {
             project,
@@ -1218,11 +1206,6 @@ pub fn run() -> anyhow::Result<()> {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
             let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
             let filter = crate::selector::RepoFilter::parse(&roles, &repos)?;
-            // push's default is serial (jobs=1). This differs from fetch/update
-            // (which auto-resolve to min(nproc, 8)) because push's `--json`
-            // contract pins envelope output under `-j 1` and NDJSON under
-            // `-j > 1`; defaulting to auto would silently switch envelope ->
-            // NDJSON on multi-core hosts.
             let jobs = match jobs {
                 Some(n) => crate::parallel::resolve_jobs(Some(n)),
                 None => 1,
@@ -1235,7 +1218,7 @@ pub fn run() -> anyhow::Result<()> {
                         .map_or(crate::vcs::Force::FfOnly, crate::vcs::Force::Overwrite),
                 )
             };
-            push::run_push(&ctx, mode, &filter, jobs, OutputMode::resolve(json, jobs))?;
+            push::run_push(&ctx, mode, &filter, jobs, OutputMode::from_flag(json))?;
         }
         Some(Commands::Update {
             dirty,
@@ -1254,12 +1237,6 @@ pub fn run() -> anyhow::Result<()> {
             // advance_checkout, where it gates the ff-or-refuse guard.
             let detach_checkouts = consent::DetachConsent::from_flag(detach_checkouts);
             let filter = selector.parse_filter()?;
-            // Update's default is auto-parallel (min(nproc, 8)). The envelope/NDJSON
-            // split mirrors sync: -j 1 (or unspecified with --json) emits the
-            // envelope; -j > 1 streams NDJSON. Note: unlike sync, update defaults
-            // to auto-parallel even without --json, so --json + no -j will default
-            // to multi-worker NDJSON on multi-core machines. Callers that want the
-            // envelope must pass `-j 1` explicitly alongside --json.
             let jobs = crate::parallel::resolve_jobs(jobs);
             refuse_symlinked_members_here(&ctx)?;
             let commit = commit.then(|| lock::CommitMessage::from_flag(message));
@@ -1267,7 +1244,7 @@ pub fn run() -> anyhow::Result<()> {
                 &ctx,
                 dirty,
                 commit,
-                OutputMode::resolve(json, jobs),
+                OutputMode::from_flag(json),
                 &filter,
                 jobs,
                 detach_checkouts,

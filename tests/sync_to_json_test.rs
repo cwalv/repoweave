@@ -23,7 +23,6 @@
 
 use assert_cmd::Command as AssertCommand;
 use predicates::prelude::*;
-use repoweave::parallel::JsonShape;
 use repoweave::sync::{sync_to_json_run, SyncRequest};
 use repoweave::workspace::WorkspaceContext;
 use serde_json::Value;
@@ -748,7 +747,6 @@ fn resumed_sync_to_json_run_reports_the_op_not_the_invocation() {
     let envelope = completed_envelope(sync_to_json_run(
         &invocation,
         resume_request(&invocation),
-        JsonShape::Envelope,
     ));
 
     assert_eq!(
@@ -790,7 +788,6 @@ fn resumed_sync_to_json_run_reports_the_retire_that_did_not_run() {
     let envelope = completed_envelope(sync_to_json_run(
         &invocation,
         resume_request(&invocation),
-        JsonShape::Envelope,
     ));
 
     assert!(
@@ -937,7 +934,6 @@ fn a_resume_without_the_recorded_discard_consent_is_refused() {
     let run = sync_to_json_run(
         &invocation,
         resume_request(&invocation),
-        JsonShape::Envelope,
     );
 
     let err = run
