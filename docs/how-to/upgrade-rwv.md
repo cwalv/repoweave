@@ -75,7 +75,7 @@ rwv doctor --fix -C <path from primary:>
 A `rwv.yaml` with no `rwv.toml` beside it is refused at error severity, and there is no `--fix` arm for it. `rwv doctor` reports:
 
 ```text
-[error] core: <project>: <dir>/rwv.yaml is a YAML manifest; rwv reads rwv.toml. Rewrite it as rwv.toml by hand and delete <dir>/rwv.yaml — rwv will not convert it, because the comments and key order you wrote cannot be carried across formats.
+[error: legacy-manifest-format] core: <project>: <dir>/rwv.yaml is a YAML manifest; rwv reads rwv.toml. Rewrite it as rwv.toml by hand and delete <dir>/rwv.yaml — rwv will not convert it, because the comments and key order you wrote cannot be carried across formats.
 ```
 
 Rewrite the manifest by hand (see [File formats reference — `rwv.toml`](../reference/formats.md#rwvtoml--project-manifest) for the schema) and delete `rwv.yaml`.
@@ -85,7 +85,7 @@ Rewrite the manifest by hand (see [File formats reference — `rwv.toml`](../ref
 With the manifest loading, a `rwv.lock` left in its pre-JSON shape fails to parse. `rwv doctor` reports:
 
 ```text
-[error] core: <project>: failed to parse rwv.lock at <dir>/rwv.lock: rwv.lock could not be parsed; it is a generated file — run `rwv lock` to regenerate it: expected value at line 1 column 1
+[error: unparseable-project] core: <project>: failed to parse rwv.lock at <dir>/rwv.lock: rwv.lock could not be parsed; it is a generated file — run `rwv lock` to regenerate it: expected value at line 1 column 1
 ```
 
 Regenerate it from the current checkouts:

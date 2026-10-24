@@ -1379,7 +1379,7 @@ fn rm_rf_of_a_container_placed_seat_is_fixed_in_one_pass() {
          registration guarding it is pruned; got:\n{fix_stdout}"
     );
     assert!(
-        !fix_stdout.contains("[error]"),
+        !fix_stdout.contains("[error"),
         "no raw git error should reach the operator on the first pass; \
          got:\n{fix_stdout}"
     );

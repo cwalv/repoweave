@@ -369,12 +369,12 @@ files = ["turbo.json"]
         .assert()
         .success()
         .stdout(predicate::str::contains(format!(
-            "[warning] vscode-workspace: vscode-workspace managed file missing: {}; \
+            "[warning: managed-file-missing] vscode-workspace: vscode-workspace managed file missing: {}; \
              run rwv doctor --fix to regenerate",
             project_dir.join("my-app.code-workspace").display()
         )))
         .stdout(predicate::str::contains(
-            "[warning] static-files: declared file 'turbo.json' not found in project directory",
+            "[warning: config-rejected] static-files: declared file 'turbo.json' not found in project directory",
         ))
         // Both declared files are absent at their source, and neither is
         // written through its link, so there is no link to expect and the
@@ -1015,7 +1015,7 @@ fn check_fix_reports_not_a_repo_cleanly_instead_of_raw_git_error() {
         output.status.code()
     );
     assert!(
-        !stdout.contains("[error]"),
+        !stdout.contains("[error"),
         "no raw git error should reach the operator; got:\n{stdout}"
     );
     assert!(
@@ -2173,7 +2173,7 @@ fn check_unparseable_project_reported_as_violation() {
         .failure();
     let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
     assert!(
-        out.contains("[error]") && out.contains("failed to parse rwv.toml"),
+        out.contains("[error: unparseable-project]") && out.contains("failed to parse rwv.toml"),
         "expected the parse failure reported at error severity, got stdout: {out}"
     );
     assert!(

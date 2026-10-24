@@ -12,7 +12,11 @@ read further.
 
 ## Finding your entry
 
-The tag is not printed in the default text output. Ask for it:
+Each line of the default text output opens with the finding's severity and
+its tag, in the spelling `rwv explain` takes: `[warning: stale-lock]`, or
+`[warning: working-tree-drift/safe-to-fix]` for a finding with a sub-kind.
+`--json` carries the same tag as `kind` and `sub_kind`; this prints it in that
+spelling:
 
 ```bash
 rwv doctor --json | jq -r '.violations[] | .kind + (
@@ -940,7 +944,7 @@ repair stands beside the clone. The refusal is one error line, so `--fix` exits
 1, followed by every reason that applies, each with what it holds:
 
 ```
-[error] core: clone-topology fix left <project>--<name>/<repo> standing: not replacing the full clone at <path> with a worktree of the canonical clone:
+[error: core-finding] core: clone-topology fix left <project>--<name>/<repo> standing: not replacing the full clone at <path> with a worktree of the canonical clone:
   - it holds ignored files, which no commit records either. Move out any you need; if the rest are regenerable, such as build output or installed dependencies, `git -C <path> clean -X -d -n` lists what would go, and `git -C <path> clean -X -d -f` deletes it:
       node_modules/
 

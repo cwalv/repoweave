@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 /// Each variant carries enough data to produce a useful message.
 /// Separating the description (this enum) from execution (the checker)
 /// makes results testable without touching the filesystem.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum CheckViolation {
     /// A directory under a registry path not listed in any project's `rwv.toml`.
     OrphanedClone { path: RepoPath },
@@ -1135,7 +1135,7 @@ pub enum DeadOpLeaseKind {
 }
 
 /// Which way a member's tracked files disagree with its role.
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum PermissionsKind {
     /// A `reference` member's tracked file carries a write bit.
@@ -1145,7 +1145,7 @@ pub enum PermissionsKind {
     ReadOnlyMember,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum DriftKind {
     /// Nothing at the slot, and the canonical clone holds the pinned revision.
@@ -1166,7 +1166,7 @@ pub enum DriftKind {
 
 /// Which spelling of the replay exclusion the project repo carries, which
 /// decides whether `--fix` writes the entry fresh or migrates one in place.
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum ReplayExclusionKind {
     /// `.gitattributes` carries no entry for `rwv.lock` at all.
@@ -1214,7 +1214,7 @@ pub enum SubmoduleCommitKind {
 }
 
 /// How a stale index should be treated.
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum IndexDriftKind {
     /// Index tree matches the tree of some recent ancestor commit. Safe to
@@ -1226,7 +1226,7 @@ pub enum IndexDriftKind {
 }
 
 /// How stale working-tree files should be treated.
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum WorkingTreeDriftKind {
     /// All modified files' on-disk content matches blobs reachable from HEAD.
@@ -2491,6 +2491,19 @@ pub struct CargoSkewOccurrenceOutput {
 }
 
 impl ViolationOutput {
+    /// The name `rwv explain` takes for this finding: its `kind`, or
+    /// `<kind>/<sub-kind>` for a finding that carries a `sub_kind`.
+    pub fn token(&self) -> String {
+        let wire = serde_json::to_value(self).expect("a violation serializes");
+        let kind = wire["kind"]
+            .as_str()
+            .expect("every violation carries a kind");
+        match wire.get("sub_kind") {
+            None | Some(serde_json::Value::Null) => kind.to_owned(),
+            Some(sub_kind) => format!("{kind}/{}", crate::wire_token::wire_token(sub_kind)),
+        }
+    }
+
     /// Convert an internal [`CheckViolation`] into its wire-format
     /// counterpart, resolving `path` against `workspace_dir` for
     /// non-workweave variants and against `workweave_dirs` for
@@ -7883,15 +7896,20 @@ impl CollapsedClass {
 /// (`CollapsedClass`); everything else renders itemized. The collapse is a
 /// TEXT-report shape only — `--json` is built straight from
 /// `CheckViolation` and carries every record.
-fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
+fn violations_to_issues(
+    violations: Vec<CheckViolation>,
+    token_of: impl Fn(&CheckViolation) -> String,
+) -> Vec<ReportLine> {
     use crate::integration::Severity;
-    let mut counts: std::collections::BTreeMap<CollapsedClass, (usize, Severity)> =
+    let mut counts: std::collections::BTreeMap<CollapsedClass, (usize, Severity, String)> =
         std::collections::BTreeMap::new();
     let mut itemized = Vec::new();
     for v in violations {
         match CollapsedClass::of(&v) {
             Some(class) => {
-                let (n, severity) = counts.entry(class).or_insert((0, Severity::Warning));
+                let (n, severity, _) = counts
+                    .entry(class)
+                    .or_insert_with(|| (0, Severity::Warning, token_of(&v)));
                 *n += 1;
                 if v.severity() == Severity::Error {
                     *severity = Severity::Error;
@@ -7900,22 +7918,31 @@ fn violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
             None => itemized.push(v),
         }
     }
-    let mut issues = itemized_violations_to_issues(itemized);
-    issues.extend(
+    let mut lines = itemized_violations_to_issues(itemized, token_of);
+    lines.extend(
         counts
             .into_iter()
-            .map(|(class, (n, severity))| class.issue(n, severity)),
+            .map(|(class, (n, severity, token))| ReportLine {
+                token,
+                issue: class.issue(n, severity),
+            }),
     );
-    issues
+    lines
 }
 
 /// The per-item rendering behind [`violations_to_issues`] — every violation
 /// here produces its own line (or is dropped by the one deliberate
 /// json-only carve-out below).
-fn itemized_violations_to_issues(violations: Vec<CheckViolation>) -> Vec<Issue> {
+fn itemized_violations_to_issues(
+    violations: Vec<CheckViolation>,
+    token_of: impl Fn(&CheckViolation) -> String,
+) -> Vec<ReportLine> {
     violations
         .into_iter()
-        .filter_map(CheckViolation::into_text_issue)
+        .filter_map(|v| {
+            let token = token_of(&v);
+            v.into_text_issue().map(|issue| ReportLine { token, issue })
+        })
         .collect()
 }
 
@@ -10640,16 +10667,16 @@ pub fn run_check(
     let findings = findings
         .with_issues(collect_doctor_issues(&world, issue_repair))
         .admitting(kind_filter);
-    let all_issues = text_report(findings, fix_errors);
+    let lines = text_report(findings, fix_errors, &world.workspace_dir);
 
-    for issue in &all_issues {
-        let prefix = match issue.severity {
+    for ReportLine { token, issue } in &lines {
+        let severity = match issue.severity {
             Severity::Warning => "warning",
             Severity::Error => "error",
         };
-        outln!("[{prefix}] {}: {}", issue.source, issue.message);
+        outln!("[{severity}: {token}] {}: {}", issue.source, issue.message);
     }
-    let verdict = doctor_verdict(kind_filter, all_issues.iter().map(|issue| issue.severity));
+    let verdict = doctor_verdict(kind_filter, lines.iter().map(|line| line.issue.severity));
 
     // The P1 record: a clean weave-wide unfiltered run advances the health
     // floor. Weave-wide because the floor licenses arm removal for the
@@ -10925,22 +10952,43 @@ impl DoctorFindings {
 /// bypassing the per-class count collapse, because `--kind` is what replaces
 /// `--json | jq` for triage and must show the records, not the count line
 /// that pointed there.
-fn text_report(findings: DoctorFindings, fix_errors: Vec<String>) -> Vec<Issue> {
+fn text_report(
+    findings: DoctorFindings,
+    fix_errors: Vec<String>,
+    workspace_dir: &Path,
+) -> Vec<ReportLine> {
     use crate::integration::Severity;
-    let mut lines = if findings.filtered {
-        itemized_violations_to_issues(findings.violations)
-    } else {
-        violations_to_issues(findings.violations)
+    let workweave_dirs = &findings.workweave_dirs;
+    let token_of = |v: &CheckViolation| {
+        ViolationOutput::from_violation(v.clone(), workspace_dir, workweave_dirs).token()
     };
-    lines.extend(fix_errors.into_iter().map(|message| Issue {
-        kind: IssueKind::CoreFinding,
-        source: IssueSource::Core,
-        severity: Severity::Error,
-        message: message.into(),
-        safe_to_fix: true,
+    let mut lines = if findings.filtered {
+        itemized_violations_to_issues(findings.violations, token_of)
+    } else {
+        violations_to_issues(findings.violations, token_of)
+    };
+    let issues = fix_errors
+        .into_iter()
+        .map(|message| Issue {
+            kind: IssueKind::CoreFinding,
+            source: IssueSource::Core,
+            severity: Severity::Error,
+            message: message.into(),
+            safe_to_fix: true,
+        })
+        .chain(findings.issues);
+    lines.extend(issues.map(|issue| ReportLine {
+        token: issue.kind.tag(),
+        issue,
     }));
-    lines.extend(findings.issues);
     lines
+}
+
+/// One line of the text report: a finding, and the name `rwv explain` takes
+/// for it — the `kind` and `sub_kind` `--json` carries, in one token.
+struct ReportLine {
+    token: String,
+    issue: Issue,
 }
 
 /// The one place `rwv doctor` decides which scans run.

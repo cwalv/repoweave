@@ -410,7 +410,7 @@ fn e2e_cargo_lock_out_of_band_rewrite_surfaces_digest_warning() {
         "finding must name the restore exit:\n{stdout_drift}"
     );
     assert!(
-        stdout_drift.contains("[warning]"),
+        stdout_drift.contains("[warning: managed-file-drift] cargo-workspace:"),
         "digest mismatch must be warning severity:\n{stdout_drift}"
     );
     assert_eq!(

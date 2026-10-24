@@ -129,7 +129,7 @@ The role is spelled `owned`, not `primary`: "primary" names the *workspace* (the
 
 ```
 $ rwv doctor
-[error] core: alpha: failed to parse rwv.toml at projects/alpha/rwv.toml: rwv.toml is yours to edit; rwv will not rewrite a file it could not parse: TOML parse error at line 5, column 8
+[error: unparseable-project] core: alpha: failed to parse rwv.toml at projects/alpha/rwv.toml: rwv.toml is yours to edit; rwv will not rewrite a file it could not parse: TOML parse error at line 5, column 8
   |
 5 | role = "primary"
   |        ^^^^^^^^^

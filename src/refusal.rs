@@ -434,15 +434,49 @@ fn ref_name_kind(e: &crate::naming::RefNameError) -> RefusalKind {
 
 /// Everything a refused run writes to stderr, as bytes.
 ///
-/// The headline and chain go through `Debug`, which is the formatter the
-/// runtime's own reporter uses, so an error carrying no kind produces the same
-/// bytes here as it did when `main` returned a `Result`. The route line is a
-/// bare command and nothing else: a reader who has learned to skip it must be
-/// able to skip it on shape alone.
+/// An error carrying no kind goes through `Debug`, which is the formatter the
+/// runtime's own reporter uses, so it produces the same bytes here as it did
+/// when `main` returned a `Result` — the backtrace `RUST_BACKTRACE` asks for
+/// included. A refusal prints the same headline and chain without one: it
+/// was declined on purpose, and where in rwv it was declined is no help to
+/// the operator it routes. The route line is a bare command and nothing
+/// else: a reader who has learned to skip it must be able to skip it on
+/// shape alone.
 pub fn render(err: &anyhow::Error) -> String {
-    let mut out = format!("Error: {err:?}\n");
-    if let Some(kind) = kind_of(err) {
+    let kind = kind_of(err);
+    let body = match kind {
+        Some(_) => headline_and_causes(err),
+        None => format!("{err:?}"),
+    };
+    let mut out = format!("Error: {body}\n");
+    if let Some(kind) = kind {
         out.push_str(&format!("\nrwv explain {}\n", kind.token()));
+    }
+    out
+}
+
+/// `err`'s `Debug` rendering up to where anyhow appends a captured backtrace:
+/// the headline, then each cause under `Caused by:`, numbered when there are
+/// several, every line of a cause indented under its first.
+fn headline_and_causes(err: &anyhow::Error) -> String {
+    let mut out = err.to_string();
+    let causes: Vec<String> = err.chain().skip(1).map(ToString::to_string).collect();
+    if causes.is_empty() {
+        return out;
+    }
+    out.push_str("\n\nCaused by:");
+    let numbered = causes.len() > 1;
+    for (n, cause) in causes.iter().enumerate() {
+        let (first, rest) = if numbered {
+            (format!("{n: >5}: "), "       ")
+        } else {
+            ("    ".to_owned(), "    ")
+        };
+        for (i, line) in cause.split('\n').enumerate() {
+            out.push('\n');
+            out.push_str(if i == 0 { &first } else { rest });
+            out.push_str(line);
+        }
     }
     out
 }
@@ -681,5 +715,30 @@ mod tests {
 
         let reserved = anyhow::Error::new(RepoPathError::ProjectRepo);
         assert_eq!(kind_of(&reserved), Some(RefusalKind::ReservedRepoPath));
+    }
+
+    /// Against anyhow's own `Debug`, which is what an unkinded error prints:
+    /// the two agree on every byte before the backtrace anyhow may append.
+    #[test]
+    fn a_refusal_renders_anyhows_headline_and_chain() {
+        let none = anyhow::anyhow!("one\ntwo");
+        let one = Err::<(), _>(anyhow::anyhow!("root\ncause"))
+            .context("outer")
+            .unwrap_err();
+        let many = Err::<(), _>(anyhow::anyhow!("root\nsecond line"))
+            .context("middle")
+            .context("outer\nheadline")
+            .unwrap_err();
+        for err in [none, one, many] {
+            let debug = format!("{err:?}");
+            let ours = headline_and_causes(&err);
+            let rest = debug
+                .strip_prefix(&ours)
+                .unwrap_or_else(|| panic!("{ours:?} is not a prefix of {debug:?}"));
+            assert!(
+                rest.is_empty() || rest.starts_with("\n\nStack backtrace:"),
+                "{rest:?}"
+            );
+        }
     }
 }

@@ -311,7 +311,7 @@ fn the_text_channel_names_the_driver_the_pattern_and_the_remedy() {
         "the remedy names the driver rwv does define: {line}"
     );
     assert!(
-        line.starts_with("[warning]"),
+        line.starts_with("[warning: phantom-merge-driver]"),
         "report-only: a phantom degrades to a textual merge, which the \
          repo's own gates still catch — it does not fail doctor: {line}"
     );

@@ -185,7 +185,9 @@ when it is not.
 ## Output
 
 Default text output is one human-readable line per violation, grouped by
-severity. Under `--json`, output is the envelope:
+severity. Each line opens `[<severity>: <token>] <source>:`, where `<token>`
+is the finding's `kind`, or `<kind>/<sub-kind>` for a finding with a
+sub-kind — the name `rwv explain <token>` serves the finding's entry under. Under `--json`, output is the envelope:
 
 ```
 {

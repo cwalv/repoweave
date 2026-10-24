@@ -944,6 +944,58 @@ fn an_error_with_no_kind_prints_no_route_line() {
     );
 }
 
+/// Stderr of a failing run with backtraces requested the way an operator
+/// requests them.
+fn stderr_under_rust_backtrace(args: &[&str], cwd: &Path) -> String {
+    let output = common::rwv()
+        .args(args)
+        .current_dir(cwd)
+        .env("RUST_BACKTRACE", "1")
+        .env_remove("RUST_LIB_BACKTRACE")
+        .output()
+        .expect("rwv should run");
+    assert!(
+        !output.status.success(),
+        "rwv {args:?} was expected to fail"
+    );
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+/// A refusal was declined on purpose; the stack it was declined from is not
+/// the operator's to read, whatever `RUST_BACKTRACE` says.
+#[test]
+fn a_refusal_prints_no_backtrace_under_rust_backtrace() {
+    let tmp = common::tempdir().unwrap();
+    let ws = plain_weave(tmp.path());
+
+    let stderr = stderr_under_rust_backtrace(&["abort"], &ws);
+    assert_routes_to(&stderr, "no-op-recorded");
+    assert!(
+        !stderr.contains("backtrace"),
+        "a refusal must print no backtrace, stderr was:\n{stderr}"
+    );
+}
+
+/// The counterpart: an error rwv did not decline on purpose keeps the
+/// backtrace `RUST_BACKTRACE` asks for, since where it came from is the
+/// report's whole value.
+#[test]
+fn an_error_with_no_kind_keeps_its_backtrace_under_rust_backtrace() {
+    let tmp = common::tempdir().unwrap();
+    let ws = plain_weave(tmp.path());
+    std::fs::write(ws.join("projects/web-app/rwv.toml"), "not = = toml\n").unwrap();
+
+    let stderr = stderr_under_rust_backtrace(&["remove", "nonexistent/path/repo"], &ws);
+    assert!(
+        stderr.contains("TOML parse error") && routed_tokens(&stderr).is_empty(),
+        "precondition: the failure is the parser's, not a refusal:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("\n\nStack backtrace:\n"),
+        "an unkinded error must keep its backtrace, stderr was:\n{stderr}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Exit codes and the case of the E
 // ---------------------------------------------------------------------------

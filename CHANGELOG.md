@@ -175,6 +175,26 @@ every sub-kind of that kind. `rwv explain safe-to-fix` refuses with the new
 token `ambiguous-explain-token` and lists the spelling for each kind. A
 sub-kind only one kind carries still resolves on its own.
 
+### Breaking: each line of `rwv doctor`'s text report names its finding
+
+A refusal ends with a route line, `rwv explain <token>`. `rwv doctor`'s text
+report printed only `[warning]` or `[error]`, so the token to pass to
+`rwv explain` had to be read out of `rwv doctor --json`. Each line now opens
+`[<severity>: <token>] <source>:`, as in
+`[warning: working-tree-drift/safe-to-fix] core: …`. The token is the
+finding's `kind`, or `<kind>/<sub-kind>` for a finding with a sub-kind, which
+is the spelling `rwv explain` serves the finding's entry under. A script that
+matched a line's `[warning] ` or `[error] ` prefix must match the bracket up
+to its `:` instead.
+
+### A refusal prints no Rust backtrace under `RUST_BACKTRACE`
+
+With `RUST_BACKTRACE=1` exported, a refusal (`rwv abort` with no operation
+in progress, for one) followed its message with a Rust stack backtrace of
+twenty lines or more. A refusal now prints its message and its route line
+and nothing else. An error that is not a refusal keeps the backtrace
+`RUST_BACKTRACE` asks for.
+
 ### On Windows, `rwv explain` and `rwv prime` print LF line endings
 
 The pages `rwv explain` and `rwv prime` print are built into the binary. The
