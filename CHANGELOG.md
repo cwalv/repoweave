@@ -12,6 +12,20 @@ When the `go.work` at the weave root could not be read, `go-work` treated it as
 having no `use` entries, so entries for repos no longer in the project stayed
 in it. The unreadable file is now an error that names it.
 
+### `rwv doctor --fix` deletes the branches of seats removed by hand
+
+A seat's directory deleted by hand leaves its worktree registration in the
+store, and git refuses to delete a branch a registration holds even when its
+directory is gone. `rwv doctor --fix` dropped those registrations only in
+stores a manifest lists, so in any other store each safe stale ephemeral
+branch the seat left failed with git's "used by worktree" error. Before its
+first delete in a store, `--fix` now drops that store's registrations of
+removed worktrees, listed in a manifest or not, and prints a line for each.
+A locked registration stays, with the branch it holds.
+
+The `stale-worktree-registration` repair no longer drops a registration whose
+path holds a directory again; it is reported instead.
+
 ### A member a workweave's sync prunes no longer keeps the primary's clone claimed
 
 When `rwv sync` or `rwv sync-to` pruned a member's checkout in a workweave,
