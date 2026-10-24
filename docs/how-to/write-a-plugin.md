@@ -82,6 +82,8 @@ rwv --help            # lists check-mid-op under "External commands"
 rwv check-mid-op      # runs ~/.local/bin/rwv-check-mid-op
 ```
 
+On Windows an extensionless script is not a plugin and `rwv --help` does not list it: the file needs an extension listed in `PATHEXT`, such as a compiled `rwv-check-mid-op.exe` or a `rwv-check-mid-op.cmd` shim that runs the script through an interpreter (see [Discovery and naming](../reference/plugin-protocol.md#discovery-and-naming)).
+
 If multiple `rwv-check-mid-op` executables exist on `$PATH`, the first one wins at exec time and shadowed duplicates are reported by `rwv doctor --json` (see [Discovery and naming](../reference/plugin-protocol.md#discovery-and-naming)).
 
 ## Related
