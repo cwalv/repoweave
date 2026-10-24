@@ -527,8 +527,8 @@ fn an_in_place_fetch_names_materialize_only_when_it_moved_or_created_a_checkout(
     assert_eq!(skipped(&run.json()), vec![record]);
 }
 
-/// In a workweave the clones a fetch moves are the primary's, so only a member
-/// worktree it creates there makes it say the hooks did not run.
+/// A fetch in a workweave leaves the primary's clones where they are, so only a
+/// member worktree it creates there makes it say the hooks did not run.
 #[test]
 fn an_in_place_fetch_in_a_workweave_names_materialize_only_for_a_worktree_it_created() {
     let weave = Weave::new();
@@ -543,10 +543,12 @@ fn an_in_place_fetch_in_a_workweave_names_materialize_only_for_a_worktree_it_cre
     common::git_in(&canonical, &["add", "-A"]);
     common::git_in(&canonical, &["commit", "-q", "-m", "ahead of the lock"]);
     common::git_in(&canonical, &["checkout", "-q", "--detach"]);
+    let ahead = common::git_in(&canonical, &["rev-parse", "HEAD"]);
     let run = weave.ok_in(&seat, &["fetch", "--json", "-j", "1"]);
-    assert!(
-        !canonical.join("moved.txt").exists(),
-        "fixture: the fetch moved the primary's clone back to the pin:\n{}",
+    assert_eq!(
+        common::git_in(&canonical, &["rev-parse", "HEAD"]),
+        ahead,
+        "the fetch left the primary's clone where it was:\n{}",
         run.report()
     );
     assert_says_nothing_skipped(&run);
