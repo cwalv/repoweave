@@ -866,6 +866,13 @@ const PANIC_ON_LOOKUP: &[(&str, &str, usize, LookupKind, &str)] = &[
     ),
     (
         "tests/doctor_kind_filter_test.rs",
+        "a_source_fetch_passes_over_a_missing_tool_and_the_kind_gate_fails_it",
+        1,
+        LookupKind::HostTool,
+        "links the real `git` beside a stand-in `npm` on a `PATH` that holds nothing else, because fetch and doctor shell out to it",
+    ),
+    (
+        "tests/doctor_kind_filter_test.rs",
         "kind_filter_admits_an_integration_issue_kind_and_json_fails_on_it",
         1,
         LookupKind::HostTool,
