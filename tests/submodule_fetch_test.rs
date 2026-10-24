@@ -465,3 +465,34 @@ fn sync_to_creates_a_checkout_with_its_submodules() {
 
     assert_populated(&two.join(&member));
 }
+
+#[test]
+fn fetch_in_a_workweave_checks_out_its_members_empty_submodules() {
+    let weave = weave();
+    let member = weave.add();
+    weave.forget_module_data(&member);
+    weave.lock_and_commit();
+    let seat = weave.seat("one");
+    assert!(is_empty(&seat.join(&member).join(SUB)));
+
+    rwv(&seat, &["fetch"]);
+
+    assert_populated(&weave.canonical(&member));
+    assert_populated(&seat.join(&member));
+}
+
+#[test]
+fn a_submodule_git_declines_is_not_checked_out_from_local_data() {
+    let weave = weave();
+    let member = weave.add();
+    weave.lock_and_commit();
+    git(
+        &weave.canonical(&member),
+        &["config", &format!("submodule.{SUB}.update"), "none"],
+    );
+
+    let seat = weave.seat("one");
+
+    assert!(is_empty(&seat.join(&member).join(SUB)));
+    assert!(findings(&seat).is_empty());
+}
