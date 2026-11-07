@@ -479,7 +479,7 @@ fn fetch_into_a_workweave_checks_out_the_submodules_of_the_member_it_creates() {
         let (seat, _) = weave.seat("one");
         remove_member(&weave, &seat);
 
-        rwv(&["fetch"], &seat);
+        rwv(&["update"], &seat);
 
         assert_checked_out(&weave, &seat.join(MEMBER), role);
         weave.trap.assert_untouched();

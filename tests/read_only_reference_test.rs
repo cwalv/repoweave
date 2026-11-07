@@ -349,7 +349,7 @@ fn fetch_clones_a_reference_member_read_only_in_the_primary() {
     let weave = make_weave(tmp.path());
     std::fs::remove_dir_all(&weave.reference).unwrap();
 
-    succeed(&["fetch"], &weave.primary);
+    succeed(&["update"], &weave.primary);
 
     assert_read_only(&weave.reference, "after fetch cloned it");
     assert_writable(&weave.owned, "after fetch");
@@ -477,7 +477,7 @@ fn update_settles_what_it_advances() {
     commit_all(&pusher, "upstream advance");
     common::git_in(&pusher, &["push", "-q", "origin", "main"]);
 
-    succeed(&["update"], &weave.primary);
+    succeed(&["update", "--remote"], &weave.primary);
 
     assert!(
         weave.reference.join("UPSTREAM").exists(),
@@ -726,7 +726,7 @@ fn a_clone_projects_disagree_on_stays_writable_whichever_project_settles_it() {
     for project in [PROJECT, OTHER_PROJECT] {
         activate(&weave, project);
         make_read_only(&weave.reference);
-        succeed(&["update"], &weave.primary);
+        succeed(&["update", "--remote"], &weave.primary);
         assert_writable(
             &weave.reference,
             &format!("after update with {project} active, while {OTHER_PROJECT} declares it owned"),
@@ -741,7 +741,7 @@ fn a_clone_every_project_declares_reference_is_read_only() {
     add_project(&weave, OTHER_PROJECT, "reference");
 
     activate(&weave, OTHER_PROJECT);
-    succeed(&["update"], &weave.primary);
+    succeed(&["update", "--remote"], &weave.primary);
     assert_read_only(
         &weave.reference,
         "after update, every project declaring reference",

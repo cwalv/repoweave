@@ -1,13 +1,35 @@
-//! E2E tests for the `--role` / `--repo` selector grammar on `rwv update`.
+//! E2E tests for `rwv update`.
 //!
-//! `rwv update` advances each manifest repo to its remote branch HEAD and
-//! re-snapshots the lock. The filter narrows the *advance* loop but the
-//! post-advance lock still walks the full manifest. These tests verify the
-//! selection step: only filtered repos advance; others stay at their
-//! existing HEAD.
+//! `rwv update` re-materializes missing manifest members of the active project
+//! and aligns each present clone to `rwv.lock`; it never writes the lock.
+//!
+//! MOVE, consent, the birth-target rule and the version-relatedness guard are
+//! the branch model's vocabulary; `docs/internals/branch-model.md` specifies
+//! each one.
+//!
+//! Adversarial coverage:
+//! - missing member re-clone is BORN ATTACHED at the LOCKED SHA — not at
+//!   branch HEAD, and not detached
+//! - present member ALREADY at the locked SHA is not moved (mtime/HEAD
+//!   unchanged) — which is not the same as "present members are untouched":
+//!   a present member whose HEAD differs from the pin IS realigned
+//! - realignment of a present member is a MOVE of the tracking branch's local
+//!   counterpart, not a detach: it fast-forwards, refuses a non-fast-forward,
+//!   and refuses outright when the checkout is on some other branch
+//! - `--detach-checkouts` is the named exit from both refusals
+//! - an already-detached member stays detached (a MOVE), but refuses while
+//!   the repo is mid-operation
+//! - the lock is never written: a member it lacks is cloned at the declared
+//!   branch's tip when missing and left where it is when present
+//! - `--repo` filter limits materialization
+//! - end-to-end DanglingReference: doctor reports → update → doctor clean
+//! - usage error when there is no workspace
+//! - `--frozen`, `--no-reference` and `--allow-non-empty-dir` are not arguments
 
 use assert_cmd::Command;
-use std::path::{Path, PathBuf};
+use predicates::prelude::*;
+use std::path::Path;
+use std::process;
 
 mod common;
 
@@ -15,633 +37,1095 @@ fn rwv() -> Command {
     common::rwv()
 }
 
-fn init_bare_repo_with_commit(bare: &Path) {
-    let parent = bare.parent().expect("bare repo path needs a parent");
-    let stem = bare.file_stem().unwrap().to_string_lossy().into_owned();
-    common::git_in(
-        parent,
-        &[
-            "init",
-            "--bare",
-            "--initial-branch=main",
-            bare.to_str().unwrap(),
-        ],
-    );
-    let seed = parent.join(format!("__seed_{stem}"));
-    common::git_in(
-        parent,
-        &["clone", bare.to_str().unwrap(), seed.to_str().unwrap()],
-    );
-    common::git_in(&seed, &["config", "user.email", "test@test.com"]);
-    common::git_in(&seed, &["config", "user.name", "Test"]);
-    std::fs::write(seed.join("README"), "seed").unwrap();
-    common::git_in(&seed, &["add", "."]);
-    common::git_in(&seed, &["commit", "-m", "initial"]);
-    common::git_in(&seed, &["push", "origin", "main"]);
+fn init_bare_repo(path: &Path) {
+    let status = common::git()
+        .args(["init", "--bare", "--initial-branch=main"])
+        .arg(path)
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::null())
+        .status()
+        .expect("git should be available");
+    assert!(status.success(), "git init --bare failed");
 }
 
-/// Workspace + active project ready to be driven by `rwv update`.
-struct UpdateWorkspace {
+/// Initialize a bare git repo with an initial commit AND a second commit,
+/// so tests can distinguish between "aligned at locked SHA" and "at branch
+/// HEAD".
+fn init_bare_repo_with_two_commits(path: &Path) -> (String, String) {
+    init_bare_repo(path);
+
+    let tmp = common::tempdir().expect("tempdir for working clone");
+    let work = tmp.path().join("work");
+
+    common::git_in(
+        tmp.path(),
+        &["clone", &path.to_string_lossy(), &work.to_string_lossy()],
+    );
+    common::git_in(&work, &["config", "user.email", "test@test.com"]);
+    common::git_in(&work, &["config", "user.name", "Test"]);
+    std::fs::write(work.join("README"), "initial\n").unwrap();
+    common::git_in(&work, &["add", "."]);
+    common::git_in(&work, &["commit", "-m", "initial"]);
+    let first_sha = common::git_in(&work, &["rev-parse", "HEAD"]);
+    std::fs::write(work.join("README"), "second\n").unwrap();
+    common::git_in(&work, &["add", "."]);
+    common::git_in(&work, &["commit", "-m", "second"]);
+    let second_sha = common::git_in(&work, &["rev-parse", "HEAD"]);
+    common::git_in(&work, &["push", "origin", "main"]);
+    (first_sha, second_sha)
+}
+
+/// Set up a workspace with an active project. Returns the workspace root.
+/// The project has two manifest entries; both bare repos are pre-materialized
+/// on the caller (via clone from bare). The rwv.lock pins each repo to its
+/// FIRST commit; the bare repo's HEAD is at the SECOND commit — so aligning
+/// to the lock vs branch HEAD is observably different.
+struct Setup {
+    workspace: std::path::PathBuf,
+    /// (repo_path, bare_repo_path, first_sha, second_sha)
+    repos: Vec<(String, std::path::PathBuf, String, String)>,
     _tmp: tempfile::TempDir,
-    workspace: PathBuf,
-    #[allow(dead_code)] // kept for parity with push_test fixture
-    project_name: String,
-    /// (canonical_path, bare_remote_path) for each manifest repo.
-    manifest_bares: Vec<(String, PathBuf)>,
 }
 
-/// Build a workspace with manifest repos at the given roles. Each gets its
-/// own bare remote (advances pushed to the bare appear when `rwv update`
-/// `git fetch`'s the remote). rwv.lock is generated to match local HEAD.
-fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> UpdateWorkspace {
+fn setup_workspace_with_locked_project(repo_paths: &[&str]) -> Setup {
     let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
-    std::fs::create_dir_all(workspace.join("projects")).unwrap();
 
-    let mut manifest_bares: Vec<(String, PathBuf)> = Vec::new();
-    let mut manifest_shas: Vec<(String, String)> = Vec::new();
-    let mut manifest_yaml = String::from("[repositories]\n");
-    for (repo_path, role) in repos {
-        let bare = tmp
-            .path()
-            .join(format!("{}.git", repo_path.replace('/', "_")));
-        init_bare_repo_with_commit(&bare);
-        let canonical = workspace.join(repo_path);
-        std::fs::create_dir_all(canonical.parent().unwrap()).unwrap();
-        common::git_in(
-            workspace.parent().unwrap(),
-            &[
-                "clone",
-                "--origin",
-                "origin",
-                bare.to_str().unwrap(),
-                canonical.to_str().unwrap(),
-            ],
-        );
-        common::git_in(&canonical, &["config", "user.email", "test@test.com"]);
-        common::git_in(&canonical, &["config", "user.name", "Test"]);
-        let head = common::git_in(&canonical, &["rev-parse", "HEAD"]);
-        manifest_shas.push(((*repo_path).to_string(), head));
-        manifest_bares.push(((*repo_path).to_string(), bare.clone()));
-        let bare_url = common::file_url(&bare);
-        manifest_yaml.push_str(&format!(
-            "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nbranch = \"main\"\nrole = \"{role}\"\n"
-        ));
+    let mut repos = Vec::new();
+    for rp in repo_paths {
+        let bare = tmp.path().join(format!("{}.git", rp.replace('/', "_")));
+        let (first, second) = init_bare_repo_with_two_commits(&bare);
+        repos.push((rp.to_string(), bare, first, second));
     }
 
-    // Project repo carrying the manifest + lock.
-    let project_bare = tmp.path().join("project.git");
-    init_bare_repo_with_commit(&project_bare);
-    let project_dir = workspace.join("projects").join(project_name);
-    common::git_in(
-        workspace.parent().unwrap(),
-        &[
-            "clone",
-            project_bare.to_str().unwrap(),
-            project_dir.to_str().unwrap(),
-        ],
-    );
-    common::git_in(&project_dir, &["config", "user.email", "test@test.com"]);
-    common::git_in(&project_dir, &["config", "user.name", "Test"]);
+    // Build the project directory in-place under projects/<name>.
+    let project_dir = workspace.join("projects").join("my-app");
+    std::fs::create_dir_all(&project_dir).unwrap();
 
-    std::fs::write(project_dir.join("rwv.toml"), &manifest_yaml).unwrap();
+    let mut manifest = String::from("[repositories]\n");
+    for (rp, bare, _, _) in &repos {
+        let url = common::file_url(bare);
+        manifest.push_str(&format!(
+            "[repositories.\"{rp}\"]\ntype = \"git\"\nurl = \"{url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
+        ));
+    }
+    std::fs::write(project_dir.join("rwv.toml"), &manifest).unwrap();
+
     let mut lock_entries: Vec<(String, String, String)> = Vec::new();
-    for (rp, sha) in &manifest_shas {
-        let (_, bare) = manifest_bares.iter().find(|(p, _)| p == rp).unwrap();
-        let bare_url = common::file_url(bare);
-        lock_entries.push((rp.clone(), bare_url, sha.clone()));
+    for (rp, bare, first, _) in &repos {
+        let url = common::file_url(bare);
+        lock_entries.push((rp.clone(), url, first.clone()));
     }
     let entries: Vec<(&str, &str, &str)> = lock_entries
         .iter()
         .map(|(p, u, s)| (p.as_str(), u.as_str(), s.as_str()))
         .collect();
     common::fixture_lock(&project_dir, &entries);
-    common::git_in(&project_dir, &["add", "."]);
-    common::git_in(&project_dir, &["commit", "-m", "manifest + lock"]);
 
-    std::fs::write(workspace.join(".rwv-active"), format!("{project_name}\n")).unwrap();
+    // Activate the project.
+    std::fs::write(workspace.join(".rwv-active"), "my-app\n").unwrap();
 
-    UpdateWorkspace {
-        _tmp: tmp,
+    Setup {
         workspace,
-        project_name: project_name.to_string(),
-        manifest_bares,
+        repos,
+        _tmp: tmp,
     }
 }
 
-/// Advance the `main` branch on a bare remote by cloning, committing, and
-/// pushing back. Returns the new HEAD SHA on the bare. The bare's name is
-/// embedded in the commit content so each advance produces a distinct SHA
-/// across bares (avoids `Test`-user + same-content collisions in the test).
-fn advance_bare_main(bare: &Path) -> String {
-    let parent = bare.parent().unwrap();
-    let stem = bare.file_stem().unwrap().to_string_lossy().into_owned();
-    let work = parent.join(format!("__adv_{stem}"));
+/// Materialize a manifest repo on disk at the locked SHA (mimics what a
+/// previous update would have done).
+fn materialize_repo_at(workspace: &Path, repo_path: &str, bare: &Path, sha: &str) {
+    let dest = workspace.join(repo_path);
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
     common::git_in(
-        parent,
-        &["clone", bare.to_str().unwrap(), work.to_str().unwrap()],
+        workspace.parent().unwrap_or(workspace),
+        &["clone", &bare.to_string_lossy(), &dest.to_string_lossy()],
+    );
+    common::git_in(&dest, &["checkout", sha]);
+}
+
+/// Materialize a manifest repo and leave it ON its default branch, at branch
+/// HEAD — the state an operator's clone is normally in, and the one where the
+/// lock pin (an older SHA) and the checked-out commit disagree.
+fn materialize_repo_on_branch(
+    workspace: &Path,
+    repo_path: &str,
+    bare: &Path,
+) -> std::path::PathBuf {
+    let dest = workspace.join(repo_path);
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    common::git_in(
+        workspace.parent().unwrap_or(workspace),
+        &["clone", &bare.to_string_lossy(), &dest.to_string_lossy()],
+    );
+    common::git_in(&dest, &["config", "user.email", "test@test.com"]);
+    common::git_in(&dest, &["config", "user.name", "Test"]);
+    dest
+}
+
+/// Materialize a manifest repo on its default branch and rewind the BRANCH
+/// (not just HEAD) to `sha`, so the lock pin is a strict descendant of the
+/// branch tip — the shape where realignment is a legal fast-forward.
+fn materialize_repo_on_branch_at(
+    workspace: &Path,
+    repo_path: &str,
+    bare: &Path,
+    sha: &str,
+) -> std::path::PathBuf {
+    let dest = materialize_repo_on_branch(workspace, repo_path, bare);
+    common::git_in(&dest, &["reset", "--hard", sha]);
+    dest
+}
+
+/// The ref this checkout is on, or `None` when HEAD is detached.
+///
+/// Delegates to the shared primitive, which asks `Vcs::head_attachment` — the
+/// production classifier — rather than `git symbolic-ref --short HEAD`.
+/// `--short` returns the shortest *unambiguous* name, so a same-named tag
+/// makes it answer `heads/main`; and its failure exit collapses detached,
+/// unborn, and not-a-repo into one `None`.
+fn current_branch(repo: &Path) -> Option<String> {
+    common::checkout_ref(repo)
+}
+
+// ============================================================================
+// In-place mode: missing member re-cloned at the LOCKED SHA
+// ============================================================================
+
+#[test]
+fn update_materializes_missing_member_at_locked_sha() {
+    let s = setup_workspace_with_locked_project(&["github/acme/a"]);
+    let (repo, _bare, first_sha, _second_sha) = &s.repos[0];
+
+    // No repo directory yet — this is the dangling-reference state.
+    let dest = s.workspace.join(repo);
+    assert!(!dest.exists(), "precondition: repo dir must not exist");
+
+    rwv()
+        .arg("update")
+        .current_dir(&s.workspace)
+        .assert()
+        .success();
+
+    // Clone materialized...
+    assert!(dest.exists(), "update must materialize the missing clone");
+    assert!(dest.join(".git").exists(), "must be a real git clone");
+
+    // ... AT THE LOCKED SHA (not branch HEAD). This is the load-bearing
+    // assertion: `rwv update` aligns to the lock, unlike `rwv update --remote`,
+    // which would advance to the second commit.
+    let head = common::git_in(&dest, &["rev-parse", "HEAD"]);
+    assert_eq!(
+        head, *first_sha,
+        "materialized clone must be at LOCKED SHA (first_sha), not branch HEAD"
+    );
+
+    // ... and ATTACHED to the tracking branch's local counterpart, with the
+    // branch itself at the pin. The birth-target rule for an absent clone:
+    // the birth happens AT the lock revision, so bootstrapping a weave from a
+    // lock behind origin performs no MOVE and needs no consent. A clone that
+    // landed on origin's tip and was then aligned would answer `None` here —
+    // which is the state that made "detached" the normal resting state of a
+    // freshly-cloned weave.
+    assert_eq!(
+        current_branch(&dest).as_deref(),
+        Some("main"),
+        "the clone must be born attached to the tracking counterpart, not detached at the pin"
+    );
+    assert_eq!(
+        common::git_in(&dest, &["rev-parse", "main"]),
+        *first_sha,
+        "the branch itself is born AT the pin, not at origin's tip"
+    );
+}
+
+// ============================================================================
+// Present member ALREADY at the locked SHA is not moved (no HEAD churn, no
+// re-clone). Scope note: the fixture leaves the member detached at the pin,
+// so this pins the no-op case only. The realignment cases below cover a
+// present member whose HEAD differs from the pin.
+// ============================================================================
+
+#[test]
+fn update_leaves_present_member_at_locked_sha_unmoved() {
+    let s = setup_workspace_with_locked_project(&["github/acme/a", "github/acme/b"]);
+    let (repo_a, bare_a, first_a, _) = &s.repos[0];
+    let (_repo_b, _bare_b, _, _) = &s.repos[1];
+
+    // Pre-materialize repo_a at first_sha (matches the lock).
+    materialize_repo_at(&s.workspace, repo_a, bare_a, first_a);
+    let dest_a = s.workspace.join(repo_a);
+    let head_before = common::git_in(&dest_a, &["rev-parse", "HEAD"]);
+    // Take a directory-inode marker: record the .git/config mtime.
+    let git_config_before = std::fs::metadata(dest_a.join(".git/config"))
+        .unwrap()
+        .modified()
+        .unwrap();
+
+    // Now run update — it should re-materialize repo_b but leave
+    // repo_a alone.
+    rwv()
+        .arg("update")
+        .current_dir(&s.workspace)
+        .assert()
+        .success();
+
+    let head_after = common::git_in(&dest_a, &["rev-parse", "HEAD"]);
+    assert_eq!(
+        head_before, head_after,
+        "present member's HEAD must be unchanged by update"
+    );
+    let git_config_after = std::fs::metadata(dest_a.join(".git/config"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    assert_eq!(
+        git_config_before, git_config_after,
+        "present member's .git/config must not be touched by update"
+    );
+}
+
+// ============================================================================
+// Present member whose HEAD differs from the pin IS realigned — as a MOVE of
+// the tracking branch's local counterpart. The checkout stays on the branch;
+// the branch advances under it.
+// ============================================================================
+
+#[test]
+fn update_fast_forwards_the_counterpart_and_stays_attached() {
+    let s = setup_workspace_with_locked_project(&["github/acme/a"]);
+    let (repo_a, bare_a, first_a, second_a) = &s.repos[0];
+
+    // Present, clean, on main at the FIRST commit; the lock pins the SECOND,
+    // so the pin is a strict descendant of the branch tip.
+    let dest_a = materialize_repo_on_branch_at(&s.workspace, repo_a, bare_a, first_a);
+    // The pin has to be the second commit for this to be a fast-forward; the
+    // shared fixture locks the first, so re-pin here.
+    let url_a = common::file_url(bare_a);
+    common::fixture_lock(
+        &s.workspace.join("projects/my-app"),
+        &[(repo_a.as_str(), url_a.as_str(), second_a.as_str())],
+    );
+
+    rwv()
+        .arg("update")
+        .current_dir(&s.workspace)
+        .assert()
+        .success();
+
+    assert_eq!(
+        common::git_in(&dest_a, &["rev-parse", "HEAD"]),
+        second_a.as_str(),
+        "present member must be realigned to the locked SHA"
+    );
+    assert_eq!(
+        current_branch(&dest_a).as_deref(),
+        Some("main"),
+        "realignment is a MOVE of the counterpart, so the checkout stays on it"
+    );
+    assert_eq!(
+        common::git_in(&dest_a, &["rev-parse", "main"]),
+        second_a.as_str(),
+        "the branch ref is what moved — HEAD did not leave it behind"
+    );
+}
+
+// ============================================================================
+// Precondition (R1): realignment refuses when it would change what HEAD is
+// attached to without consent. Not "when work would be stranded" — a clean,
+// published, fully-pushed branch refuses too, because the pin it is being
+// asked to take is not a fast-forward.
+// ============================================================================
+
+#[test]
+fn update_refuses_to_rewind_the_counterpart_even_when_the_member_is_clean() {
+    let s = setup_workspace_with_locked_project(&["github/acme/a"]);
+    let (repo_a, bare_a, first_a, second_a) = &s.repos[0];
+
+    // Clean, on a published branch, nothing in flight — and the lock pins an
+    // ANCESTOR of the branch tip. Taking the pin would either rewind `main`
+    // (a MOVE needing a discard warrant) or leave `main` behind (a detach
+    // needing consent). rwv holds neither, so it refuses.
+    let dest_a = materialize_repo_on_branch(&s.workspace, repo_a, bare_a);
+    assert_eq!(current_branch(&dest_a).as_deref(), Some("main"));
+
+    rwv()
+        .arg("update")
+        .current_dir(&s.workspace)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("is not a fast-forward"))
+        .stderr(predicate::str::contains("--detach-checkouts"));
+
+    assert_eq!(
+        current_branch(&dest_a).as_deref(),
+        Some("main"),
+        "the refusal must leave the member on its branch"
+    );
+    assert_eq!(common::git_in(&dest_a, &["rev-parse", "HEAD"]), *second_a);
+    assert_ne!(common::git_in(&dest_a, &["rev-parse", "HEAD"]), *first_a);
+}
+
+#[test]
+fn update_refuses_to_rewind_a_counterpart_carrying_uncommitted_changes() {
+    let s = setup_workspace_with_locked_project(&["github/acme/a"]);
+    let (repo_a, bare_a, first_a, second_a) = &s.repos[0];
+
+    let dest_a = materialize_repo_on_branch(&s.workspace, repo_a, bare_a);
+    // Dirt in a path the checkout does NOT touch, so git itself would happily
+    // carry it onto a detached HEAD. The refusal has to be rwv's.
+    std::fs::write(dest_a.join("scratch.txt"), "work in progress\n").unwrap();
+
+    rwv()
+        .arg("update")
+        .current_dir(&s.workspace)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("is not a fast-forward"))
+        .stderr(predicate::str::contains("--detach-checkouts"));
+
+    assert_eq!(
+        current_branch(&dest_a).as_deref(),
+        Some("main"),
+        "the refusal must leave the member on its branch"
+    );
+    assert_eq!(common::git_in(&dest_a, &["rev-parse", "HEAD"]), *second_a);
+    assert_ne!(common::git_in(&dest_a, &["rev-parse", "HEAD"]), *first_a);
+    assert!(
+        dest_a.join("scratch.txt").exists(),
+        "a refusal touches nothing, including the working tree"
+    );
+}
+
+#[test]
+fn update_refuses_when_the_branch_carries_commits_origin_does_not_have() {
+    let s = setup_workspace_with_locked_project(&["github/acme/a"]);
+    let (repo_a, bare_a, _first_a, _second_a) = &s.repos[0];
+
+    let dest_a = materialize_repo_on_branch(&s.workspace, repo_a, bare_a);
+    std::fs::write(dest_a.join("README"), "third\n").unwrap();
+    common::git_in(&dest_a, &["commit", "-am", "third"]);
+    let unpushed = common::git_in(&dest_a, &["rev-parse", "HEAD"]);
+
+    // A branch ahead of the pin can never fast-forward TO the pin, so the
+    // unpublished commit is protected by the same predicate that protects a
+    // clean rewind — the guard no longer has to ask origin what it has.
+    rwv()
+        .arg("update")
+        .current_dir(&s.workspace)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("is not a fast-forward"));
+
+    assert_eq!(current_branch(&dest_a).as_deref(), Some("main"));
+    assert_eq!(
+        common::git_in(&dest_a, &["rev-parse", "HEAD"]),
+        unpushed,
+        "the commit origin has never seen is still checked out"
+    );
+    assert_eq!(common::git_in(&dest_a, &["rev-parse", "main"]), unpushed);
+}
+
+#[test]
+fn update_refuses_when_attached_to_a_branch_the_manifest_does_not_declare() {
+    let s = setup_workspace_with_locked_project(&["github/acme/a"]);
+    let (repo_a, bare_a, first_a, second_a) = &s.repos[0];
+
+    // On a personal branch positioned so that taking the pin WOULD be a
+    // fast-forward. The refusal therefore cannot be the fast-forward check:
+    // it is the version-relatedness guard, which refuses to relate an
+    // operator's bookmark to the lock at all. Advancing it would strand no
+    // commits and still silently change what the bookmark means.
+    let dest_a = materialize_repo_on_branch(&s.workspace, repo_a, bare_a);
+    common::git_in(&dest_a, &["checkout", "-b", "feature", first_a]);
+    let url_a = common::file_url(bare_a);
+    common::fixture_lock(
+        &s.workspace.join("projects/my-app"),
+        &[(repo_a.as_str(), url_a.as_str(), second_a.as_str())],
+    );
+
+    rwv()
+        .arg("update")
+        .current_dir(&s.workspace)
+        .assert()
+        .failure()
+        // Names BOTH refs: the one it is on and the one it expected.
+        .stderr(predicate::str::contains("is on branch 'feature'"))
+        .stderr(predicate::str::contains("local counterpart ('main')"))
+        .stderr(predicate::str::contains("--detach-checkouts"))
+        .stderr(predicate::str::contains("is not a fast-forward").not());
+
+    assert_eq!(current_branch(&dest_a).as_deref(), Some("feature"));
+    assert_eq!(common::git_in(&dest_a, &["rev-parse", "HEAD"]), *first_a);
+}
+
+#[test]
+fn update_detach_checkouts_waives_the_refusal() {
+    let s = setup_workspace_with_locked_project(&["github/acme/a"]);
+    let (repo_a, bare_a, first_a, _second_a) = &s.repos[0];
+
+    let dest_a = materialize_repo_on_branch(&s.workspace, repo_a, bare_a);
+    std::fs::write(dest_a.join("README"), "third\n").unwrap();
+    common::git_in(&dest_a, &["commit", "-am", "third"]);
+    let unpushed = common::git_in(&dest_a, &["rev-parse", "HEAD"]);
+    std::fs::write(dest_a.join("scratch.txt"), "work in progress\n").unwrap();
+
+    rwv()
+        .args(["update", "--detach-checkouts"])
+        .current_dir(&s.workspace)
+        .assert()
+        .success();
+
+    assert_eq!(common::git_in(&dest_a, &["rev-parse", "HEAD"]), *first_a);
+    assert_eq!(current_branch(&dest_a), None);
+    // The waiver is not a discard: the unpushed commits are still on the
+    // branch ref, and the uncommitted file came along.
+    assert_eq!(common::git_in(&dest_a, &["rev-parse", "main"]), unpushed);
+    assert!(dest_a.join("scratch.txt").exists());
+}
+
+#[test]
+fn update_detach_checkouts_waives_the_relatedness_refusal_too() {
+    let s = setup_workspace_with_locked_project(&["github/acme/a"]);
+    let (repo_a, bare_a, first_a, second_a) = &s.repos[0];
+
+    // The other refusal the branch model defines — version-relatedness rather
+    // than non-fast-forward. The consent detaches; it does not relocate the
+    // personal branch, which is the whole point of naming the flag after the
+    // consequence rather than after the precondition.
+    let dest_a = materialize_repo_on_branch(&s.workspace, repo_a, bare_a);
+    common::git_in(&dest_a, &["checkout", "-b", "feature"]);
+
+    rwv()
+        .args(["update", "--detach-checkouts"])
+        .current_dir(&s.workspace)
+        .assert()
+        .success();
+
+    assert_eq!(common::git_in(&dest_a, &["rev-parse", "HEAD"]), *first_a);
+    assert_eq!(current_branch(&dest_a), None);
+    assert_eq!(
+        common::git_in(&dest_a, &["rev-parse", "feature"]),
+        *second_a,
+        "the personal branch is left exactly where it was"
+    );
+}
+
+// ============================================================================
+// An already-detached member stays detached: HEAD moves, its symbolic-ness
+// does not, so this is a MOVE and needs no consent — but the mid-operation
+// precondition applies to it.
+// ============================================================================
+
+#[test]
+fn update_moves_an_already_detached_member_without_consent() {
+    let s = setup_workspace_with_locked_project(&["github/acme/a"]);
+    let (repo_a, bare_a, first_a, second_a) = &s.repos[0];
+
+    // Detached at the second commit; the lock pins the first. Nothing is
+    // attached, so nothing can be abandoned — no flag required, and the
+    // rewind-vs-fast-forward question does not arise.
+    materialize_repo_at(&s.workspace, repo_a, bare_a, second_a);
+    let dest_a = s.workspace.join(repo_a);
+    assert_eq!(current_branch(&dest_a), None, "precondition: detached");
+
+    rwv()
+        .arg("update")
+        .current_dir(&s.workspace)
+        .assert()
+        .success();
+
+    assert_eq!(common::git_in(&dest_a, &["rev-parse", "HEAD"]), *first_a);
+    assert_eq!(
+        current_branch(&dest_a),
+        None,
+        "a detached member stays detached — update does not reattach it"
+    );
+}
+
+#[test]
+fn update_refuses_to_move_a_detached_member_that_is_mid_operation() {
+    let s = setup_workspace_with_locked_project(&["github/acme/a"]);
+    let (repo_a, bare_a, first_a, second_a) = &s.repos[0];
+
+    materialize_repo_at(&s.workspace, repo_a, bare_a, second_a);
+    let dest_a = s.workspace.join(repo_a);
+    // `Detached` collapses "rwv left this at a lock SHA" and "the operator is
+    // mid-bisect". Only the first is rwv's to move.
+    common::git_in(&dest_a, &["bisect", "start"]);
+
+    rwv()
+        .arg("update")
+        .current_dir(&s.workspace)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("mid-bisect"));
+
+    assert_eq!(
+        common::git_in(&dest_a, &["rev-parse", "HEAD"]),
+        *second_a,
+        "the bisect's HEAD must not be yanked out from under it"
+    );
+    assert_ne!(common::git_in(&dest_a, &["rev-parse", "HEAD"]), *first_a);
+}
+
+// ============================================================================
+// The lock is read, never written: a member it lacks is cloned at its declared
+// branch's tip when missing and left where it is when present
+// ============================================================================
+
+const MEMBER_A: &str = "github/acme/a";
+const MEMBER_B: &str = "github/acme/b";
+const B_BRANCH: &str = "release";
+
+/// A project whose members are `a`, declaring `main`, and `b`, declaring
+/// `release` — a branch whose tip is neither `main`'s nor the remote's HEAD.
+/// The lock file is written only when `lock_a` is set, and then pins `a` at
+/// its first commit and nothing else.
+struct Pair {
+    workspace: std::path::PathBuf,
+    project_dir: std::path::PathBuf,
+    bare_a: std::path::PathBuf,
+    bare_b: std::path::PathBuf,
+    first_a: String,
+    second_a: String,
+    main_b: String,
+    release_b: String,
+    _tmp: tempfile::TempDir,
+}
+
+impl Pair {
+    fn new(lock_a: bool) -> Pair {
+        let tmp = common::tempdir().unwrap();
+        let workspace = tmp.path().join("ws");
+        std::fs::create_dir_all(&workspace).unwrap();
+
+        let bare_a = tmp.path().join("a.git");
+        let bare_b = tmp.path().join("b.git");
+        let (first_a, second_a) = init_bare_repo_with_two_commits(&bare_a);
+        let (_, main_b) = init_bare_repo_with_two_commits(&bare_b);
+        let release_b = push_new_branch(&bare_b, B_BRANCH);
+
+        let project_dir = workspace.join("projects").join("my-app");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        let url_a = common::file_url(&bare_a);
+        let url_b = common::file_url(&bare_b);
+        std::fs::write(
+            project_dir.join("rwv.toml"),
+            format!(
+                "[repositories.\"{MEMBER_A}\"]\ntype = \"git\"\nurl = \"{url_a}\"\nbranch = \"main\"\nrole = \"owned\"\n\n\
+                 [repositories.\"{MEMBER_B}\"]\ntype = \"git\"\nurl = \"{url_b}\"\nbranch = \"{B_BRANCH}\"\nrole = \"owned\"\n"
+            ),
+        )
+        .unwrap();
+        if lock_a {
+            common::fixture_lock(&project_dir, &[(MEMBER_A, &url_a, &first_a)]);
+        }
+        std::fs::write(workspace.join(".rwv-active"), "my-app\n").unwrap();
+
+        Pair {
+            workspace,
+            project_dir,
+            bare_a,
+            bare_b,
+            first_a,
+            second_a,
+            main_b,
+            release_b,
+            _tmp: tmp,
+        }
+    }
+
+    fn lock_bytes(&self) -> Option<Vec<u8>> {
+        std::fs::read(self.project_dir.join("rwv.lock")).ok()
+    }
+
+    fn member(&self, repo: &str) -> std::path::PathBuf {
+        self.workspace.join(repo)
+    }
+
+    /// `b` present on its declared branch, one commit behind the remote's tip.
+    fn place_b_behind_its_tip(&self) -> std::path::PathBuf {
+        let dest = materialize_repo_on_branch(&self.workspace, MEMBER_B, &self.bare_b);
+        common::git_in(&dest, &["checkout", B_BRANCH]);
+        common::git_in(&dest, &["reset", "--hard", &self.main_b]);
+        dest
+    }
+}
+
+/// Create `branch` on the bare repo with one commit beyond `main`, returning
+/// its tip.
+fn push_new_branch(bare: &Path, branch: &str) -> String {
+    let tmp = common::tempdir().expect("tempdir for working clone");
+    let work = tmp.path().join("work");
+    common::git_in(
+        tmp.path(),
+        &["clone", &bare.to_string_lossy(), &work.to_string_lossy()],
     );
     common::git_in(&work, &["config", "user.email", "test@test.com"]);
     common::git_in(&work, &["config", "user.name", "Test"]);
-    std::fs::write(work.join("advance.txt"), format!("advance-{stem}")).unwrap();
-    common::git_in(&work, &["add", "."]);
-    common::git_in(&work, &["commit", "-m", &format!("advance {stem}")]);
-    common::git_in(&work, &["push", "origin", "main"]);
+    common::git_in(&work, &["checkout", "-b", branch]);
+    std::fs::write(work.join("README"), "release\n").unwrap();
+    common::git_in(&work, &["commit", "-am", "release"]);
+    common::git_in(&work, &["push", "origin", branch]);
     common::git_in(&work, &["rev-parse", "HEAD"])
 }
 
-// ============================================================================
-// CLI plumbing
-// ============================================================================
-
 #[test]
-fn update_help_lists_role_and_repo_flags() {
-    let output = rwv()
-        .args(["update", "--help"])
-        .output()
-        .expect("rwv update --help");
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
+fn update_clones_a_member_the_lock_lacks_on_its_declared_branch_and_leaves_the_lock_bytes_alone() {
+    let p = Pair::new(true);
+    let lock_before = p.lock_bytes();
     assert!(
-        combined.contains("--role"),
-        "update --help should list --role; got: {combined}"
+        lock_before.is_some(),
+        "precondition: the fixture wrote a lock"
     );
-    assert!(
-        combined.contains("--repo"),
-        "update --help should list --repo; got: {combined}"
-    );
-}
-
-// ============================================================================
-// --role: only matching-role repos advance
-// ============================================================================
-
-#[test]
-fn update_role_filter_only_advances_matching_role() {
-    let ws = build_workspace(
-        "alpha",
-        &[("local/org/p", "owned"), ("local/org/d", "dependency")],
-    );
-
-    // Advance both bares on `main` — only the primary local clone should
-    // pick the new tip up.
-    let (_, p_bare) = ws
-        .manifest_bares
-        .iter()
-        .find(|(p, _)| p == "local/org/p")
-        .unwrap();
-    let (_, d_bare) = ws
-        .manifest_bares
-        .iter()
-        .find(|(p, _)| p == "local/org/d")
-        .unwrap();
-    let new_p_sha = advance_bare_main(p_bare);
-    let new_d_sha = advance_bare_main(d_bare);
-    assert_ne!(new_p_sha, new_d_sha);
 
     rwv()
-        .args(["update", "--role", "owned", "--dirty"])
-        .current_dir(&ws.workspace)
+        .arg("update")
+        .current_dir(&p.workspace)
         .assert()
-        .success();
+        .success()
+        .stdout(predicate::str::contains(
+            "cloned github/acme/b onto release at the branch tip: the lock has no entry for it",
+        ));
 
-    let p_local = ws.workspace.join("local/org/p");
-    let d_local = ws.workspace.join("local/org/d");
+    let (dest_a, dest_b) = (p.member(MEMBER_A), p.member(MEMBER_B));
     assert_eq!(
-        common::git_in(&p_local, &["rev-parse", "HEAD"]),
-        new_p_sha,
-        "primary repo should advance"
+        common::git_in(&dest_a, &["rev-parse", "HEAD"]),
+        p.first_a,
+        "the member the lock covers is born at its pin, behind the remote's tip"
+    );
+    assert_ne!(p.first_a, p.second_a, "fixture: the pin is not the tip");
+    assert_eq!(
+        current_branch(&dest_b).as_deref(),
+        Some(B_BRANCH),
+        "the member the lock lacks is born on its declared branch, not the remote's HEAD"
+    );
+    assert_eq!(
+        common::git_in(&dest_b, &["rev-parse", "HEAD"]),
+        p.release_b,
+        "the member the lock lacks is born at the remote tip of its declared branch"
     );
     assert_ne!(
-        common::git_in(&d_local, &["rev-parse", "HEAD"]),
-        new_d_sha,
-        "dependency repo should NOT advance"
+        p.release_b, p.main_b,
+        "fixture: the branch tip is not main's"
     );
-}
-
-// ============================================================================
-// --repo exact: only that path advances
-// ============================================================================
-
-#[test]
-fn update_repo_exact_filter_advances_only_that_path() {
-    let ws = build_workspace(
-        "alpha",
-        &[("local/org/a", "owned"), ("local/org/b", "owned")],
-    );
-    let (_, a_bare) = ws
-        .manifest_bares
-        .iter()
-        .find(|(p, _)| p == "local/org/a")
-        .unwrap();
-    let (_, b_bare) = ws
-        .manifest_bares
-        .iter()
-        .find(|(p, _)| p == "local/org/b")
-        .unwrap();
-    let new_a_sha = advance_bare_main(a_bare);
-    let new_b_sha = advance_bare_main(b_bare);
-
-    rwv()
-        .args(["update", "--repo", "local/org/a", "--dirty"])
-        .current_dir(&ws.workspace)
-        .assert()
-        .success();
-
-    let a_local = ws.workspace.join("local/org/a");
-    let b_local = ws.workspace.join("local/org/b");
-    assert_eq!(common::git_in(&a_local, &["rev-parse", "HEAD"]), new_a_sha);
-    assert_ne!(common::git_in(&b_local, &["rev-parse", "HEAD"]), new_b_sha);
-}
-
-// ============================================================================
-// --repo glob: matching paths advance
-// ============================================================================
-
-#[test]
-fn update_repo_glob_filter_advances_matching() {
-    let ws = build_workspace(
-        "alpha",
-        &[
-            ("local/org/a", "owned"),
-            ("local/org/b", "owned"),
-            ("local/other/c", "owned"),
-        ],
-    );
-    let new_shas: Vec<(String, String)> = ws
-        .manifest_bares
-        .iter()
-        .map(|(p, bare)| (p.clone(), advance_bare_main(bare)))
-        .collect();
-
-    rwv()
-        .args(["update", "--repo", "glob:local/org/*", "--dirty"])
-        .current_dir(&ws.workspace)
-        .assert()
-        .success();
-
-    for (rp, new_sha) in &new_shas {
-        let local = ws.workspace.join(rp);
-        let head = common::git_in(&local, &["rev-parse", "HEAD"]);
-        if rp.starts_with("local/org/") {
-            assert_eq!(&head, new_sha, "{rp} should have advanced");
-        } else {
-            assert_ne!(&head, new_sha, "{rp} should NOT have advanced");
-        }
-    }
-}
-
-// ============================================================================
-// --repo re: regex match
-// ============================================================================
-
-#[test]
-fn update_repo_regex_filter_advances_matching() {
-    let ws = build_workspace(
-        "alpha",
-        &[
-            ("local/cwalv/a", "owned"),
-            ("local/cwalv/b", "owned"),
-            ("local/other/c", "owned"),
-        ],
-    );
-    let new_shas: Vec<(String, String)> = ws
-        .manifest_bares
-        .iter()
-        .map(|(p, bare)| (p.clone(), advance_bare_main(bare)))
-        .collect();
-
-    rwv()
-        .args(["update", "--repo", "re:^local/cwalv/", "--dirty"])
-        .current_dir(&ws.workspace)
-        .assert()
-        .success();
-
-    for (rp, new_sha) in &new_shas {
-        let head = common::git_in(ws.workspace.join(rp), &["rev-parse", "HEAD"]);
-        if rp.starts_with("local/cwalv/") {
-            assert_eq!(&head, new_sha);
-        } else {
-            assert_ne!(&head, new_sha);
-        }
-    }
-}
-
-// ============================================================================
-// Union: --role + --repo
-// ============================================================================
-
-#[test]
-fn update_union_role_and_repo_selectors() {
-    let ws = build_workspace(
-        "alpha",
-        &[
-            ("local/me/p", "owned"),
-            ("local/external/dep", "dependency"),
-            ("local/external/other", "dependency"),
-        ],
-    );
-    let new_shas: Vec<(String, String)> = ws
-        .manifest_bares
-        .iter()
-        .map(|(p, bare)| (p.clone(), advance_bare_main(bare)))
-        .collect();
-
-    rwv()
-        .args([
-            "update",
-            "--role",
-            "owned",
-            "--repo",
-            "local/external/dep",
-            "--dirty",
-        ])
-        .current_dir(&ws.workspace)
-        .assert()
-        .success();
-
-    for (rp, new_sha) in &new_shas {
-        let head = common::git_in(ws.workspace.join(rp), &["rev-parse", "HEAD"]);
-        let expected_advance = rp == "local/me/p" || rp == "local/external/dep";
-        if expected_advance {
-            assert_eq!(&head, new_sha, "{rp} should advance");
-        } else {
-            assert_ne!(&head, new_sha, "{rp} should NOT advance");
-        }
-    }
-}
-
-// ============================================================================
-// Missing clone: honest repair advice (repair-verb audit)
-// ============================================================================
-
-/// A manifest entry whose clone is absent on disk must produce an error that
-/// names `rwv fetch` (in-place mode) as the repair verb, followed by re-running
-/// `rwv update`. Stale manual-git-clone advice must NOT appear — the settled
-/// repair verb replaces the manual repair (see fetch::run_fetch_in_place).
-#[test]
-fn update_missing_clone_names_rwv_fetch_repair_verb() {
-    let ws = build_workspace("proj-missing", &[("local/acme/present", "owned")]);
-
-    // Append a manifest entry for a repo that was never cloned locally.
-    // (Constructing the missing state directly — no deletions needed.)
-    let project_dir = ws.workspace.join("projects").join("proj-missing");
-    let bare_url = common::file_url(&ws.manifest_bares[0].1);
-    let mut manifest = std::fs::read_to_string(project_dir.join("rwv.toml")).unwrap();
-    manifest.push_str(&format!(
-        "[repositories.\"local/acme/absent\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
-    ));
-    std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
-
-    let output = rwv()
-        .args(["update", "--dirty"])
-        .current_dir(&ws.workspace)
-        .output()
-        .expect("failed to spawn rwv update");
-
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    assert!(
-        !output.status.success(),
-        "update must fail when a manifest clone is missing on disk; got:\n{combined}"
-    );
-    assert!(
-        combined.contains("clone missing"),
-        "error must name the state (clone missing); got:\n{combined}"
-    );
-    // Repair verb: `rwv fetch` (in-place mode re-materializes the member).
-    assert!(
-        combined.contains("rwv fetch"),
-        "error must name `rwv fetch` as the repair verb; got:\n{combined}"
-    );
-    assert!(
-        combined.contains("rwv update"),
-        "error must name re-running `rwv update` after the repair; \
-         got:\n{combined}"
-    );
-    // Stale honest-manual advice must be gone.
-    assert!(
-        !combined.contains("git clone"),
-        "error must NOT advise manual `git clone` — the repair verb `rwv fetch` \
-         performs the repair; got:\n{combined}"
-    );
-}
-
-// ============================================================================
-// R18 regression: prune + ghost-ref detection
-// ============================================================================
-
-/// Helper: rename the main branch on a bare remote to a new name. This
-/// simulates the upstream "rename branch" case — the old branch is deleted
-/// and a new one is created under a different name.
-///
-/// Bare repos refuse to delete their current branch (HEAD). We work around
-/// this by first pointing HEAD at the new branch name in the bare, then
-/// deleting the old branch. The sequence:
-///   1. Clone the bare, create the new branch, push it.
-///   2. In the bare repo, change HEAD to point at the new branch.
-///   3. Delete the old branch from the bare.
-fn rename_branch_on_bare(bare: &Path, old_name: &str, new_name: &str) {
-    let parent = bare.parent().unwrap();
-    let stem = bare.file_stem().unwrap().to_string_lossy().into_owned();
-    let work = parent.join(format!("__rename_{stem}"));
-    common::git_in(
-        parent,
-        &["clone", bare.to_str().unwrap(), work.to_str().unwrap()],
-    );
-    common::git_in(&work, &["config", "user.email", "test@test.com"]);
-    common::git_in(&work, &["config", "user.name", "Test"]);
-    // Create the new branch and push it to the bare.
-    common::git_in(&work, &["checkout", "-b", new_name]);
-    common::git_in(
-        &work,
-        &["push", "origin", &format!("{new_name}:{new_name}")],
-    );
-    // Update the bare's HEAD to point at the new branch so the old one is
-    // no longer the "current branch" and can be deleted.
-    common::git_in(
-        bare,
-        &["symbolic-ref", "HEAD", &format!("refs/heads/{new_name}")],
-    );
-    // Now delete the old branch from the bare.
-    common::git_in(bare, &["branch", "-D", old_name]);
-}
-
-/// R18 regression test: upstream renames a branch (delete + create under new
-/// name). Before this fix, `rwv update` would resolve against the stale
-/// `origin/<old-name>` remote-tracking ref indefinitely (ghost-ref bug).
-/// After this fix, `--prune` removes the stale ref during fetch, and the
-/// subsequent resolution fails with a house-pattern error naming:
-/// - the repo path,
-/// - the branch name that is gone,
-/// - the state ("does not resolve on the remote — renamed or deleted upstream"),
-/// - the one exit (update rwv.toml's `version:` to the current branch name);
-///   the message must not recommend pinning `version:` to a SHA or tag,
-///   since `version:` is branch-only and that pin can never resolve.
-#[test]
-fn update_prune_detects_deleted_branch_with_actionable_message() {
-    let ws = build_workspace("r18-test", &[("local/org/renamed", "owned")]);
-
-    let (_, bare) = ws
-        .manifest_bares
-        .iter()
-        .find(|(p, _)| p == "local/org/renamed")
-        .unwrap();
-
-    // Rename the tracked branch on the bare remote: "main" -> "main-v2".
-    rename_branch_on_bare(bare, "main", "main-v2");
-
-    // rwv update must fail and produce a house-pattern error.
-    let output = rwv()
-        .args(["update", "--dirty"])
-        .current_dir(&ws.workspace)
-        .output()
-        .expect("failed to spawn rwv update");
-
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    assert!(
-        !output.status.success(),
-        "update must fail when the tracked branch no longer exists upstream; \
-         got:\n{combined}"
-    );
-    assert!(
-        combined.contains("local/org/renamed"),
-        "error must name the repo path; got:\n{combined}"
-    );
-    assert!(
-        combined.contains("main"),
-        "error must name the branch that is gone; got:\n{combined}"
-    );
-    assert!(
-        combined.contains("does not resolve on the remote")
-            || combined.contains("renamed or deleted upstream"),
-        "error must state the upstream-deletion/rename condition; got:\n{combined}"
-    );
-    // Must name the one supported exit.
-    assert!(
-        combined.contains("version:") || combined.contains("current branch name"),
-        "error must name the rwv.toml version update exit; got:\n{combined}"
-    );
-    // Must not steer the operator toward pinning `version:` to a SHA/tag —
-    // that pin is unsupported and can never resolve.
-    assert!(
-        !combined.contains("pin `version:`"),
-        "error must not recommend the unsupported version: pin; got:\n{combined}"
-    );
-}
-
-/// Post-prune normal update still succeeds. Verifies that `--prune` does not
-/// break the happy path: when upstream hasn't renamed or deleted any branch,
-/// `rwv update` continues to work correctly.
-#[test]
-fn update_prune_does_not_break_normal_update() {
-    let ws = build_workspace("prune-happy", &[("local/org/repo", "owned")]);
-
-    let (_, bare) = ws
-        .manifest_bares
-        .iter()
-        .find(|(p, _)| p == "local/org/repo")
-        .unwrap();
-
-    let new_sha = advance_bare_main(bare);
-
-    rwv()
-        .args(["update", "--dirty"])
-        .current_dir(&ws.workspace)
-        .assert()
-        .success();
-
-    let local = ws.workspace.join("local/org/repo");
     assert_eq!(
-        common::git_in(&local, &["rev-parse", "HEAD"]),
-        new_sha,
-        "repo should advance to the new upstream SHA after prune-enabled update"
+        p.lock_bytes(),
+        lock_before,
+        "update writes no lock: the member it cloned is not added"
     );
 }
 
-/// Adversarial: the lock pins a bare SHA. Even if the corresponding remote-
-/// tracking ref is pruned (e.g. the branch that originally contained that
-/// commit was deleted upstream), the object itself is still in the local
-/// clone's object store and is reachable. This test verifies that `rwv lock`
-/// (which reads HEAD, not remote refs) and the object store are the correct
-/// primitives — a pruned tracking ref must NOT prevent the lock SHA from
-/// being available.
-///
-/// Note: `rwv update` advances to the *current* remote branch HEAD and then
-/// snapshots the lock. This test verifies that fetching with `--prune` does
-/// not remove the commit objects that the lock references — only the stale
-/// remote-tracking *refs* are removed, not the objects they pointed to.
 #[test]
-fn update_prune_does_not_lose_lock_pinned_sha() {
-    let ws = build_workspace("sha-pin-test", &[("local/org/obj", "owned")]);
+fn update_with_no_lock_clones_every_member_at_its_branch_tip_and_creates_no_lock() {
+    let p = Pair::new(false);
+    assert_eq!(p.lock_bytes(), None, "precondition: there is no lock");
 
-    let (_, bare) = ws
-        .manifest_bares
-        .iter()
-        .find(|(p, _)| p == "local/org/obj")
-        .unwrap();
-
-    // Capture the SHA that the local clone currently has checked out.
-    let local = ws.workspace.join("local/org/obj");
-    let pinned_sha = common::git_in(&local, &["rev-parse", "HEAD"]);
-
-    // Advance the bare (so main moves forward) but DO NOT advance the local
-    // clone — the local is now "behind" but holds the old SHA in its object
-    // store. The old SHA is in the local object store but no longer at any
-    // remote-tracking ref tip after we prune (main has moved on).
-    advance_bare_main(bare);
-
-    // Verify the pinned SHA is still reachable in the object store.
-    let cat_file_status = common::git()
-        .args(["cat-file", "-e", &format!("{pinned_sha}^{{commit}}")])
-        .current_dir(&local)
-        .status()
-        .expect("git cat-file should be available");
-    assert!(
-        cat_file_status.success(),
-        "pinned SHA {pinned_sha} must still exist in local object store"
-    );
-
-    // Now run update — this fetches with --prune and moves the local clone
-    // to the new upstream HEAD. The old SHA object remains in the store
-    // (git prune/gc would be needed to actually remove it, which rwv never
-    // calls). Confirm update succeeds.
     rwv()
-        .args(["update", "--dirty"])
-        .current_dir(&ws.workspace)
+        .arg("update")
+        .current_dir(&p.workspace)
         .assert()
         .success();
 
-    // After update, the repo is at the new HEAD, not the old pinned SHA.
-    let post_sha = common::git_in(&local, &["rev-parse", "HEAD"]);
+    let (dest_a, dest_b) = (p.member(MEMBER_A), p.member(MEMBER_B));
+    assert_eq!(current_branch(&dest_a).as_deref(), Some("main"));
+    assert_eq!(
+        common::git_in(&dest_a, &["rev-parse", "HEAD"]),
+        p.second_a,
+        "with no lock a member is born at its declared branch's tip"
+    );
+    assert_eq!(current_branch(&dest_b).as_deref(), Some(B_BRANCH));
+    assert_eq!(common::git_in(&dest_b, &["rev-parse", "HEAD"]), p.release_b);
+    assert_eq!(
+        p.lock_bytes(),
+        None,
+        "update must not create the lock it found missing"
+    );
+}
+
+#[test]
+fn update_leaves_a_present_member_the_lock_lacks_where_it_is() {
+    let p = Pair::new(true);
+    let dest_b = p.place_b_behind_its_tip();
     assert_ne!(
-        post_sha, pinned_sha,
-        "repo should have advanced past the originally-pinned SHA"
+        p.main_b, p.release_b,
+        "fixture: the member is behind its tip"
     );
 
-    // The old commit object is still reachable in the object store (not pruned
-    // by --prune, which only removes remote-tracking *refs*, not objects).
-    let cat_file_after = common::git()
-        .args(["cat-file", "-e", &format!("{pinned_sha}^{{commit}}")])
-        .current_dir(&local)
-        .status()
-        .expect("git cat-file should be available");
+    rwv()
+        .arg("update")
+        .current_dir(&p.workspace)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "leaving github/acme/b where it is: the lock has no entry for it",
+        ));
+
+    assert_eq!(current_branch(&dest_b).as_deref(), Some(B_BRANCH));
+    assert_eq!(common::git_in(&dest_b, &["rev-parse", "HEAD"]), p.main_b);
+    assert_eq!(
+        common::git_in(&dest_b, &["rev-parse", B_BRANCH]),
+        p.main_b,
+        "the branch is not advanced to the remote's tip"
+    );
+}
+
+#[test]
+fn update_with_no_lock_leaves_every_present_member_where_it_is() {
+    let p = Pair::new(false);
+    let dest_b = p.place_b_behind_its_tip();
+    materialize_repo_at(&p.workspace, MEMBER_A, &p.bare_a, &p.first_a);
+    let dest_a = p.member(MEMBER_A);
+    assert_eq!(current_branch(&dest_a), None, "precondition: a is detached");
+
+    rwv()
+        .arg("update")
+        .current_dir(&p.workspace)
+        .assert()
+        .success();
+
+    assert_eq!(
+        common::git_in(&dest_a, &["rev-parse", "HEAD"]),
+        p.first_a,
+        "a detached member the lock is silent on stays at the commit it was on"
+    );
+    assert_eq!(current_branch(&dest_a), None);
+    assert_eq!(current_branch(&dest_b).as_deref(), Some(B_BRANCH));
+    assert_eq!(common::git_in(&dest_b, &["rev-parse", "HEAD"]), p.main_b);
+    assert_eq!(p.lock_bytes(), None, "update must not create a lock");
+}
+
+// ============================================================================
+// --repo filter limits materialization
+// ============================================================================
+
+#[test]
+fn update_repo_filter_limits_materialization() {
+    let s = setup_workspace_with_locked_project(&["github/acme/a", "github/acme/b"]);
+    let (repo_a, _, first_a, _) = &s.repos[0];
+    let (repo_b, _, _, _) = &s.repos[1];
+
+    // Both repos missing. Filter to only repo_a.
+    rwv()
+        .args(["update", "--repo", repo_a])
+        .current_dir(&s.workspace)
+        .assert()
+        .success();
+
+    let dest_a = s.workspace.join(repo_a);
+    let dest_b = s.workspace.join(repo_b);
     assert!(
-        cat_file_after.success(),
-        "pinned SHA {pinned_sha} must remain in object store after prune-enabled fetch \
-         (--prune only removes stale tracking refs, not commit objects)"
+        dest_a.exists(),
+        "repo_a must be materialized (matches --repo)"
+    );
+    assert!(
+        !dest_b.exists(),
+        "repo_b must NOT be materialized (excluded by --repo filter)"
+    );
+
+    // repo_a is at locked SHA.
+    let head_a = common::git_in(&dest_a, &["rev-parse", "HEAD"]);
+    assert_eq!(head_a, *first_a, "materialized clone must be at LOCKED SHA");
+}
+
+// ============================================================================
+// End-to-end: doctor dangling → update → doctor clean
+// ============================================================================
+
+#[test]
+fn dangling_reference_end_to_end_update_repairs_and_doctor_clean() {
+    // The audit round found text-only tests let dead advice through. This
+    // test exercises the FULL loop: create a dangling reference, doctor
+    // reports it, run the named repair verb (`rwv update`), doctor now clean.
+    let s = setup_workspace_with_locked_project(&["github/acme/a"]);
+    let (repo, _, first_sha, _) = &s.repos[0];
+
+    // 1. doctor must report dangling reference (repo missing on disk).
+    let out1 = rwv()
+        .arg("doctor")
+        .current_dir(&s.workspace)
+        .output()
+        .expect("doctor spawn failed");
+    let combined1 = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out1.stdout),
+        String::from_utf8_lossy(&out1.stderr)
+    );
+    assert!(
+        !out1.status.success(),
+        "doctor must exit non-zero when a dangling reference exists; got:\n{combined1}"
+    );
+    assert!(
+        combined1.contains("dangling"),
+        "doctor must report dangling reference; got:\n{combined1}"
+    );
+    assert!(
+        combined1.contains("run `rwv update` from the workspace"),
+        "doctor's dangling-reference message must name `rwv update` as the repair verb; \
+         got:\n{combined1}"
+    );
+
+    // 2. Run the named repair verb: `rwv update`.
+    rwv()
+        .arg("update")
+        .current_dir(&s.workspace)
+        .assert()
+        .success();
+
+    // 3. Repo now exists at locked SHA.
+    let dest = s.workspace.join(repo);
+    assert!(dest.exists(), "update must materialize the dangling repo");
+    let head = common::git_in(&dest, &["rev-parse", "HEAD"]);
+    assert_eq!(head, *first_sha, "repair must land at LOCKED SHA");
+
+    // 4. doctor is now clean.
+    let out2 = rwv()
+        .arg("doctor")
+        .current_dir(&s.workspace)
+        .output()
+        .expect("doctor spawn failed");
+    let combined2 = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out2.stdout),
+        String::from_utf8_lossy(&out2.stderr)
+    );
+    assert!(
+        out2.status.success(),
+        "doctor must be clean after update repair; got:\n{combined2}"
+    );
+    assert!(
+        !combined2.contains("dangling"),
+        "doctor must no longer report a dangling reference; got:\n{combined2}"
+    );
+}
+
+// ============================================================================
+// Usage: no workspace; arguments that belong to other verbs
+// ============================================================================
+
+#[test]
+fn update_outside_a_workspace_names_the_missing_weave_root() {
+    let tmp = common::tempdir().unwrap();
+    rwv()
+        .arg("update")
+        .current_dir(tmp.path())
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("no repoweave workspace found above")
+                .and(predicate::str::contains("rwv explain no-weave-root")),
+        );
+}
+
+#[test]
+fn update_refuses_the_arguments_that_belong_to_other_verbs() {
+    let s = setup_workspace_with_locked_project(&["github/acme/a"]);
+    for flag in ["--frozen", "--no-reference", "--allow-non-empty-dir"] {
+        rwv()
+            .args(["update", flag])
+            .current_dir(&s.workspace)
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains(format!(
+                "unexpected argument '{flag}' found"
+            )));
+    }
+    assert!(
+        !s.workspace.join("github/acme/a").exists(),
+        "a refused invocation materializes nothing"
+    );
+}
+
+// ============================================================================
+// Workweave invocation: canonical clone lands at PRIMARY, not workweave
+// ============================================================================
+
+#[test]
+fn update_from_workweave_materializes_at_primary() {
+    // Clone-topology I1: the canonical store per manifest repo lives at
+    // primary's `<weave>/<repo_path>`. Invoking `rwv update` from a workweave
+    // must materialize the missing member at PRIMARY's canonical path, not
+    // at the workweave's slot. See docs/explanation/joints/clone-topology.md.
+    let s = setup_workspace_with_locked_project(&["github/acme/a"]);
+    let (repo, _, first_sha, _) = &s.repos[0];
+
+    // Set up a workweave marker pointing at primary.
+    let workweave_dir = s.workspace.join(".workweaves/my-app--dev");
+    std::fs::create_dir_all(&workweave_dir).unwrap();
+    // A projects/<name>/rwv.toml + rwv.lock is per-workspace state; the
+    // workweave gets its own copy (mirrors how rwv workweave create/rwv
+    // activate populate this). Copy the primary's project files into the
+    // workweave so `require_active_project_on_disk` finds them.
+    std::fs::create_dir_all(workweave_dir.join("projects/my-app")).unwrap();
+    let primary_project = s.workspace.join("projects/my-app");
+    std::fs::copy(
+        primary_project.join("rwv.toml"),
+        workweave_dir.join("projects/my-app/rwv.toml"),
+    )
+    .unwrap();
+    std::fs::copy(
+        primary_project.join("rwv.lock"),
+        workweave_dir.join("projects/my-app/rwv.lock"),
+    )
+    .unwrap();
+
+    // Write the workweave marker. Format: JSON with `primary`, `project`, `parent`.
+    let marker_yaml = common::workweave_marker(&s.workspace, "my-app", &s.workspace);
+    std::fs::write(workweave_dir.join(".rwv-workweave"), marker_yaml).unwrap();
+    common::register_workweave(&s.workspace, "my-app", "dev", &workweave_dir);
+
+    // Run update from INSIDE the workweave.
+    let output = rwv()
+        .arg("update")
+        .current_dir(&workweave_dir)
+        .output()
+        .expect("update spawn failed");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.status.success(),
+        "update from workweave should succeed (canonical materializes at primary); \
+         got:\n{combined}"
+    );
+
+    // Canonical clone must exist at PRIMARY's path…
+    let primary_dest = s.workspace.join(repo);
+    assert!(
+        primary_dest.exists(),
+        "canonical clone must be materialized at primary's `<weave>/<repo_path>`, \
+         not the workweave's slot (clone-topology I1)"
+    );
+    // …at the locked SHA.
+    let head = common::git_in(&primary_dest, &["rev-parse", "HEAD"]);
+    assert_eq!(
+        head, *first_sha,
+        "primary canonical clone must be at LOCKED SHA"
+    );
+
+    // The workweave's slot holds a worktree linked into that canonical store
+    // — never a second clone, which would be two DAGs for one repo — on the
+    // workweave's ephemeral branch at the locked SHA.
+    let workweave_dest = workweave_dir.join(repo);
+    assert!(
+        workweave_dest.join(".git").is_file(),
+        "update from a workweave must create the workweave's worktree for the member \
+         its lock pins, as a linked worktree (`.git` a file), not a clone; got:\n{combined}"
+    );
+    let common_dir = common::git_in(&workweave_dest, &["rev-parse", "--git-common-dir"]);
+    assert_eq!(
+        repoweave::path_spelling::resolve(&workweave_dest.join(common_dir)).unwrap(),
+        repoweave::path_spelling::resolve(&primary_dest.join(".git")).unwrap(),
+        "the workweave's worktree must share primary's canonical store (clone-topology I1)"
+    );
+    assert_eq!(
+        common::git_in(&workweave_dest, &["symbolic-ref", "--short", "HEAD"]),
+        "my-app--dev",
+        "the worktree sits on the workweave's ephemeral branch"
+    );
+    assert_eq!(
+        common::git_in(&workweave_dest, &["rev-parse", "HEAD"]),
+        *first_sha,
+        "the worktree is born at the revision the workweave's lock pins"
+    );
+}
+
+// ============================================================================
+// Project selection: --project, and the weave's only project
+// ============================================================================
+
+/// Add a second project, `other`, whose one member is `github/acme/b`.
+fn add_second_project(s: &Setup) -> std::path::PathBuf {
+    let bare = s._tmp.path().join("github_acme_b.git");
+    let (first, _) = init_bare_repo_with_two_commits(&bare);
+    let url = common::file_url(&bare);
+    let project_dir = s.workspace.join("projects/other");
+    std::fs::create_dir_all(&project_dir).unwrap();
+    std::fs::write(
+        project_dir.join("rwv.toml"),
+        format!(
+            "[repositories]\n[repositories.\"github/acme/b\"]\ntype = \"git\"\nurl = \"{url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
+        ),
+    )
+    .unwrap();
+    common::fixture_lock(&project_dir, &[("github/acme/b", &url, &first)]);
+    s.workspace.join("github/acme/b")
+}
+
+#[test]
+fn update_activates_the_only_project_when_none_is_active() {
+    let s = setup_workspace_with_locked_project(&["github/acme/a"]);
+    std::fs::remove_file(s.workspace.join(".rwv-active")).unwrap();
+
+    rwv()
+        .arg("update")
+        .current_dir(&s.workspace)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "activating project 'my-app', the only project in this weave",
+        ));
+
+    assert!(s.workspace.join("github/acme/a/.git").exists());
+    assert_eq!(
+        std::fs::read_to_string(s.workspace.join(".rwv-active"))
+            .unwrap()
+            .trim(),
+        "my-app",
+        "the weave's only project must be active after the update"
+    );
+}
+
+#[test]
+fn update_project_flag_targets_that_project_without_selecting_it() {
+    let s = setup_workspace_with_locked_project(&["github/acme/a"]);
+    let other_member = add_second_project(&s);
+
+    rwv()
+        .args(["update", "--project", "other"])
+        .current_dir(&s.workspace)
+        .assert()
+        .success();
+
+    assert!(
+        other_member.join(".git").exists(),
+        "--project names the manifest updated"
+    );
+    assert!(
+        !s.workspace.join("github/acme/a").exists(),
+        "the active project's members are not cloned"
+    );
+    assert_eq!(
+        std::fs::read_to_string(s.workspace.join(".rwv-active"))
+            .unwrap()
+            .trim(),
+        "my-app",
+        "--project does not change .rwv-active"
+    );
+}
+
+#[test]
+fn update_project_flag_does_not_activate_the_only_project() {
+    let s = setup_workspace_with_locked_project(&["github/acme/a"]);
+    std::fs::remove_file(s.workspace.join(".rwv-active")).unwrap();
+
+    rwv()
+        .args(["update", "--project", "my-app"])
+        .current_dir(&s.workspace)
+        .assert()
+        .success();
+
+    assert!(s.workspace.join("github/acme/a/.git").exists());
+    assert!(
+        !s.workspace.join(".rwv-active").exists(),
+        "--project does not change .rwv-active, even with one project"
     );
 }

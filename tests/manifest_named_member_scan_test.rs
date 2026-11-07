@@ -110,7 +110,7 @@ fn a_missing_member_under_a_non_registry_directory_is_dangling_until_fetch_resto
     );
 
     common::rwv()
-        .arg("fetch")
+        .arg("update")
         .current_dir(&ws)
         .assert()
         .success();

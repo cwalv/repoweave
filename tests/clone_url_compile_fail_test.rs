@@ -73,10 +73,16 @@ fn clone_attached_at_does_not_take_text() {
         "E0308",
         "the lock-pinned clone takes a CloneUrl, not a string",
         r#"
-        use repoweave::vcs::{LocalRefName, RawRevisionId, Vcs};
+        use repoweave::vcs::{LocalRefName, RawRevisionId, RemoteRef, Vcs};
         use std::path::Path;
-        pub fn clone(vcs: &dyn Vcs, dest: &Path, name: &LocalRefName, at: &RawRevisionId) {
-            let _ = vcs.clone_attached_at("x", dest, name, at);
+        pub fn clone(
+            vcs: &dyn Vcs,
+            dest: &Path,
+            name: &LocalRefName,
+            declared: &RemoteRef,
+            pin: Option<&RawRevisionId>,
+        ) {
+            let _ = vcs.clone_attached_at("x", dest, name, declared, pin);
         }
         "#,
     );

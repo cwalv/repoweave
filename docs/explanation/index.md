@@ -26,12 +26,12 @@
 
 ### Lock & sync
 
-- [Lock-as-derived](./joints/lock-as-derived.md) — why `rwv.lock` is computed from member HEADs on mutation and read as the target only when `fetch` or `sync` materializes it
+- [Lock-as-derived](./joints/lock-as-derived.md) — why `rwv.lock` is computed from member HEADs on mutation and read as the target only when `clone`, `update` or `sync` materializes it
 - [Sync semantics](./joints/sync-semantics.md) — the direction pair `rwv sync` / `rwv sync-to`, its phases, savepoints and abort, and the strategy choice
 
 ## Design notes
 
 - [Verb vs composition](./joints/verb-vs-composition.md) — why `rwv` provides workspace verbs and leaves per-repo git porcelain to `git` and `gita`
-- [Verb vs vocabulary](./joints/verb-vs-vocabulary.md) — why each verb takes its name from git's vocabulary (`fetch`, `push`) or a package manager's (`update`, `lock`), chosen by what the verb does
+- [Verb vs vocabulary](./joints/verb-vs-vocabulary.md) — why each verb takes its name from git's vocabulary (`clone`, `fetch`, `pull`, `push`) or a package manager's (`update`, `lock`), chosen by what the verb does
 - [VCS as seam](./joints/vcs-as-seam.md) — the internal `Vcs` trait boundary that isolates git command mechanics from workspace logic
 - [Plugin boundary](./joints/plugin-boundary.md) — when a feature belongs in `rwv` core vs. an external `rwv-<name>` plugin executable

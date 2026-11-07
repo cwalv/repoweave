@@ -16,8 +16,10 @@ rwv explain <verb>
 - **sync** — bring another workspace's committed state into this one (`--json` available)
 - **sync-to** — advance target workspace to CWD's tip (3-step orchestration: rebase, relock, FF-advance) (`--json` available)
 - **push** — publish member repos then the project repo to shared remotes (`--json` available)
-- **fetch** — clone a project, or align its repos to rwv.lock without advancing pins (`--json` available)
-- **update** — advance each repo to its branch HEAD on the remote and re-snapshot the lock (`--json` available)
+- **clone** — clone a project and each member at the commit rwv.lock pins; exit status 3 when a member is left unpinned (`--json` available)
+- **fetch** — the pruning fetch of every remote of every repo; moves no branch, checkout or lock (`--json` available)
+- **pull** — fetch, fast-forward the project branch to its upstream, then update the members (`--json` available)
+- **update** — clone missing members and align the rest to rwv.lock; with --remote, advance each repo to its branch HEAD and re-snapshot the lock (`--json` available)
 - **prime** — agent-oriented orientation context for the workspace
 - **explain** — per-verb JIT reflection (this verb)
 - **workweave** — create, delete, or list workweaves for a project

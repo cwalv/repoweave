@@ -1191,7 +1191,7 @@ pub(crate) fn materialize_member(
         crate::refuse!(
             RefusalKind::MissingCanonicalClone,
             "canonical clone for {repo_path} missing at {}; \
-             run `rwv fetch --project {project}` at the primary weave first to materialize it \
+             run `rwv update --project {project}` at the primary weave first to materialize it \
              there",
             canonical.display()
         );
@@ -1451,7 +1451,7 @@ fn refuse_unless_replaceable(
         None => {
             reasons.push(format!(
                 "there is no canonical clone at {} to link a worktree into; \
-                 `rwv fetch --project {project}` in the primary weave materializes it.",
+                 `rwv update --project {project}` in the primary weave materializes it.",
                 canonical.display()
             ));
             false
@@ -2240,16 +2240,16 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
     }
 
     if !submodule_warnings.is_empty() {
-        let selectors: Vec<String> = submodule_warnings
+        let advised: Vec<String> = submodule_warnings
             .iter()
-            .map(|repo| format!("--repo {repo}"))
+            .map(|repo| format!("`rwv update --repo {repo}`"))
             .collect();
         eprintln!(
             "rwv workweave create: warning: submodules not initialized in {} repo(s): {}; \
-             `rwv fetch {}` run in {} fetches what they record and checks them out",
+             run {} in {} to fetch what they record and check them out",
             submodule_warnings.len(),
             submodule_warnings.join(", "),
-            selectors.join(" "),
+            advised.join(" and "),
             workweave_dir.display(),
         );
     }
@@ -4455,7 +4455,7 @@ mod tests {
         .expect("a member with no canonical clone is refused");
         let message = format!("{err:#}");
         assert!(
-            message.contains("run `rwv fetch --project web-app` at the primary weave first"),
+            message.contains("run `rwv update --project web-app` at the primary weave first"),
             "{message}"
         );
         assert!(

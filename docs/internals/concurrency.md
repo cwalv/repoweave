@@ -46,6 +46,21 @@ file. The publish retries the replacement for the claim budget
 rename, rather than make every reader take the claim git's readers never
 take.
 
+**A fetch into an object store is claimed: one at a time per store.** Two
+fetches into one store race on the refs they update, and the loser dies on a
+ref lock. A canonical clone's store is shared by its workweaves' worktrees, so
+seats working in parallel meet there. Every pruning fetch — `rwv fetch`, and
+the fetch `rwv pull` and `rwv update --remote` run before they act — therefore
+runs inside `FetchClaim::hold` (`src/fetch_claim.rs`), which holds the claim
+file `.rwv-fetch.lock` in the store directory, and `Vcs::fetch_pruning` takes
+the held claim as a witness, so a fetch without one is not expressible. It is
+the same state-claim mechanism as the workweave index's claim
+(`StateFile::FetchClaim` beside `StateFile::IndexClaim` in
+`src/state_file.rs`): a peer is waited for within the shared claim budget, then
+the verb refuses as `state-claim-held`, naming the file to delete when no rwv is
+running. The claim orders rwv's own fetches; a `git fetch` typed by hand into
+the same store takes no `.rwv-fetch.lock`.
+
 **The working tree: detect, don't prevent.** Member checkouts, manifests, and
 everything else that editors, builds, and other processes legitimately touch is
 shared, unlocked space. rwv never locks it and never assumes exclusive access —

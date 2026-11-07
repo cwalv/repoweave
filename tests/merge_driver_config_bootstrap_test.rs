@@ -105,7 +105,7 @@ fn fetch_plants_merge_driver_config_when_gitattributes_declares_it() {
     let bare = push_project_source(tmp.path(), "with-driver", true);
 
     rwv()
-        .args(["fetch", &common::file_url(&bare)])
+        .args(["clone", &common::file_url(&bare)])
         .current_dir(&workspace)
         .assert()
         .success();
@@ -136,7 +136,7 @@ fn fetch_leaves_merge_driver_unconfigured_without_gitattributes_declaration() {
     let bare = push_project_source(tmp.path(), "no-driver", false);
 
     rwv()
-        .args(["fetch", &common::file_url(&bare)])
+        .args(["clone", &common::file_url(&bare)])
         .current_dir(&workspace)
         .assert()
         .success();

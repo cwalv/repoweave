@@ -58,11 +58,12 @@ fn two_projects_with_a_workweave_named_alike() -> Weave {
             ),
         )
         .unwrap();
+        common::fixture_lock_at_remote_tips(&dir, &[(member, &common::file_url(&bare))]);
         common::git_in(&dir, &["init", "-q", "-b", "main"]);
         common::git_in(&dir, &["config", "user.email", "test@test.com"]);
         common::git_in(&dir, &["config", "user.name", "Test"]);
         common::git_in(&dir, &["add", "-A"]);
-        common::git_in(&dir, &["commit", "-qm", "manifest"]);
+        common::git_in(&dir, &["commit", "-qm", "manifest and lock"]);
     }
     std::fs::write(primary.join(".rwv-active"), "p1\n").unwrap();
     assert_eq!(
@@ -72,10 +73,7 @@ fn two_projects_with_a_workweave_named_alike() -> Weave {
     );
 
     for (project, _) in PROJECTS {
-        rwv_ok(&["fetch", "--project", project], &primary);
-        let dir = primary.join("projects").join(project);
-        common::git_in(&dir, &["add", "-A"]);
-        common::git_in(&dir, &["commit", "-qm", "lock"]);
+        rwv_ok(&["update", "--project", project], &primary);
         rwv_ok(
             &["workweave", "create", "--project", project, SEAT],
             &primary,

@@ -322,18 +322,54 @@ fn doctor_json_wire_output_conforms() {
     assert_conforms("doctor", &doc, "issues");
 }
 
+/// The project repo's remote, as a `clone` source.
+fn project_source(weave: &Weave) -> String {
+    common::file_url(weave.origin.join("web-app.git"))
+}
+
+/// An empty directory beside the primary for a clone to fill.
+fn empty_dir(weave: &Weave, name: &str) -> PathBuf {
+    let dir = weave.parent.join(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[test]
+fn clone_json_wire_output_conforms() {
+    let weave = weave();
+    let doc = emit(
+        &empty_dir(&weave, "fresh"),
+        &["clone", &project_source(&weave), "--json", "-j", "1"],
+    );
+    assert_conforms("clone", &doc, "outcomes");
+}
+
 #[test]
 fn fetch_json_wire_output_conforms() {
     let weave = weave();
     let doc = emit(&weave.primary, &["fetch", "--json", "-j", "1"]);
-    assert_conforms("fetch", &doc, "outcomes");
+    assert_conforms("fetch", &doc, "repos");
+}
+
+#[test]
+fn pull_json_wire_output_conforms() {
+    let weave = weave();
+    let doc = emit(&weave.primary, &["pull", "--json", "-j", "1"]);
+    assert_conforms("pull", &doc, "outcomes");
 }
 
 #[test]
 fn update_json_wire_output_conforms() {
     let weave = weave();
     let doc = emit(&weave.primary, &["update", "--json", "-j", "1"]);
-    assert_conforms("update", &doc, "repos");
+    assert_conforms("update", &doc, "outcomes");
+}
+
+#[test]
+fn update_remote_json_wire_output_conforms() {
+    let weave = weave();
+    let doc = emit(&weave.primary, &["update", "--remote", "--json", "-j", "1"]);
+    assert_conforms("update-remote", &doc, "repos");
 }
 
 #[test]
@@ -425,7 +461,7 @@ fn emit_after_failure(cwd: &Path, args: &[&str]) -> Value {
 }
 
 #[test]
-fn fetch_json_wire_output_conforms_on_partial_failure() {
+fn update_json_wire_output_conforms_on_partial_failure() {
     let weave = weave();
 
     // A second manifest entry with a nonexistent `file://` URL, never cloned
@@ -450,20 +486,58 @@ fn fetch_json_wire_output_conforms_on_partial_failure() {
         &["commit", "-m", "manifest: add unreachable repo"],
     );
 
-    let doc = emit_after_failure(&weave.primary, &["fetch", "--json", "-j", "1"]);
-    assert_conforms("fetch", &doc, "outcomes");
+    let doc = emit_after_failure(&weave.primary, &["update", "--json", "-j", "1"]);
+    assert_conforms("update", &doc, "outcomes");
     assert!(
         doc["outcomes"]
             .as_array()
             .unwrap()
             .iter()
             .any(|o| o["status"] == "failed"),
-        "expected a failed fetch outcome: {doc:#}"
+        "expected a failed update outcome: {doc:#}"
     );
 }
 
 #[test]
-fn update_json_wire_output_conforms_on_failure() {
+fn clone_json_wire_output_conforms_on_partial_failure() {
+    let weave = weave();
+    let member_url = common::file_url(weave.member_origin());
+    let bad_url = common::file_url(weave.parent.join("no-such-repo.git"));
+    std::fs::write(
+        weave.project().join("rwv.toml"),
+        format!(
+            "[repositories]\n\
+             [repositories.\"{MEMBER}\"]\n\
+             type = \"git\"\nurl = \"{member_url}\"\nbranch = \"main\"\nrole = \"owned\"\n\
+             [repositories.\"github/example/missing\"]\n\
+             type = \"git\"\nurl = \"{bad_url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
+        ),
+    )
+    .unwrap();
+    common::git_in(weave.project(), &["add", "-A"]);
+    common::git_in(
+        weave.project(),
+        &["commit", "-m", "manifest: add unreachable repo"],
+    );
+    common::git_in(weave.project(), &["push", "origin", "main"]);
+
+    let doc = emit_after_failure(
+        &empty_dir(&weave, "fresh"),
+        &["clone", &project_source(&weave), "--json", "-j", "1"],
+    );
+    assert_conforms("clone", &doc, "outcomes");
+    assert!(
+        doc["outcomes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|o| o["status"] == "failed"),
+        "expected a failed clone outcome: {doc:#}"
+    );
+}
+
+#[test]
+fn update_remote_json_wire_output_conforms_on_failure() {
     let weave = weave();
 
     // Point the manifest's declared branch at one that will never resolve on
@@ -483,8 +557,8 @@ fn update_json_wire_output_conforms_on_failure() {
         &["commit", "-m", "manifest: point at unreachable branch"],
     );
 
-    let doc = emit_after_failure(&weave.primary, &["update", "--json", "-j", "1"]);
-    assert_conforms("update", &doc, "repos");
+    let doc = emit_after_failure(&weave.primary, &["update", "--remote", "--json", "-j", "1"]);
+    assert_conforms("update-remote", &doc, "repos");
     assert!(
         doc["repos"]
             .as_array()
@@ -598,17 +672,17 @@ fn push_json_wire_output_conforms_on_project_failure() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn fetch_json_wire_output_conforms_under_two_workers() {
-    let weave = weave();
-    let doc = emit(&weave.primary, &["fetch", "--json", "-j", "2"]);
-    assert_conforms("fetch", &doc, "outcomes");
-}
-
-#[test]
 fn update_json_wire_output_conforms_under_two_workers() {
     let weave = weave();
     let doc = emit(&weave.primary, &["update", "--json", "-j", "2"]);
-    assert_conforms("update", &doc, "repos");
+    assert_conforms("update", &doc, "outcomes");
+}
+
+#[test]
+fn update_remote_json_wire_output_conforms_under_two_workers() {
+    let weave = weave();
+    let doc = emit(&weave.primary, &["update", "--remote", "--json", "-j", "2"]);
+    assert_conforms("update-remote", &doc, "repos");
 }
 
 #[test]

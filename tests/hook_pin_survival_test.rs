@@ -473,7 +473,7 @@ fn npm_activation_leaves_a_non_newest_pin_byte_identical() {
     // Control: the fixture can show movement.
     assert!(
         std::process::Command::new(common::node_tool("npm"))
-            .args(["update"])
+            .args(["update", "--remote"])
             .current_dir(&root)
             .output()
             .expect("npm should run")

@@ -78,11 +78,13 @@ fn every_writing_verb_refuses_from_another_projects_directory() {
         &["member", "remove", "github/acme/server"],
         &["member", "set-role", "github/acme/server", "owned"],
         &["lock"],
-        &["update"],
+        &["update", "--remote"],
         &["push"],
         &["sync", "primary"],
         &["sync-to", "primary"],
+        &["update"],
         &["fetch"],
+        &["pull"],
         &["doctor", "--fix"],
     ];
     for args in cases {
@@ -120,12 +122,12 @@ fn doctor_without_fix_reports_from_another_projects_directory() {
 }
 
 #[test]
-fn fetch_refuses_to_guess_among_several_projects_and_names_the_project_flag() {
+fn update_refuses_to_guess_among_several_projects_and_names_the_project_flag() {
     let tmp = common::tempdir().unwrap();
     let ws = two_project_weave(tmp.path());
     std::fs::remove_file(ws.join(".rwv-active")).unwrap();
 
-    let stderr = refusal_stderr(&["fetch"], &ws);
+    let stderr = refusal_stderr(&["update"], &ws);
     assert_routes_to(&stderr, "no-active-project");
     assert!(stderr.contains("--project <name>"), "{stderr}");
     assert!(
@@ -135,14 +137,33 @@ fn fetch_refuses_to_guess_among_several_projects_and_names_the_project_flag() {
 }
 
 #[test]
-fn fetch_project_flag_with_a_source_is_inapplicable() {
+fn clone_takes_no_project_flag() {
     let tmp = common::tempdir().unwrap();
     let ws = two_project_weave(tmp.path());
     let source = common::file_url(tmp.path().join("web-app.git"));
 
-    let stderr = refusal_stderr(&["fetch", "--project", "mobile", &source], &ws);
-    assert_routes_to(&stderr, "inapplicable-flag");
-    assert!(stderr.contains("--project"), "{stderr}");
+    common::rwv()
+        .args(["clone", "--project", "mobile", &source])
+        .current_dir(&ws)
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains("unexpected argument '--project'"));
+}
+
+#[test]
+fn update_takes_no_source() {
+    let tmp = common::tempdir().unwrap();
+    let ws = two_project_weave(tmp.path());
+    let source = common::file_url(tmp.path().join("web-app.git"));
+
+    common::rwv()
+        .args(["update", "--project", "mobile", &source])
+        .current_dir(&ws)
+        .assert()
+        .code(2)
+        .stderr(predicates::str::contains(format!(
+            "unexpected argument '{source}'"
+        )));
 }
 
 #[test]
@@ -213,15 +234,15 @@ fn add_no_longer_adopts_an_existing_clone_named_by_its_path() {
     let manifest = std::fs::read_to_string(ws.join("projects/web-app/rwv.toml")).unwrap();
     assert!(manifest.contains("vendor/other"), "{manifest}");
 
-    let fetched = common::rwv()
-        .arg("fetch")
+    let updated = common::rwv()
+        .arg("update")
         .current_dir(&ws)
         .output()
         .unwrap();
     assert!(
-        fetched.status.success(),
-        "rwv fetch after the adopt:\n{}",
-        String::from_utf8_lossy(&fetched.stderr)
+        updated.status.success(),
+        "rwv update after the adopt:\n{}",
+        String::from_utf8_lossy(&updated.stderr)
     );
 }
 
@@ -301,7 +322,7 @@ fn param_and_params_json_require_new() {
 }
 
 #[test]
-fn fetch_refuses_a_plain_path_source_and_names_both_spellings() {
+fn clone_refuses_a_plain_path_source_and_names_both_spellings() {
     let tmp = common::tempdir().unwrap();
     let target = tmp.path().join("fresh");
     std::fs::create_dir_all(&target).unwrap();
@@ -319,11 +340,11 @@ fn fetch_refuses_a_plain_path_source_and_names_both_spellings() {
     );
     let path = bare.to_str().unwrap();
 
-    let stderr = refusal_stderr(&["fetch", path], &target);
+    let stderr = refusal_stderr(&["clone", path], &target);
     assert_routes_to(&stderr, "unresolvable-repo-source");
     assert!(
-        stderr.contains(&format!("`rwv fetch {}`", common::file_url(&bare)))
-            && stderr.contains("`rwv fetch --project <name>`"),
+        stderr.contains(&format!("`rwv clone {}`", common::file_url(&bare)))
+            && stderr.contains("`rwv update --project <name>`"),
         "the refusal must name the file:// spelling and the in-place spelling:\n{stderr}"
     );
     assert!(
@@ -331,7 +352,7 @@ fn fetch_refuses_a_plain_path_source_and_names_both_spellings() {
         "nothing may have been cloned"
     );
 
-    let advised = common::advised_command(&stderr, "rwv fetch file://");
+    let advised = common::advised_command(&stderr, "rwv clone file://");
     let followed = common::run_advised(&advised, &target);
     assert!(
         followed.status.success(),
@@ -340,7 +361,7 @@ fn fetch_refuses_a_plain_path_source_and_names_both_spellings() {
     );
     assert!(
         target.join("projects").is_dir(),
-        "the fetch cloned the project"
+        "the clone cloned the project"
     );
     let findings = common::doctor_findings(&target);
     assert!(
@@ -353,9 +374,9 @@ fn fetch_refuses_a_plain_path_source_and_names_both_spellings() {
 }
 
 /// A manifest `url` that is a plain path names no remote to clone from; the
-/// refusal on `rwv fetch` names the `file://` spelling to write instead.
+/// refusal on `rwv update` names the `file://` spelling to write instead.
 #[test]
-fn fetch_of_a_manifest_url_that_is_a_plain_path_clears_once_it_is_spelled_file() {
+fn update_of_a_manifest_url_that_is_a_plain_path_clears_once_it_is_spelled_file() {
     let tmp = common::tempdir().unwrap();
     let ws = two_project_weave(tmp.path());
     let bare = tmp.path().join("remotes/lib.git");
@@ -373,7 +394,7 @@ fn fetch_of_a_manifest_url_that_is_a_plain_path_clears_once_it_is_spelled_file()
 
     let findings_before = common::doctor_findings(&ws);
     let out = common::rwv()
-        .arg("fetch")
+        .arg("update")
         .current_dir(&ws)
         .output()
         .unwrap();
@@ -398,7 +419,7 @@ fn fetch_of_a_manifest_url_that_is_a_plain_path_clears_once_it_is_spelled_file()
     .unwrap();
 
     let followed = common::rwv()
-        .arg("fetch")
+        .arg("update")
         .current_dir(&ws)
         .output()
         .unwrap();

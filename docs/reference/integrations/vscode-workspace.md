@@ -61,7 +61,7 @@ hide-dotfiles = true   # default: true; adds ".*": true to settings.files.exclud
 
 `folders` is `rwv`'s owned region probe, and `"rwv.generated"` is the top-level ownership marker. A `.code-workspace` file that has a `folders` array but no `"rwv.generated"` marker was authored by hand: `rwv` leaves it byte-for-byte alone on authoring verbs, and `rwv doctor` reports it as `managed-file-user-held`. A file with no `folders` key has no owned region to conflict with, so `rwv` writes `folders`, `settings`, and `"rwv.generated"` while preserving any other top-level blocks (`extensions`, `launch`, `tasks`).
 
-**Taking the pen** — delete the `"rwv.generated"` key. `rwv` stops writing the file and only reports on it. Changing `rwv`'s managed values while leaving `"rwv.generated"` in place does not take the pen; the next authoring verb (`rwv member add`, `remove`, `update`, `role`, `doctor --fix`) rewrites them.
+**Taking the pen** — delete the `"rwv.generated"` key. `rwv` stops writing the file and only reports on it. Changing `rwv`'s managed values while leaving `"rwv.generated"` in place does not take the pen; the next authoring verb (`rwv member add`, `remove`, `update --remote`, `role`, `doctor --fix`) rewrites them.
 
 ## Install hook
 
@@ -77,7 +77,7 @@ The file is deleted only when nothing user-authored remains after stripping: no 
 
 ## Diagnostics
 
-Reported by `rwv doctor`. Verify rows also print as warnings on `rwv activate`, `rwv materialize`, `rwv workweave create` and the activation a `rwv fetch` performs; see [Hook points](./index.md#hook-points).
+Reported by `rwv doctor`. Verify rows also print as warnings on `rwv activate`, `rwv materialize`, `rwv workweave create` and the activation a `rwv clone` or `rwv update` performs; see [Hook points](./index.md#hook-points).
 
 | Kind | Severity | Condition | Repair |
 |---|---|---|---|

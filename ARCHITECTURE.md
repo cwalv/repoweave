@@ -85,6 +85,8 @@ empty is what lets the consent tokens in `src/cli/consent.rs` stay
 | `workspace` (`src/workspace.rs`, 5171) | `WorkspaceContext` and its `resolve`; `Checkout`; `Resolution`; the `.rwv-active` / `.rwv-workweave` marker constants. `WorkweaveMarker` (`src/workspace/marker.rs`) and `RootObservation::require_exclusive` with the identity payloads it produces (`src/workspace/root_identity.rs`) each sit in a child module holding nothing else that sets their private fields, so the compiler admits one literal. |
 | `registry` (`src/registry.rs`, 685) | Host-to-local-prefix mapping. `Registry` trait; `CloneUrl`, the only URL a `Vcs` method hands git, constructed only here and compared only by `names_same_remote`; `resolve_to_clone_info`, which turns a manifest `url` or CLI source, shorthand included, into one; `recorded_remote`, which reads a clone's configured remote as one. Unrelated to integrations despite the name. |
 | `selector` (`src/selector.rs`, 438) | The shared `--role` / `--repo` filter grammar. |
+| `member_selection` (`src/member_selection.rs`) | `MemberSelection`: the members `--role` and `--repo` name, less the `reference` members under `--no-reference`. Built once where the flags parse, and asked by every step of a verb, so no step covers a member another step left out. |
+| `exit_status` (`src/exit_status.rs`) | `CompletedWithRemainder`, the error that ends a verb with exit status `3`: it finished, and part of the work is left to the operator. `run_and_report` in `src/cli/dispatch.rs` maps it to the status after the verb has printed what it left. |
 
 ### Data model
 
@@ -103,9 +105,22 @@ empty is what lets the consent tokens in `src/cli/consent.rs` stay
 ### Verbs
 
 `activate`, `add_remove`, `check` (`rwv doctor`, 8712 lines — the largest
-module), `fetch`, `init`, `push`, `status`, `sync`, `update`, `prime`, `setup`,
-`explain`. Each owns one verb's orchestration and its `--json` envelope type
-(§7). `sync` (6779) additionally owns the phase machine (§5).
+module), `init`, `push`, `status`, `sync`, `prime`, `setup`, `explain`. Each
+owns one verb's orchestration and its `--json` envelope type (§7). `sync`
+(6779) additionally owns the phase machine (§5).
+
+The verbs that take a project in, or move it forward, are split across modules
+by what they may change. Of these only `update_remote` writes `rwv.lock`, and
+the rest read it.
+
+| Module | Owns |
+|---|---|
+| `clone` (`src/clone.rs`) | `rwv clone`: clones the project repo, runs `bring_members` over its members, then activates the project when none is active. A member the lock gives no commit to be at is judged `pin` `none` or `pin` `unreachable` and listed, and the verb returns `CompletedWithRemainder`. |
+| `fetch` (`src/fetch.rs`) | `rwv fetch`, and `pruning_fetch`, the one function every pruning fetch goes through — `rwv pull` and `rwv update --remote` call it too. It moves no local branch, checkout or lock, and records the old tip of a rewritten remote-tracking branch as a superseded tip. |
+| `fetch_claim` (`src/fetch_claim.rs`) | `FetchClaim::hold`, the claim on an object store that lets one fetch into it run at a time. [`docs/internals/concurrency.md`](docs/internals/concurrency.md). |
+| `pull` (`src/pull.rs`) | `rwv pull`: the fetch, the fast-forward of the project branch (`take_in_project`), then `update_members`. |
+| `update` (`src/update.rs`) | `rwv update`, and `bring_members`, the clone-missing-and-align engine `rwv clone` shares: it clones each member not on disk, aligns each present one to its lock entry, and reports what became of every pin as a `PinOutcome`. The lock is read and never written. |
+| `update_remote` (`src/update_remote.rs`) | `rwv update --remote`: the pruning fetch, the advance of each repo to its branch HEAD, and the re-snapshot of `rwv.lock` through `write_project_lock` (`src/lock.rs`, which `rwv lock` also runs). An authoring verb, so it also regenerates integration files. |
 
 ### Seams and shared machinery
 
@@ -165,14 +180,19 @@ verbs that act on a project, and feeds `WorkspaceContext::resolve` as
 `project_override`.
 
 **5. The verb match** (`dispatch.rs`), which calls one module's entry
-point. The unmatched-verb arm falls through to plugin dispatch (§6.4).
+point. The unmatched-verb arm falls through to plugin dispatch (§6.4). The exit
+status is decided at one funnel, `run_and_report` (`dispatch.rs`): `0` when the
+verb returns, `3` when it returns `CompletedWithRemainder` (`src/exit_status.rs`)
+after printing what it left, and `1` for any other error, after the refusal
+funnel prints it. Arguments that do not parse exit `2` before any verb runs.
 
 ### Where parallelism lives
 
 There are no threads outside `parallel::run_in_parallel`
 (`src/parallel.rs`), which runs a closure over items in a bounded
-`std::thread::scope` pool and gathers results in input order. `fetch` and
-`update` default to `min(available_parallelism, 8)`; `sync`, `sync-to` and
+`std::thread::scope` pool and gathers results in input order. `clone`, `fetch`,
+`pull`, `update` and `update --remote` default to
+`min(available_parallelism, 8)`; `sync`, `sync-to` and
 `push` default to serial. A push authenticates and runs the repo's pre-push
 hook, which concurrent pushes would run side by side against one terminal's
 credential prompts. `-j` never changes `--json` output: every verb prints one
@@ -459,6 +479,10 @@ requires.** The proof is a value that cannot be forged:
   by a boolean argument. `DiscardWarrant` pairs a `SavepointRef`
   with an operator consent token: a destructive reset is
   representable only when a savepoint provably exists.
+- **The fetch claim.** `Vcs::fetch_pruning` takes a `&FetchClaim`
+  (`src/fetch_claim.rs`), which only `FetchClaim::hold` constructs, so a
+  pruning fetch into an object store without the claim on it is not
+  expressible.
 - **Consent tokens.** They live in `pub mod consent` (`src/cli/consent.rs`),
   not in `vcs`, with constructors that are `pub(in crate::cli)` and called
   only from `cli::dispatch::run`, from argv — or, for a `--continue`, from
@@ -623,8 +647,10 @@ negotiation, no minimum-version check, and no capability handshake.
 ## 7. Output and generated artifacts
 
 **There is no shared output envelope.** Each `--json`-capable verb owns its own
-top-level struct — `StatusJsonOutput` (`src/status.rs`), `FetchJsonOutput`
-(`src/fetch.rs`), `UpdateJsonOutput` (`src/update.rs`), `PushJsonOutput`
+top-level struct — `StatusJsonOutput` (`src/status.rs`), `CloneJsonOutput`
+(`src/clone.rs`), `FetchJsonOutput` (`src/fetch.rs`), `PullJsonOutput`
+(`src/pull.rs`), `UpdateJsonOutput` (`src/update.rs`),
+`UpdateRemoteJsonOutput` (`src/update_remote.rs`), `PushJsonOutput`
 (`src/push.rs`), `SyncJsonOutput` (`src/sync.rs`), `SyncToJsonOutput`, and
 `DoctorJsonOutput` (`src/check.rs`) — each pinning its own schema URL. Both
 of `rwv doctor`'s report renderers, the text report and `build_doctor_json`,

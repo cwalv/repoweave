@@ -31,7 +31,7 @@ Options come before the command. The first word that is not an option starts the
 | `--role ROLE` | Repos with that role; repeatable |
 | `--repo SEL` | Repos whose manifest path matches: bare = exact, `re:<pat>`, `glob:<pat>`; repeatable |
 
-`--role` and `--repo` are the [selector grammar](./cli.md#selector-grammar) of `rwv status`, `fetch`, `update` and `push`, with the same union rule. A selector *replaces* the default scope rather than narrowing it: `--role reference` and a `--repo` naming a reference repo both include it. The project repo is not a manifest member and is never run in.
+`--role` and `--repo` are the [selector grammar](./cli.md#selector-grammar) of `rwv status`, `fetch`, `pull`, `update` and `push`, with the same union rule. A selector *replaces* the default scope rather than narrowing it: `--role reference` and a `--repo` naming a reference repo both include it. The project repo is not a manifest member and is never run in.
 
 A selection that matches no repo is an error naming the selectors that matched nothing, and nothing runs. When the project's `rwv.toml` or `rwv.lock` does not load, the error says so instead, after `rwv status`'s warning naming the line; fix it and run again.
 
@@ -53,7 +53,7 @@ The command runs with the repo's checkout as its working directory. Each command
 | `RWV_REPO_ROLE` | The repo's role |
 | `RWV_REPO_PATH` | The absolute path of the repo's checkout |
 
-A member repo whose checkout is absent from disk is not run; it is reported as not present and counts as a failure. `rwv fetch` restores it, and `rwv doctor --fix` then relinks the workweave checkouts of a canonical clone that `rwv fetch` cloned again.
+A member repo whose checkout is absent from disk is not run; it is reported as not present and counts as a failure. `rwv update` restores it, and `rwv doctor --fix` then relinks the workweave checkouts of a canonical clone that `rwv update` cloned again.
 
 A bare command name is looked up on `PATH` once, before any repo runs, so every repo runs the same program and a typo fails once rather than once per repo. A relative `PATH` entry is read from the directory `rwv` was invoked from, or the `-C`/`-w` directory, never from a repo's checkout. A command spelled with a directory (`./scripts/test.sh`) is resolved inside each repo.
 

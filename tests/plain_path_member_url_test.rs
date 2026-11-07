@@ -1,7 +1,7 @@
 //! A member whose `url` in `rwv.toml` is a plain path: no clone of it can be
-//! made, `rwv fetch` names the refusal on the member's own line and in its
+//! made, `rwv update` names the refusal on the member's own line and in its
 //! `--json` record, and `rwv doctor` names the one repair that works, writing
-//! the `url` as a `file://` URL. Following that repair, `rwv fetch` clones it.
+//! the `url` as a `file://` URL. Following that repair, `rwv update` clones it.
 
 use std::path::{Path, PathBuf};
 use std::process::Output;
@@ -76,14 +76,14 @@ impl Weave {
 }
 
 #[test]
-fn fetch_names_the_refusal_on_the_members_line_and_in_its_record() {
+fn update_names_the_refusal_on_the_members_line_and_in_its_record() {
     let weave = Weave::with_url(|bare| bare.to_str().unwrap().to_owned());
 
-    let out = run(&["fetch"], &weave.ws);
+    let out = run(&["update"], &weave.ws);
     let stderr = String::from_utf8_lossy(&out.stderr);
     let member_line = stderr
         .lines()
-        .position(|l| l.starts_with(&format!("rwv fetch: error: {MEMBER}:")))
+        .position(|l| l.starts_with(&format!("rwv update: error: {MEMBER}:")))
         .unwrap_or_else(|| panic!("{}", text(&out)));
     assert_eq!(
         stderr.lines().nth(member_line + 1),
@@ -93,7 +93,7 @@ fn fetch_names_the_refusal_on_the_members_line_and_in_its_record() {
     );
     assert!(!out.status.success());
 
-    let out = run(&["fetch", "--json", "-j", "1"], &weave.ws);
+    let out = run(&["update", "--json", "-j", "1"], &weave.ws);
     let envelope: serde_json::Value =
         serde_json::from_slice(&out.stdout).unwrap_or_else(|e| panic!("{e}: {}", text(&out)));
     let record = &envelope["outcomes"][0];
@@ -102,7 +102,7 @@ fn fetch_names_the_refusal_on_the_members_line_and_in_its_record() {
 }
 
 #[test]
-fn doctor_names_only_the_respelling_and_following_it_lets_fetch_clone() {
+fn doctor_names_only_the_respelling_and_following_it_lets_update_clone() {
     let weave = Weave::with_url(|bare| bare.to_str().unwrap().to_owned());
 
     assert_eq!(weave.doctor_kinds(), ["unresolvable-url"]);
@@ -116,7 +116,7 @@ fn doctor_names_only_the_respelling_and_following_it_lets_fetch_clone() {
     );
 
     weave.write_url(&file_url);
-    let out = run(&["fetch"], &weave.ws);
+    let out = run(&["update"], &weave.ws);
     assert!(out.status.success(), "{}", text(&out));
     assert!(weave.ws.join(MEMBER).join(".git").exists());
     assert_eq!(weave.doctor_kinds(), Vec::<String>::new());

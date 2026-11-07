@@ -409,7 +409,7 @@ fn advice_invocations_all_parse() {
         "rwv sync-to --retire",
         "rwv lock",
         "rwv abort",
-        "rwv fetch",
+        "rwv update",
         "rwv sync",
         "rwv sync-to",
     ];

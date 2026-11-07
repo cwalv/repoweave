@@ -158,7 +158,7 @@ keep the project's by deleting the file at the weave root. Then run `rwv doctor
 ### `cwd-in-inactive-project`
 
 **Condition.** A verb that writes into its project (`add`, `remove`, `role`,
-`lock`, `update`, `push`, `sync`, `sync-to`, in-place `fetch`, or `doctor
+`lock`, `fetch`, `pull`, `update`, `push`, `sync`, `sync-to`, or `doctor
 --fix`) was run from inside `projects/<name>/` at a primary weave root, with no
 `--project`, while `.rwv-active` selects a different project.
 
@@ -347,10 +347,9 @@ applied that nothing read. The refusal is generic: a per-flag
 token would name the remedy's argument rather than a state.
 
 **Exits.** Drop the flag, or switch to the mode that reads it — the message
-names which. For example, `rwv fetch --project` with a source refuses, because
-the source names the project it clones. `--force` on a verb that does not
-declare it refuses the same way: rwv has no blanket force, and each refusal
-names the flag that consents to the one loss it would cause.
+names which. For example, `--force` on a verb that does not declare it refuses:
+rwv has no blanket force, and each refusal names the flag that consents to the
+one loss it would cause.
 
 ### `invalid-ref-name`
 
@@ -440,17 +439,6 @@ operator did not ask for.
 **Exits.** Add `--param <name>=<value>` for each parameter the refusal names
 — the same declared surface `rwv explain member`'s creation-parameter table
 renders, so the two cannot disagree.
-
-### `missing-lock`
-
-**Condition.** `--frozen` was passed and there is no lock file.
-
-**Why.** `--frozen` means "use exactly what the lock pins". With no lock there
-is nothing to be faithful to, and proceeding would resolve versions afresh —
-the opposite of what the flag asks for.
-
-**Exits.** Drop `--frozen` to resolve and write a lock, or fetch a project that
-carries one.
 
 ### `nested-project-name`
 
@@ -729,7 +717,7 @@ recorded, so the re-run starts from the same place this one did.
 satisfy an address, because a typo would then produce an empty project rather
 than an error.
 
-**Exits.** Check the spelling against `rwv status`, or `rwv fetch` the project
+**Exits.** Check the spelling against `rwv status`, or `rwv clone` the project
 into this workspace if it belongs here.
 
 ### `project-dir-occupied`
@@ -740,9 +728,9 @@ into this workspace if it belongs here.
 rwv will not merge into an occupied slot, because the occupant's files are not
 rwv's to reinterpret.
 
-**Exits.** For `rwv fetch <source>`: if the project already there is the one
-you meant, `rwv fetch --project <name>` fetches its members in place; to fetch
-the other one too, run `rwv fetch <source>` in an empty directory, which
+**Exits.** For `rwv clone <source>`: if the project already there is the one
+you meant, `rwv update --project <name>` brings up its members in place; to
+clone the other one too, run `rwv clone <source>` in an empty directory, which
 becomes a weave of its own. For `rwv init`, choose another name.
 
 ### `project-repo-off-canonical-branch`
@@ -1198,9 +1186,9 @@ characters and the rule each one protects.
 ### `unresolvable-repo-source`
 
 **Condition.** The source parses as neither a URL nor a known shorthand. For
-`rwv member add` and `rwv fetch` this includes a plain path, relative or absolute, and
-so does a member's `url` in `rwv.toml` when `rwv fetch` or `rwv sync` clones
-it. For a member, `rwv fetch` names this token after that member's error line
+`rwv member add` and `rwv clone` this includes a plain path, relative or absolute, and
+so does a member's `url` in `rwv.toml` when `rwv clone`, `rwv update` or `rwv sync` clones
+it. For a member, `rwv clone` and `rwv update` name this token after that member's error line
 and in its `--json` record's `refusal`, and the run as a whole ends with
 `partial-run-aborted`. `rwv doctor` reports every such member as
 `provenance` / `unresolvable-url` before any clone is attempted.
@@ -1211,8 +1199,8 @@ unintended or records the wrong URL, so each meaning has its own spelling.
 
 **Exits.** The message names them. To clone from a local remote, spell it as a
 URL: `file:///abs/path`, in `rwv.toml` as well. To register the clone already at that path under the
-weave root: `rwv member add --adopt <path>`. To fetch the members of a project already
-in this weave, drop the source: `rwv fetch --project <name>`. Otherwise give a
+weave root: `rwv member add --adopt <path>`. To bring up the members of a project already
+in this weave, drop the source: `rwv update --project <name>`. Otherwise give a
 full URL, or `owner/repo` shorthand for a supported registry.
 
 ### `unspellable-directory-name`

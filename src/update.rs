@@ -1,81 +1,82 @@
-//! `rwv update` — advance each manifest repo to its branch HEAD and
-//! re-snapshot `rwv.lock`.
+//! `rwv update` — clone the members missing on disk, align the rest to the
+//! lock, and report what the lock leaves unpinned.
 //!
-//! Semantically analogous to `cargo update` or `npm update`: this is the
-//! verb that mutates the lock by pulling fresh tips from the network.
-//! `rwv fetch` (default) reads the lock; `rwv lock` snapshots local tips;
-//! `rwv update` advances and re-snapshots.
+//! The engine here is also what `rwv clone` runs once it has the project
+//! repo: a clone is an update of a weave with nothing in it.
 
+use crate::activate::ActivateOptions;
 use crate::cli::consent::DetachConsent;
-use crate::lock;
-use crate::manifest::{Project, ProjectName, RepoEntry, RepoPath};
-use crate::parallel::{run_in_parallel, run_subprocess_with_reporter, OutputMode, Reporter};
+use crate::diagnosis::JudgedOutput;
+use crate::manifest::{LockEntry, LockFile, Manifest, RepoEntry, RepoPath};
+use crate::member_selection::MemberSelection;
+use crate::parallel::{run_in_parallel, OutputMode, Reporter};
 use crate::placement::PlacementOutput;
-use crate::selector::RepoFilter;
-use crate::vcs::{vcs_for, HeadAttachment, ResolvedRevisionId, Vcs, VcsError};
+use crate::refusal::RefusalKind;
+use crate::registry;
+use crate::skipped::{SkipReason, SkippedEffect};
+use crate::vcs::{
+    vcs_for, HeadAttachment, PinOutcome, RawRevisionId, ResolvedRevisionId, Vcs, VcsError,
+};
 use crate::workspace::{
-    member_checkout_dir, Checkout, MemberCheckout, Resolution, WorkspaceContext,
+    observe_root, project_dir, Checkout, Resolution, RootObservation, WorkspaceContext,
 };
 use anyhow::Context;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-/// Schema URL for `rwv update --json` output. Pins to the committed artifact
-/// under `docs/reference/schemas/update.json`.
+/// Schema URL embedded in `rwv update --json` output. Pins to the committed
+/// artifact under `docs/reference/schemas/update.json`.
 pub const UPDATE_SCHEMA_URL: &str = crate::schema_url::schema_url!("update");
 
-/// Per-repo outcome kind for `rwv update --json`.
+/// Per-member outcome record for `rwv update --json` and `rwv clone --json`.
+///
+/// `status` is one of `"ok"`, `"skipped"`, or `"failed"`. `message` carries
+/// a human-readable description of the outcome (always present for `"failed"`;
+/// present for `"skipped"` to say why; `null` for `"ok"`).
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct MemberOutcomeOutput {
+    pub path: String,
+    pub absolute_path: crate::path_spelling::WirePath,
+    pub status: MemberOutcomeStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    /// The refusal token of a `failed` repo, resolvable with `rwv explain
+    /// <token>`. Absent when the failure carries no classified refusal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<String>,
+}
+
+/// Status discriminant for [`MemberOutcomeOutput`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
-pub enum UpdateKind {
-    /// Repo was advanced to a new SHA (old_sha != new_sha).
-    Updated,
-    /// Repo was already at the branch HEAD (old_sha == new_sha).
-    UpToDate,
-    /// Advance failed; see `error` for the message.
+pub enum MemberOutcomeStatus {
+    Ok,
+    Skipped,
     Failed,
 }
 
-/// Per-repo record in `rwv update --json` output.
-///
-/// `old_sha` is the tip before the fetch; `new_sha` is the tip after
-/// checkout (the new branch HEAD). Both are `null` when the SHA could not
-/// be read (e.g. the repo was missing from disk before the advance). For
-/// `kind = failed`, `new_sha` is always `null`; `error` carries the
-/// human-readable failure message.
-#[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct RepoUpdateRecord {
-    /// Manifest-relative path.
-    pub path: String,
-    /// Fully resolved absolute path.
-    pub absolute_path: crate::path_spelling::WirePath,
-    /// Branch name from the manifest `branch` field.
-    pub branch: String,
-    /// Outcome discriminant.
-    pub kind: UpdateKind,
-    /// Tip SHA before the advance (`null` if unreadable).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub old_sha: Option<String>,
-    /// Tip SHA after the advance (`null` when `kind = failed`).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub new_sha: Option<String>,
-    /// Human-readable error message, only present when `kind = failed`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
+/// What a run of [`bring_members`] reports about the members, before it is
+/// given the envelope of the verb that ran it.
+pub(crate) struct MembersReport {
+    outcomes: Vec<MemberOutcomeOutput>,
+    placements: Vec<PlacementOutput>,
+    resolution: Option<Resolution>,
+    pub(crate) skipped: Vec<SkippedEffect>,
 }
 
 /// Top-level envelope for `rwv update --json`.
-/// `{ "$schema": "<url>", "repos": [<RepoUpdateRecord>, ...] }`
+///
+/// Shape: `{ "$schema": "<url>", "outcomes": [<MemberOutcomeOutput>, ...] }`.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct UpdateJsonOutput {
     #[serde(rename = "$schema")]
-    pub schema_url: String,
-    pub repos: Vec<RepoUpdateRecord>,
-    /// How the files of each checkout the advance moved were placed. Empty,
-    /// not absent, when it moved none.
+    pub schema: String,
+    pub outcomes: Vec<MemberOutcomeOutput>,
+    /// How the files of each checkout the update moved or created were placed:
+    /// a canonical clone it realigned, and from a workweave each worktree it
+    /// created there. Empty, not absent, when it placed none.
     pub placements: Vec<PlacementOutput>,
     /// Resolved workspace coordinates (weave root, optional workweave
     /// identity, project). Absent when no project is resolved.
@@ -84,534 +85,697 @@ pub struct UpdateJsonOutput {
     /// The materialization side effects this update skipped, each naming the
     /// command that performs it. Empty, not absent, when it skipped none.
     #[serde(default)]
-    pub skipped: Vec<crate::skipped::SkippedEffect>,
+    pub skipped: Vec<SkippedEffect>,
 }
 
-/// Run `rwv update` for the current workspace context.
+impl MembersReport {
+    pub(crate) fn into_update_envelope(self) -> UpdateJsonOutput {
+        UpdateJsonOutput {
+            schema: UPDATE_SCHEMA_URL.to_owned(),
+            outcomes: self.outcomes,
+            placements: self.placements,
+            resolution: self.resolution,
+            skipped: self.skipped,
+        }
+    }
+
+    pub(crate) fn into_clone_envelope(
+        self,
+        left: Vec<JudgedOutput>,
+    ) -> crate::clone::CloneJsonOutput {
+        crate::clone::CloneJsonOutput {
+            schema: crate::clone::CLONE_SCHEMA_URL.to_owned(),
+            outcomes: self.outcomes,
+            left,
+            placements: self.placements,
+            resolution: self.resolution,
+            skipped: self.skipped,
+        }
+    }
+}
+
+impl UpdateJsonOutput {
+    pub(crate) fn print(&self) -> anyhow::Result<()> {
+        let out =
+            serde_json::to_string_pretty(self).context("failed to serialize update output")?;
+        outln!("{out}");
+        Ok(())
+    }
+}
+
+/// Per-repo outcome of the member loop body. Communicates back to the caller
+/// (1) whether the repo succeeded and what became of its pin, and (2) what to
+/// print in the error report on failure.
+enum MemberStep {
+    /// Repo handled successfully, its checkout placed as `pin` says.
+    Ok { pin: PinOutcome },
+    /// Repo intentionally skipped (e.g. `--no-reference` on a reference
+    /// repo). Not counted as failure; not counted as success.
+    Skipped,
+    /// Repo failed. Its `{:#}` rendering is the aggregated-error-report
+    /// message, and a refusal tagged anywhere in its chain names the record's
+    /// `refusal`.
+    Failed(anyhow::Error),
+}
+
+/// Clone the members of the active project that are missing from the
+/// current workspace, and align the rest to `rwv.lock`.
 ///
-/// For each repo in the active project's manifest:
-/// 1. `git fetch` the remote.
-/// 2. Resolve the branch (`branch` in the manifest) on the remote — this
-///    is the canonical "HEAD of the upstream branch" value.
-/// 3. Checkout that revision in the local clone.
+/// The repair for a dangling reference: it resolves the workspace from CWD,
+/// iterates the active project's manifest, and clones any repo whose
+/// canonical clone directory is missing, at the commit the lock pins, or at
+/// the declared branch's tip where it pins none.
 ///
-/// After all repos are advanced, regenerate `rwv.lock` from the new tips
-/// and write it. The lock-write reuses `lock::generate_lock`, which carries
-/// the dirty check; `dirty` here controls whether to bypass it.
+/// A clone that is already present is realigned rather than skipped: when the
+/// lock covers it, `bring_one` resolves the locked revision in that clone's
+/// own object store and `realign_present_clone` advances the checkout to it
+/// — fast-forwarding the tracking branch's local counterpart, or refusing
+/// unless `detach_checkouts` carries a consent. When the lock has no entry for
+/// the repo, or there is no lock, the clone is left alone. The lock is not
+/// written.
 ///
-/// The enabled integrations then re-author their managed/generated content
-/// against the advanced tree, so it can be committed alongside the lock. This
-/// step is skipped when `filter` is non-empty — see the guard at the call
-/// site.
+/// Clone-topology (I1): the canonical clone always lives at primary's
+/// `<weave>/<repo_path>`, even when this verb is invoked from inside a
+/// workweave. It therefore materializes into
+/// [`WorkspaceContext::primary_path`] first; from a workweave it then creates
+/// the worktree for each member the workweave's `rwv.lock` pins and the
+/// workweave lacks, as `rwv doctor --fix` would once the revision is local.
 ///
-/// When `commit` is set, the lock and the content authored against the
-/// tips it records are staged and committed together in the project repo —
-/// the derived change is never separated from the change that caused it.
-/// When `project_override` is `Some`, that project is updated instead of
-/// the active one (one-shot; does not change `.rwv-active`).
-/// Under `--json`, one envelope reaches stdout, its records sorted by repo path.
-///
-/// `jobs` is the resolved worker count (post-[`crate::parallel::resolve_jobs`]).
-/// `jobs == 1` runs serially with no prefix; `jobs > 1` runs the per-repo
-/// loop on a bounded worker pool, prefixing stdout/stderr lines with the
-/// repo path. The lock write happens serially after all workers join.
+/// When the primary has no project selected and the invocation named none,
+/// the weave's only project is updated and then activated; with zero or
+/// several projects there is nothing to select and the run refuses, naming
+/// `--project`.
 #[allow(clippy::too_many_arguments)]
 pub fn run_update(
     ctx: &WorkspaceContext,
-    dirty: bool,
-    commit: Option<lock::CommitMessage>,
-    output: OutputMode,
-    filter: &RepoFilter,
-    jobs: usize,
+    selection: &MemberSelection,
     detach_checkouts: Option<DetachConsent>,
-    opts: crate::activate::ActivateOptions,
+    jobs: usize,
+    output: OutputMode,
+    activation: ActivateOptions,
 ) -> anyhow::Result<()> {
-    // Only reads the op-state; the sync engine takes its own exclusion.
-    crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
+    let run = update_members(ctx, selection, detach_checkouts, jobs, output, activation)?;
+    if output.is_json() {
+        run.envelope.print()?;
+    }
+    run.tail
+}
 
-    let (project_name, workweave_dir) = match &ctx.checkout {
-        Checkout::Primary { .. } => {
-            let name = ctx.require_active_project_on_disk()?.clone();
-            (name, None)
+/// What [`update_members`] did: the envelope it would print, and how the run
+/// ended after it. A run that ends in a refusal after its report is complete
+/// still has the report to print first.
+pub(crate) struct UpdateRun {
+    pub(crate) envelope: UpdateJsonOutput,
+    pub(crate) tail: anyhow::Result<()>,
+}
+
+/// [`run_update`] without the printing of its envelope.
+pub(crate) fn update_members(
+    ctx: &WorkspaceContext,
+    selection: &MemberSelection,
+    detach_checkouts: Option<DetachConsent>,
+    jobs: usize,
+    output: OutputMode,
+    activation: ActivateOptions,
+) -> anyhow::Result<UpdateRun> {
+    let invocation = ctx;
+    let sole = sole_unselected_project(invocation);
+    let bound;
+    let ctx = match &sole {
+        Some(project) => {
+            bound = WorkspaceContext::resolve_for_project(invocation.active_path(), project)?;
+            &bound
         }
-        Checkout::Workweave { dir, project, .. } => {
-            (project.clone(), Some(dir.as_path().to_path_buf()))
+        None => invocation,
+    };
+    let name = ctx.require_active_project_on_disk()?.clone();
+
+    // Per-workspace state (rwv.toml, rwv.lock) lives under active_path — the
+    // workweave when in one, primary otherwise. Mirrors add_remove.rs's
+    // find_project_dir.
+    let project_dir = project_dir(ctx.active_path(), &name);
+
+    // Clone destination (canonical store) is always primary's slot — clone-
+    // topology I1. Passing primary_path() as workspace_root routes bring_one
+    // to write clones at `<primary>/<repo_path>/`, even when CWD is inside a
+    // workweave. See docs/explanation/joints/clone-topology.md.
+    let workspace_root = ctx.primary_path();
+    let primary_lock = match &ctx.checkout {
+        Checkout::Workweave { .. } => {
+            let path = LockFile::path_in(&crate::workspace::project_dir(workspace_root, &name));
+            if path.exists() {
+                Some(
+                    LockFile::from_state(&path)
+                        .with_context(|| format!("failed to read lock file at {path}"))?,
+                )
+            } else {
+                None
+            }
         }
+        Checkout::Primary { .. } => None,
+    };
+    let duty = match &ctx.checkout {
+        Checkout::Workweave { .. } => CloneDuty::SharedStore {
+            primary_lock: primary_lock.as_ref(),
+        },
+        Checkout::Primary { .. } => CloneDuty::Checkouts,
     };
 
-    update_for_project(
-        ctx,
-        &project_name,
-        workweave_dir.as_deref(),
-        dirty,
-        commit,
-        output,
-        filter,
-        jobs,
+    let run = match bring_members(
+        "update",
+        &project_dir,
+        workspace_root,
+        selection,
         detach_checkouts,
-        opts,
+        jobs,
+        output,
+        Some(ctx.resolution()),
+        duty,
+    ) {
+        Ok(run) => run,
+        Err(aborted) => {
+            return Ok(UpdateRun {
+                envelope: aborted.report.into_update_envelope(),
+                tail: Err(aborted.error),
+            });
+        }
+    };
+    let moved_or_created = run.moved_or_created;
+    let mut report = run.report;
+
+    let created = match &ctx.checkout {
+        Checkout::Workweave {
+            name: workweave,
+            dir,
+            project,
+            ..
+        } => materialize_workweave_members(
+            ctx,
+            &name,
+            workweave.require(dir.as_path(), project)?,
+            &project_dir,
+            selection,
+            output,
+            &mut report.placements,
+        ),
+        Checkout::Primary { .. } => Ok(false),
+    };
+    // In a workweave the only clones update changes are canonical clones it
+    // created for the primary; only a worktree it created is this workweave's.
+    let checkout_changed = match &ctx.checkout {
+        Checkout::Workweave { .. } => matches!(created, Ok(true)),
+        Checkout::Primary { .. } => moved_or_created,
+    };
+    if let Some(project) = &sole {
+        let msg = format!(
+            "rwv update: activating project '{project}', the only project in this weave \
+             (none was active)"
+        );
+        if output == OutputMode::Text {
+            outln!("{msg}");
+        } else {
+            eprintln!("{msg}");
+        }
+        report
+            .skipped
+            .extend(crate::activate::activate_with_options(
+                project, invocation, activation,
+            )?);
+    } else if checkout_changed {
+        let presented = observe_root(ctx.active_path())
+            .as_ref()
+            .and_then(RootObservation::presented_project)
+            .cloned();
+        let skip = match presented {
+            Some(active) if active == name => SkippedEffect::hooks_while_active(&active),
+            _ => SkippedEffect::install_hooks(SkipReason::NotPresented {
+                project: name.clone(),
+            }),
+        };
+        skip.report();
+        report.skipped.push(skip);
+    }
+    Ok(UpdateRun {
+        envelope: report.into_update_envelope(),
+        tail: created.map(|_| ()),
+    })
+}
+
+/// The project an update selects for itself: the weave's only one,
+/// when the primary has none selected and the invocation named none.
+fn sole_unselected_project(ctx: &WorkspaceContext) -> Option<crate::manifest::ProjectName> {
+    if !matches!(ctx.checkout, Checkout::Primary { project: None }) {
+        return None;
+    }
+    match crate::workspace::discover_projects(ctx.primary_path()).as_slice() {
+        [only] => Some(only.clone()),
+        _ => None,
+    }
+}
+
+/// Give the workweave the worktree of each member it lacks — nothing at the
+/// slot while its `rwv.lock` pins the member, a symlink, or a checkout whose
+/// link dangles — through [`crate::workweave::materialize_member`], once the
+/// canonical clones hold the pinned revisions, returning
+/// whether it created any. A symlinked member the lock does not pin starts at
+/// the canonical clone's HEAD, which is what the link showed. How each one's
+/// files were placed is added to `placements` for the envelope.
+#[allow(clippy::too_many_arguments)]
+fn materialize_workweave_members(
+    ctx: &WorkspaceContext,
+    project: &crate::manifest::ProjectName,
+    workweave: &crate::manifest::WorkweaveName,
+    project_dir: &Path,
+    selection: &MemberSelection,
+    output: OutputMode,
+    placements: &mut Vec<PlacementOutput>,
+) -> anyhow::Result<bool> {
+    let manifest = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME))?;
+    let lock_path = LockFile::path_in(project_dir);
+    let lock = if lock_path.exists() {
+        Some(LockFile::from_state(&lock_path)?)
+    } else {
+        None
+    };
+    let mut failures: Vec<String> = Vec::new();
+    let mut created = false;
+    for (repo_path, entry) in manifest.iter_entries() {
+        if !selection.covers(repo_path, entry.role) {
+            continue;
+        }
+        let slot = ctx.active_path().join(repo_path.as_path());
+        let symlinked = crate::workweave::is_symlinked_member(&slot);
+        if !symlinked && !crate::workweave::is_dangling_link(&slot) && slot.exists() {
+            if crate::workweave::scan_uninitialized_submodules(&slot).is_empty() {
+                continue;
+            }
+            crate::workweave::populate_member_submodules(
+                vcs_for(entry.vcs_type).as_ref(),
+                &slot,
+                repo_path,
+                entry.role,
+                entry.recurse_submodules,
+                "rwv update: ",
+            );
+            continue;
+        }
+        let vcs = vcs_for(entry.vcs_type);
+        let start = match lock.as_ref().and_then(|lock| lock.get_entry(repo_path)) {
+            Some(pin) => pin.version.as_str().to_owned(),
+            None if symlinked => {
+                let canonical = ctx.primary_path().join(repo_path.as_path());
+                match vcs.head_revision(&canonical) {
+                    Ok(head) => head.id().as_str().to_owned(),
+                    Err(e) => {
+                        failures.push(format!("{repo_path}: {e:#}"));
+                        continue;
+                    }
+                }
+            }
+            None => continue,
+        };
+        match crate::workweave::materialize_member(
+            vcs.as_ref(),
+            ctx.primary_path(),
+            ctx.active_path(),
+            project,
+            workweave,
+            repo_path,
+            entry.role,
+            entry.recurse_submodules,
+            &start,
+            crate::workweave::ReceiptedBranch::Attach,
+        ) {
+            Ok(born) => {
+                created = true;
+                let line = format!(
+                    "rwv update: gave this workweave its worktree for {repo_path}: {}{}",
+                    born.summary(),
+                    crate::share::files_note(born.files),
+                );
+                if output == OutputMode::Text {
+                    outln!("{line}");
+                } else {
+                    eprintln!("{line}");
+                }
+                if let (OutputMode::Json, Some(files)) = (output, born.files) {
+                    placements.push(PlacementOutput::new(repo_path, &slot, files));
+                }
+            }
+            Err(e) => failures.push(format!("{repo_path}: {e:#}")),
+        }
+    }
+    if failures.is_empty() {
+        return Ok(created);
+    }
+    crate::refuse!(
+        RefusalKind::PartialRunAborted,
+        "update brought the pinned revisions into the canonical clones but could not \
+         create {} worktree(s) in this workweave:\n  {}",
+        failures.len(),
+        failures.join("\n  ")
     )
 }
 
-/// Outcome of advancing a single repo.
-///
-/// `Ok((new_sha, files))` means fetch + resolve + checkout ran cleanly, the
-/// repo is now at `new_sha`, and `files` says how the files it rewrote were
-/// placed. `Err(msg)` means one of those steps failed and `msg` is the
-/// human-readable failure to surface in the aggregated summary.
-type RepoOutcome = Result<(String, Option<crate::share::FilePlacement>), String>;
-
-/// Extended work item: repo path + manifest entry + old tip SHA captured
-/// before the advance loop runs.
-struct WorkItem {
-    repo_path: RepoPath,
-    entry: RepoEntry,
-    checkout: MemberCheckout,
-    /// HEAD before the advance (`None` if unreadable — e.g. repo missing or
-    /// git error).
-    old: Option<ResolvedRevisionId>,
-    /// The backend resolved from this entry's `vcs_type`, resolved once here
-    /// and borrowed by the worker rather than re-resolved per repo.
-    vcs: Box<dyn Vcs>,
+/// A run of [`bring_members`] that could not finish, and what it had to say
+/// about the members before it stopped.
+pub(crate) struct MembersAborted {
+    pub(crate) report: MembersReport,
+    pub(crate) error: anyhow::Error,
 }
 
-/// Internal: do the update for a specific project under `ctx.active_path()`.
-#[allow(clippy::too_many_arguments)]
-fn update_for_project(
-    ctx: &WorkspaceContext,
-    project_name: &ProjectName,
-    workweave_dir: Option<&Path>,
-    dirty: bool,
-    commit: Option<lock::CommitMessage>,
-    output: OutputMode,
-    filter: &RepoFilter,
-    jobs: usize,
-    detach_checkouts: Option<DetachConsent>,
-    opts: crate::activate::ActivateOptions,
-) -> anyhow::Result<()> {
-    let active_root = ctx.active_path();
-    let primary_root = ctx.primary_path();
-    let project_dir = crate::workspace::project_dir(active_root, project_name);
-    let project = Project::from_dir(&project_dir, project_name.clone())
-        .with_context(|| format!("failed to load project '{}'", project_name))?;
+/// What [`bring_members`] did, beyond what its report holds.
+pub(crate) struct MembersRun {
+    pub(crate) report: MembersReport,
+    /// Some checkout's HEAD is not where it was before this run: a clone it
+    /// created, or one it moved. Read whatever the output mode, unlike the
+    /// report's `placements`, which also has no record for a fresh clone.
+    pub(crate) moved_or_created: bool,
+    /// Each member the run covered and what became of its pin, in manifest
+    /// order.
+    pub(crate) pins: Vec<MemberPin>,
+}
 
-    // Snapshot the repo list into a Vec so the parallel loop can index by
-    // position. The BTreeMap iteration is deterministic, so the resulting
-    // Vec mirrors the previous serial loop's order exactly.
-    //
-    // Apply the `--role` / `--repo` filter so only selected repos are
-    // advanced. Empty filter is a no-op (every repo passes). The post-loop
-    // lock re-snapshot below still walks the *full* manifest, so unfiltered
-    // repos remain at their previous lock SHAs — see the comment by the
-    // `lock::lock` call.
-    //
-    // Capture the old SHA before the advance so JSON output can report
-    // the before/after delta. Missing-repo clones produce `old_sha = None`.
-    let work_items: Vec<WorkItem> = project
-        .manifest
-        .iter_entries()
-        .filter(|(rp, entry)| filter.matches(rp, entry.role))
-        .map(|(rp, entry)| {
-            let checkout = member_checkout_dir(rp, primary_root, workweave_dir);
-            let vcs = vcs_for(entry.vcs_type);
-            let old = vcs.head_revision(checkout.path()).ok();
-            WorkItem {
-                repo_path: rp.clone(),
-                entry: entry.clone(),
-                checkout,
-                old,
-                vcs,
-            }
+/// What became of one member's pin on a run.
+pub(crate) struct MemberPin {
+    pub(crate) path: RepoPath,
+    pub(crate) vcs_type: crate::manifest::VcsType,
+    pub(crate) outcome: PinOutcome,
+}
+
+/// The per-project member loop shared by `rwv clone` (once it has the project
+/// repo) and `rwv update`: clone each member not on disk, align each present
+/// one to its lock entry, and report what became of every pin.
+///
+/// `verb` is the command whose progress lines these are. The lock is read and
+/// never written: a member it lacks, or pins at a commit no ref reaches,
+/// is [`PinOutcome::None`] or [`PinOutcome::Unreachable`] in the result.
+///
+/// `resolution` is the resolved workspace coordinate block for the `--json`
+/// envelope. `None` when no `WorkspaceContext` is available (a clone runs
+/// before a context is resolved).
+///
+/// Returns the report for the caller to print once it has placed anything
+/// else, populated only under `--json`. A run with failures returns it inside
+/// [`MembersAborted`] with the refusal, for the caller to print first.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn bring_members(
+    verb: &'static str,
+    project_dir: &Path,
+    workspace_root: &Path,
+    selection: &MemberSelection,
+    detach_checkouts: Option<DetachConsent>,
+    jobs: usize,
+    output: OutputMode,
+    resolution: Option<Resolution>,
+    duty: CloneDuty<'_>,
+) -> Result<MembersRun, Box<MembersAborted>> {
+    let empty_report = |resolution: Option<Resolution>| MembersReport {
+        outcomes: Vec::new(),
+        placements: Vec::new(),
+        resolution,
+        skipped: Vec::new(),
+    };
+    let setup = || -> anyhow::Result<(Manifest, Option<LockFile>)> {
+        let manifest_path = project_dir.join(Manifest::FILE_NAME);
+        let manifest = Manifest::from_path(&manifest_path)
+            .with_context(|| format!("failed to read manifest from {}", manifest_path.display()))?;
+        let lock_path = LockFile::path_in(project_dir);
+        let existing_lock = if lock_path.exists() {
+            Some(
+                LockFile::from_state(&lock_path)
+                    .with_context(|| format!("failed to read lock file at {lock_path}"))?,
+            )
+        } else {
+            None
+        };
+        Ok((manifest, existing_lock))
+    };
+    let (manifest, existing_lock) = setup().map_err(|error| {
+        Box::new(MembersAborted {
+            report: empty_report(resolution.clone()),
+            error,
         })
+    })?;
+
+    // Warn about orphan lock entries (in lock, not in manifest). Doesn't fail
+    // and doesn't touch the clones.
+    if let Some(ref lock) = existing_lock {
+        for repo_path in lock.iter_repo_paths() {
+            if !manifest.contains_repo(repo_path) {
+                eprintln!(
+                    "rwv {verb}: warning: orphan in lock: {} (lock entry has no manifest entry)",
+                    repo_path.as_str()
+                );
+            }
+        }
+        for (repo_path, version) in lock.entries_pinned_by_name() {
+            eprintln!(
+                "rwv {verb}: warning: {}",
+                crate::lock::pinned_by_name_warning(repo_path, version)
+            );
+        }
+    }
+
+    // Snapshot the work list. BTreeMap iteration is deterministic, so the
+    // resulting Vec preserves the serial loop's ordering (acceptance: -j 1
+    // matches the previous behavior exactly).
+    //
+    // Apply the `--role` / `--repo` filter here so the worker pool only sees
+    // selected repos. Empty filter is a no-op (every repo passes). See
+    // `src/selector.rs` for the grammar and union semantics.
+    let work_items: Vec<(RepoPath, RepoEntry, Box<dyn Vcs>)> = manifest
+        .iter_entries()
+        .filter(|(rp, entry)| selection.names(rp, entry.role))
+        .map(|(rp, e)| (rp.clone(), e.clone(), vcs_for(e.vcs_type)))
         .collect();
 
     let parallel = jobs > 1;
-    // Under JSON mode we suppress text-mode prefix output so stdout only
-    // carries structured data. Text mode uses the Reporter prefix as usual.
-    let use_reporter = output == OutputMode::Text;
     let write_lock: Mutex<()> = Mutex::new(());
 
-    let outcomes: Vec<RepoOutcome> = run_in_parallel(&work_items, jobs, |_idx, item| {
-        let reporter = if parallel && use_reporter {
-            Reporter::parallel(item.repo_path.as_str().to_string(), &write_lock)
-        } else {
-            Reporter::serial()
-        };
-        advance_one(
-            item.vcs.as_ref(),
-            &item.repo_path,
-            &item.entry,
-            &item.checkout,
-            detach_checkouts,
-            &reporter,
-            use_reporter,
-        )
-        .and_then(|new_sha| {
-            crate::settle::settle_moved(
-                item.vcs.as_ref(),
-                item.checkout.path(),
-                item.entry.role,
-                item.old.as_ref(),
-            )
-            .map(|settled| (new_sha, settled.files))
-            .map_err(|e| format!("{}: {e:#}", item.repo_path))
-        })
-    });
+    let outcomes: Vec<(MemberStep, Option<crate::share::FilePlacement>, bool)> =
+        run_in_parallel(&work_items, jobs, |_idx, item| {
+            let (repo_path, entry, vcs) = item;
+            // A parallel reporter forwards subprocess stdout to stdout, which
+            // belongs to the envelope under `--json`.
+            let reporter = if parallel && output == OutputMode::Text {
+                Reporter::parallel(repo_path.as_str().to_string(), &write_lock)
+            } else {
+                Reporter::serial()
+            };
+            let member = workspace_root.join(repo_path.as_path());
+            let before = vcs.head_revision(&member).ok();
+            let step = bring_one(
+                verb,
+                vcs.as_ref(),
+                repo_path,
+                entry,
+                workspace_root,
+                existing_lock.as_ref(),
+                duty,
+                selection,
+                detach_checkouts,
+                &reporter,
+                output,
+            );
+            if matches!(step, MemberStep::Ok { .. }) {
+                crate::workweave::fetch_member_submodules(
+                    vcs.as_ref(),
+                    &member,
+                    repo_path,
+                    entry.role,
+                    entry.recurse_submodules,
+                    &format!("rwv {verb}: "),
+                );
+            }
+            let (step, files) = match step {
+                MemberStep::Ok { .. } => {
+                    match crate::settle::settle_moved(
+                        vcs.as_ref(),
+                        &member,
+                        entry.role,
+                        before.as_ref(),
+                    ) {
+                        Ok(settled) => (step, settled.files),
+                        Err(e) => (MemberStep::Failed(e.context(repo_path.to_string())), None),
+                    }
+                }
+                other => (other, None),
+            };
+            let moved_or_created =
+                matches!(step, MemberStep::Ok { .. }) && before != vcs.head_revision(&member).ok();
 
-    // Aggregate errors in input order — matches the existing serial shape.
+            (step, files, moved_or_created)
+        });
+
+    // Aggregate outcomes serially in input order — preserves the existing
+    // error-report shape.
+    let mut succeeded = 0usize;
     let mut errors: Vec<String> = Vec::new();
-    let mut updated = 0usize;
+    let mut pins: Vec<MemberPin> = Vec::new();
 
-    // Build JSON records if requested. We zip work_items with outcomes by
-    // position (run_in_parallel preserves input order in its output).
-    let mut json_records: Vec<RepoUpdateRecord> = Vec::new();
-    let mut placements: Vec<PlacementOutput> = Vec::new();
+    // Records follow work_items order whatever order the workers finished in.
+    let mut report = empty_report(resolution);
 
-    for (item, outcome) in work_items.iter().zip(outcomes) {
-        let branch = item.entry.branch.to_string();
-        let abs_str = crate::path_spelling::WirePath::of(item.checkout.path());
-
-        let old_sha = item.old.as_ref().map(|r| r.display_str().to_owned());
-        let mut placed = None;
-        let record = match outcome {
-            Ok((new_sha, files)) => {
-                placed = files;
-                // "advanced N repo(s)" counts SHA deltas, not non-`Err`
-                // outcomes: a repo that was already at the target was
-                // visited successfully but advanced nothing.
-                let kind = if old_sha.as_deref() == Some(new_sha.as_str()) {
-                    UpdateKind::UpToDate
-                } else {
-                    updated += 1;
-                    UpdateKind::Updated
-                };
-                RepoUpdateRecord {
-                    path: item.repo_path.to_string(),
-                    absolute_path: abs_str,
-                    branch,
-                    kind,
-                    old_sha,
-                    new_sha: Some(new_sha),
-                    error: None,
+    let moved_or_created = outcomes.iter().any(|(_, _, moved)| *moved);
+    for ((step, files, _), (repo_path, entry, _vcs)) in outcomes.iter().zip(work_items.iter()) {
+        let member = workspace_root.join(repo_path.as_path());
+        let abs_path = crate::path_spelling::WirePath::of(&member);
+        match step {
+            MemberStep::Ok { pin } => {
+                succeeded += 1;
+                pins.push(MemberPin {
+                    path: repo_path.clone(),
+                    vcs_type: entry.vcs_type,
+                    outcome: *pin,
+                });
+                if let (OutputMode::Text, Some(files)) = (output, files) {
+                    outln!("rwv {verb}: {repo_path}: files {files}");
+                }
+                if output.is_json() {
+                    report.outcomes.push(MemberOutcomeOutput {
+                        path: repo_path.to_string(),
+                        absolute_path: abs_path,
+                        status: MemberOutcomeStatus::Ok,
+                        message: None,
+                        refusal: None,
+                    });
+                    if let Some(files) = files {
+                        report
+                            .placements
+                            .push(PlacementOutput::new(repo_path, &member, *files));
+                    }
                 }
             }
-            Err(msg) => {
-                errors.push(msg.clone());
-                RepoUpdateRecord {
-                    path: item.repo_path.to_string(),
-                    absolute_path: abs_str,
-                    branch,
-                    kind: UpdateKind::Failed,
-                    old_sha,
-                    new_sha: None,
-                    error: Some(msg),
+            MemberStep::Skipped => {
+                if output.is_json() {
+                    report.outcomes.push(MemberOutcomeOutput {
+                        path: repo_path.to_string(),
+                        absolute_path: abs_path,
+                        status: MemberOutcomeStatus::Skipped,
+                        message: Some(format!("skipped {}", repo_path.as_str())),
+                        refusal: None,
+                    });
                 }
             }
-        };
-
-        if let (OutputMode::Text, Some(files)) = (output, placed) {
-            outln!("  {}: files {files}", record.path);
-        }
-        let placement =
-            placed.map(|files| PlacementOutput::new(&item.repo_path, item.checkout.path(), files));
-
-        if output.is_json() {
-            json_records.push(record);
-            placements.extend(placement);
+            MemberStep::Failed(error) => {
+                let msg = format!("{error:#}");
+                let refusal = crate::refusal::kind_of(error).map(RefusalKind::token);
+                if output == OutputMode::Text {
+                    eprintln!("rwv {verb}: error: {msg}");
+                    for route in crate::refusal::routes(error) {
+                        eprintln!("rwv explain {route}");
+                    }
+                }
+                if output.is_json() {
+                    report.outcomes.push(MemberOutcomeOutput {
+                        path: repo_path.to_string(),
+                        absolute_path: abs_path,
+                        status: MemberOutcomeStatus::Failed,
+                        message: Some(msg.clone()),
+                        refusal,
+                    });
+                }
+                errors.push(msg);
+            }
         }
     }
 
-    if !errors.is_empty() && output == OutputMode::Text {
-        eprintln!("rwv update: {} repo(s) failed to update:", errors.len());
-        for msg in &errors {
-            eprintln!("  - {msg}");
+    // Summary (text mode only; JSON mode consumers check `status` fields).
+    let total = succeeded + errors.len();
+    if !errors.is_empty() {
+        if output == OutputMode::Text {
+            eprintln!(
+                "rwv {verb}: {succeeded}/{total} repo(s) succeeded, {} failed:",
+                errors.len()
+            );
+            for msg in &errors {
+                eprintln!("  - {msg}");
+            }
         }
-        crate::refuse!(
-            crate::refusal::RefusalKind::PartialRunAborted,
-            "update aborted with {} failure(s); lock not written",
-            errors.len()
-        );
+        // Under `--json` the caller prints the report before refusing, so a
+        // partial failure still leaves parseable output.
+        return Err(Box::new(MembersAborted {
+            report,
+            error: crate::refusal::refusal(
+                RefusalKind::PartialRunAborted,
+                format!(
+                    "{verb} completed with {} clone failure(s) out of {total} repo(s)",
+                    errors.len()
+                ),
+            ),
+        }));
     }
 
     if output == OutputMode::Text {
-        outln!("rwv update: advanced {updated} repo(s)");
+        outln!("rwv {verb}: done ({succeeded} repo(s) ready)");
     }
 
-    // Under JSON mode with failures: emit output first, then bail.
-    // Under text mode with failures: already bailed above.
-    // Under JSON mode without failures: fall through to lock write.
-    if output.is_json() && !errors.is_empty() {
-        let envelope = UpdateJsonOutput {
-            schema_url: UPDATE_SCHEMA_URL.to_string(),
-            repos: json_records,
-            placements,
-            resolution: Some(ctx.resolution()),
-            skipped: Vec::new(),
-        };
-        let out =
-            serde_json::to_string_pretty(&envelope).context("failed to serialize update output")?;
-        outln!("{out}");
-        crate::refuse!(
-            crate::refusal::RefusalKind::PartialRunAborted,
-            "update aborted with {} failure(s); lock not written",
-            errors.len()
-        );
-    }
-
-    // Re-snapshot the lock to capture the new tips. Delegates to the same
-    // `lock::lock` entry point so the commit/dirty handling, hook fire
-    // policy, and error surface stay consistent. Pass the same override
-    // through so the lock operates on the same project the update did.
-    //
-    // Critical: this happens AFTER the parallel worker pool has joined.
-    // The lock file is shared project-wide state; concurrent writes would
-    // race. Keeping it serial post-join is the natural fit for the
-    // existing structure.
-    //
-    // Filter scope: the `--role` / `--repo` filter narrows the *advance*
-    // loop above, not the lock snapshot. `lock::lock` walks the full
-    // manifest and records HEAD of every repo on disk: filtered repos are
-    // at their newly-advanced HEAD; unfiltered repos are at whatever HEAD
-    // they were already on. This preserves the invariant that the lock
-    // always describes the whole manifest. The filter narrows the loop,
-    // not the lock-shape — same decision as push in `src/push.rs`.
-    let pending_commit = lock::write_project_lock(ctx, dirty, commit)
-        .context("failed to write lock after update")?;
-
-    // Regeneration reads EVERY manifest member (member presence is gated on
-    // `.exists()`, and content-derived fields read member working trees), so it
-    // is only sound over a tree the run actually covered. An unfiltered update
-    // bails above if any member is missing or failed to advance; a filtered one
-    // proves nothing about the repos it skipped, so it leaves the managed files
-    // alone and `rwv doctor --fix` remains the repair path.
-    let mut authored = BTreeSet::new();
-    let skipped = if filter.is_empty() {
-        let skipped = match workweave_dir {
-            Some(dir) => crate::activate::activate_workweave_intent(project_name, dir),
-            None => crate::activate::activate_intent_with_options(project_name, ctx, opts),
-        }
-        .context("failed to regenerate integration content after update")?;
-        authored = crate::activate::owned_paths(active_root, project_name, &project.manifest);
-
-        // Report at the moment of causation. Advancing members can raise what
-        // they require above a go.work go-line (or any other
-        // `Ownership::DefaultOnly` value) the operator pinned — the MOVE is
-        // valid and stays, but this is where the operator is standing when the
-        // breach appears, so the observation is made here as well as in
-        // `rwv doctor`. Same predicate, via the same runner: no policy can
-        // diverge between the two surfacings. Not a refusal and not a gate —
-        // the findings go to stderr so `--json` stdout stays structured, and
-        // the exit status is untouched.
-        //
-        // Sharing the unfiltered branch deliberately: a filtered update leaves
-        // the managed files alone and proves nothing about the members it
-        // skipped, so it has no post-MOVE state worth reporting on either.
-        for issue in
-            crate::activate::member_incompatibilities(active_root, project_name, &project.manifest)
-        {
-            eprintln!("[warning] {}: {}", issue.source, issue.message);
-        }
-        skipped
-    } else {
-        let skipped = crate::skipped::SkippedEffect::narrowed().to_vec();
-        skipped
-            .iter()
-            .for_each(crate::skipped::SkippedEffect::report);
-        skipped
-    };
-
-    // The regenerated content and the lock that records the tips it was
-    // derived from are one change: commit them together, after authoring.
-    // When authoring was withheld, `authored` is empty and this is the
-    // lock-only commit `rwv lock --commit` makes.
-    if let Some(pending) = &pending_commit {
-        lock::commit_project_lock(pending, &authored)
-            .context("failed to commit lock after update")?;
-    }
-
-    // Emit JSON envelope after lock write (so the lock is coherent before
-    // consumers read the envelope).
-    if output.is_json() {
-        let envelope = UpdateJsonOutput {
-            schema_url: UPDATE_SCHEMA_URL.to_string(),
-            repos: json_records,
-            placements,
-            resolution: Some(ctx.resolution()),
-            skipped,
-        };
-        let out =
-            serde_json::to_string_pretty(&envelope).context("failed to serialize update output")?;
-        outln!("{out}");
-    }
-
-    Ok(())
+    Ok(MembersRun {
+        report,
+        moved_or_created,
+        pins,
+    })
 }
 
-/// Per-repo worker: `git fetch --all --tags`, resolve the conventional
-/// remote branch, then advance the checkout onto it ([`advance_checkout`]).
+/// What the clones under a run's store root are to the workspace whose lock
+/// it reads.
+#[derive(Clone, Copy)]
+pub(crate) enum CloneDuty<'a> {
+    /// They are its checkouts: aligned to its lock.
+    Checkouts,
+    /// They are the primary's canonical clones, which a workweave's worktrees
+    /// share. The workweave's pins are fetched into them and nothing they have
+    /// checked out moves; the primary's lock, not the workweave's, says where a
+    /// clone not on disk is born.
+    SharedStore { primary_lock: Option<&'a LockFile> },
+}
+
+/// Realign a clone that is already on disk to `target`.
 ///
-/// Returns `Ok(new_sha)` on success (the SHA the repo is now at) or
-/// `Err(msg)` on failure. `use_reporter` suppresses progress lines under
-/// `--json` so stdout carries only structured data.
+/// The kind of ref write this performs is decided by what HEAD is, and each
+/// kind carries its own precondition:
 ///
-/// All user-facing text output is routed through `reporter`, which prefixes
-/// `[<repo>]` and serializes writes under `-j > 1`; under `-j 1` the
-/// reporter is a no-prefix passthrough.
-#[allow(clippy::too_many_arguments)]
-fn advance_one(
+/// - **Attached to the tracking declaration's local counterpart** — a MOVE
+///   of that branch, legal when `target` is a fast-forward. A non-fast-forward
+///   (materializing an older lock, or a branch carrying commits origin has
+///   not seen) refuses, naming `--detach-checkouts`.
+/// - **Attached to anything else** — an operator's personal branch. Refuses
+///   naming both refs rather than relocating a ref it cannot relate to the
+///   layer that justifies the move. It refuses even when `target` *would* be
+///   a fast-forward: attachment is operator state, and a fast-forward of a
+///   personal bookmark still silently changes what it means.
+/// - **Detached** — a MOVE of HEAD itself, which stays detached. Subject to
+///   the mid-operation precondition inside [`Vcs::advance_detached_head`]
+///   — `Detached` alone cannot tell "rwv left this at a lock SHA" apart from
+///   "the operator is stopped mid-bisect".
+/// - **Unborn** — refuses. Both exits are unrepresentable rather than
+///   undecided: MOVE semantics on an unborn HEAD are undefined (an
+///   `UnbornRef` cannot be passed to `advance_attached_ref`), and
+///   `detach_head` takes an `AttachedRef`, so no consent token opens the
+///   detaching route either.
+///
+/// A `detach_checkouts` consent converts both refusals into the detach they
+/// name; it never turns a refused MOVE into a performed one, so the branch
+/// ref is left where it is in every case.
+///
+/// Returns the refusal or failure message when the operation must stop.
+fn realign_present_clone(
     vcs: &dyn Vcs,
     repo_path: &RepoPath,
     entry: &RepoEntry,
-    checkout: &MemberCheckout,
-    detach_checkouts: Option<DetachConsent>,
-    reporter: &Reporter<'_>,
-    use_reporter: bool,
-) -> Result<String, String> {
-    let repo_dir = checkout.path();
-    // Which checkout this member is advancing decides which ref is the legal
-    // object of the MOVE — the canonical's tracking counterpart, or the
-    // workweave's ephemeral ref.
-    let in_workweave = checkout.is_workweave_slot();
-
-    if !repo_dir.exists() {
-        // `rwv fetch` (no SOURCE) re-clones missing members of the active
-        // project — the settled repair verb for dangling references. See
-        // fetch::run_fetch_in_place.
-        return Err(format!(
-            "{}: clone missing on disk; run `rwv fetch` from the workspace \
-             to re-materialize missing manifest members, then re-run `rwv update`",
-            repo_path.as_str(),
-        ));
-    }
-
-    let branch = entry.branch.on_remote();
-
-    // git fetch the remote(s). Run from the repo dir so default remote
-    // selection applies.
-    //
-    // `--prune` removes remote-tracking refs that no longer exist on the
-    // remote. Without it, a branch deleted or renamed upstream leaves a
-    // stale `origin/<branch>` ref that `resolve_branch_on_remote` would
-    // resolve forever, silently diverging from the real upstream state
-    // (R18 GAP). Pruning is safe: remote-tracking refs are derived state;
-    // the lock pins bare SHAs, so pruned refs never lose reachable objects.
-    //
-    // Shallow-clone note: `git fetch --prune` works correctly for shallow
-    // clones (per git-fetch(1)); git does not refuse or warn on shallow
-    // repos for the `--prune` flag. No special handling needed.
-    if use_reporter {
-        reporter.out(&format!("rwv update: fetching {}", repo_path.as_str()));
-    }
-    let mut cmd = crate::git::fetch_all_prune_command(repo_dir);
-    let outcome = match run_subprocess_with_reporter(&mut cmd, reporter) {
-        Ok(o) => o,
-        Err(e) => {
-            return Err(format!(
-                "{}: git fetch failed to spawn: {e:#}",
-                repo_path.as_str()
-            ));
-        }
-    };
-    if !outcome.status.success() {
-        // Under serial mode `stderr_capture` carries git's stderr; under
-        // parallel mode the stderr was already streamed through the
-        // reporter, so the captured string is empty and we just say
-        // "failed". The streamed lines remain on the terminal for the
-        // user to read.
-        let suffix = if outcome.stderr_capture.is_empty() {
-            "failed".to_string()
-        } else {
-            format!("failed: {}", outcome.stderr_capture.trim())
-        };
-        return Err(format!("{}: git fetch {suffix}", repo_path.as_str()));
-    }
-
-    // Resolve the branch HEAD on the conventional remote. The VCS layer
-    // owns the naming policy, so this is one call rather than a fallback
-    // chain. No bare-branch fallback — missing-remote produces a clear
-    // error rather than silently resolving to the local branch tip.
-    //
-    // When `--prune` above removed a stale remote-tracking ref for
-    // `branch`, this resolution will now correctly fail rather than
-    // resolving against a ghost ref. The error below names the state and
-    // the two actionable exits so the operator knows what to do.
-    let resolved = match vcs.resolve_branch_on_remote(repo_dir, &branch) {
-        Ok(r) => r,
-        Err(_) => {
-            return Err(format!(
-                "{repo}: branch '{branch}' does not resolve on the remote \
-                 — renamed or deleted upstream, or `branch` was never a \
-                 branch (it tracks a branch only; it cannot pin a tag or \
-                 SHA). To fix: update rwv.toml's `branch` field to the \
-                 current branch name.",
-                repo = repo_path.as_str(),
-                branch = branch.branch(),
-            ));
-        }
-    };
-
-    advance_checkout(
-        vcs,
-        repo_path,
-        entry,
-        repo_dir,
-        in_workweave,
-        &resolved,
-        detach_checkouts,
-    )?;
-
-    // Capture the new SHA after checkout for JSON reporting.
-    let new_sha = vcs
-        .head_revision(repo_dir)
-        .ok()
-        .map(|r| r.display_str().to_owned())
-        .unwrap_or_else(|| resolved.to_string());
-
-    Ok(new_sha)
-}
-
-/// Advance one checkout onto `target`, the tracking branch's tip on the
-/// conventional remote.
-///
-/// Which ref is the legal object of the move depends on the checkout:
-///
-/// - **Canonical, attached to the tracking declaration's local counterpart**
-///   — fast-forward that branch. A non-fast-forward refuses, naming the two
-///   exits: reconcile the branch with its tracking tip yourself (ordinary
-///   `git rebase` / `git merge`) and re-run, or `--detach-checkouts` to
-///   materialize the tip without moving your branch.
-/// - **Canonical, attached to anything else** — refuses naming both refs.
-///   `update`'s justification comes from the tracking declaration, so its
-///   object must too; it does not relocate an operator's personal branch, not
-///   even by a fast-forward, because attachment is operator state.
-/// - **Inside a workweave** — advances the ephemeral ref the checkout is on
-///   when `target` is a fast-forward, and otherwise points at `rwv sync`.
-///   Where the canonical arm offers `--detach-checkouts`, this one does not:
-///   `rwv sync` is the verb that reconciles a workweave with its parent, and
-///   detaching the ephemeral ref would report "advanced 1 repo(s)" for a
-///   detach at the identical SHA. The relatedness guard is deliberately
-///   *not* applied here: whether an operator-created branch inside a
-///   workweave is legal at all is undecided, so this path does not decide it.
-/// - **Detached** — a MOVE of HEAD itself, which stays detached; the
-///   mid-operation precondition inside [`Vcs::advance_detached_head`]
-///   refuses when the repo is stopped mid-rebase, mid-merge or mid-bisect.
-/// - **Unborn** — refuses. As in `fetch`, both exits are unrepresentable
-///   rather than undecided: an `UnbornRef` cannot be passed to
-///   `advance_attached_ref`, and `detach_head` takes an `AttachedRef`.
-fn advance_checkout(
-    vcs: &dyn Vcs,
-    repo_path: &RepoPath,
-    entry: &RepoEntry,
-    repo_dir: &Path,
-    in_workweave: bool,
+    dest: &Path,
     target: &ResolvedRevisionId,
     detach_checkouts: Option<DetachConsent>,
 ) -> Result<(), String> {
     let describe = |e: VcsError| format!("{}: {e:#}", repo_path.as_str());
 
-    let attached = match vcs.head_attachment(repo_dir).map_err(describe)? {
+    let attached = match vcs.head_attachment(dest).map_err(describe)? {
         HeadAttachment::Detached(was) => {
             if was.at() == target {
+                // The absorbed no-op: a clone already at the pin is not
+                // realigned at all, so nothing is asked of the operator and
+                // nothing is written.
                 return Ok(());
             }
             return vcs.advance_detached_head(&was, target).map_err(describe);
@@ -619,38 +783,14 @@ fn advance_checkout(
         HeadAttachment::Unborn(u) => {
             return Err(format!(
                 "{}: branch '{u}' has no commits yet — rwv update has no way to \
-                 advance it to {}. Make an initial commit, or check out a branch \
-                 that has one, then re-run.",
+                 place {} on an unborn branch. Make an initial commit, or check \
+                 out a branch that has one, then re-run.",
                 repo_path.as_str(),
                 target.display_str(),
             ));
         }
         HeadAttachment::Attached(a) => a,
     };
-
-    let head = vcs.head_revision(repo_dir).map_err(describe)?;
-    let is_fast_forward =
-        &head == target || vcs.is_ancestor(repo_dir, &head, target).map_err(describe)?;
-
-    if in_workweave {
-        if &head == target {
-            return Ok(());
-        }
-        if is_fast_forward {
-            return vcs
-                .advance_attached_ref(&attached, target)
-                .map_err(describe);
-        }
-        return Err(format!(
-            "{}: advancing '{attached}' to {} is not a fast-forward — this \
-             workweave's checkout has diverged from the tip {} is on.\n  \
-             Run `rwv sync` to reconcile the workweave with its parent, then \
-             re-run `rwv update`.",
-            repo_path.as_str(),
-            target.display_str(),
-            vcs.conventional_remote_name(),
-        ));
-    }
 
     let counterpart = entry.branch.local_counterpart();
 
@@ -660,7 +800,7 @@ fn advance_checkout(
                 "{}: is on branch '{attached}', not the local counterpart \
                  ('{counterpart}') of the branch the manifest declares — rwv \
                  update moves only that branch, so it will not relocate one it \
-                 cannot relate to the tracking declaration.\n  \
+                 cannot relate to the lock.\n  \
                  Switch to '{counterpart}' and re-run, or re-run with \
                  --detach-checkouts to materialize {} on a detached HEAD \
                  (your branch is not moved).",
@@ -673,28 +813,253 @@ fn advance_checkout(
             .map_err(describe);
     }
 
+    let head = vcs.head_revision(dest).map_err(describe)?;
     if &head == target {
         return Ok(());
     }
-    if is_fast_forward {
+    // Classify before acting rather than reading a failure back out of git:
+    // `merge --ff-only` also fails on a dirty tree, and the two need
+    // different messages.
+    if vcs.is_ancestor(dest, &head, target).map_err(describe)? {
         return vcs
             .advance_attached_ref(&attached, target)
             .map_err(describe);
     }
     let Some(consent) = detach_checkouts else {
         return Err(format!(
-            "{}: advancing '{attached}' to {} is not a fast-forward — the branch \
-             carries commits '{declared}' on the remote does not have.\n  \
-             Reconcile '{attached}' with its tracking tip yourself (ordinary \
-             `git rebase` / `git merge`) and re-run, or re-run with \
-             --detach-checkouts to materialize {} on a detached HEAD (the branch \
-             ref is not moved).",
+            "{}: aligning '{attached}' to {} is not a fast-forward — the pin is \
+             not a descendant of the branch tip, which is what materializing an \
+             older lock, or a branch carrying commits {} has not seen, looks \
+             like.\n  \
+             Reconcile '{attached}' with the pin yourself (ordinary `git rebase` \
+             / `git merge`) and re-run, or re-run with --detach-checkouts to \
+             materialize {} on a detached HEAD (the branch ref is not moved).",
             repo_path.as_str(),
             target.display_str(),
+            vcs.conventional_remote_name(),
             target.display_str(),
-            declared = entry.branch,
         ));
     };
     vcs.detach_head(&attached, target, consent)
         .map_err(describe)
+}
+
+/// Per-repo worker of [`bring_members`]: one iteration of its loop body.
+///
+/// Returns [`MemberStep`]; the caller aggregates failures.
+///
+/// When `output` is a JSON mode, progress lines are emitted to stderr (via
+/// `reporter.err`) rather than stdout, so that stdout carries only
+/// machine-readable JSON output.
+#[allow(clippy::too_many_arguments)]
+fn bring_one(
+    verb: &'static str,
+    vcs: &dyn Vcs,
+    repo_path: &RepoPath,
+    entry: &RepoEntry,
+    workspace_root: &Path,
+    existing_lock: Option<&LockFile>,
+    duty: CloneDuty<'_>,
+    selection: &MemberSelection,
+    detach_checkouts: Option<DetachConsent>,
+    reporter: &Reporter<'_>,
+    output: OutputMode,
+) -> MemberStep {
+    // Helper: route progress to stdout (text mode) or stderr (JSON mode).
+    let emit = |msg: &str| {
+        if output.is_json() {
+            reporter.err(msg);
+        } else {
+            reporter.out(msg);
+        }
+    };
+
+    if selection.leaves_out(entry.role) {
+        emit(&format!(
+            "rwv {verb}: skipping {} (role: reference)",
+            repo_path.as_str()
+        ));
+        return MemberStep::Skipped;
+    }
+
+    let dest: PathBuf = workspace_root.join(repo_path.as_path());
+
+    let lock_entry = existing_lock.and_then(|l| l.get_entry(repo_path).cloned());
+
+    if let CloneDuty::SharedStore { primary_lock } = duty {
+        if !dest.exists() {
+            let birth = primary_lock
+                .and_then(|l| l.get_entry(repo_path))
+                .or(lock_entry.as_ref());
+            if let Err(error) = clone_member(verb, vcs, repo_path, entry, &dest, birth, &emit) {
+                return MemberStep::Failed(error);
+            }
+        }
+        return match lock_entry {
+            Some(pin) => make_pin_local(verb, vcs, repo_path, &dest, &pin.version, &emit),
+            None => MemberStep::Ok {
+                pin: PinOutcome::None,
+            },
+        };
+    }
+
+    if dest.exists() {
+        let Some(lock_entry) = lock_entry else {
+            emit(&format!(
+                "rwv {verb}: leaving {} where it is: the lock has no entry for it",
+                repo_path.as_str()
+            ));
+            return MemberStep::Ok {
+                pin: PinOutcome::None,
+            };
+        };
+        emit(&format!(
+            "rwv {verb}: aligning {} to {}",
+            repo_path.as_str(),
+            lock_entry.version,
+        ));
+        let resolved = match vcs.resolve_revision(&dest, lock_entry.version.as_str()) {
+            Ok(r) => r,
+            Err(e) => {
+                return MemberStep::Failed(anyhow::Error::from(e).context(format!(
+                    "{}: failed to resolve {}",
+                    repo_path.as_str(),
+                    lock_entry.version,
+                )));
+            }
+        };
+        if let Err(msg) =
+            realign_present_clone(vcs, repo_path, entry, &dest, &resolved, detach_checkouts)
+        {
+            return MemberStep::Failed(anyhow::anyhow!(msg));
+        }
+        return MemberStep::Ok {
+            pin: PinOutcome::Reached,
+        };
+    }
+
+    match clone_member(
+        verb,
+        vcs,
+        repo_path,
+        entry,
+        &dest,
+        lock_entry.as_ref(),
+        &emit,
+    ) {
+        Ok(pin) => MemberStep::Ok { pin },
+        Err(error) => MemberStep::Failed(error),
+    }
+}
+
+/// Clone the member at `repo_path` into `dest`: born attached to the local
+/// counterpart of the branch the manifest declares, at `birth`'s pin where the
+/// clone holds it, else at that branch's tip on the remote.
+fn clone_member(
+    verb: &'static str,
+    vcs: &dyn Vcs,
+    repo_path: &RepoPath,
+    entry: &RepoEntry,
+    dest: &Path,
+    birth: Option<&LockEntry>,
+    emit: &dyn Fn(&str),
+) -> anyhow::Result<PinOutcome> {
+    let clone_url = registry::resolve_to_clone_info(&entry.url)
+        .with_context(|| repo_path.to_string())?
+        .url;
+
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "{}: failed to create directory {}",
+                repo_path.as_str(),
+                parent.display()
+            )
+        })?;
+    }
+
+    emit(&format!(
+        "rwv {verb}: cloning {} from {} (role: {})",
+        repo_path.as_str(),
+        clone_url,
+        entry.role
+    ));
+
+    // A lock-pinned clone is born ATTACHED AT THE PIN — one operation, not a
+    // clone followed by an align. Cloning to the remote tip and then moving
+    // to the pin would leave the member detached, which is not a state a
+    // clone is entitled to put an operator's checkout in.
+    let counterpart = entry.branch.local_counterpart();
+    let born = vcs
+        .clone_attached_at(
+            &clone_url,
+            dest,
+            &counterpart,
+            &entry.branch.on_remote(),
+            birth.map(|pin| &pin.version),
+        )
+        .with_context(|| {
+            format!(
+                "{}: failed to materialize {} on branch '{}'",
+                repo_path.as_str(),
+                clone_url,
+                entry.branch,
+            )
+        })?;
+    match (born.pin, birth) {
+        (PinOutcome::Reached, Some(pin)) => emit(&format!(
+            "rwv {verb}: cloned {} onto {counterpart} at {}",
+            repo_path.as_str(),
+            pin.version,
+        )),
+        (PinOutcome::Unreachable, Some(pin)) => emit(&format!(
+            "rwv {verb}: cloned {} onto {counterpart} at the branch tip: the clone holds no \
+             {}",
+            repo_path.as_str(),
+            pin.version,
+        )),
+        _ => emit(&format!(
+            "rwv {verb}: cloned {} onto {counterpart} at the branch tip: the lock has no entry \
+             for it",
+            repo_path.as_str(),
+        )),
+    }
+    Ok(born.pin)
+}
+
+/// Make `pin` resolvable in the canonical clone at `store`, fetching from its
+/// remote only when it is not already there. Nothing checked out moves.
+fn make_pin_local(
+    verb: &'static str,
+    vcs: &dyn Vcs,
+    repo_path: &RepoPath,
+    store: &Path,
+    pin: &RawRevisionId,
+    emit: &dyn Fn(&str),
+) -> MemberStep {
+    let reached = MemberStep::Ok {
+        pin: PinOutcome::Reached,
+    };
+    if vcs.resolve_revision(store, pin.as_str()).is_ok() {
+        return reached;
+    }
+    emit(&format!(
+        "rwv {verb}: fetching {pin} into the canonical clone of {}",
+        repo_path.as_str()
+    ));
+    if let Err(e) = vcs.fetch_remote(store) {
+        return MemberStep::Failed(anyhow::Error::from(e).context(format!(
+            "{}: failed to fetch {} into the canonical clone",
+            repo_path.as_str(),
+            vcs.conventional_remote_name(),
+        )));
+    }
+    match vcs.resolve_revision(store, pin.as_str()) {
+        Ok(_) => reached,
+        Err(e) => MemberStep::Failed(anyhow::Error::from(e).context(format!(
+            "{}: {pin} is not on {} either",
+            repo_path.as_str(),
+            vcs.conventional_remote_name(),
+        ))),
+    }
 }

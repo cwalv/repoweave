@@ -1,4 +1,4 @@
-//! Per-repo parallelism for network-bound verbs (`rwv fetch`, `rwv update`).
+//! Per-repo parallelism for network-bound verbs (`rwv fetch`, `rwv update`, `rwv update --remote`, `rwv clone`).
 //!
 //! This module owns the small set of pieces those verbs need to fan out
 //! their per-repo loop across worker threads:

@@ -353,10 +353,10 @@ carries git's vocabulary across the seam:
 
   A hand-written census of these mentions undercounts in one shape: it
   records the sites someone went looking for, and misses the ones in
-  messages whose subject is something else — `rwv fetch`'s
+  messages whose subject is something else — `rwv update`'s
   non-fast-forward refusal ("a branch carrying commits origin has not
-  seen") and `rwv update`'s ("diverged from the tip origin is on") among
-  them. Those name the remote through `Vcs::conventional_remote_name`.
+  seen") and `rwv update --remote`'s ("diverged from the tip origin is on")
+  among them. Those name the remote through `Vcs::conventional_remote_name`.
 
   The hints telling the operator that `origin/HEAD` is unset belong to
   the third item in this list rather than this one: they spell git

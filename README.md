@@ -4,7 +4,7 @@
 
 If your project spans more than one repo — or even a single `owned` member repo paired with a `projects/<name>/` coordination envelope, read-only `reference` repos for study, and isolated parallel agent workweaves — you've probably felt at least one of these: a setup README that drifts away from what people actually clone; cross-cutting scripts, manifests, and decision records with no obvious home; a publish-and-reinstall cycle every time a shared library changes; no way to say *exactly* this set of revisions was running in production on a given day; two coding agents colliding in the same checkout or explaining the repository topology every new session.
 
-repoweave is a coordination layer that addresses those without merging the repos. A committable manifest lists which repos belong to the project — whether ten polyrepo services or one `owned` member repo alongside `reference` dependencies. A single lock pins every revision for reproducibility. One command (`rwv fetch <url>`) clones the project and every repo it lists. Workweaves give you isolated parallel cross-repo work — or an agent sandbox with transactional landing (`rwv sync-to --retire`) and one-command rollback (`rwv abort`) — without disturbing the primary. The repos themselves stay independent.
+repoweave is a coordination layer that addresses those without merging the repos. A committable manifest lists which repos belong to the project — whether ten polyrepo services or one `owned` member repo alongside `reference` dependencies. A single lock pins every revision for reproducibility. One command (`rwv clone <url>`) clones the project and every repo it lists. Workweaves give you isolated parallel cross-repo work — or an agent sandbox with transactional landing (`rwv sync-to --retire`) and one-command rollback (`rwv abort`) — without disturbing the primary. The repos themselves stay independent.
 
 **Start where you are:** [Shared workspaces for polyrepo teams](docs/explanation/lenses/workspace.md) · [Monorepo speed without migration](docs/explanation/lenses/monorepo.md) · [Parallel sandboxes for agents](docs/explanation/lenses/agent.md)
 
@@ -13,8 +13,8 @@ repoweave is a coordination layer that addresses those without merging the repos
 A monorepo eliminates most of the coordination pain — at the cost of vendoring every repo into one tree and giving up per-repo ownership. repoweave gives you the coordination wins while leaving each repo sovereign. ([Alternatives comparison](docs/comparison.md) — when git submodules, gita, or a monorepo actually wins.)
 
 - **A committable manifest and lock.** `projects/<name>/rwv.toml` lists the repos; `rwv.lock` pins every revision. `sha256sum rwv.lock` is the multi-repo equivalent of `git rev-parse HEAD`.
-- **One command reproduces the workspace.** `rwv fetch <url>` clones the project and every repo it lists, surfaces ecosystem workspace files at the weave root where they apply, and runs install commands. For toolchain pins, env activation, or full OS-level reproduction, drop a `.mise.toml` / `.envrc` / `devcontainer.json` into the project repo (they're cross-cutting artifacts) — `rwv fetch` carries them with everything else. See [adjacent-tools](docs/adjacent-tools.md).
-- **A dedicated `projects/<name>/` envelope for intent and cross-cutting artifacts.** Keeping `rwv.toml`, `rwv.lock`, deliberative design records, issue trackers, `CLAUDE.md`, operational scripts, k8s manifests, devcontainer configs, `.mise.toml` toolchain pins, and Nix flakes in `projects/<name>/` gives them versioned correspondence with your code without polluting any product repository's commit history or public landing page — and they come along on every `rwv fetch`.
+- **One command reproduces the workspace.** `rwv clone <url>` clones the project and every repo it lists at its pinned commit, surfaces ecosystem workspace files at the weave root where they apply, and runs install commands. For toolchain pins, env activation, or full OS-level reproduction, drop a `.mise.toml` / `.envrc` / `devcontainer.json` into the project repo (they're cross-cutting artifacts) — `rwv clone` carries them with everything else. See [adjacent-tools](docs/adjacent-tools.md).
+- **A dedicated `projects/<name>/` envelope for intent and cross-cutting artifacts.** Keeping `rwv.toml`, `rwv.lock`, deliberative design records, issue trackers, `CLAUDE.md`, operational scripts, k8s manifests, devcontainer configs, `.mise.toml` toolchain pins, and Nix flakes in `projects/<name>/` gives them versioned correspondence with your code without polluting any product repository's commit history or public landing page — and they come along on every `rwv clone`.
 - **Isolated parallel work via workweaves.** `git worktree` extended across N repos, with per-workweave `node_modules` / `.venv` / `target` and automatic copy-on-write file sharing where the filesystem supports reflinks. Use for feature branches, PR review, or agent sandboxes — the primary weave stays undisturbed.
 - **A bounded surface for automation.** `rwv prime` advertises the workspace; `rwv explain <verb>` returns a markdown bundle with the verb's JSON Schema embedded; `rwv setup claude` wires `SessionStart`/`PreCompact` context hooks and `WorktreeCreate`/`WorktreeRemove` lifecycle hooks so `claude --worktree` provisions a full multi-repo workweave; roles surface repo change-resistance as machine-readable metadata (`reference` repos are physically read-only — their tracked files carry no write bits; `dependency` repos are writable but conventionally off-limits and excluded from `rwv push` by default). Together they give an agent harness everything it needs to drive the workspace without scraping help text.
 - **Built-in failure recovery and drift repair.** Every `rwv sync` and `rwv sync-to` records savepoint refs under `refs/rwv/pre-op/<id>` so `rwv abort` can restore every touched repo to its exact pre-operation state; `rwv doctor` detects and repairs workspace drift (`--fix`); destructive overrides require explicit, narrowly scoped flags (`--discard-local-commits`, `--allow-stale-lock`).
@@ -72,10 +72,10 @@ rm ~/.local/bin/rwv ~/.local/bin/rwv-each
 
 ```bash
 mkdir my-workspace && cd my-workspace
-rwv fetch chatly/web-app          # clone project + all its repos, activate, install
+rwv clone chatly/web-app          # clone project + all its repos at their pins, activate, install
 ```
 
-That single command clones the project repo, reads its `rwv.toml` manifest, clones every listed repo to its canonical path (`github/chatly/server/`, etc.), activates the project (surfacing ecosystem workspace files like `package.json`, `go.work`, `Cargo.toml` at the weave root via symlinks), and runs install hooks. You are ready to work.
+That single command clones the project repo, reads its `rwv.toml` manifest, clones every listed repo to its canonical path (`github/chatly/server/`, etc.) at the commit `rwv.lock` pins, activates the project (surfacing ecosystem workspace files like `package.json`, `go.work`, `Cargo.toml` at the weave root via symlinks), and runs install hooks. You are ready to work.
 
 ```bash
 # edit across repos freely — cross-package imports resolve locally
@@ -115,7 +115,7 @@ rwv sync-to --retire                     # rebase onto parent, auto-relock, fast
 | `-C <path>`, `--cwd <path>` | Global: resolve the workspace as if invoked from `<path>` (precedes the subcommand) |
 | `-w <project>--<name>`, `--workweave <project>--<name>` | Global: address a workweave by name from anywhere (precedes the subcommand) |
 | `rwv` | Show current context (weave, project, workweave, repos) |
-| `rwv fetch <source>` | Clone a project and all its repos; align repos to `rwv.lock`; activate and install. `--frozen` errors if the lock is incomplete (CI). With no `<source>`, re-clone missing members of the active project (`--project` names another); a weave with exactly one project and none active gets it activated |
+| `rwv clone <source>` | Clone a project and each of its repos at the commit `rwv.lock` pins; activate and install. Writes no lock. A repo the lock has no entry for, or pins at an unreachable commit, is cloned at its branch tip and listed, and the clone exits `3` — the check a CI job runs for a reproducible build |
 | `rwv init <project>` | Create a new project with empty `rwv.toml`. Optional `--provider registry/owner` sets up the remote |
 | `rwv activate <project>` | Set the active project — update `.rwv-active`, verify integration files, surface symlinks at the weave root, and run install hooks (`--no-materialize` to skip hooks) |
 | `rwv materialize` | Run integration install hooks, clean up disabled-integration artifacts, and settle drifted attested files (`--regenerate-drifted`, `--adopt-drifted`, `--remove-undeclared-links`) without switching projects |
@@ -132,7 +132,10 @@ rwv sync-to --retire                     # rebase onto parent, auto-relock, fast
 | `rwv abort` | Roll an in-flight `sync` or `sync-to` back to its savepoints in every workspace it touched; run it from any of them |
 | `rwv backup <list\|drop\|prune>` | List the backups rwv keeps before a step that would leave a commit or an edit unpreserved (`workweave delete --discard-*`, `abort --abandon-foreign-tip`), drop them by name, or prune those a branch already reaches. A drop that would leave a commit some project's lock pins unreachable is refused |
 | `rwv push` | Coordinated cross-repo push: member repos first, then project repo. `--dry-run` to preview; `--force` for force-push consent; `--role`/`--repo` selectors to limit scope |
-| `rwv update` | Advance each repo to its branch HEAD and re-snapshot `rwv.lock` (network bump; analogous to `cargo update`). `--commit` commits the lock and the regenerated files, with `rwv.toml` when it has uncommitted changes |
+| `rwv fetch` | Pruning fetch of every remote of the project repo and of each member present on disk. Moves no branch, checkout, or lock; reports which remote-tracking branches moved |
+| `rwv pull` | Fetch, fast-forward the project branch to its upstream, then `rwv update`. Reports the members the pulled lock re-pinned |
+| `rwv update` | Clone the repos missing on disk and align each present repo to the commit `rwv.lock` pins. Never advances a pin or writes the lock. `--project` names another project; a weave with exactly one project and none active gets it activated |
+| `rwv update --remote` | Advance each repo to its branch HEAD and re-snapshot `rwv.lock` (network bump; analogous to `cargo update`). `--commit` commits the lock and the regenerated files, with `rwv.toml` when it has uncommitted changes |
 | `rwv workweave create <name>` | Create an isolated working copy (worktrees on ephemeral branches) and run its install hooks (`--no-materialize` skips them). `--dir <path>` places it at exactly that path; `--basedir <path>` places it under that directory for one run |
 | `rwv workweave set-default-create-basedir <path>` | Set the directory new workweaves of the project are created under by default |
 | `rwv workweave delete <name>` | Delete a workweave (remove worktrees, clean up ephemeral branches) |
@@ -201,7 +204,7 @@ Multiple agents can work in parallel — one workweave each. The first landing i
 
 Full docs at **[cwalv.github.io/repoweave](https://cwalv.github.io/repoweave/)**, or browse the source:
 
-- **New here?** [tutorial.md](docs/tutorial.md) — fetch a project, make changes, lock, workweave
+- **New here?** [tutorial.md](docs/tutorial.md) — clone a project, make changes, lock, workweave
 - **Task-shaped recipes:** [how-to/index.md](docs/how-to/index.md) — add a repo, create a workweave, push a cross-repo feature, hand off to an agent, release a package
 - **Command & format lookup:** [reference/cli.md](docs/reference/cli.md) — all verbs, flags, file formats, roles, glossary, and integrations
 - **The "why":** [explanation/lenses/workspace.md](docs/explanation/lenses/workspace.md) — workspace, monorepo, and agent lenses; plus [explanation/index.md](docs/explanation/index.md) for joints and cross-cutting concepts

@@ -110,7 +110,7 @@ fn leaving_rwv_by_the_documented_steps_leaves_only_the_two_named_traces() {
     )
     .unwrap();
     std::fs::write(ws.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
-    succeed(&ws, &["fetch"]);
+    succeed(&ws, &["update"]);
     succeed(&ws, &["lock"]);
     common::git_in(&project, &["add", "-A"]);
     common::git_in(&project, &["commit", "-m", "initial"]);

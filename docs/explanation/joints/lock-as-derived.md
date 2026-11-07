@@ -44,7 +44,7 @@ previous file is replaced by the current snapshot.
 Integration install hooks belong to `rwv activate` and `rwv materialize`,
 which prepare the workspace on disk. `rwv lock` is a pure git snapshot.
 
-The other "advancement" verbs — `rwv update` and `rwv sync` — emit
+The other "advancement" verbs — `rwv update --remote` and `rwv sync` — emit
 fresh locks internally as part of their own work, but the locks they
 emit are still derived: each one is the output of running the same
 snapshot operation against the manifest tips at the moment of capture.
@@ -90,7 +90,7 @@ The "lock as derived" framing collapses a class of questions:
 
 The lock is committed alongside the project-repo state for one purpose:
 reproducibility. A collaborator who checks out the project repo at any
-commit and runs `rwv fetch` gets exactly the manifest-tip set the lock
+commit and runs `rwv update` gets exactly the manifest-tip set the lock
 records. The lock is the *artifact*; manifest commits are the *source*.
 
 ## What the lock contains

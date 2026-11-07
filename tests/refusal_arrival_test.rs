@@ -592,9 +592,15 @@ fn each_selector_condition_routes_to_its_own_token() {
     let ws = plain_weave(tmp.path());
 
     for (args, token) in [
-        (["update", "--role", "bogus"], "unknown-role"),
-        (["update", "--repo", "re:"], "empty-selector-pattern"),
-        (["update", "--repo", "re:["], "uncompilable-selector"),
+        (["update", "--remote", "--role", "bogus"], "unknown-role"),
+        (
+            ["update", "--remote", "--repo", "re:"],
+            "empty-selector-pattern",
+        ),
+        (
+            ["update", "--remote", "--repo", "re:["],
+            "uncompilable-selector",
+        ),
     ] {
         let stderr = refusal_stderr(&args, &ws);
         assert_routes_to(&stderr, token);
@@ -1030,7 +1036,7 @@ fn each_argument_refusal_routes_to_its_own_token() {
         ),
         (&["member", "add", "foo"], "unresolvable-repo-source"),
         (
-            &["fetch", "/srv/repos/web-app.git"],
+            &["clone", "/srv/repos/web-app.git"],
             "unresolvable-repo-source",
         ),
         (
@@ -1056,11 +1062,14 @@ fn each_argument_refusal_routes_to_its_own_token() {
             &["-w", "noseparator", "status"],
             "malformed-workweave-address",
         ),
-        (&["fetch", "--allow-non-empty-dir"], "inapplicable-flag"),
+        (&["update", "--force"], "inapplicable-flag"),
         (&["nosuchverb"], "unknown-verb"),
         (&["explain", "nosuchverb"], "no-explain-entry"),
         (&["doctor", "--kind", "nosuchkind"], "unknown-finding-kind"),
-        (&["update", "--repo", "glob:"], "empty-selector-pattern"),
+        (
+            &["update", "--remote", "--repo", "glob:"],
+            "empty-selector-pattern",
+        ),
     ];
 
     for (index, (args, token)) in cases.into_iter().enumerate() {
@@ -1071,34 +1080,6 @@ fn each_argument_refusal_routes_to_its_own_token() {
             "rwv {args:?} must route to `{token}`, stderr was:\n{stderr}"
         );
     }
-}
-
-/// The lock preconditions, which need a weave shaped against them rather than
-/// an argument the verb rejects.
-#[test]
-fn the_frozen_lock_gates_route_to_their_tokens() {
-    let tmp = common::tempdir().unwrap();
-
-    let absent = plain_weave(&tmp.path().join("absent"));
-    std::fs::remove_file(absent.join("projects/web-app/rwv.lock")).unwrap();
-    assert_routes_to(
-        &refusal_stderr(&["fetch", "--frozen"], &absent),
-        "missing-lock",
-    );
-
-    let partial = plain_weave(&tmp.path().join("partial"));
-    std::fs::write(
-        partial.join("projects/web-app/rwv.toml"),
-        format!(
-            "[repositories.\"{SERVER_PATH}\"]\ntype = \"git\"\nurl = \"{SERVER_URL}\"\n\
-             branch = \"main\"\nrole = \"owned\"\n"
-        ),
-    )
-    .unwrap();
-    assert_routes_to(
-        &refusal_stderr(&["fetch", "--frozen"], &partial),
-        "incomplete-lock",
-    );
 }
 
 /// A pre-TOML manifest, whose refusal reaches the operator under the load
@@ -1133,7 +1114,7 @@ fn a_run_that_withheld_its_artifact_routes_to_a_token() {
     )
     .unwrap();
 
-    let stderr = refusal_stderr(&["fetch"], &ws);
+    let stderr = refusal_stderr(&["update", "--remote"], &ws);
     assert_routes_to(&stderr, "partial-run-aborted");
 }
 

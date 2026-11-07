@@ -75,7 +75,7 @@ target must be in a state to receive it. Before step 1 begins, `sync-to`
 refuses when any target repo (manifest or project) has uncommitted tracked
 changes step 3 would fast-forward over, or is on a **detached HEAD** — there
 is no branch there to advance, so the landing would be recorded nowhere.
-`rwv fetch --detach-checkouts` and `rwv update --detach-checkouts` leave repos detached; check out the receiving branch in the target and re-run.
+`rwv update --detach-checkouts`, `rwv update --remote --detach-checkouts` and `rwv pull --detach-checkouts` leave repos detached; check out the receiving branch in the target and re-run.
 
 Untracked files in the target are not scanned by this preflight — a
 fast-forward only overwrites a path the incoming commits write, so an
@@ -120,7 +120,7 @@ relock → advance-target → retire); the target workspace holds a thin lease
 (`--allow-stale-lock`, `--discard-local-commits`) are recorded in the
 `overrides` field so `--continue` resumes with the same consents.
 
-If another verb (sync, update, `lock --commit`, workweave delete, retire) hits
+If another verb (sync, `update --remote`, `lock --commit`, workweave delete, retire) hits
 a workspace that is already involved in an in-flight op, it refuses immediately,
 naming the op, its age, the phase it stalled in, and the two exits:
 `rwv sync-to --continue` from the owning workspace, or `rwv abort` to roll back.
@@ -353,6 +353,13 @@ Schema:
           ]
         },
         {
+          "description": "A branch and the branch it takes in from or publishes to.",
+          "type": "string",
+          "enum": [
+            "push-branch"
+          ]
+        },
+        {
           "description": "A name the verb was given is unusable.",
           "type": "string",
           "enum": [
@@ -374,7 +381,7 @@ Schema:
           ]
         },
         {
-          "description": "A commit a live lock pins that a verb would leave nothing reaching.",
+          "description": "The commit a lock pins for a member, and whether a ref reaches it.",
           "type": "string",
           "enum": [
             "pin"

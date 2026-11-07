@@ -332,7 +332,7 @@ fn locked_reports_an_absent_lock_entry_the_pipeline_stays_quiet_about() {
         "`--locked` must name the condition for the absent repo; got: {absent_line:?}"
     );
     assert!(
-        absent_line.contains("run `rwv fetch` with no source"),
+        absent_line.contains("run `rwv update` to materialize it"),
         "`--locked` must name the verb that materializes the repo; got: {absent_line:?}"
     );
 

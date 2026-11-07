@@ -120,7 +120,7 @@ pub fn render_context(ctx: &WorkspaceContext) -> String {
     out.push_str("| `rwv member remove PATH` | Remove a repo from the active project |\n");
     out.push_str("| `rwv lock` | Snapshot repo versions to rwv.lock |\n");
     out.push_str("| `rwv doctor` | Run convention enforcement |\n");
-    out.push_str("| `rwv fetch SOURCE` | Clone a project and its repos |\n");
+    out.push_str("| `rwv clone SOURCE` | Clone a project and its repos |\n");
 
     // -- Directory layout -------------------------------------------------------
     render_directory_layout(&mut out, ctx, project);

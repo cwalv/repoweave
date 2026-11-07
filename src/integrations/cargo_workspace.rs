@@ -886,7 +886,7 @@ impl Integration for CargoWorkspace {
                 "[warning] cargo-workspace: skipping the cargo lockfile step — {} \
                  workspace member(s) named by {} are not on disk: {}. This is the \
                  expected state directly after `rwv init --adopt`, which clones only \
-                 the project repo. Run `rwv fetch` to clone them, then `rwv activate` \
+                 the project repo. Run `rwv update` to clone them, then `rwv activate` \
                  to generate the lockfile.",
                 unfetched.len(),
                 managed.display(),

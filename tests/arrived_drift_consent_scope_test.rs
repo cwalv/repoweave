@@ -480,7 +480,7 @@ fn update_withholds_the_generator_over_unsettled_drift() {
     let f = fixture();
     materialized_then_pinned_back(&f);
 
-    let run = f.rwv(&["update"]);
+    let run = f.rwv(&["update", "--remote"]);
     assert!(run.ok, "the lock re-snapshot still lands:\n{}", run.all);
     assert!(
         f.drift_is_unaccepted(),

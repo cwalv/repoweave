@@ -804,7 +804,7 @@ fn mid_op_update_refuses_with_in_flight_message() {
     plant_owner_record(&ww.root, "sync-to", "replay", &ww.root, &primary.root);
 
     let assertion = rwv()
-        .args(["update"])
+        .args(["update", "--remote"])
         .current_dir(&ww.root)
         .assert()
         .failure();
@@ -962,7 +962,7 @@ fn mid_op_lease_side_verb_refuses_and_names_owner() {
     // From the LEASED workspace (primary), `rwv update` must refuse, following
     // the lease pointer to the owner record for the rich message.
     let assertion = rwv()
-        .args(["update"])
+        .args(["update", "--remote"])
         .current_dir(&primary.root)
         .assert()
         .failure();

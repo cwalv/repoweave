@@ -92,12 +92,12 @@ impl From<&op_state::ResolvedOwner> for OpStatus {
 ///
 /// - `Missing` — the clone directory is absent from disk entirely (out-of-band
 ///   `rm -rf`, never fetched, etc.). The lock entry may be fine; the repair
-///   verb is a re-clone / `rwv fetch`.
+///   verb is a re-clone / `rwv update`.
 ///
 /// - `Unreachable` — the clone directory exists but the SHA pinned in the lock
 ///   is not present in the local object store (history rewritten, shallow
 ///   clone, object pruned). The repair is `git fetch` in that clone, which
-///   re-materializes the missing object; `rwv fetch` does not fetch into a
+///   re-materializes the missing object; `rwv update` does not fetch into a
 ///   clone that is present.
 ///
 /// Neither state should be attributed to the lock file itself — surfacing them
@@ -112,12 +112,12 @@ pub enum LockRelation {
     NoLock,
     Unknown,
     /// Clone directory is absent from disk (out-of-band removal, never fetched).
-    /// Repair: re-clone / `rwv fetch`.
+    /// Repair: re-clone / `rwv update`.
     Missing,
     /// Clone directory exists but the locked SHA is not in the local object
     /// store (history rewritten, shallow clone, object pruned).
     /// Repair: `git fetch` in that clone to materialize the missing object;
-    /// `rwv fetch` does not fetch into a clone that is present.
+    /// `rwv update` does not fetch into a clone that is present.
     Unreachable,
 }
 

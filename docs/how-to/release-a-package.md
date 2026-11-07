@@ -10,8 +10,10 @@ rwv push
 `rwv.lock` records the exact 40-character commit SHA of every member repository unconditionally. For internal-only repositories that do not publish to an external package registry, committing `rwv.lock` (and tagging `projects/<project>/` if you cut release tags at the project level) is the entire release. Any machine or CI job reproduces that exact source tree with:
 
 ```bash
-rwv fetch chatly/web-app --frozen
+rwv clone chatly/web-app
 ```
+
+The exit status is the reproducibility check: `0` means every member repository sits at the commit `rwv.lock` pins, and `3` means a member is unpinned (the lock has no entry for it) or its pinned commit is unreachable. `rwv clone` lists each such member and clones it at the tip of its declared branch, so a CI job that fails on a non-zero status rejects a lock that does not reproduce the tree.
 
 ## Publish to external registries
 

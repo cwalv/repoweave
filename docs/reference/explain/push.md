@@ -4,8 +4,8 @@
 
 Publish a cross-repo feature to shared remotes. Pushes member repos first,
 then the project repo last — the project repo carries the committed lock that
-pins manifest SHAs, so collaborators' `rwv fetch` must never see a committed
-lock referencing unpushed manifest commits.
+pins manifest SHAs, so collaborators' `rwv clone` and `rwv update` must never
+see a committed lock referencing unpushed manifest commits.
 
 Refuses if invoked from a workweave (workweave branches shouldn't leak to
 shared remotes). Refuses if the project repo has uncommitted changes to any
@@ -149,6 +149,13 @@ Schema:
           ]
         },
         {
+          "description": "A branch and the branch it takes in from or publishes to.",
+          "type": "string",
+          "enum": [
+            "push-branch"
+          ]
+        },
+        {
           "description": "A name the verb was given is unusable.",
           "type": "string",
           "enum": [
@@ -170,7 +177,7 @@ Schema:
           ]
         },
         {
-          "description": "A commit a live lock pins that a verb would leave nothing reaching.",
+          "description": "The commit a lock pins for a member, and whether a ref reaches it.",
           "type": "string",
           "enum": [
             "pin"

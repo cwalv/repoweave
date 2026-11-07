@@ -65,7 +65,7 @@ a category. For a destructive override the consequence is a loss, so
 the flag states what it destroys — `--discard-local-commits` names the
 exact loss; the operator reading it knows what they are signing. That
 is the destructive instance of the rule, not a separate rule: the same
-naming discipline covers non-destructive gates too (`fetch
+naming discipline covers non-destructive gates too (`clone
 --allow-non-empty-dir` names the bootstrap precondition it waives, not
 a loss), with no exemption class needed to cover them.
 

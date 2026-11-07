@@ -190,9 +190,9 @@ impl GitCommand {
         self.command.spawn()
     }
 
-    /// The `Command` itself, which takes any argument. The door out of this
-    /// module, for a caller that must hand a finished command to code that
-    /// spawns it.
+    /// The `Command` itself, which takes any argument. Only a test fixture
+    /// that builds the state the code under test reads has a use for it.
+    #[cfg(test)]
     pub(super) fn into_command(self) -> Command {
         self.command
     }

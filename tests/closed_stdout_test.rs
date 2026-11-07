@@ -111,8 +111,8 @@ verbs_that_print! {
 #[test]
 fn fetch_still_clones_the_missing_member() {
     let weave = Weave::new(true);
-    let out = closed_stdout(weave.command(&["fetch"]));
-    assert_quiet("fetch", &out);
+    let out = closed_stdout(weave.command(&["update"]));
+    assert_quiet("clone", &out);
     assert!(
         ["app", "lib"].iter().all(|m| Path::new(&weave.ws)
             .join("github/org")
@@ -126,7 +126,7 @@ fn fetch_still_clones_the_missing_member() {
 #[test]
 fn fetch_streaming_its_records_still_clones_the_missing_member() {
     let weave = Weave::new(true);
-    let out = closed_stdout(weave.command(&["fetch", "--json", "-j", "2"]));
+    let out = closed_stdout(weave.command(&["update", "--json", "-j", "2"]));
     assert_quiet("fetch --json -j 2", &out);
     assert!(
         ["app", "lib"].iter().all(|m| Path::new(&weave.ws)

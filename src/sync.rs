@@ -1769,7 +1769,7 @@ fn manifest_at_revision(
 /// - In a workweave: a worktree of the canonical clone at primary, born at
 ///   `start` ([`crate::workweave::materialize_member`]).
 /// - In a primary weave: `git clone` from the manifest URL (mirrors
-///   `rwv fetch`'s clone path).
+///   `rwv clone`'s member clone).
 ///
 /// `entry` carries the manifest URL. Caller is responsible for the
 /// surrounding sync flow (replay will then call `sync_one_repo` to land HEAD

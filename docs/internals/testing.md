@@ -327,11 +327,20 @@ Three modules carry it, and each has one job:
 A step's `Allowance` is the scenario's statement of what it expects the step
 to do, read only by the invariants:
 
-- `may_rewind`, `may_strand` and `may_rewrite` name the repos in which the
-  step may move a pin backwards, leave a commit no ref reaches, or move a
-  declared branch to or with its upstream. Each is the seam for an operation
-  the step names, never a blanket pass: a check that is spared still runs for
-  every repo the step does not name.
+- `may_rewind`, `may_strand`, `may_rewrite` and `may_leave_unresolved` name
+  the repos in which the step may move a pin backwards, leave a commit no ref
+  reaches, move a declared branch to or with its upstream, or leave a pin at a
+  commit no ref of its backing repository reaches (a lock published ahead of
+  its member, or a clone of one). Each is the seam for an operation the step
+  names, never a blanket pass: a check that is spared still runs for every
+  repo the step does not name.
+- Its outcome is an `Exit`: success, refusal, or an exact status (`Exit::Code`,
+  for a verb whose distinct status is the thing under test), and any number of
+  claims about the state afterward: marks reachable from a ref, a pin
+  containing a mark, a workweave gone, the step's output holding a text, a
+  checkout on a branch, and `LocalStateUnchanged`, which compares every
+  checkout at a place — HEAD, branches, uncommitted changes and the project's
+  lock — before and after the step.
 - Its remote writes say which refs of which remotes the step may change, and
   how: a push creates a branch or moves it forward, an overwrite may move it
   anywhere, a delete removes it, and the forge's sync of a mirror may change

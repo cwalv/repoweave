@@ -142,11 +142,16 @@ pub enum Action {
         at: Place,
         args: Vec<String>,
     },
-    /// An empty weave root on `machine`, filled by `rwv fetch` from `proj`'s
+    DropLockEntry {
+        at: Place,
+        project: Repo,
+        member: Repo,
+    },
+    /// An empty weave root on `machine`, filled by `rwv clone` from `proj`'s
     /// remote.
     NewMachine(Machine),
-    /// `rwv fetch` of another project's remote into an existing weave.
-    FetchProject(Machine, Repo),
+    /// `rwv clone` of another project's remote into an existing weave.
+    CloneProject(Machine, Repo),
     Forge(Forge),
     /// rwv spawned in the background armed at `point`, the step ending once
     /// it is held there; the process stays held under `handle` until a
@@ -169,6 +174,8 @@ pub enum Action {
 pub enum Exit {
     Succeeds,
     Fails,
+    /// The process ended with exactly this status.
+    Code(i32),
     Undecided,
 }
 
@@ -200,6 +207,17 @@ pub enum Claim {
         mark: &'static str,
         marked: Option<&'static str>,
     },
+    /// What the step printed holds this text.
+    OutputContains(&'static str),
+    /// The checkout of `repo` at `at` is on `branch`.
+    OnBranch {
+        at: Place,
+        repo: Repo,
+        branch: &'static str,
+    },
+    /// No branch, HEAD, working-tree change or `rwv.lock` of any checkout at
+    /// `at` differs from what it was before the step.
+    LocalStateUnchanged(Place),
 }
 
 /// The outcome a step is expected to have. A step whose outcome the adopted
@@ -341,6 +359,24 @@ impl Step {
         )
     }
 
+    /// Removes `member`'s entry from the project's `rwv.lock` at `at`, leaving
+    /// the change uncommitted.
+    pub fn drop_lock_entry(at: &Place, project: Repo, member: Repo) -> Step {
+        Step::new(
+            format!(
+                "drop {}'s entry from {}'s lock",
+                member.name(),
+                project.name()
+            ),
+            Action::DropLockEntry {
+                at: at.clone(),
+                project,
+                member,
+            },
+            Expect::succeeds(),
+        )
+    }
+
     pub fn hand_commit(at: &Place, repo: Repo, branch: &str, files: &[(&str, &str)]) -> Step {
         let paths: Vec<&str> = files.iter().map(|(path, _)| *path).collect();
         Step::new(
@@ -381,10 +417,10 @@ impl Step {
         )
     }
 
-    pub fn fetch_project(machine: Machine, project: Repo) -> Step {
+    pub fn clone_project(machine: Machine, project: Repo) -> Step {
         Step::new(
-            format!("rwv fetch {} on {machine:?}", project.name()),
-            Action::FetchProject(machine, project),
+            format!("rwv clone {} on {machine:?}", project.name()),
+            Action::CloneProject(machine, project),
             Expect::succeeds(),
         )
     }
@@ -469,6 +505,11 @@ impl Step {
 
     pub fn may_rewrite(mut self, repos: &[Repo]) -> Step {
         self.allow.may_rewrite.extend_from_slice(repos);
+        self
+    }
+
+    pub fn may_leave_unresolved(mut self, members: &[Repo]) -> Step {
+        self.allow.may_leave_unresolved.extend_from_slice(members);
         self
     }
 
@@ -592,6 +633,7 @@ impl Report {
 
 struct Run<'a> {
     sandbox: &'a Sandbox,
+    last_code: Option<i32>,
     marks: BTreeMap<&'static str, String>,
     held: BTreeMap<&'static str, Paused>,
     offline: BTreeMap<Remote, Unreachable<'a>>,
@@ -609,6 +651,7 @@ pub fn run_in(sandbox: &Sandbox, scenario: Scenario) -> Report {
     };
     let mut run = Run {
         sandbox,
+        last_code: None,
         marks: BTreeMap::new(),
         held: BTreeMap::new(),
         offline: BTreeMap::new(),
@@ -620,6 +663,16 @@ pub fn run_in(sandbox: &Sandbox, scenario: Scenario) -> Report {
             report.pending = Some((step.label, verb));
             break;
         }
+        let unmoved: Vec<(Place, String)> = step
+            .expect
+            .claims
+            .iter()
+            .filter_map(|claim| match claim {
+                Claim::LocalStateUnchanged(at) => Some((at.clone(), run.local_state(at))),
+                _ => None,
+            })
+            .collect();
+        run.last_code = None;
         let (succeeded, output) = run.perform(&step.action);
         let after = invariants::snapshot(sandbox);
         for violation in invariants::check(sandbox, &before, &after, &step.allow) {
@@ -633,10 +686,17 @@ pub fn run_in(sandbox: &Sandbox, scenario: Scenario) -> Report {
                 step.label.clone(),
                 "expected a refusal; it succeeded".to_owned(),
             )),
+            (Exit::Code(want), _) if run.last_code != Some(want) => report.unmet.push((
+                step.label.clone(),
+                format!(
+                    "expected exit status {want}; got {:?}:\n{output}",
+                    run.last_code
+                ),
+            )),
             _ => {}
         }
         for claim in &step.expect.claims {
-            if let Err(why) = run.holds(claim, &after) {
+            if let Err(why) = run.holds(claim, &after, &output, &unmoved) {
                 report.unmet.push((step.label.clone(), why));
             }
         }
@@ -699,6 +759,7 @@ impl Run<'_> {
                         format!("{from:?} is not in {} exactly once", path.display()),
                     );
                 }
+                // raw lock bytes: a hand edit replaces text in whatever file the step names, a lock included; the edit itself is the subject.
                 std::fs::write(&path, text.replacen(from.as_str(), to, 1)).unwrap();
                 (true, String::new())
             }
@@ -714,19 +775,46 @@ impl Run<'_> {
             Action::Rwv { at, args } => {
                 let args: Vec<&str> = args.iter().map(String::as_str).collect();
                 let out = sb.rwv(&sb.place_root(at), &args);
+                self.last_code = out.status.code();
                 (out.status.success(), rendered(&out))
+            }
+            Action::DropLockEntry {
+                at,
+                project,
+                member,
+            } => {
+                let path = sb.checkout(at, *project).join("rwv.lock");
+                let mut lock: serde_json::Value =
+                    serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+                let removed = lock["repositories"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove(&member.rel_path());
+                if removed.is_none() {
+                    return (
+                        false,
+                        format!("{} has no entry for {}", path.display(), member.name()),
+                    );
+                }
+                let mut text = serde_json::to_string_pretty(&lock).unwrap();
+                text.push('\n');
+                // raw lock bytes: a lock with one entry removed, which the builder, taking the entries to write, cannot express over a lock it did not write.
+                std::fs::write(&path, text).unwrap();
+                (true, String::new())
             }
             Action::NewMachine(machine) => {
                 let root = sb.prepare_machine(*machine);
-                let fetch = sb.fetch_command(Repo::Proj);
+                let fetch = sb.clone_command(Repo::Proj);
                 let args: Vec<&str> = fetch.iter().map(String::as_str).collect();
                 let out = sb.rwv(&root, &args);
+                self.last_code = out.status.code();
                 (out.status.success(), rendered(&out))
             }
-            Action::FetchProject(machine, project) => {
-                let fetch = sb.fetch_command(*project);
+            Action::CloneProject(machine, project) => {
+                let fetch = sb.clone_command(*project);
                 let args: Vec<&str> = fetch.iter().map(String::as_str).collect();
                 let out = sb.rwv(&sb.weave_root(*machine), &args);
+                self.last_code = out.status.code();
                 (out.status.success(), rendered(&out))
             }
             Action::Forge(forge) => self.forge(forge),
@@ -919,9 +1007,83 @@ impl Run<'_> {
         }
     }
 
-    fn holds(&self, claim: &Claim, after: &Snapshot) -> Result<(), String> {
+    /// Every checkout at `at`, as one text: its HEAD, its branches, its
+    /// uncommitted changes, and the project's lock bytes.
+    fn local_state(&self, at: &Place) -> String {
+        let sb = self.sandbox;
+        let mut text = String::new();
+        for repo in [Repo::Proj, Repo::App, Repo::Lib, Repo::Docs] {
+            let dir = sb.checkout(at, repo);
+            if !dir.is_dir() {
+                continue;
+            }
+            text.push_str(&format!("== {}\n", repo.name()));
+            for args in [
+                &["rev-parse", "HEAD"][..],
+                &["symbolic-ref", "-q", "HEAD"][..],
+                &[
+                    "for-each-ref",
+                    "--format=%(refname) %(objectname)",
+                    "refs/heads",
+                ][..],
+                &["status", "--porcelain"][..],
+            ] {
+                let out = sb.git(&dir, args);
+                text.push_str(&rendered(&out));
+            }
+            if let Ok(lock) = std::fs::read_to_string(dir.join("rwv.lock")) {
+                text.push_str(&lock);
+            }
+        }
+        text
+    }
+
+    fn holds(
+        &self,
+        claim: &Claim,
+        after: &Snapshot,
+        output: &str,
+        unmoved: &[(Place, String)],
+    ) -> Result<(), String> {
         let sb = self.sandbox;
         match claim {
+            Claim::OutputContains(text) => {
+                if output.contains(text) {
+                    Ok(())
+                } else {
+                    Err(format!("the output does not hold {text:?}:\n{output}"))
+                }
+            }
+            Claim::OnBranch { at, repo, branch } => {
+                let out = sb.git(
+                    &sb.checkout(at, *repo),
+                    &["symbolic-ref", "--short", "HEAD"],
+                );
+                let head = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+                if head == *branch {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "{} at {at:?} is on {head:?}, not {branch:?}",
+                        repo.name()
+                    ))
+                }
+            }
+            Claim::LocalStateUnchanged(at) => {
+                let before = &unmoved
+                    .iter()
+                    .find(|(place, _)| place == at)
+                    .expect("captured before the step")
+                    .1;
+                let now = self.local_state(at);
+                if *before == now {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "the checkouts at {at:?} moved:\n--- before\n{before}--- after\n{now}"
+                    ))
+                }
+            }
             Claim::Contains {
                 at,
                 repo,

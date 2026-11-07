@@ -11,9 +11,9 @@ files it implies, and auto-activates the project.
 integrations, `<name>.code-workspace` — before it activates, so a new project
 starts with nothing for `rwv doctor` to report. `init --adopt` **never authors
 integration content**: it clones only the project repo, and its members are
-not on disk until `rwv fetch`, so generating at that point would overwrite
+not on disk until `rwv update`, so generating at that point would overwrite
 the adopted project's committed workspace files from an empty member set. To
-regenerate an adopted project, run `rwv fetch`, then `rwv doctor --fix`.
+regenerate an adopted project, run `rwv update`, then `rwv doctor --fix`.
 
 ### Empty-directory bootstrap
 

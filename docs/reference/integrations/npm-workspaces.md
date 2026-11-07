@@ -25,7 +25,7 @@ enabled = false
 
 | Key | Ownership | Behavior |
 |---|---|---|
-| `workspaces` (array form) or `workspaces.packages` (object form) | `Author` | Updated on authoring verbs (`rwv member add`, `rwv member remove`, `rwv update`, `rwv member set-role`, `rwv doctor --fix`) when `"x-repoweave"` is present or `workspaces` is absent. When `workspaces` is an object on disk, `rwv` owns only `workspaces.packages` and preserves sibling keys (`nohoist`, etc.). |
+| `workspaces` (array form) or `workspaces.packages` (object form) | `Author` | Updated on authoring verbs (`rwv member add`, `rwv member remove`, `rwv update --remote`, `rwv member set-role`, `rwv doctor --fix`) when `"x-repoweave"` is present or `workspaces` is absent. When `workspaces` is an object on disk, `rwv` owns only `workspaces.packages` and preserves sibling keys (`nohoist`, etc.). |
 | `name` (`"<project>"`), `private` (`true`) | `DefaultOnly` | Seeded only when absent on a fresh file; never overwritten or stripped on deactivation. |
 | `"x-repoweave": { "managed": true }` | Marker | Top-level JSON marker recording `rwv` ownership of the `workspaces` region. |
 
@@ -78,7 +78,7 @@ Gated on the `"x-repoweave"` marker: strips `workspaces` (or `workspaces.package
 
 ## Diagnostics
 
-Reported by `rwv doctor`. Verify rows also print as warnings on `rwv activate`, `rwv materialize`, `rwv workweave create` and the activation a `rwv fetch` performs; see [Hook points](./index.md#hook-points).
+Reported by `rwv doctor`. Verify rows also print as warnings on `rwv activate`, `rwv materialize`, `rwv workweave create` and the activation a `rwv clone` or `rwv update` performs; see [Hook points](./index.md#hook-points).
 
 | Kind | Severity | Condition | Repair |
 |---|---|---|---|

@@ -1,0 +1,190 @@
+# rwv clone
+
+## Purpose
+
+Clone a project into the workspace and bring up every member repo at the
+commit the project's `rwv.lock` pins. `clone` reproduces a recorded state: it
+never advances a pin, and it never writes the lock.
+
+Given a `source` (a URL — `file://` for a local remote — or `owner/repo`
+shorthand), `clone` clones the project repo into `projects/<name>/`, reads its
+`rwv.lock`, and clones every member repo. Each member is born attached to the
+local counterpart of the branch its `rwv.toml` entry declares, positioned at
+the commit the lock pins for it. When no project is active, `clone` then
+activates the project it cloned, as `rwv activate` would.
+
+A plain path is not a source: it names no remote, so `clone` refuses
+(`unresolvable-repo-source`) and names the two spellings that are — `rwv clone
+file://<absolute path>` to clone from a local remote, and `rwv update --project
+<name>` for a project already at `projects/<name>/`.
+
+### A member the lock cannot place
+
+A clone completes whatever the lock holds. A member that the lock gives no
+commit to be at is cloned on the branch its entry declares, at the tip of that
+branch on the remote, and listed:
+
+- **`pin` `none`** — the lock has no entry for the member, or there is no
+  `rwv.lock` at all. A lock file that is absent pins nothing, so every member
+  is listed.
+- **`pin` `unreachable`** — the lock pins a commit that no ref in the clone
+  reaches: the commit was rewritten away, or sits on a branch the remote no
+  longer has.
+
+`clone` writes no lock entry for either. `rwv explain pin` serves the page for
+the state, with the choices to settle it. This is the check a CI job runs
+where it once passed `--frozen`: a clone that exits `0` placed every member at
+its pin.
+
+## Invocation
+
+```
+rwv clone <source> [--allow-non-empty-dir] [--no-reference]
+          [-j <N>] [--json] [--no-materialize]
+```
+
+- `<source>` — full clone URL (`file://` for a local remote) or `owner/repo` /
+  `registry/owner/repo` shorthand.
+- `--allow-non-empty-dir` — clone into a non-empty directory that is not
+  already a workspace (normally an error).
+- `--no-reference` — skip repos with `role: reference` (useful when mirrors
+  are offline). A skipped member is not listed.
+- `-j <N>` — run up to `N` per-member clones in parallel. Default:
+  `min(nproc, 8)`.
+- `--json` — emit machine-readable output (see Output below).
+- `--no-materialize` — a clone that activates a project runs the integration
+  install hooks; this skips them, and `rwv materialize` runs them later. The
+  activation itself still happens.
+
+Run `rwv clone --help` for the full clap surface.
+
+## Output
+
+Default text output is one line per member on the standard text channel,
+saying whether it was cloned at its pin or at its branch's tip. Errors
+(including per-member failures) are printed to stderr. A summary line reports
+how many repos are ready. When members were left, each is then printed as
+`rwv clone: <repo>: pin none` or `rwv clone: <repo>: pin unreachable`, with the
+choices that settle it and the route line `rwv explain pin`.
+
+Under `--json`, `clone` emits a single JSON envelope after all repos finish,
+whatever `-j` is:
+
+```
+{
+  "$schema": "<url>",
+  "outcomes": [ { "path": "...", ... }, ... ],
+  "left": [ { "path": "...", "axis": "pin", "state": "none", ... }, ... ],
+  "placements": [ { "path": "...", "absolute_path": "...", "files": { ... } }, ... ],
+  "skipped": [ { "effect": "install-hooks", "reason": "no-materialize", "remedy": "rwv materialize" }, ... ]
+}
+```
+
+`outcomes` lists the repos sorted by repo path, however the workers finished.
+Each record has the shape: `path` (manifest-relative), `absolute_path`
+(on-disk), `status` (`ok` / `skipped` / `failed`), `message` (human-readable
+detail; absent for `ok`, present for `skipped` and `failed`), and, on a
+`failed` record whose cause is a refusal, `refusal`: its token, which `rwv
+explain <token>` resolves.
+
+`left` lists the members the clone completed without a commit to place them
+at, one record each: `path`, `axis` (`pin`), `state` (`none` or `unreachable`)
+and the `choices` that settle it. It is empty exactly when the exit status is
+`0`.
+
+File counts are never on an outcome. Each checkout whose files the clone
+placed gets a placement record: `path`, `absolute_path` (the checkout the
+files are in), and `files` (`reflinked`, `hardlinked`, `written`). The
+envelope lists them under `placements`, empty when nothing was placed.
+
+A clone that does not activate a project says so in one line naming the
+command that does it: `rwv clone: skipping auto-activate (project '<active>'
+already active); `rwv activate <cloned>` selects it and runs its install
+hooks` (on stdout in text mode, stderr under `--json`). An activation run with
+`--no-materialize` says: `[skipped] core: the install hooks did not run
+(--no-materialize); `rwv materialize` runs them`. A hook whose tool is not on
+`PATH` gets its `tool-missing` warning. The envelope records the same facts in
+`skipped`. Each record carries `effect` (`install-hooks`,
+`integration-files`, `weave-root-links` or `activation`), `integration`
+(present only when one integration's part was skipped), `reason`
+(`no-materialize`, `inside-workweave` or `narrowed`, or an object naming what
+it concerns: `{"tool-missing": {"tool": …}}`, `{"not-presented": {"project":
+…}}`, `{"project-already-active": {"project": …}}`) and `remedy`, the command
+that performs the effect.
+
+The `$schema` URL points to the committed schema artifact.
+
+Schema:
+
+{{SCHEMA}}
+
+## Exit codes
+
+- `0` — the project repo and every non-reference member repo cloned, and every
+  member sits at its pin. Reference repos that failed are warnings, not
+  errors.
+- `3` — the clone completed, and left at least one member without a commit to
+  place it at (`pin` `none` or `pin` `unreachable`). Everything else was done;
+  `rwv explain pin` serves the page for the state. Under `--json` the envelope
+  is complete and `left` names the members.
+- `1` — the project repo failed to clone, at least one non-reference repo
+  failed, or the current directory is not a workspace and
+  `--allow-non-empty-dir` was not passed. Under `--json` the envelope is
+  emitted before exit even on failure, so consumers always get parseable
+  output.
+- `2` — the arguments did not parse.
+
+## Examples
+
+Clone a project from a GitHub shorthand:
+
+```
+rwv clone owner/myproject
+```
+
+Same, with a full URL:
+
+```
+rwv clone https://github.com/owner/myproject.git
+```
+
+CI — fail unless every member sits at the commit the lock pins:
+
+```
+rwv clone owner/myproject
+```
+
+Skip reference repos (faster when mirrors are offline):
+
+```
+rwv clone owner/myproject --no-reference
+```
+
+Clone with 4 workers and emit the JSON envelope:
+
+```
+rwv clone owner/myproject -j 4 --json
+```
+
+Get the paths of the members the lock left unpinned:
+
+```
+rwv clone owner/myproject --json | jq -r '.left[].path'
+```
+
+## Common errors
+
+- *cannot clone project 'X': projects/X already exists* — if that is the
+  project you meant, `rwv update --project X` brings up its members in place;
+  otherwise run `rwv clone <source>` in an empty directory, which becomes a
+  weave of its own.
+- *no repoweave workspace found and … is not empty* — the current directory
+  is not a workspace; use `--allow-non-empty-dir` to clone here anyway.
+- *is a plain path, which names no remote* — spell a local remote as
+  `file://<absolute path>`, or run `rwv update --project <name>` for a project
+  already in the weave.
+- *repository not found* — the source URL is wrong or the remote is private
+  and credentials aren't configured.
+- *branch … does not exist on the remote* — a member's `branch` names a branch
+  the remote does not have, so there is no tip to place the member at.
+- *network-error* — connectivity issue; retry.

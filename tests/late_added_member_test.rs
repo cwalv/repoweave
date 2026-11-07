@@ -243,7 +243,7 @@ fn a_late_added_member_of_each_role_is_created_by_doctor_fix() {
         assert!(fixed.status.success(), "role {role}: {}", describe(&fixed));
         assert_worktree_at(&seat.join(LATE_PATH), &canonical, "app--seat", &pin);
 
-        let fetched = run(&["fetch"], &seat);
+        let fetched = run(&["update"], &seat);
         assert!(
             fetched.status.success(),
             "role {role}: {}",
@@ -296,7 +296,7 @@ fn a_late_added_member_whose_canonical_clone_is_not_on_disk_is_created_by_fetch(
         "doctor --fix never clones; that is fetch's, behind the network"
     );
 
-    let fetched = run(&["fetch"], &seat);
+    let fetched = run(&["update"], &seat);
     assert!(fetched.status.success(), "{}", describe(&fetched));
     assert_worktree_at(&seat.join(LATE_PATH), &canonical, "app--seat", &pin);
     assert_eq!(
@@ -461,7 +461,7 @@ fn a_member_added_with_new_from_a_workweave_is_created_after_its_first_commit() 
     assert!(fixed.status.success(), "{}", describe(&fixed));
     assert_worktree_at(&seat.join(member), &canonical, "app--seat", &pin);
 
-    let fetched = run(&["fetch"], &seat);
+    let fetched = run(&["update"], &seat);
     assert!(fetched.status.success(), "{}", describe(&fetched));
     assert_eq!(
         findings_about(&seat, member),

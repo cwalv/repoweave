@@ -164,15 +164,15 @@ is *when* it authors them. In brief:
 
 | Verbs | Action on managed region |
 |---|---|
-| `add`, `remove`, `update`, `role` (the authoring verbs) | Regenerate, for the operator to commit alongside the `rwv.toml`/`rwv.lock` change |
+| `add`, `remove`, `update --remote`, `role` (the authoring verbs) | Regenerate, for the operator to commit alongside the `rwv.toml`/`rwv.lock` change |
 | `init <name>` | Author the files the new project's empty manifest implies, before activating it |
-| `activate`, `materialize`, `fetch`, workweave-create, `lock`, `init --adopt` | Surface (symlink, always) + verify-and-warn; never rewrite integration workspace files to pick up `rwv.toml` changes (`materialize` also runs install hooks, cleans up disabled-integration artifacts, and settles drifted attested generated files via `--regenerate-drifted` / `--adopt-drifted`) |
+| `activate`, `materialize`, `clone`, `update`, workweave-create, `lock`, `init --adopt` | Surface (symlink, always) + verify-and-warn; never rewrite integration workspace files to pick up `rwv.toml` changes (`materialize` also runs install hooks, cleans up disabled-integration artifacts, and settles drifted attested generated files via `--regenerate-drifted` / `--adopt-drifted`) |
 | `rwv doctor` / `rwv doctor --fix` | Report Axis-2 content drift **and** Axis-1 surfacing gaps; `--fix` regenerates content and re-surfaces symlinks |
 
 rwv writes the regenerated files into the project directory; it never commits them. An authoring verb
 also **withholds** regeneration when a repo the manifest declares active has no directory on disk —
 authoring from a partial member set would drop the absent repos from every managed file. The
-manifest change still lands; `rwv fetch` then `rwv doctor --fix` regenerates once the member set is
+manifest change still lands; `rwv update` then `rwv doctor --fix` regenerates once the member set is
 whole.
 
 `activate` creates the symlink unconditionally (Axis-1 surfacing). It never authors the committed
@@ -184,9 +184,8 @@ construction, because regeneration is tied to the authoring verb that changed th
 "Never author" is a claim about the **authoring path** — the managed regions and rwv-computed
 artifacts that the authoring verbs regenerate. It is not a claim that a verb off that path leaves
 every byte on disk untouched. The verbs that run activation (`activate`, `materialize`, `init`,
-`init --adopt`, workweave-create, and a `fetch` that activates a project — the first fetch of a
-source, or an in-place fetch selecting the weave's only project — but not `lock`, which runs no
-activation) still fire the integration **install hooks** unless the verb's `--no-materialize`
+`init --adopt`, workweave-create, a `clone` that activates a project, and an `update` selecting the
+weave's only project — but not `lock`, which runs no activation) still fire the integration **install hooks** unless the verb's `--no-materialize`
 skips them, and the ecosystem tools those hooks invoke rewrite the lockfiles they own:
 `Cargo.lock`, `package-lock.json`, `pnpm-lock.yaml`, `uv.lock`.
 
@@ -210,7 +209,7 @@ A license to rewrite is not an obligation to. A hook whose inputs are not on dis
 rather than failing: `init --adopt` clones only the project repo, so an adopted manifest that
 already names its members names paths that do not exist, and cargo cannot resolve a lockfile
 against them. The cargo hook detects that before shelling out, skips the generation, and names the
-absent members plus the commands that resolve them (`rwv fetch`, then `rwv activate`) — the adopt
+absent members plus the commands that resolve them (`rwv update`, then `rwv activate`) — the adopt
 completes, and the lock first appears at the activation that follows the members arriving. Nothing
 is lost by deferring, because membership change is the lockfile-refresh trigger in the first place.
 The deferral is scoped to inputs that are **absent**: a member that is on disk but whose manifest

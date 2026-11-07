@@ -319,7 +319,7 @@ fn shared_member(name: &'static str, branch: &'static str) -> Scenario {
         name,
         seed: Seed::default().second_project(SecondProject { branch }),
         steps: vec![
-            Step::fetch_project(Machine::A, Repo::Proj2).expect(Exit::Undecided),
+            Step::clone_project(Machine::A, Repo::Proj2).expect(Exit::Undecided),
             Step::commit(&a(), Repo::Lib, "lib-pending"),
             Step::rwv(&a(), &["activate", "proj2"]),
             Step::rwv(&a(), &["activate", "proj"]),
@@ -538,7 +538,7 @@ pub fn project_pr_merged_before_members() -> Scenario {
             branch: "feat-x",
             how: MergeHow::Squash,
         }),
-        Step::rwv(&Place::Primary(Machine::C), &["update"]),
+        Step::rwv(&Place::Primary(Machine::C), &["update", "--remote"]),
     ]);
     scenario("project PR merged before its member PRs", steps)
 }
@@ -554,7 +554,7 @@ pub fn hand_edit_declaration_to_existing_branch() -> Scenario {
                 &declared_branch_text(Repo::Lib, "main"),
                 &declared_branch_text(Repo::Lib, "dev"),
             ),
-            Step::rwv(&a(), &["update"]),
+            Step::rwv(&a(), &["update", "--remote"]),
         ],
     )
 }
@@ -570,7 +570,7 @@ pub fn hand_edit_declaration_to_missing_branch() -> Scenario {
                 &declared_branch_text(Repo::Lib, "main"),
                 &declared_branch_text(Repo::Lib, "nowhere"),
             ),
-            Step::rwv(&a(), &["update"]),
+            Step::rwv(&a(), &["update", "--remote"]),
         ],
     )
 }
@@ -669,4 +669,90 @@ pub fn feature_branches_in_some_members() -> Scenario {
     }
     steps.push(Step::commit(&a(), Repo::App, "main-after"));
     scenario("a feature branch in some members", steps)
+}
+
+fn forge_commits_everywhere() -> Vec<Step> {
+    [
+        (Repo::Proj, "forge-proj"),
+        (Repo::App, "forge-app"),
+        (Repo::Lib, "forge-lib"),
+        (Repo::Docs, "forge-docs"),
+    ]
+    .into_iter()
+    .map(|(repo, mark)| {
+        Step::forge(Forge::Commit {
+            repo,
+            branch: "main",
+            mark,
+        })
+    })
+    .collect()
+}
+
+pub fn fetch_moves_nothing() -> Scenario {
+    let mut steps = forge_commits_everywhere();
+    let mut fetch = Step::rwv(&a(), &["fetch"])
+        .expect(Exit::Succeeds)
+        .claim(Claim::LocalStateUnchanged(a()));
+    for (repo, mark) in [
+        (Repo::Proj, "forge-proj"),
+        (Repo::App, "forge-app"),
+        (Repo::Lib, "forge-lib"),
+        (Repo::Docs, "forge-docs"),
+    ] {
+        fetch = fetch.claim(Claim::Contains {
+            at: a(),
+            repo,
+            rev: "origin/main",
+            mark,
+        });
+    }
+    steps.push(fetch);
+    scenario("fetch moves nothing", steps)
+}
+
+fn project_with_an_incomplete_lock() -> Vec<Step> {
+    vec![
+        Step::commit(&a(), Repo::App, "unpublished-app"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::drop_lock_entry(&a(), Repo::Proj, Repo::Docs),
+        Step::git(
+            &a(),
+            Repo::Proj,
+            &["commit", "-a", "-m", "lock: without docs"],
+        ),
+        Step::git(&a(), Repo::Proj, &["push", "origin", "main"])
+            .pushes(Remote::origin(Repo::Proj), "main")
+            .may_leave_unresolved(&[Repo::App]),
+    ]
+}
+
+pub fn clone_exit_status() -> Scenario {
+    let mut steps = project_with_an_incomplete_lock();
+    steps.push(
+        Step::new_machine(Machine::B)
+            .expect(Exit::Code(3))
+            .may_leave_unresolved(&[Repo::App])
+            .claim(Claim::OutputContains("local/remotes/docs: pin none"))
+            .claim(Claim::OutputContains("local/remotes/app: pin unreachable"))
+            .claim(Claim::OnBranch {
+                at: Place::Primary(Machine::B),
+                repo: Repo::Docs,
+                branch: "main",
+            }),
+    );
+    scenario("clone lists what the lock cannot place and exits 3", steps)
+}
+
+pub fn clone_with_a_complete_lock() -> Scenario {
+    scenario(
+        "clone with a complete lock exits 0",
+        vec![Step::new_machine(Machine::B)
+            .expect(Exit::Code(0))
+            .claim(Claim::OnBranch {
+                at: Place::Primary(Machine::B),
+                repo: Repo::App,
+                branch: "main",
+            })],
+    )
 }

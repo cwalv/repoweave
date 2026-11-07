@@ -147,7 +147,7 @@ fn update_fast_forwards_the_counterpart_and_stays_attached() {
     let tip = fx.advance_remote();
 
     rwv()
-        .arg("update")
+        .args(["update", "--remote"])
         .current_dir(&fx.workspace)
         .assert()
         .success();
@@ -172,7 +172,7 @@ fn update_is_a_no_op_when_the_counterpart_is_already_at_the_tip() {
     let before = fx.head();
 
     rwv()
-        .arg("update")
+        .args(["update", "--remote"])
         .current_dir(&fx.workspace)
         .assert()
         .success();
@@ -198,7 +198,7 @@ fn update_refuses_when_attached_to_a_branch_the_manifest_does_not_declare() {
     // moving a personal bookmark changes what it means even when it strands
     // nothing (§8.3).
     rwv()
-        .arg("update")
+        .args(["update", "--remote"])
         .current_dir(&fx.workspace)
         .assert()
         .failure()
@@ -220,7 +220,7 @@ fn update_detach_checkouts_detaches_rather_than_relocating_the_branch() {
     let tip = fx.advance_remote();
 
     rwv()
-        .args(["update", "--detach-checkouts"])
+        .args(["update", "--remote", "--detach-checkouts"])
         .current_dir(&fx.workspace)
         .assert()
         .success();
@@ -249,7 +249,7 @@ fn update_refuses_a_non_fast_forward_naming_both_exits() {
     assert_ne!(local, tip);
 
     rwv()
-        .arg("update")
+        .args(["update", "--remote"])
         .current_dir(&fx.workspace)
         .assert()
         .failure()
@@ -280,7 +280,7 @@ fn update_moves_an_already_detached_member_and_leaves_it_detached() {
 
     // Nothing is attached, so nothing can be abandoned: no consent required.
     rwv()
-        .arg("update")
+        .args(["update", "--remote"])
         .current_dir(&fx.workspace)
         .assert()
         .success();
@@ -304,7 +304,7 @@ fn update_refuses_to_move_a_detached_member_that_is_mid_operation() {
     let tip = fx.advance_remote();
 
     rwv()
-        .arg("update")
+        .args(["update", "--remote"])
         .current_dir(&fx.workspace)
         .assert()
         .failure()
@@ -324,7 +324,7 @@ fn update_counts_sha_deltas_not_repos_visited() {
     fx.advance_remote();
 
     rwv()
-        .arg("update")
+        .args(["update", "--remote"])
         .current_dir(&fx.workspace)
         .assert()
         .success()
@@ -333,7 +333,7 @@ fn update_counts_sha_deltas_not_repos_visited() {
     // Second run: nothing on the remote has moved, so nothing advances. The
     // old count reported every non-`Err` outcome, so this said "advanced 1".
     rwv()
-        .arg("update")
+        .args(["update", "--remote"])
         .current_dir(&fx.workspace)
         .assert()
         .success()
@@ -394,7 +394,7 @@ fn update_inside_a_workweave_advances_the_ephemeral_ref_without_detaching() {
     let tip = fx.advance_remote();
 
     rwv()
-        .args(["update", "--repo", &fx.repo_path])
+        .args(["update", "--remote", "--repo", &fx.repo_path])
         .current_dir(&ww)
         .assert()
         .success();
@@ -423,7 +423,7 @@ fn update_inside_a_workweave_points_at_rwv_sync_when_it_is_not_a_fast_forward() 
     fx.advance_remote();
 
     rwv()
-        .args(["update", "--repo", &fx.repo_path])
+        .args(["update", "--remote", "--repo", &fx.repo_path])
         .current_dir(&ww)
         .assert()
         .failure()
@@ -448,7 +448,11 @@ fn update_inside_a_workweave_falls_through_to_the_canonical_clone_when_the_membe
     let ww = add_workweave_without_slot(&fx, "my-app--dev");
     let tip = fx.advance_remote();
 
-    rwv().arg("update").current_dir(&ww).assert().success();
+    rwv()
+        .args(["update", "--remote"])
+        .current_dir(&ww)
+        .assert()
+        .success();
 
     assert_eq!(
         fx.head(),

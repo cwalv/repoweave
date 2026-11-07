@@ -1,4 +1,4 @@
-//! `rwv member add` and `rwv fetch` give the canonical clone the submodules its
+//! `rwv member add` and `rwv update` give the canonical clone the submodules its
 //! checkouts record, from upstream, so that creating a checkout, which never
 //! reaches the network, has them to check out.
 
@@ -199,16 +199,16 @@ fn finding_text(cwd: &Path) -> String {
         .to_owned()
 }
 
-/// The `rwv fetch` doctor's text names for an `unfetched` finding on
+/// The `rwv update` doctor's text names for an `unfetched` finding on
 /// `member`, run in `cwd`, as the arguments to run it with in the workweave.
-fn advised_fetch(cwd: &Path, member: &str) -> Vec<String> {
+fn advised_update(cwd: &Path, member: &str) -> Vec<String> {
     let advice = finding_text(cwd);
-    let fetch = format!("rwv fetch --repo {member}");
+    let update = format!("rwv update --repo {member}");
     assert!(
-        advice.contains(&format!("`{fetch}` run in that workweave")),
+        advice.contains(&format!("`{update}` run in that workweave")),
         "{advice}"
     );
-    fetch.split(' ').skip(1).map(str::to_owned).collect()
+    update.split(' ').skip(1).map(str::to_owned).collect()
 }
 
 fn is_empty(dir: &Path) -> bool {
@@ -278,7 +278,7 @@ fn add_leaves_a_reference_members_submodule_files_read_only() {
 }
 
 #[test]
-fn the_advised_fetch_gives_a_canonical_clone_without_module_data_its_submodules() {
+fn the_advised_update_gives_a_canonical_clone_without_module_data_its_submodules() {
     let weave = weave();
     let member = weave.add();
     weave.forget_module_data(&member);
@@ -298,9 +298,9 @@ fn the_advised_fetch_gives_a_canonical_clone_without_module_data_its_submodules(
             cwd.display()
         );
     }
-    let fetch = advised_fetch(&weave.primary, &member);
+    let update = advised_update(&weave.primary, &member);
 
-    rwv(&one, &fetch.iter().map(String::as_str).collect::<Vec<_>>());
+    rwv(&one, &update.iter().map(String::as_str).collect::<Vec<_>>());
 
     assert_populated(&weave.canonical(&member));
     assert_populated(&one.join(&member));
@@ -311,7 +311,7 @@ fn the_advised_fetch_gives_a_canonical_clone_without_module_data_its_submodules(
 }
 
 #[test]
-fn fetch_brings_a_commit_the_canonical_copy_lacks_without_moving_its_checkout() {
+fn update_brings_a_commit_the_canonical_copy_lacks_without_moving_its_checkout() {
     let weave = weave();
     let member = weave.add();
     let canonical = weave.canonical(&member);
@@ -326,7 +326,7 @@ fn fetch_brings_a_commit_the_canonical_copy_lacks_without_moving_its_checkout() 
     let seat = weave.seat("one");
     assert_eq!(sole_finding(&seat)["sub_kind"], "unfetched");
 
-    let out = rwv(&weave.primary, &["fetch", "--repo", &member]);
+    let out = rwv(&weave.primary, &["update", "--repo", &member]);
 
     assert!(
         out.contains(&format!("{member}/{SUB}: submodule fetched")),
@@ -351,7 +351,7 @@ fn a_member_that_skips_submodules_is_not_fetched_for() {
     weave.forget_module_data(&member);
     weave.set_skip(&member);
 
-    rwv(&weave.primary, &["fetch"]);
+    rwv(&weave.primary, &["update"]);
     rwv(
         &weave.primary,
         &["member", "add", &common::file_url(&weave.upstream_app)],
@@ -374,7 +374,7 @@ fn a_submodule_git_declines_is_neither_fetched_nor_reported() {
     );
     weave.lock_and_commit();
 
-    rwv(&weave.primary, &["fetch"]);
+    rwv(&weave.primary, &["update"]);
     let seat = weave.seat("one");
 
     assert!(is_empty(&canonical.join(SUB)));
@@ -416,7 +416,7 @@ fn seat_records_a_newer_sub(weave: &Weave) -> (PathBuf, String, String) {
 }
 
 #[test]
-fn fetch_brings_a_commit_only_a_workweave_records() {
+fn update_brings_a_commit_only_a_workweave_records() {
     let weave = weave();
     let (seat, member, moved) = seat_records_a_newer_sub(&weave);
     let canonical = weave.canonical(&member);
@@ -425,7 +425,7 @@ fn fetch_brings_a_commit_only_a_workweave_records() {
 
     let out = rwv(
         &weave.primary,
-        &["fetch", "--project", PROJECT, "--repo", &member],
+        &["update", "--project", PROJECT, "--repo", &member],
     );
 
     assert!(
@@ -444,7 +444,7 @@ fn fetch_brings_a_commit_only_a_workweave_records() {
 }
 
 #[test]
-fn fetch_brings_nothing_for_a_submodule_git_declines() {
+fn update_brings_nothing_for_a_submodule_git_declines() {
     let weave = weave();
     let (seat, member, moved) = seat_records_a_newer_sub(&weave);
     let canonical = weave.canonical(&member);
@@ -455,7 +455,7 @@ fn fetch_brings_nothing_for_a_submodule_git_declines() {
 
     let out = rwv(
         &weave.primary,
-        &["fetch", "--project", PROJECT, "--repo", &member],
+        &["update", "--project", PROJECT, "--repo", &member],
     );
 
     assert!(!out.contains("submodule fetched"), "{out}");
@@ -521,7 +521,7 @@ fn sync_to_creates_a_checkout_with_its_submodules() {
 }
 
 #[test]
-fn fetch_in_a_workweave_checks_out_its_members_empty_submodules() {
+fn update_in_a_workweave_checks_out_its_members_empty_submodules() {
     let weave = weave();
     let member = weave.add();
     weave.forget_module_data(&member);
@@ -529,7 +529,7 @@ fn fetch_in_a_workweave_checks_out_its_members_empty_submodules() {
     let seat = weave.seat("one");
     assert!(is_empty(&seat.join(&member).join(SUB)));
 
-    rwv(&seat, &["fetch"]);
+    rwv(&seat, &["update"]);
 
     assert_populated(&weave.canonical(&member));
     assert_populated(&seat.join(&member));
@@ -552,15 +552,18 @@ fn a_submodule_git_declines_is_not_checked_out_from_local_data() {
 }
 
 #[test]
-fn the_advised_fetch_in_the_workweave_brings_and_checks_out_a_commit_only_it_records() {
+fn the_advised_update_in_the_workweave_brings_and_checks_out_a_commit_only_it_records() {
     let weave = weave();
     let (seat, member, moved) = seat_records_a_newer_sub(&weave);
     let canonical = weave.canonical(&member);
     let canonical_head = git(&canonical, &["rev-parse", "HEAD"]);
     assert_eq!(sole_finding(&seat)["sub_kind"], "unfetched");
-    let fetch = advised_fetch(&seat, &member);
+    let update = advised_update(&seat, &member);
 
-    rwv(&seat, &fetch.iter().map(String::as_str).collect::<Vec<_>>());
+    rwv(
+        &seat,
+        &update.iter().map(String::as_str).collect::<Vec<_>>(),
+    );
 
     assert!(findings(&seat).is_empty());
     let checkout = seat.join(&member);
@@ -569,7 +572,7 @@ fn the_advised_fetch_in_the_workweave_brings_and_checks_out_a_commit_only_it_rec
 }
 
 #[test]
-fn the_fetch_workweave_create_advises_for_unfetched_submodules_populates_the_checkout() {
+fn the_update_workweave_create_advises_for_unfetched_submodules_populates_the_checkout() {
     let weave = weave();
     let member = weave.add();
     weave.forget_module_data(&member);
@@ -584,11 +587,11 @@ fn the_fetch_workweave_create_advises_for_unfetched_submodules_populates_the_che
         .lines()
         .find(|l| l.contains("submodules not initialized in"))
         .unwrap_or_else(|| panic!("workweave create warned of nothing:\n{out}"));
-    let fetch = common::advised_command(warning, "rwv fetch");
+    let update = common::advised_command(warning, "rwv update");
     let (_, rest) = warning
-        .split_once(&format!("`{fetch}` run in "))
+        .split_once(&format!("run `{update}` in "))
         .unwrap_or_else(|| panic!("the warning names no workspace to run it in: {warning}"));
-    let run_in = PathBuf::from(rest.split(" fetches what").next().unwrap());
+    let run_in = PathBuf::from(rest.split(" to fetch what").next().unwrap());
     let seat = weave
         .primary
         .parent()
@@ -600,17 +603,17 @@ fn the_fetch_workweave_create_advises_for_unfetched_submodules_populates_the_che
         repoweave::path_spelling::resolve(&seat).unwrap()
     );
     assert_eq!(
-        fetch
+        update
             .split(' ')
             .skip(1)
             .map(str::to_owned)
             .collect::<Vec<_>>(),
-        advised_fetch(&seat, &member),
+        advised_update(&seat, &member),
         "workweave create and doctor name one route"
     );
     assert!(is_empty(&seat.join(&member).join(SUB)));
 
-    rwv(&run_in, &fetch.split(' ').skip(1).collect::<Vec<_>>());
+    rwv(&run_in, &update.split(' ').skip(1).collect::<Vec<_>>());
 
     assert_populated(&seat.join(&member));
     assert!(findings(&seat).is_empty());

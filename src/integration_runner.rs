@@ -243,7 +243,7 @@ pub fn malformed_settings(
 
 /// Run verify hooks for each enabled integration, collecting issues.
 ///
-/// Called from context verbs (`rwv activate`, `rwv fetch`, workweave-create):
+/// Called from context verbs (`rwv activate`, `rwv clone`, `rwv update`, workweave-create):
 /// the verb verifies and surfaces (creates/repairs symlinks) — it never
 /// authors integration content. Drift between on-disk content and what
 /// `activate()` would produce is reported as `Issue`s (typically
@@ -266,7 +266,7 @@ pub fn run_verifications(
 /// collecting the informational findings.
 ///
 /// **The single collection point for the category** — `rwv doctor`'s standing
-/// observation arm and `rwv update`'s post-MOVE report both come through here,
+/// observation arm and `rwv update --remote`'s post-MOVE report both come through here,
 /// so the two surfacings cannot diverge in policy. Neither gates on the result:
 /// the findings are reports.
 ///

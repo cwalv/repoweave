@@ -113,7 +113,7 @@ fn add_new_unknown_registry_is_decorated_once() {
 /// `Error: ` of its own doubles the sentence while leaving the decoration
 /// count at one.
 #[test]
-fn fetch_occupied_project_refuses_once() {
+fn clone_occupied_project_refuses_once() {
     let tmp = common::tempdir().unwrap();
     let source = tmp.path().join("web-app.git");
     common::git_in(
@@ -126,15 +126,15 @@ fn fetch_occupied_project_refuses_once() {
     std::fs::create_dir_all(&occupied).unwrap();
     std::fs::write(occupied.join("rwv.toml"), "[repositories]\n").unwrap();
 
-    let (stderr, decorations) = refusal_stderr(&["fetch", &common::file_url(&source)], &workspace);
+    let (stderr, decorations) = refusal_stderr(&["clone", &common::file_url(&source)], &workspace);
 
     assert_eq!(
-        stderr.matches("cannot fetch project").count(),
+        stderr.matches("cannot clone project").count(),
         1,
         "the refusal reached the operator more than once, stderr was:\n{stderr}"
     );
     assert_eq!(
-        stderr.matches("fetches its members in place").count(),
+        stderr.matches("brings up its members in place").count(),
         1,
         "the hint reached the operator more than once, stderr was:\n{stderr}"
     );

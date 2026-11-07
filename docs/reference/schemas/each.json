@@ -50,7 +50,7 @@
           ]
         },
         {
-          "description": "The repo's checkout is absent from disk; `rwv fetch` restores it.",
+          "description": "The repo's checkout is absent from disk; `rwv update` restores it.",
           "type": "string",
           "enum": [
             "not-present"

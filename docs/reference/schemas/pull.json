@@ -1,0 +1,639 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PullJsonOutput",
+  "description": "Top-level envelope for `rwv pull --json`.\n\nThe update's records are the envelope's own, as `rwv update --json` has them.",
+  "type": "object",
+  "required": [
+    "$schema",
+    "fetched",
+    "outcomes",
+    "placements",
+    "project"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "fetched": {
+      "description": "The pruning fetch of each repo, as `rwv fetch --json` reports it.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/FetchedRepoOutput"
+      }
+    },
+    "outcomes": {
+      "description": "The update's per-member outcomes.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/MemberOutcomeOutput"
+      }
+    },
+    "placements": {
+      "description": "How the files of each checkout the update moved or created were placed. Empty, not absent, when it placed none.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/PlacementOutput"
+      }
+    },
+    "project": {
+      "description": "What taking in the project branch did.",
+      "allOf": [
+        {
+          "$ref": "#/definitions/ProjectTakeInOutput"
+        }
+      ]
+    },
+    "resolution": {
+      "description": "Resolved workspace coordinates (weave root, optional workweave identity, project). Absent when no project is resolved.",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/Resolution"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "skipped": {
+      "description": "The materialization side effects the update skipped, each naming the command that performs it. Empty, not absent, when it skipped none.",
+      "default": [],
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/SkippedEffect"
+      }
+    }
+  },
+  "definitions": {
+    "BranchMoveKind": {
+      "description": "How a remote-tracking branch moved, as `rwv fetch --json` spells it.",
+      "oneOf": [
+        {
+          "description": "The remote has the branch and the repo had no record of it.",
+          "type": "string",
+          "enum": [
+            "created"
+          ]
+        },
+        {
+          "description": "The new tip descends from the old one.",
+          "type": "string",
+          "enum": [
+            "advanced"
+          ]
+        },
+        {
+          "description": "The new tip does not descend from the old one. The old tip is kept as the branch's superseded tip.",
+          "type": "string",
+          "enum": [
+            "rewritten"
+          ]
+        },
+        {
+          "description": "The remote no longer has the branch.",
+          "type": "string",
+          "enum": [
+            "pruned"
+          ]
+        }
+      ]
+    },
+    "BranchMoveOutput": {
+      "description": "One remote-tracking branch a fetch moved.",
+      "type": "object",
+      "required": [
+        "branch",
+        "move"
+      ],
+      "properties": {
+        "branch": {
+          "description": "The branch, qualified by its remote (`origin/main`).",
+          "type": "string"
+        },
+        "from": {
+          "description": "The tip before the fetch. Absent for a `created` branch.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "move": {
+          "$ref": "#/definitions/BranchMoveKind"
+        },
+        "to": {
+          "description": "The tip after the fetch. Absent for a `pruned` branch.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "Effect": {
+      "description": "The side effect that did not happen.",
+      "oneOf": [
+        {
+          "description": "The integrations' install hooks (`npm install`, `uv sync`, `cargo fetch`, …).",
+          "type": "string",
+          "enum": [
+            "install-hooks"
+          ]
+        },
+        {
+          "description": "Regenerating the integrations' managed and generated files.",
+          "type": "string",
+          "enum": [
+            "integration-files"
+          ]
+        },
+        {
+          "description": "Refreshing the weave root's links onto the project's files.",
+          "type": "string",
+          "enum": [
+            "weave-root-links"
+          ]
+        },
+        {
+          "description": "Activating a cloned project: selecting it, surfacing its links and running its install hooks.",
+          "type": "string",
+          "enum": [
+            "activation"
+          ]
+        }
+      ]
+    },
+    "EntryChange": {
+      "description": "How the pulled `rwv.toml` changed a member's entry.",
+      "type": "string",
+      "enum": [
+        "added",
+        "removed",
+        "changed"
+      ]
+    },
+    "FetchStatus": {
+      "description": "How a repo's fetch ended.",
+      "oneOf": [
+        {
+          "description": "Every remote answered.",
+          "type": "string",
+          "enum": [
+            "fetched"
+          ]
+        },
+        {
+          "description": "A remote could not be completed, the cause named in `message`. Later verbs read the repo's remote-tracking branches as last fetched.",
+          "type": "string",
+          "enum": [
+            "unconfirmed"
+          ]
+        },
+        {
+          "description": "The repo was not fetched, the reason named in `message`.",
+          "type": "string",
+          "enum": [
+            "skipped"
+          ]
+        }
+      ]
+    },
+    "FetchedRepoOutput": {
+      "description": "One repo's record in `rwv fetch --json`.",
+      "type": "object",
+      "required": [
+        "absolute_path",
+        "moved",
+        "path",
+        "status"
+      ],
+      "properties": {
+        "absolute_path": {
+          "$ref": "#/definitions/WirePath"
+        },
+        "message": {
+          "description": "The cause of an `unconfirmed` fetch, or the reason for a `skipped` one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "moved": {
+          "description": "Each remote-tracking branch that moved, by branch.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/BranchMoveOutput"
+          }
+        },
+        "path": {
+          "description": "The repo's path: a member's manifest path, or `projects/<name>` for the project repo.",
+          "type": "string"
+        },
+        "refusal": {
+          "description": "The refusal token of an `unconfirmed` repo whose cause is a refusal, resolvable with `rwv explain <token>`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/definitions/FetchStatus"
+        }
+      }
+    },
+    "FilePlacement": {
+      "description": "How a member's tracked files reached a workspace.",
+      "type": "object",
+      "required": [
+        "hardlinked",
+        "reflinked",
+        "written"
+      ],
+      "properties": {
+        "hardlinked": {
+          "description": "Linked to another workspace's read-only copy.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "reflinked": {
+          "description": "Cloned from another workspace's copy, sharing its storage until either is written.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "written": {
+          "description": "Written by the version control system.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        }
+      }
+    },
+    "MemberChangeOutput": {
+      "description": "A member entry the pulled `rwv.toml` added, removed or changed.",
+      "type": "object",
+      "required": [
+        "change",
+        "fields",
+        "path"
+      ],
+      "properties": {
+        "change": {
+          "$ref": "#/definitions/EntryChange"
+        },
+        "fields": {
+          "description": "For a changed entry, each field that differs as `<field>: <was> -> <now>`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "path": {
+          "type": "string"
+        }
+      }
+    },
+    "MemberOutcomeOutput": {
+      "description": "Per-member outcome record for `rwv update --json` and `rwv clone --json`.\n\n`status` is one of `\"ok\"`, `\"skipped\"`, or `\"failed\"`. `message` carries a human-readable description of the outcome (always present for `\"failed\"`; present for `\"skipped\"` to say why; `null` for `\"ok\"`).",
+      "type": "object",
+      "required": [
+        "absolute_path",
+        "path",
+        "status"
+      ],
+      "properties": {
+        "absolute_path": {
+          "$ref": "#/definitions/WirePath"
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "refusal": {
+          "description": "The refusal token of a `failed` repo, resolvable with `rwv explain <token>`. Absent when the failure carries no classified refusal.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/definitions/MemberOutcomeStatus"
+        }
+      }
+    },
+    "MemberOutcomeStatus": {
+      "description": "Status discriminant for [`MemberOutcomeOutput`].",
+      "type": "string",
+      "enum": [
+        "ok",
+        "skipped",
+        "failed"
+      ]
+    },
+    "PlacementOutput": {
+      "description": "How the files of one checkout were placed when a verb created or moved it.",
+      "type": "object",
+      "required": [
+        "absolute_path",
+        "files",
+        "path"
+      ],
+      "properties": {
+        "absolute_path": {
+          "description": "The checkout whose files were placed.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/WirePath"
+            }
+          ]
+        },
+        "files": {
+          "description": "How many files were cloned, linked or written.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/FilePlacement"
+            }
+          ]
+        },
+        "path": {
+          "description": "Manifest-relative path of the repository.",
+          "type": "string"
+        }
+      }
+    },
+    "ProjectTakeInOutput": {
+      "description": "What `rwv pull` did to the project branch.",
+      "type": "object",
+      "required": [
+        "member_changes",
+        "path",
+        "re_pinned",
+        "result"
+      ],
+      "properties": {
+        "branch": {
+          "description": "The branch the project repo is on. Absent when it is detached.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "from": {
+          "description": "The branch's tip before. Present for `advanced`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "member_changes": {
+          "description": "Member entries the pulled `rwv.toml` added, removed or changed.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/MemberChangeOutput"
+          }
+        },
+        "path": {
+          "description": "The project repo's path, `projects/<name>`.",
+          "type": "string"
+        },
+        "re_pinned": {
+          "description": "Members the pulled lock re-pinned backward.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/RePinnedOutput"
+          }
+        },
+        "result": {
+          "$ref": "#/definitions/TakeIn"
+        },
+        "to": {
+          "description": "The branch's tip after. Present for `advanced`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "RePinnedOutput": {
+      "description": "A member whose pin the pulled lock moved backward, or to a commit that does not descend from the old one.",
+      "type": "object",
+      "required": [
+        "from",
+        "path",
+        "to"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        }
+      }
+    },
+    "Resolution": {
+      "description": "Resolved workspace coordinates for `--json` output and the plugin env-var envelope.\n\nCarries `workspace` (primary root abs path), `workweave` (the `<project>--<name>` identity the registry records), `project` (resolved project name), and `workweave_unregistered`. No `kind` or `location` field: the checkout is one of three states, and two of them are already carried by `workweave`'s presence.\n\nThe third state needs a field of its own. A workweave whose directory no registry entry names has no identity, so `workweave` is absent for it — and absent is what the primary looks like. Without `workweave_unregistered` the two serialize identically, and a consumer reading the documented meaning of that absence is told, positively, that it is at the primary checkout.\n\nResults only — provenance (which chain step resolved the project, which flag addressed the workspace) is deliberately excluded: anything in default `--json` output becomes depended on, and the assertion use case needs the result, not the mechanism. Provenance appears only in the human-facing \"target:\" line printed to stderr.\n\nIsomorphic to the plugin env-var envelope (`RWV_WORKSPACE`/`RWV_WORKWEAVE`/`RWV_WORKWEAVE_UNREGISTERED`/`RWV_PROJECT`): both surfaces are pure projections of [`WorkspaceContext::resolution`], never independently computed.",
+      "type": "object",
+      "required": [
+        "workspace"
+      ],
+      "properties": {
+        "project": {
+          "description": "Resolved project name; absent when the workspace resolved but no project did (a primary with no project selected).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspace": {
+          "description": "Primary weave root.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/WirePath"
+            }
+          ]
+        },
+        "workweave": {
+          "description": "Workweave identity (`<project>--<name>`), as the primary-side registry records it.\n\nAbsent at the primary, and absent for a workweave whose directory no registry entry names — identity is by record, so an unregistered workweave has no identity to report and rwv will not spell one from the directory name. Those two absences are told apart by `workweave_unregistered`, not by this field.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workweave_unregistered": {
+          "description": "`true` when the invocation resolved into a workweave whose directory no registry entry names, so `workweave` above is absent for a reason that is not \"this is the primary\".\n\nSerialized only in that state, so the primary and a registered workweave emit exactly the bytes they emitted before this field existed. `rwv doctor --fix` registers such a directory, after which this is absent and `workweave` carries the identity.",
+          "type": "boolean"
+        }
+      }
+    },
+    "SkipReason": {
+      "description": "Why the effect did not happen.",
+      "oneOf": [
+        {
+          "description": "`--no-materialize` was passed.",
+          "type": "string",
+          "enum": [
+            "no-materialize"
+          ]
+        },
+        {
+          "description": "An authoring verb ran inside a workweave, where it runs no hooks.",
+          "type": "string",
+          "enum": [
+            "inside-workweave"
+          ]
+        },
+        {
+          "description": "The CLI the integration's hook drives is not on `PATH`.",
+          "type": "object",
+          "required": [
+            "tool-missing"
+          ],
+          "properties": {
+            "tool-missing": {
+              "type": "object",
+              "required": [
+                "tool"
+              ],
+              "properties": {
+                "tool": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "The verb acted on a project the weave root does not present.",
+          "type": "object",
+          "required": [
+            "not-presented"
+          ],
+          "properties": {
+            "not-presented": {
+              "type": "object",
+              "required": [
+                "project"
+              ],
+              "properties": {
+                "project": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "`rwv update --remote` was narrowed by `--role` or `--repo`.",
+          "type": "string",
+          "enum": [
+            "narrowed"
+          ]
+        },
+        {
+          "description": "A project was already active, so the verb selected none.",
+          "type": "object",
+          "required": [
+            "project-already-active"
+          ],
+          "properties": {
+            "project-already-active": {
+              "type": "object",
+              "required": [
+                "project"
+              ],
+              "properties": {
+                "project": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "SkippedEffect": {
+      "description": "One materialization side effect a verb skipped on this run.",
+      "type": "object",
+      "required": [
+        "effect",
+        "reason",
+        "remedy"
+      ],
+      "properties": {
+        "effect": {
+          "$ref": "#/definitions/Effect"
+        },
+        "integration": {
+          "description": "The integration whose part of `effect` was skipped; absent when the whole effect was.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "$ref": "#/definitions/SkipReason"
+        },
+        "remedy": {
+          "description": "The command that performs the effect.",
+          "type": "string"
+        }
+      }
+    },
+    "TakeIn": {
+      "description": "What taking in the project branch came to.",
+      "oneOf": [
+        {
+          "description": "The branch was behind its upstream and now is at it.",
+          "type": "string",
+          "enum": [
+            "advanced"
+          ]
+        },
+        {
+          "description": "The branch is at its upstream.",
+          "type": "string",
+          "enum": [
+            "even"
+          ]
+        },
+        {
+          "description": "The branch holds commits its upstream lacks, and nothing it has not.",
+          "type": "string",
+          "enum": [
+            "ahead"
+          ]
+        },
+        {
+          "description": "The branch has no upstream, or its upstream is not on the remote.",
+          "type": "string",
+          "enum": [
+            "no-upstream"
+          ]
+        },
+        {
+          "description": "The project repo is on no branch.",
+          "type": "string",
+          "enum": [
+            "detached"
+          ]
+        }
+      ]
+    },
+    "WirePath": {
+      "description": "Absolute path, `/`-separated on every platform.",
+      "type": "string"
+    }
+  }
+}

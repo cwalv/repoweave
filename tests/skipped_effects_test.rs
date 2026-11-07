@@ -339,7 +339,15 @@ fn a_narrowed_update_names_doctor_fix_and_materialize_in_text_and_json() {
 
     let run = weave.ok_in(
         &weave.ws,
-        &["update", "--repo", "github/acme/web", "--json", "-j", "1"],
+        &[
+            "update",
+            "--remote",
+            "--repo",
+            "github/acme/web",
+            "--json",
+            "-j",
+            "1",
+        ],
     );
     for line in [
         "[skipped] core: the integration files were not regenerated (the update was narrowed \
@@ -362,7 +370,7 @@ fn a_narrowed_update_names_doctor_fix_and_materialize_in_text_and_json() {
     );
     assert!(!weave.npm_ran(), "fixture: a narrowed update runs no hook");
 
-    let run = weave.ok_in(&weave.ws, &["update", "--json", "-j", "1"]);
+    let run = weave.ok_in(&weave.ws, &["update", "--remote", "--json", "-j", "1"]);
     assert!(
         weave.npm_ran(),
         "control: an unnarrowed update ran the hooks"
@@ -377,7 +385,14 @@ fn update_records_the_hooks_it_skipped_in_json() {
 
     let run = weave.ok_in(
         &weave.ws,
-        &["update", "--no-materialize", "--json", "-j", "1"],
+        &[
+            "update",
+            "--remote",
+            "--no-materialize",
+            "--json",
+            "-j",
+            "1",
+        ],
     );
     assert!(run.stderr.contains(NO_MATERIALIZE), "{}", run.report());
     assert_eq!(
@@ -388,7 +403,7 @@ fn update_records_the_hooks_it_skipped_in_json() {
     );
 
     let seat = weave.seat();
-    let run = weave.ok_in(&seat, &["update", "--json", "-j", "1"]);
+    let run = weave.ok_in(&seat, &["update", "--remote", "--json", "-j", "1"]);
     assert!(run.stderr.contains(INSIDE_WORKWEAVE), "{}", run.report());
     assert_eq!(
         skipped(&run.json()),
@@ -398,7 +413,7 @@ fn update_records_the_hooks_it_skipped_in_json() {
     );
 
     std::fs::remove_file(weave.bin.join("npm")).unwrap();
-    let run = weave.ok_in(&weave.ws, &["update", "--json", "-j", "1"]);
+    let run = weave.ok_in(&weave.ws, &["update", "--remote", "--json", "-j", "1"]);
     assert!(
         run.stderr.contains(
             "[warning] npm-workspaces: npm is not on PATH, so this integration's install hook \
@@ -419,7 +434,7 @@ fn update_records_the_hooks_it_skipped_in_json() {
 }
 
 #[test]
-fn fetch_names_what_its_activation_skipped_in_text_and_json() {
+fn clone_names_what_its_activation_skipped_in_text_and_json() {
     let weave = Weave::new();
     let source = weave.tmp.path().join("app.git");
     common::git_in(
@@ -440,7 +455,7 @@ fn fetch_names_what_its_activation_skipped_in_text_and_json() {
 
     let run = weave.ok_in(
         &fresh("flagged"),
-        &["fetch", &source, "--no-materialize", "--json", "-j", "1"],
+        &["clone", &source, "--no-materialize", "--json", "-j", "1"],
     );
     assert!(run.stderr.contains(NO_MATERIALIZE), "{}", run.report());
     assert_eq!(
@@ -456,7 +471,7 @@ fn fetch_names_what_its_activation_skipped_in_text_and_json() {
     let run = weave.ok_in(
         &occupied,
         &[
-            "fetch",
+            "clone",
             &source,
             "--allow-non-empty-dir",
             "--json",
@@ -466,7 +481,7 @@ fn fetch_names_what_its_activation_skipped_in_text_and_json() {
     );
     assert!(
         run.stderr.contains(
-            "rwv fetch: skipping auto-activate (project 'elsewhere' already active); \
+            "rwv clone: skipping auto-activate (project 'elsewhere' already active); \
              `rwv activate app` selects it and runs its install hooks"
         ),
         "{}",
@@ -481,7 +496,7 @@ fn fetch_names_what_its_activation_skipped_in_text_and_json() {
         })]
     );
 
-    let run = weave.ok_in(&fresh("control"), &["fetch", &source, "--json", "-j", "1"]);
+    let run = weave.ok_in(&fresh("control"), &["clone", &source, "--json", "-j", "1"]);
     assert!(
         weave.npm_ran(),
         "control: the first activation ran the hooks"
@@ -490,7 +505,7 @@ fn fetch_names_what_its_activation_skipped_in_text_and_json() {
     assert_eq!(skipped(&run.json()), Vec::<serde_json::Value>::new());
 
     std::fs::remove_file(weave.ws.join(".rwv-active")).unwrap();
-    let run = weave.ok_in(&weave.ws, &["fetch"]);
+    let run = weave.ok_in(&weave.ws, &["update"]);
     assert!(
         weave.npm_ran(),
         "control: selecting the only project ran its hooks"
@@ -498,14 +513,14 @@ fn fetch_names_what_its_activation_skipped_in_text_and_json() {
     assert_says_nothing_skipped(&run);
 }
 
-/// An in-place fetch that activates nothing says the hooks did not run only
-/// when it moved or created a checkout: a no-op fetch leaves nothing for them
-/// to do and says nothing.
+/// An update that activates nothing says the hooks did not run only when it
+/// moved or created a checkout: a no-op update leaves nothing for them to do
+/// and says nothing.
 #[test]
-fn an_in_place_fetch_names_materialize_only_when_it_moved_or_created_a_checkout() {
+fn an_update_names_materialize_only_when_it_moved_or_created_a_checkout() {
     let weave = Weave::new();
     let line = "[skipped] core: the install hooks did not run (project `app` was already active, \
-                so this fetch activated nothing); `rwv materialize` runs them";
+                so this update activated nothing); `rwv materialize` runs them";
     let record = serde_json::json!({
         "effect": "install-hooks",
         "reason": {"project-already-active": {"project": "app"}},
@@ -513,7 +528,7 @@ fn an_in_place_fetch_names_materialize_only_when_it_moved_or_created_a_checkout(
     });
     let member = weave.ws.join("github/acme/web");
 
-    for args in [&["fetch"][..], &["fetch", "--json", "-j", "1"][..]] {
+    for args in [&["update"][..], &["update", "--json", "-j", "1"][..]] {
         let run = weave.ok_in(&weave.ws, args);
         assert_says_nothing_skipped(&run);
         if args.contains(&"--json") {
@@ -521,12 +536,12 @@ fn an_in_place_fetch_names_materialize_only_when_it_moved_or_created_a_checkout(
         }
     }
 
-    for args in [&["fetch"][..], &["fetch", "--json", "-j", "1"][..]] {
+    for args in [&["update"][..], &["update", "--json", "-j", "1"][..]] {
         std::fs::remove_dir_all(&member).unwrap();
         let run = weave.ok_in(&weave.ws, args);
         assert!(
             member.join(".git").exists(),
-            "fixture: fetch re-cloned the member"
+            "fixture: update re-cloned the member"
         );
         assert!(
             run.stderr.contains(line),
@@ -543,24 +558,24 @@ fn an_in_place_fetch_names_materialize_only_when_it_moved_or_created_a_checkout(
     common::git_in(&member, &["add", "-A"]);
     common::git_in(&member, &["commit", "-q", "-m", "ahead of the lock"]);
     common::git_in(&member, &["checkout", "-q", "--detach"]);
-    let run = weave.ok_in(&weave.ws, &["fetch", "--json", "-j", "1"]);
+    let run = weave.ok_in(&weave.ws, &["update", "--json", "-j", "1"]);
     assert!(
         !member.join("moved.txt").exists(),
-        "fixture: fetch moved the member back to its pin:\n{}",
+        "fixture: update moved the member back to its pin:\n{}",
         run.report()
     );
     assert!(run.stderr.contains(line), "{}", run.report());
     assert_eq!(skipped(&run.json()), vec![record]);
 }
 
-/// A fetch in a workweave leaves the primary's clones where they are, so only a
-/// member worktree it creates there makes it say the hooks did not run.
+/// An update in a workweave leaves the primary's clones where they are, so only
+/// a member worktree it creates there makes it say the hooks did not run.
 #[test]
-fn an_in_place_fetch_in_a_workweave_names_materialize_only_for_a_worktree_it_created() {
+fn an_update_in_a_workweave_names_materialize_only_for_a_worktree_it_created() {
     let weave = Weave::new();
     let seat = weave.seat();
 
-    let run = weave.ok_in(&seat, &["fetch", "--json", "-j", "1"]);
+    let run = weave.ok_in(&seat, &["update", "--json", "-j", "1"]);
     assert_says_nothing_skipped(&run);
     assert_eq!(skipped(&run.json()), Vec::<serde_json::Value>::new());
 
@@ -570,11 +585,11 @@ fn an_in_place_fetch_in_a_workweave_names_materialize_only_for_a_worktree_it_cre
     common::git_in(&canonical, &["commit", "-q", "-m", "ahead of the lock"]);
     common::git_in(&canonical, &["checkout", "-q", "--detach"]);
     let ahead = common::git_in(&canonical, &["rev-parse", "HEAD"]);
-    let run = weave.ok_in(&seat, &["fetch", "--json", "-j", "1"]);
+    let run = weave.ok_in(&seat, &["update", "--json", "-j", "1"]);
     assert_eq!(
         common::git_in(&canonical, &["rev-parse", "HEAD"]),
         ahead,
-        "the fetch left the primary's clone where it was:\n{}",
+        "the update left the primary's clone where it was:\n{}",
         run.report()
     );
     assert_says_nothing_skipped(&run);
@@ -585,15 +600,15 @@ fn an_in_place_fetch_in_a_workweave_names_materialize_only_for_a_worktree_it_cre
         weave.ws.join("github/acme/web"),
         &["worktree", "remove", "--force", &member.to_string_lossy()],
     );
-    let run = weave.ok_in(&seat, &["fetch", "--json", "-j", "1"]);
+    let run = weave.ok_in(&seat, &["update", "--json", "-j", "1"]);
     assert!(
         member.join(".git").exists(),
-        "fixture: fetch re-created the worktree"
+        "fixture: update re-created the worktree"
     );
     assert!(
         run.stderr.contains(
             "[skipped] core: the install hooks did not run (project `app` was already active, \
-             so this fetch activated nothing); `rwv materialize` runs them"
+             so this update activated nothing); `rwv materialize` runs them"
         ),
         "{}",
         run.report()

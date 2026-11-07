@@ -296,7 +296,7 @@ fn update_with_project_override_regenerates_without_selecting() {
     select_proj_a(&ws);
 
     rwv()
-        .args(["update", "--project", "proj-b"])
+        .args(["update", "--remote", "--project", "proj-b"])
         .current_dir(&ws)
         .assert()
         .success();

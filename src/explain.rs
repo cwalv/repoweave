@@ -17,7 +17,9 @@ const LOG_EXPLAIN: &str = include_str!("../docs/reference/explain/log.md");
 const DOCTOR_EXPLAIN: &str = include_str!("../docs/reference/explain/doctor.md");
 const SYNC_EXPLAIN: &str = include_str!("../docs/reference/explain/sync.md");
 const SYNC_TO_EXPLAIN: &str = include_str!("../docs/reference/explain/sync-to.md");
+const CLONE_EXPLAIN: &str = include_str!("../docs/reference/explain/clone.md");
 const FETCH_EXPLAIN: &str = include_str!("../docs/reference/explain/fetch.md");
+const PULL_EXPLAIN: &str = include_str!("../docs/reference/explain/pull.md");
 const UPDATE_EXPLAIN: &str = include_str!("../docs/reference/explain/update.md");
 const PUSH_EXPLAIN: &str = include_str!("../docs/reference/explain/push.md");
 const PRIME_EXPLAIN: &str = include_str!("../docs/reference/explain/prime.md");
@@ -227,7 +229,9 @@ const VERB_BUNDLES: &[(&str, &str)] = &[
     ("doctor", DOCTOR_EXPLAIN),
     ("sync", SYNC_EXPLAIN),
     ("sync-to", SYNC_TO_EXPLAIN),
+    ("clone", CLONE_EXPLAIN),
     ("fetch", FETCH_EXPLAIN),
+    ("pull", PULL_EXPLAIN),
     ("update", UPDATE_EXPLAIN),
     ("push", PUSH_EXPLAIN),
     ("prime", PRIME_EXPLAIN),

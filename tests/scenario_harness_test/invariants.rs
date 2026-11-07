@@ -210,6 +210,10 @@ pub struct Allowance {
     /// Repos the step names for moving a declared branch to or with its
     /// upstream.
     pub may_rewrite: Vec<Repo>,
+    /// Members whose pin the step may leave at a commit no ref of the
+    /// repository that backs it reaches: a lock published ahead of its
+    /// member, or a clone of one.
+    pub may_leave_unresolved: Vec<Repo>,
     pub writes: Vec<RemoteWrite>,
 }
 
@@ -636,11 +640,13 @@ pub fn check(
 ) -> Vec<Violation> {
     let mut violations = stranded(sandbox, before, after, &allow.may_strand);
     let already = unresolved_pins(sandbox, before);
-    violations.extend(
-        unresolved_pins(sandbox, after)
-            .into_iter()
-            .filter(|v| !already.contains(v)),
-    );
+    violations.extend(unresolved_pins(sandbox, after).into_iter().filter(|v| {
+        let spared = matches!(
+            v,
+            Violation::UnresolvedPin { member, .. } if allow.may_leave_unresolved.contains(member)
+        );
+        !already.contains(v) && !spared
+    }));
     violations.extend(rewound_pins(sandbox, before, after, &allow.may_rewind));
     violations.extend(unattributed_remote_writes(
         sandbox,

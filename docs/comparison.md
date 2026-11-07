@@ -31,7 +31,7 @@ Git submodules pin a commit SHA from one repo inside another. They solve the rep
 
 **git submodules win when:** your use case is purely pinning — a firmware repo that vendors a hardware-abstraction library at a known commit, a docs repo that embeds a spec. No writable workspace needed, no parallel work, no agent integration.
 
-**repoweave wins when:** you want to *work* across repos, not just pin them. Submodules check out detached HEADs by default, have no concept of generated ecosystem workspace files, no workweave isolation, no `sync-to --retire` landing path, and no structured agent surface. Updating submodules across several repos is manual and error-prone; `rwv update` advances every member repo in parallel and re-snapshots `rwv.lock` only after every advance succeeds.
+**repoweave wins when:** you want to *work* across repos, not just pin them. Submodules check out detached HEADs by default, have no concept of generated ecosystem workspace files, no workweave isolation, no `sync-to --retire` landing path, and no structured agent surface. Updating submodules across several repos is manual and error-prone; `rwv update --remote` advances every member repo in parallel and re-snapshots `rwv.lock` only after every advance succeeds.
 
 ## git subtree
 
@@ -98,9 +98,9 @@ Earlier tools split into two dataflows:
 1. **No record (`gita`, `meta`):** fan out commands across directories, but pin nothing and generate no workspace wiring. Nothing can drift, and nothing is reproducible.
 2. **Authoritative record (`git submodules`, `repo`, `west`):** treat the composition record like a source file that checkouts must conform to. Detached HEADs and forgotten pointer-bump commits are that dataflow working as designed.
 
-repoweave uses a third dataflow: **the lock is derived on mutation and authoritative only at materialization (`rwv fetch` / `rwv sync`)**:
+repoweave uses a third dataflow: **the lock is derived on mutation and authoritative only at materialization (`rwv clone` / `rwv update` / `rwv sync`)**:
 
-- **Reconciliation is built into the verbs:** the authoring verbs (`add`, `remove`, `update`, `role`) author ecosystem workspace files and `activate` surfaces them at the weave root; `sync` and `sync-to` recompute `rwv.lock` in Phase 3 ([lock-as-derived](explanation/joints/lock-as-derived.md)), making lock merge conflicts impossible.
+- **Reconciliation is built into the verbs:** the authoring verbs (`add`, `remove`, `update --remote`, `role`) author ecosystem workspace files and `activate` surfaces them at the weave root; `sync` and `sync-to` recompute `rwv.lock` in Phase 3 ([lock-as-derived](explanation/joints/lock-as-derived.md)), making lock merge conflicts impossible.
 - **Drift is detectable and repairable:** `rwv doctor`, including each integration's own checks, reports divergence, and `rwv abort` rolls back mid-operation sync state via `refs/rwv/pre-op/<id>` savepoints.
 - **Ordinary git stays first-class:** there is no `rwv commit` or wrapped git porcelain ([verb-vs-composition](explanation/joints/verb-vs-composition.md)).
 

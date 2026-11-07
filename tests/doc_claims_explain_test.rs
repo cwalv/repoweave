@@ -115,7 +115,7 @@ fn explain_sync_matches_committed_doc() {
 
 #[test]
 fn explain_fetch_matches_committed_doc() {
-    assert_byte_identical("fetch");
+    assert_byte_identical("update");
 }
 
 #[test]

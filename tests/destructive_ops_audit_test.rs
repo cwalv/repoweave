@@ -405,7 +405,7 @@ const ALLOWLIST: &[Allowed] = &[
             existing one. `-B` therefore repositions a ref git minted \
             moments earlier with no working tree hanging off it and no \
             observer, which is what makes it a birth rather than a MOVE \
-            (`fetch` (absent clone) is the other birth site). With an explicit \
+            (`rwv update` for a member not on disk is the other birth site). With an explicit \
             start point there is no checkout.guess and no tag lookup, and \
             the -- terminator keeps a path-shaped name out of the pathspec \
             list; the clone runs --no-checkout, so no working tree is ever \
@@ -453,14 +453,20 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git.rs",
         pattern: "\"update-ref\"",
-        count: 3,
+        count: 5,
         callers: &[],
         justification: "(1) savepoint create, (2) savepoint drop, both \
             namespaced under refs/rwv/pre-op/<op-id> (relocated from \
             sync.rs). (3) create_unpopulated_submodule(): \
             detaches HEAD, with --no-deref, in a submodule repository the \
             same call cloned an instant before and that nothing else has \
-            seen; its branches are left as the clone made them. None touch \
+            seen; its branches are left as the clone made them. (5) \
+            record_superseded_tip(): after a pruning fetch moved a \
+            remote-tracking branch to a tip that does not descend from its \
+            old one, names the old tip under refs/rwv/superseded/<remote>/ \
+            <branch>/<old tip>. The ref's name ends in the commit it points \
+            at, so the call only adds a name for a commit the fetch had \
+            just dropped one; it moves and deletes nothing. None touch \
             user refs.",
     },
     Allowed {

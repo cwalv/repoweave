@@ -125,35 +125,23 @@ pub enum Commands {
     Resolve,
 
     // ── Setup & lifecycle ─────────────────────────────────────────────────────
-    /// Clone a project and align repos to rwv.lock (no network bump). Use `rwv update` to advance to branch HEAD. With no SOURCE, re-materialize missing manifest members of the active project (repair verb for dangling references).
-    Fetch {
-        /// Source to fetch from: a URL (`file://` for a local remote) or `owner/repo` shorthand. Omit to re-materialize missing manifest members of the active project in the current workspace.
-        source: Option<String>,
-        /// Error if the lock file is missing or incomplete (CI mode)
-        #[arg(long)]
-        frozen: bool,
-        /// Bootstrap into a non-empty directory that is not a workspace
+    /// Clone a project and each of its members at the commit `rwv.lock` pins. A member the lock does not pin, or pins at a commit no ref reaches, is cloned at its declared branch's tip and listed; the exit status is then 3.
+    Clone {
+        /// Project to clone: a URL (`file://` for a local remote) or `owner/repo` shorthand
+        source: String,
+        /// Clone into a non-empty directory that is not a workspace
         #[arg(long)]
         allow_non_empty_dir: bool,
-        /// Skip cloning/fetching repositories with role: reference
+        /// Skip cloning repositories with role: reference
         #[arg(long)]
         no_reference: bool,
-        /// Align a present repo even where that changes what HEAD is attached to: materialize the pin on a detached HEAD instead of refusing
-        #[arg(long)]
-        detach_checkouts: bool,
-        #[command(flatten)]
-        selector: RepoSelectorArgs,
         /// Number of parallel per-repo workers. Default: min(nproc, 8). `-j 1` is explicit serial.
         #[arg(short = 'j', long = "jobs")]
         jobs: Option<usize>,
-        /// Emit per-repo outcomes as one `{ "$schema": ..., "outcomes": [...] }`
-        /// JSON envelope once every repo is done, whatever `-j` is. See `rwv explain fetch`.
+        /// Emit per-repo outcomes, and the members left without a pin, as one JSON envelope once every repo is done, whatever `-j` is. See `rwv explain clone`.
         #[arg(long)]
         json: bool,
-        /// Without SOURCE, operate on this project instead of the active project (does not change `.rwv-active`)
-        #[arg(long)]
-        project: Option<String>,
-        /// Skip the integration install hooks (e.g., `npm install`, `uv sync`) of the activation a fetch performs when it activates a project (a SOURCE fetch's first one, or an in-place fetch selecting the weave's only project); `rwv materialize` runs them later
+        /// Skip the integration install hooks (e.g., `npm install`, `uv sync`) of the activation a clone performs when no project is active; `rwv materialize` runs them later
         #[arg(long)]
         no_materialize: bool,
     },
@@ -431,37 +419,54 @@ pub enum Commands {
     },
 
     // ── Network & publishing ──────────────────────────────────────────────────
-    /// Push member repos and then the project repo, in that order. Refuses from a workweave. Member pushes are attempt-all-and-collect; project repo is gated on every member repo succeeding.
-    Push {
+    /// Bring every remote's branches and tags into each repo's object store, dropping remote branches that are gone. Moves no branch, checkout or lock, and reports what moved.
+    Fetch {
+        /// Skip repositories with role: reference
+        #[arg(long)]
+        no_reference: bool,
+        #[command(flatten)]
+        selector: RepoSelectorArgs,
+        /// Number of parallel per-repo workers. Default: min(nproc, 8). `-j 1` is explicit serial.
+        #[arg(short = 'j', long = "jobs")]
+        jobs: Option<usize>,
+        /// Emit per-repo results as one JSON envelope once every repo is done, whatever `-j` is. See `rwv explain fetch`.
+        #[arg(long)]
+        json: bool,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
-        /// Print the push plan without executing
+    },
+    /// Fetch, fast-forward the project branch to its upstream, then update the members to the lock it holds.
+    Pull {
+        /// Align a repo even when that detaches a branch attached to
+        /// something other than its tracking counterpart
         #[arg(long)]
-        dry_run: bool,
-        /// Force-push every repo in the operation (member repos and the project repo). Default deny.
+        detach_checkouts: bool,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
-        force: bool,
-        /// Limit the push to repos with this role. Repeat to union multiple roles. Combined as a union with --repo. Lock-precondition still runs against the full manifest.
-        #[arg(long = "role")]
-        roles: Vec<String>,
-        /// Limit the push to repos matching this selector. Bare strings match exactly; `re:<pat>` matches as regex; `glob:<pat>` matches as glob. Repeat for union. Combined as a union with --role. Lock-precondition still runs against the full manifest.
-        #[arg(long = "repo")]
-        repos: Vec<String>,
-        /// Number of parallel per-repo workers for member-repo pushes. Default: 1 (serial): every push authenticates and runs the repo's pre-push hook, so concurrent pushes would share one terminal's credential prompts and run those hooks side by side, and the default push set is already narrowed to writable roles. Project-repo push always runs serially as the last step.
+        project: Option<String>,
+        #[command(flatten)]
+        selector: RepoSelectorArgs,
+        /// Number of parallel per-repo workers. Default: min(nproc, 8). `-j 1` is explicit serial.
         #[arg(short = 'j', long = "jobs")]
         jobs: Option<usize>,
-        /// Emit per-repo outcomes as JSON (array-of-records with stable per-variant `kind`). See `rwv explain push`.
+        /// Emit one JSON envelope once every step is done, whatever `-j` is. See `rwv explain pull`.
         #[arg(long)]
         json: bool,
-    },
-    /// Advance each repo to its branch HEAD and re-snapshot the lock (network bump; analogous to `cargo update` / `npm update`). Use `rwv fetch` for the read-only counterpart that aligns clones to the existing lock.
-    Update {
-        /// Allow update with uncommitted changes in repos when relocking
+        /// Skip the integration install hooks (e.g., `npm install`, `uv sync`) of the activation an update performs when it selects the weave's only project; `rwv materialize` runs them later
         #[arg(long)]
+        no_materialize: bool,
+    },
+    /// Clone the members missing on disk and align the rest to rwv.lock, without writing it. With --remote, advance each repo to its branch HEAD on the remote and re-snapshot the lock (network bump; analogous to `cargo update` / `npm update`).
+    Update {
+        /// Advance each repo to its branch HEAD on the remote and re-snapshot the lock
+        #[arg(long)]
+        remote: bool,
+        /// Allow update with uncommitted changes in repos when relocking
+        #[arg(long, requires = "remote")]
         dirty: bool,
         /// Commit rwv.lock together with the integration files regenerated against the new tips, and with rwv.toml when it has uncommitted changes
-        #[arg(long)]
+        #[arg(long, requires = "remote")]
         commit: bool,
         /// Commit message for `--commit`, in place of the generated summary of which repos changed
         #[arg(short = 'm', long = "message", value_name = "MSG", requires = "commit")]
@@ -487,6 +492,30 @@ pub enum Commands {
         no_materialize: bool,
     },
 
+    /// Push member repos and then the project repo, in that order. Refuses from a workweave. Member pushes are attempt-all-and-collect; project repo is gated on every member repo succeeding.
+    Push {
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
+        /// Print the push plan without executing
+        #[arg(long)]
+        dry_run: bool,
+        /// Force-push every repo in the operation (member repos and the project repo). Default deny.
+        #[arg(long)]
+        force: bool,
+        /// Limit the push to repos with this role. Repeat to union multiple roles. Combined as a union with --repo. Lock-precondition still runs against the full manifest.
+        #[arg(long = "role")]
+        roles: Vec<String>,
+        /// Limit the push to repos matching this selector. Bare strings match exactly; `re:<pat>` matches as regex; `glob:<pat>` matches as glob. Repeat for union. Combined as a union with --role. Lock-precondition still runs against the full manifest.
+        #[arg(long = "repo")]
+        repos: Vec<String>,
+        /// Number of parallel per-repo workers for member-repo pushes. Default: 1 (serial): every push authenticates and runs the repo's pre-push hook, so concurrent pushes would share one terminal's credential prompts and run those hooks side by side, and the default push set is already narrowed to writable roles. Project-repo push always runs serially as the last step.
+        #[arg(short = 'j', long = "jobs")]
+        jobs: Option<usize>,
+        /// Emit per-repo outcomes as JSON (array-of-records with stable per-variant `kind`). See `rwv explain push`.
+        #[arg(long)]
+        json: bool,
+    },
     // ── Tooling ───────────────────────────────────────────────────────────────
     /// Generate shell completions
     Completions {

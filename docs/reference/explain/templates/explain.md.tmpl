@@ -44,9 +44,9 @@ Run `rwv explain --help` for the full clap surface.
 
 Every invocation (index or bundle) opens with a `rwv <version>` line — the
 same string `rwv --version` prints — then a blank line, then markdown to
-stdout. For JSON-capable verbs (`status`, `doctor`, `sync`), the bundle
-includes a fenced ```json block with the JSON Schema. For markdown-only
-verbs (`fetch`, `update`, `prime`, `explain`), no schema block is included.
+stdout. For JSON-capable verbs (`status`, `doctor`, `sync`, `fetch`,
+`update`), the bundle includes a fenced ```json block with the JSON Schema.
+For markdown-only verbs (`prime`, `explain`), no schema block is included.
 
 ## Exit codes
 

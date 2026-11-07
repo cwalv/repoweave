@@ -24,7 +24,7 @@ rwv [-C <path> | -w <project>--<name>] each [options] --shell '<command string>'
   starts the command; everything after it is passed through unchanged.
 - With neither `--role` nor `--repo`, every member repo except role
   `reference` runs. Either selector replaces that default scope, with the
-  union semantics of `rwv status`, `fetch`, `update` and `push`. The project
+  union semantics of `rwv status`, `fetch`, `pull`, `update` and `push`. The project
   repo never runs.
 - `-j <N>` runs up to `N` repos at once (default `min(nproc, 8)`). `-j 1`
   hands the terminal to each command in turn.
@@ -108,7 +108,7 @@ Schema:
           ]
         },
         {
-          "description": "The repo's checkout is absent from disk; `rwv fetch` restores it.",
+          "description": "The repo's checkout is absent from disk; `rwv update` restores it.",
           "type": "string",
           "enum": [
             "not-present"

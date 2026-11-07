@@ -1,14 +1,16 @@
 //! Tests for `rwv update --json`.
 //!
 //! Two layers:
-//! 1. Library-level: round-trip the `UpdateJsonOutput` envelope type through
+//! 1. Library-level: round-trip the `UpdateRemoteJsonOutput` envelope type through
 //!    serde so the wire shape (`$schema`, `repos` array, per-record fields)
 //!    is pinned independent of the live update path.
 //! 2. End-to-end: drive `rwv update --json` through the binary, parse stdout,
 //!    assert the envelope shape whatever `-j` is.
 
 use assert_cmd::Command;
-use repoweave::update::{RepoUpdateRecord, UpdateJsonOutput, UpdateKind, UPDATE_SCHEMA_URL};
+use repoweave::update_remote::{
+    RepoUpdateRecord, UpdateKind, UpdateRemoteJsonOutput, UPDATE_REMOTE_SCHEMA_URL,
+};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
@@ -165,12 +167,12 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> UpdateWorkspac
 // Library-level: serde round-trip tests
 // ===========================================================================
 
-/// Round-trip the UpdateJsonOutput envelope so the wire shape is pinned
+/// Round-trip the UpdateRemoteJsonOutput envelope so the wire shape is pinned
 /// independent of the live update path.
 #[test]
 fn update_json_envelope_round_trips() {
-    let envelope = UpdateJsonOutput {
-        schema_url: UPDATE_SCHEMA_URL.to_string(),
+    let envelope = UpdateRemoteJsonOutput {
+        schema_url: UPDATE_REMOTE_SCHEMA_URL.to_string(),
         repos: vec![
             RepoUpdateRecord {
                 path: "github/org/repo".into(),
@@ -209,7 +211,7 @@ fn update_json_envelope_round_trips() {
     // Top-level: $schema + repos.
     assert_eq!(
         v["$schema"],
-        serde_json::Value::String(UPDATE_SCHEMA_URL.to_string())
+        serde_json::Value::String(UPDATE_REMOTE_SCHEMA_URL.to_string())
     );
     let repos = v["repos"].as_array().expect("repos is array");
     assert_eq!(repos.len(), 2);
@@ -235,8 +237,8 @@ fn update_json_envelope_round_trips() {
     );
 
     // Typed round-trip.
-    let decoded: UpdateJsonOutput = serde_json::from_str(&json).expect("deserializes");
-    assert_eq!(decoded.schema_url, UPDATE_SCHEMA_URL);
+    let decoded: UpdateRemoteJsonOutput = serde_json::from_str(&json).expect("deserializes");
+    assert_eq!(decoded.schema_url, UPDATE_REMOTE_SCHEMA_URL);
     assert_eq!(decoded.repos.len(), 2);
     assert_eq!(decoded.repos[0].kind, UpdateKind::Updated);
     assert_eq!(decoded.repos[1].kind, UpdateKind::UpToDate);
@@ -301,7 +303,7 @@ fn update_json_envelope_emitted_under_j1() {
     let new_sha = advance_bare_main(bare);
 
     let assert = rwv()
-        .args(["update", "--dirty", "--json", "-j", "1"])
+        .args(["update", "--remote", "--dirty", "--json", "-j", "1"])
         .current_dir(&ws.workspace)
         .assert()
         .success();
@@ -313,7 +315,7 @@ fn update_json_envelope_emitted_under_j1() {
     let obj = parsed.as_object().expect("top level must be an object");
     assert_eq!(
         obj.get("$schema").and_then(Value::as_str),
-        Some(UPDATE_SCHEMA_URL),
+        Some(UPDATE_REMOTE_SCHEMA_URL),
         "envelope must have correct $schema"
     );
 
@@ -351,11 +353,11 @@ fn update_json_is_one_envelope_whatever_the_worker_count() {
             advance_bare_main(bare);
         }
         let out = rwv()
-            .args(["update", "--dirty", "--json", "-j", jobs])
+            .args(["update", "--remote", "--dirty", "--json", "-j", jobs])
             .current_dir(&ws.workspace)
             .assert()
             .success();
-        common::envelope_shape(&out.get_output().stdout, UPDATE_SCHEMA_URL, "repos")
+        common::envelope_shape(&out.get_output().stdout, UPDATE_REMOTE_SCHEMA_URL, "repos")
     };
     let serial = shape_under("beta", "1");
     let manifest_order: Vec<&str> = repos.iter().map(|(path, _)| *path).collect();
@@ -374,7 +376,7 @@ fn update_json_up_to_date_when_already_at_head() {
     // Do NOT advance the bare — repo is already at branch HEAD.
 
     let assert = rwv()
-        .args(["update", "--dirty", "--json", "-j", "1"])
+        .args(["update", "--remote", "--dirty", "--json", "-j", "1"])
         .current_dir(&ws.workspace)
         .assert()
         .success();

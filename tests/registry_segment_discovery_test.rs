@@ -252,7 +252,7 @@ fn fetch_clears_a_dangling_file_url_member() {
     );
 
     common::rwv()
-        .args(["fetch"])
+        .args(["update"])
         .current_dir(&ws)
         .assert()
         .success();

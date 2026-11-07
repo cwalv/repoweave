@@ -538,6 +538,41 @@ pub fn fixture_lock(project_dir: &std::path::Path, repos: &[(&str, &str, &str)])
     repoweave::lock::write_lock_in(&lock, project_dir).expect("a fixture lock must be writable");
 }
 
+/// [`fixture_lock`] pinning each `(repo_path, url)` at the tip of its remote's
+/// `main`, read from the remote the way a clone reads it.
+///
+/// For a project source whose members already sit on their remotes: a clone
+/// of it places every member at its pin, so the lock it carries is the
+/// complete, reachable one a published project has.
+pub fn fixture_lock_at_remote_tips(project_dir: &std::path::Path, repos: &[(&str, &str)]) {
+    let pinned: Vec<(String, String, String)> = repos
+        .iter()
+        .map(|(path, url)| {
+            let out = git()
+                .args(["ls-remote", url, "refs/heads/main"])
+                .output()
+                .expect("git ls-remote runs");
+            assert!(
+                out.status.success(),
+                "git ls-remote {url} failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let line = String::from_utf8_lossy(&out.stdout).into_owned();
+            let tip = line
+                .split_whitespace()
+                .next()
+                .unwrap_or_else(|| panic!("{url} has no main branch to pin"))
+                .to_owned();
+            ((*path).to_owned(), (*url).to_owned(), tip)
+        })
+        .collect();
+    let borrowed: Vec<(&str, &str, &str)> = pinned
+        .iter()
+        .map(|(p, u, v)| (p.as_str(), u.as_str(), v.as_str()))
+        .collect();
+    fixture_lock(project_dir, &borrowed);
+}
+
 /// The bytes [`fixture_lock`] writes, for a caller that needs them as a value
 /// — committing through a helper that takes file contents, or asserting
 /// against what a lock write must produce.

@@ -78,61 +78,110 @@ a binary built from a source archive has none. `RWV_VERSION` in the
 
 Show current context: weave root, active project, workweave (if any), repos.
 
-### `rwv fetch [<source>] [...]`
+### `rwv clone <source> [...]`
 
-Read `rwv.lock` and align clones to it. Bootstrap when lock is absent.
+Clone a project and each of its members at the commit its `rwv.lock` pins.
 
-Two modes, keyed on whether `<source>` is given:
+`<source>` is a URL (`https://…`, `git@…`, `file://` for a local remote) or `owner/repo` shorthand. `clone` clones the project repo from `<source>` into the current directory, reads its committed `rwv.lock`, clones every listed member repo to its canonical slot, and activates the project when none is active (`.rwv-active`, weave-root links, install hooks). A plain path refuses with `unresolvable-repo-source`, naming the `file://` spelling. It writes no lock.
 
-- **With `<source>`** — a URL (`https://…`, `git@…`, `file://` for a local remote) or `owner/repo` shorthand: the *bootstrap* mode. Clones the project repo from `<source>` into the current directory, reads its committed `rwv.lock`, clones every listed member repo to its canonical slot, and activates the project when none is active (`.rwv-active`, weave-root links, install hooks), `--frozen` and filtered runs included. A plain path refuses with `unresolvable-repo-source`, naming the `file://` spelling.
-- **No `<source>`** — the *in-place repair* mode: re-materialize missing manifest members in the current workspace. Uses the existing `rwv.toml` and `rwv.lock`; clones any repo whose canonical directory is absent (the `missing-canonical-clone` and `dangling-reference` findings from `rwv doctor` point here). Run from the weave root. With no project active and exactly one project in the weave, it fetches that project and then activates it, printing `rwv fetch: activating project '<name>', the only project in this weave (none was active)`; with several, it refuses with `no-active-project` unless `--project` names one.
+Each member is born attached to the local counterpart of the branch its entry declares, at the commit the lock pins. A member the lock cannot place is cloned on that branch at the tip of the remote's branch, listed, and left for the operator to settle; the clone itself completes:
 
-How `rwv fetch` handles each manifest repository:
+| Member | State | Printed as |
+|---|---|---|
+| The lock has no entry for it, or there is no `rwv.lock` | `pin` `none` | `rwv clone: <repo>: pin none` |
+| The lock pins a commit no ref in the clone reaches | `pin` `unreachable` | `rwv clone: <repo>: pin unreachable` |
 
-| Clone & lock state | `rwv fetch` behavior |
-|---|---|
-| Absent on disk | Clones from remote and attaches the declared `branch` at the locked SHA (or remote tip if unlocked) |
-| Present, locked SHA is a fast-forward of the declared `branch` | Fast-forwards the local branch to the locked SHA and leaves HEAD attached (local object store only; no network fetch) |
-| Present, locked SHA is missing from the local object store | Errors (`fetch` does not contact the remote for an already-present clone; run `git -C <repo> fetch` first) |
-| Present, locked SHA is not a fast-forward or checkout is on another branch | Fails that repo, unless `--detach-checkouts` is passed to materialize the pin on a detached HEAD (use `git checkout <branch>` later before running `rwv sync-to`). The other repos still align, and the run exits 1 with `partial-run-aborted` |
-| Present, no lock entry (or no `rwv.lock`) | Leaves the clone at its current HEAD and records that SHA in `rwv.lock` (unless `--frozen` is passed) |
+A clone that left any member exits with status `3` ([Exit status](#exit-status)); `rwv explain pin` serves the state's page. This is the check a CI job runs for a reproducible build: a clone that exits `0` placed every member at its pin.
 
 | Flag | Effect |
 |---|---|
-| `--frozen` | Error if lock is incomplete; never advance. Suitable for CI |
-| `--allow-non-empty-dir` | Bootstrap into a non-empty directory that is not a workspace |
-| `--no-reference` | Skip cloning/fetching repositories with `role = "reference"` |
-| `--detach-checkouts` | Realign a present clone even where that changes what HEAD is attached to: materialize the pin on a detached HEAD instead of refusing |
-| `--role` / `--repo` | Selector filters (see [Selector grammar](#selector-grammar)). A filtered run skips the lock write |
+| `--allow-non-empty-dir` | Clone into a non-empty directory that is not a workspace |
+| `--no-reference` | Skip cloning repositories with `role = "reference"`; they are not listed |
 | `-j N` | Parallel per-repo workers (default: `min(nproc, 8)`; `-j 1` for serial execution) |
 | `--json` | Structured output: one JSON envelope, whatever `-j` is |
-| `--project <name>` | In-place mode only: fetch this project instead of the active one (does not change `.rwv-active`). With `<source>` it refuses with `inapplicable-flag` |
-| `--no-materialize` | Skip the install hooks of the activation a fetch performs (a bootstrap fetch's, or an in-place fetch selecting the weave's only project); `.rwv-active` and the weave-root links are still written. With a project already active, an in-place fetch activates nothing and the flag has no effect |
+| `--no-materialize` | Skip the install hooks of the activation a clone performs; `.rwv-active` and the weave-root links are still written. With a project already active, a clone activates nothing and the flag has no effect |
 
-The lock is **read-only** for covered entries. To advance tips and re-snapshot, use `rwv update`.
+`--json` emits the envelope `{ "$schema": "...", "outcomes": [...], "left": [...] }` once every repo is done, with `outcomes` sorted by repo path, whatever `-j` is, and `left` the members listed above (empty exactly when the exit status is `0`). See [JSON envelope convention](#--json-envelope-convention).
 
-`--json` emits the envelope `{ "$schema": "...", "outcomes": [...] }` once
-every repo is done, with `outcomes` sorted by repo path, whatever `-j` is. See
-[JSON envelope convention](#--json-envelope-convention).
+### `rwv fetch [...]`
+
+The pruning fetch of every remote of every repo in the project: the project repo and each member present on disk. It brings branches and tags into each object store, drops the remote-tracking branches a remote no longer has, and reports what moved. It moves no local branch, no checkout and no lock.
+
+A repo's fetch holds the claim on its object store, so fetches into one store run one at a time and parallel seats wait on each other instead of failing on a ref lock. A remote-tracking branch that moved to a tip not descending from the old one is `rewritten`, and its old tip is kept as a superseded tip under `refs/rwv/superseded/`. A branch the remote deleted is `pruned`, which supersedes nothing. A member not on disk is reported `skipped`; `rwv update` clones it. A repo whose remote could not be completed is `unconfirmed`, the cause named, and the run exits 1 with `partial-run-aborted` after trying every repo.
+
+| Flag | Effect |
+|---|---|
+| `--no-reference` | Skip repositories with `role = "reference"` |
+| `--role` / `--repo` | Selector filters (see [Selector grammar](#selector-grammar)). A selector narrows the fetch to the members it names and leaves the project repo out |
+| `-j N` | Parallel per-repo workers (default: `min(nproc, 8)`; `-j 1` for serial execution) |
+| `--json` | Structured output: one JSON envelope, whatever `-j` is |
+| `--project <name>` | Fetch this project instead of the active one (does not change `.rwv-active`) |
+
+`--json` emits the envelope `{ "$schema": "...", "repos": [...] }` once every repo is done, with `repos` listing the project repo first and then the members by path, each with `status` (`fetched` / `unconfirmed` / `skipped`) and `moved`. See `rwv explain fetch`.
+
+### `rwv pull [...]`
+
+Fetch, fast-forward the project branch to its upstream, then update the members to the lock it holds. Three steps, in order:
+
+1. The pruning fetch of every repo, as [`rwv fetch`](#rwv-fetch-). A repo it could not complete refuses the pull before anything is taken in.
+2. The project branch fast-forwards when it is behind its upstream, and reports what the commits it took in changed: `re-pinned` for a member whose pin the pulled lock moved to a commit that does not descend from the old one, and `member-changed` for each member entry the pulled `rwv.toml` added, removed or changed. A branch that is at its upstream, ahead of it, or has none has nothing to take in. One that has diverged refuses as `push-branch` `diverged`, with nothing changed. Uncommitted changes to tracked files in the project repo refuse as `edits` `dirty` before the branch moves.
+3. [`rwv update`](#rwv-update-), which `--role` and `--repo` narrow.
+
+| Flag | Effect |
+|---|---|
+| `--detach-checkouts` | As for `rwv update` |
+| `--role` / `--repo` | Selector filters; they narrow step 3 only |
+| `-j N` | Parallel per-repo workers (default: `min(nproc, 8)`) |
+| `--json` | Structured output: one JSON envelope with the fetch's records (`fetched`), the project branch's (`project`) and the update's (`outcomes`) |
+| `--no-materialize` | As for `rwv update` |
+| `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
 ### `rwv update [...]`
 
-**The verb that gets the latest.** Advance each member repo to its branch HEAD on the remote, then re-snapshot `rwv.lock`. Maps semantically to `cargo update` / `npm update`.
+Clone the members missing on disk, then align each present member to the commit `rwv.lock` pins for it. It never advances a pin and never writes the lock; [`rwv update --remote`](#rwv-update---remote-) is the form that does. Run it from the weave root or a workweave.
 
-The advance is a **fast-forward of the branch the checkout is on**, not a checkout of the tip: on the canonical, that branch must be the local counterpart of the one `branch` declares, and `update` refuses when the checkout is on any other branch. It also refuses when the tip is not a fast-forward — reconcile the branch with its tracking tip yourself (ordinary `git rebase` / `git merge`) and re-run, or pass `--detach-checkouts` to materialize the tip on a detached HEAD without moving your branch. Inside a workweave the same fast-forward rule applies to the workweave's own branch, and a divergence points at `rwv sync` rather than at a flag. An already-detached member stays detached, unless the repo is stopped mid-rebase / mid-merge / mid-bisect, which refuses.
+This is the repair after members drift or go missing: a manifest entry pointing at a missing clone (the `missing-canonical-clone` and `dangling-reference` findings from `rwv doctor` point here), a raw checkout in a member, a workweave lacking a member's worktree. With no project active and exactly one project in the weave, it updates that project and then activates it, printing `rwv update: activating project '<name>', the only project in this weave (none was active)`; with several, it refuses with `no-active-project` unless `--project` names one.
+
+How `rwv update` handles each manifest repository:
+
+| Clone & lock state | `rwv update` behavior |
+|---|---|
+| Absent on disk | Clones from remote and attaches the declared `branch` at the locked SHA; with no lock entry, or a locked SHA no ref in the clone reaches, at the tip of the remote's branch |
+| Present, locked SHA is a fast-forward of the declared `branch` | Fast-forwards the local branch to the locked SHA and leaves HEAD attached (local object store only; no network fetch) |
+| Present, locked SHA is missing from the local object store | Errors (`update` does not contact the remote for an already-present clone; run `rwv fetch` first) |
+| Present, locked SHA is not a fast-forward or checkout is on another branch | Fails that repo, unless `--detach-checkouts` is passed to materialize the pin on a detached HEAD (use `git checkout <branch>` later before running `rwv sync-to`). The other repos still align, and the run exits 1 with `partial-run-aborted` |
+| Present, no lock entry (or no `rwv.lock`) | Leaves the clone at its current HEAD; the lock is not written |
+
+| Flag | Effect |
+|---|---|
+| `--detach-checkouts` | Realign a present clone even where that changes what HEAD is attached to: materialize the pin on a detached HEAD instead of refusing |
+| `--role` / `--repo` | Selector filters (see [Selector grammar](#selector-grammar)) |
+| `-j N` | Parallel per-repo workers (default: `min(nproc, 8)`; `-j 1` for serial execution) |
+| `--json` | Structured output: one JSON envelope, whatever `-j` is |
+| `--project <name>` | Update this project instead of the active one (does not change `.rwv-active`) |
+| `--no-materialize` | Skip the install hooks of the activation an update performs when it selects the weave's only project; `.rwv-active` and the weave-root links are still written. With a project already active, an update activates nothing and the flag has no effect |
+
+`--json` emits the envelope `{ "$schema": "...", "outcomes": [...] }` once every repo is done, with `outcomes` sorted by repo path, whatever `-j` is. See [JSON envelope convention](#--json-envelope-convention) and `rwv explain update`.
+
+### `rwv update --remote [...]`
+
+**The form that gets the latest.** Advance each member repo to its branch HEAD on the remote, then re-snapshot `rwv.lock`. Maps semantically to `cargo update` / `npm update`. The pruning fetch it runs first is the one `rwv fetch` runs.
+
+The advance is a **fast-forward of the branch the checkout is on**, not a checkout of the tip: on the canonical, that branch must be the local counterpart of the one `branch` declares, and `update --remote` refuses when the checkout is on any other branch. It also refuses when the tip is not a fast-forward — reconcile the branch with its tracking tip yourself (ordinary `git rebase` / `git merge`) and re-run, or pass `--detach-checkouts` to materialize the tip on a detached HEAD without moving your branch. Inside a workweave the same fast-forward rule applies to the workweave's own branch, and a divergence points at `rwv sync` rather than at a flag. An already-detached member stays detached, unless the repo is stopped mid-rebase / mid-merge / mid-bisect, which refuses.
 
 `advanced N repo(s)` counts repos whose SHA actually changed.
 
 | Flag | Effect |
 |---|---|
+| `--remote` | Selects this form |
 | `--detach-checkouts` | Advance a repo even where that changes what HEAD is attached to: materialize the tip on a detached HEAD instead of refusing |
 | `--role` / `--repo` | Selector filters |
 | `-j N` | Parallel per-repo workers (default: min(nproc, 8)) |
 | `--json` | Structured output: one JSON envelope, whatever `-j` is |
-| `--dirty` | Allow update with uncommitted changes in repos when relocking |
-| `--commit` | Commit `rwv.lock` together with the integration files regenerated against the new tips, and with `rwv.toml` when it has uncommitted changes. Other uncommitted changes in the project repo refuse (`edits`) |
+| `--dirty` | Allow update with uncommitted changes in repos when relocking. Needs `--remote` |
+| `--commit` | Commit `rwv.lock` together with the integration files regenerated against the new tips, and with `rwv.toml` when it has uncommitted changes. Other uncommitted changes in the project repo refuse (`edits`) before anything moves. Needs `--remote` |
 | `-m` / `--message <msg>` | The commit message for `--commit`, in place of the generated summary. Without `--commit` it is a usage error (exit 2) |
-| `--no-materialize` | Skip the install hooks of the regeneration `update` runs at primary; `rwv materialize` runs them later. Inside a workweave `update` runs no hooks either way |
+| `--no-materialize` | Skip the install hooks of the regeneration `update --remote` runs at primary; `rwv materialize` runs them later. Inside a workweave `update --remote` runs no hooks either way |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
 A repo that fails to advance fails the run: the repos that did advance stay where they moved, the lock is not written, and the run exits 1 with `partial-run-aborted`.
@@ -413,7 +462,7 @@ Show per-repo state for the CWD workspace.
 
 `--json` emits the envelope `{"$schema": "...", "repos": [...]}`. Each record includes `lock_pinned_by_name` (`true` when an older or hand-edited `rwv.lock` entry holds a tag or branch name rather than a 40-character hex commit SHA; `rwv lock` rewrites it to a commit SHA). See [JSON envelope convention](#--json-envelope-convention).
 
-A `missing` relation names a clone directory that has vanished; the repair is `rwv fetch` with no source — the in-place re-materialize mode — run from the weave root (see [`rwv fetch`](#rwv-fetch-source-) above and `rwv doctor` for the paired detection: `missing-canonical-clone`, `dangling-reference`). An `unreachable` relation names a clone that is present but whose object store lacks the locked SHA; in-place `rwv fetch` does not repair it (with the directory present it performs a local checkout without a network fetch). If the remote still has the revision, `git fetch` in the affected repo re-pulls it; if the remote's history was rewritten, re-lock to a reachable state — see [reconcile repos](../how-to/reconcile-repos.md).
+A `missing` relation names a clone directory that has vanished; the repair is [`rwv update`](#rwv-update-), which clones the member again, run from the weave root (see `rwv doctor` for the paired detection: `missing-canonical-clone`, `dangling-reference`). An `unreachable` relation names a clone that is present but whose object store lacks the locked SHA; `rwv update` does not repair it (with the directory present it performs a local checkout without a network fetch). If the remote still has the revision, [`rwv fetch`](#rwv-fetch-) or `git fetch` in the affected repo re-pulls it; if the remote's history was rewritten, re-lock to a reachable state — see [reconcile repos](../how-to/reconcile-repos.md).
 
 ### `rwv log [<range>] [--against <W>] [--diff] [--json] [--project <name>]`
 
@@ -510,6 +559,17 @@ Register Claude Code hooks in `~/.claude/settings.json` (`SessionStart` and `Pre
 
 Generate shell completions (bash, zsh, fish, etc.). Source the output in your shell rc file.
 
+## Exit status
+
+| Status | Meaning |
+|---|---|
+| `0` | The verb completed everything it set out to do. |
+| `1` | The verb stopped: a refusal, a failed repo, a conflict parked for `--continue` or `rwv abort`. |
+| `2` | The arguments did not parse. |
+| `3` | The verb completed and left part of the work to you. [`rwv clone`](#rwv-clone-source-) ends so when a member is left with no pin or at a pin no ref reaches; its report and `--json` envelope list each member. |
+
+A status of `3` is a finished run, not a failure: everything the verb could do was done, and the output names what remains.
+
 ## Skipped side effects
 
 A verb that leaves out a side effect it would otherwise perform says so on
@@ -518,16 +578,16 @@ nothing prints none of these lines, and none of them changes the exit code.
 
 | When | Line |
 |---|---|
-| `--no-materialize` on `activate`, `add`, `remove`, `role`, `update`, `workweave create`, `fetch` or `init --adopt` | ``[skipped] core: the install hooks did not run (--no-materialize); `rwv materialize` runs them`` |
-| `add`, `remove`, `role` or `update` inside a workweave, which never run hooks there | ``[skipped] core: the install hooks did not run (an authoring verb runs none inside a workweave); `rwv materialize` runs them`` |
-| `add`, `remove`, `role` or `update` with `--project <name>` naming a project the weave root does not present: the files are regenerated and the verb stops there | ``[skipped] core: the weave-root links were not refreshed (`<name>` is not the project this weave root presents); `rwv activate <name>` refreshes them`` and ``[skipped] core: the install hooks did not run (`<name>` is not the project this weave root presents); `rwv activate <name>` runs them`` |
-| `update --role` or `--repo`, which regenerates nothing and runs no hooks | ``[skipped] core: the integration files were not regenerated (the update was narrowed by --role or --repo); `rwv doctor --fix` regenerates them`` and ``[skipped] core: the install hooks did not run (the update was narrowed by --role or --repo); `rwv materialize` runs them`` |
-| `fetch <source>` while another project is active (on stdout in text mode, stderr under `--json`) | ``rwv fetch: skipping auto-activate (project '<active>' already active); `rwv activate <fetched>` selects it and runs its install hooks`` |
-| `fetch` with no source, its project already active, when it cloned a missing member or realigned one to its pin | ``[skipped] core: the install hooks did not run (project `<project>` was already active, so this fetch activated nothing); `rwv materialize` runs them`` (with `--project` naming a project the root does not present, the `rwv activate <project>` form above) |
+| `--no-materialize` on `activate`, `member add`, `member remove`, `member set-role`, `update`, `pull`, `workweave create`, `clone` or `init --adopt` | ``[skipped] core: the install hooks did not run (--no-materialize); `rwv materialize` runs them`` |
+| `member add`, `member remove`, `member set-role` or `update --remote` inside a workweave, which never run hooks there | ``[skipped] core: the install hooks did not run (an authoring verb runs none inside a workweave); `rwv materialize` runs them`` |
+| `member add`, `member remove`, `member set-role` or `update --remote` with `--project <name>` naming a project the weave root does not present: the files are regenerated and the verb stops there | ``[skipped] core: the weave-root links were not refreshed (`<name>` is not the project this weave root presents); `rwv activate <name>` refreshes them`` and ``[skipped] core: the install hooks did not run (`<name>` is not the project this weave root presents); `rwv activate <name>` runs them`` |
+| `update --remote` with `--role` or `--repo`, which regenerates nothing and runs no hooks | ``[skipped] core: the integration files were not regenerated (the update was narrowed by --role or --repo); `rwv doctor --fix` regenerates them`` and ``[skipped] core: the install hooks did not run (the update was narrowed by --role or --repo); `rwv materialize` runs them`` |
+| `clone <source>` while another project is active (on stdout in text mode, stderr under `--json`) | ``rwv clone: skipping auto-activate (project '<active>' already active); `rwv activate <cloned>` selects it and runs its install hooks`` |
+| `update`, its project already active, when it cloned a missing member or realigned one to its pin | ``[skipped] core: the install hooks did not run (project `<project>` was already active, so this update activated nothing); `rwv materialize` runs them`` (with `--project` naming a project the root does not present, the `rwv activate <project>` form above) |
 | An install hook whose tool is not on `PATH`, on every verb that runs hooks | ``[warning] <integration>: <tool> is not on PATH, so this integration's install hook did not run; install <tool>, then run `rwv materialize` `` |
 
-Under `--json` in serial mode (`-j 1`), the `rwv update` and `rwv fetch`
-envelopes carry a `skipped` array, present and empty when nothing was
+Under `--json` in serial mode (`-j 1`), the `rwv clone`, `rwv update` and
+`rwv update --remote` envelopes, and `rwv pull`'s, carry a `skipped` array, present and empty when nothing was
 skipped. Each record has `effect` (`install-hooks`, `integration-files`,
 `weave-root-links` or `activation`), `reason` (`no-materialize`,
 `inside-workweave`, `narrowed`, or an object: `tool-missing` with the tool,
@@ -574,13 +634,13 @@ Per-verb reflection — *replaces hand-maintained `--help` scraping* in agent ha
 
 Every page it serves opens with a `rwv <version>` line — the same string `rwv --version` prints — and a blank line, so a saved copy says which build it describes.
 
-Use case: agent harness asks "what flags does `rwv push` take, and what does it print?" — the bundle is authoritative. For `--json`-capable verbs (`status`, `doctor`, `fetch`, `update`, `sync`, `sync-to`, `push`), the JSON Schema is embedded as a fenced code block inside the bundle.
+Use case: agent harness asks "what flags does `rwv push` take, and what does it print?" — the bundle is authoritative. For `--json`-capable verbs (`status`, `doctor`, `clone`, `fetch`, `pull`, `update`, `sync`, `sync-to`, `push`), the JSON Schema is embedded as a fenced code block inside the bundle.
 
 The rendered bundles are checked in at `docs/reference/explain/` for offline browsing.
 
 ## Project resolution
 
-Project-scoped verbs (`member add`, `member remove`, `member set-role`, `member set-recurse-submodules`, `workweave create`, `workweave delete`, `workweave list`, `workweave set-default-create-basedir`, `lock`, `update`, `push`, `sync`, `sync-to`, `status`, `log`, `doctor`, `fetch` in-place) pick their target project via a fixed chain, highest priority first:
+Project-scoped verbs (`member add`, `member remove`, `member set-role`, `member set-recurse-submodules`, `workweave create`, `workweave delete`, `workweave list`, `workweave set-default-create-basedir`, `lock`, `update`, `pull`, `fetch`, `push`, `sync`, `sync-to`, `status`, `log`, `doctor`) pick their target project via a fixed chain, highest priority first:
 
 1. `--project <name>` — the explicit override on the invocation.
 2. `-w/--workweave <project>--<name>` — the `<project>--` prefix of the global workweave-selector flag names the project.
@@ -590,7 +650,7 @@ Project-scoped verbs (`member add`, `member remove`, `member set-role`, `member 
 
 Step 3 is one tier rather than two ranked ones because the two files are **mutually exclusive**: a primary root carries the pointer, a workweave root carries the marker, never both. No invocation ever sees both answers, so there is no precedence between them to get wrong. `rwv doctor` enforces the exclusivity, reporting a root carrying both as a `weave-root-identity-conflict`.
 
-The pointer is total at primary by construction: every path that creates a project leaves one active. `rwv init` activates the project it creates, and `rwv fetch <source>` activates the project it clones when none is active. A missing pointer therefore arises from hand surgery, and is repaired without a guess only where nothing is left to guess: an in-place `rwv fetch` in a weave holding exactly one project activates it. Anywhere else a missing or stale pointer produces a corrective error, not silent structure inference. `rwv workweave create <name>` writes only the marker: a workweave's project is fixed at creation and cannot be switched, so there is no selection for a pointer to record.
+The pointer is total at primary by construction: every path that creates a project leaves one active. `rwv init` activates the project it creates, and `rwv clone <source>` activates the project it clones when none is active. A missing pointer therefore arises from hand surgery, and is repaired without a guess only where nothing is left to guess: `rwv update` in a weave holding exactly one project activates it. Anywhere else a missing or stale pointer produces a corrective error, not silent structure inference. `rwv workweave create <name>` writes only the marker: a workweave's project is fixed at creation and cannot be switched, so there is no selection for a pointer to record.
 
 ### Target line — visibility when the pointer decides
 
@@ -606,7 +666,7 @@ Stderr, not stdout, so the line never contaminates a `--json` verb's output. The
 
 ### CWD inside another project
 
-Changing into `projects/<name>/` does not select that project. When `.rwv-active` selects a different one and no `--project` is given, a verb that writes into its project — `member add`, `member remove`, `member set-role`, `member set-recurse-submodules`, `workweave create`, `workweave delete`, `workweave list`, `workweave set-default-create-basedir`, `lock`, `update`, `push`, `sync`, `sync-to`, in-place `fetch`, `doctor --fix` — refuses (`cwd-in-inactive-project`) rather than write into the active project from the other's directory:
+Changing into `projects/<name>/` does not select that project. When `.rwv-active` selects a different one and no `--project` is given, a verb that writes into its project — `member add`, `member remove`, `member set-role`, `member set-recurse-submodules`, `workweave create`, `workweave delete`, `workweave list`, `workweave set-default-create-basedir`, `lock`, `update`, `pull`, `fetch`, `push`, `sync`, `sync-to`, `doctor --fix` — refuses (`cwd-in-inactive-project`) rather than write into the active project from the other's directory:
 
 ```
 Error: CWD is inside projects/mobile/, but `.rwv-active` selects web, so this would act on web. Pass `--project mobile` to act on mobile, or `--project web` to act on web from here; `rwv activate mobile` switches the active project.
@@ -652,13 +712,13 @@ states and the choices each prints.
 
 | Category | Verbs | Resolution behavior |
 |---|---|---|
-| Project-scoped | `member add`, `member remove`, `member set-role`, `member set-recurse-submodules`, `workweave create`, `workweave delete`, `workweave list`, `workweave set-default-create-basedir`, `lock`, `update`, `push`, `sync`, `sync-to`, `status`, `log`, `doctor` (project-scoped checks), `fetch` (in-place) | Full chain; target line when the pointer decides |
+| Project-scoped | `member add`, `member remove`, `member set-role`, `member set-recurse-submodules`, `workweave create`, `workweave delete`, `workweave list`, `workweave set-default-create-basedir`, `lock`, `update`, `pull`, `fetch`, `push`, `sync`, `sync-to`, `status`, `log`, `doctor` (project-scoped checks) | Full chain; target line when the pointer decides |
 | Project named positionally | `activate <project>` | Explicit already; no chain consulted |
 | Workspace-scoped, no project | `init`, `abort`, `resolve`, `prime`, `explain`, `doctor` (cross-project scan) | No project selection involved |
 
 ## Selector grammar
 
-`rwv fetch`, `rwv update`, `rwv push`, and `rwv status` share a selector surface for picking which repos to operate on or report. The [`rwv each`](./rwv-each.md) plugin takes the same flags and hands them to `rwv status`.
+`rwv fetch`, `rwv pull`, `rwv update`, `rwv push`, and `rwv status` share a selector surface for picking which repos to operate on or report. The [`rwv each`](./rwv-each.md) plugin takes the same flags and hands them to `rwv status`.
 
 ### Flags
 
@@ -710,8 +770,11 @@ Every JSON-capable verb emits a self-describing envelope:
 | `rwv status --json` | `repos` |
 | `rwv log --json` | `repos` |
 | `rwv doctor --json` | `violations` (and `issues` for integration findings) |
-| `rwv fetch --json` | `outcomes` |
-| `rwv update --json` | `repos` |
+| `rwv clone --json` | `outcomes` (and `left`) |
+| `rwv fetch --json` | `repos` |
+| `rwv pull --json` | `outcomes` (and `fetched`, `project`) |
+| `rwv update --json` | `outcomes` |
+| `rwv update --remote --json` | `repos` |
 | `rwv sync --json` | `outcomes` |
 | `rwv sync-to --json` | `outcomes` |
 | `rwv push --json` | `outcomes` |

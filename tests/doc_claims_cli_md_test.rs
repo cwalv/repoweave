@@ -185,28 +185,67 @@ fn assert_all_cli_md_flags_in_help(
 }
 
 // ===========================================================================
-// rwv fetch
+// rwv clone, fetch, pull, update
 // ===========================================================================
+
+#[test]
+fn cli_md_clone_flags_exist_in_help() {
+    let cli_md = read_cli_md();
+    let cli_flags = extract_cli_md_flags_for_section(&cli_md, "### `rwv clone");
+    assert!(
+        !cli_flags.is_empty(),
+        "the clone section lists no flag: the section walk is blind"
+    );
+    let help = help_flags(&["clone"]);
+    assert_all_cli_md_flags_in_help("clone", &cli_flags, &help);
+}
 
 #[test]
 fn cli_md_fetch_flags_exist_in_help() {
     let cli_md = read_cli_md();
-    // Section starts at "### `rwv fetch <source> [...]`"
     let cli_flags = extract_cli_md_flags_for_section(&cli_md, "### `rwv fetch");
+    assert!(
+        !cli_flags.is_empty(),
+        "the fetch section lists no flag: the section walk is blind"
+    );
     let help = help_flags(&["fetch"]);
     assert_all_cli_md_flags_in_help("fetch", &cli_flags, &help);
 }
 
-// ===========================================================================
-// rwv update
-// ===========================================================================
+#[test]
+fn cli_md_pull_flags_exist_in_help() {
+    let cli_md = read_cli_md();
+    let cli_flags = extract_cli_md_flags_for_section(&cli_md, "### `rwv pull");
+    assert!(
+        !cli_flags.is_empty(),
+        "the pull section lists no flag: the section walk is blind"
+    );
+    let help = help_flags(&["pull"]);
+    assert_all_cli_md_flags_in_help("pull", &cli_flags, &help);
+}
 
 #[test]
 fn cli_md_update_flags_exist_in_help() {
     let cli_md = read_cli_md();
-    let cli_flags = extract_cli_md_flags_for_section(&cli_md, "### `rwv update");
+    let cli_flags = extract_cli_md_flags_for_section(&cli_md, "### `rwv update [");
+    assert!(
+        !cli_flags.is_empty(),
+        "the update section lists no flag: the section walk is blind"
+    );
     let help = help_flags(&["update"]);
     assert_all_cli_md_flags_in_help("update", &cli_flags, &help);
+}
+
+#[test]
+fn cli_md_update_remote_flags_exist_in_help() {
+    let cli_md = read_cli_md();
+    let cli_flags = extract_cli_md_flags_for_section(&cli_md, "### `rwv update --remote");
+    assert!(
+        cli_flags.contains(&"--commit".to_owned()),
+        "the update --remote section lists --commit: {cli_flags:?}"
+    );
+    let help = help_flags(&["update", "--remote"]);
+    assert_all_cli_md_flags_in_help("update --remote", &cli_flags, &help);
 }
 
 // ===========================================================================
@@ -453,8 +492,8 @@ fn assert_no_rejected_values(errors: &[String]) {
 /// rwv has today sits on one of these; a verb with no `Possible values:` block
 /// contributes an empty map and costs one process spawn.
 const VALUE_CHECKED_VERBS: &[&[&str]] = &[
-    &["fetch"],
     &["update"],
+    &["update", "--remote"],
     &["lock"],
     &["sync"],
     &["sync-to"],

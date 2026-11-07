@@ -555,7 +555,7 @@ pub(crate) fn vcs_for(vcs_type: crate::manifest::VcsType) -> Box<dyn Vcs> {
 /// and therefore no [`crate::manifest::VcsType`] to resolve from.
 ///
 /// It is git by construction: `rwv init` creates the project repo with `git
-/// init` and `rwv fetch` clones it with git, so no other backend can reach it.
+/// init` and `rwv clone` clones it with git, so no other backend can reach it.
 /// Call this once per invocation at a verb's entry point and pass the handle
 /// down; the frames below it must not re-resolve.
 pub(crate) fn project_vcs() -> Box<dyn Vcs> {
@@ -1315,6 +1315,61 @@ impl fmt::Display for RemoteRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} on the remote", self.branch)
     }
+}
+
+/// What a member's lock entry came to when its checkout was placed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PinOutcome {
+    /// The checkout is at the commit the lock pins.
+    Reached,
+    /// The lock holds no entry for the member: the checkout sits where the
+    /// declared branch is.
+    None,
+    /// The lock pins a commit no ref in the clone reaches: the checkout sits
+    /// where the declared branch is.
+    Unreachable,
+}
+
+/// A checkout [`Vcs::clone_attached_at`] created: where it sits, and what
+/// became of the pin it was asked to start at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemberBirth {
+    pub at: ResolvedRevisionId,
+    pub pin: PinOutcome,
+}
+
+/// What a pruning fetch did, and what the VCS said while it did it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PruningFetch {
+    pub moves: Vec<RemoteBranchMove>,
+    /// The VCS's own progress report, for a caller that relays it.
+    pub log: String,
+    /// The remotes the fetch could not complete. The others are fetched and
+    /// pruned all the same.
+    pub unconfirmed: Vec<UnconfirmedRemote>,
+}
+
+/// What a pruning fetch did to one remote-tracking branch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteBranchMove {
+    /// The branch as the repo spells it remote-qualified (git: `origin/main`).
+    pub branch: String,
+    pub change: BranchChange,
+}
+
+/// How a remote-tracking branch moved in a pruning fetch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BranchChange {
+    /// The remote has the branch and the repo had no record of it.
+    Created { to: String },
+    /// The new tip descends from the old one.
+    Advanced { from: String, to: String },
+    /// The new tip does not descend from the old one. The old tip is kept as
+    /// the branch's superseded tip.
+    Rewritten { from: String, to: String },
+    /// The remote no longer has the branch. Nothing is kept: a prune
+    /// supersedes nothing.
+    Pruned { from: String },
 }
 
 /// A local branch name arrived at through a *named* projection.
@@ -2451,6 +2506,26 @@ pub trait Vcs: Send + Sync {
     /// store, updating only its remote-tracking refs: no local branch and no
     /// checkout moves.
     fn fetch_remote(&self, repo: &Path) -> Result<(), VcsError>;
+
+    /// The tip of the branch `on` takes in from — the remote branch the VCS
+    /// records for it — or `None` when it records none, or the remote has
+    /// not got the branch (git: `@{upstream}`).
+    fn upstream_tip(&self, on: &AttachedRef) -> Result<Option<ResolvedRevisionId>, VcsError>;
+
+    /// Bring every remote's branches and tags into `repo`'s object store,
+    /// dropping remote-tracking branches a remote no longer has, and report
+    /// each remote-tracking branch that moved. No local branch and no
+    /// checkout moves.
+    ///
+    /// A branch that moved to a tip not descending from its old one keeps the
+    /// old tip as its superseded tip, recorded before this returns (git:
+    /// `refs/rwv/superseded/<remote>/<branch>/<old tip>`). `claim` is the
+    /// proof that no other rwv fetches into this store meanwhile.
+    fn fetch_pruning(
+        &self,
+        claim: &crate::fetch_claim::FetchClaim,
+        repo: &Path,
+    ) -> Result<PruningFetch, VcsError>;
 
     /// What this backend calls the remote every method here acts on.
     ///
@@ -3645,17 +3720,19 @@ pub trait Vcs: Send + Sync {
         start_point: &ResolvedRevisionId,
     ) -> Result<RefOrigin, VcsError>;
 
-    /// Materialize `url` at `dest` with the checkout attached to `name` and
-    /// positioned at the lock scalar `at`, which is resolved *inside* the
-    /// new clone and returned.
+    /// Materialize `url` at `dest` with the checkout attached to `name`,
+    /// positioned at the lock scalar `pin` when the new clone holds it, else at
+    /// the tip of `declared`; the result says which, and where.
     ///
-    /// The **birth** arm of `rwv fetch`:
-    /// no consent token, because there was no prior attachment to lose.
-    /// The birth target is the lock revision, not the remote tip. Cloning
-    /// onto the tip and then aligning would make bootstrapping a weave from
-    /// a lock that is behind origin a *rewind*, and a rewinding MOVE needs a
+    /// The **birth** arm of `rwv clone` and of `rwv update` for a member not
+    /// on disk: no consent token, because there was no prior attachment to
+    /// lose. The birth target is the pin, not the remote tip. Cloning onto the
+    /// tip and then aligning would make bootstrapping a weave from a lock that
+    /// is behind origin a *rewind*, and a rewinding MOVE needs a
     /// `DiscardWarrant` — so that sequence would refuse on every repo and
-    /// mass-produce a weave with every member detached.
+    /// mass-produce a weave with every member detached. A pin the clone does
+    /// not hold is [`PinOutcome::Unreachable`], and a member with no `pin`
+    /// starts at the tip with [`PinOutcome::None`]; neither is a failure.
     ///
     /// One call rather than a clone plus an align so there is no way to
     /// point the positioning half at a repo this call did not just create:
@@ -3666,8 +3743,9 @@ pub trait Vcs: Send + Sync {
         url: &CloneUrl,
         dest: &Path,
         name: &LocalRefName,
-        at: &RawRevisionId,
-    ) -> Result<ResolvedRevisionId, VcsError>;
+        declared: &RemoteRef,
+        pin: Option<&RawRevisionId>,
+    ) -> Result<MemberBirth, VcsError>;
 
     /// Leave the checkout `from` witnesses on no branch, at `to`.
     ///
@@ -4088,10 +4166,6 @@ pub trait Vcs: Send + Sync {
 
     /// Every local and remote-tracking branch of `repo` with its tip.
     fn branch_tips(&self, repo: &Path) -> Result<Vec<BranchTip>, VcsError>;
-
-    /// Fetch every remote of `repo`, pruning the remote-tracking branches a
-    /// remote no longer has; the remotes it could not complete.
-    fn fetch_pruning(&self, repo: &Path) -> Result<Vec<UnconfirmedRemote>, VcsError>;
 
     // ---- population -------------------------------------------------------
 

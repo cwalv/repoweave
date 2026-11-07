@@ -25,7 +25,7 @@ go-version = "1.26"
 
 | Directive | Ownership | Behavior |
 |---|---|---|
-| `use (...)` | `Author` | Preceded by `// managed by repoweave`. Updated on authoring verbs (`rwv member add`, `rwv member remove`, `rwv update`, `rwv member set-role`, `rwv doctor --fix`) via `go work` when `go` is on `PATH`, or via the built-in line-region editor when `go` is absent. |
+| `use (...)` | `Author` | Preceded by `// managed by repoweave`. Updated on authoring verbs (`rwv member add`, `rwv member remove`, `rwv update --remote`, `rwv member set-role`, `rwv doctor --fix`) via `go work` when `go` is on `PATH`, or via the built-in line-region editor when `go` is absent. |
 | `go <version>` | `DefaultOnly` | Seeded only when `go.work` has no `go` directive yet, from `[integrations.go-work] go-version` or from the highest `go` directive across member `go.mod` files. Once present, `rwv` never overwrites or strips it (even when `go work use` would otherwise raise it). |
 
 All other directives (`replace`, `toolchain`, `godebug`) and comments are user-owned and preserved byte-for-byte.
@@ -61,7 +61,7 @@ Gated on the `// managed by repoweave` marker: strips the `use (...)` block and 
 
 ## Diagnostics
 
-Reported by `rwv doctor`. Verify rows also print as warnings on `rwv activate`, `rwv materialize`, `rwv workweave create` and the activation a `rwv fetch` performs; see [Hook points](./index.md#hook-points).
+Reported by `rwv doctor`. Verify rows also print as warnings on `rwv activate`, `rwv materialize`, `rwv workweave create` and the activation a `rwv clone` or `rwv update` performs; see [Hook points](./index.md#hook-points).
 
 | Kind | Severity | Condition | Repair |
 |---|---|---|---|

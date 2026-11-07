@@ -66,6 +66,6 @@ pub enum EachOutcomeStatus {
     TimedOut,
     /// Never started: `--fail-fast` or an interrupt stopped new repos first.
     NotRun,
-    /// The repo's checkout is absent from disk; `rwv fetch` restores it.
+    /// The repo's checkout is absent from disk; `rwv update` restores it.
     NotPresent,
 }

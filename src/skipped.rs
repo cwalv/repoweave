@@ -36,7 +36,7 @@ pub enum Effect {
     IntegrationFiles,
     /// Refreshing the weave root's links onto the project's files.
     WeaveRootLinks,
-    /// Activating a fetched project: selecting it, surfacing its links and
+    /// Activating a cloned project: selecting it, surfacing its links and
     /// running its install hooks.
     Activation,
 }
@@ -53,9 +53,9 @@ pub enum SkipReason {
     ToolMissing { tool: String },
     /// The verb acted on a project the weave root does not present.
     NotPresented { project: ProjectName },
-    /// `rwv update` was narrowed by `--role` or `--repo`.
+    /// `rwv update --remote` was narrowed by `--role` or `--repo`.
     Narrowed,
-    /// A project was already active, so the fetch selected none.
+    /// A project was already active, so the verb selected none.
     ProjectAlreadyActive { project: ProjectName },
 }
 
@@ -103,7 +103,7 @@ impl SkippedEffect {
         ]
     }
 
-    /// The regeneration and the hooks a narrowed `rwv update` leaves alone.
+    /// The regeneration and the hooks a narrowed `rwv update --remote` leaves alone.
     pub fn narrowed() -> [Self; 2] {
         [
             Self {
@@ -116,7 +116,7 @@ impl SkippedEffect {
         ]
     }
 
-    /// A bootstrap fetch of `fetched` that activated nothing because `active`
+    /// A clone of `fetched` that activated nothing because `active`
     /// already was.
     pub fn activation_while_active(active: &ProjectName, fetched: &ProjectName) -> Self {
         Self {
@@ -129,7 +129,7 @@ impl SkippedEffect {
         }
     }
 
-    /// An in-place fetch that ran no hooks because `active` was already
+    /// An update that ran no hooks because `active` was already
     /// active and it selected nothing.
     pub fn hooks_while_active(active: &ProjectName) -> Self {
         Self::install_hooks(SkipReason::ProjectAlreadyActive {
@@ -157,12 +157,12 @@ impl SkippedEffect {
             }
             SkipReason::ProjectAlreadyActive { project } if self.effect == Effect::Activation => {
                 return format!(
-                    "rwv fetch: skipping auto-activate (project '{project}' already active); \
+                    "rwv clone: skipping auto-activate (project '{project}' already active); \
                      `{remedy}` selects it and runs its install hooks"
                 )
             }
             SkipReason::ProjectAlreadyActive { project } => {
-                format!("project `{project}` was already active, so this fetch activated nothing")
+                format!("project `{project}` was already active, so this update activated nothing")
             }
             SkipReason::NoMaterialize => "--no-materialize".to_string(),
             SkipReason::InsideWorkweave => {
@@ -180,7 +180,7 @@ impl SkippedEffect {
                 "regenerates them",
             ),
             Effect::WeaveRootLinks => ("the weave-root links were not refreshed", "refreshes them"),
-            Effect::Activation => ("the fetched project was not activated", "activates it"),
+            Effect::Activation => ("the cloned project was not activated", "activates it"),
         };
         format!(
             "[skipped] {}: {what} ({why}); `{remedy}` {does}",

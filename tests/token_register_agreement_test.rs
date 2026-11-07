@@ -115,11 +115,6 @@ const INTENDED_REUSE: &[(&str, &[&str], &str)] = &[
         "a repo's HEAD could not be read",
     ),
     (
-        "incomplete-lock",
-        &["doctor", "refusal"],
-        "the lock does not cover every manifest repo",
-    ),
-    (
         "legacy-manifest-format",
         &["doctor", "refusal"],
         "the project carries a manifest in the retired format",
@@ -770,7 +765,7 @@ const ALREADY_WALKED: &[&str] = &[
 /// sub-kinds and missed four vocabularies outright; this file's own walk is
 /// the source of truth for the number below, and a mismatch here means the
 /// walk moved, not that the constant needs editing to match.
-const UNWALKED_KEBAB_CENSUS: (usize, usize) = (38, 149);
+const UNWALKED_KEBAB_CENSUS: (usize, usize) = (41, 162);
 
 /// A residue sub-kind token deliberately mirrored from `RefusalKind`, and the
 /// vocabulary that mirrors it — the D1 sentence again, one level deeper than

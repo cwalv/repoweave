@@ -1,13 +1,14 @@
-//! Tests for `rwv fetch --json`.
+//! Tests for `rwv clone --json`.
 //!
 //! Two layers:
 //! 1. Library-level: round-trip the envelope struct through serde so the wire
 //!    shape (`$schema`, `outcomes` array, `status` field) is pinned
-//!    independent of the live fetch path.
-//! 2. End-to-end: drive `rwv fetch --json` through the binary using local bare
+//!    independent of the live clone path.
+//! 2. End-to-end: drive `rwv clone --json` through the binary using local bare
 //!    repos, parse stdout as JSON, and assert the documented shape.
 
-use repoweave::fetch::{FetchJsonOutput, FetchOutcomeOutput, FetchOutcomeStatus, FETCH_SCHEMA_URL};
+use repoweave::clone::{CloneJsonOutput, CLONE_SCHEMA_URL};
+use repoweave::update::{MemberOutcomeOutput, MemberOutcomeStatus};
 use serde_json::Value;
 use std::path::Path;
 use std::process;
@@ -23,29 +24,30 @@ fn rwv() -> assert_cmd::Command {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn fetch_json_envelope_round_trips() {
-    let envelope = FetchJsonOutput {
-        schema: FETCH_SCHEMA_URL.to_owned(),
+fn clone_json_envelope_round_trips() {
+    let envelope = CloneJsonOutput {
+        schema: CLONE_SCHEMA_URL.to_owned(),
         outcomes: vec![
-            FetchOutcomeOutput {
+            MemberOutcomeOutput {
                 path: "github/org/alpha".into(),
                 absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new(
                     "/abs/github/org/alpha",
                 )),
-                status: FetchOutcomeStatus::Ok,
+                status: MemberOutcomeStatus::Ok,
                 message: None,
                 refusal: None,
             },
-            FetchOutcomeOutput {
+            MemberOutcomeOutput {
                 path: "github/org/beta".into(),
                 absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new(
                     "/abs/github/org/beta",
                 )),
-                status: FetchOutcomeStatus::Skipped,
+                status: MemberOutcomeStatus::Skipped,
                 message: Some("skipped github/org/beta".into()),
                 refusal: None,
             },
         ],
+        left: Vec::new(),
         placements: Vec::new(),
         resolution: None,
         skipped: Vec::new(),
@@ -57,7 +59,7 @@ fn fetch_json_envelope_round_trips() {
     // Wire-shape: top-level $schema + outcomes array.
     assert_eq!(
         v["$schema"],
-        serde_json::Value::String(FETCH_SCHEMA_URL.to_string())
+        serde_json::Value::String(CLONE_SCHEMA_URL.to_string())
     );
     let outcomes = v["outcomes"].as_array().expect("outcomes is array");
     assert_eq!(outcomes.len(), 2);
@@ -76,23 +78,23 @@ fn fetch_json_envelope_round_trips() {
     );
 
     // Typed round-trip.
-    let decoded: FetchJsonOutput = serde_json::from_str(&json).expect("deserializes");
-    assert_eq!(decoded.schema, FETCH_SCHEMA_URL);
+    let decoded: CloneJsonOutput = serde_json::from_str(&json).expect("deserializes");
+    assert_eq!(decoded.schema, CLONE_SCHEMA_URL);
     assert_eq!(decoded.outcomes.len(), 2);
     assert_eq!(decoded.outcomes[0].path, "github/org/alpha");
-    assert_eq!(decoded.outcomes[0].status, FetchOutcomeStatus::Ok);
+    assert_eq!(decoded.outcomes[0].status, MemberOutcomeStatus::Ok);
     assert!(decoded.outcomes[0].message.is_none());
-    assert_eq!(decoded.outcomes[1].status, FetchOutcomeStatus::Skipped);
+    assert_eq!(decoded.outcomes[1].status, MemberOutcomeStatus::Skipped);
 }
 
 #[test]
-fn fetch_outcome_failed_serializes() {
-    let record = FetchOutcomeOutput {
+fn member_outcome_failed_serializes() {
+    let record = MemberOutcomeOutput {
         path: "github/org/repo".into(),
         absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new(
             "/abs/github/org/repo",
         )),
-        status: FetchOutcomeStatus::Failed,
+        status: MemberOutcomeStatus::Failed,
         message: Some("clone failed: connection refused".into()),
         refusal: None,
     };
@@ -104,14 +106,14 @@ fn fetch_outcome_failed_serializes() {
 }
 
 #[test]
-fn fetch_schema_url_points_at_committed_artifact() {
+fn clone_schema_url_points_at_committed_artifact() {
     assert!(
-        FETCH_SCHEMA_URL.ends_with("/docs/reference/schemas/fetch.json"),
-        "FETCH_SCHEMA_URL must end with /docs/reference/schemas/fetch.json; got: {FETCH_SCHEMA_URL}"
+        CLONE_SCHEMA_URL.ends_with("/docs/reference/schemas/clone.json"),
+        "CLONE_SCHEMA_URL must end with /docs/reference/schemas/clone.json; got: {CLONE_SCHEMA_URL}"
     );
     assert!(
-        FETCH_SCHEMA_URL.contains("cwalv/repoweave"),
-        "FETCH_SCHEMA_URL must reference the cwalv/repoweave repo; got: {FETCH_SCHEMA_URL}"
+        CLONE_SCHEMA_URL.contains("cwalv/repoweave"),
+        "CLONE_SCHEMA_URL must reference the cwalv/repoweave repo; got: {CLONE_SCHEMA_URL}"
     );
 }
 
@@ -161,7 +163,8 @@ fn init_bare_repo_with_commit(path: &Path) {
     run(&["push", "origin", "main"], &work);
 }
 
-/// Push an `rwv.toml` manifest into a bare repo.
+/// Push an `rwv.toml` manifest, and the `rwv.lock` that pins each member at its
+/// remote's tip, into a bare repo.
 fn push_manifest_to_bare(bare: &Path, repos: &[(&str, &str)]) {
     let tmp = common::tempdir().expect("tempdir");
     let work = tmp.path().join("mwork");
@@ -191,17 +194,18 @@ fn push_manifest_to_bare(bare: &Path, repos: &[(&str, &str)]) {
         ));
     }
     std::fs::write(work.join("rwv.toml"), &manifest_toml).unwrap();
-    run(&["add", "rwv.toml"], &work);
-    run(&["commit", "-m", "add manifest"], &work);
+    common::fixture_lock_at_remote_tips(&work, repos);
+    run(&["add", "rwv.toml", "rwv.lock"], &work);
+    run(&["commit", "-m", "add manifest and lock"], &work);
     run(&["push", "origin", "main"], &work);
 }
 
 // ---------------------------------------------------------------------------
-// End-to-end: `rwv fetch --json` (serial / envelope mode)
+// End-to-end: `rwv clone --json` (serial / envelope mode)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn fetch_json_envelope_emits_schema_and_outcomes_array() {
+fn clone_json_envelope_emits_schema_and_outcomes_array() {
     let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
@@ -227,9 +231,9 @@ fn fetch_json_envelope_emits_schema_and_outcomes_array() {
     );
     let project_url = common::file_url(&project_bare);
 
-    // Run `rwv fetch --json -j 1` (explicit serial = envelope mode).
+    // Run `rwv clone --json -j 1` (explicit serial = envelope mode).
     let assert = rwv()
-        .args(["fetch", &project_url, "--json", "-j", "1"])
+        .args(["clone", &project_url, "--json", "-j", "1"])
         .current_dir(&workspace)
         .assert()
         .success();
@@ -242,7 +246,7 @@ fn fetch_json_envelope_emits_schema_and_outcomes_array() {
 
     assert_eq!(
         obj.get("$schema").and_then(Value::as_str),
-        Some(FETCH_SCHEMA_URL),
+        Some(CLONE_SCHEMA_URL),
         "envelope must include $schema URL"
     );
 
@@ -251,6 +255,11 @@ fn fetch_json_envelope_emits_schema_and_outcomes_array() {
         .and_then(Value::as_array)
         .expect("outcomes must be an array");
     assert_eq!(outcomes.len(), 2, "two repos in manifest, two outcomes");
+    assert_eq!(
+        obj.get("left"),
+        Some(&Value::Array(Vec::new())),
+        "every member sits at its pin, so none is left: {stdout}"
+    );
 
     for o in outcomes {
         let entry = o.as_object().expect("each outcome must be an object");
@@ -276,7 +285,7 @@ fn fetch_json_envelope_emits_schema_and_outcomes_array() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn fetch_json_is_one_envelope_whatever_the_worker_count() {
+fn clone_json_is_one_envelope_whatever_the_worker_count() {
     let tmp = common::tempdir().unwrap();
     let repo_paths: Vec<String> = (0..3).map(|i| format!("local/org/repo-{i}")).collect();
     let repo_urls: Vec<String> = (0..3)
@@ -300,11 +309,11 @@ fn fetch_json_is_one_envelope_whatever_the_worker_count() {
         let workspace = tmp.path().join(format!("ws-j{jobs}"));
         std::fs::create_dir_all(&workspace).unwrap();
         let out = rwv()
-            .args(["fetch", &project_url, "--json", "-j", jobs])
+            .args(["clone", &project_url, "--json", "-j", jobs])
             .current_dir(&workspace)
             .assert()
             .success();
-        common::envelope_shape(&out.get_output().stdout, FETCH_SCHEMA_URL, "outcomes")
+        common::envelope_shape(&out.get_output().stdout, CLONE_SCHEMA_URL, "outcomes")
     };
     let serial = shape_under("1");
     assert_eq!(serial.1, repo_paths, "outcomes follow the manifest");

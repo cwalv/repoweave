@@ -130,7 +130,7 @@ fn fetch_allow_non_empty_dir_waives_only_the_nonempty_dir_refusal() {
 
     // Without the waiver: refuses and names the flag.
     let output = rwv()
-        .args(["fetch", &project_url])
+        .args(["clone", &project_url])
         .current_dir(&workspace)
         .output()
         .expect("rwv fetch should run");
@@ -150,7 +150,7 @@ fn fetch_allow_non_empty_dir_waives_only_the_nonempty_dir_refusal() {
 
     // With the waiver: proceeds, and the pre-existing file survives.
     rwv()
-        .args(["fetch", &project_url, "--allow-non-empty-dir"])
+        .args(["clone", &project_url, "--allow-non-empty-dir"])
         .current_dir(&workspace)
         .assert()
         .success();

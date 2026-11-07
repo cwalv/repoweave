@@ -138,13 +138,13 @@ fn published(with_extra: bool) -> Published {
 }
 
 #[test]
-fn a_frozen_fetch_resolves_a_tag_pinned_entry_and_warns() {
+fn a_clone_resolves_a_tag_pinned_entry_and_warns() {
     let p = published(false);
-    let (_, stderr) = succeed(&p.workspace, &["fetch", &p.source, "--frozen"]);
+    let (_, stderr) = succeed(&p.workspace, &["clone", &p.source]);
 
     assert!(
         names_the_pin(&stderr, DEP, "v1.0.0"),
-        "fetch must say the entry is pinned by name and name the repair:\n{stderr}"
+        "clone must say the entry is pinned by name and name the repair:\n{stderr}"
     );
     assert_eq!(
         common::git_in(common::under(&p.workspace, DEP), &["rev-parse", "HEAD"]),
@@ -153,15 +153,43 @@ fn a_frozen_fetch_resolves_a_tag_pinned_entry_and_warns() {
     );
 }
 
-/// The additive write pins both the repo it adds and the existing entry
-/// pinned by name by commit id, though a tag names each HEAD.
 #[test]
-fn an_additive_fetch_writes_every_entry_as_a_commit_id() {
-    let p = published(true);
-    let (_, stderr) = succeed(&p.workspace, &["fetch", &p.source]);
+fn an_update_resolves_a_tag_pinned_entry_and_warns() {
+    let p = published(false);
+    succeed(&p.workspace, &["clone", &p.source]);
+    let (_, stderr) = succeed(&p.workspace, &["update"]);
+
     assert!(
         names_the_pin(&stderr, DEP, "v1.0.0"),
-        "fetch must say the entry is pinned by name:\n{stderr}"
+        "update must say the entry is pinned by name and name the repair:\n{stderr}"
+    );
+    assert_eq!(
+        common::git_in(common::under(&p.workspace, DEP), &["rev-parse", "HEAD"]),
+        p.dep_sha,
+        "the entry resolves to the commit the tag names"
+    );
+}
+
+/// A clone writes no lock: the entry pinned by name stays a name, and the
+/// member the lock does not cover is listed, not added.
+#[test]
+fn a_clone_leaves_a_tag_pinned_entry_a_name_and_lists_the_uncovered_member() {
+    let p = published(true);
+    let out = run(&p.workspace, &["clone", &p.source]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(3),
+        "a member the lock lacks makes the clone exit 3:\n{stdout}\n{stderr}"
+    );
+    assert!(
+        names_the_pin(&stderr, DEP, "v1.0.0"),
+        "clone must say the entry is pinned by name:\n{stderr}"
+    );
+    assert!(
+        stdout.contains(&format!("{EXTRA}: pin none")),
+        "the uncovered member must be listed:\n{stdout}"
     );
 
     let lock_path = p
@@ -170,14 +198,25 @@ fn an_additive_fetch_writes_every_entry_as_a_commit_id() {
         .join("project")
         .join("rwv.lock");
     assert_eq!(
-        version_in(&lock_path, EXTRA),
-        p.extra_sha,
-        "the added entry must be the commit id, not the tag naming it"
+        version_in(&lock_path, DEP),
+        "v1.0.0",
+        "the entry pinned by name must stay as published"
+    );
+    let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
+    assert!(
+        lock.get_entry(&repoweave::manifest::RepoPath::new(EXTRA).unwrap())
+            .is_none(),
+        "the uncovered member must not be added to the lock"
     );
     assert_eq!(
-        version_in(&lock_path, DEP),
+        common::git_in(common::under(&p.workspace, DEP), &["rev-parse", "HEAD"]),
         p.dep_sha,
-        "the existing entry pinned by name must be written as its commit id"
+        "the covered entry resolves to the commit the tag names"
+    );
+    assert_eq!(
+        common::git_in(common::under(&p.workspace, EXTRA), &["rev-parse", "HEAD"]),
+        p.extra_sha,
+        "the uncovered member is cloned at its branch tip"
     );
 }
 
@@ -274,7 +313,7 @@ fn dep_status(dir: &Path) -> serde_json::Value {
 #[test]
 fn doctor_reports_and_status_marks_a_tag_pinned_entry() {
     let p = published(false);
-    succeed(&p.workspace, &["fetch", &p.source, "--frozen"]);
+    succeed(&p.workspace, &["clone", &p.source]);
 
     let findings = pinned_by_name_findings(&p.workspace);
     assert_eq!(findings.len(), 1, "one finding: {findings:?}");
@@ -300,7 +339,7 @@ fn doctor_reports_and_status_marks_a_tag_pinned_entry() {
 #[test]
 fn a_commit_id_pinned_entry_raises_no_finding_and_no_marker() {
     let p = published(false);
-    succeed(&p.workspace, &["fetch", &p.source, "--frozen"]);
+    succeed(&p.workspace, &["clone", &p.source]);
     succeed(&p.workspace, &["lock", "--project", "project"]);
 
     assert_eq!(
@@ -315,7 +354,7 @@ fn a_commit_id_pinned_entry_raises_no_finding_and_no_marker() {
 #[test]
 fn doctor_locked_warns_beside_a_tag_pinned_entry() {
     let p = published(false);
-    succeed(&p.workspace, &["fetch", &p.source, "--frozen"]);
+    succeed(&p.workspace, &["clone", &p.source]);
     let (stdout, _) = succeed(&p.workspace, &["doctor", "--locked"]);
     assert!(
         stdout.contains(&format!("warning: {DEP}: lock pins `v1.0.0`")),

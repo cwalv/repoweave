@@ -69,7 +69,7 @@ The others follow.
 
 **Why.** Moving or removing a checkout over uncommitted changes would lose them or tangle them into a half-applied result, and recording its tip would describe something other than what is on disk. An operation in progress holds a partial result that only the tool which started it can finish.
 
-**States.** A refused verb prints `rwv <verb>: <repo>: edits <state>` for each repo it judged in one of these, with what the state lists beneath it.
+**States.** A verb that judges a repo in one of these prints `rwv <verb>: <repo>: edits <state>`, with what the state lists beneath it, and refuses unless its row below says it completes.
 
 | State | Means | Refused by |
 |---|---|---|
@@ -94,7 +94,7 @@ The others follow.
 
 **Why.** Deleting a clone's store takes every ref and object with it at once, for every checkout derived from it, so a live one would be left pointing at nothing.
 
-**States.** A refused verb prints `rwv <verb>: <repo>: checkout <state>` for each repo it judged in one of these, with what the state lists beneath it.
+**States.** A verb that judges a repo in one of these prints `rwv <verb>: <repo>: checkout <state>`, with what the state lists beneath it, and refuses unless its row below says it completes.
 
 | State | Means | Refused by |
 |---|---|---|
@@ -110,13 +110,32 @@ The others follow.
 
 **Where this sits.** [Clone topology](../explanation/joints/clone-topology.md).
 
+### `push-branch`
+
+**Condition.** A branch and the remote branch it takes in from or publishes to have each moved, or the remote has none to give.
+
+**Why.** Taking in a branch that has commits of its own would have to discard them or tangle the two histories, and only a fast-forward does neither, so a verb that takes in stops where the histories have diverged instead of choosing for you.
+
+**States.** A verb that judges a repo in one of these prints `rwv <verb>: <repo>: push-branch <state>`, with what the state lists beneath it, and refuses unless its row below says it completes.
+
+| State | Means | Refused by |
+|---|---|---|
+| `diverged` | the branch and its upstream each hold commits the other lacks, counted on the line | `rwv pull`, for the project branch |
+
+**Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
+
+| State | Choice | Spelled | Where | Keeps work because |
+|---|---|---|---|---|
+
+**Where this sits.** [Sync semantics](../explanation/joints/sync-semantics.md).
+
 ### `name`
 
 **Condition.** A name the verb was given cannot be used: another workweave already holds it, it reads as a revision where a branch belongs, or it names nothing in a repo the verb read.
 
 **Why.** A workweave name maps to one workweave; recording a second would make every later address ambiguous, and a delete would remove whichever was found first. A member entry's `branch` declares the branch to track while the lock records where you are, so a commit id or release tag there leaves nothing to track. A name that resolves to nothing has no tip to read, and reading another branch in its place would answer a question nobody asked.
 
-**States.** A refused verb prints `rwv <verb>: <repo>: name <state>` for each repo it judged in one of these, with what the state lists beneath it.
+**States.** A verb that judges a repo in one of these prints `rwv <verb>: <repo>: name <state>`, with what the state lists beneath it, and refuses unless its row below says it completes.
 
 | State | Means | Refused by |
 |---|---|---|
@@ -130,6 +149,7 @@ The others follow.
 |---|---|---|---|---|
 | `taken` | use another name | — | here | nothing changes |
 | `taken` | C9: delete what is landed | `rwv workweave delete <ww> --project <project>` | the primary | deletes only what is landed elsewhere; local only |
+| `no-such-branch` | C33: look for what may be published but not yet fetched | `rwv fetch` | any workspace | downloads only |
 
 **Where this sits.** [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md); [Lock as derived](../explanation/joints/lock-as-derived.md).
 
@@ -139,7 +159,7 @@ The others follow.
 
 **Why.** The project repo carries the lock that pins each member's commit. Publishing it while a member's push failed would advertise a commit collaborators cannot fetch, so the lock is withheld until every member it pins is published.
 
-**States.** A refused verb prints `rwv <verb>: <repo>: publish <state>` for each repo it judged in one of these, with what the state lists beneath it.
+**States.** A verb that judges a repo in one of these prints `rwv <verb>: <repo>: publish <state>`, with what the state lists beneath it, and refuses unless its row below says it completes.
 
 | State | Means | Refused by |
 |---|---|---|
@@ -154,24 +174,29 @@ The others follow.
 
 ### `pin`
 
-**Condition.** A verb would delete, move or overwrite the last ref that reaches a commit some project's live lock pins.
+**Condition.** A commit a lock pins is not there to be at: the lock has no entry for a member, or pins a commit that no ref in the clone reaches; or a verb would delete, move or overwrite the last ref that reaches a commit some project's live lock pins.
 
-**Why.** A lock pins each member at a commit so that a fresh clone can build the project. Removing the last ref that reaches a pinned commit leaves the pin unreachable: no clone can fetch it, and the lock describes a state nobody can recreate. A pin is live in every project of the weave, not only the one the verb runs in, because a member's clone is shared.
+**Why.** A lock pins each member at a commit so that a fresh clone can build the project. With no entry there is nothing to reproduce, and a commit no ref reaches is one the remotes this clone has fetched no longer hold; the member is checked out on its declared branch at the tip of the remote's branch instead, so the weave is usable, and the lock is left as it was for you to settle. Removing the last ref that reaches a pinned commit leaves the pin unreachable: no clone can fetch it, and the lock describes a state nobody can recreate. A pin is live in every project of the weave, not only the one the verb runs in, because a member's clone is shared.
 
-**States.** A refused verb prints `rwv <verb>: <repo>: pin <state>` for each repo it judged in one of these, with what the state lists beneath it.
+**States.** A verb that judges a repo in one of these prints `rwv <verb>: <repo>: pin <state>`, with what the state lists beneath it, and refuses unless its row below says it completes.
 
 | State | Means | Refused by |
 |---|---|---|
+| `none` | the lock has no entry for the member, or there is no lock file; the checkout is on the declared branch at the tip of the remote's branch | `rwv clone`, which does not refuse: it completes, lists the member and exits with status 3 |
+| `unreachable` | the lock pins a commit that no ref in the clone reaches; the checkout is on the declared branch at the tip of the remote's branch | `rwv clone`, which does not refuse: it completes, lists the member and exits with status 3 |
 | `would be unreachable` | a live lock pins a commit that only the backups being dropped reach, listed with the locks that pin it | `rwv backup drop` and `rwv backup prune` |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
 
 | State | Choice | Spelled | Where | Keeps work because |
 |---|---|---|---|---|
+| `none` | C1: take in theirs | `rwv update --remote --repo <m>` | any workspace | fast-forward only |
+| `unreachable` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
+| `unreachable` | C19: wait until the PR lands or its branch is deleted, then rerun | — | nowhere | nothing changes |
 | `would be unreachable` | C7: publish it (again) | `rwv push` | here | adds only |
 | `would be unreachable` | C27: publish this commit under a branch name you choose | VCS action (git: `git -C <checkout> push <r> <sha>:refs/heads/<name>`) | any workspace | creates or fast-forwards |
 
-**Where this sits.** [Destructive operations](../explanation/destructive-operations.md).
+**Where this sits.** [Lock as derived](../explanation/joints/lock-as-derived.md); [Reconcile repos](../how-to/reconcile-repos.md); [Destructive operations](../explanation/destructive-operations.md).
 
 ## Tokens
 
@@ -268,7 +293,7 @@ keep the project's by deleting the file at the weave root. Then run `rwv doctor
 ### `cwd-in-inactive-project`
 
 **Condition.** A verb that writes into its project (`add`, `remove`, `role`,
-`lock`, `update`, `push`, `sync`, `sync-to`, in-place `fetch`, or `doctor
+`lock`, `fetch`, `pull`, `update`, `push`, `sync`, `sync-to`, or `doctor
 --fix`) was run from inside `projects/<name>/` at a primary weave root, with no
 `--project`, while `.rwv-active` selects a different project.
 
@@ -457,10 +482,9 @@ applied that nothing read. The refusal is generic: a per-flag
 token would name the remedy's argument rather than a state.
 
 **Exits.** Drop the flag, or switch to the mode that reads it — the message
-names which. For example, `rwv fetch --project` with a source refuses, because
-the source names the project it clones. `--force` on a verb that does not
-declare it refuses the same way: rwv has no blanket force, and each refusal
-names the flag that consents to the one loss it would cause.
+names which. For example, `--force` on a verb that does not declare it refuses:
+rwv has no blanket force, and each refusal names the flag that consents to the
+one loss it would cause.
 
 ### `invalid-ref-name`
 
@@ -550,17 +574,6 @@ operator did not ask for.
 **Exits.** Add `--param <name>=<value>` for each parameter the refusal names
 — the same declared surface `rwv explain member`'s creation-parameter table
 renders, so the two cannot disagree.
-
-### `missing-lock`
-
-**Condition.** `--frozen` was passed and there is no lock file.
-
-**Why.** `--frozen` means "use exactly what the lock pins". With no lock there
-is nothing to be faithful to, and proceeding would resolve versions afresh —
-the opposite of what the flag asks for.
-
-**Exits.** Drop `--frozen` to resolve and write a lock, or fetch a project that
-carries one.
 
 ### `nested-project-name`
 
@@ -839,7 +852,7 @@ recorded, so the re-run starts from the same place this one did.
 satisfy an address, because a typo would then produce an empty project rather
 than an error.
 
-**Exits.** Check the spelling against `rwv status`, or `rwv fetch` the project
+**Exits.** Check the spelling against `rwv status`, or `rwv clone` the project
 into this workspace if it belongs here.
 
 ### `project-dir-occupied`
@@ -850,9 +863,9 @@ into this workspace if it belongs here.
 rwv will not merge into an occupied slot, because the occupant's files are not
 rwv's to reinterpret.
 
-**Exits.** For `rwv fetch <source>`: if the project already there is the one
-you meant, `rwv fetch --project <name>` fetches its members in place; to fetch
-the other one too, run `rwv fetch <source>` in an empty directory, which
+**Exits.** For `rwv clone <source>`: if the project already there is the one
+you meant, `rwv update --project <name>` brings up its members in place; to
+clone the other one too, run `rwv clone <source>` in an empty directory, which
 becomes a weave of its own. For `rwv init`, choose another name.
 
 ### `project-repo-off-canonical-branch`
@@ -1308,9 +1321,9 @@ characters and the rule each one protects.
 ### `unresolvable-repo-source`
 
 **Condition.** The source parses as neither a URL nor a known shorthand. For
-`rwv member add` and `rwv fetch` this includes a plain path, relative or absolute, and
-so does a member's `url` in `rwv.toml` when `rwv fetch` or `rwv sync` clones
-it. For a member, `rwv fetch` names this token after that member's error line
+`rwv member add` and `rwv clone` this includes a plain path, relative or absolute, and
+so does a member's `url` in `rwv.toml` when `rwv clone`, `rwv update` or `rwv sync` clones
+it. For a member, `rwv clone` and `rwv update` name this token after that member's error line
 and in its `--json` record's `refusal`, and the run as a whole ends with
 `partial-run-aborted`. `rwv doctor` reports every such member as
 `provenance` / `unresolvable-url` before any clone is attempted.
@@ -1321,8 +1334,8 @@ unintended or records the wrong URL, so each meaning has its own spelling.
 
 **Exits.** The message names them. To clone from a local remote, spell it as a
 URL: `file:///abs/path`, in `rwv.toml` as well. To register the clone already at that path under the
-weave root: `rwv member add --adopt <path>`. To fetch the members of a project already
-in this weave, drop the source: `rwv fetch --project <name>`. Otherwise give a
+weave root: `rwv member add --adopt <path>`. To bring up the members of a project already
+in this weave, drop the source: `rwv update --project <name>`. Otherwise give a
 full URL, or `owner/repo` shorthand for a supported registry.
 
 ### `unspellable-directory-name`

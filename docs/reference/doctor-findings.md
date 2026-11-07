@@ -199,9 +199,9 @@ rwv holds the two as distinct identities and keeps resolving them byte-exactly
 reports is a portability hazard: a filesystem that folds case cannot hold both,
 so a clone or fetch of this weave onto macOS or Windows collides. That is why
 it fires on case-sensitive hosts too, where the pair is perfectly legal and
-nothing else would notice until someone else's machine failed. `rwv init` and
-`rwv fetch` print the same warning at mint, so a pair is usually reported when
-it is created rather than found later.
+nothing else would notice until someone else's machine failed. `rwv init`
+prints the same warning at mint, so a pair it creates is reported when it is
+created rather than found later.
 
 **What to do:** rename one of the two if this weave is meant to travel.
 Never auto-fixed — which of two recorded identities should change is the
@@ -251,10 +251,10 @@ leaves this one standing. Or remove the directory yourself.
 
 **Error. Report-only.** An `rwv.toml` entry whose path is not on disk. An
 entry whose `url` names no remote is reported as
-[`unresolvable-url`](#unresolvable-url) instead, because `rwv fetch` cannot
+[`unresolvable-url`](#unresolvable-url) instead, because `rwv update` cannot
 clone it until the `url` is rewritten.
 
-**What to do:** `rwv fetch` re-materializes it in place, or drop the entry
+**What to do:** `rwv update` re-materializes it in place, or drop the entry
 from the manifest if the repo is genuinely gone.
 
 When a clone of the entry's URL stands at the path that URL places it at, and
@@ -262,7 +262,7 @@ no entry of the project names that path, the checkout was moved there ahead of
 the re-key [`placement-disagreement`](#placement-disagreement) asks for. The
 record's `clone_at_placement` names that path, and the message names the
 repair: re-key the entry in `rwv.toml` to it and run `rwv lock`. That clone is
-not reported as an [`orphaned-clone`](#orphaned-clone). `rwv fetch` there would
+not reported as an [`orphaned-clone`](#orphaned-clone). `rwv update` there would
 clone the URL a second time at the recorded path.
 
 ### `unparseable-project`
@@ -271,7 +271,7 @@ A project directory exists but does not load: its `rwv.toml` or its `rwv.lock` f
 
 **Why.** A project rwv cannot see into must not read as a clean project with zero findings, so `rwv doctor` reports it at error severity. Its `message` names which of the two files failed and carries that file's remedy, and `manifest_path` always names the manifest, because it locates the project rather than the failure. A verb that reads the manifest at the checked-out tip refuses when it names member-entry keys an earlier release wrote: no verb reads them, and the repair is mechanical.
 
-**States.** A refused verb prints `rwv <verb>: <repo>: unparseable-project <state>` for each repo it judged in one of these, with what the state lists beneath it.
+**States.** A verb that judges a repo in one of these prints `rwv <verb>: <repo>: unparseable-project <state>`, with what the state lists beneath it, and refuses unless its row below says it completes.
 
 | State | Means | Refused by |
 |---|---|---|
@@ -320,8 +320,8 @@ refusal. See [Formats](./formats.md) for the shape to write.
 **Error. Report-only.** A repo's HEAD does not match the SHA `rwv.lock` pins.
 
 **What to do:** `rwv lock` to re-pin `rwv.lock` from the current working tips,
-or `rwv fetch` (with no `<source>`) to realign the local checkouts to the
-revisions recorded in `rwv.lock`. Which you want depends on whether the working
+or `rwv update` to realign the local checkouts to the revisions recorded in
+`rwv.lock`. Which you want depends on whether the working
 tree or the lock is the state you meant. The lock is a derived artifact, not a
 source of truth — see [Lock-as-derived](../explanation/joints/lock-as-derived.md).
 
@@ -340,8 +340,8 @@ resolve — a lock written against history that was never fetched here. The
 entry is kept as a finding rather than dropped: dropping it would leave the
 repo with no locked revision to compare against, which reads as healthy.
 
-**What to do:** fetch the missing history, or `rwv lock` to re-pin from the
-working tips if the lock is the stale side.
+**What to do:** `rwv fetch` to bring in the missing history, or `rwv lock` to
+re-pin from the working tips if the lock is the stale side.
 
 ### `lock-pinned-by-name`
 
@@ -353,8 +353,8 @@ holding a full commit id raises nothing, and a lock that is absent or clean of
 names raises nothing.
 
 `rwv status` marks the same entry (`lock_pinned_by_name` in `--json`), and
-`rwv doctor --locked` prints the same warning beside the entry. `rwv fetch` and
-`rwv sync` warn about it on stderr and proceed.
+`rwv doctor --locked` prints the same warning beside the entry. `rwv clone`,
+`rwv update` and `rwv sync` warn about it on stderr and proceed.
 
 **What to do:** run `rwv lock`, which records the commit id each name points at.
 
@@ -512,8 +512,8 @@ project would fail with a confusing downstream error.
 **Error. Auto-fixable.** `.rwv-active` is empty, cannot be read, or holds text
 that is not a project name. rwv never writes such a file, so it selects
 nothing: a verb that would take its project from the pointer refuses with this
-token rather than act as if no project were selected, and a bootstrap
-`rwv fetch` into a directory holding one refuses before it clones. `rwv doctor`
+token rather than act as if no project were selected, and a
+`rwv clone` into a directory holding one refuses before it clones. `rwv doctor`
 runs with no project selected, so it can report the file. Verbs that do not
 select a project (`rwv activate`, `abort`, `resolve`, `-w` addressing) are not
 affected, and neither is a verb given `--project`.
@@ -830,7 +830,7 @@ still holds for it, and moves or deletes no branch:
   says so.
 
 A registration of a removed checkout directory is dropped first, unless it is
-locked. `rwv fetch` run in the workweave takes the same path.
+locked. `rwv update` run in the workweave takes the same path.
 
 #### `missing`
 
@@ -847,7 +847,7 @@ network is involved.
 clone holds neither the workweave's branch nor the pinned revision, or is not
 on disk.
 
-**What to do:** `rwv fetch` run in the workweave fetches the pinned revision
+**What to do:** `rwv update` run in the workweave fetches the pinned revision
 into the canonical clone, cloning the canonical clone first where it is not on
 disk, and creates the worktree. It moves no branch of the primary's. Doctor
 never fetches.
@@ -888,7 +888,7 @@ and the canonical clone holds neither its registration of the checkout, the
 workweave's branch nor the pinned revision.
 
 **What to do:** if the pinned revision is on the remote, run
-`rwv fetch --project <project>` at the primary weave, then `rwv doctor --fix`,
+`rwv update --project <project>` at the primary weave, then `rwv doctor --fix`,
 which relinks the checkout onto it. If it is in no clone — the workweave
 committed it and the clone holding it was deleted before it was pushed —
 `rwv doctor --fix --abandon-lost-pins` relinks the checkout onto the
@@ -1108,7 +1108,7 @@ cause instead of letting the failure be misread as live local edits.
 
 Doctor reports it from the primary weave and from inside the workweave.
 
-**What to do:** run `rwv fetch --project <project>` at the primary weave to
+**What to do:** run `rwv update --project <project>` at the primary weave to
 clone it again, then `rwv doctor --fix` there, which relinks every workweave
 checkout of it as [`dangling-link`](#dangling-link) describes, keeping their
 files. A branch that lived only in the deleted clone is gone with it, so the
@@ -1119,8 +1119,8 @@ stays behind explicit verbs.
 A verb that needs the canonical clone to give a workweave its worktree
 refuses with this token, and `rwv doctor --fix` gives the same cause as a
 reason it cannot replace a full clone standing in a workweave. Both name
-`rwv fetch --project <project>`, `<project>` being the workweave's own. Run it
-at the primary weave: a bare `rwv fetch` there fetches only the active
+`rwv update --project <project>`, `<project>` being the workweave's own. Run it
+at the primary weave: a bare `rwv update` there updates only the active
 project's members, so for a workweave of any other project it materializes
 nothing. Then re-run the verb, or `--continue` the operation that parked on
 it.
@@ -1148,7 +1148,7 @@ network is involved.
 **Warning. Report-only.** The canonical clone holds no copy of each listed
 submodule with the commit the member records.
 
-**What to do:** run the `rwv fetch --repo <path>` the message names in that
+**What to do:** run the `rwv update --repo <path>` the message names in that
 workweave. It fetches the commits into the canonical clone's copies, without
 moving a submodule already checked out there, and checks them out in the
 workweave. `--fix` itself never reaches the network, so it leaves this
@@ -1186,8 +1186,8 @@ clone with `no-remote-url`.
 
 **Error. Report-only.** The manifest's `url` is neither a URL nor registry
 shorthand, such as a plain path, so it names no remote. Every clone of the
-member refuses with `unresolvable-repo-source`: `rwv fetch` on another machine,
-and `rwv sync` into a weave without it. Doctor reports it whether or not a clone
+member refuses with `unresolvable-repo-source`: `rwv clone` or `rwv update` on
+another machine, and `rwv sync` into a weave without it. Doctor reports it whether or not a clone
 is on disk; when none is, this is the only finding for the entry, with no
 `dangling-reference` beside it.
 
@@ -1200,9 +1200,9 @@ is on disk; when none is, this is the only finding for the entry, with no
 **Error. Report-only.** The SHA `rwv.lock` pins is absent from the clone's
 object store.
 
-**What to do:** run `git -C <repo> fetch` to pull the missing object from the
-remote (or `rwv lock` to re-pin from local tips if the lock is the stale side).
-In-place `rwv fetch` does not contact the network for an already-present clone.
+**What to do:** run `rwv fetch --repo <repo>` to pull the missing object from
+the remote (or `rwv lock` to re-pin from local tips if the lock is the stale
+side). `rwv update` does not contact the network for an already-present clone.
 
 #### `placement-disagreement`
 
@@ -1731,9 +1731,10 @@ file, so its absence is a state a fresh generation reaches rather than a
 decision you made.
 
 **What to do:** `rwv doctor --fix`, which re-runs the generation that writes
-it. The authoring verbs (`rwv member add`, `rwv member remove`, `rwv update`, `rwv member set-role`) run
-the same generation; `rwv activate`, `rwv materialize` and `rwv workweave
-create` author nothing and report the file missing.
+it. The authoring verbs (`rwv member add`, `rwv member remove`,
+`rwv update --remote`, `rwv member set-role`) run the same generation;
+`rwv activate`, `rwv materialize` and `rwv workweave create` author nothing and
+report the file missing.
 
 ### `managed-file-drift`
 
@@ -1826,8 +1827,9 @@ on, and the only repair `--fix` has for this project regenerates from the very
 settings that did not read — so it is withheld rather than attempted and
 reported as failed. The other verbs stop on the same block, each naming it and
 the field: `rwv materialize` refuses before its first step, changing nothing;
-`rwv member add`, `rwv member remove`, `rwv member set-role` and `rwv update` refuse and leave
-`rwv.toml` unchanged; and `rwv activate` withholds its install hooks.
+`rwv member add`, `rwv member remove`, `rwv member set-role` and
+`rwv update --remote` refuse and leave `rwv.toml` unchanged; and `rwv activate`
+withholds its install hooks.
 
 Everything that integration would otherwise have reported for this project is
 missing from the run alongside it. A hook that cannot read its own
@@ -1844,8 +1846,8 @@ The one kind that carries fields rather than only
 a tag, because the four facts its predicate established are what the remedy
 turns on: `path` (the managed file holding the value), `key`, `on_disk`,
 `required`, and `required_by` (the member file carrying the requirement).
-Doctor is the standing observation arm for it, and `rwv update` reports the
-same finding at the moment it creates one. Neither gates: nothing refuses on
+Doctor is the standing observation arm for it, and `rwv update --remote` reports
+the same finding at the moment it creates one. Neither gates: nothing refuses on
 it, and `--fix` cannot repair it — rwv seeded the key once and never
 overwrites it, so this is not drift.
 

@@ -1,1593 +1,433 @@
-//! E2E tests for `rwv fetch`.
-//!
-//! These tests exercise the CLI binary via `assert_cmd`. Tests that require
-//! the fetch command to be fully implemented are marked `#[ignore]`.
+//! `rwv fetch`: the pruning fetch moves remote-tracking branches and nothing
+//! else, keeps the tip a rewrite dropped, and runs one fetch at a time per
+//! object store.
 
-use assert_cmd::Command;
-use predicates::prelude::*;
-use std::path::{Path, PathBuf};
-use std::process;
+use serde_json::Value;
+use std::path::PathBuf;
 
 mod common;
 
-/// Build a `Command` for the `rwv` binary.
-fn rwv() -> Command {
-    common::rwv()
+const MEMBER: &str = "github/example/server";
+const PROJECT: &str = "web-app";
+
+struct Weave {
+    _root: tempfile::TempDir,
+    parent: PathBuf,
+    primary: PathBuf,
+    member_origin: PathBuf,
+    forge: PathBuf,
 }
 
-/// Create a bare git repo at `path` to serve as a local "remote".
-fn init_bare_repo(path: &Path) {
-    let status = common::git()
-        .args(["init", "--bare", "--initial-branch=main"])
-        .arg(path)
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
-        .expect("git should be available");
-    assert!(status.success(), "git init --bare failed");
-}
-
-/// Create a bare git repo with an initial commit so it can be cloned.
-fn init_bare_repo_with_commit(path: &Path) {
-    init_bare_repo(path);
-
-    // Create a temporary working clone, make a commit, push to the bare repo.
-    let tmp = common::tempdir().expect("tempdir for working clone");
-    let work = tmp.path().join("work");
-
-    let run = |args: &[&str], cwd: &Path| {
-        let status = common::git()
-            .args(args)
-            .current_dir(cwd)
-            .stdout(process::Stdio::null())
-            .stderr(process::Stdio::null())
-            .status()
-            .expect("git command failed to start");
-        assert!(status.success(), "git {:?} failed", args);
-    };
-
-    run(
-        &["clone", &path.to_string_lossy(), &work.to_string_lossy()],
-        tmp.path(),
-    );
-    run(&["config", "user.email", "test@test.com"], &work);
-    run(&["config", "user.name", "Test"], &work);
-    std::fs::write(work.join("README"), "init").unwrap();
-    run(&["add", "."], &work);
-    run(&["commit", "-m", "initial"], &work);
-    run(&["push", "origin", "main"], &work);
-}
-
-/// Write an `rwv.toml` manifest pointing repos at the given bare repo URL.
-fn write_manifest(dir: &Path, repos: &[(&str, &str)]) {
-    let mut manifest_toml = String::from("[repositories]\n");
-    for (path, url) in repos {
-        manifest_toml.push_str(&format!(
-            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
-        ));
-    }
-    std::fs::write(dir.join("rwv.toml"), &manifest_toml).unwrap();
-}
-
-// ============================================================================
-// Basic CLI plumbing
-// ============================================================================
-
-#[test]
-fn fetch_no_source_outside_workspace_errors_usage() {
-    // With no SOURCE argument AND no repoweave workspace above CWD,
-    // in-place mode has nothing to operate on. The error must name both
-    // the missing SOURCE and the workspace requirement so the user sees
-    // both viable invocations.
-    let tmp = common::tempdir().unwrap();
-    rwv()
-        .arg("fetch")
-        .current_dir(tmp.path())
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("no SOURCE").and(predicate::str::contains("workspace")));
-}
-
-#[test]
-fn fetch_accepts_source_argument() {
-    // With a non-existent source, fetch should fail with a clear error.
-    rwv()
-        .args(["fetch", "some-source"])
-        .assert()
-        .failure()
-        .stderr(
-            predicate::str::contains("error")
-                .or(predicate::str::contains("Error"))
-                .or(predicate::str::contains("not found")),
-        );
-}
-
-// ============================================================================
-// Fetch with a valid project source — clones project repo and listed repos
-// ============================================================================
-
-#[test]
-fn fetch_clones_project_and_repos() {
-    let tmp = common::tempdir().unwrap();
-    let workspace = tmp.path().join("ws");
-    std::fs::create_dir_all(&workspace).unwrap();
-
-    // Set up two bare repos to act as remotes.
-    let bare_server = tmp.path().join("bare_server.git");
-    let bare_client = tmp.path().join("bare_client.git");
-    init_bare_repo_with_commit(&bare_server);
-    init_bare_repo_with_commit(&bare_client);
-
-    // Set up the "project source" — a bare repo containing rwv.toml.
-    let project_bare = tmp.path().join("project.git");
-    init_bare_repo(&project_bare);
-
-    // Clone the project bare repo, add an rwv.toml, push.
-    let project_work = tmp.path().join("project_work");
-    let run = |args: &[&str], cwd: &Path| {
-        let status = common::git()
-            .args(args)
-            .current_dir(cwd)
-            .stdout(process::Stdio::null())
-            .stderr(process::Stdio::null())
-            .status()
-            .expect("git command failed");
-        assert!(status.success(), "git {:?} failed", args);
-    };
-
-    run(
-        &[
-            "clone",
-            &project_bare.to_string_lossy(),
-            &project_work.to_string_lossy(),
-        ],
-        tmp.path(),
-    );
-    run(&["config", "user.email", "test@test.com"], &project_work);
-    run(&["config", "user.name", "Test"], &project_work);
-
-    // Use file:// URLs so no network access is needed.
-    let server_url = common::file_url(&bare_server);
-    let client_url = common::file_url(&bare_client);
-    write_manifest(
-        &project_work,
-        &[
-            ("local/org/server", &server_url),
-            ("local/org/client", &client_url),
-        ],
-    );
-    run(&["add", "rwv.toml"], &project_work);
-    run(&["commit", "-m", "add manifest"], &project_work);
-    run(&["push", "origin", "main"], &project_work);
-
-    // Run `rwv fetch` pointing at the project bare repo.
-    let project_source = common::file_url(&project_bare);
-    rwv()
-        .args(["fetch", &project_source])
-        .current_dir(&workspace)
-        .assert()
-        .success();
-
-    // Verify the repos were cloned to canonical paths.
-    assert!(
-        workspace.join("local/org/server").exists(),
-        "server repo should be cloned"
-    );
-    assert!(
-        workspace.join("local/org/client").exists(),
-        "client repo should be cloned"
-    );
-}
-
-// ============================================================================
-// Directory structure after fetch
-// ============================================================================
-
-#[test]
-fn fetch_creates_project_dir_with_manifest() {
-    let tmp = common::tempdir().unwrap();
-    let workspace = tmp.path().join("ws");
-    std::fs::create_dir_all(&workspace).unwrap();
-
-    // Set up a bare repo for the project source with an rwv.toml.
-    let bare_repo = tmp.path().join("remote.git");
-    init_bare_repo(&bare_repo);
-
-    let work = tmp.path().join("work");
-    let run = |args: &[&str], cwd: &Path| {
-        let status = common::git()
-            .args(args)
-            .current_dir(cwd)
-            .stdout(process::Stdio::null())
-            .stderr(process::Stdio::null())
-            .status()
-            .expect("git command failed");
-        assert!(status.success(), "git {:?} failed", args);
-    };
-
-    run(
-        &[
-            "clone",
-            &bare_repo.to_string_lossy(),
-            &work.to_string_lossy(),
-        ],
-        tmp.path(),
-    );
-    run(&["config", "user.email", "test@test.com"], &work);
-    run(&["config", "user.name", "Test"], &work);
-    write_manifest(&work, &[]);
-    run(&["add", "rwv.toml"], &work);
-    run(&["commit", "-m", "manifest"], &work);
-    run(&["push", "origin", "main"], &work);
-
-    let source = common::file_url(&bare_repo);
-    rwv()
-        .args(["fetch", &source])
-        .current_dir(&workspace)
-        .assert()
-        .success();
-
-    // The project directory should exist under projects/ and contain rwv.toml.
-    let projects_dir = workspace.join("projects");
-    assert!(projects_dir.exists(), "projects/ directory should exist");
-
-    // Find the project subdirectory (name derived from source).
-    let entries: Vec<_> = std::fs::read_dir(&projects_dir)
-        .expect("should be able to read projects/")
-        .filter_map(|e| e.ok())
-        .collect();
-    assert!(
-        !entries.is_empty(),
-        "projects/ should contain at least one project"
-    );
-
-    let project_dir = entries[0].path();
-    assert!(
-        project_dir.join("rwv.toml").exists(),
-        "project directory should contain rwv.toml"
-    );
-}
-
-#[test]
-fn fetch_repos_at_canonical_paths() {
-    let tmp = common::tempdir().unwrap();
-    let workspace = tmp.path().join("ws");
-    std::fs::create_dir_all(&workspace).unwrap();
-
-    let bare_repo = tmp.path().join("dep.git");
-    init_bare_repo_with_commit(&bare_repo);
-
-    let project_bare = tmp.path().join("project.git");
-    init_bare_repo(&project_bare);
-
-    let work = tmp.path().join("work");
-    let run = |args: &[&str], cwd: &Path| {
-        let status = common::git()
-            .args(args)
-            .current_dir(cwd)
-            .stdout(process::Stdio::null())
-            .stderr(process::Stdio::null())
-            .status()
-            .expect("git command failed");
-        assert!(status.success(), "git {:?} failed", args);
-    };
-
-    run(
-        &[
-            "clone",
-            &project_bare.to_string_lossy(),
-            &work.to_string_lossy(),
-        ],
-        tmp.path(),
-    );
-    run(&["config", "user.email", "test@test.com"], &work);
-    run(&["config", "user.name", "Test"], &work);
-
-    let dep_url = common::file_url(&bare_repo);
-    write_manifest(&work, &[("local/team/dep", &dep_url)]);
-    run(&["add", "rwv.toml"], &work);
-    run(&["commit", "-m", "manifest"], &work);
-    run(&["push", "origin", "main"], &work);
-
-    let source = common::file_url(&project_bare);
-    rwv()
-        .args(["fetch", &source])
-        .current_dir(&workspace)
-        .assert()
-        .success();
-
-    // Repo should be at {registry}/{owner}/{repo}/ relative to workspace root.
-    let repo_dir = workspace.join("local/team/dep");
-    assert!(
-        repo_dir.exists(),
-        "repo should be at canonical path local/team/dep"
-    );
-    assert!(
-        repo_dir.join(".git").exists() || repo_dir.join("HEAD").exists(),
-        "canonical path should contain a git repository"
-    );
-}
-
-// ============================================================================
-// Fetch with already-existing workspace — graceful handling
-// ============================================================================
-
-#[test]
-fn fetch_existing_workspace_handles_gracefully() {
-    let tmp = common::tempdir().unwrap();
-    let workspace = tmp.path().join("ws");
-    std::fs::create_dir_all(&workspace).unwrap();
-
-    let bare_repo = tmp.path().join("dep.git");
-    init_bare_repo_with_commit(&bare_repo);
-
-    let project_bare = tmp.path().join("project.git");
-    init_bare_repo(&project_bare);
-
-    let work = tmp.path().join("work");
-    let run = |args: &[&str], cwd: &Path| {
-        let status = common::git()
-            .args(args)
-            .current_dir(cwd)
-            .stdout(process::Stdio::null())
-            .stderr(process::Stdio::null())
-            .status()
-            .expect("git command failed");
-        assert!(status.success(), "git {:?} failed", args);
-    };
-
-    run(
-        &[
-            "clone",
-            &project_bare.to_string_lossy(),
-            &work.to_string_lossy(),
-        ],
-        tmp.path(),
-    );
-    run(&["config", "user.email", "test@test.com"], &work);
-    run(&["config", "user.name", "Test"], &work);
-
-    let dep_url = common::file_url(&bare_repo);
-    write_manifest(&work, &[("local/team/dep", &dep_url)]);
-    run(&["add", "rwv.toml"], &work);
-    run(&["commit", "-m", "manifest"], &work);
-    run(&["push", "origin", "main"], &work);
-
-    let source = common::file_url(&project_bare);
-
-    // First fetch — should succeed.
-    rwv()
-        .args(["fetch", &source])
-        .current_dir(&workspace)
-        .assert()
-        .success();
-
-    // Second fetch of the same source — the project directory already exists,
-    // so rwv fetch must exit non-zero with an "already exists" error and a
-    // scoped-path hint.
-    let output = rwv()
-        .args(["fetch", &source])
-        .current_dir(&workspace)
-        .output()
-        .expect("rwv fetch should run");
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let combined = format!("{stdout}{stderr}");
-
-    assert!(
-        !output.status.success(),
-        "second fetch of same source should fail (project already exists), got: {combined}"
-    );
-    assert!(
-        combined.contains("already exists"),
-        "second fetch should report 'already exists', got: {combined}"
-    );
-}
-
-// ============================================================================
-// Fetch with invalid/nonexistent source — clear error
-// ============================================================================
-
-#[test]
-fn fetch_invalid_source_errors_clearly() {
-    let tmp = common::tempdir().unwrap();
-
-    rwv()
-        .args(["fetch", "file:///nonexistent/path/to/repo.git"])
-        .current_dir(tmp.path())
-        .assert()
-        .failure()
-        .stderr(
-            predicate::str::contains("error")
-                .or(predicate::str::contains("Error"))
-                .or(predicate::str::contains("not found")
-                    .or(predicate::str::contains("failed"))
-                    .or(predicate::str::contains("could not"))),
-        );
-}
-
-#[test]
-fn fetch_garbage_source_errors_clearly() {
-    let tmp = common::tempdir().unwrap();
-
-    rwv()
-        .args(["fetch", "not-a-valid-source-at-all"])
-        .current_dir(tmp.path())
-        .assert()
-        .failure()
-        .stderr(
-            predicate::str::contains("error")
-                .or(predicate::str::contains("Error"))
-                .or(predicate::str::contains("invalid"))
-                .or(predicate::str::contains("Invalid"))
-                .or(predicate::str::contains("not found"))
-                .or(predicate::str::contains("failed")),
-        );
-}
-
-// ============================================================================
-// FetchMode enum tests (V6a)
-// ============================================================================
-//
-// FetchMode controls how `rwv fetch` resolves repo versions:
-//   - Default: fetch branch HEAD from `rwv.toml`, update `rwv.lock` with SHAs
-//   - Locked:  check out exact revisions from `rwv.lock`
-//   - Frozen:  like Locked, but error if lock is missing or incomplete
-
-#[test]
-fn fetch_mode_default_updates_lock() {
-    // Default fetch should clone repos at branch HEAD from rwv.toml and then
-    // write/update rwv.lock with the resolved SHAs.
-    let tmp = common::tempdir().unwrap();
-    let workspace = tmp.path().join("ws");
-    std::fs::create_dir_all(&workspace).unwrap();
-
-    let bare_repo = tmp.path().join("dep.git");
-    init_bare_repo_with_commit(&bare_repo);
-
-    let project_bare = tmp.path().join("project.git");
-    init_bare_repo(&project_bare);
-
-    let work = tmp.path().join("work");
-    let run = |args: &[&str], cwd: &Path| {
-        let status = common::git()
-            .args(args)
-            .current_dir(cwd)
-            .stdout(process::Stdio::null())
-            .stderr(process::Stdio::null())
-            .status()
-            .expect("git command failed");
-        assert!(status.success(), "git {:?} failed", args);
-    };
-
-    run(
-        &[
-            "clone",
-            &project_bare.to_string_lossy(),
-            &work.to_string_lossy(),
-        ],
-        tmp.path(),
-    );
-    run(&["config", "user.email", "test@test.com"], &work);
-    run(&["config", "user.name", "Test"], &work);
-
-    let dep_url = common::file_url(&bare_repo);
-    write_manifest(&work, &[("local/team/dep", &dep_url)]);
-    run(&["add", "rwv.toml"], &work);
-    run(&["commit", "-m", "manifest"], &work);
-    run(&["push", "origin", "main"], &work);
-
-    let source = common::file_url(&project_bare);
-    rwv()
-        .args(["fetch", &source])
-        .current_dir(&workspace)
-        .assert()
-        .success();
-
-    // After default fetch, rwv.lock should exist in the project directory.
-    let lock_path = workspace.join("projects/project/rwv.lock");
-    assert!(
-        lock_path.exists(),
-        "default fetch should create/update rwv.lock"
-    );
-
-    let lock_content = std::fs::read_to_string(&lock_path).unwrap();
-    assert!(
-        lock_content.contains("local/team/dep"),
-        "lock should reference the fetched repo"
-    );
-    assert!(
-        lock_content.contains("\"version\""),
-        "lock should contain pinned versions"
-    );
-}
-
-#[test]
-fn fetch_default_auto_activates_project() {
-    // Default fetch should auto-activate the project (write .rwv-active,
-    // generate ecosystem files, create symlinks).
-    let tmp = common::tempdir().unwrap();
-    let workspace = tmp.path().join("ws");
-    std::fs::create_dir_all(&workspace).unwrap();
-
-    let bare_repo = tmp.path().join("dep.git");
-    init_bare_repo_with_commit(&bare_repo);
-
-    let project_bare = tmp.path().join("project.git");
-    init_bare_repo(&project_bare);
-
-    let work = tmp.path().join("work");
-    let run = |args: &[&str], cwd: &Path| {
-        let status = common::git()
-            .args(args)
-            .current_dir(cwd)
-            .stdout(process::Stdio::null())
-            .stderr(process::Stdio::null())
-            .status()
-            .expect("git command failed");
-        assert!(status.success(), "git {:?} failed", args);
-    };
-
-    run(
-        &[
-            "clone",
-            &project_bare.to_string_lossy(),
-            &work.to_string_lossy(),
-        ],
-        tmp.path(),
-    );
-    run(&["config", "user.email", "test@test.com"], &work);
-    run(&["config", "user.name", "Test"], &work);
-
-    let dep_url = common::file_url(&bare_repo);
-    write_manifest(&work, &[("local/team/dep", &dep_url)]);
-    run(&["add", "rwv.toml"], &work);
-    run(&["commit", "-m", "manifest"], &work);
-    run(&["push", "origin", "main"], &work);
-
-    let source = common::file_url(&project_bare);
-    rwv()
-        .args(["fetch", &source])
-        .current_dir(&workspace)
-        .assert()
-        .success();
-
-    // .rwv-active should be written at workspace root.
-    let active_path = workspace.join(".rwv-active");
-    assert!(
-        active_path.exists(),
-        "fetch should auto-activate the project (write .rwv-active)"
-    );
-    let active_content = std::fs::read_to_string(&active_path).unwrap();
-    assert!(
-        active_content.contains("project"),
-        ".rwv-active should reference the fetched project name"
-    );
-}
-
-// ============================================================================
-// Bootstrap auto-activate vs. a pre-existing `.rwv-active` pointer
-//
-// A pointer naming a project skips the auto-activate. One that is empty,
-// whitespace-only, or not a project name selects nothing a verb may act on,
-// so the bootstrap refuses before it clones anything rather than reading it
-// as no selection.
-// ============================================================================
-
-/// Set up a project source with one dependency repo and an empty workspace
-/// directory, without fetching. Returns `(workspace, source)`; a bootstrap
-/// `rwv fetch <source>` against them always derives the project name
-/// `"project"`.
-fn setup_bootstrap_source(tmp: &Path) -> (PathBuf, String) {
-    let workspace = tmp.join("ws");
-    std::fs::create_dir_all(&workspace).unwrap();
-
-    let bare_repo = tmp.join("dep.git");
-    init_bare_repo_with_commit(&bare_repo);
-
-    let project_bare = tmp.join("project.git");
-    init_bare_repo(&project_bare);
-
-    let work = tmp.join("work");
-    let run = |args: &[&str], cwd: &Path| {
-        let status = common::git()
-            .args(args)
-            .current_dir(cwd)
-            .stdout(process::Stdio::null())
-            .stderr(process::Stdio::null())
-            .status()
-            .expect("git command failed");
-        assert!(status.success(), "git {:?} failed", args);
-    };
-
-    run(
-        &[
-            "clone",
-            &project_bare.to_string_lossy(),
-            &work.to_string_lossy(),
-        ],
-        tmp,
-    );
-    run(&["config", "user.email", "test@test.com"], &work);
-    run(&["config", "user.name", "Test"], &work);
-
-    let dep_url = common::file_url(&bare_repo);
-    write_manifest(&work, &[("local/team/dep", &dep_url)]);
-    run(&["add", "rwv.toml"], &work);
-    run(&["commit", "-m", "manifest"], &work);
-    run(&["push", "origin", "main"], &work);
-
-    let source = common::file_url(&project_bare);
-    (workspace, source)
-}
-
-#[test]
-fn fetch_bootstrap_refuses_over_a_pointer_that_holds_no_project_name() {
-    for content in ["", "  \n  \n", "-not-a-valid-name\n"] {
-        let tmp = common::tempdir().unwrap();
-        let (workspace, source) = setup_bootstrap_source(tmp.path());
-        std::fs::write(workspace.join(".rwv-active"), content).unwrap();
-
-        let out = rwv()
-            .args(["fetch", &source, "--allow-non-empty-dir"])
-            .current_dir(&workspace)
-            .output()
-            .unwrap();
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(!out.status.success(), "{content:?}: {stderr}");
-        assert!(
-            stderr.contains("unreadable-active-project") && stderr.contains("rwv activate"),
-            "{content:?}: {stderr}"
-        );
-        assert!(
-            !workspace.join("projects").join("project").exists(),
-            "{content:?}: the refusal comes before the project is cloned"
-        );
-        assert_eq!(
-            std::fs::read_to_string(workspace.join(".rwv-active")).unwrap(),
-            content,
-            "the pointer is left for the operator to repair"
-        );
-    }
-}
-
-#[test]
-fn fetch_bootstrap_skips_auto_activate_over_valid_active_pointer() {
-    let tmp = common::tempdir().unwrap();
-    let (workspace, source) = setup_bootstrap_source(tmp.path());
-    std::fs::write(workspace.join(".rwv-active"), "other-project\n").unwrap();
-
-    rwv()
-        .args(["fetch", &source, "--allow-non-empty-dir"])
-        .current_dir(&workspace)
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(
-            "rwv fetch: skipping auto-activate (project 'other-project' already active)",
-        ));
-
-    // The pointer is left as it was, not overwritten with the freshly
-    // bootstrapped project's name.
-    let active_content = std::fs::read_to_string(workspace.join(".rwv-active")).unwrap();
-    assert_eq!(active_content.trim(), "other-project");
-}
-
-// ============================================================================
-// Default fetch reads rwv.lock (pins to lock SHA, does NOT bump to HEAD)
-// ============================================================================
-
-#[test]
-fn fetch_default_reads_lock_and_does_not_bump_it() {
-    // Default `rwv fetch` reads rwv.lock and aligns each repo to the lock
-    // SHA, NOT the manifest's branch HEAD. The lock file itself must not
-    // be mutated when the lock already covers every manifest entry —
-    // that is the headline guarantee of the fetch/update split.
-    let tmp = common::tempdir().unwrap();
-    let workspace = tmp.path().join("ws");
-    std::fs::create_dir_all(&workspace).unwrap();
-
-    let bare_repo = tmp.path().join("dep.git");
-    init_bare_repo_with_commit(&bare_repo);
-
-    let project_bare = tmp.path().join("project.git");
-    init_bare_repo(&project_bare);
-
-    let work = tmp.path().join("work");
-    let run = |args: &[&str], cwd: &Path| -> String {
-        let out = common::git()
-            .args(args)
-            .current_dir(cwd)
-            .stdout(process::Stdio::piped())
-            .stderr(process::Stdio::null())
-            .output()
-            .expect("git command failed");
-        assert!(out.status.success(), "git {:?} failed", args);
-        String::from_utf8(out.stdout).unwrap().trim().to_string()
-    };
-
-    let run_quiet = |args: &[&str], cwd: &Path| {
-        let status = common::git()
-            .args(args)
-            .current_dir(cwd)
-            .stdout(process::Stdio::null())
-            .stderr(process::Stdio::null())
-            .status()
-            .expect("git command failed");
-        assert!(status.success(), "git {:?} failed", args);
-    };
-
-    run_quiet(
-        &[
-            "clone",
-            &project_bare.to_string_lossy(),
-            &work.to_string_lossy(),
-        ],
-        tmp.path(),
-    );
-    run_quiet(&["config", "user.email", "test@test.com"], &work);
-    run_quiet(&["config", "user.name", "Test"], &work);
-
-    let dep_url = common::file_url(&bare_repo);
-    write_manifest(&work, &[("local/team/dep", &dep_url)]);
-    run_quiet(&["add", "rwv.toml"], &work);
-    run_quiet(&["commit", "-m", "manifest"], &work);
-
-    // Get the first commit SHA from the bare repo (before any new commits).
-    let dep_clone = tmp.path().join("dep_clone");
-    run_quiet(
-        &[
-            "clone",
-            &bare_repo.to_string_lossy(),
-            &dep_clone.to_string_lossy(),
-        ],
-        tmp.path(),
-    );
-    let first_sha = run(&["rev-parse", "HEAD"], &dep_clone);
-
-    // Write a lock file pinning the dep at first_sha.
-    common::fixture_lock(&work, &[("local/team/dep", &dep_url, &first_sha)]);
-    run_quiet(&["add", "rwv.lock"], &work);
-    run_quiet(&["commit", "-m", "add lock"], &work);
-
-    // Push a second commit to the bare repo so HEAD advances past the lock.
-    run_quiet(&["config", "user.email", "test@test.com"], &dep_clone);
-    run_quiet(&["config", "user.name", "Test"], &dep_clone);
-    std::fs::write(dep_clone.join("second.txt"), "change").unwrap();
-    run_quiet(&["add", "."], &dep_clone);
-    run_quiet(&["commit", "-m", "second"], &dep_clone);
-    run_quiet(&["push", "origin", "main"], &dep_clone);
-
-    run_quiet(&["push", "origin", "main"], &work);
-
-    // Capture the committed lock content so we can verify fetch did not
-    // bump it to branch HEAD.
-    let lock_before = common::read_normalized(work.join("rwv.lock"));
-
-    // Default fetch: should check out dep at first_sha (the lock value),
-    // not HEAD (the branch tip, which is now ahead).
-    let source = common::file_url(&project_bare);
-    rwv()
-        .args(["fetch", &source])
-        .current_dir(&workspace)
-        .assert()
-        .success();
-
-    // Verify the cloned repo is at the locked SHA.
-    let dep_dir = workspace.join("local/team/dep");
-    assert!(dep_dir.exists(), "dep should be cloned");
-    let checked_out_sha = run(&["rev-parse", "HEAD"], &dep_dir);
-    assert_eq!(
-        checked_out_sha, first_sha,
-        "default fetch should check out the exact revision from rwv.lock"
-    );
-
-    // The committed lock fully covered the manifest, so fetch had nothing
-    // to bootstrap or additively add — lock content must be byte-identical.
-    let lock_after = common::read_normalized(workspace.join("projects/project/rwv.lock"));
-    assert_eq!(
-        lock_before, lock_after,
-        "default fetch must not mutate rwv.lock when it already covers every manifest entry"
-    );
-}
-
-// ============================================================================
-// --frozen mode: error on missing or incomplete lock
-// ============================================================================
-
-#[test]
-fn fetch_frozen_errors_on_missing_lock() {
-    // --frozen should error if rwv.lock does not exist.
-    let tmp = common::tempdir().unwrap();
-    let workspace = tmp.path().join("ws");
-    std::fs::create_dir_all(&workspace).unwrap();
-
-    let bare_repo = tmp.path().join("dep.git");
-    init_bare_repo_with_commit(&bare_repo);
-
-    let project_bare = tmp.path().join("project.git");
-    init_bare_repo(&project_bare);
-
-    let work = tmp.path().join("work");
-    let run = |args: &[&str], cwd: &Path| {
-        let status = common::git()
-            .args(args)
-            .current_dir(cwd)
-            .stdout(process::Stdio::null())
-            .stderr(process::Stdio::null())
-            .status()
-            .expect("git command failed");
-        assert!(status.success(), "git {:?} failed", args);
-    };
-
-    run(
-        &[
-            "clone",
-            &project_bare.to_string_lossy(),
-            &work.to_string_lossy(),
-        ],
-        tmp.path(),
-    );
-    run(&["config", "user.email", "test@test.com"], &work);
-    run(&["config", "user.name", "Test"], &work);
-
-    let dep_url = common::file_url(&bare_repo);
-    write_manifest(&work, &[("local/team/dep", &dep_url)]);
-    // Deliberately do NOT create rwv.lock.
-    run(&["add", "rwv.toml"], &work);
-    run(&["commit", "-m", "manifest without lock"], &work);
-    run(&["push", "origin", "main"], &work);
-
-    let source = common::file_url(&project_bare);
-    rwv()
-        .args(["fetch", &source, "--frozen"])
-        .current_dir(&workspace)
-        .assert()
-        .failure()
-        .stderr(
-            predicate::str::contains("lock").and(
-                predicate::str::contains("missing")
-                    .or(predicate::str::contains("not found"))
-                    .or(predicate::str::contains("does not exist")),
-            ),
-        );
-}
-
-#[test]
-fn fetch_frozen_errors_on_incomplete_lock() {
-    // --frozen should error if rwv.lock exists but doesn't cover the manifest
-    // (e.g., manifest has a repo that the lock file doesn't cover).
-    let tmp = common::tempdir().unwrap();
-    let workspace = tmp.path().join("ws");
-    std::fs::create_dir_all(&workspace).unwrap();
-
-    let bare_repo = tmp.path().join("dep.git");
-    init_bare_repo_with_commit(&bare_repo);
-
-    let bare_repo2 = tmp.path().join("dep2.git");
-    init_bare_repo_with_commit(&bare_repo2);
-
-    let project_bare = tmp.path().join("project.git");
-    init_bare_repo(&project_bare);
-
-    let work = tmp.path().join("work");
-    let run = |args: &[&str], cwd: &Path| {
-        let status = common::git()
-            .args(args)
-            .current_dir(cwd)
-            .stdout(process::Stdio::null())
-            .stderr(process::Stdio::null())
-            .status()
-            .expect("git command failed");
-        assert!(status.success(), "git {:?} failed", args);
-    };
-
-    run(
-        &[
-            "clone",
-            &project_bare.to_string_lossy(),
-            &work.to_string_lossy(),
-        ],
-        tmp.path(),
-    );
-    run(&["config", "user.email", "test@test.com"], &work);
-    run(&["config", "user.name", "Test"], &work);
-
-    let dep_url = common::file_url(&bare_repo);
-    let dep2_url = common::file_url(&bare_repo2);
-
-    // Manifest lists TWO repos.
-    write_manifest(
-        &work,
-        &[("local/team/dep", &dep_url), ("local/team/dep2", &dep2_url)],
-    );
-
-    // Lock only covers ONE repo — incomplete.
-    common::fixture_lock(&work, &[("local/team/dep", &dep_url, &"a".repeat(40))]);
-
-    run(&["add", "."], &work);
-    run(&["commit", "-m", "incomplete lock"], &work);
-    run(&["push", "origin", "main"], &work);
-
-    let source = common::file_url(&project_bare);
-    rwv()
-        .args(["fetch", &source, "--frozen"])
-        .current_dir(&workspace)
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("incomplete").or(predicate::str::contains("not covered")));
-}
-
-#[test]
-fn fetch_frozen_succeeds_with_valid_lock() {
-    // --frozen should succeed when rwv.lock exists and covers all manifest repos.
-    let tmp = common::tempdir().unwrap();
-    let workspace = tmp.path().join("ws");
-    std::fs::create_dir_all(&workspace).unwrap();
-
-    let bare_repo = tmp.path().join("dep.git");
-    init_bare_repo_with_commit(&bare_repo);
-
-    let project_bare = tmp.path().join("project.git");
-    init_bare_repo(&project_bare);
-
-    let work = tmp.path().join("work");
-    let run = |args: &[&str], cwd: &Path| -> String {
-        let out = common::git()
-            .args(args)
-            .current_dir(cwd)
-            .stdout(process::Stdio::piped())
-            .stderr(process::Stdio::null())
-            .output()
-            .expect("git command failed");
-        assert!(out.status.success(), "git {:?} failed", args);
-        String::from_utf8(out.stdout).unwrap().trim().to_string()
-    };
-    let run_quiet = |args: &[&str], cwd: &Path| {
-        let status = common::git()
-            .args(args)
-            .current_dir(cwd)
-            .stdout(process::Stdio::null())
-            .stderr(process::Stdio::null())
-            .status()
-            .expect("git command failed");
-        assert!(status.success(), "git {:?} failed", args);
-    };
-
-    run_quiet(
-        &[
-            "clone",
-            &project_bare.to_string_lossy(),
-            &work.to_string_lossy(),
-        ],
-        tmp.path(),
-    );
-    run_quiet(&["config", "user.email", "test@test.com"], &work);
-    run_quiet(&["config", "user.name", "Test"], &work);
-
-    // Get the dep's HEAD SHA for the lock file.
-    let dep_clone = tmp.path().join("dep_clone");
-    run_quiet(
-        &[
-            "clone",
-            &bare_repo.to_string_lossy(),
-            &dep_clone.to_string_lossy(),
-        ],
-        tmp.path(),
-    );
-    let dep_sha = run(&["rev-parse", "HEAD"], &dep_clone);
-
-    let dep_url = common::file_url(&bare_repo);
-    write_manifest(&work, &[("local/team/dep", &dep_url)]);
-
-    // Write a valid lock that matches the manifest.
-    common::fixture_lock(&work, &[("local/team/dep", &dep_url, &dep_sha)]);
-
-    run_quiet(&["add", "."], &work);
-    run_quiet(&["commit", "-m", "manifest+lock"], &work);
-    run_quiet(&["push", "origin", "main"], &work);
-
-    let source = common::file_url(&project_bare);
-    rwv()
-        .args(["fetch", &source, "--frozen"])
-        .current_dir(&workspace)
-        .assert()
-        .success();
-
-    let dep_dir = workspace.join("local/team/dep");
-    assert!(dep_dir.exists(), "dep should be cloned with --frozen");
-}
-
-// ============================================================================
-// Second fetch of same project: collision error
-// ============================================================================
-
-#[test]
-fn fetch_second_invocation_is_idempotent() {
-    // Fetching the same project source twice collides on the project directory.
-    // The second fetch must exit non-zero with an "already exists" error.
-    // The first fetch activates the project; the active file must remain after
-    // the failed second fetch.
-    let tmp = common::tempdir().unwrap();
-    let workspace = tmp.path().join("ws");
-    std::fs::create_dir_all(&workspace).unwrap();
-
-    let bare_repo = tmp.path().join("dep.git");
-    init_bare_repo_with_commit(&bare_repo);
-
-    let project_bare = tmp.path().join("project.git");
-    init_bare_repo(&project_bare);
-
-    let work = tmp.path().join("work");
-    let run = |args: &[&str], cwd: &Path| {
-        let status = common::git()
-            .args(args)
-            .current_dir(cwd)
-            .stdout(process::Stdio::null())
-            .stderr(process::Stdio::null())
-            .status()
-            .expect("git command failed");
-        assert!(status.success(), "git {:?} failed", args);
-    };
-
-    run(
-        &[
-            "clone",
-            &project_bare.to_string_lossy(),
-            &work.to_string_lossy(),
-        ],
-        tmp.path(),
-    );
-    run(&["config", "user.email", "test@test.com"], &work);
-    run(&["config", "user.name", "Test"], &work);
-
-    let dep_url = common::file_url(&bare_repo);
-    write_manifest(&work, &[("local/team/dep", &dep_url)]);
-    run(&["add", "rwv.toml"], &work);
-    run(&["commit", "-m", "manifest"], &work);
-    run(&["push", "origin", "main"], &work);
-
-    let source = common::file_url(&project_bare);
-
-    // First fetch — succeeds and activates the project.
-    rwv()
-        .args(["fetch", &source])
-        .current_dir(&workspace)
-        .assert()
-        .success();
-
-    assert!(
-        workspace.join(".rwv-active").exists(),
-        "project should be activated after first fetch"
-    );
-
-    // Second fetch of the same source — must fail with collision error.
-    let output = rwv()
-        .args(["fetch", &source])
-        .current_dir(&workspace)
-        .output()
-        .expect("rwv fetch should run");
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let combined = format!("{stdout}{stderr}");
-
-    assert!(
-        !output.status.success(),
-        "second fetch of same source should fail (project already exists), got: {combined}"
-    );
-    assert!(
-        combined.contains("already exists"),
-        "second fetch should report 'already exists', got: {combined}"
-    );
-
-    // .rwv-active must still exist after the failed second fetch.
-    assert!(
-        workspace.join(".rwv-active").exists(),
-        "project should remain activated after failed second fetch"
-    );
-}
-
-// ============================================================================
-// CLI flag plumbing: --frozen is recognized
-// ============================================================================
-
-#[test]
-fn fetch_frozen_flag_is_recognized() {
-    // `rwv fetch <source> --frozen` should not fail with "unrecognized argument".
-    rwv()
-        .args(["fetch", "some-source", "--frozen"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("unrecognized").not());
-}
-
-// ============================================================================
-// --no-reference: skip reference-role repos
-// ============================================================================
-
-/// Write a manifest with mixed primary/reference roles.
-fn write_manifest_with_roles(dir: &Path, repos: &[(&str, &str, &str)]) {
-    let mut manifest_toml = String::from("[repositories]\n");
-    for (path, url, role) in repos {
-        manifest_toml.push_str(&format!(
-            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nbranch = \"main\"\nrole = \"{role}\"\n"
-        ));
-    }
-    std::fs::write(dir.join("rwv.toml"), &manifest_toml).unwrap();
-}
-
-#[test]
-fn fetch_no_reference_skips_reference_role_repos() {
-    // `rwv fetch <source> --no-reference` should clone primary/fork/dependency
-    // repos but skip any repo with `role: reference`.
-    let tmp = common::tempdir().unwrap();
-    let workspace = tmp.path().join("ws");
-    std::fs::create_dir_all(&workspace).unwrap();
-
-    let primary_bare = tmp.path().join("primary.git");
-    init_bare_repo_with_commit(&primary_bare);
-    let reference_bare = tmp.path().join("reference.git");
-    init_bare_repo_with_commit(&reference_bare);
-
-    let project_bare = tmp.path().join("project.git");
-    init_bare_repo(&project_bare);
-
-    let work = tmp.path().join("work");
-    let run = |args: &[&str], cwd: &Path| {
-        let status = common::git()
-            .args(args)
-            .current_dir(cwd)
-            .stdout(process::Stdio::null())
-            .stderr(process::Stdio::null())
-            .status()
-            .expect("git command failed");
-        assert!(status.success(), "git {:?} failed", args);
-    };
-
-    run(
-        &[
-            "clone",
-            &project_bare.to_string_lossy(),
-            &work.to_string_lossy(),
-        ],
-        tmp.path(),
-    );
-    run(&["config", "user.email", "test@test.com"], &work);
-    run(&["config", "user.name", "Test"], &work);
-
-    let primary_url = common::file_url(&primary_bare);
-    let reference_url = common::file_url(&reference_bare);
-    write_manifest_with_roles(
-        &work,
-        &[
-            ("local/team/primary", &primary_url, "owned"),
-            ("local/team/reference", &reference_url, "reference"),
-        ],
-    );
-    run(&["add", "rwv.toml"], &work);
-    run(&["commit", "-m", "manifest"], &work);
-    run(&["push", "origin", "main"], &work);
-
-    let source = common::file_url(&project_bare);
-    rwv()
-        .args(["fetch", &source, "--no-reference"])
-        .current_dir(&workspace)
-        .assert()
-        .success();
-
-    assert!(
-        workspace.join("local/team/primary").exists(),
-        "primary repo should be cloned"
-    );
-    assert!(
-        !workspace.join("local/team/reference").exists(),
-        "reference repo should be skipped with --no-reference"
-    );
-}
-
-#[test]
-fn fetch_frozen_no_reference_tolerates_reference_missing_from_lock() {
-    // Regression test for find_incomplete_repos: with --frozen --no-reference,
-    // a reference repo present in the manifest but missing from rwv.lock
-    // must NOT cause failure — the user has explicitly opted out of
-    // fetching reference repos, so missing lock entries for them are fine.
-    let tmp = common::tempdir().unwrap();
-    let workspace = tmp.path().join("ws");
-    std::fs::create_dir_all(&workspace).unwrap();
-
-    let primary_bare = tmp.path().join("primary.git");
-    init_bare_repo_with_commit(&primary_bare);
-    let reference_bare = tmp.path().join("reference.git");
-    init_bare_repo_with_commit(&reference_bare);
-
-    let project_bare = tmp.path().join("project.git");
-    init_bare_repo(&project_bare);
-
-    let work = tmp.path().join("work");
-    let run = |args: &[&str], cwd: &Path| -> String {
-        let out = common::git()
-            .args(args)
-            .current_dir(cwd)
-            .stdout(process::Stdio::piped())
-            .stderr(process::Stdio::null())
-            .output()
-            .expect("git command failed");
-        assert!(out.status.success(), "git {:?} failed", args);
-        String::from_utf8(out.stdout).unwrap().trim().to_string()
-    };
-    let run_quiet = |args: &[&str], cwd: &Path| {
-        let status = common::git()
-            .args(args)
-            .current_dir(cwd)
-            .stdout(process::Stdio::null())
-            .stderr(process::Stdio::null())
-            .status()
-            .expect("git command failed");
-        assert!(status.success(), "git {:?} failed", args);
-    };
-
-    run_quiet(
-        &[
-            "clone",
-            &project_bare.to_string_lossy(),
-            &work.to_string_lossy(),
-        ],
-        tmp.path(),
-    );
-    run_quiet(&["config", "user.email", "test@test.com"], &work);
-    run_quiet(&["config", "user.name", "Test"], &work);
-
-    // Get the primary HEAD SHA so we can write a valid lock for it.
-    let primary_clone = tmp.path().join("primary_clone");
-    run_quiet(
-        &[
-            "clone",
-            &primary_bare.to_string_lossy(),
-            &primary_clone.to_string_lossy(),
-        ],
-        tmp.path(),
-    );
-    let primary_sha = run(&["rev-parse", "HEAD"], &primary_clone);
-
-    let primary_url = common::file_url(&primary_bare);
-    let reference_url = common::file_url(&reference_bare);
-    write_manifest_with_roles(
-        &work,
-        &[
-            ("local/team/primary", &primary_url, "owned"),
-            ("local/team/reference", &reference_url, "reference"),
-        ],
-    );
-
-    // Lock file covers ONLY the primary — reference is intentionally absent.
-    // Without --no-reference this would be incomplete; with --no-reference,
-    // find_incomplete_repos must skip the reference entry.
-    common::fixture_lock(&work, &[("local/team/primary", &primary_url, &primary_sha)]);
-
-    run_quiet(&["add", "."], &work);
-    run_quiet(&["commit", "-m", "manifest+partial-lock"], &work);
-    run_quiet(&["push", "origin", "main"], &work);
-
-    let source = common::file_url(&project_bare);
-    rwv()
-        .args(["fetch", &source, "--frozen", "--no-reference"])
-        .current_dir(&workspace)
-        .assert()
-        .success();
-
-    assert!(
-        workspace.join("local/team/primary").exists(),
-        "primary repo should be cloned with --frozen --no-reference"
-    );
-    assert!(
-        !workspace.join("local/team/reference").exists(),
-        "reference repo should be skipped"
-    );
-}
-
-#[test]
-fn fetch_frozen_without_no_reference_errors_when_reference_missing_from_lock() {
-    // Sibling check for the test above: WITHOUT --no-reference, a reference
-    // repo missing from the lock must still trigger the incomplete-lock error.
-    // This guards against the find_incomplete_repos fix accidentally exempting
-    // reference repos unconditionally.
-    let tmp = common::tempdir().unwrap();
-    let workspace = tmp.path().join("ws");
-    std::fs::create_dir_all(&workspace).unwrap();
-
-    let primary_bare = tmp.path().join("primary.git");
-    init_bare_repo_with_commit(&primary_bare);
-    let reference_bare = tmp.path().join("reference.git");
-    init_bare_repo_with_commit(&reference_bare);
-
-    let project_bare = tmp.path().join("project.git");
-    init_bare_repo(&project_bare);
-
-    let work = tmp.path().join("work");
-    let run_quiet = |args: &[&str], cwd: &Path| {
-        let status = common::git()
-            .args(args)
-            .current_dir(cwd)
-            .stdout(process::Stdio::null())
-            .stderr(process::Stdio::null())
-            .status()
-            .expect("git command failed");
-        assert!(status.success(), "git {:?} failed", args);
-    };
-
-    run_quiet(
-        &[
-            "clone",
-            &project_bare.to_string_lossy(),
-            &work.to_string_lossy(),
-        ],
-        tmp.path(),
-    );
-    run_quiet(&["config", "user.email", "test@test.com"], &work);
-    run_quiet(&["config", "user.name", "Test"], &work);
-
-    let primary_url = common::file_url(&primary_bare);
-    let reference_url = common::file_url(&reference_bare);
-    write_manifest_with_roles(
-        &work,
-        &[
-            ("local/team/primary", &primary_url, "owned"),
-            ("local/team/reference", &reference_url, "reference"),
-        ],
-    );
-
-    // Lock covers only primary; reference absent.
-    common::fixture_lock(
-        &work,
-        &[("local/team/primary", &primary_url, &"a".repeat(40))],
-    );
-
-    run_quiet(&["add", "."], &work);
-    run_quiet(&["commit", "-m", "manifest+partial-lock"], &work);
-    run_quiet(&["push", "origin", "main"], &work);
-
-    let source = common::file_url(&project_bare);
-    rwv()
-        .args(["fetch", &source, "--frozen"])
-        .current_dir(&workspace)
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("incomplete").or(predicate::str::contains("not covered")));
-}
-
-// ============================================================================
-// `--role` / `--repo` filter
-// ============================================================================
-
-/// Build a project bare and a working clone with `repos` declared in
-/// rwv.toml at the given roles. Returns the project bare URL ready to feed
-/// `rwv fetch`. Each `(canonical_path, role)` repo gets its own bare remote
-/// behind a `file://` URL so no network is required.
-fn build_filter_fixture(
-    tmp: &tempfile::TempDir,
-    repos: &[(&str, &str)], // (canonical_path, role)
-) -> String {
-    let run = |args: &[&str], cwd: &Path| {
-        let status = common::git()
-            .args(args)
-            .current_dir(cwd)
-            .stdout(process::Stdio::null())
-            .stderr(process::Stdio::null())
-            .status()
-            .expect("git command failed");
-        assert!(
-            status.success(),
-            "git {:?} failed in {}",
-            args,
-            cwd.display()
-        );
-    };
-
-    let mut entries: Vec<(String, String, String)> = Vec::new();
-    for (path, role) in repos {
-        let bare = tmp.path().join(format!("{}.git", path.replace('/', "_")));
-        init_bare_repo_with_commit(&bare);
-        let url = common::file_url(&bare);
-        entries.push((path.to_string(), url, role.to_string()));
+impl Weave {
+    fn member(&self) -> PathBuf {
+        self.primary.join(MEMBER)
     }
 
-    // Build the project bare with rwv.toml.
-    let project_bare = tmp.path().join("project.git");
-    init_bare_repo(&project_bare);
-    let project_work = tmp.path().join("project_work");
-    run(
-        &[
-            "clone",
-            &project_bare.to_string_lossy(),
-            &project_work.to_string_lossy(),
-        ],
-        tmp.path(),
-    );
-    run(&["config", "user.email", "test@test.com"], &project_work);
-    run(&["config", "user.name", "Test"], &project_work);
+    fn project(&self) -> PathBuf {
+        self.primary.join("projects").join(PROJECT)
+    }
 
-    let triples: Vec<(&str, &str, &str)> = entries
-        .iter()
-        .map(|(p, u, r)| (p.as_str(), u.as_str(), r.as_str()))
-        .collect();
-    write_manifest_with_roles(&project_work, &triples);
-    run(&["add", "rwv.toml"], &project_work);
-    run(&["commit", "-m", "add manifest"], &project_work);
-    run(&["push", "origin", "main"], &project_work);
+    fn git_member(&self, args: &[&str]) -> String {
+        common::git_in(self.member(), args)
+    }
 
-    common::file_url(&project_bare)
-}
+    fn forge_git(&self, args: &[&str]) -> String {
+        common::git_in(&self.forge, args)
+    }
 
-#[test]
-fn fetch_role_filter_only_clones_matching_role() {
-    let tmp = common::tempdir().unwrap();
-    let workspace = tmp.path().join("ws");
-    std::fs::create_dir_all(&workspace).unwrap();
+    /// A colleague adds a commit on `branch` of the member's origin, creating
+    /// the branch from `main` when the origin lacks it.
+    fn forge_commit(&self, branch: &str, file: &str) -> String {
+        self.forge_git(&["fetch", "--quiet", "origin"]);
+        let remote = format!("origin/{branch}");
+        if self
+            .forge_git(&["branch", "--list", "--remotes", &remote])
+            .is_empty()
+        {
+            self.forge_git(&["switch", "-C", branch, "origin/main"]);
+        } else {
+            self.forge_git(&["switch", "-C", branch, &remote]);
+        }
+        std::fs::write(self.forge.join(file), file).unwrap();
+        self.forge_git(&["add", file]);
+        self.forge_git(&["commit", "-m", file]);
+        self.forge_git(&["push", "origin", branch]);
+        self.forge_git(&["rev-parse", "HEAD"])
+    }
 
-    let source = build_filter_fixture(
-        &tmp,
-        &[("local/org/p", "owned"), ("local/org/d", "dependency")],
-    );
+    /// A colleague replaces `branch`'s tip on the origin with another commit
+    /// and force-pushes it.
+    fn forge_rewrite_tip(&self, branch: &str, file: &str) -> String {
+        self.forge_git(&["fetch", "--quiet", "origin"]);
+        self.forge_git(&["switch", "-C", branch, &format!("origin/{branch}")]);
+        self.forge_git(&["reset", "--hard", "HEAD~1"]);
+        std::fs::write(self.forge.join(file), file).unwrap();
+        self.forge_git(&["add", file]);
+        self.forge_git(&["commit", "-m", file]);
+        self.forge_git(&["push", "--force", "origin", branch]);
+        self.forge_git(&["rev-parse", "HEAD"])
+    }
 
-    rwv()
-        .args(["fetch", &source, "--role", "owned"])
-        .current_dir(&workspace)
-        .assert()
-        .success();
+    fn rwv(&self, args: &[&str]) -> std::process::Output {
+        common::rwv()
+            .args(args)
+            .current_dir(&self.primary)
+            .output()
+            .expect("rwv runs")
+    }
 
-    assert!(
-        workspace.join("local/org/p").exists(),
-        "primary repo should be cloned"
-    );
-    assert!(
-        !workspace.join("local/org/d").exists(),
-        "dependency repo should NOT be cloned under --role owned"
-    );
-}
-
-#[test]
-fn fetch_repo_exact_selector_clones_only_that_path() {
-    let tmp = common::tempdir().unwrap();
-    let workspace = tmp.path().join("ws");
-    std::fs::create_dir_all(&workspace).unwrap();
-
-    let source = build_filter_fixture(&tmp, &[("local/org/a", "owned"), ("local/org/b", "owned")]);
-
-    rwv()
-        .args(["fetch", &source, "--repo", "local/org/a"])
-        .current_dir(&workspace)
-        .assert()
-        .success();
-
-    assert!(workspace.join("local/org/a").exists(), "a should be cloned");
-    assert!(
-        !workspace.join("local/org/b").exists(),
-        "b should NOT be cloned"
-    );
-}
-
-#[test]
-fn fetch_repo_glob_selector_clones_matching_paths() {
-    let tmp = common::tempdir().unwrap();
-    let workspace = tmp.path().join("ws");
-    std::fs::create_dir_all(&workspace).unwrap();
-
-    let source = build_filter_fixture(
-        &tmp,
-        &[
-            ("local/org/a", "owned"),
-            ("local/org/b", "owned"),
-            ("local/other/c", "owned"),
-        ],
-    );
-
-    rwv()
-        .args(["fetch", &source, "--repo", "glob:local/org/*"])
-        .current_dir(&workspace)
-        .assert()
-        .success();
-
-    assert!(workspace.join("local/org/a").exists());
-    assert!(workspace.join("local/org/b").exists());
-    assert!(
-        !workspace.join("local/other/c").exists(),
-        "glob:local/org/* should not match local/other/c"
-    );
-}
-
-#[test]
-fn fetch_repo_regex_selector_clones_matching_paths() {
-    let tmp = common::tempdir().unwrap();
-    let workspace = tmp.path().join("ws");
-    std::fs::create_dir_all(&workspace).unwrap();
-
-    let source = build_filter_fixture(
-        &tmp,
-        &[
-            ("local/cwalv/a", "owned"),
-            ("local/cwalv/b", "owned"),
-            ("local/other/c", "owned"),
-        ],
-    );
-
-    rwv()
-        .args(["fetch", &source, "--repo", "re:^local/cwalv/"])
-        .current_dir(&workspace)
-        .assert()
-        .success();
-
-    assert!(workspace.join("local/cwalv/a").exists());
-    assert!(workspace.join("local/cwalv/b").exists());
-    assert!(!workspace.join("local/other/c").exists());
-}
-
-#[test]
-fn fetch_union_role_and_repo_selectors() {
-    let tmp = common::tempdir().unwrap();
-    let workspace = tmp.path().join("ws");
-    std::fs::create_dir_all(&workspace).unwrap();
-
-    // primary repo at local/me/a; dependency at local/external/dep; another
-    // dependency at local/external/other (must NOT match).
-    let source = build_filter_fixture(
-        &tmp,
-        &[
-            ("local/me/a", "owned"),
-            ("local/external/dep", "dependency"),
-            ("local/external/other", "dependency"),
-        ],
-    );
-
-    rwv()
-        .args([
-            "fetch",
-            &source,
-            "--role",
-            "owned",
-            "--repo",
-            "local/external/dep",
+    fn superseded(&self) -> String {
+        self.git_member(&[
+            "for-each-ref",
+            "--format=%(refname) %(objectname)",
+            "refs/rwv/superseded",
         ])
-        .current_dir(&workspace)
-        .assert()
-        .success();
+    }
 
-    assert!(workspace.join("local/me/a").exists(), "owned via --role");
-    assert!(
-        workspace.join("local/external/dep").exists(),
-        "dep via --repo exact"
+    /// Everything a fetch must leave alone, as one text.
+    fn local_state(&self) -> String {
+        let mut text = String::new();
+        for dir in [self.member(), self.project()] {
+            for args in [
+                &["rev-parse", "HEAD"][..],
+                &[
+                    "for-each-ref",
+                    "--format=%(refname) %(objectname)",
+                    "refs/heads",
+                ][..],
+                &["status", "--porcelain"][..],
+            ] {
+                text.push_str(&common::git_in(&dir, args));
+                text.push('\n');
+            }
+        }
+        text.push_str(&std::fs::read_to_string(self.project().join("rwv.lock")).unwrap());
+        text
+    }
+}
+
+fn weave() -> Weave {
+    let root = common::tempdir().expect("temp root");
+    let parent = root.path().to_path_buf();
+    let primary = parent.join("primary");
+    let origin = parent.join("origin");
+    std::fs::create_dir_all(&origin).unwrap();
+    std::fs::create_dir_all(primary.join("github/example")).unwrap();
+    std::fs::create_dir_all(primary.join("projects")).unwrap();
+
+    let member_origin = origin.join("server.git");
+    let project_origin = origin.join("web-app.git");
+    for bare in [&member_origin, &project_origin] {
+        common::git_in(
+            &origin,
+            &["init", "--bare", "-b", "main", &bare.to_string_lossy()],
+        );
+    }
+
+    let member = primary.join(MEMBER);
+    common::git_in(
+        &parent,
+        &[
+            "clone",
+            &member_origin.to_string_lossy(),
+            &member.to_string_lossy(),
+        ],
     );
+    std::fs::write(member.join("README.md"), "init\n").unwrap();
+    common::git_in(&member, &["add", "."]);
+    common::git_in(&member, &["commit", "-m", "initial"]);
+    common::git_in(&member, &["push", "origin", "main"]);
+
+    let project = primary.join("projects").join(PROJECT);
+    common::git_in(
+        &parent,
+        &[
+            "clone",
+            &project_origin.to_string_lossy(),
+            &project.to_string_lossy(),
+        ],
+    );
+    let url = common::file_url(&member_origin);
+    std::fs::write(
+        project.join("rwv.toml"),
+        format!(
+            "[repositories]\n[repositories.\"{MEMBER}\"]\ntype = \"git\"\nurl = \"{url}\"\n\
+             branch = \"main\"\nrole = \"owned\"\n"
+        ),
+    )
+    .unwrap();
+    common::fixture_lock_at_remote_tips(&project, &[(MEMBER, &url)]);
+    common::git_in(&project, &["add", "-A"]);
+    common::git_in(&project, &["commit", "-m", "manifest and lock"]);
+    common::git_in(&project, &["push", "origin", "main"]);
+    std::fs::write(primary.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
+
+    let forge = parent.join("forge");
+    common::git_in(
+        &parent,
+        &[
+            "clone",
+            &member_origin.to_string_lossy(),
+            &forge.to_string_lossy(),
+        ],
+    );
+
+    Weave {
+        _root: root,
+        parent,
+        primary,
+        member_origin,
+        forge,
+    }
+}
+
+fn json(out: &std::process::Output) -> Value {
+    serde_json::from_slice(&out.stdout).unwrap_or_else(|e| {
+        panic!(
+            "stdout is not one JSON document ({e}):\n{}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        )
+    })
+}
+
+fn moves_of<'a>(doc: &'a Value, path: &str) -> &'a Vec<Value> {
+    doc["repos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["path"] == path)
+        .unwrap_or_else(|| panic!("no record for {path} in {doc:#}"))["moved"]
+        .as_array()
+        .unwrap()
+}
+
+#[test]
+fn fetch_reports_what_the_remote_advanced_and_moves_no_local_state() {
+    let weave = weave();
+    let before = weave.local_state();
+    let local_main = weave.git_member(&["rev-parse", "main"]);
+    let tip = weave.forge_commit("main", "advance.txt");
+
+    let out = weave.rwv(&["fetch"]);
+
     assert!(
-        !workspace.join("local/external/other").exists(),
-        "other dep not matched by either flag"
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains(&format!("{MEMBER}: origin/main")) && stdout.contains(&tip[..12]),
+        "the advance is reported with the new tip:\n{stdout}"
+    );
+    assert_eq!(
+        weave.git_member(&["rev-parse", "refs/remotes/origin/main"]),
+        tip
+    );
+    assert_eq!(
+        weave.git_member(&["rev-parse", "main"]),
+        local_main,
+        "the local branch stays"
+    );
+    assert_eq!(weave.local_state(), before, "nothing local moved");
+    assert_eq!(weave.superseded(), "", "a fast-forward supersedes nothing");
+}
+
+#[test]
+fn fetch_keeps_the_old_tip_of_a_rewritten_branch_and_says_it_was_rewritten() {
+    let weave = weave();
+    let old = weave.forge_commit("feat", "first.txt");
+    assert!(weave.rwv(&["fetch"]).status.success());
+    let new = weave.forge_rewrite_tip("feat", "second.txt");
+
+    let out = weave.rwv(&["fetch", "--json"]);
+
+    assert!(out.status.success());
+    let doc = json(&out);
+    let rewritten: Vec<&Value> = moves_of(&doc, MEMBER)
+        .iter()
+        .filter(|m| m["move"] == "rewritten")
+        .collect();
+    assert_eq!(rewritten.len(), 1, "{doc:#}");
+    assert_eq!(rewritten[0]["branch"], "origin/feat");
+    assert_eq!(rewritten[0]["from"], old.as_str());
+    assert_eq!(rewritten[0]["to"], new.as_str());
+    assert_eq!(
+        weave.superseded(),
+        format!("refs/rwv/superseded/origin/feat/{old} {old}"),
+        "the old tip is kept under the superseded namespace"
+    );
+    assert_eq!(
+        weave.git_member(&["rev-parse", "refs/remotes/origin/feat"]),
+        new
+    );
+
+    let text = weave.rwv(&["fetch"]);
+    assert!(
+        String::from_utf8_lossy(&text.stdout).contains("nothing moved"),
+        "a second fetch has nothing to report"
     );
 }
 
-/// A source whose repository name is not a legal project name is refused
-/// before anything is cloned: `projects/<name>` would be a project no later
-/// verb could name.
 #[test]
-fn fetch_refuses_a_source_named_like_no_project_before_cloning() {
-    let tmp = common::tempdir().unwrap();
-    let workspace = tmp.path().join("ws");
-    std::fs::create_dir_all(&workspace).unwrap();
-    let bare = tmp.path().join("bad--name.git");
-    init_bare_repo_with_commit(&bare);
+fn fetch_text_names_a_rewritten_branch() {
+    let weave = weave();
+    weave.forge_commit("feat", "first.txt");
+    assert!(weave.rwv(&["fetch"]).status.success());
+    weave.forge_rewrite_tip("feat", "second.txt");
 
-    let out = rwv()
-        .args(["fetch", &common::file_url(&bare)])
-        .current_dir(&workspace)
-        .output()
+    let out = weave.rwv(&["fetch"]);
+
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("origin/feat rewritten"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}
+
+#[test]
+fn fetch_records_no_superseded_tip_for_a_branch_the_remote_deleted() {
+    let weave = weave();
+    weave.forge_commit("feat", "first.txt");
+    assert!(weave.rwv(&["fetch"]).status.success());
+    weave.forge_git(&["push", "origin", "--delete", "feat"]);
+
+    let out = weave.rwv(&["fetch", "--json"]);
+
+    assert!(out.status.success());
+    let doc = json(&out);
+    assert!(
+        moves_of(&doc, MEMBER)
+            .iter()
+            .any(|m| m["move"] == "pruned" && m["branch"] == "origin/feat"),
+        "{doc:#}"
+    );
+    assert_eq!(weave.superseded(), "", "a prune supersedes nothing");
+    assert_eq!(
+        weave.git_member(&["branch", "--list", "--remotes", "origin/feat"]),
+        "",
+        "the remote-tracking branch is dropped"
+    );
+}
+
+#[test]
+fn fetch_covers_the_project_repo_and_a_selector_narrows_it_to_members() {
+    let weave = weave();
+
+    let all = json(&weave.rwv(&["fetch", "--json"]));
+    let paths: Vec<&str> = all["repos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths, [format!("projects/{PROJECT}"), MEMBER.to_owned()]);
+
+    let narrowed = json(&weave.rwv(&["fetch", "--json", "--repo", MEMBER]));
+    let paths: Vec<&str> = narrowed["repos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(paths, [MEMBER]);
+}
+
+#[test]
+fn fetch_skips_a_member_that_is_not_on_disk_and_succeeds() {
+    let weave = weave();
+    std::fs::remove_dir_all(weave.member()).unwrap();
+
+    let out = weave.rwv(&["fetch", "--json"]);
+
+    assert!(out.status.success());
+    let doc = json(&out);
+    let record = doc["repos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["path"] == MEMBER)
         .unwrap();
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        !out.status.success()
-            && stderr.contains("'bad--name' is not a valid project name")
-            && stderr.contains("rwv explain unrenderable-name"),
-        "the derived name is refused with its token:\n{stderr}"
+    assert_eq!(record["status"], "skipped");
+    assert!(record["message"].as_str().unwrap().contains("rwv update"));
+}
+
+#[test]
+fn fetch_leaves_a_repo_unconfirmed_and_exits_one_once_every_repo_was_tried() {
+    let weave = weave();
+    let away = weave.parent.join("server.git.away");
+    std::fs::rename(&weave.member_origin, &away).unwrap();
+
+    let out = weave.rwv(&["fetch", "--json"]);
+
+    assert_eq!(out.status.code(), Some(1));
+    let doc = json(&out);
+    let status_of = |path: &str| {
+        doc["repos"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["path"] == path)
+            .unwrap()["status"]
+            .clone()
+    };
+    assert_eq!(status_of(MEMBER), "unconfirmed");
+    assert_eq!(
+        status_of(&format!("projects/{PROJECT}")),
+        "fetched",
+        "the other repos are still tried"
     );
-    assert!(
-        !workspace.join("projects").join("bad--name").exists(),
-        "nothing is cloned for a name that is refused"
-    );
+}
+
+#[test]
+fn fetch_refuses_arguments_that_belong_to_other_verbs() {
+    let weave = weave();
+    for flag in ["--frozen", "--detach-checkouts", "--allow-non-empty-dir"] {
+        let out = weave.rwv(&["fetch", flag]);
+        assert_eq!(out.status.code(), Some(2), "{flag}");
+    }
+    let out = weave.rwv(&["fetch", "file:///elsewhere"]);
+    assert_eq!(out.status.code(), Some(2), "fetch takes no source");
+}
+
+#[cfg(feature = "test-pause")]
+mod claim {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    /// A fetch held under the object store's claim keeps a second fetch into
+    /// the same store waiting, and the second goes on once the first lets go.
+    #[test]
+    fn a_second_fetch_into_one_store_waits_for_the_first_to_finish() {
+        let weave = weave();
+        let pause_dir = weave.parent.join("pause");
+        let mut first = common::rwv_std();
+        first
+            .args(["fetch", "--repo", MEMBER])
+            .current_dir(&weave.primary);
+        let held = common::pause::Paused::spawn(first, "fetch-under-claim", &pause_dir)
+            .expect("the first fetch is held under the claim");
+
+        let mut second = common::rwv_std();
+        second
+            .args(["fetch", "--repo", MEMBER])
+            .current_dir(&weave.primary)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        let mut waiting = second.spawn().expect("the second fetch starts");
+        let deadline = Instant::now() + Duration::from_millis(1500);
+        while Instant::now() < deadline {
+            assert!(
+                waiting.try_wait().unwrap().is_none(),
+                "the second fetch ran to the end while the first held the store"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        let first_out = held.release();
+        assert!(first_out.status.success());
+        let status = waiting.wait().expect("the second fetch ends");
+        assert!(status.success(), "the second fetch proceeds once released");
+    }
 }

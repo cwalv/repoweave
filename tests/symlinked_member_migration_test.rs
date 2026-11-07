@@ -12,7 +12,7 @@
 //!   - `rwv doctor --fix` replaces each link with a worktree at the pinned
 //!     revision, touching neither canonical clone nor what a link pointed at;
 //!   - a link whose pinned revision the canonical clone lacks is left for
-//!     `rwv fetch`, and doctor never fetches it;
+//!     `rwv update`, and doctor never fetches it;
 //!   - `--worktree-references` is gone.
 
 use assert_cmd::Command as AssertCommand;
@@ -394,6 +394,44 @@ fn doctor_at_the_primary_reports_and_repairs_a_workweaves_symlinks() {
 }
 
 #[test]
+fn update_replaces_a_symlinked_member_where_update_remote_refuses_it() {
+    let tmp = common::tempdir().unwrap();
+    let weave = unmigrated_weave(tmp.path());
+    let linked = weave.seat.join(LINKED_PATH);
+    let dangling = weave.seat.join(DANGLING_PATH);
+
+    let refused = rwv()
+        .args(["update", "--remote"])
+        .current_dir(&weave.seat)
+        .output()
+        .unwrap();
+    assert_eq!(
+        refused.status.code(),
+        Some(1),
+        "update --remote must refuse; stderr:\n{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(
+        linked.is_symlink() && dangling.is_symlink(),
+        "the refusal leaves both links where they were"
+    );
+
+    let out = rwv()
+        .args(["update"])
+        .current_dir(&weave.seat)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "update must give the seat its worktrees; stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_worktree_at(&linked, &weave.linked_canonical, &weave.linked_pin);
+    assert_worktree_at(&dangling, &weave.dangling_canonical, &weave.dangling_pin);
+}
+
+#[test]
 fn verbs_refuse_an_unmigrated_workweave_and_name_doctor_fix() {
     let tmp = common::tempdir().unwrap();
     let weave = unmigrated_weave(tmp.path());
@@ -405,7 +443,7 @@ fn verbs_refuse_an_unmigrated_workweave_and_name_doctor_fix() {
     let refusals: Vec<(&Path, Vec<&str>)> = vec![
         (&weave.seat, vec!["status"]),
         (&weave.seat, vec!["lock"]),
-        (&weave.seat, vec!["update"]),
+        (&weave.seat, vec!["update", "--remote"]),
         (&weave.seat, vec!["sync", "primary"]),
         (&weave.seat, vec!["sync-to", primary_arg.as_str()]),
         (&weave.primary, vec!["sync", seat_arg.as_str()]),
@@ -639,7 +677,7 @@ fn doctor_fix_migrates_a_member_under_a_parked_op_and_abort_then_restores() {
 }
 
 #[test]
-fn a_symlinked_member_whose_canonical_clone_is_gone_waits_for_fetch() {
+fn a_symlinked_member_whose_canonical_clone_is_gone_waits_for_update() {
     let tmp = common::tempdir().unwrap();
     let weave = unmigrated_weave(tmp.path());
     let upstream = tmp.path().join("upstream-dangling");
@@ -692,11 +730,11 @@ fn a_symlinked_member_whose_canonical_clone_is_gone_waits_for_fetch() {
     );
     assert!(
         weave.seat.join(DANGLING_PATH).is_symlink(),
-        "doctor --fix must leave a link whose revision is not local for `rwv fetch`"
+        "doctor --fix must leave a link whose revision is not local for `rwv update`"
     );
     assert!(
         !weave.dangling_canonical.exists(),
-        "doctor never clones: the network stays behind `rwv fetch`"
+        "doctor never clones: the network stays behind `rwv update`"
     );
     assert_worktree_at(
         &weave.seat.join(LINKED_PATH),
@@ -705,13 +743,13 @@ fn a_symlinked_member_whose_canonical_clone_is_gone_waits_for_fetch() {
     );
 
     let out = rwv()
-        .args(["fetch"])
+        .args(["update"])
         .current_dir(&weave.seat)
         .output()
         .unwrap();
     assert!(
         out.status.success(),
-        "fetch must clone the canonical and create the worktree; stdout:\n{}\nstderr:\n{}",
+        "update must clone the canonical and create the worktree; stdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
@@ -723,7 +761,7 @@ fn a_symlinked_member_whose_canonical_clone_is_gone_waits_for_fetch() {
     assert_eq!(
         drift_records(&weave.seat),
         vec![],
-        "fetch and doctor agree once fetch has run"
+        "update and doctor agree once update has run"
     );
 }
 

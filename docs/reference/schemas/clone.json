@@ -1,0 +1,579 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CloneJsonOutput",
+  "description": "Top-level envelope for `rwv clone --json`.\n\nShape: `{ \"$schema\": \"<url>\", \"outcomes\": [...], \"left\": [...] }`.",
+  "type": "object",
+  "required": [
+    "$schema",
+    "left",
+    "outcomes",
+    "placements"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "left": {
+      "description": "The members the clone completed without a commit to place them at: the lock has no entry for them (`pin` `none`), or pins a commit no ref in the clone reaches (`pin` `unreachable`). Empty, and the exit status `0`, when every member sits at its pin.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/JudgedOutput"
+      }
+    },
+    "outcomes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/MemberOutcomeOutput"
+      }
+    },
+    "placements": {
+      "description": "How the files of each checkout the clone created were placed. Empty, not absent, when it placed none.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/PlacementOutput"
+      }
+    },
+    "resolution": {
+      "description": "Resolved workspace coordinates (weave root, optional workweave identity, project). Absent when no project is resolved.",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/Resolution"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "skipped": {
+      "description": "The materialization side effects this clone skipped, each naming the command that performs it. Empty, not absent, when it skipped none.",
+      "default": [],
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/SkippedEffect"
+      }
+    }
+  },
+  "definitions": {
+    "Axis": {
+      "description": "What a refusal judged a repo on. Its token is the kind `rwv explain` serves; the order here is the order a repo's lines print in.",
+      "oneOf": [
+        {
+          "description": "Uncommitted work, or a VCS operation in progress, in a checkout.",
+          "type": "string",
+          "enum": [
+            "edits"
+          ]
+        },
+        {
+          "description": "Another checkout derives from what the verb would remove.",
+          "type": "string",
+          "enum": [
+            "checkout"
+          ]
+        },
+        {
+          "description": "A branch and the branch it takes in from or publishes to.",
+          "type": "string",
+          "enum": [
+            "push-branch"
+          ]
+        },
+        {
+          "description": "A name the verb was given is unusable.",
+          "type": "string",
+          "enum": [
+            "name"
+          ]
+        },
+        {
+          "description": "What `rwv push` withheld.",
+          "type": "string",
+          "enum": [
+            "publish"
+          ]
+        },
+        {
+          "description": "A project whose `rwv.toml` does not load.",
+          "type": "string",
+          "enum": [
+            "unparseable-project"
+          ]
+        },
+        {
+          "description": "The commit a lock pins for a member, and whether a ref reaches it.",
+          "type": "string",
+          "enum": [
+            "pin"
+          ]
+        }
+      ]
+    },
+    "ChoiceOutput": {
+      "type": "object",
+      "required": [
+        "phrase",
+        "run"
+      ],
+      "properties": {
+        "id": {
+          "description": "The choice's id on the axis's page; null for one it does not number.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "phrase": {
+          "type": "string"
+        },
+        "run": {
+          "description": "The commands, one per line, as the terminal prints them.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "where": {
+          "description": "The directory it must run in; null where it runs here or names its own directory.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/WirePath"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "Effect": {
+      "description": "The side effect that did not happen.",
+      "oneOf": [
+        {
+          "description": "The integrations' install hooks (`npm install`, `uv sync`, `cargo fetch`, …).",
+          "type": "string",
+          "enum": [
+            "install-hooks"
+          ]
+        },
+        {
+          "description": "Regenerating the integrations' managed and generated files.",
+          "type": "string",
+          "enum": [
+            "integration-files"
+          ]
+        },
+        {
+          "description": "Refreshing the weave root's links onto the project's files.",
+          "type": "string",
+          "enum": [
+            "weave-root-links"
+          ]
+        },
+        {
+          "description": "Activating a cloned project: selecting it, surfacing its links and running its install hooks.",
+          "type": "string",
+          "enum": [
+            "activation"
+          ]
+        }
+      ]
+    },
+    "FactKind": {
+      "description": "A fact about a judged repo. Facts are reported; they never select a choice.",
+      "oneOf": [
+        {
+          "description": "A superseded tip was recorded for the branch.",
+          "type": "string",
+          "enum": [
+            "rewritten"
+          ]
+        },
+        {
+          "description": "The branch is an ancestor of where it lands.",
+          "type": "string",
+          "enum": [
+            "landed"
+          ]
+        },
+        {
+          "description": "Another project's live lock pins the commits.",
+          "type": "string",
+          "enum": [
+            "pinned-by"
+          ]
+        },
+        {
+          "description": "Other live weave branches declare the branch.",
+          "type": "string",
+          "enum": [
+            "shared"
+          ]
+        },
+        {
+          "description": "The pin is on the branch it lands into.",
+          "type": "string",
+          "enum": [
+            "pin-landed"
+          ]
+        },
+        {
+          "description": "The member was left detached because its branch is checked out elsewhere.",
+          "type": "string",
+          "enum": [
+            "checkout"
+          ]
+        },
+        {
+          "description": "The unlanded commits carry changes equivalent to commits where they land.",
+          "type": "string",
+          "enum": [
+            "patch-equivalent"
+          ]
+        }
+      ]
+    },
+    "FactOutput": {
+      "type": "object",
+      "required": [
+        "fact"
+      ],
+      "properties": {
+        "about": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fact": {
+          "$ref": "#/definitions/FactKind"
+        }
+      }
+    },
+    "FilePlacement": {
+      "description": "How a member's tracked files reached a workspace.",
+      "type": "object",
+      "required": [
+        "hardlinked",
+        "reflinked",
+        "written"
+      ],
+      "properties": {
+        "hardlinked": {
+          "description": "Linked to another workspace's read-only copy.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "reflinked": {
+          "description": "Cloned from another workspace's copy, sharing its storage until either is written.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "written": {
+          "description": "Written by the version control system.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        }
+      }
+    },
+    "JudgedOutput": {
+      "description": "One judged repo, as `--json` carries it.",
+      "type": "object",
+      "required": [
+        "axis",
+        "choices",
+        "facts",
+        "listed",
+        "path",
+        "state"
+      ],
+      "properties": {
+        "axis": {
+          "description": "What it was judged on; `rwv explain <axis>` serves the axis's page.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Axis"
+            }
+          ]
+        },
+        "choices": {
+          "description": "What this state can run, in the order the page lists it.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ChoiceOutput"
+          }
+        },
+        "facts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/FactOutput"
+          }
+        },
+        "listed": {
+          "description": "The files, paths or commits the state lists.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "path": {
+          "description": "The repo's path, `projects/<name>` for the project repo.",
+          "type": "string"
+        },
+        "state": {
+          "description": "The state it was judged in, as that page names it.",
+          "type": "string"
+        },
+        "subject": {
+          "description": "What the state names, when it names something.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspace": {
+          "description": "The workspace the repo was judged in, when that is not the one the verb ran in.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/WirePath"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "MemberOutcomeOutput": {
+      "description": "Per-member outcome record for `rwv update --json` and `rwv clone --json`.\n\n`status` is one of `\"ok\"`, `\"skipped\"`, or `\"failed\"`. `message` carries a human-readable description of the outcome (always present for `\"failed\"`; present for `\"skipped\"` to say why; `null` for `\"ok\"`).",
+      "type": "object",
+      "required": [
+        "absolute_path",
+        "path",
+        "status"
+      ],
+      "properties": {
+        "absolute_path": {
+          "$ref": "#/definitions/WirePath"
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "refusal": {
+          "description": "The refusal token of a `failed` repo, resolvable with `rwv explain <token>`. Absent when the failure carries no classified refusal.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/definitions/MemberOutcomeStatus"
+        }
+      }
+    },
+    "MemberOutcomeStatus": {
+      "description": "Status discriminant for [`MemberOutcomeOutput`].",
+      "type": "string",
+      "enum": [
+        "ok",
+        "skipped",
+        "failed"
+      ]
+    },
+    "PlacementOutput": {
+      "description": "How the files of one checkout were placed when a verb created or moved it.",
+      "type": "object",
+      "required": [
+        "absolute_path",
+        "files",
+        "path"
+      ],
+      "properties": {
+        "absolute_path": {
+          "description": "The checkout whose files were placed.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/WirePath"
+            }
+          ]
+        },
+        "files": {
+          "description": "How many files were cloned, linked or written.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/FilePlacement"
+            }
+          ]
+        },
+        "path": {
+          "description": "Manifest-relative path of the repository.",
+          "type": "string"
+        }
+      }
+    },
+    "Resolution": {
+      "description": "Resolved workspace coordinates for `--json` output and the plugin env-var envelope.\n\nCarries `workspace` (primary root abs path), `workweave` (the `<project>--<name>` identity the registry records), `project` (resolved project name), and `workweave_unregistered`. No `kind` or `location` field: the checkout is one of three states, and two of them are already carried by `workweave`'s presence.\n\nThe third state needs a field of its own. A workweave whose directory no registry entry names has no identity, so `workweave` is absent for it — and absent is what the primary looks like. Without `workweave_unregistered` the two serialize identically, and a consumer reading the documented meaning of that absence is told, positively, that it is at the primary checkout.\n\nResults only — provenance (which chain step resolved the project, which flag addressed the workspace) is deliberately excluded: anything in default `--json` output becomes depended on, and the assertion use case needs the result, not the mechanism. Provenance appears only in the human-facing \"target:\" line printed to stderr.\n\nIsomorphic to the plugin env-var envelope (`RWV_WORKSPACE`/`RWV_WORKWEAVE`/`RWV_WORKWEAVE_UNREGISTERED`/`RWV_PROJECT`): both surfaces are pure projections of [`WorkspaceContext::resolution`], never independently computed.",
+      "type": "object",
+      "required": [
+        "workspace"
+      ],
+      "properties": {
+        "project": {
+          "description": "Resolved project name; absent when the workspace resolved but no project did (a primary with no project selected).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspace": {
+          "description": "Primary weave root.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/WirePath"
+            }
+          ]
+        },
+        "workweave": {
+          "description": "Workweave identity (`<project>--<name>`), as the primary-side registry records it.\n\nAbsent at the primary, and absent for a workweave whose directory no registry entry names — identity is by record, so an unregistered workweave has no identity to report and rwv will not spell one from the directory name. Those two absences are told apart by `workweave_unregistered`, not by this field.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workweave_unregistered": {
+          "description": "`true` when the invocation resolved into a workweave whose directory no registry entry names, so `workweave` above is absent for a reason that is not \"this is the primary\".\n\nSerialized only in that state, so the primary and a registered workweave emit exactly the bytes they emitted before this field existed. `rwv doctor --fix` registers such a directory, after which this is absent and `workweave` carries the identity.",
+          "type": "boolean"
+        }
+      }
+    },
+    "SkipReason": {
+      "description": "Why the effect did not happen.",
+      "oneOf": [
+        {
+          "description": "`--no-materialize` was passed.",
+          "type": "string",
+          "enum": [
+            "no-materialize"
+          ]
+        },
+        {
+          "description": "An authoring verb ran inside a workweave, where it runs no hooks.",
+          "type": "string",
+          "enum": [
+            "inside-workweave"
+          ]
+        },
+        {
+          "description": "The CLI the integration's hook drives is not on `PATH`.",
+          "type": "object",
+          "required": [
+            "tool-missing"
+          ],
+          "properties": {
+            "tool-missing": {
+              "type": "object",
+              "required": [
+                "tool"
+              ],
+              "properties": {
+                "tool": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "The verb acted on a project the weave root does not present.",
+          "type": "object",
+          "required": [
+            "not-presented"
+          ],
+          "properties": {
+            "not-presented": {
+              "type": "object",
+              "required": [
+                "project"
+              ],
+              "properties": {
+                "project": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "`rwv update --remote` was narrowed by `--role` or `--repo`.",
+          "type": "string",
+          "enum": [
+            "narrowed"
+          ]
+        },
+        {
+          "description": "A project was already active, so the verb selected none.",
+          "type": "object",
+          "required": [
+            "project-already-active"
+          ],
+          "properties": {
+            "project-already-active": {
+              "type": "object",
+              "required": [
+                "project"
+              ],
+              "properties": {
+                "project": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "SkippedEffect": {
+      "description": "One materialization side effect a verb skipped on this run.",
+      "type": "object",
+      "required": [
+        "effect",
+        "reason",
+        "remedy"
+      ],
+      "properties": {
+        "effect": {
+          "$ref": "#/definitions/Effect"
+        },
+        "integration": {
+          "description": "The integration whose part of `effect` was skipped; absent when the whole effect was.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "$ref": "#/definitions/SkipReason"
+        },
+        "remedy": {
+          "description": "The command that performs the effect.",
+          "type": "string"
+        }
+      }
+    },
+    "WirePath": {
+      "description": "Absolute path, `/`-separated on every platform.",
+      "type": "string"
+    }
+  }
+}

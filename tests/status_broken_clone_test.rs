@@ -464,7 +464,7 @@ fn missing_repair_drive_fetch_in_place_restores_ok() {
 
     // 3. Run the documented repair: `rwv fetch` (no SOURCE — in-place re-materialize).
     let repair_out = rwv()
-        .arg("fetch")
+        .arg("update")
         .current_dir(&ws)
         .output()
         .expect("rwv fetch (in-place)");

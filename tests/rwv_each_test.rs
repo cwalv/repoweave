@@ -430,13 +430,13 @@ fn shell_runs_the_command_string_through_the_platform_shell() {
 }
 
 #[test]
-fn a_missing_checkout_is_not_run_and_fails_naming_rwv_fetch() {
+fn a_missing_checkout_is_not_run_and_fails_naming_rwv_update() {
     let gone = "github/org/gone";
     let w = Weave::with_missing(&[(APP, "owned")], &[(gone, "owned")]);
     let out = w.each(&["--", "git", "status"]);
     assert_eq!(out.status.code(), Some(1));
     assert!(
-        stderr(&out).contains(&format!("{gone}: not present on disk; run `rwv fetch`")),
+        stderr(&out).contains(&format!("{gone}: not present on disk; run `rwv update`")),
         "{}",
         stderr(&out)
     );

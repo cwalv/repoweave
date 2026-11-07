@@ -183,10 +183,10 @@ impl<'a> Reporter<'a> {
 }
 
 /// The repair for a member checkout that is not on disk, in the weave or the
-/// workweave `rwv each` ran in. In a workweave `rwv fetch` restores it on its
+/// workweave `rwv each` ran in. In a workweave `rwv update` restores it on its
 /// own branch; in the primary weave it clones the member again, and the
 /// workweave checkouts of the deleted clone are relinked by `rwv doctor --fix`.
-pub const RESTORE: &str = "run `rwv fetch` to restore it, then `rwv doctor --fix` to relink any \
+pub const RESTORE: &str = "run `rwv update` to restore it, then `rwv doctor --fix` to relink any \
                        workweave checkouts of it";
 
 fn text_note(outcome: &Outcome, failure: Option<&str>) -> Option<String> {
@@ -297,7 +297,7 @@ mod tests {
         assert_eq!(
             summary(&refs, false).unwrap(),
             "rwv each: 5 of 6 repos did not succeed\n  a: exit 3\n  c: timed out\n  d: not present \
-             on disk; run `rwv fetch` to restore it, then `rwv doctor --fix` to relink any workweave \
+             on disk; run `rwv update` to restore it, then `rwv doctor --fix` to relink any workweave \
              checkouts of it\n  e: not run\n  f: failed to run"
         );
     }

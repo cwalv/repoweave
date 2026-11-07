@@ -54,6 +54,80 @@ fn solo_workweave_lands_and_pushes() {
 }
 
 #[test]
+fn fetch_moves_no_branch_head_checkout_or_lock_on_any_repo() {
+    runner::run(scenarios::fetch_moves_nothing()).assert_fully_decided_green();
+}
+
+#[test]
+fn clone_completes_listing_each_member_the_lock_cannot_place_and_exits_with_the_distinct_status() {
+    runner::run(scenarios::clone_exit_status()).assert_fully_decided_green();
+}
+
+#[test]
+fn clone_of_a_project_with_a_complete_lock_exits_zero() {
+    runner::run(scenarios::clone_with_a_complete_lock()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_step_that_exits_with_another_status_than_declared_is_unmet() {
+    let report = bad_steps(
+        "status exits 0",
+        vec![Step::rwv(&a(), &["status"]).expect(Exit::Code(3))],
+    );
+    assert!(
+        report
+            .unmet
+            .iter()
+            .any(|(_, why)| why.contains("expected exit status 3")),
+        "{report}"
+    );
+}
+
+#[test]
+fn a_claim_that_local_state_is_unchanged_reports_a_step_that_moves_it() {
+    let report = bad_steps(
+        "a commit moves app",
+        vec![Step::commit(&a(), Repo::App, "moves").claim(Claim::LocalStateUnchanged(a()))],
+    );
+    assert!(
+        report.unmet.iter().any(|(_, why)| why.contains("moved")),
+        "{report}"
+    );
+}
+
+#[test]
+fn a_pin_left_unresolved_is_reported_unless_the_step_names_its_member() {
+    let unnamed = bad_steps(
+        "the lock is published ahead of app",
+        vec![
+            Step::commit(&a(), Repo::App, "ahead"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::git(&a(), Repo::Proj, &["push", "origin", "main"])
+                .pushes(Remote::origin(Repo::Proj), "main"),
+        ],
+    );
+    assert!(
+        unnamed
+            .violations
+            .iter()
+            .any(|(_, v)| v.invariant() == Invariant::EveryPinResolves),
+        "{unnamed}"
+    );
+
+    let named = bad_steps(
+        "the lock is published ahead of app, and the step says so",
+        vec![
+            Step::commit(&a(), Repo::App, "ahead"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::git(&a(), Repo::Proj, &["push", "origin", "main"])
+                .pushes(Remote::origin(Repo::Proj), "main")
+                .may_leave_unresolved(&[Repo::App]),
+        ],
+    );
+    named.assert_green();
+}
+
+#[test]
 fn permanent_seat_lands_twice_then_needs_a_declaration_verb() {
     runner::run(scenarios::permanent_seat()).assert_pending_on(MissingVerb::Declare);
 }

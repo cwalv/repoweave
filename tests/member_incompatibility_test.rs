@@ -416,7 +416,7 @@ fn update_reports_breach_it_newly_created() {
     advance_member_go_version(&fx.member_bare, "1.26");
 
     let output = rwv_without_go()
-        .args(["update", "--dirty"])
+        .args(["update", "--remote", "--dirty"])
         .current_dir(&fx.workspace)
         .output()
         .expect("rwv update should run");
@@ -472,7 +472,7 @@ fn update_reports_breach_on_the_go_tool_path() {
     advance_member_go_version(&fx.member_bare, "1.21");
 
     let output = rwv()
-        .args(["update", "--dirty"])
+        .args(["update", "--remote", "--dirty"])
         .current_dir(&fx.workspace)
         .output()
         .expect("rwv update should run");
@@ -507,7 +507,7 @@ fn update_silent_when_advance_keeps_members_compatible() {
     advance_member_go_version(&fx.member_bare, "1.24");
 
     let output = rwv_without_go()
-        .args(["update", "--dirty"])
+        .args(["update", "--remote", "--dirty"])
         .current_dir(&fx.workspace)
         .output()
         .expect("rwv update should run");

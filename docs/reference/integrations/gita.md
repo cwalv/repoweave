@@ -22,7 +22,7 @@ The table takes only `enabled`:
 enabled = true
 ```
 
-After enabling it, `rwv doctor` reports both CSVs as `managed-file-missing`, and `rwv doctor --fix` writes them into `projects/<project>/gita/` and surfaces them at the weave or workweave root as `gita/repos.csv` and `gita/groups.csv`. From then on the authoring verbs (`rwv member add`, `remove`, `update`, `role`) keep them current.
+After enabling it, `rwv doctor` reports both CSVs as `managed-file-missing`, and `rwv doctor --fix` writes them into `projects/<project>/gita/` and surfaces them at the weave or workweave root as `gita/repos.csv` and `gita/groups.csv`. From then on the authoring verbs (`rwv member add`, `remove`, `update --remote`, `role`) keep them current.
 
 gita looks for its files in `$GITA_PROJECT_HOME/gita/`, so point `GITA_PROJECT_HOME` at the weave or workweave root itself, not at its `gita/` directory:
 
@@ -67,7 +67,7 @@ Both files are fully rwv-owned and rewritten in full by each authoring pass. Bec
 
 ### Why not `gita freeze` / `gita clone`?
 
-Gita has its own serialization format (`gita freeze` outputs CSV with URL, name, path, branch) and can bootstrap from it via `gita clone`. This overlaps with `rwv lock` / `rwv fetch`, but `gita freeze` records branch names rather than pinned commit SHAs, so it is less precise for reproducibility. Repoweave stores role annotations and project configuration in `rwv.toml` and pins exact 40-character commit SHAs in JSON in `rwv.lock`. Because the two mechanisms would overlap awkwardly, the `gita` integration only generates the runtime CSV config files that gita reads.
+Gita has its own serialization format (`gita freeze` outputs CSV with URL, name, path, branch) and can bootstrap from it via `gita clone`. This overlaps with `rwv lock` / `rwv clone`, but `gita freeze` records branch names rather than pinned commit SHAs, so it is less precise for reproducibility. Repoweave stores role annotations and project configuration in `rwv.toml` and pins exact 40-character commit SHAs in JSON in `rwv.lock`. Because the two mechanisms would overlap awkwardly, the `gita` integration only generates the runtime CSV config files that gita reads.
 
 ## Install hook
 
@@ -81,7 +81,7 @@ Removes `gita/repos.csv` and `gita/groups.csv`, and removes the `gita/` director
 
 ## Diagnostics
 
-Reported by `rwv doctor`. Verify rows also print as warnings on `rwv activate`, `rwv materialize`, `rwv workweave create` and the activation a `rwv fetch` performs; see [Hook points](./index.md#hook-points).
+Reported by `rwv doctor`. Verify rows also print as warnings on `rwv activate`, `rwv materialize`, `rwv workweave create` and the activation a `rwv clone` or `rwv update` performs; see [Hook points](./index.md#hook-points).
 
 | Kind | Severity | Condition | Repair |
 |---|---|---|---|

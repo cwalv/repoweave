@@ -19,8 +19,8 @@ rwv status [--json] [--project <name>]
 - `--project <name>` reports status for the named project without changing
   the active project (`.rwv-active` is untouched).
 - `--role` / `--repo` narrow the report to matching repos, in both the table
-  and the `--json` `repos` array. The grammar is the one `fetch`, `update`,
-  and `push` take: a bare `--repo` value matches a manifest path exactly,
+  and the `--json` `repos` array. The grammar is the one `fetch`, `pull`,
+  `update` and `push` take: a bare `--repo` value matches a manifest path exactly,
   `re:<pat>` as a regex, `glob:<pat>` as a glob; repeated flags, and `--role`
   with `--repo`, combine as a union. With neither flag every repo is
   reported. A filter that matches no repo is not an error: the table has no
@@ -130,7 +130,7 @@ Schema:
       "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
     },
     "LockRelation": {
-      "description": "Relation between the current branch tip and the lock SHA.\n\nThe two clone-health variants (`Missing` / `Unreachable`) name distinct failure modes, neither of which is `NoLock`:\n\n- `Missing` — the clone directory is absent from disk entirely (out-of-band `rm -rf`, never fetched, etc.). The lock entry may be fine; the repair verb is a re-clone / `rwv fetch`.\n\n- `Unreachable` — the clone directory exists but the SHA pinned in the lock is not present in the local object store (history rewritten, shallow clone, object pruned). The repair is `git fetch` in that clone, which re-materializes the missing object; `rwv fetch` does not fetch into a clone that is present.\n\nNeither state should be attributed to the lock file itself — surfacing them as `no-lock` misdirects operators at the wrong repair path.",
+      "description": "Relation between the current branch tip and the lock SHA.\n\nThe two clone-health variants (`Missing` / `Unreachable`) name distinct failure modes, neither of which is `NoLock`:\n\n- `Missing` — the clone directory is absent from disk entirely (out-of-band `rm -rf`, never fetched, etc.). The lock entry may be fine; the repair verb is a re-clone / `rwv update`.\n\n- `Unreachable` — the clone directory exists but the SHA pinned in the lock is not present in the local object store (history rewritten, shallow clone, object pruned). The repair is `git fetch` in that clone, which re-materializes the missing object; `rwv update` does not fetch into a clone that is present.\n\nNeither state should be attributed to the lock file itself — surfacing them as `no-lock` misdirects operators at the wrong repair path.",
       "oneOf": [
         {
           "type": "string",
@@ -144,14 +144,14 @@ Schema:
           ]
         },
         {
-          "description": "Clone directory is absent from disk (out-of-band removal, never fetched). Repair: re-clone / `rwv fetch`.",
+          "description": "Clone directory is absent from disk (out-of-band removal, never fetched). Repair: re-clone / `rwv update`.",
           "type": "string",
           "enum": [
             "missing"
           ]
         },
         {
-          "description": "Clone directory exists but the locked SHA is not in the local object store (history rewritten, shallow clone, object pruned). Repair: `git fetch` in that clone to materialize the missing object; `rwv fetch` does not fetch into a clone that is present.",
+          "description": "Clone directory exists but the locked SHA is not in the local object store (history rewritten, shallow clone, object pruned). Repair: `git fetch` in that clone to materialize the missing object; `rwv update` does not fetch into a clone that is present.",
           "type": "string",
           "enum": [
             "unreachable"

@@ -14,8 +14,8 @@
 //!   4. An integration issue's kind is a kind too: naming it admits those
 //!      issues, and under `--json` a non-empty view fails the run, which is
 //!      how CI escalates a warning such as `tool-missing`.
-//!   5. That gate in its CI place: a source fetch over a missing tool exits
-//!      0 with the warning, and `--kind tool-missing` fails the same weave.
+//!   5. That gate in its CI place: a clone over a missing tool exits 0 with
+//!      the warning, and `--kind tool-missing` fails the same weave.
 //!
 //! The fixture holds findings of two kinds at once: two redundant orphaned
 //! savepoints (a collapsed reclamation class) and one misnamed workweave
@@ -428,17 +428,17 @@ fn issue_kinds_are_admissible_and_share_no_name_with_violation_kinds() {
     );
 }
 
-/// The CI recipe: a source fetch over a missing ecosystem tool exits 0 with
+/// The CI recipe: a clone over a missing ecosystem tool exits 0 with
 /// a `tool-missing` warning, so the job's gate is `rwv doctor --kind
 /// tool-missing`, which fails on that weave and passes once the tool is
 /// installed.
 #[cfg(unix)]
 #[test]
-fn a_source_fetch_passes_over_a_missing_tool_and_the_kind_gate_fails_it() {
+fn a_clone_passes_over_a_missing_tool_and_the_kind_gate_fails_it() {
     use std::os::unix::fs::PermissionsExt;
 
     let tmp = common::tempdir().unwrap();
-    let seed = |name: &str, file: &str, body: &str| -> String {
+    let seed = |name: &str, file: &str, body: &str, pinned: &[(&str, &str)]| -> String {
         let bare = tmp.path().join(format!("{name}.git"));
         common::git_in(
             tmp.path(),
@@ -455,6 +455,9 @@ fn a_source_fetch_passes_over_a_missing_tool_and_the_kind_gate_fails_it() {
             &["clone", bare.to_str().unwrap(), work.to_str().unwrap()],
         );
         std::fs::write(work.join(file), body).unwrap();
+        if !pinned.is_empty() {
+            common::fixture_lock_at_remote_tips(&work, pinned);
+        }
         common::git_in(&work, &["add", "."]);
         common::git_in(
             &work,
@@ -475,6 +478,7 @@ fn a_source_fetch_passes_over_a_missing_tool_and_the_kind_gate_fails_it() {
         "web",
         "package.json",
         "{\"name\": \"web\", \"version\": \"0.1.0\"}\n",
+        &[],
     );
     let project = seed(
         "app",
@@ -483,6 +487,7 @@ fn a_source_fetch_passes_over_a_missing_tool_and_the_kind_gate_fails_it() {
             "[repositories.\"local/acme/web\"]\ntype = \"git\"\nurl = \"{member}\"\n\
              branch = \"main\"\nrole = \"owned\"\n"
         ),
+        &[("local/acme/web", member.as_str())],
     );
 
     let no_npm = common::tool_only_bin("git");
@@ -510,11 +515,11 @@ fn a_source_fetch_passes_over_a_missing_tool_and_the_kind_gate_fails_it() {
         (out.status.success(), report)
     };
 
-    let (ok, report) = run(&["fetch", &project], &no_npm);
-    assert!(ok, "fetch must not fail over a missing tool:\n{report}");
+    let (ok, report) = run(&["clone", &project], &no_npm);
+    assert!(ok, "clone must not fail over a missing tool:\n{report}");
     assert!(
         report.contains("[warning] npm-workspaces: npm is not on PATH"),
-        "fetch must report the missing tool as a warning:\n{report}"
+        "clone must report the missing tool as a warning:\n{report}"
     );
 
     let (ok, report) = run(&["doctor", "--kind", "tool-missing"], &no_npm);

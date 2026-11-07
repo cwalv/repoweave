@@ -66,23 +66,55 @@ shrinks (e.g., when a composition recipe gets cleaner upstream).
 
 ## Walking the existing verbs
 
-### `rwv fetch`
+### `rwv clone`
 
-Reads `rwv.lock`, materializes member clones to the recorded
-SHAs. Bootstrap when no lock exists.
+Clones the project repo from a source, reads its `rwv.lock`, and clones
+every member at the recorded SHA.
 
 - *Per-repo policy from role?* Yes — role determines which repos are
-  fetched and to which recorded SHA; the VCS impl owns the remote name
-  but the manifest knows which SHAs to target.
+  cloned (`--no-reference` skips `reference` members), and the manifest
+  knows which SHA each one targets.
 - *Cross-repo dependency ordering?* The project repo must come first
-  to read the lock; member repos follow.
-- *rwv-owned state?* The lock is read.
+  to read the manifest and the lock; member repos follow.
+- *rwv-owned state?* The lock is read; `.rwv-active` and the weave-root
+  links are written.
+
+Pass. The "clone all my repos" composition has to spell each URL and cannot
+read the lock-target SHA for each repo.
+
+### `rwv fetch`
+
+Pruning fetch of every remote of the project repo and of each member on
+disk. It moves no local branch, checkout or lock.
+
+- *Per-repo policy from role?* The manifest decides which repos are
+  fetched, and `--no-reference`, `--role` and `--repo` narrow them.
+- *Cross-repo dependency ordering?* No — each repo's fetch is independent;
+  fetches into one object store run one at a time.
+- *rwv-owned state?* A remote-tracking branch the remote rewrote keeps its
+  old tip under `refs/rwv/superseded/`.
 
 Pass. The "fetch all my repos" composition exists (`rwv status --json
 | jq -r '.repos[].absolute_path' | xargs ...`) but has to spell the remote name
-itself, and cannot read the lock-target SHA for each repo.
+itself, serialize fetches into a shared object store, and keep the old tip of
+a rewritten branch.
 
 ### `rwv update`
+
+Clones the members missing on disk and aligns each present member to the
+commit `rwv.lock` pins for it. It never advances a pin and never writes the
+lock.
+
+- *Per-repo policy from role?* The `--role` and `--repo` selectors narrow
+  which repos are aligned.
+- *Cross-repo ordering?* The project repo's lock is read first; the member
+  repos follow.
+- *rwv-owned state?* The lock is read, and each repo's recorded SHA is the
+  target.
+
+Pass. Composition cannot read the lock-target SHA for each repo.
+
+### `rwv update --remote`
 
 Advances each member repo to its branch HEAD and re-snapshots the
 lock.
@@ -94,6 +126,22 @@ lock.
 - *rwv-owned state?* The lock is written.
 
 Pass.
+
+### `rwv pull`
+
+Fetches, fast-forwards the project branch to its upstream, then runs
+`rwv update`.
+
+- *Per-repo policy from role?* No — it takes in one repo, the project
+  repo, and the update step takes the `--role` and `--repo` selectors.
+- *Cross-repo ordering?* Yes — the project repo must come first, because
+  the lock and manifest it brings decide where each member goes.
+- *rwv-owned state?* The pulled `rwv.lock` and `rwv.toml` are rwv-owned
+  state; the verb reports the members the lock re-pinned and the entries the
+  manifest added, removed or changed.
+
+Pass. `git pull` in the project repo takes in the files, but the members stay
+where they were until someone aligns them to the new lock.
 
 ### `rwv lock`
 
@@ -115,7 +163,7 @@ the project repo last; refuses on lock mismatch.
   push just like owned repos; both use `origin`.
 - *Cross-repo ordering?* Yes — project repo last. The committed lock
   must never reference unpushed manifest SHAs (otherwise
-  collaborators' `rwv fetch` hits "object missing" against
+  collaborators' `rwv clone` hits "object missing" against
   pinned-but-unpublished commits).
 - *rwv-owned state?* The lock is read as a precondition (HEAD must
   match recorded SHA, else refuse).
@@ -188,36 +236,6 @@ live as a how-to recipe rather than a verb.
 **Verdict:** does not pass the gate as proposed. Document the
 composition; revisit the verb if the composition turns out to share
 non-trivial coordination logic.
-
-### `rwv pull`
-
-Proposed as a symmetry-with-push counterpart: "fetch and merge in all
-member repos."
-
-- *Per-repo policy from role?* No — the same backend-named remote
-  `rwv fetch` uses (`origin` in the git impl).
-- *Cross-repo ordering?* No — pull is per-repo independent.
-- *rwv-owned state?* The lock would have to be updated (pulling
-  changes the manifest tips); but at that point the verb is just
-  `rwv update`.
-
-This is the trap case. "Symmetry with push" is not coordination the
-manifest knows and the VCS doesn't — it's surface symmetry within
-rwv, which is exactly what the principle excludes. The work `rwv
-pull` would do collapses into either:
-
-- `rwv update` (fetch and update the lock) if the user wants the new
-  state recorded, or
-- shell composition (`rwv status --json | jq ... | xargs git pull`)
-  if the user doesn't.
-
-**Verdict:** does not pass. The asymmetry between `rwv push` and "no
-rwv pull" is principled, not an inconsistency:
-`rwv push` enforces a lock-state precondition that `git pull` would
-have to *re-derive* (since `git pull` itself moves the manifest tips
-and would have to decide what the new lock should record). `rwv
-update` already owns that decision. See
-[verb-vs-vocabulary](./verb-vs-vocabulary.md) for the naming side.
 
 ### "Run this command across repos"
 

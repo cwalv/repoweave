@@ -1,17 +1,19 @@
-//! Acceptance tests for `rwv fetch -j N` and `rwv update -j N`.
+//! Acceptance tests for `-j N` on `rwv clone`, `rwv update` and
+//! `rwv update --remote`.
 //!
 //! These cover the visible behaviors pinned in the spec notes:
 //!
-//! - `-j N` accepted as a flag on both verbs.
+//! - `-j N` accepted as a flag on all three verbs.
 //! - `-j 1` reproduces serial behavior (no `[<repo>]` prefix in output).
 //! - `-j > 1` runs concurrently; per-line `[<repo-path>]` prefix appears.
 //! - Failure aggregation under `-j > 1` matches the serial shape (all
 //!   failing repos surface in the trailing summary; exit non-zero).
-//! - Lock write under `-j > 1` happens after the worker pool joins —
-//!   asserted via the resulting `rwv.lock` content being well-formed and
-//!   covering every manifest repo (no race / partial-write artifacts).
+//! - Every member lands at the commit the lock pins under `-j > 1`, and
+//!   `rwv update --remote` writes the lock after the worker pool joins —
+//!   asserted via the resulting `rwv.lock` covering every advanced SHA (no
+//!   race / partial-write artifacts).
 //!
-//! The tests follow the existing `tests/fetch_test.rs` pattern: spin up
+//! The tests follow the existing `tests/clone_test.rs` pattern: spin up
 //! local bare repos as file:// remotes; no network.
 
 use assert_cmd::Command;
@@ -25,7 +27,7 @@ fn rwv() -> Command {
     common::rwv()
 }
 
-// ----- Setup helpers (mirroring tests/fetch_test.rs) -------------------------
+// ----- Setup helpers (mirroring tests/clone_test.rs) -------------------------
 
 fn init_bare_repo(path: &Path) {
     let status = common::git()
@@ -55,8 +57,21 @@ fn init_bare_repo_with_commit(path: &Path) {
 }
 
 /// Set up a project bare repo whose `rwv.toml` references the given
-/// `(repo_path, url)` pairs. Returns the source URL.
+/// `(repo_path, url)` pairs and whose `rwv.lock` pins each at the tip of its
+/// remote's `main`. Returns the source URL.
 fn make_project_source(tmp: &Path, name: &str, repos: &[(&str, &str)]) -> String {
+    make_project_source_locked(tmp, name, repos, |work| {
+        common::fixture_lock_at_remote_tips(work, repos);
+    })
+}
+
+/// [`make_project_source`], with `write_lock` writing the project's `rwv.lock`.
+fn make_project_source_locked(
+    tmp: &Path,
+    name: &str,
+    repos: &[(&str, &str)],
+    write_lock: impl FnOnce(&Path),
+) -> String {
     let project_bare = tmp.join(format!("{name}.git"));
     init_bare_repo(&project_bare);
     let work = tmp.join(format!("{name}_work"));
@@ -77,7 +92,8 @@ fn make_project_source(tmp: &Path, name: &str, repos: &[(&str, &str)]) -> String
         ));
     }
     std::fs::write(work.join("rwv.toml"), &manifest_toml).unwrap();
-    common::git_in(&work, &["add", "rwv.toml"]);
+    write_lock(&work);
+    common::git_in(&work, &["add", "rwv.toml", "rwv.lock"]);
     common::git_in(&work, &["commit", "-m", "manifest"]);
     common::git_in(&work, &["push", "origin", "main"]);
     common::file_url(&project_bare)
@@ -88,7 +104,7 @@ fn make_project_source(tmp: &Path, name: &str, repos: &[(&str, &str)]) -> String
 /// `-j 1` reproduces serial behavior: output never contains a
 /// `[<repo-path>]` prefix.
 #[test]
-fn fetch_dash_j_one_emits_no_prefix() {
+fn clone_dash_j_one_emits_no_prefix() {
     let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");
     std::fs::create_dir_all(&ws).unwrap();
@@ -107,7 +123,7 @@ fn fetch_dash_j_one_emits_no_prefix() {
     );
 
     let out = rwv()
-        .args(["fetch", &source, "-j", "1"])
+        .args(["clone", &source, "-j", "1"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -122,7 +138,7 @@ fn fetch_dash_j_one_emits_no_prefix() {
 /// `-j N` (N > 1) attaches `[<repo-path>]` to per-repo lines so
 /// interleaved output is parseable. Mirrors `make -j` / `ninja`.
 #[test]
-fn fetch_dash_j_two_emits_repo_prefix() {
+fn clone_dash_j_two_emits_repo_prefix() {
     let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");
     std::fs::create_dir_all(&ws).unwrap();
@@ -141,7 +157,7 @@ fn fetch_dash_j_two_emits_repo_prefix() {
     );
 
     let out = rwv()
-        .args(["fetch", &source, "-j", "2"])
+        .args(["clone", &source, "-j", "2"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -152,17 +168,18 @@ fn fetch_dash_j_two_emits_repo_prefix() {
     );
 }
 
-/// `-j N` clones all repos and produces a well-formed lock covering
-/// every manifest entry. This is the proxy for "lock write is serial
-/// post-join": if it were racy under parallelism we'd see missing
-/// entries or a truncated file.
+/// Under `-j N` every member lands at the commit the lock pins, not at its
+/// remote's tip, and the clone leaves the lock the project carried untouched.
+/// The remotes move past the pins after the lock is written, so a worker that
+/// placed a member at the tip would differ from its pin.
 #[test]
-fn fetch_dash_j_clones_all_repos_and_writes_complete_lock() {
+fn clone_dash_j_places_every_member_at_its_pin_and_writes_no_lock() {
     let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");
     std::fs::create_dir_all(&ws).unwrap();
 
     // 5 repos — enough to exercise concurrency without being slow.
+    let mut bares = Vec::new();
     let mut urls = Vec::new();
     let mut paths = Vec::new();
     for i in 0..5 {
@@ -170,6 +187,7 @@ fn fetch_dash_j_clones_all_repos_and_writes_complete_lock() {
         init_bare_repo_with_commit(&bare);
         urls.push(common::file_url(&bare));
         paths.push(format!("local/org/r{i}"));
+        bares.push(bare);
     }
     let pairs: Vec<(&str, &str)> = paths
         .iter()
@@ -177,37 +195,31 @@ fn fetch_dash_j_clones_all_repos_and_writes_complete_lock() {
         .map(|(p, u)| (p.as_str(), u.as_str()))
         .collect();
     let source = make_project_source(tmp.path(), "proj", &pairs);
+    let pins: Vec<String> = bares.iter().map(|bare| tip(bare)).collect();
+    for (i, bare) in bares.iter().enumerate() {
+        let advanced = advance_bare_repo(tmp.path(), bare, &format!("r{i}-v2"));
+        assert_ne!(advanced, pins[i]);
+    }
 
     rwv()
-        .args(["fetch", &source, "-j", "4"])
+        .args(["clone", &source, "-j", "4"])
         .current_dir(&ws)
         .assert()
         .success();
 
-    // Every repo clone present.
-    for p in &paths {
-        assert!(ws.join(p).exists(), "expected {p} to be cloned under -j 4");
+    for (path, pin) in paths.iter().zip(&pins) {
+        let head = common::git_in(ws.join(path), &["rev-parse", "HEAD"]);
+        assert_eq!(&head, pin, "{path} should sit at its pin under -j 4");
     }
 
-    // Lock file written and covers every repo. Parse the YAML strictly
-    // so a corrupt/partial write would fail here.
-    let project_dirs: Vec<_> = std::fs::read_dir(ws.join("projects"))
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .collect();
-    assert_eq!(project_dirs.len(), 1);
-    let lock_path = project_dirs[0].path().join("rwv.lock");
-    assert!(
-        lock_path.exists(),
-        "rwv.lock should be written after parallel fetch"
+    let project_dir = ws.join("projects/proj");
+    let on_disk = std::fs::read_to_string(project_dir.join("rwv.lock")).unwrap();
+    let committed = common::git_in(&project_dir, &["show", "HEAD:rwv.lock"]);
+    assert_eq!(
+        on_disk.trim(),
+        committed,
+        "clone must not rewrite the lock the project carried"
     );
-    let lock_text = std::fs::read_to_string(&lock_path).unwrap();
-    for p in &paths {
-        assert!(
-            lock_text.contains(p),
-            "lock should contain entry for {p}, got:\n{lock_text}"
-        );
-    }
 }
 
 /// Under `-j > 1` a failing repo (bad URL) does not prevent the other
@@ -215,7 +227,7 @@ fn fetch_dash_j_clones_all_repos_and_writes_complete_lock() {
 /// aggregated summary and the command exits non-zero — matching the
 /// existing serial aggregation shape.
 #[test]
-fn fetch_dash_j_aggregates_failures() {
+fn clone_dash_j_aggregates_failures() {
     let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");
     std::fs::create_dir_all(&ws).unwrap();
@@ -228,15 +240,25 @@ fn fetch_dash_j_aggregates_failures() {
     init_bare_repo_with_commit(&r_ok);
     let u_ok = common::file_url(&r_ok);
     let u_bad = format!("{}/does_not_exist.git", common::file_url(tmp.path()));
+    let pin = tip(&r_ok);
 
-    let source = make_project_source(
+    let source = make_project_source_locked(
         tmp.path(),
         "proj",
         &[("local/org/r_ok", &u_ok), ("local/org/r_bad", &u_bad)],
+        |work| {
+            common::fixture_lock(
+                work,
+                &[
+                    ("local/org/r_ok", &u_ok, &pin),
+                    ("local/org/r_bad", &u_bad, &pin),
+                ],
+            );
+        },
     );
 
     rwv()
-        .args(["fetch", &source, "-j", "2"])
+        .args(["clone", &source, "-j", "2"])
         .current_dir(&ws)
         .assert()
         .failure()
@@ -252,7 +274,7 @@ fn fetch_dash_j_aggregates_failures() {
 
 /// `--jobs` long form is accepted (mirrors `-j` short form).
 #[test]
-fn fetch_accepts_long_jobs_flag() {
+fn clone_accepts_long_jobs_flag() {
     let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");
     std::fs::create_dir_all(&ws).unwrap();
@@ -263,7 +285,7 @@ fn fetch_accepts_long_jobs_flag() {
     let source = make_project_source(tmp.path(), "proj", &[("local/org/r1", &u1)]);
 
     rwv()
-        .args(["fetch", &source, "--jobs", "1"])
+        .args(["clone", &source, "--jobs", "1"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -287,6 +309,68 @@ fn update_accepts_dash_j_flag() {
         .stderr(predicate::str::contains("unexpected argument").not());
 }
 
+/// `rwv update -j 2` clones the members missing on disk concurrently, each
+/// line carrying its `[<repo-path>]` prefix, and puts each at its pin.
+#[test]
+fn update_dash_j_two_clones_missing_members_with_repo_prefix() {
+    let tmp = common::tempdir().unwrap();
+    let ws = tmp.path().join("ws");
+    std::fs::create_dir_all(&ws).unwrap();
+
+    let bare_a = tmp.path().join("a.git");
+    let bare_b = tmp.path().join("b.git");
+    init_bare_repo_with_commit(&bare_a);
+    init_bare_repo_with_commit(&bare_b);
+    let url_a = common::file_url(&bare_a);
+    let url_b = common::file_url(&bare_b);
+    let source = make_project_source(
+        tmp.path(),
+        "proj",
+        &[("local/team/a", &url_a), ("local/team/b", &url_b)],
+    );
+    let (pin_a, pin_b) = (tip(&bare_a), tip(&bare_b));
+    rwv()
+        .args(["clone", &source])
+        .current_dir(&ws)
+        .assert()
+        .success();
+    std::fs::remove_dir_all(ws.join("local/team/a")).unwrap();
+    std::fs::remove_dir_all(ws.join("local/team/b")).unwrap();
+
+    let out = rwv()
+        .args(["update", "-j", "2"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let stdout = String::from_utf8_lossy(&out.get_output().stdout).to_string();
+    assert!(
+        stdout.contains("[local/team/a]") && stdout.contains("[local/team/b]"),
+        "expected [<repo>] prefix for each repo under -j 2, got:\n{stdout}"
+    );
+    for (path, pin) in [("local/team/a", &pin_a), ("local/team/b", &pin_b)] {
+        let head = common::git_in(ws.join(path), &["rev-parse", "HEAD"]);
+        assert_eq!(&head, pin, "{path} should be cloned at its pin");
+    }
+}
+
+/// `rwv update --remote -j N` accepts the flag, on the same terms as
+/// [`update_accepts_dash_j_flag`].
+#[test]
+fn update_remote_accepts_dash_j_flag() {
+    let tmp = common::tempdir().unwrap();
+    rwv()
+        .args(["update", "--remote", "-j", "2"])
+        .current_dir(tmp.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unexpected argument").not());
+}
+
+fn tip(bare: &Path) -> String {
+    common::git_in(bare, &["rev-parse", "main"])
+}
+
 /// Advance a bare repo by one commit and return the new tip SHA.
 fn advance_bare_repo(tmp: &Path, bare: &Path, label: &str) -> String {
     let work = tmp.join(format!("{label}-work"));
@@ -300,23 +384,19 @@ fn advance_bare_repo(tmp: &Path, bare: &Path, label: &str) -> String {
     common::git_in(&work, &["add", "advance.txt"]);
     common::git_in(&work, &["commit", "-m", label]);
     common::git_in(&work, &["push", "origin", "main"]);
-    let out = common::git()
-        .args(["rev-parse", "main"])
-        .current_dir(bare)
-        .output()
-        .unwrap();
-    String::from_utf8(out.stdout).unwrap().trim().to_string()
+    tip(bare)
 }
 
 /// End-to-end parallel correctness: bootstrap a workspace with two
-/// repos via `rwv fetch`, advance both remotes, then `rwv update -j 2`.
-/// Both repos must advance in their local clones AND in `rwv.lock`.
+/// repos via `rwv clone`, advance both remotes, then
+/// `rwv update --remote -j 2`. Both repos must advance in their local clones
+/// AND in `rwv.lock`.
 /// This is the strongest single check for "lock write is serial
 /// post-join" — if the lock write raced or the parallel worker pool
 /// dropped a repo, the resulting lock would miss an entry or hold a
 /// stale SHA.
 #[test]
-fn update_dash_j_advances_all_repos_and_relocks() {
+fn update_remote_dash_j_advances_all_repos_and_relocks() {
     let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");
     std::fs::create_dir_all(&ws).unwrap();
@@ -335,10 +415,10 @@ fn update_dash_j_advances_all_repos_and_relocks() {
         &[("local/team/a", &url_a), ("local/team/b", &url_b)],
     );
 
-    // Bootstrap via `rwv fetch` (serial; tested above to work under
+    // Bootstrap via `rwv clone` (serial; tested above to work under
     // -j too — we just need a workspace).
     rwv()
-        .args(["fetch", &source])
+        .args(["clone", &source])
         .current_dir(&ws)
         .assert()
         .success();
@@ -349,7 +429,7 @@ fn update_dash_j_advances_all_repos_and_relocks() {
     assert_ne!(new_a, new_b);
 
     rwv()
-        .args(["update", "-j", "2"])
+        .args(["update", "--remote", "-j", "2"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -378,8 +458,9 @@ fn update_dash_j_advances_all_repos_and_relocks() {
     );
 }
 
-/// A worker's *subprocess* output reaches the user, prefixed. `rwv update`
-/// streams `git fetch` through the reporter under `-j > 1`; rwv's own stderr
+/// A worker's *subprocess* output reaches the user, prefixed.
+/// `rwv update --remote` streams `git fetch` through the reporter under
+/// `-j > 1`; rwv's own stderr
 /// lines on this path are written directly and carry no prefix, so a
 /// prefixed stderr line is one git wrote and the forwarding delivered.
 ///
@@ -388,7 +469,7 @@ fn update_dash_j_advances_all_repos_and_relocks() {
 /// stdout/stderr from a spawned thread, outside libtest's capture, so those
 /// tests can see the call return but not that a line came out.
 #[test]
-fn update_dash_j_forwards_child_output_prefixed() {
+fn update_remote_dash_j_forwards_child_output_prefixed() {
     let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");
     std::fs::create_dir_all(&ws).unwrap();
@@ -399,14 +480,14 @@ fn update_dash_j_forwards_child_output_prefixed() {
     let source = make_project_source(tmp.path(), "proj", &[("local/team/a", &url)]);
 
     rwv()
-        .args(["fetch", &source])
+        .args(["clone", &source])
         .current_dir(&ws)
         .assert()
         .success();
     advance_bare_repo(tmp.path(), &bare, "a-v2");
 
     let out = rwv()
-        .args(["update", "-j", "2"])
+        .args(["update", "--remote", "-j", "2"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -418,12 +499,12 @@ fn update_dash_j_forwards_child_output_prefixed() {
     );
 }
 
-/// Failure aggregation under `rwv update -j 2`: one bad repo (broken
+/// Failure aggregation under `rwv update --remote -j 2`: one bad repo (broken
 /// remote) must not prevent the healthy one from being attempted, and
 /// the aggregated error report must surface the bad repo and bail
 /// (lock not written).
 #[test]
-fn update_dash_j_aggregates_failures() {
+fn update_remote_dash_j_aggregates_failures() {
     let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");
     std::fs::create_dir_all(&ws).unwrap();
@@ -433,8 +514,8 @@ fn update_dash_j_aggregates_failures() {
     let url_ok = common::file_url(&bare_ok);
     let url_bad = format!("{}/missing.git", common::file_url(tmp.path()));
 
-    // Fetch can't bootstrap a workspace if a repo URL is invalid, so
-    // we set up a "good" manifest, fetch, then break the bad repo's
+    // Clone can't bootstrap a workspace if a repo URL is invalid, so
+    // we set up a "good" manifest, clone, then break the bad repo's
     // remote afterwards by deleting the bare backing store.
     let bare_bad = tmp.path().join("bad.git");
     init_bare_repo_with_commit(&bare_bad);
@@ -449,7 +530,7 @@ fn update_dash_j_aggregates_failures() {
         ],
     );
     rwv()
-        .args(["fetch", &source])
+        .args(["clone", &source])
         .current_dir(&ws)
         .assert()
         .success();
@@ -464,7 +545,7 @@ fn update_dash_j_aggregates_failures() {
     let lock_before = std::fs::read_to_string(ws.join("projects/proj/rwv.lock")).unwrap();
 
     rwv()
-        .args(["update", "-j", "2"])
+        .args(["update", "--remote", "-j", "2"])
         .current_dir(&ws)
         .assert()
         .failure()

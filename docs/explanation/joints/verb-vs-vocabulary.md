@@ -9,14 +9,15 @@ asymmetry is principled, not accidental.
 
 ## The two vocabularies
 
-**VCS surface** (`git`, `hg`, `sl`, `jj`): `fetch`, `push`. Verbs that
-move commits between local and remote without re-deciding what "current"
-means. The lock is read, never mutated, by these operations.
+**VCS surface** (`git`, `hg`, `sl`, `jj`): `clone`, `fetch`, `pull`,
+`push`. Verbs that move commits between local and remote without
+re-deciding what "current" means. The lock is read, never mutated, by
+these operations.
 
 **Package-manager surface** (`cargo`, `npm`, `uv`, `pnpm`): `update`,
-`lock`. Verbs whose principal artifact is the lockfile. They re-snapshot
-the recorded state of the world; the network fetch (if any) is a side
-effect of deciding what to record.
+`lock`. Verbs whose principal artifact is the lockfile. They settle the
+local state against the recorded state of the world, or re-snapshot it;
+the network fetch (if any) is a side effect of deciding what to record.
 
 Each rwv verb belongs to whichever surface most accurately describes
 what the verb *does*, not which surface gives the cleanest internal
@@ -36,7 +37,7 @@ Two corollaries:
   VCS vocabulary.
 
 "Surface symmetry within rwv" is the tempting wrong answer: it
-suggests `fetch`/`push` should sit next to `pull`/`publish`, or that
+suggests that `push` should sit next to `publish`, or that
 everything that talks to a remote should share a vocabulary. Neither is
 the right gate. The audience's mental model on encountering the verb
 name is what matters, and that model is set by the closest single-tool
@@ -57,7 +58,7 @@ package-manager release operation (registry upload, version bump, side
 effects beyond transmit) that doesn't match the verb's behavior. VCS
 verb.
 
-### `rwv update` (not `pull`)
+### `rwv update --remote` (not `pull`)
 
 Advances each member repo to its branch HEAD and re-snapshots
 `rwv.lock`. The principal artifact is the new lock; the network fetch
@@ -65,15 +66,40 @@ exists in service of the snapshot. The audience expectation maps
 cleanly to `cargo update` / `npm update`: "go get the latest versions
 and record them." Calling it `pull` would suggest a VCS merge into the
 working tree (no lock mutation implied), which understates the central
-effect. Package-manager verb.
+effect, and `rwv pull` already names a different effect (below).
+Package-manager verb.
+
+### `rwv update`
+
+Clones the members missing on disk and aligns each present member to the
+commit `rwv.lock` pins for it. The lock is read, never written. It shares
+the verb with `update --remote` because both settle the weave against the
+lock: one makes the weave match it, the other makes it match the remotes.
+The `--remote` flag marks the form that fetches the remotes' tips and
+rewrites the lock. Package-manager verb.
+
+### `rwv clone`
+
+Clones the project repo from a source, then every member at the commit
+`rwv.lock` pins, and activates the project when none is active. The lock is
+read-only, and a member the lock cannot place is listed and left for the
+operator rather than recorded. Audience expectation: `git clone` of several
+repos, with the manifest deciding which and where. VCS verb.
 
 ### `rwv fetch`
 
-Reads `rwv.lock`, materializes clones, aligns each repo to the
-lock-recorded SHA. Lock is read-only. Bootstrap behavior (no lock
-present) is a degenerate case of the same operation. Audience
-expectation: `git fetch` against several repos, with the manifest
-deciding which and where. VCS verb.
+Pruning fetch of every remote of the project repo and of each member on
+disk. It moves no local branch, checkout or lock. Audience expectation:
+`git fetch --prune` against several repos, with the manifest deciding which
+and where. VCS verb.
+
+### `rwv pull`
+
+Fetches, fast-forwards the project branch to its upstream, then runs
+`rwv update`, so the members follow the lock the project branch brought in.
+Audience expectation: `git pull --ff-only` of the project repo, with the
+members following. The lock arrives with the project branch; `pull` never
+writes one. VCS verb.
 
 ### `rwv lock`
 
@@ -88,16 +114,12 @@ workspace. Together they are a direction-explicit pair for local-to-local
 workspace alignment. The question is why these are *their own* vocabulary
 rather than `pull`/`push` variants.
 
-**The `push` argument fails first.** `rwv push` is already taken: it
-moves commits from local repos to their VCS remotes, manifest-aware and
-ordered. Reusing the name for a local-to-local operation would be a
-vocabulary collision, not a symmetry.
-
-**The `pull` argument fails on composition grounds.** `rwv pull` was
-explicitly considered and rejected in
-[verb-vs-composition](./verb-vs-composition.md): the work it would do
-collapses into either `rwv update` (fetch + re-snapshot the lock) or
-shell composition. The verb doesn't earn its keep.
+**The `push` and `pull` arguments fail first.** `rwv push` is already
+taken: it moves commits from local repos to their VCS remotes,
+manifest-aware and ordered. `rwv pull` is taken too: it takes in the
+project repo's upstream and has the members follow the lock it brings.
+Reusing either name for a local-to-local operation would be a vocabulary
+collision, not a symmetry.
 
 **The deeper reason: strategy choice.** No VCS `push` command accepts a
 `--rebase` option. The reason is structural: the remote is not yours to
@@ -141,8 +163,9 @@ When proposing a new verb, after it has cleared the
    audience reach for first?
 
 Pick the name from that vocabulary. Do not reach for surface symmetry
-within rwv — a `fetch`/`push` pair next to an `update`/`lock` pair is
-the *correct* shape, because the two pairs do different kinds of work.
+within rwv — VCS verbs (`clone`, `fetch`, `pull`, `push`) next to
+package-manager verbs (`update`, `lock`) is the *correct* shape, because the
+two groups do different kinds of work.
 
 The internal counterpart to this principle —
 [vcs-as-seam](./vcs-as-seam.md) — applies to *implementation*: anywhere

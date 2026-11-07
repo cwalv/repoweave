@@ -271,6 +271,43 @@ impl CommitMessage {
     }
 }
 
+/// Refuse when the project repo has uncommitted changes to tracked files
+/// outside `rwv.lock`, `rwv.toml` and `authored`: a lock commit must not bundle
+/// unrelated work in progress.
+///
+/// Pure judgment, so a verb that commits the lock can ask it before it writes
+/// the lock.
+pub(crate) fn judge_unrelated_dirt(
+    vcs: &dyn Vcs,
+    project: &crate::manifest::ProjectName,
+    project_dir: &Path,
+    authored: &BTreeSet<String>,
+) -> anyhow::Result<()> {
+    let tracked_dirty = vcs
+        .tracked_dirty_file_names(project_dir)
+        .context("failed to read project repo status")?;
+    let unrelated: Vec<&String> = tracked_dirty
+        .iter()
+        .filter(|path| {
+            path.as_str() != LockFile::FILE_NAME
+                && path.as_str() != Manifest::FILE_NAME
+                && !authored.contains(path.as_str())
+        })
+        .collect();
+    if unrelated.is_empty() {
+        return Ok(());
+    }
+    let mut report = Report::default();
+    report.add(
+        State::EditsDirty
+            .of(crate::workspace::project_rel_path(project))
+            .listing(unrelated)
+            .checkout(project_dir)
+            .judge(vcs),
+    );
+    report.into_result()
+}
+
 /// Commit `rwv.lock` from `project_dir`, together with a dirty `rwv.toml`
 /// and whatever of `authored` the run actually rewrote.
 ///
@@ -299,25 +336,10 @@ fn commit_lock_file(
     let dirty = vcs
         .dirty_file_names(project_dir)
         .context("failed to read project repo status")?;
-    let tracked_dirty = vcs
-        .tracked_dirty_file_names(project_dir)
-        .context("failed to read project repo status")?;
-
+    judge_unrelated_dirt(vcs, project, project_dir, authored)?;
     let carried = |path: &str| {
         path == LockFile::FILE_NAME || path == Manifest::FILE_NAME || authored.contains(path)
     };
-    let unrelated: Vec<&String> = tracked_dirty.iter().filter(|path| !carried(path)).collect();
-    if !unrelated.is_empty() {
-        let mut report = Report::default();
-        report.add(
-            State::EditsDirty
-                .of(crate::workspace::project_rel_path(project))
-                .listing(unrelated)
-                .checkout(project_dir)
-                .judge(vcs),
-        );
-        report.into_result()?;
-    }
 
     let mut paths = vec![LockFile::FILE_NAME];
     paths.extend(

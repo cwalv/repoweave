@@ -7,7 +7,7 @@ CWD is not inside a weave or workweave. Below is a compact overview of how `rwv`
 - **Weave**: A top-level workspace directory containing `projects/<name>/` (each project's git repo) alongside canonical member clones at `<registry>/<owner>/<repo>/` (e.g., `github/org/service/`).
   - `projects/<name>/rwv.toml` is the hand-authored project manifest declaring member repositories (`type`, `url`, `branch`, `role`) and optional `[integrations.<name>]` settings.
   - `projects/<name>/rwv.lock` is the derived revision snapshot pinning every member repo to a 40-hex commit SHA.
-  - Ecosystem workspace files (`Cargo.toml`, `package.json`, `go.work`, `pyproject.toml`, `<name>.code-workspace`) live in `projects/<name>/`. **Authoring verbs** (`rwv member add`, `rwv member remove`, `rwv member set-role`, `rwv update`) and `rwv doctor --fix` author or regenerate the rwv-owned regions of those files; **`rwv activate`** never authors or overwrites file content — it switches `.rwv-active`, surfaces weave-root symlinks (`Cargo.toml` -> `projects/<active>/Cargo.toml`, etc.), and runs install hooks. **`rwv materialize`** settles attested generated-file drift, cleans up disabled integration artifacts, repairs missing weave-root symlinks, and runs install hooks for the project this checkout already presents.
+  - Ecosystem workspace files (`Cargo.toml`, `package.json`, `go.work`, `pyproject.toml`, `<name>.code-workspace`) live in `projects/<name>/`. **Authoring verbs** (`rwv member add`, `rwv member remove`, `rwv member set-role`, `rwv update --remote`) and `rwv doctor --fix` author or regenerate the rwv-owned regions of those files; **`rwv activate`** never authors or overwrites file content — it switches `.rwv-active`, surfaces weave-root symlinks (`Cargo.toml` -> `projects/<active>/Cargo.toml`, etc.), and runs install hooks. **`rwv materialize`** settles attested generated-file drift, cleans up disabled integration artifacts, repairs missing weave-root symlinks, and runs install hooks for the project this checkout already presents.
   - Each member repo has a `role` (`owned`, `fork`, `dependency`, `reference`): `owned` and `fork` are read-write and included in `rwv push`; `dependency` is included in ecosystem workspace files and workweave branches but skipped by `rwv push`; `reference` is excluded from ecosystem workspace files and checked out with read-only tracked regular files (write bits removed).
 
 - **Workweave**: An isolated parallel workspace at `.workweaves/<project>--<name>/` (sibling of the weave root by default) for a single task or agent.
@@ -15,12 +15,12 @@ CWD is not inside a weave or workweave. Below is a compact overview of how `rwv`
   - Carries a `.rwv-workweave` marker recording `{primary, project, parent}` (mutually exclusive with `.rwv-active`, which is primary-only).
 
 - **Lock & sync**: `rwv.lock` pins every member repo to a commit SHA (never a tag or branch name).
-  - `rwv lock` snapshots local HEAD SHAs into `rwv.lock` (`rwv lock --commit` commits `rwv.lock`, with `rwv.toml` when it has uncommitted changes; `rwv push` refuses while either is uncommitted); `rwv update` fetches from remotes, fast-forwards checkouts, and updates `rwv.lock`; `rwv fetch` aligns checkouts to `rwv.lock` without advancing pins.
+  - `rwv lock` snapshots local HEAD SHAs into `rwv.lock` (`rwv lock --commit` commits `rwv.lock`, with `rwv.toml` when it has uncommitted changes; `rwv push` refuses while either is uncommitted); `rwv update --remote` fetches from remotes, fast-forwards checkouts, and updates `rwv.lock`; `rwv update` clones the members missing on disk and aligns the rest to `rwv.lock` without advancing pins or writing the lock; `rwv clone` brings up a project at the commits its `rwv.lock` pins; `rwv fetch` downloads and moves no branch, checkout or lock; `rwv pull` fetches, fast-forwards the project branch to its upstream, then runs `rwv update`.
   - `rwv sync <source>` pulls another workspace's committed state into CWD and regenerates CWD's `rwv.lock` after replay completes; `rwv sync-to` lands CWD's work into its target workspace (auto-relocking CWD at op start when repo tips have moved past `rwv.lock`, rebasing CWD onto target, and fast-forwarding target).
 
 ## Common pitfalls
 
-- **Weave-root ecosystem files are symlinks into `projects/<active>/`**: In hybrid files (`Cargo.toml`, `package.json`, `pyproject.toml`, `go.work`), hand-authored keys outside the rwv-owned marker region are preserved across regeneration. Edits inside the rwv-owned region are overwritten when `rwv member add`, `rwv member remove`, `rwv member set-role`, `rwv update`, or `rwv doctor --fix` regenerates the file (`rwv activate` only moves symlinks and never clobbers file content).
+- **Weave-root ecosystem files are symlinks into `projects/<active>/`**: In hybrid files (`Cargo.toml`, `package.json`, `pyproject.toml`, `go.work`), hand-authored keys outside the rwv-owned marker region are preserved across regeneration. Edits inside the rwv-owned region are overwritten when `rwv member add`, `rwv member remove`, `rwv member set-role`, `rwv update --remote`, or `rwv doctor --fix` regenerates the file (`rwv activate` only moves symlinks and never clobbers file content).
 - **Don't run `git worktree add` directly**: Always use `rwv workweave create <name>` so all member repos, ephemeral branches, ownership receipts, and `.rwv-workweave` markers stay consistent.
 - **Don't run `rwv push` from inside a workweave**: `rwv push` refuses from a workweave (`push-from-workweave`) so ephemeral `<project>--<name>` branches do not leak to shared remotes. Land into the primary weave first with `rwv sync-to` (or `rwv sync-to --retire`), then run `rwv push` from primary.
 - **Don't `chmod` or edit `reference` repos in place**: Tracked regular files in `reference` repos carry no write bit. To promote a repo for editing, run `rwv member set-role <path> owned` (or `fork`), which updates `rwv.toml`, regenerates ecosystem files, and restores write bits.
@@ -55,8 +55,11 @@ rwv push
 | `rwv doctor` | Check workspace conventions (`--fix` repairs auto-fixable findings) |
 | `rwv activate PROJECT` | Switch `.rwv-active`, surface weave-root symlinks, run install hooks |
 | `rwv materialize` | Settle drift, clean up disabled integrations, repair symlinks, run hooks |
-| `rwv fetch [SOURCE]` | Bootstrap a project or align present/missing repos to `rwv.lock` |
-| `rwv update` | Fetch remote branches, fast-forward checkouts, and re-snapshot `rwv.lock` |
+| `rwv clone SOURCE` | Clone a project and each member at the commit `rwv.lock` pins (exit status 3 when a member is left unpinned) |
+| `rwv fetch` | Pruning fetch of every remote of every repo; moves no branch, checkout or lock |
+| `rwv pull` | Fetch, fast-forward the project branch to its upstream, then `rwv update` |
+| `rwv update` | Clone missing members and align present ones to `rwv.lock`; never advances a pin or writes the lock |
+| `rwv update --remote` | Fetch remote branches, fast-forward checkouts, and re-snapshot `rwv.lock` |
 | `rwv member add URL` | Clone a repo, register in `rwv.toml`, and regenerate integration files |
 | `rwv member remove PATH` | Unregister a repo from `rwv.toml` and regenerate integration files |
 | `rwv member set-role PATH ROLE` | Change a repo's role (`owned`, `fork`, `dependency`, `reference`) and settle files |
@@ -88,7 +91,7 @@ Run `rwv --help` or `rwv <command> --help` for full flag details.
 
 ## Agent integration surfaces
 
-Machine-readable `--json` output is supported on `rwv status --json`, `rwv doctor --json`, `rwv sync --json`, `rwv sync-to --json`, `rwv fetch --json`, `rwv update --json`, `rwv push --json`, `rwv log --json`, and `rwv backup list` (with `--json`). Each emits one JSON envelope; on the multi-worker verbs (`fetch`, `update`, `push`, `sync`, `sync-to`) `-j` changes only how many repos run at once:
+Machine-readable `--json` output is supported on `rwv status --json`, `rwv doctor --json`, `rwv sync --json`, `rwv sync-to --json`, `rwv clone --json`, `rwv fetch --json`, `rwv pull --json`, `rwv update --json`, `rwv update --remote --json`, `rwv push --json`, `rwv log --json`, and `rwv backup list` (with `--json`). Each emits one JSON envelope; on the multi-worker verbs (`clone`, `fetch`, `pull`, `update`, `push`, `sync`, `sync-to`) `-j` changes only how many repos run at once:
 - `rwv status --json` — per-repo records carry `path` (manifest-relative) and `absolute_path` (fully resolved on disk), plus `lock_pinned_by_name` when an older lock entry holds a ref name instead of a commit SHA; status records are flat and have no `kind` field.
 - `rwv sync --json` / `rwv sync-to --json` — per-repo outcome records carry `kind` (kebab-case discriminant), `path`, and `absolute_path`; the envelope's `complete` is `true` when the op finished and cleared op-state. Both exit 1 when a checkout replay could not prune is left on disk, even though the op completed.
 - `rwv doctor --json` — violations carry a kebab-case `kind` discriminant (and optional `sub_kind`); path fields are per-variant: per-repo variants carry `path` + `absolute_path`, `weave-root-identity-conflict` carries `root`, and `workweave-tree-integrity` carries `workweave_dir`. Integration findings appear on the `issues` array.

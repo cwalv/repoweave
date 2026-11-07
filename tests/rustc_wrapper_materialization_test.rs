@@ -1,6 +1,6 @@
 //! cargo-workspace's `rustc-wrapper` key tracks the host at every
 //! materialization, not only when the managed files are authored: `rwv
-//! materialize`, the first activation `rwv fetch` performs, and `rwv workweave
+//! materialize`, the first activation `rwv clone` performs, and `rwv workweave
 //! create` write it where the wrapper is on `PATH` and strip it where it is
 //! not, and the weave root links the file in the same pass.
 //!
@@ -154,7 +154,7 @@ fn materialize_fits_the_wrapper_key_to_the_host_both_ways() {
 }
 
 #[test]
-fn fetch_fits_the_wrapper_key_at_its_first_activation() {
+fn clone_fits_the_wrapper_key_at_its_first_activation() {
     let tmp = common::tempdir().unwrap();
     let url = crate_remote(tmp.path());
     let authoring = weave(tmp.path(), &url);
@@ -163,6 +163,7 @@ fn fetch_fits_the_wrapper_key_at_its_first_activation() {
 
     rwv(&authoring, &path, &["doctor", "--fix"]);
     let project = authoring.join("projects/app");
+    common::fixture_lock_at_remote_tips(&project, &[("github/acme/lib", &url)]);
     common::git_in(&project, &["add", "-A"]);
     common::git_in(&project, &["commit", "-m", "authored"]);
     let source = tmp.path().join("app.git");
@@ -179,10 +180,10 @@ fn fetch_fits_the_wrapper_key_at_its_first_activation() {
     install_sccache(&bin);
     let fresh = tmp.path().join("fresh");
     std::fs::create_dir_all(&fresh).unwrap();
-    let report = rwv(&fresh, &path, &["fetch", &common::file_url(&source)]);
+    let report = rwv(&fresh, &path, &["clone", &common::file_url(&source)]);
     assert!(
         surfaced_config(&fresh, "app").is_some_and(|c| c.contains(WRAPPER_KEY)),
-        "fetch's first activation must write the wrapper key and link it:\n{report}"
+        "clone's first activation must write the wrapper key and link it:\n{report}"
     );
 }
 

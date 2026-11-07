@@ -55,7 +55,7 @@ Keyed by canonical local path (`<registry>/<owner>/<repo>`). Each entry:
 | Field | Required | Description |
 |---|---|---|
 | `type` | yes | VCS type. Currently `git`. |
-| `url` | yes | Clone source: a URL (`https://…`, `git@…`, `file://` for a local remote) or registry shorthand (`github/owner/repo`), as `rwv member add` was given it. Every clone resolves shorthand through the built-in registries, so `rwv fetch` on another machine clones the same remote. |
+| `url` | yes | Clone source: a URL (`https://…`, `git@…`, `file://` for a local remote) or registry shorthand (`github/owner/repo`), as `rwv member add` was given it. Every clone resolves shorthand through the built-in registries, so `rwv clone` or `rwv update` on another machine clones the same remote. |
 | `branch` | yes | The branch the member tracks. |
 | `role` | yes | One of `owned`, `fork`, `dependency`, `reference`. |
 | `recurse-submodules` | no | `true` (the default, and not written when rwv writes the file) or `false`. See [Submodules](#submodules). |
@@ -66,19 +66,19 @@ Any other key in an entry is rejected, naming it. `version` and `submodules`, th
 
 - **`rwv member add <url>`** populates `branch` from the remote's default branch (`origin/HEAD`), and `rwv member add --new` from the branch the new repo is on.
 - A `branch` that reads as a commit id (seven or more hex digits) or a release tag (`v2.0`, `v0.3.4-rc1`) fails to parse, naming the value and its line, and `rwv member add` refuses with [`name`](./refusals.md#name) `a revision` rather than record such a branch.
-- **`rwv update`** reads `branch` to know which remote branch tip to advance each repo to before re-snapshotting `rwv.lock`.
-- **`rwv fetch`** checks a new clone out on the local counterpart of the branch `branch` names, and refuses to move a present checkout attached to any other branch. **`rwv doctor --fix --reattach-checkouts`** reattaches a detached canonical clone to that same branch.
-- **`rwv fetch`** and **`rwv sync`** align checkouts to the 40-character commit SHA in `rwv.lock` (falling back to `branch` only on `rwv fetch` without `--frozen` when a newly added repo has no lock entry yet).
+- **`rwv update --remote`** reads `branch` to know which remote branch tip to advance each repo to before re-snapshotting `rwv.lock`.
+- **`rwv clone`** and **`rwv update`** check a new clone out on the local counterpart of the branch `branch` names, and `rwv update` refuses to move a present checkout attached to any other branch. **`rwv doctor --fix --reattach-checkouts`** reattaches a detached canonical clone to that same branch.
+- **`rwv clone`**, **`rwv update`** and **`rwv sync`** align checkouts to the 40-character commit SHA in `rwv.lock`. A member that `rwv clone` or `rwv update` clones and the lock has no entry for is checked out at the tip of `branch` instead; neither verb records it, and `rwv lock` does.
 
 The role for your own code is spelled `role = "owned"`; a manifest spelling it `primary` fails to parse. See [reference/roles — Migrating from `role: primary`](./roles.md#migrating-from-role-primary).
 
 #### Submodules
 
-When rwv creates a checkout of a member — `rwv workweave create`, or a member a workweave lacks created by `rwv fetch`, `rwv member add`, `rwv sync`, `rwv sync-to` or `rwv doctor --fix` — it checks out each submodule the member records from the copy of that submodule's repository the canonical clone already holds, nested submodules included. It never uses the network for this. The files are cloned or linked from the same submodule in the weave's other checkouts where the filesystem allows, as a member's own files are. A `reference` member's submodule files are read-only like the rest of its files.
+When rwv creates a checkout of a member — `rwv workweave create`, or a member a workweave lacks created by `rwv update`, `rwv member add`, `rwv sync`, `rwv sync-to` or `rwv doctor --fix` — it checks out each submodule the member records from the copy of that submodule's repository the canonical clone already holds, nested submodules included. It never uses the network for this. The files are cloned or linked from the same submodule in the weave's other checkouts where the filesystem allows, as a member's own files are. A `reference` member's submodule files are read-only like the rest of its files.
 
-The canonical clone gets that copy from the network verbs. When `rwv member add` or `rwv fetch` clones a member or finds it present, it checks out every submodule whose directory in the canonical clone is empty, nested ones included, from its upstream remote, and fetches into a copy it already holds any commit a checkout of the member records that the copy lacks. A copy's own checkout in the canonical clone is not moved by that fetch.
+The canonical clone gets that copy from the network verbs. When `rwv member add`, `rwv clone` or `rwv update` clones a member or finds it present, it checks out every submodule whose directory in the canonical clone is empty, nested ones included, from its upstream remote, and fetches into a copy it already holds any commit a checkout of the member records that the copy lacks. A copy's own checkout in the canonical clone is not moved by that fetch.
 
-A submodule whose recorded commit the canonical clone does not hold stays empty, and `rwv doctor` reports it as [`uninitialized-submodule`](./doctor-findings.md#uninitialized-submodule) / `unfetched`. `rwv fetch --repo <path>` run in that workweave fetches it and checks it out.
+A submodule whose recorded commit the canonical clone does not hold stays empty, and `rwv doctor` reports it as [`uninitialized-submodule`](./doctor-findings.md#uninitialized-submodule) / `unfetched`. `rwv update --repo <path>` run in that workweave fetches it and checks it out.
 
 `recurse-submodules = false` leaves a member's submodules empty in the canonical clone and in every checkout rwv creates, and doctor does not report them. So does git's own `submodule.<name>.update = none`, from `.gitmodules` or the repository's config, for that one submodule.
 
@@ -135,7 +135,7 @@ Both lists default to empty and only apply to gitignored artifacts (secrets, loc
 
 ## `rwv.lock` — pinned revisions
 
-Generated by `rwv lock` or `rwv update`. Same repository table as `rwv.toml` but JSON, with `type`, `url` and a `version` that holds each repo's commit id — never a tag or branch name, even when a tag points at HEAD. A name can be moved or deleted after the lock is written; a commit id cannot.
+Generated by `rwv lock` or `rwv update --remote`. Same repository table as `rwv.toml` but JSON, with `type`, `url` and a `version` that holds each repo's commit id — never a tag or branch name, even when a tag points at HEAD. A name can be moved or deleted after the lock is written; a commit id cannot.
 
 ```json
 {
@@ -159,7 +159,7 @@ Generated by `rwv lock` or `rwv update`. Same repository table as `rwv.toml` but
 }
 ```
 
-An older or hand-edited lock may still carry an entry pinned by a tag or branch name. Verbs that read the lock resolve it to wherever the name points now. `rwv fetch` and `rwv sync` warn, naming the entry; `rwv status` marks it and `rwv doctor` reports it as [`lock-pinned-by-name`](./doctor-findings.md#lock-pinned-by-name), in `--json` too. The next `rwv lock`, or a sync's relock, records the commit id.
+An older or hand-edited lock may still carry an entry pinned by a tag or branch name. Verbs that read the lock resolve it to wherever the name points now. `rwv clone`, `rwv update` and `rwv sync` warn, naming the entry; `rwv status` marks it and `rwv doctor` reports it as [`lock-pinned-by-name`](./doctor-findings.md#lock-pinned-by-name), in `--json` too. The next `rwv lock`, or a sync's relock, records the commit id.
 
 `rwv.lock` is derived state. Do not hand-edit; it is the *output* of `rwv lock` and the *output* of `rwv sync` Phase 3. See [lock-as-derived](../explanation/joints/lock-as-derived.md).
 
@@ -177,7 +177,7 @@ web-app
 
 `.rwv-active` is the **single source of truth** for the active project within a workspace. There is no CWD-based override; `cd projects/<name>/` does not switch projects.
 
-Updated by `rwv activate <project>`, by `rwv init`, and by the `rwv fetch` that activates a project when none is. A file that is empty or holds anything but a project name selects nothing: a verb that reads it refuses (`unreadable-active-project`) instead of acting as if no project were selected. Action verbs (`rwv lock`, `rwv member add`, `rwv sync`) read it; pass `--project <name>` for a one-shot override without changing the file. A verb that writes into its project, run from inside `projects/<other>/` while the file names a different project, refuses (`cwd-in-inactive-project`) rather than act on the one the file names.
+Updated by `rwv activate <project>`, by `rwv init`, and by the `rwv clone` or `rwv update` that activates a project when none is. A file that is empty or holds anything but a project name selects nothing: a verb that reads it refuses (`unreadable-active-project`) instead of acting as if no project were selected. Action verbs (`rwv lock`, `rwv member add`, `rwv sync`) read it; pass `--project <name>` for a one-shot override without changing the file. A verb that writes into its project, run from inside `projects/<other>/` while the file names a different project, refuses (`cwd-in-inactive-project`) rather than act on the one the file names.
 
 ## `.rwv-workweave` — workweave marker
 
@@ -291,7 +291,7 @@ The first path segment is a **registry** — a short name for where the repo liv
 
 ### Project paths
 
-Project paths default to `projects/{name}/`. If names collide across organizations, `rwv fetch` errors and suggests a scoped form: `projects/{owner}/{name}/` or `projects/{registry}/{owner}/{name}/`.
+Project paths default to `projects/{name}/`. If names collide across organizations, a project can live at a scoped path instead: `projects/{owner}/{name}/` or `projects/{registry}/{owner}/{name}/`. `rwv clone` refuses with [`project-dir-occupied`](./refusals.md#project-dir-occupied) when the directory for the name is already taken.
 
 `rwv` commands that take a project path require the path *as created* — if the project lives at `projects/chatly/web-app/`, use `chatly/web-app`, not `web-app`.
 

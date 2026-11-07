@@ -8,7 +8,7 @@
 use super::{git_command, Argv, GitVcs, BACKUP_NAMESPACE, LOCAL_BRANCH_NAMESPACE};
 use crate::vcs::{
     Backup, BackupMark, BackupName, BackupSource, BranchTip, CommitId, CommitSummary, ListedBackup,
-    RemoteTracking, ResolvedRevisionId, UnconfirmedRemote, VcsError,
+    RemoteTracking, ResolvedRevisionId, VcsError,
 };
 use std::path::Path;
 
@@ -319,32 +319,6 @@ impl GitVcs {
             });
         }
         Ok(tips)
-    }
-
-    pub(super) fn fetch_every_remote_pruning(
-        repo: &Path,
-    ) -> Result<Vec<UnconfirmedRemote>, VcsError> {
-        let repo = Self::work_dir_for_store(repo);
-        let remotes = Self::run_trimmed(["remote"], &repo)?;
-        let mut unconfirmed = Vec::new();
-        for remote in remotes.lines().map(str::trim).filter(|r| !r.is_empty()) {
-            match Self::run(["fetch", "--prune", remote], &repo) {
-                Ok(_) => {}
-                Err(VcsError::CommandFailed { stderr, .. }) => {
-                    unconfirmed.push(UnconfirmedRemote {
-                        remote: remote.to_owned(),
-                        cause: stderr
-                            .lines()
-                            .map(str::trim)
-                            .find(|l| !l.is_empty())
-                            .unwrap_or("fetch failed")
-                            .to_owned(),
-                    });
-                }
-                Err(e) => return Err(e),
-            }
-        }
-        Ok(unconfirmed)
     }
 }
 
@@ -726,7 +700,9 @@ mod tests {
         git(origin.path(), &["branch", "-D", "gone-soon"]);
         git(&c, &["remote", "add", "lost", "/nonexistent/remote/path"]);
 
-        let unconfirmed = GitVcs.fetch_pruning(&c).unwrap();
+        let unconfirmed = crate::fetch::pruning_fetch(&GitVcs, &c)
+            .unwrap()
+            .unconfirmed;
 
         assert_eq!(unconfirmed.len(), 1);
         assert_eq!(unconfirmed[0].remote, "lost");

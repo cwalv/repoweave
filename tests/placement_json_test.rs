@@ -314,7 +314,7 @@ fn sync_to_places_a_member_it_creates_in_the_target_under_either_worker_count() 
         let weave = weave();
         let target = weave.seat("target");
         let seat = seat_named_lacking_a_member(&weave, "feat");
-        succeed(&seat, &["fetch", "--json", "-j", "1"]);
+        succeed(&seat, &["update", "--json", "-j", "1"]);
         assert!(seat.join(EXTRA).is_dir() && !target.join(EXTRA).exists());
 
         let target_arg = target.to_string_lossy();
@@ -330,12 +330,12 @@ fn sync_to_places_a_member_it_creates_in_the_target_under_either_worker_count() 
 }
 
 #[test]
-fn fetch_in_a_seat_places_the_worktree_it_creates_in_the_envelope() {
+fn update_in_a_seat_places_the_worktree_it_creates_in_the_envelope() {
     for jobs in ["1", "2"] {
         let weave = weave();
         let seat = seat_lacking_a_member(&weave);
 
-        let doc = envelope(&seat, &["fetch", "--json", "-j", jobs]);
+        let doc = envelope(&seat, &["update", "--json", "-j", jobs]);
         let context = format!("-j {jobs}\n{doc:#}");
         let placements = doc["placements"].as_array().unwrap();
         assert_eq!(placements.len(), 1, "{context}");
@@ -346,33 +346,24 @@ fn fetch_in_a_seat_places_the_worktree_it_creates_in_the_envelope() {
         let aligned = outcomes.iter().find(|o| o["path"] == EXTRA).unwrap();
         assert!(
             same_checkout(&aligned["absolute_path"], &weave.primary.join(EXTRA)),
-            "the outcome names the clone the fetch aligned, not the seat's worktree:\n{context}"
+            "the outcome names the clone the update aligned, not the seat's worktree:\n{context}"
         );
         assert_no_outcome_carries_files(outcomes, &context);
     }
 }
 
-/// A `reference` member is fetched into a seat like any other, and
-/// `--no-reference` leaves it out of the seat as it leaves it out of the
-/// primary.
+/// A `reference` member gets a worktree in a seat like any other.
 #[test]
-fn fetch_in_a_seat_creates_a_reference_member_unless_no_reference_leaves_it_out() {
-    for (extra_args, created) in [(&[][..], true), (&["--no-reference"][..], false)] {
-        let weave = weave();
-        let seat = seat_lacking_a_member_as(&weave, "feat", "reference");
-        let args: Vec<&str> = ["fetch", "--json", "-j", "1"]
-            .into_iter()
-            .chain(extra_args.iter().copied())
-            .collect();
+fn update_in_a_seat_creates_a_reference_member() {
+    let weave = weave();
+    let seat = seat_lacking_a_member_as(&weave, "feat", "reference");
 
-        let doc = envelope(&seat, &args);
+    let doc = envelope(&seat, &["update", "--json", "-j", "1"]);
 
-        assert_eq!(
-            seat.join(EXTRA).exists(),
-            created,
-            "args {args:?}: the reference member's worktree in the seat\n{doc:#}"
-        );
-    }
+    assert!(
+        seat.join(EXTRA).exists(),
+        "the reference member's worktree in the seat\n{doc:#}"
+    );
 }
 
 /// A `--json` run's outcome records and placements, from its envelope's
@@ -392,12 +383,16 @@ fn outcomes_and_placements(
 }
 
 #[test]
-fn update_reports_the_advance_as_a_placement_under_either_worker_count() {
+fn update_remote_reports_the_advance_as_a_placement_under_either_worker_count() {
     for jobs in ["1", "2"] {
         let weave = weave();
         weave.advance_origin(&["U1", "U2"]);
-        let (records, placements) =
-            outcomes_and_placements(&weave.primary, &["update", "--json"], "repos", jobs);
+        let (records, placements) = outcomes_and_placements(
+            &weave.primary,
+            &["update", "--remote", "--json"],
+            "repos",
+            jobs,
+        );
         let context = format!("-j {jobs}\n{records:#?}\n{placements:#?}");
         assert!(!records.is_empty(), "{context}");
         assert_eq!(placements.len(), 1, "{context}");
@@ -409,7 +404,7 @@ fn update_reports_the_advance_as_a_placement_under_either_worker_count() {
 }
 
 #[test]
-fn fetch_reports_a_realigned_clone_as_a_placement_under_either_worker_count() {
+fn update_reports_a_realigned_clone_as_a_placement_under_either_worker_count() {
     for jobs in ["1", "2"] {
         let weave = weave();
         let sha = weave.advance_origin(&["F1", "F2"]);
@@ -419,12 +414,12 @@ fn fetch_reports_a_realigned_clone_as_a_placement_under_either_worker_count() {
         common::git_in(weave.project(), &["commit", "-q", "-am", "lock: upstream"]);
 
         let (records, placements) =
-            outcomes_and_placements(&weave.primary, &["fetch", "--json"], "outcomes", jobs);
+            outcomes_and_placements(&weave.primary, &["update", "--json"], "outcomes", jobs);
         let context = format!("-j {jobs}\n{records:#?}\n{placements:#?}");
         assert_eq!(
             common::git_in(weave.member(), &["rev-parse", "HEAD"]),
             sha,
-            "fixture: fetch realigns the clone to the lock\n{context}"
+            "fixture: update realigns the clone to the lock\n{context}"
         );
         assert_eq!(placements.len(), 1, "{context}");
         let placement = placement_of(&placements, &weave.member(), &context);
@@ -494,7 +489,14 @@ fn file_counts_sit_only_in_placement_records_in_every_committed_schema() {
     }
     assert_eq!(
         holding,
-        ["fetch", "sync", "sync-to", "update"],
+        [
+            "clone",
+            "pull",
+            "sync",
+            "sync-to",
+            "update",
+            "update-remote"
+        ],
         "every verb that places files reports placements"
     );
 }

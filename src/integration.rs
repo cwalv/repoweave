@@ -608,7 +608,7 @@ pub enum HookOutcome {
 // This category carries the second fact and nothing else. It is **not drift**:
 // the `DefaultOnly` contract is untouched, `verify()` still reports
 // `DefaultOnly` divergence as CLEAN, and the two coexist on the same file.
-// Nothing gates on it — `doctor` and `update` report; neither refuses.
+// Nothing gates on it — `doctor` and `update --remote` report; neither refuses.
 
 /// An on-disk `Ownership::DefaultOnly` value that is incompatible with what
 /// the workspace members require.
@@ -709,7 +709,7 @@ impl MemberIncompatibility {
     }
 
     /// Render this observation as the informational [`Issue`] both `rwv doctor`
-    /// and `rwv update` surface.
+    /// and `rwv update --remote` surface.
     ///
     /// `safe_to_fix` is `false` and the message names both operator remedies;
     /// neither is a per-call-site choice (see the type docs). The observation
@@ -919,7 +919,7 @@ pub trait Integration {
     /// Verify that the on-disk managed/generated artifacts agree with what
     /// `activate()` would produce for the current `rwv.toml` + `rwv.lock`.
     ///
-    /// Called by context verbs (`rwv activate`, `rwv fetch`, workweave-create)
+    /// Called by context verbs (`rwv activate`, `rwv clone`, `rwv update`, workweave-create)
     /// and by `rwv doctor`. **Must not author content** — only inspect.
     /// Emit drift findings as `Issue`s (typically `Severity::Warning`); the
     /// recovery hatch is `rwv doctor --fix`, which re-runs `activate()`.

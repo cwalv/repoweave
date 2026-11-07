@@ -100,7 +100,7 @@ fn init_add_fetch_activate_prints_no_warning_and_refuses_nothing() {
     for args in [
         &["init", "myapp"][..],
         &["member", "add", &url],
-        &["fetch"],
+        &["update"],
         &["activate", "myapp"],
     ] {
         let verb = format!("rwv {}", args.join(" "));

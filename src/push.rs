@@ -1,8 +1,8 @@
 //! `rwv push` — coordinated cross-repo push.
 //!
-//! The publisher-side counterpart to `rwv update`. Pushes manifest repos
+//! The publisher-side counterpart to `rwv update --remote`. Pushes manifest repos
 //! first, then the project repo last — the project repo carries the
-//! committed lock that pins manifest SHAs, so collaborators' `rwv fetch`
+//! committed lock that pins manifest SHAs, so collaborators' `rwv clone` or `rwv update`
 //! must never see a committed lock referencing unpushed manifest commits.
 
 use crate::diagnosis::{Report, State};
@@ -243,7 +243,7 @@ pub fn run_push(
     //    when `--role` / `--repo` narrows the actual push loop below. The
     //    committed lock describes every manifest repo; publishing a
     //    project-repo lock that doesn't match the unfiltered repos breaks
-    //    collaborators' `rwv fetch` (they hit "object missing" against the
+    //    collaborators' `rwv clone` or `rwv update` (they hit "object missing" against the
     //    pinned-but-unpublished SHAs). The filter narrows the push loop,
     //    not the precondition.
     let lock_path = LockFile::path_in(&project_dir);
@@ -262,11 +262,11 @@ pub fn run_push(
         let vcs = vcs_for(entry.vcs_type);
         let repo_dir = primary_root.join(repo_path.as_path());
         if !repo_dir.exists() {
-            // `rwv fetch` (no SOURCE) re-clones missing members of the
+            // `rwv update` re-clones missing members of the
             // active project — the settled repair verb for dangling
             // references. See fetch::run_fetch_in_place.
             lock_mismatches.push(format!(
-                "{}: clone missing on disk; run `rwv fetch` from the workspace \
+                "{}: clone missing on disk; run `rwv update` from the workspace \
                  to re-materialize missing manifest members, then re-run `rwv push`",
                 repo_path.as_str(),
             ));

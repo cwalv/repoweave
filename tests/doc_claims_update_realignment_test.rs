@@ -1,24 +1,19 @@
-//! Doc-claims coverage for what in-place `rwv fetch` does to a clone that is
-//! ALREADY on disk, and for what `--frozen` changes about it.
+//! Doc-claims coverage for what `rwv update` does to a clone that is ALREADY on
+//! disk, and for the lock it reads and never writes.
 //!
 //! The claim is conditional on lock state, and both flat readings of it are
 //! wrong: "present clones are untouched" holds in two of the three lock
 //! states, "present clones are realigned" in the third.
 //!
-//! `tests/fetch_in_place_test.rs` pins the lock-HAS-an-entry arm — the
-//! realignment itself (a fast-forward of the tracking branch's local
-//! counterpart), the refusals when it would not be one, and the no-op when
-//! HEAD is already at the pin.
-//! This file pins the other two lock states, the locality of the resolve,
-//! `--frozen`'s coverage-not-freshness semantics, default/frozen equivalence,
-//! and the lock-write step a `--repo` filter skips.
+//! `tests/update_test.rs` pins the lock-HAS-an-entry arm — the realignment
+//! itself (a fast-forward of the tracking branch's local counterpart), the
+//! refusals when it would not be one, and the no-op when HEAD is already at the
+//! pin.
+//! This file pins the other two lock states, the locality of the resolve, and
+//! that no lock state makes update write the lock.
 //!
-//! Vocabulary: STALE is freshness — the lock is behind HEAD. INCOMPLETE is
-//! coverage — a manifest repo has no lock entry. `--frozen` errors on
-//! incomplete only.
-//!
-//! `rwv fetch <source>` onto an existing `projects/<name>/` is pinned by
-//! `doc_claims_fetch_test.rs::fetch_name_collision_behavior`.
+//! `rwv clone <source>` onto an existing `projects/<name>/` is pinned by
+//! `tests/doc_claims_clone_test.rs`.
 
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -223,16 +218,16 @@ impl Fixture {
 }
 
 // ============================================================================
-// Lock state 2 of 3 — an existing lock that does not cover the repo
-// (INCOMPLETE coverage). The present clone is not realigned; the lock grows.
+// Lock state 2 of 3 — an existing lock that does not cover the repo. The
+// present clone is not realigned; the lock is not grown.
 // ============================================================================
 
 #[test]
-fn present_clone_absent_from_the_lock_is_untouched_and_added_at_its_own_head() {
+fn present_clone_absent_from_the_lock_is_untouched_and_the_lock_is_not_grown() {
     let fx = setup(&["github/acme/a", "github/acme/b"]);
-    let (a_first, b_first, b_second) = {
+    let (a_first, b_first) = {
         let (a, b) = (fx.repo("github/acme/a"), fx.repo("github/acme/b"));
-        (a.first.clone(), b.first.clone(), b.second.clone())
+        (a.first.clone(), b.first.clone())
     };
     fx.write_lock(&[("github/acme/a", &a_first)]);
 
@@ -243,9 +238,10 @@ fn present_clone_absent_from_the_lock_is_untouched_and_added_at_its_own_head() {
     let dest_b = fx.clone_on_branch("github/acme/b");
     // Behind origin, so the on-disk HEAD and the branch tip disagree.
     common::git_in(&dest_b, &["reset", "--hard", &b_first]);
+    let lock_before = fx.lock_text().unwrap();
 
     rwv()
-        .arg("fetch")
+        .arg("update")
         .current_dir(&fx.workspace)
         .assert()
         .success();
@@ -260,36 +256,27 @@ fn present_clone_absent_from_the_lock_is_untouched_and_added_at_its_own_head() {
         Some("main"),
         "no checkout runs for it, so nothing detaches it"
     );
-
-    let lock = std::fs::read_to_string(fx.lock_path()).unwrap();
-    assert!(
-        lock.contains(&b_first),
-        "the additive entry records the clone's own HEAD; got:\n{lock}"
-    );
-    assert!(
-        !lock.contains(&b_second),
-        "not the tip origin is on — nothing is fetched to write it; got:\n{lock}"
-    );
-    assert!(
-        lock.contains(&a_first),
-        "the pre-existing entry must not be advanced; got:\n{lock}"
+    assert_eq!(
+        fx.lock_text().unwrap(),
+        lock_before,
+        "update never writes the lock: the clone it left is not added to it"
     );
 }
 
 // ============================================================================
-// Lock state 3 of 3 — no lock at all (bootstrap). Present clones are the
-// source of truth, not the target of a realignment.
+// Lock state 3 of 3 — no lock at all. Present clones are the source of truth,
+// not the target of a realignment, and update does not create the lock.
 // ============================================================================
 
 #[test]
-fn present_clone_with_no_lock_at_all_is_untouched_and_the_lock_records_its_head() {
+fn present_clone_with_no_lock_at_all_is_untouched_and_no_lock_is_written() {
     let fx = setup(&["github/acme/a"]);
     let a = fx.repo("github/acme/a");
     let dest = fx.clone_on_branch("github/acme/a");
     assert!(fx.lock_text().is_none(), "precondition: no lock on disk");
 
     rwv()
-        .arg("fetch")
+        .arg("update")
         .current_dir(&fx.workspace)
         .assert()
         .success();
@@ -297,18 +284,12 @@ fn present_clone_with_no_lock_at_all_is_untouched_and_the_lock_records_its_head(
     assert_eq!(
         common::git_in(&dest, &["rev-parse", "HEAD"]),
         a.second,
-        "bootstrap must not move a present clone"
+        "with no lock a present clone is not moved"
     );
     assert_eq!(current_branch(&dest).as_deref(), Some("main"));
-
-    let lock = std::fs::read_to_string(fx.lock_path()).unwrap();
     assert!(
-        lock.contains(&a.second),
-        "the bootstrapped lock is snapshotted from the on-disk HEAD; got:\n{lock}"
-    );
-    assert!(
-        !lock.contains(&a.first),
-        "nothing pins the older commit here; got:\n{lock}"
+        !fx.lock_path().exists(),
+        "update must not create the lock it found missing"
     );
 }
 
@@ -328,7 +309,7 @@ fn realignment_resolves_the_pin_locally_and_does_not_fetch_a_missing_one() {
     fx.write_lock(&[("github/acme/a", &third)]);
 
     rwv()
-        .arg("fetch")
+        .arg("update")
         .current_dir(&fx.workspace)
         .assert()
         .failure()
@@ -337,158 +318,82 @@ fn realignment_resolves_the_pin_locally_and_does_not_fetch_a_missing_one() {
 
     assert!(
         !git_ok(&["cat-file", "-e", &format!("{third}^{{commit}}")], &dest),
-        "fetch must not have pulled the pin from origin"
+        "update must not have pulled the pin from origin"
     );
     assert_eq!(common::git_in(&dest, &["rev-parse", "HEAD"]), a_second);
     assert_eq!(current_branch(&dest).as_deref(), Some("main"));
 }
 
 // ============================================================================
-// `--frozen` validates COVERAGE, not freshness.
+// Realigning to a complete lock moves the clone and leaves the lock alone.
 // ============================================================================
 
 #[test]
-fn frozen_errors_on_an_incomplete_lock_without_touching_any_clone() {
-    let fx = setup(&["github/acme/a", "github/acme/b"]);
-    let (a_first, a_second) = {
-        let a = fx.repo("github/acme/a");
-        (a.first.clone(), a.second.clone())
-    };
-    fx.write_lock(&[("github/acme/a", &a_first)]);
-    let dest_a = fx.clone_on_branch("github/acme/a");
-    fx.clone_on_branch("github/acme/b");
-    let lock_before = fx.lock_text().unwrap();
-
-    rwv()
-        .args(["fetch", "--frozen"])
-        .current_dir(&fx.workspace)
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("not covered by lock"))
-        .stderr(predicate::str::contains("github/acme/b"));
-
-    assert_eq!(
-        common::git_in(&dest_a, &["rev-parse", "HEAD"]),
-        a_second,
-        "the coverage check bails before any repo is realigned"
-    );
-    assert_eq!(
-        fx.lock_text().unwrap(),
-        lock_before,
-        "--frozen never writes"
-    );
-}
-
-#[test]
-fn frozen_checks_coverage_not_freshness_and_realigns_identically_to_default() {
+fn realigning_to_a_complete_lock_leaves_the_lock_bytes_alone() {
     let fx = setup(&["github/acme/a"]);
     let (a_first, a_second) = {
         let a = fx.repo("github/acme/a");
         (a.first.clone(), a.second.clone())
     };
-    // Complete coverage, STALE freshness: the clone sits on main at the first
-    // commit while the lock pins the second. Freshness disagreement is what
-    // this test is about; the direction is chosen so realignment is the legal
-    // fast-forward of the tracking counterpart rather than the rewind the
-    // branch model refuses (§5, `fetch` (present clone)).
+    // The clone sits on main at the first commit while the lock pins the
+    // second: realignment is the legal fast-forward of the tracking
+    // counterpart rather than the rewind the branch model refuses.
     fx.write_lock(&[("github/acme/a", &a_second)]);
     let dest = fx.clone_on_branch("github/acme/a");
     common::git_in(&dest, &["reset", "--hard", &a_first]);
     let lock_before = fx.lock_text().unwrap();
 
-    let observe = || {
-        (
-            common::git_in(&dest, &["rev-parse", "HEAD"]),
-            current_branch(&dest),
-            common::git_in(&dest, &["rev-parse", "main"]),
-            fx.lock_text().unwrap(),
-        )
-    };
-
     rwv()
-        .arg("fetch")
+        .arg("update")
         .current_dir(&fx.workspace)
         .assert()
         .success();
-    let after_default = observe();
 
-    // Back to the start state. The realignment moved the branch — it is a
-    // MOVE of the counterpart, not a detach — so rewinding the branch is what
-    // undoes it.
-    common::git_in(&dest, &["reset", "--hard", &a_first]);
-
-    rwv()
-        .args(["fetch", "--frozen"])
-        .current_dir(&fx.workspace)
-        .assert()
-        .success();
-    let after_frozen = observe();
-
+    assert_eq!(common::git_in(&dest, &["rev-parse", "HEAD"]), a_second);
     assert_eq!(
-        after_default, after_frozen,
-        "--frozen changes lock validation only; the realignment it performs \
-         is indistinguishable from the default mode's"
-    );
-    assert_eq!(after_default.0, a_second, "both modes land on the pin");
-    assert_eq!(
-        after_default.1.as_deref(),
+        current_branch(&dest).as_deref(),
         Some("main"),
-        "and both leave the checkout attached to the counterpart they moved"
+        "the checkout stays attached to the counterpart it moved"
     );
-    assert_eq!(after_default.2, a_second, "the branch ref is what advanced");
     assert_eq!(
-        after_default.3, lock_before,
-        "a complete lock needs neither a bootstrap nor an additive write, so \
-         neither mode writes it"
+        common::git_in(&dest, &["rev-parse", "main"]),
+        a_second,
+        "the branch ref is what advanced"
+    );
+    assert_eq!(
+        fx.lock_text().unwrap(),
+        lock_before,
+        "a lock that covers every member needs no write, and update makes none"
     );
 }
 
 // ============================================================================
-// A `--role` / `--repo` filter realigns the same way but skips the whole
-// lock-write step — both halves of it.
+// A `--repo` filter narrows which repos are visited, not what happens to them.
 // ============================================================================
 
 #[test]
-fn filtered_fetch_skips_the_bootstrap_lock_write() {
-    let fx = setup(&["github/acme/a", "github/acme/b"]);
-    fx.clone_on_branch("github/acme/a");
-    fx.clone_on_branch("github/acme/b");
-    assert!(fx.lock_text().is_none(), "precondition: no lock on disk");
-
-    rwv()
-        .args(["fetch", "--repo", "github/acme/a"])
-        .current_dir(&fx.workspace)
-        .assert()
-        .success();
-
-    assert!(
-        fx.lock_text().is_none(),
-        "a filtered fetch has not seen every manifest repo, so it writes no \
-         bootstrap lock — even with every clone on disk"
-    );
-}
-
-#[test]
-fn filtered_fetch_skips_the_additive_coverage_write_but_still_realigns() {
-    let fx = setup(&["github/acme/a", "github/acme/b"]);
-    let (a_first, a_second, b_second) = (
+fn a_repo_filter_realigns_the_named_repos_only_and_writes_no_lock() {
+    let fx = setup(&["github/acme/a", "github/acme/b", "github/acme/c"]);
+    let (a_first, a_second, b_second, c_first, c_second) = (
         fx.repo("github/acme/a").first.clone(),
         fx.repo("github/acme/a").second.clone(),
         fx.repo("github/acme/b").second.clone(),
+        fx.repo("github/acme/c").first.clone(),
+        fx.repo("github/acme/c").second.clone(),
     );
-    fx.write_lock(&[("github/acme/a", &a_second)]);
+    fx.write_lock(&[("github/acme/a", &a_second), ("github/acme/c", &c_second)]);
+    // Both covered repos are behind their pins, so each is a fast-forward of
+    // `main` if visited.
     let dest_a = fx.clone_on_branch("github/acme/a");
-    // Behind its pin, so the covered repo really is realigned rather than
-    // being a no-op — and realigning it is a fast-forward of `main`.
     common::git_in(&dest_a, &["reset", "--hard", &a_first]);
     let dest_b = fx.clone_on_branch("github/acme/b");
+    let dest_c = fx.clone_on_branch("github/acme/c");
+    common::git_in(&dest_c, &["reset", "--hard", &c_first]);
     let lock_before = fx.lock_text().unwrap();
 
-    // Both filtered repos are processed: b is the uncovered one, so the
-    // additive entry is produced and then dropped by the filter.
     rwv()
         .args([
-            "fetch",
+            "update",
             "--repo",
             "github/acme/a",
             "--repo",
@@ -501,12 +406,17 @@ fn filtered_fetch_skips_the_additive_coverage_write_but_still_realigns() {
     assert_eq!(
         common::git_in(&dest_a, &["rev-parse", "HEAD"]),
         a_second,
-        "the filter narrows which repos are visited, not what happens to them"
+        "a named repo is realigned"
     );
-    assert_eq!(common::git_in(&dest_b, &["rev-parse", "HEAD"]), b_second);
     assert_eq!(
-        fx.lock_text().unwrap(),
-        lock_before,
-        "the additive entry for the uncovered repo is not written under a filter"
+        common::git_in(&dest_b, &["rev-parse", "HEAD"]),
+        b_second,
+        "a named repo the lock does not cover is left where it is"
     );
+    assert_eq!(
+        common::git_in(&dest_c, &["rev-parse", "HEAD"]),
+        c_first,
+        "a repo the filter does not name is not visited"
+    );
+    assert_eq!(fx.lock_text().unwrap(), lock_before);
 }

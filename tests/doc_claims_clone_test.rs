@@ -1,31 +1,7 @@
-//! Integration tests verifying documented behavior of `rwv fetch`, `rwv member add`,
+//! Integration tests verifying documented behavior of `rwv clone`, `rwv member add`,
 //! and `rwv member remove`.
 //!
 //! Each test states the documented claim it pins in its own section banner.
-//! Where the implementation diverges from what the docs say, the test verifies
-//! the *current* behavior and carries a `// TODO` comment pointing at the gap.
-//!
-//! ## Verb-vocabulary audit (2026-05-24)
-//!
-//! The verb-vocabulary split is:
-//!   - `rwv fetch <source>` is the read-only/align-to-lock verb. It reads
-//!     `rwv.lock` and pins each clone to the locked SHA. It does NOT
-//!     auto-bump the lock when the manifest is fully covered by the lock
-//!     (the headline guarantee tested in `tests/fetch_test.rs::
-//!     fetch_default_reads_lock_and_does_not_bump_it`).
-//!   - `rwv update` is the network-bumping verb that re-snapshots the
-//!     lock from each manifest repo's branch HEAD. Anchored in
-//!     `tests/doc_claims_update_test.rs`.
-//!   - `--frozen` errors when the lock is missing or incomplete (CI gate);
-//!     default mode bootstraps missing lock entries additively. There is
-//!     no `--locked` flag on `rwv fetch`.
-//!
-//! Audit result: none of the doc_claims_fetch tests below assert lock
-//! auto-bumping. The assertions cover name collision, --delete safety,
-//! local-path URL inference, shorthand resolution, and auto-activate
-//! suppression — all orthogonal to the fetch-vs-update split. No
-//! assertions needed updating; this header marker records that the
-//! audit was performed.
 
 use assert_cmd::Command;
 use std::path::Path;
@@ -83,7 +59,8 @@ fn init_bare_repo_with_commit(path: &Path) {
     run(&["push", "origin", "main"], &work);
 }
 
-/// Push an `rwv.toml` manifest into a bare repo (via a temporary working clone).
+/// Push an `rwv.toml` manifest, and the `rwv.lock` pinning each member at its
+/// remote's tip, into a bare repo (via a temporary working clone).
 ///
 /// `repos` is a slice of `(canonical_path, url)` pairs.
 fn push_manifest_to_bare(bare: &Path, repos: &[(&str, &str)]) {
@@ -115,9 +92,52 @@ fn push_manifest_to_bare(bare: &Path, repos: &[(&str, &str)]) {
         ));
     }
     std::fs::write(work.join("rwv.toml"), &manifest_toml).unwrap();
-    run(&["add", "rwv.toml"], &work);
-    run(&["commit", "-m", "add manifest"], &work);
+    common::fixture_lock_at_remote_tips(&work, repos);
+    run(&["add", "rwv.toml", "rwv.lock"], &work);
+    run(&["commit", "-m", "add manifest and lock"], &work);
     run(&["push", "origin", "main"], &work);
+}
+
+/// A bare remote at `<tmp>/<name>.git` holding one commit on `main`; returns
+/// its URL.
+fn member_remote_url(tmp: &Path, name: &str) -> String {
+    let bare = tmp.join(format!("{name}.git"));
+    common::init_bare_repo_with_commit(&bare);
+    common::file_url(&bare)
+}
+
+/// A project remote at `<tmp>/<name>.git` declaring the one member
+/// `(path, url)` at `role`, with a lock pinning it at its tip when `locked`;
+/// returns its URL.
+fn project_with_one_member(
+    tmp: &Path,
+    name: &str,
+    member: (&str, &str),
+    role: &str,
+    locked: bool,
+) -> String {
+    let bare = tmp.join(format!("{name}.git"));
+    init_bare_repo(&bare);
+    let work = tmp.join(format!("{name}-work"));
+    common::git_in(
+        tmp,
+        &["clone", &bare.to_string_lossy(), &work.to_string_lossy()],
+    );
+    let (path, url) = member;
+    std::fs::write(
+        work.join("rwv.toml"),
+        format!(
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nbranch = \"main\"\nrole = \"{role}\"\n"
+        ),
+    )
+    .unwrap();
+    if locked {
+        common::fixture_lock_at_remote_tips(&work, &[member]);
+    }
+    common::git_in(&work, &["add", "."]);
+    common::git_in(&work, &["commit", "-m", "project"]);
+    common::git_in(&work, &["push", "origin", "main"]);
+    common::file_url(&bare)
 }
 
 /// Set up a workspace with a single project that has an `rwv.toml` and is
@@ -158,15 +178,15 @@ fn setup_workspace_with_project(
 }
 
 // ============================================================================
-// Test 1 — name collision on fetch
+// Test 1 — name collision on clone
 //
-// `rwv fetch <source>` over an occupied `projects/<name>/` refuses, naming
-// `rwv fetch --project <name>` for the project already there and an empty
-// directory for fetching this one beside it. Both run.
+// `rwv clone <source>` over an occupied `projects/<name>/` refuses, naming
+// `rwv update --project <name>` for the project already there and an empty
+// directory for cloning this one beside it. Both run.
 // ============================================================================
 
 #[test]
-fn fetch_name_collision_names_the_in_place_fetch_and_an_empty_directory() {
+fn clone_name_collision_names_the_in_place_update_and_an_empty_directory() {
     let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
@@ -175,31 +195,31 @@ fn fetch_name_collision_names_the_in_place_fetch_and_an_empty_directory() {
     push_manifest_to_bare(&project_bare, &[]);
     let project_url = common::file_url(&project_bare);
     rwv()
-        .args(["fetch", &project_url])
+        .args(["clone", &project_url])
         .current_dir(&workspace)
         .assert()
         .success();
 
     let output = rwv()
-        .args(["fetch", &project_url])
+        .args(["clone", &project_url])
         .current_dir(&workspace)
         .output()
-        .expect("rwv fetch should run");
+        .expect("rwv clone should run");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         !output.status.success() && stderr.contains("rwv explain project-dir-occupied"),
-        "fixture: the second fetch refuses for the occupied directory:\n{stderr}"
+        "fixture: the second clone refuses for the occupied directory:\n{stderr}"
     );
     assert!(
-        stderr.contains("`rwv fetch --project web-app` fetches its members in place")
+        stderr.contains("`rwv update --project web-app` brings up its members in place")
             && stderr.contains(&format!(
-                "run `rwv fetch {project_url}` in an empty directory"
+                "run `rwv clone {project_url}` in an empty directory"
             )),
-        "the refusal names the in-place fetch and the empty directory:\n{stderr}"
+        "the refusal names the in-place update and the empty directory:\n{stderr}"
     );
 
     rwv()
-        .args(["fetch", "--project", "web-app"])
+        .args(["update", "--project", "web-app"])
         .current_dir(&workspace)
         .assert()
         .success();
@@ -207,7 +227,7 @@ fn fetch_name_collision_names_the_in_place_fetch_and_an_empty_directory() {
     let beside = tmp.path().join("beside");
     std::fs::create_dir_all(&beside).unwrap();
     rwv()
-        .args(["fetch", &project_url])
+        .args(["clone", &project_url])
         .current_dir(&beside)
         .assert()
         .success();
@@ -369,7 +389,7 @@ fn add_from_local_path_infers_url() {
 // ============================================================================
 // Test 4 — two-segment shorthand resolves to github.com
 //
-// Doc claim: `rwv fetch owner/name` (two-segment shorthand) resolves to
+// Doc claim: `rwv clone owner/name` (two-segment shorthand) resolves to
 //             github.com and clones.
 //
 // We verify resolution without network access by checking that the error
@@ -378,24 +398,20 @@ fn add_from_local_path_infers_url() {
 // ============================================================================
 
 #[test]
-fn fetch_shorthand_notation_resolves_to_github() {
+fn clone_shorthand_notation_resolves_to_github() {
     let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
-    // Use a nonexistent owner/repo so the clone fails immediately without
-    // network traffic (git will fail to connect or resolve the host).
-    // The error should mention "github.com", proving shorthand expansion worked.
     let output = rwv()
-        .args(["fetch", "nonexistent-owner-xyzzy/nonexistent-repo-xyzzy"])
+        .args(["clone", "nonexistent-owner-xyzzy/nonexistent-repo-xyzzy"])
         .current_dir(&workspace)
         .output()
-        .expect("rwv fetch should run");
+        .expect("rwv clone should run");
 
-    // Expect failure (clone will not succeed).
     assert!(
         !output.status.success(),
-        "fetch of nonexistent shorthand repo should fail"
+        "clone of nonexistent shorthand repo should fail"
     );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -409,93 +425,92 @@ fn fetch_shorthand_notation_resolves_to_github() {
     );
 }
 
-/// Alternative version of test 4 using a local bare repo via a three-segment
-/// `local/owner/repo` style path (file:// URL, no network required).
-///
-/// This exercises a different resolution path through the registry but confirms
-/// that fetch correctly resolves shorthand and clones the content.
+/// A full `file://` URL is passed through as it stands (shorthand only expands
+/// for known registries like github and gitlab), and the project clones under
+/// the name of the repository.
 #[test]
-fn fetch_shorthand_notation_with_local_bare_repo() {
+fn clone_of_a_file_url_names_the_project_for_the_repository() {
     let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
-    // Create a bare repo with a manifest so fetch has something to clone.
     let project_bare = tmp.path().join("myproject.git");
     init_bare_repo(&project_bare);
     push_manifest_to_bare(&project_bare, &[]);
-
-    // Use a full file:// URL (shorthand only works for known registries like
-    // github/gitlab; file:// URLs are passed through directly).
     let project_url = common::file_url(&project_bare);
 
     rwv()
-        .args(["fetch", &project_url])
+        .args(["clone", &project_url])
         .current_dir(&workspace)
         .assert()
         .success();
 
-    // The project should be cloned under projects/myproject/
     assert!(
         workspace.join("projects/myproject").exists(),
         "project should be cloned to projects/myproject"
     );
 }
 
-/// A project remote whose commit carries an empty manifest and the empty lock
-/// that covers it, so `--frozen` has nothing to refuse.
-fn locked_empty_project_bare(tmp: &tempfile::TempDir, name: &str) -> String {
-    let bare = tmp.path().join(format!("{name}.git"));
-    init_bare_repo(&bare);
-    let work = tmp.path().join(format!("{name}-work"));
-    common::git_in(
-        tmp.path(),
-        &["clone", bare.to_str().unwrap(), work.to_str().unwrap()],
-    );
-    common::git_in(&work, &["config", "user.email", "test@test.com"]);
-    common::git_in(&work, &["config", "user.name", "Test"]);
-    std::fs::write(work.join("rwv.toml"), "[repositories]\n").unwrap();
-    common::fixture_lock(&work, &[]);
-    common::git_in(&work, &["add", "rwv.toml", "rwv.lock"]);
-    common::git_in(&work, &["commit", "-m", "manifest and lock"]);
-    common::git_in(&work, &["push", "origin", "main"]);
-    common::file_url(&bare)
-}
+// ============================================================================
+// Test 4b — activation is not lock coverage
+//
+// A clone activates the project it created when none is active, whether the
+// clone lists members the lock cannot place or skips members with a filter.
+// ============================================================================
 
-/// Activation is not lock coverage: neither `--frozen` nor a filter skips the
-/// first fetch's activation of the project it created.
 #[test]
-fn a_frozen_or_filtered_first_fetch_still_activates_the_project() {
+fn a_clone_that_lists_members_or_skips_references_still_activates_the_project() {
     let tmp = common::tempdir().unwrap();
-    for (name, extra) in [("frozen-app", "--frozen"), ("filtered-app", "--repo=none")] {
-        let url = locked_empty_project_bare(&tmp, name);
+
+    let owned_url = member_remote_url(tmp.path(), "owned-member");
+    let unlocked = project_with_one_member(
+        tmp.path(),
+        "unlocked-app",
+        ("local/org/member", &owned_url),
+        "owned",
+        false,
+    );
+    let reference_url = member_remote_url(tmp.path(), "reference-member");
+    let filtered = project_with_one_member(
+        tmp.path(),
+        "filtered-app",
+        ("local/org/reference", &reference_url),
+        "reference",
+        true,
+    );
+
+    for (name, url, extra, code) in [
+        ("unlocked-app", unlocked, None, 3),
+        ("filtered-app", filtered, Some("--no-reference"), 0),
+    ] {
         let workspace = tmp.path().join(format!("ws-{name}"));
         std::fs::create_dir_all(&workspace).unwrap();
 
-        rwv()
-            .args(["fetch", extra, &url])
-            .current_dir(&workspace)
-            .assert()
-            .success();
+        let mut cmd = rwv();
+        cmd.arg("clone").arg(&url);
+        if let Some(extra) = extra {
+            cmd.arg(extra);
+        }
+        cmd.current_dir(&workspace).assert().code(code);
 
         assert_eq!(
             std::fs::read_to_string(workspace.join(".rwv-active"))
                 .unwrap_or_default()
                 .trim(),
             name,
-            "`rwv fetch {extra} <source>` must activate the project it cloned"
+            "`rwv clone <source> {extra:?}` must activate the project it cloned"
         );
     }
 }
 
 // ============================================================================
-// Test 5 — fetching a second project leaves the active project alone
+// Test 5 — cloning a second project leaves the active project alone
 //
-// Doc claim: Fetching a second project does not change the active project.
+// Doc claim: Cloning a second project does not change the active project.
 // ============================================================================
 
 #[test]
-fn fetch_second_project_does_not_auto_activate() {
+fn clone_second_project_does_not_auto_activate() {
     let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
@@ -508,9 +523,9 @@ fn fetch_second_project_does_not_auto_activate() {
     push_manifest_to_bare(&project_a_bare, &[]);
     let url_a = common::file_url(&project_a_bare);
 
-    // Fetch project A — this should activate it (first fetch, no .rwv-active yet).
+    // Clone project A — this should activate it (first clone, no .rwv-active yet).
     rwv()
-        .args(["fetch", &url_a])
+        .args(["clone", &url_a])
         .current_dir(&workspace)
         .assert()
         .success();
@@ -519,13 +534,13 @@ fn fetch_second_project_does_not_auto_activate() {
     let active_path = workspace.join(".rwv-active");
     assert!(
         active_path.exists(),
-        ".rwv-active should exist after first fetch"
+        ".rwv-active should exist after first clone"
     );
     let active_after_a = std::fs::read_to_string(&active_path).expect("failed to read .rwv-active");
     assert_eq!(
         active_after_a.trim(),
         "project-a",
-        "project-a should be active after fetching it"
+        "project-a should be active after cloning it"
     );
 
     // ------------------------------------------------------------------
@@ -536,65 +551,39 @@ fn fetch_second_project_does_not_auto_activate() {
     push_manifest_to_bare(&project_b_bare, &[]);
     let url_b = common::file_url(&project_b_bare);
 
-    // Fetch project B — .rwv-active already exists, so activation is skipped.
+    // Clone project B — .rwv-active already exists, so activation is skipped.
     rwv()
-        .args(["fetch", &url_b])
+        .args(["clone", &url_b])
         .current_dir(&workspace)
         .assert()
         .success();
 
     // .rwv-active must still point to project-a.
     let active_after_b = std::fs::read_to_string(&active_path)
-        .expect("failed to read .rwv-active after second fetch");
+        .expect("failed to read .rwv-active after second clone");
     assert_eq!(
         active_after_b.trim(),
         "project-a",
-        "second fetch must not overwrite .rwv-active; project-a should remain active"
+        "second clone must not overwrite .rwv-active; project-a should remain active"
     );
 }
 
 // ============================================================================
 // Test 6 — --json envelope assertion
 //
-// Doc claim: `rwv fetch --json -j 1` emits `{ "$schema": "<url>", "outcomes": [...] }`
-// envelope. Each element of `outcomes` has `path`, `absolute_path`, and `status`.
+// Doc claim: `rwv clone --json -j 1` emits
+// `{ "$schema": "<url>", "outcomes": [...], "left": [...] }` envelope. Each
+// element of `outcomes` has `path`, `absolute_path`, and `status`; `left` is
+// empty when every member sits at its pin.
 // ============================================================================
 
 #[test]
-fn fetch_json_envelope_shape() {
+fn clone_json_envelope_shape() {
     let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
-    // Create a repo for the manifest.
-    let repo_bare = tmp.path().join("the-repo.git");
-    let repo_bare_url = common::file_url(&repo_bare);
-    let status = common::git()
-        .args(["init", "--bare", "--initial-branch=main"])
-        .arg(&repo_bare)
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::null())
-        .status()
-        .expect("git");
-    assert!(status.success());
-
-    // Clone + commit + push to make repo_bare fetchable.
-    let tmp_work = common::tempdir().unwrap();
-    let work = tmp_work.path().join("work");
-    common::git_in(
-        tmp_work.path(),
-        &[
-            "clone",
-            &repo_bare.to_string_lossy(),
-            &work.to_string_lossy(),
-        ],
-    );
-    common::git_in(&work, &["config", "user.email", "test@test.com"]);
-    common::git_in(&work, &["config", "user.name", "Test"]);
-    std::fs::write(work.join("README"), "init").unwrap();
-    common::git_in(&work, &["add", "."]);
-    common::git_in(&work, &["commit", "-m", "initial"]);
-    common::git_in(&work, &["push", "origin", "main"]);
+    let repo_bare_url = member_remote_url(tmp.path(), "the-repo");
 
     // Create project bare with manifest pointing at the repo.
     let project_bare = tmp.path().join("proj.git");
@@ -602,9 +591,9 @@ fn fetch_json_envelope_shape() {
     push_manifest_to_bare(&project_bare, &[("local/org/the-repo", &repo_bare_url)]);
     let project_url = common::file_url(&project_bare);
 
-    // Run `rwv fetch --json -j 1` (explicit serial = envelope).
+    // Run `rwv clone --json -j 1` (explicit serial = envelope).
     let assert = rwv()
-        .args(["fetch", &project_url, "--json", "-j", "1"])
+        .args(["clone", &project_url, "--json", "-j", "1"])
         .current_dir(&workspace)
         .assert()
         .success();
@@ -620,8 +609,8 @@ fn fetch_json_envelope_shape() {
         .and_then(serde_json::Value::as_str)
         .expect("$schema missing");
     assert!(
-        schema_val.ends_with("/docs/reference/schemas/fetch.json"),
-        "$schema must end with /docs/reference/schemas/fetch.json; got: {schema_val}"
+        schema_val.ends_with("/docs/reference/schemas/clone.json"),
+        "$schema must end with /docs/reference/schemas/clone.json; got: {schema_val}"
     );
 
     // outcomes must be an array.
@@ -639,50 +628,30 @@ fn fetch_json_envelope_shape() {
         Some("ok"),
         "repo should be ok"
     );
+
+    assert_eq!(
+        obj.get("left"),
+        Some(&serde_json::json!([])),
+        "the member sits at its pin, so none is left"
+    );
 }
 
 // ============================================================================
 // Test 7 — --json -j N envelope assertion
 //
-// Doc claim: `rwv fetch -j 2 --json` emits the same single envelope as
+// Doc claim: `rwv clone -j 2 --json` emits the same single envelope as
 // `-j 1`, whatever `-j` is, with `outcomes` sorted by repo path.
 // ============================================================================
 
 #[test]
-fn fetch_json_envelope_under_parallel_jobs() {
+fn clone_json_envelope_under_parallel_jobs() {
     let tmp = common::tempdir().unwrap();
     let workspace = tmp.path().join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
     // Create two repos so we actually hit the parallel path.
-    let bare_a = tmp.path().join("aa.git");
-    let bare_b = tmp.path().join("bb.git");
-    let url_a = common::file_url(&bare_a);
-    let url_b = common::file_url(&bare_b);
-
-    for bare in &[&bare_a, &bare_b] {
-        let s = common::git()
-            .args(["init", "--bare", "--initial-branch=main"])
-            .arg(*bare)
-            .stdout(process::Stdio::null())
-            .stderr(process::Stdio::null())
-            .status()
-            .unwrap();
-        assert!(s.success());
-
-        let tw = common::tempdir().unwrap();
-        let w = tw.path().join("w");
-        common::git_in(
-            tw.path(),
-            &["clone", &bare.to_string_lossy(), &w.to_string_lossy()],
-        );
-        common::git_in(&w, &["config", "user.email", "test@test.com"]);
-        common::git_in(&w, &["config", "user.name", "Test"]);
-        std::fs::write(w.join("README"), "init").unwrap();
-        common::git_in(&w, &["add", "."]);
-        common::git_in(&w, &["commit", "-m", "initial"]);
-        common::git_in(&w, &["push", "origin", "main"]);
-    }
+    let url_a = member_remote_url(tmp.path(), "aa");
+    let url_b = member_remote_url(tmp.path(), "bb");
 
     let project_bare = tmp.path().join("proj.git");
     init_bare_repo(&project_bare);
@@ -693,7 +662,7 @@ fn fetch_json_envelope_under_parallel_jobs() {
     let project_url = common::file_url(&project_bare);
 
     let assert = rwv()
-        .args(["fetch", &project_url, "--json", "-j", "2"])
+        .args(["clone", &project_url, "--json", "-j", "2"])
         .current_dir(&workspace)
         .assert()
         .success();
@@ -703,8 +672,8 @@ fn fetch_json_envelope_under_parallel_jobs() {
         .unwrap_or_else(|e| panic!("stdout not one JSON document ({e}):\n{stdout}"));
     let schema_val = parsed["$schema"].as_str().expect("$schema missing");
     assert!(
-        schema_val.ends_with("/docs/reference/schemas/fetch.json"),
-        "$schema must end with /docs/reference/schemas/fetch.json; got: {schema_val}"
+        schema_val.ends_with("/docs/reference/schemas/clone.json"),
+        "$schema must end with /docs/reference/schemas/clone.json; got: {schema_val}"
     );
     let outcomes = parsed["outcomes"]
         .as_array()

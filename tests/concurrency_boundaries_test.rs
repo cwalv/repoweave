@@ -138,7 +138,7 @@ const ADVISORY_REFUSAL_SITES: [(&str, usize); 6] = [
     ("backup.rs", 2),
     ("check.rs", 1),
     ("lock.rs", 1),
-    ("update.rs", 1),
+    ("update_remote.rs", 1),
     ("workweave.rs", 1),
 ];
 

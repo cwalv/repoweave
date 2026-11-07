@@ -185,7 +185,7 @@ fn is_live_edit(finding: &str) -> bool {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn a_deleted_canonical_clone_is_fetched_then_the_workweave_checkout_is_relinked() {
+fn a_deleted_canonical_clone_is_restored_by_update_then_the_workweave_checkout_is_relinked() {
     let w = Weave::new();
     std::fs::remove_dir_all(w.canonical()).unwrap();
 
@@ -204,12 +204,12 @@ fn a_deleted_canonical_clone_is_fetched_then_the_workweave_checkout_is_relinked(
     assert_names(
         &printed,
         &[
-            "`rwv fetch --project demo` at the primary weave",
+            "`rwv update --project demo` at the primary weave",
             "`rwv doctor --fix` there",
         ],
     );
 
-    rwv(&w.primary, &["fetch", "--project", "demo"]);
+    rwv(&w.primary, &["update", "--project", "demo"]);
     let between = findings(&w.workweave, false);
     assert!(
         between.contains(&format!("workweave-drift/dangling-link {MEMBER}"))
@@ -241,7 +241,7 @@ fn an_uncommitted_edit_survives_the_relink_onto_a_recreated_branch() {
     std::fs::write(&edited, format!("{original}edited\n")).unwrap();
     std::fs::remove_dir_all(w.canonical()).unwrap();
 
-    rwv(&w.primary, &["fetch", "--project", "demo"]);
+    rwv(&w.primary, &["update", "--project", "demo"]);
     doctor_fix(&w.primary);
 
     assert_eq!(
@@ -437,13 +437,13 @@ fn each_advice(dir: &Path) -> String {
         .to_owned()
 }
 
-const EACH_STEPS: &[&str] = &["run `rwv fetch`", "then `rwv doctor --fix`"];
+const EACH_STEPS: &[&str] = &["run `rwv update`", "then `rwv doctor --fix`"];
 
 #[test]
 fn rwv_each_advice_in_the_workweave_restores_a_removed_checkout() {
     let (w, tip, before, unlanded) = removed_checkout(Branch::Moved);
     assert_names(&each_advice(&w.workweave), EACH_STEPS);
-    rwv(&w.workweave, &["fetch"]);
+    rwv(&w.workweave, &["update"]);
     doctor_fix(&w.workweave);
     assert_restored(&w, &tip, &before, unlanded.as_deref());
 }
@@ -453,7 +453,7 @@ fn rwv_each_advice_in_the_primary_restores_a_deleted_canonical_clone_and_its_wor
     let w = Weave::new();
     std::fs::remove_dir_all(w.canonical()).unwrap();
     assert_names(&each_advice(&w.primary), EACH_STEPS);
-    rwv(&w.primary, &["fetch"]);
+    rwv(&w.primary, &["update"]);
     doctor_fix(&w.primary);
 
     assert_eq!(status(&w.checkout()), format!("## {BRANCH}\n"));
@@ -474,7 +474,7 @@ fn a_locked_registration_of_a_removed_checkout_is_left_and_named() {
     std::fs::remove_dir_all(w.checkout()).unwrap();
 
     let out = common::rwv()
-        .args(["fetch"])
+        .args(["update"])
         .current_dir(&w.workweave)
         .output()
         .unwrap();
@@ -491,7 +491,7 @@ fn a_locked_registration_of_a_removed_checkout_is_left_and_named() {
         w.canonical(),
         &["worktree", "unlock", &w.checkout().to_string_lossy()],
     );
-    rwv(&w.workweave, &["fetch"]);
+    rwv(&w.workweave, &["update"]);
     assert_eq!(status(&w.checkout()), format!("## {BRANCH}\n"));
 }
 
@@ -513,12 +513,12 @@ fn a_pin_lost_with_the_deleted_clone_is_given_up_under_consent_keeping_the_files
     assert_names(
         &printed,
         &[
-            "`rwv fetch --project demo`",
+            "`rwv update --project demo`",
             "`rwv doctor --fix` there",
             "`--abandon-lost-pins`",
         ],
     );
-    rwv(&w.primary, &["fetch", "--project", "demo"]);
+    rwv(&w.primary, &["update", "--project", "demo"]);
     let fixed = doctor_fix(&w.primary);
     assert!(
         !fixed.contains("retracted dangling ownership receipt"),

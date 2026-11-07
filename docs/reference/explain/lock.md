@@ -13,7 +13,7 @@ Every entry is the commit id HEAD is on, never a tag or branch name, even
 when a tag points at HEAD. A name can be moved or deleted after the lock is
 written; a commit id cannot, so the lock resolves to the same tree however
 the names around it change. The same holds for every writer of the lock,
-including the `rwv sync` and `rwv fetch` paths that write it internally.
+including the `rwv sync` and `rwv update --remote` paths that write it internally.
 
 An older or hand-edited lock may still carry an entry pinned by name.
 Verbs that read the lock resolve such an entry to wherever the name points
@@ -48,9 +48,12 @@ single repo) to record the new cross-repo state. Common patterns:
   but do not auto-lock; run `rwv lock --commit` to checkpoint the new
   membership.
 
-Do **not** run `rwv lock` in place of `rwv update`. `lock` snapshots
-*current local HEADs*; `update` fetches from the network and advances tips.
-If you want the latest upstream commits, use `rwv update`.
+Do **not** run `rwv lock` in place of `rwv update --remote`. `lock` snapshots
+*current local HEADs*; `update --remote` fetches from the network and advances
+tips. If you want the latest upstream commits, use `rwv update --remote`.
+
+`rwv clone` and `rwv update` never write the lock: a member the lock has no
+entry for is left unpinned, and `rwv lock` records it.
 
 ### Stale-lock relationship
 

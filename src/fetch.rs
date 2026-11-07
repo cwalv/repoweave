@@ -1,90 +1,149 @@
-//! `rwv fetch` — clone a project and its repos into the workspace.
+//! `rwv fetch` — the pruning fetch of every remote of every repo.
 //!
-//! The source must be a URL (full URL or `owner/repo` shorthand resolved via
-//! the registry). A plain path is refused: a local remote is spelled
-//! `file://`, and a project already in the weave is fetched without a source.
+//! It brings remote branches and tags into each repo's object store, drops
+//! the remote-tracking branches a remote no longer has, and reports what
+//! moved. No local branch, no checkout and no lock moves: `rwv update` and
+//! `rwv pull` are the verbs that act on what it brought.
 
-use crate::activate::ActivateOptions;
-use crate::cli::consent::DetachConsent;
-use crate::lock;
-use crate::manifest::{LockEntry, LockFile, Manifest, RepoEntry, RepoPath, Role};
-use crate::parallel::{run_in_parallel, OutputMode, Reporter};
-use crate::placement::PlacementOutput;
-use crate::refusal::{refusal, RefusalKind};
-use crate::registry;
-use crate::selector::RepoFilter;
-use crate::skipped::{SkipReason, SkippedEffect};
-use crate::vcs::{
-    project_vcs, vcs_for, HeadAttachment, RawRevisionId, ReplayExclusionState, ResolvedRevisionId,
-    Vcs, VcsError,
-};
-use crate::workspace::{
-    observe_root, project_dir, projects_dir, Checkout, Resolution, RootObservation,
-    WorkspaceContext,
-};
+use crate::fetch_claim::FetchClaim;
+use crate::manifest::{Manifest, ProjectName};
+use crate::member_selection::MemberSelection;
+use crate::parallel::{run_in_parallel, OutputMode};
+use crate::refusal::RefusalKind;
+use crate::vcs::{project_vcs, vcs_for, BranchChange, PruningFetch, RemoteBranchMove, Vcs};
+use crate::workspace::{project_dir, Checkout, Resolution, WorkspaceContext};
 use anyhow::Context;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 
 /// Schema URL embedded in `rwv fetch --json` output. Pins to the committed
 /// artifact under `docs/reference/schemas/fetch.json`.
 pub const FETCH_SCHEMA_URL: &str = crate::schema_url::schema_url!("fetch");
 
-/// Per-repo outcome record for `rwv fetch --json`.
-///
-/// `status` is one of `"ok"`, `"skipped"`, or `"failed"`. `message` carries
-/// a human-readable description of the outcome (always present for `"failed"`;
-/// present for `"skipped"` to say why; `null` for `"ok"`).
+/// How a remote-tracking branch moved, as `rwv fetch --json` spells it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum BranchMoveKind {
+    /// The remote has the branch and the repo had no record of it.
+    Created,
+    /// The new tip descends from the old one.
+    Advanced,
+    /// The new tip does not descend from the old one. The old tip is kept as
+    /// the branch's superseded tip.
+    Rewritten,
+    /// The remote no longer has the branch.
+    Pruned,
+}
+
+/// One remote-tracking branch a fetch moved.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct BranchMoveOutput {
+    /// The branch, qualified by its remote (`origin/main`).
+    pub branch: String,
+    #[serde(rename = "move")]
+    pub kind: BranchMoveKind,
+    /// The tip before the fetch. Absent for a `created` branch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    /// The tip after the fetch. Absent for a `pruned` branch.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to: Option<String>,
+}
+
+impl BranchMoveOutput {
+    fn of(moved: &RemoteBranchMove) -> Self {
+        let (kind, from, to) = match &moved.change {
+            BranchChange::Created { to } => (BranchMoveKind::Created, None, Some(to.clone())),
+            BranchChange::Advanced { from, to } => (
+                BranchMoveKind::Advanced,
+                Some(from.clone()),
+                Some(to.clone()),
+            ),
+            BranchChange::Rewritten { from, to } => (
+                BranchMoveKind::Rewritten,
+                Some(from.clone()),
+                Some(to.clone()),
+            ),
+            BranchChange::Pruned { from } => (BranchMoveKind::Pruned, Some(from.clone()), None),
+        };
+        Self {
+            branch: moved.branch.clone(),
+            kind,
+            from,
+            to,
+        }
+    }
+
+    fn line(&self) -> String {
+        let short = |tip: &Option<String>| {
+            tip.as_deref()
+                .map(|t| crate::vcs::short_revision(t).to_owned())
+                .unwrap_or_default()
+        };
+        match self.kind {
+            BranchMoveKind::Created => format!("{} created at {}", self.branch, short(&self.to)),
+            BranchMoveKind::Advanced => {
+                format!("{} {}..{}", self.branch, short(&self.from), short(&self.to))
+            }
+            BranchMoveKind::Rewritten => format!(
+                "{} rewritten {}..{} (the previous tip is kept as superseded)",
+                self.branch,
+                short(&self.from),
+                short(&self.to)
+            ),
+            BranchMoveKind::Pruned => {
+                format!("{} pruned (was {})", self.branch, short(&self.from))
+            }
+        }
+    }
+}
+
+/// How a repo's fetch ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum FetchStatus {
+    /// Every remote answered.
+    Fetched,
+    /// A remote could not be completed, the cause named in `message`. Later
+    /// verbs read the repo's remote-tracking branches as last fetched.
+    Unconfirmed,
+    /// The repo was not fetched, the reason named in `message`.
+    Skipped,
+}
+
+/// One repo's record in `rwv fetch --json`.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
-pub struct FetchOutcomeOutput {
+pub struct FetchedRepoOutput {
+    /// The repo's path: a member's manifest path, or `projects/<name>` for the
+    /// project repo.
     pub path: String,
     pub absolute_path: crate::path_spelling::WirePath,
-    pub status: FetchOutcomeStatus,
+    pub status: FetchStatus,
+    /// Each remote-tracking branch that moved, by branch.
+    pub moved: Vec<BranchMoveOutput>,
+    /// The cause of an `unconfirmed` fetch, or the reason for a `skipped` one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
-    /// The refusal token of a `failed` repo, resolvable with `rwv explain
-    /// <token>`. Absent when the failure carries no classified refusal.
+    /// The refusal token of an `unconfirmed` repo whose cause is a refusal,
+    /// resolvable with `rwv explain <token>`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refusal: Option<String>,
 }
 
-impl FetchOutcomeOutput {
-    pub fn is_failure(&self) -> bool {
-        self.status == FetchOutcomeStatus::Failed
-    }
-}
-
-/// Status discriminant for [`FetchOutcomeOutput`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case")]
-pub enum FetchOutcomeStatus {
-    Ok,
-    Skipped,
-    Failed,
-}
-
 /// Top-level envelope for `rwv fetch --json`.
 ///
-/// Shape: `{ "$schema": "<url>", "outcomes": [<FetchOutcomeOutput>, ...] }`.
+/// Shape: `{ "$schema": "<url>", "repos": [<FetchedRepoOutput>, ...] }`.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct FetchJsonOutput {
     #[serde(rename = "$schema")]
     pub schema: String,
-    pub outcomes: Vec<FetchOutcomeOutput>,
-    /// How the files of each checkout the fetch moved or created were placed:
-    /// a canonical clone it realigned, and from a workweave each worktree it
-    /// created there. Empty, not absent, when it placed none.
-    pub placements: Vec<PlacementOutput>,
+    /// The repos sorted by path: the project repo first, then the members.
+    pub repos: Vec<FetchedRepoOutput>,
     /// Resolved workspace coordinates (weave root, optional workweave
     /// identity, project). Absent when no project is resolved.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resolution: Option<Resolution>,
-    /// The materialization side effects this fetch skipped, each naming the
-    /// command that performs it. Empty, not absent, when it skipped none.
-    #[serde(default)]
-    pub skipped: Vec<SkippedEffect>,
 }
 
 impl FetchJsonOutput {
@@ -95,1372 +154,217 @@ impl FetchJsonOutput {
     }
 }
 
-/// Controls how `rwv fetch` resolves repo versions.
-///
-/// - `Default`: read `rwv.lock` and align clones to it. The lock is the
-///   source of truth for which revision each repo should be at. When the
-///   lock is absent, fetch bootstraps it from branch HEAD (one-time event).
-///   When a manifest entry is missing from the lock, it is added at branch
-///   HEAD (additive only — never moves existing SHAs).
-/// - `Frozen`: like `Default`, but errors if the lock file is missing or
-///   does not cover all manifest repos (CI mode). Never mutates the lock.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FetchMode {
-    /// Read rwv.lock, align clones, bootstrap or add missing entries
-    /// additively.
-    Default,
-    /// Like Default, but error when the lock is absent or incomplete
-    /// rather than writing it. Clones are aligned the same way.
-    Frozen,
+/// Fetch every remote of the repo at `dir` under the claim on its object
+/// store, recording each superseded tip, and report what moved.
+pub(crate) fn pruning_fetch(vcs: &dyn Vcs, dir: &Path) -> anyhow::Result<PruningFetch> {
+    FetchClaim::hold(vcs, dir, |claim| {
+        vcs.fetch_pruning(claim, dir).map_err(anyhow::Error::from)
+    })
 }
 
-/// Resolve `source` to a clone URL.
-///
-/// Accepts full URLs (returned as-is) or `owner/repo` / `registry/owner/repo`
-/// shorthand (resolved via the built-in registries to an HTTPS clone URL).
-fn resolve_source(source: &str) -> anyhow::Result<registry::CloneUrl> {
-    let parsed: crate::manifest::RepoUrl = source.parse()?;
-    if parsed.is_plain_path() {
-        crate::refuse!(
-            RefusalKind::UnresolvableRepoSource,
-            "rwv fetch: '{source}' is a plain path, which names no remote to clone the \
-             project from. To clone from a local remote, spell it as a URL: \
-             `rwv fetch {file_url}`. To fetch the members of a project already in this \
-             weave at projects/<name>/, drop SOURCE: `rwv fetch --project <name>`.",
-            file_url = crate::path_spelling::file_url_suggestion(source),
-        );
-    }
-    Ok(registry::resolve_to_clone_info(&parsed)?.url)
+struct Target {
+    path: String,
+    dir: PathBuf,
+    vcs: Box<dyn Vcs>,
 }
 
-/// Which members of a manifest a fetch acts on: the ones `--role` and `--repo`
-/// name, less the `reference`-role ones under `--no-reference`. Decided once,
-/// where the flags are parsed; every step of the fetch asks it.
-#[derive(Debug, Clone)]
-pub struct MemberSelection {
-    filter: RepoFilter,
-    skip_reference: bool,
-}
-
-impl MemberSelection {
-    pub fn new(filter: RepoFilter, no_reference: bool) -> Self {
-        Self {
-            filter,
-            skip_reference: no_reference,
-        }
-    }
-
-    /// Whether `--role` / `--repo` name this member, or name none at all.
-    fn names(&self, repo_path: &RepoPath, role: Role) -> bool {
-        self.filter.matches(repo_path, role)
-    }
-
-    /// Whether `--no-reference` opts this member out of the fetch.
-    fn leaves_out(&self, role: Role) -> bool {
-        self.skip_reference && role == Role::Reference
-    }
-
-    /// Whether the fetch acts on this member.
-    fn covers(&self, repo_path: &RepoPath, role: Role) -> bool {
-        self.names(repo_path, role) && !self.leaves_out(role)
-    }
-
-    /// Whether no `--role` or `--repo` narrows the fetch.
-    fn names_every_member(&self) -> bool {
-        self.filter.is_empty()
-    }
-}
-
-/// Validate that a lock file covers all repos in the manifest.
-///
-/// Returns a list of repo paths present in the manifest but missing from the lock.
-/// A member the selection leaves out is not checked — the user has opted out
-/// of fetching it, so a missing lock entry for it shouldn't fail `--frozen`.
-fn find_incomplete_repos(
-    manifest: &Manifest,
-    lock: &LockFile,
+/// The repos `rwv fetch` covers in `ctx`'s project: the project repo, unless a
+/// selector narrows the fetch to members, then each selected member.
+fn targets(
+    ctx: &WorkspaceContext,
+    project: &ProjectName,
     selection: &MemberSelection,
-) -> Vec<RepoPath> {
-    manifest
-        .iter_entries()
-        .filter(|(_, entry)| !selection.leaves_out(entry.role))
-        .map(|(rp, _)| rp)
-        .filter(|rp| !lock.contains_repo(rp))
-        .cloned()
-        .collect()
+) -> anyhow::Result<Vec<Target>> {
+    let manifest_path = project_dir(ctx.active_path(), project).join(Manifest::FILE_NAME);
+    let manifest = Manifest::from_path(&manifest_path)
+        .with_context(|| format!("failed to read manifest from {}", manifest_path.display()))?;
+    let mut targets = Vec::new();
+    if selection.names_every_member() {
+        targets.push(Target {
+            path: crate::workspace::project_rel_path(project).to_string(),
+            dir: project_dir(ctx.primary_path(), project),
+            vcs: project_vcs(),
+        });
+    }
+    targets.extend(
+        manifest
+            .iter_entries()
+            .filter(|(path, entry)| selection.covers(path, entry.role))
+            .map(|(path, entry)| Target {
+                path: path.to_string(),
+                dir: ctx.primary_path().join(path.as_path()),
+                vcs: vcs_for(entry.vcs_type),
+            }),
+    );
+    Ok(targets)
 }
 
-/// Per-repo outcome of the fetch loop body. Communicates back to the
-/// caller (1) whether the repo succeeded, (2) whether it should be added
-/// to the lock under additive bootstrap rules, and (3) what to print in
-/// the error report on failure.
-enum FetchOutcome {
-    /// Repo handled successfully. `add_to_lock` is set iff the repo was
-    /// new to an existing lock and needs an additive entry post-join.
-    Ok { add_to_lock: Option<RepoPath> },
-    /// Repo intentionally skipped (e.g. `--no-reference` on a reference
-    /// repo). Not counted as failure; not counted as success.
-    Skipped,
-    /// Repo failed. Its `{:#}` rendering is the aggregated-error-report
-    /// message, and a refusal tagged anywhere in its chain names the record's
-    /// `refusal`.
-    Failed(anyhow::Error),
+fn project_of(ctx: &WorkspaceContext) -> anyhow::Result<ProjectName> {
+    match &ctx.checkout {
+        Checkout::Primary { .. } => Ok(ctx.require_active_project_on_disk()?.clone()),
+        Checkout::Workweave { project, .. } => Ok(project.clone()),
+    }
 }
 
-/// Run the fetch command: clone a project source, then align repos to the
-/// lock file (bootstrapping it if necessary in Default mode).
+/// Run `rwv fetch` for the project `ctx` resolved: the pruning fetch of the
+/// project repo and each selected member, `jobs` at a time.
 ///
-/// `workspace_root` is the directory where repos and `projects/` live (CWD).
-///
-/// Lock mutation:
-/// - `Default`: bootstrap the lock from branch HEAD when absent; otherwise
-///   read existing entries and additively add missing ones at branch HEAD.
-///   Never advances entries that already exist in the lock.
-/// - `Frozen`: never writes the lock; errors if missing or incomplete (CI mode).
-///
-/// `jobs` is the resolved worker count (post-[`crate::parallel::resolve_jobs`]).
-/// `jobs == 1` runs serially with no prefix; `jobs > 1` runs the per-repo
-/// clone/checkout loop on a bounded worker pool, prefixing each line with
-/// the repo path. Project-level steps (cloning the project repo,
-/// validating the lock, writing the lock at the end, auto-activate) all
-/// happen serially.
-///
-/// Under `--json`, one `{ "$schema": ..., "outcomes": [...] }` envelope
-/// reaches stdout after all repos complete, its records sorted by repo path.
-#[allow(clippy::too_many_arguments)]
+/// The canonical clone is fetched whether the verb runs in the primary or in
+/// a workweave, whose worktrees draw from it. Nothing is checked out or
+/// moved, so every checkout, branch and the lock read the same afterwards.
 pub fn run_fetch(
-    source: &str,
-    workspace_root: &Path,
-    mode: FetchMode,
+    ctx: &WorkspaceContext,
     selection: &MemberSelection,
-    detach_checkouts: Option<DetachConsent>,
     jobs: usize,
     output: OutputMode,
-    activation: ActivateOptions,
 ) -> anyhow::Result<()> {
-    let project_vcs = project_vcs();
-
-    // Resolve source to a clone URL (supports full URLs and owner/repo shorthand).
-    let url = resolve_source(source)?;
-    let name = crate::manifest::ProjectName::new(registry::repo_name_from_source(url.as_str()))?;
-    let projects_dir = projects_dir(workspace_root);
-    std::fs::create_dir_all(&projects_dir).context("failed to create projects/ directory")?;
-    if let Some(crate::workspace::RootObservation::Primary { pointer, .. }) =
-        crate::workspace::observe_root(workspace_root)
-    {
-        pointer.selection()?;
-    }
-    let project_dir = crate::workspace::project_dir(workspace_root, &name);
-    if project_dir.exists() {
-        crate::refuse!(
-            RefusalKind::ProjectDirOccupied,
-            "cannot fetch project '{name}': {}\n\
-             Hint: if that is this project, `rwv fetch --project {name}` fetches its \
-             members in place. To fetch this one beside it, run `rwv fetch {source}` in an \
-             empty directory, which becomes a weave of its own.",
-            crate::workspace::describe_existing(&project_dir)
-        );
-    } else {
-        // In JSON mode, project-level progress goes to stderr so stdout stays
-        // JSON-only. In text mode it goes to stdout as before.
-        if output.is_json() {
-            eprintln!("rwv fetch: cloning project '{}'", name);
-        } else {
-            outln!("rwv fetch: cloning project '{}'", name);
-        }
-        project_vcs
-            .clone_repo(&url, &project_dir)
-            .with_context(|| format!("failed to clone project source '{}'", url))?;
-
-        // Unlike `init`/`init_adopt`, fetch never calls `set_replay_exclusion`
-        // — it clones a project that already exists, and whether `rwv.lock`
-        // is declared derived is that project's own prior choice. Complete
-        // the config only when the clone already carries the declaration;
-        // otherwise there is no `rwv-ours` assignment for the driver to serve.
-        let declares_rwv_ours = matches!(
-            project_vcs
-                .replay_exclusion_state(&project_dir, Path::new(LockFile::FILE_NAME))
-                .with_context(|| format!(
-                    "failed to read .gitattributes in {}",
-                    project_dir.display()
-                ))?,
-            ReplayExclusionState::Current | ReplayExclusionState::LegacyAlongsideCurrent
-        );
-        if declares_rwv_ours {
-            crate::git::plant_rwv_merge_driver_config(&project_dir)
-                .context("failed to plant merge.rwv-ours config")?;
-        }
-    }
-
-    let envelope = fetch_project_repos(
-        &name,
-        &project_dir,
-        workspace_root,
-        mode,
-        selection,
-        detach_checkouts,
-        jobs,
-        output,
-        Some(activation),
-        // Source-mode fetch runs before any WorkspaceContext is resolved; no
-        // resolution block is available at this point.
-        None,
-        CloneDuty::Checkouts,
-    )?
-    .envelope;
+    let fetched = fetch_repos(ctx, selection, jobs, output)?;
+    let total = fetched.records.len();
+    let unconfirmed = fetched.unconfirmed;
     if output.is_json() {
-        envelope.print()?;
+        FetchJsonOutput {
+            schema: FETCH_SCHEMA_URL.to_owned(),
+            repos: fetched.records,
+            resolution: Some(ctx.resolution()),
+        }
+        .print()?;
+    } else {
+        outln!(
+            "rwv fetch: done ({} repo(s) fetched)",
+            fetched
+                .records
+                .iter()
+                .filter(|r| r.status == FetchStatus::Fetched)
+                .count()
+        );
+    }
+    if unconfirmed > 0 {
+        crate::refuse!(
+            RefusalKind::PartialRunAborted,
+            "fetch could not complete {unconfirmed} repo(s) out of {total}; they read as last \
+             fetched"
+        );
     }
     Ok(())
 }
 
-/// In-place mode: re-materialize missing manifest members for the active
-/// project in the current workspace, aligning each clone to `rwv.lock` (or
-/// branch HEAD if the lock has no entry for the missing repo).
-///
-/// This is the settled repair verb for a dangling reference: no SOURCE
-/// argument, resolves the workspace from CWD, iterates the active project's
-/// manifest, and clones any repo whose canonical clone directory is missing.
-///
-/// A clone that is already present is realigned rather than skipped: when the
-/// lock covers it, `fetch_one` resolves the locked revision in that clone's
-/// own object store and `realign_present_clone` advances the checkout to it
-/// — fast-forwarding the tracking branch's local counterpart, or refusing
-/// unless `detach_checkouts` carries a consent. When the lock has no entry for
-/// the repo, or there is no lock, the clone is left alone and the lock records
-/// its current HEAD.
-///
-/// Clone-topology (I1): the canonical clone always lives at primary's
-/// `<weave>/<repo_path>`, even when this verb is invoked from inside a
-/// workweave. In-place fetch therefore materializes into
-/// [`WorkspaceContext::primary_path`] first; from a workweave it then creates
-/// the worktree for each member the workweave's `rwv.lock` pins and the
-/// workweave lacks, as `rwv doctor --fix` would once the revision is local.
-///
-/// When the primary has no project selected and the invocation named none,
-/// the weave's only project is fetched and then activated; with zero or
-/// several projects there is nothing to select and the run refuses, naming
-/// `--project`.
-///
-/// Flag semantics: `--frozen`, `--no-reference`, `--role`/`--repo`, `-j`,
-/// `--json` all carry the same meaning as the SOURCE-mode path. Filtered
-/// runs are additive and skip the lock-write step (same rule as bootstrap).
-#[allow(clippy::too_many_arguments)]
-pub fn run_fetch_in_place(
+/// What [`fetch_repos`] fetched.
+pub(crate) struct FetchedRepos {
+    pub(crate) records: Vec<FetchedRepoOutput>,
+    pub(crate) unconfirmed: usize,
+}
+
+/// The pruning fetch of the repos `selection` covers, each record printed as
+/// it is reported under text output.
+pub(crate) fn fetch_repos(
     ctx: &WorkspaceContext,
-    mode: FetchMode,
     selection: &MemberSelection,
-    detach_checkouts: Option<DetachConsent>,
     jobs: usize,
     output: OutputMode,
-    activation: ActivateOptions,
-) -> anyhow::Result<()> {
-    let invocation = ctx;
-    let sole = sole_unselected_project(invocation);
-    let bound;
-    let ctx = match &sole {
-        Some(project) => {
-            bound = WorkspaceContext::resolve_for_project(invocation.active_path(), project)?;
-            &bound
-        }
-        None => invocation,
-    };
-    let name = ctx.require_active_project_on_disk()?.clone();
+) -> anyhow::Result<FetchedRepos> {
+    let project = project_of(ctx)?;
+    let targets = targets(ctx, &project, selection)?;
 
-    // Per-workspace state (rwv.toml, rwv.lock) lives under active_path — the
-    // workweave when in one, primary otherwise. Mirrors add_remove.rs's
-    // find_project_dir.
-    let project_dir = project_dir(ctx.active_path(), &name);
-
-    // Clone destination (canonical store) is always primary's slot — clone-
-    // topology I1. Passing primary_path() as workspace_root routes fetch_one
-    // to write clones at `<primary>/<repo_path>/`, even when CWD is inside a
-    // workweave. See docs/explanation/joints/clone-topology.md.
-    let workspace_root = ctx.primary_path();
-    let primary_lock = match &ctx.checkout {
-        Checkout::Workweave { .. } => {
-            let path = LockFile::path_in(&crate::workspace::project_dir(workspace_root, &name));
-            if path.exists() {
-                Some(
-                    LockFile::from_state(&path)
-                        .with_context(|| format!("failed to read lock file at {path}"))?,
-                )
-            } else {
-                None
+    let results: Vec<anyhow::Result<Option<PruningFetch>>> =
+        run_in_parallel(&targets, jobs, |_idx, target| {
+            if !target.dir.exists() {
+                return Ok(None);
             }
-        }
-        Checkout::Primary { .. } => None,
-    };
-    let duty = match &ctx.checkout {
-        Checkout::Workweave { .. } => CloneDuty::SharedStore {
-            primary_lock: primary_lock.as_ref(),
-        },
-        Checkout::Primary { .. } => CloneDuty::Checkouts,
-    };
+            pruning_fetch(target.vcs.as_ref(), &target.dir).map(Some)
+        });
 
-    let FetchRun {
-        mut envelope,
-        moved_or_created,
-    } = fetch_project_repos(
-        &name,
-        &project_dir,
-        workspace_root,
-        mode,
-        selection,
-        detach_checkouts,
-        jobs,
-        output,
-        None,
-        Some(ctx.resolution()),
-        duty,
-    )?;
-
-    let created = match &ctx.checkout {
-        Checkout::Workweave {
-            name: workweave,
-            dir,
-            project,
-            ..
-        } => materialize_workweave_members(
-            ctx,
-            &name,
-            workweave.require(dir.as_path(), project)?,
-            &project_dir,
-            selection,
-            output,
-            &mut envelope.placements,
-        ),
-        Checkout::Primary { .. } => Ok(false),
-    };
-    // In a workweave the only clones fetch changes are canonical clones it
-    // created for the primary; only a worktree it created is this workweave's.
-    let checkout_changed = match &ctx.checkout {
-        Checkout::Workweave { .. } => matches!(created, Ok(true)),
-        Checkout::Primary { .. } => moved_or_created,
-    };
-    if let Some(project) = &sole {
-        let msg = format!(
-            "rwv fetch: activating project '{project}', the only project in this weave \
-             (none was active)"
-        );
-        if output == OutputMode::Text {
-            outln!("{msg}");
-        } else {
-            eprintln!("{msg}");
-        }
-        envelope
-            .skipped
-            .extend(crate::activate::activate_with_options(
-                project, invocation, activation,
-            )?);
-    } else if checkout_changed {
-        let presented = observe_root(ctx.active_path())
-            .as_ref()
-            .and_then(RootObservation::presented_project)
-            .cloned();
-        let skip = match presented {
-            Some(active) if active == name => SkippedEffect::hooks_while_active(&active),
-            _ => SkippedEffect::install_hooks(SkipReason::NotPresented {
-                project: name.clone(),
-            }),
+    let mut records = Vec::new();
+    let mut unconfirmed = 0usize;
+    for (target, result) in targets.iter().zip(results) {
+        let absolute_path = crate::path_spelling::WirePath::of(&target.dir);
+        let record = match result {
+            Ok(None) => FetchedRepoOutput {
+                path: target.path.clone(),
+                absolute_path,
+                status: FetchStatus::Skipped,
+                moved: Vec::new(),
+                message: Some(
+                    "not on disk; `rwv update` clones the members that are missing".to_owned(),
+                ),
+                refusal: None,
+            },
+            Ok(Some(fetched)) => {
+                let unreached = unreached_remotes(&fetched.unconfirmed);
+                if unreached.is_some() {
+                    unconfirmed += 1;
+                }
+                FetchedRepoOutput {
+                    path: target.path.clone(),
+                    absolute_path,
+                    status: if unreached.is_some() {
+                        FetchStatus::Unconfirmed
+                    } else {
+                        FetchStatus::Fetched
+                    },
+                    moved: fetched.moves.iter().map(BranchMoveOutput::of).collect(),
+                    message: unreached,
+                    refusal: None,
+                }
+            }
+            Err(error) => {
+                unconfirmed += 1;
+                FetchedRepoOutput {
+                    path: target.path.clone(),
+                    absolute_path,
+                    status: FetchStatus::Unconfirmed,
+                    moved: Vec::new(),
+                    message: Some(format!("{error:#}")),
+                    refusal: crate::refusal::kind_of(&error).map(RefusalKind::token),
+                }
+            }
         };
-        skip.report();
-        envelope.skipped.push(skip);
+        if output == OutputMode::Text {
+            print_record(&record);
+        }
+        records.push(record);
     }
-    if output.is_json() {
-        envelope.print()?;
-    }
-    created.map(|_| ())
+    Ok(FetchedRepos {
+        records,
+        unconfirmed,
+    })
 }
 
-/// The project an in-place fetch selects for itself: the weave's only one,
-/// when the primary has none selected and the invocation named none.
-fn sole_unselected_project(ctx: &WorkspaceContext) -> Option<crate::manifest::ProjectName> {
-    if !matches!(ctx.checkout, Checkout::Primary { project: None }) {
+fn unreached_remotes(unconfirmed: &[crate::vcs::UnconfirmedRemote]) -> Option<String> {
+    if unconfirmed.is_empty() {
         return None;
     }
-    match crate::workspace::discover_projects(ctx.primary_path()).as_slice() {
-        [only] => Some(only.clone()),
-        _ => None,
-    }
-}
-
-/// Give the workweave the worktree of each member it lacks — nothing at the
-/// slot while its `rwv.lock` pins the member, a symlink, or a checkout whose
-/// link dangles — through [`crate::workweave::materialize_member`], once the
-/// fetch above has put the pinned revisions in the canonical clones, returning
-/// whether it created any. A symlinked member the lock does not pin starts at
-/// the canonical clone's HEAD, which is what the link showed. How each one's
-/// files were placed is added to `placements` for the envelope.
-#[allow(clippy::too_many_arguments)]
-fn materialize_workweave_members(
-    ctx: &WorkspaceContext,
-    project: &crate::manifest::ProjectName,
-    workweave: &crate::manifest::WorkweaveName,
-    project_dir: &Path,
-    selection: &MemberSelection,
-    output: OutputMode,
-    placements: &mut Vec<PlacementOutput>,
-) -> anyhow::Result<bool> {
-    let manifest = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME))?;
-    let lock_path = LockFile::path_in(project_dir);
-    let lock = if lock_path.exists() {
-        Some(LockFile::from_state(&lock_path)?)
-    } else {
-        None
-    };
-    let mut failures: Vec<String> = Vec::new();
-    let mut created = false;
-    for (repo_path, entry) in manifest.iter_entries() {
-        if !selection.covers(repo_path, entry.role) {
-            continue;
-        }
-        let slot = ctx.active_path().join(repo_path.as_path());
-        let symlinked = crate::workweave::is_symlinked_member(&slot);
-        if !symlinked && !crate::workweave::is_dangling_link(&slot) && slot.exists() {
-            if crate::workweave::scan_uninitialized_submodules(&slot).is_empty() {
-                continue;
-            }
-            crate::workweave::populate_member_submodules(
-                vcs_for(entry.vcs_type).as_ref(),
-                &slot,
-                repo_path,
-                entry.role,
-                entry.recurse_submodules,
-                "rwv fetch: ",
-            );
-            continue;
-        }
-        let vcs = vcs_for(entry.vcs_type);
-        let start = match lock.as_ref().and_then(|lock| lock.get_entry(repo_path)) {
-            Some(pin) => pin.version.as_str().to_owned(),
-            None if symlinked => {
-                let canonical = ctx.primary_path().join(repo_path.as_path());
-                match vcs.head_revision(&canonical) {
-                    Ok(head) => head.id().as_str().to_owned(),
-                    Err(e) => {
-                        failures.push(format!("{repo_path}: {e:#}"));
-                        continue;
-                    }
-                }
-            }
-            None => continue,
-        };
-        match crate::workweave::materialize_member(
-            vcs.as_ref(),
-            ctx.primary_path(),
-            ctx.active_path(),
-            project,
-            workweave,
-            repo_path,
-            entry.role,
-            entry.recurse_submodules,
-            &start,
-            crate::workweave::ReceiptedBranch::Attach,
-        ) {
-            Ok(born) => {
-                created = true;
-                let line = format!(
-                    "rwv fetch: gave this workweave its worktree for {repo_path}: {}{}",
-                    born.summary(),
-                    crate::share::files_note(born.files),
-                );
-                if output == OutputMode::Text {
-                    outln!("{line}");
-                } else {
-                    eprintln!("{line}");
-                }
-                if let (OutputMode::Json, Some(files)) = (output, born.files) {
-                    placements.push(PlacementOutput::new(repo_path, &slot, files));
-                }
-            }
-            Err(e) => failures.push(format!("{repo_path}: {e:#}")),
-        }
-    }
-    if failures.is_empty() {
-        return Ok(created);
-    }
-    crate::refuse!(
-        RefusalKind::PartialRunAborted,
-        "fetch brought the pinned revisions into the canonical clones but could not \
-         create {} worktree(s) in this workweave:\n  {}",
-        failures.len(),
-        failures.join("\n  ")
+    Some(
+        unconfirmed
+            .iter()
+            .map(|u| format!("remote {} could not be fetched: {}", u.remote, u.cause))
+            .collect::<Vec<_>>()
+            .join("; "),
     )
 }
 
-/// Shared per-project repo-materialization loop for both SOURCE-mode
-/// (bootstrap: `rwv fetch <source>`) and in-place mode (`rwv fetch` with no
-/// SOURCE). Both entries route through this helper so the clone/checkout,
-/// lock-alignment, and lock-write behavior stays identical across both
-/// invocations.
-///
-/// `auto_activate` carries the options of the first-fetch auto-activate step,
-/// and is `None` where there is none to take: only SOURCE-mode has one — the
-/// in-place path selects its project itself, in [`run_fetch_in_place`].
-///
-/// `resolution` is the resolved workspace coordinate block for the
-/// `--json` envelope. `None` when no `WorkspaceContext` is available (the
-/// SOURCE-mode bootstrap path runs before a context is resolved).
-///
-/// Returns the `--json` envelope for the caller to print once it has placed
-/// anything else, so it is populated only under `--json`, with whether any
-/// checkout moved or was created. A run with failures prints the envelope
-/// here, before refusing.
-#[allow(clippy::too_many_arguments)]
-fn fetch_project_repos(
-    name: &crate::manifest::ProjectName,
-    project_dir: &Path,
-    workspace_root: &Path,
-    mode: FetchMode,
-    selection: &MemberSelection,
-    detach_checkouts: Option<DetachConsent>,
-    jobs: usize,
-    output: OutputMode,
-    auto_activate: Option<ActivateOptions>,
-    resolution: Option<Resolution>,
-    duty: CloneDuty<'_>,
-) -> anyhow::Result<FetchRun> {
-    // Read the manifest
-    let manifest_path = project_dir.join(Manifest::FILE_NAME);
-    let manifest = Manifest::from_path(&manifest_path)
-        .with_context(|| format!("failed to read manifest from {}", manifest_path.display()))?;
-
-    // Load the lock file. In Frozen mode the lock must exist and cover all
-    // manifest repos. In Default mode the lock may be absent (bootstrap), and
-    // missing repos are added additively after fetch.
-    let lock_path = LockFile::path_in(project_dir);
-    let existing_lock: Option<LockFile> = if lock_path.exists() {
-        Some(
-            LockFile::from_state(&lock_path)
-                .with_context(|| format!("failed to read lock file at {lock_path}"))?,
-        )
-    } else {
-        None
-    };
-
-    match mode {
-        FetchMode::Frozen => {
-            let lock = existing_lock.as_ref().ok_or_else(|| {
-                refusal(
-                    RefusalKind::MissingLock,
-                    format!("rwv fetch --frozen: lock file does not exist at {lock_path}"),
-                )
-            })?;
-            let missing = find_incomplete_repos(&manifest, lock, selection);
-            if !missing.is_empty() {
-                let names: Vec<&str> = missing.iter().map(|rp| rp.as_str()).collect();
-                crate::refuse!(
-                    RefusalKind::IncompleteLock,
-                    "rwv fetch --frozen: lock file is incomplete; repos not covered by lock: {}",
-                    names.join(", ")
-                );
+fn print_record(record: &FetchedRepoOutput) {
+    match record.status {
+        FetchStatus::Fetched if record.moved.is_empty() => {
+            outln!("rwv fetch: {}: nothing moved", record.path);
+        }
+        FetchStatus::Fetched => {
+            for moved in &record.moved {
+                outln!("rwv fetch: {}: {}", record.path, moved.line());
             }
         }
-        FetchMode::Default => {
-            // Lock-not-present is a normal bootstrap. Missing entries are
-            // additive and dealt with below.
+        FetchStatus::Skipped => {
+            outln!(
+                "rwv fetch: {}: skipped: {}",
+                record.path,
+                record.message.as_deref().unwrap_or("no reason reported")
+            );
         }
-    }
-
-    // Warn about orphan lock entries (in lock, not in manifest). Doesn't fail
-    // and doesn't touch the clones.
-    if let Some(ref lock) = existing_lock {
-        for repo_path in lock.iter_repo_paths() {
-            if !manifest.contains_repo(repo_path) {
-                eprintln!(
-                    "rwv fetch: warning: orphan in lock: {} (lock entry has no manifest entry)",
-                    repo_path.as_str()
-                );
-            }
-        }
-        for (repo_path, version) in lock.entries_pinned_by_name() {
+        FetchStatus::Unconfirmed => {
             eprintln!(
-                "rwv fetch: warning: {}",
-                lock::pinned_by_name_warning(repo_path, version)
+                "rwv fetch: {}: unconfirmed: {}",
+                record.path,
+                record.message.as_deref().unwrap_or("no cause reported")
             );
         }
-    }
-
-    // Snapshot the work list. BTreeMap iteration is deterministic, so the
-    // resulting Vec preserves the serial loop's ordering (acceptance: -j 1
-    // matches the previous behavior exactly).
-    //
-    // Apply the `--role` / `--repo` filter here so the worker pool only sees
-    // selected repos. Empty filter is a no-op (every repo passes). See
-    // `src/selector.rs` for the grammar and union semantics.
-    let work_items: Vec<(RepoPath, RepoEntry, Box<dyn Vcs>)> = manifest
-        .iter_entries()
-        .filter(|(rp, entry)| selection.names(rp, entry.role))
-        .map(|(rp, e)| (rp.clone(), e.clone(), vcs_for(e.vcs_type)))
-        .collect();
-
-    let parallel = jobs > 1;
-    let write_lock: Mutex<()> = Mutex::new(());
-
-    let outcomes: Vec<(FetchOutcome, Option<crate::share::FilePlacement>, bool)> =
-        run_in_parallel(&work_items, jobs, |_idx, item| {
-            let (repo_path, entry, vcs) = item;
-            // A parallel reporter forwards subprocess stdout to stdout, which
-            // belongs to the envelope under `--json`.
-            let reporter = if parallel && output == OutputMode::Text {
-                Reporter::parallel(repo_path.as_str().to_string(), &write_lock)
-            } else {
-                Reporter::serial()
-            };
-            let member = workspace_root.join(repo_path.as_path());
-            let before = vcs.head_revision(&member).ok();
-            let outcome = fetch_one(
-                vcs.as_ref(),
-                repo_path,
-                entry,
-                workspace_root,
-                existing_lock.as_ref(),
-                duty,
-                selection,
-                detach_checkouts,
-                &reporter,
-                output,
-            );
-            if matches!(outcome, FetchOutcome::Ok { .. }) {
-                crate::workweave::fetch_member_submodules(
-                    vcs.as_ref(),
-                    &member,
-                    repo_path,
-                    entry.role,
-                    entry.recurse_submodules,
-                    "rwv fetch: ",
-                );
-            }
-            let (outcome, files) = match outcome {
-                FetchOutcome::Ok { .. } => {
-                    match crate::settle::settle_moved(
-                        vcs.as_ref(),
-                        &member,
-                        entry.role,
-                        before.as_ref(),
-                    ) {
-                        Ok(settled) => (outcome, settled.files),
-                        Err(e) => (FetchOutcome::Failed(e.context(repo_path.to_string())), None),
-                    }
-                }
-                other => (other, None),
-            };
-            let moved_or_created = matches!(outcome, FetchOutcome::Ok { .. })
-                && before != vcs.head_revision(&member).ok();
-
-            (outcome, files, moved_or_created)
-        });
-
-    // Aggregate outcomes serially in input order — preserves the existing
-    // error-report shape and gives the lock-write step a deterministic
-    // `added_to_lock` list.
-    let mut succeeded = 0usize;
-    let mut errors: Vec<String> = Vec::new();
-    let mut added_to_lock: Vec<RepoPath> = Vec::new();
-
-    // Records follow work_items order whatever order the workers finished in.
-    let mut envelope = FetchJsonOutput {
-        schema: FETCH_SCHEMA_URL.to_owned(),
-        outcomes: Vec::new(),
-        placements: Vec::new(),
-        resolution,
-        skipped: Vec::new(),
-    };
-    let envelope_records = &mut envelope.outcomes;
-
-    let moved_or_created = outcomes.iter().any(|(_, _, moved)| *moved);
-    for ((outcome, files, _), (repo_path, _entry, _vcs)) in outcomes.iter().zip(work_items.iter()) {
-        let member = workspace_root.join(repo_path.as_path());
-        let abs_path = crate::path_spelling::WirePath::of(&member);
-        match outcome {
-            FetchOutcome::Ok { add_to_lock } => {
-                succeeded += 1;
-                if let Some(rp) = add_to_lock {
-                    added_to_lock.push(rp.clone());
-                }
-                if let (OutputMode::Text, Some(files)) = (output, files) {
-                    outln!("rwv fetch: {repo_path}: files {files}");
-                }
-                if output.is_json() {
-                    envelope_records.push(FetchOutcomeOutput {
-                        path: repo_path.to_string(),
-                        absolute_path: abs_path,
-                        status: FetchOutcomeStatus::Ok,
-                        message: None,
-                        refusal: None,
-                    });
-                    if let Some(files) = files {
-                        envelope
-                            .placements
-                            .push(PlacementOutput::new(repo_path, &member, *files));
-                    }
-                }
-            }
-            FetchOutcome::Skipped => {
-                if output.is_json() {
-                    envelope_records.push(FetchOutcomeOutput {
-                        path: repo_path.to_string(),
-                        absolute_path: abs_path,
-                        status: FetchOutcomeStatus::Skipped,
-                        message: Some(format!("skipped {}", repo_path.as_str())),
-                        refusal: None,
-                    });
-                }
-            }
-            FetchOutcome::Failed(error) => {
-                let msg = format!("{error:#}");
-                let refusal = crate::refusal::kind_of(error).map(RefusalKind::token);
-                if output == OutputMode::Text {
-                    eprintln!("rwv fetch: error: {msg}");
-                    for route in crate::refusal::routes(error) {
-                        eprintln!("rwv explain {route}");
-                    }
-                }
-                if output.is_json() {
-                    envelope_records.push(FetchOutcomeOutput {
-                        path: repo_path.to_string(),
-                        absolute_path: abs_path,
-                        status: FetchOutcomeStatus::Failed,
-                        message: Some(msg.clone()),
-                        refusal,
-                    });
-                }
-                errors.push(msg);
-            }
-        }
-    }
-
-    // Summary (text mode only; JSON mode consumers check `status` fields).
-    let total = succeeded + errors.len();
-    if !errors.is_empty() {
-        if output.is_json() {
-            // The envelope prints before the refusal so a partial failure
-            // still leaves parseable output.
-            let _ = envelope.print();
-            crate::refuse!(
-                RefusalKind::PartialRunAborted,
-                "fetch completed with {} clone failure(s) out of {total} repo(s)",
-                errors.len()
-            )
-        }
-        eprintln!(
-            "rwv fetch: {succeeded}/{total} repo(s) succeeded, {} failed:",
-            errors.len()
-        );
-        for msg in &errors {
-            eprintln!("  - {msg}");
-        }
-        crate::refuse!(
-            RefusalKind::PartialRunAborted,
-            "fetch completed with {} clone failure(s) out of {total} repo(s)",
-            errors.len()
-        )
-    }
-
-    if output == OutputMode::Text {
-        outln!("rwv fetch: done ({succeeded} repo(s) ready)");
-    }
-
-    // Default mode: bootstrap or additively extend the lock.
-    //
-    // A non-empty `--role` / `--repo` filter narrows the fetch to a subset of
-    // the manifest; non-filtered repos are not on disk (in a fresh workspace)
-    // or have not been touched (in an existing workspace). Either way, the
-    // lock-write paths below — both bootstrap and additive — assume they can
-    // read HEAD from every manifest repo; under a filter that's false. Skip
-    // the lock-write entirely under a filter: the filtered fetch is a
-    // targeted-sync operation, not a lock-bumping one. Use `rwv update` or
-    // unfiltered `rwv fetch` to refresh the lock.
-    if mode == FetchMode::Default
-        && selection.names_every_member()
-        && matches!(duty, CloneDuty::Checkouts)
-    {
-        let needs_bootstrap = existing_lock.is_none();
-        let has_additions = !added_to_lock.is_empty();
-
-        // generate_lock walks every entry in the manifest and runs
-        // `git rev-parse HEAD` against each on-disk repo. A member the
-        // selection leaves out was skipped above and its directory may not
-        // exist on disk — drop it from the manifest used for lock generation
-        // so we don't trip on the missing path.
-        let mut lock_manifest = manifest.clone();
-        lock_manifest.retain_repos(|_, entry| !selection.leaves_out(entry.role));
-
-        if needs_bootstrap {
-            // Snapshot the full set of manifest repos from disk.
-            let new_lock = lock::generate_lock(&lock_manifest, workspace_root, None, true)?;
-            lock::write_lock_in(&new_lock, project_dir)?;
-            eprintln!("rwv fetch: wrote {lock_path}");
-        } else if has_additions {
-            // Existing entries keep the commits they pin. One pinned by name
-            // is written as the commit the name resolves to now, which is
-            // where the alignment above left its clone. Added repos are
-            // snapshotted at HEAD.
-            let mut merged = existing_lock
-                .as_ref()
-                .expect("existing_lock is Some when !needs_bootstrap")
-                .clone();
-            let named: Vec<RepoPath> = merged
-                .entries_pinned_by_name()
-                .map(|(repo_path, _)| repo_path.clone())
-                .collect();
-            let (resolved, _) = merged.clone().resolve_versions(workspace_root);
-            for repo_path in named {
-                if let Some(entry) = resolved.get_entry(&repo_path) {
-                    merged.insert_entry(repo_path, entry.to_raw());
-                }
-            }
-            // Generate a fresh lock for new entries only.
-            let new_lock = lock::generate_lock(&lock_manifest, workspace_root, None, true)?;
-            for repo_path in &added_to_lock {
-                if let Some(entry) = new_lock.get_entry(repo_path) {
-                    merged.insert_entry(repo_path.clone(), entry.to_raw());
-                }
-            }
-            lock::write_lock_in(&merged, project_dir)?;
-            eprintln!("rwv fetch: wrote {lock_path}");
-        }
-    }
-
-    // Activation is not part of lock coverage: `--frozen` and a filter both
-    // still activate the project a first fetch created.
-    if let Some(activation) = auto_activate {
-        let ctx = crate::workspace::WorkspaceContext::resolve_unbound(workspace_root)?;
-        let active = match ctx.primary_identity() {
-            Some(primary) => primary.pointer().selection()?.cloned(),
-            None => None,
-        };
-        match active {
-            Some(active) => {
-                let skip = SkippedEffect::activation_while_active(&active, name);
-                // Route to stderr in JSON mode so stdout stays JSON-only.
-                if output.is_json() {
-                    eprintln!("{}", skip.line());
-                } else {
-                    outln!("{}", skip.line());
-                }
-                envelope.skipped.push(skip);
-            }
-            None => {
-                envelope
-                    .skipped
-                    .extend(crate::activate::activate_with_options(
-                        name, &ctx, activation,
-                    )?);
-            }
-        }
-    }
-
-    Ok(FetchRun {
-        envelope,
-        moved_or_created,
-    })
-}
-
-/// What the clones under a fetch's store root are to the workspace whose lock
-/// it reads.
-#[derive(Clone, Copy)]
-enum CloneDuty<'a> {
-    /// They are its checkouts: aligned to its lock, which records them.
-    Checkouts,
-    /// They are the primary's canonical clones, which a workweave's worktrees
-    /// share. The workweave's pins are fetched into them and nothing they have
-    /// checked out moves; the primary's lock, not the workweave's, says where a
-    /// clone not on disk is born. The workweave's lock records its worktrees,
-    /// so this fetch does not write it.
-    SharedStore { primary_lock: Option<&'a LockFile> },
-}
-
-/// What [`fetch_project_repos`] did, beyond what its envelope reports.
-struct FetchRun {
-    envelope: FetchJsonOutput,
-    /// Some checkout's HEAD is not where it was before this fetch: a clone it
-    /// created, or one it moved. Read whatever the output mode, unlike the
-    /// envelope's `placements`, which also has no record for a fresh clone.
-    moved_or_created: bool,
-}
-
-/// Realign a clone that is already on disk to `target`.
-///
-/// The kind of ref write this performs is decided by what HEAD is, and each
-/// kind carries its own precondition:
-///
-/// - **Attached to the tracking declaration's local counterpart** — a MOVE
-///   of that branch, legal when `target` is a fast-forward. A non-fast-forward
-///   (materializing an older lock, or a branch carrying commits origin has
-///   not seen) refuses, naming `--detach-checkouts`.
-/// - **Attached to anything else** — an operator's personal branch. Refuses
-///   naming both refs rather than relocating a ref it cannot relate to the
-///   layer that justifies the move. It refuses even when `target` *would* be
-///   a fast-forward: attachment is operator state, and a fast-forward of a
-///   personal bookmark still silently changes what it means.
-/// - **Detached** — a MOVE of HEAD itself, which stays detached. Subject to
-///   the mid-operation precondition inside [`Vcs::advance_detached_head`]
-///   — `Detached` alone cannot tell "rwv left this at a lock SHA" apart from
-///   "the operator is stopped mid-bisect".
-/// - **Unborn** — refuses. Both exits are unrepresentable rather than
-///   undecided: MOVE semantics on an unborn HEAD are undefined (an
-///   `UnbornRef` cannot be passed to `advance_attached_ref`), and
-///   `detach_head` takes an `AttachedRef`, so no consent token opens the
-///   detaching route either.
-///
-/// A `detach_checkouts` consent converts both refusals into the detach they
-/// name; it never turns a refused MOVE into a performed one, so the branch
-/// ref is left where it is in every case.
-///
-/// Returns the refusal or failure message when the operation must stop.
-fn realign_present_clone(
-    vcs: &dyn Vcs,
-    repo_path: &RepoPath,
-    entry: &RepoEntry,
-    dest: &Path,
-    target: &ResolvedRevisionId,
-    detach_checkouts: Option<DetachConsent>,
-) -> Result<(), String> {
-    let describe = |e: VcsError| format!("{}: {e:#}", repo_path.as_str());
-
-    let attached = match vcs.head_attachment(dest).map_err(describe)? {
-        HeadAttachment::Detached(was) => {
-            if was.at() == target {
-                // The absorbed no-op: a clone already at the pin is not
-                // realigned at all, so nothing is asked of the operator and
-                // nothing is written.
-                return Ok(());
-            }
-            return vcs.advance_detached_head(&was, target).map_err(describe);
-        }
-        HeadAttachment::Unborn(u) => {
-            return Err(format!(
-                "{}: branch '{u}' has no commits yet — rwv fetch has no way to \
-                 place {} on an unborn branch. Make an initial commit, or check \
-                 out a branch that has one, then re-run.",
-                repo_path.as_str(),
-                target.display_str(),
-            ));
-        }
-        HeadAttachment::Attached(a) => a,
-    };
-
-    let counterpart = entry.branch.local_counterpart();
-
-    if !attached.is_named(&counterpart) {
-        let Some(consent) = detach_checkouts else {
-            return Err(format!(
-                "{}: is on branch '{attached}', not the local counterpart \
-                 ('{counterpart}') of the branch the manifest declares — rwv \
-                 fetch moves only that branch, so it will not relocate one it \
-                 cannot relate to the lock.\n  \
-                 Switch to '{counterpart}' and re-run, or re-run with \
-                 --detach-checkouts to materialize {} on a detached HEAD \
-                 (your branch is not moved).",
-                repo_path.as_str(),
-                target.display_str(),
-            ));
-        };
-        return vcs
-            .detach_head(&attached, target, consent)
-            .map_err(describe);
-    }
-
-    let head = vcs.head_revision(dest).map_err(describe)?;
-    if &head == target {
-        return Ok(());
-    }
-    // Classify before acting rather than reading a failure back out of git:
-    // `merge --ff-only` also fails on a dirty tree, and the two need
-    // different messages.
-    if vcs.is_ancestor(dest, &head, target).map_err(describe)? {
-        return vcs
-            .advance_attached_ref(&attached, target)
-            .map_err(describe);
-    }
-    let Some(consent) = detach_checkouts else {
-        return Err(format!(
-            "{}: aligning '{attached}' to {} is not a fast-forward — the pin is \
-             not a descendant of the branch tip, which is what materializing an \
-             older lock, or a branch carrying commits {} has not seen, looks \
-             like.\n  \
-             Reconcile '{attached}' with the pin yourself (ordinary `git rebase` \
-             / `git merge`) and re-run, or re-run with --detach-checkouts to \
-             materialize {} on a detached HEAD (the branch ref is not moved).",
-            repo_path.as_str(),
-            target.display_str(),
-            vcs.conventional_remote_name(),
-            target.display_str(),
-        ));
-    };
-    vcs.detach_head(&attached, target, consent)
-        .map_err(describe)
-}
-
-/// Per-repo worker for `rwv fetch`. Encapsulates one iteration of the
-/// previous serial loop body.
-///
-/// Returns [`FetchOutcome`]. The caller threads `add_to_lock` into the
-/// post-join lock-write step and aggregates failures.
-///
-/// When `output` is a JSON mode, progress lines are emitted to stderr (via
-/// `reporter.err`) rather than stdout, so that stdout carries only
-/// machine-readable JSON output.
-#[allow(clippy::too_many_arguments)]
-fn fetch_one(
-    vcs: &dyn Vcs,
-    repo_path: &RepoPath,
-    entry: &RepoEntry,
-    workspace_root: &Path,
-    existing_lock: Option<&LockFile>,
-    duty: CloneDuty<'_>,
-    selection: &MemberSelection,
-    detach_checkouts: Option<DetachConsent>,
-    reporter: &Reporter<'_>,
-    output: OutputMode,
-) -> FetchOutcome {
-    // Helper: route progress to stdout (text mode) or stderr (JSON mode).
-    let emit = |msg: &str| {
-        if output.is_json() {
-            reporter.err(msg);
-        } else {
-            reporter.out(msg);
-        }
-    };
-
-    if selection.leaves_out(entry.role) {
-        emit(&format!(
-            "rwv fetch: skipping {} (role: reference)",
-            repo_path.as_str()
-        ));
-        return FetchOutcome::Skipped;
-    }
-
-    let dest: PathBuf = workspace_root.join(repo_path.as_path());
-
-    let lock_entry = existing_lock.and_then(|l| l.get_entry(repo_path).cloned());
-
-    if let CloneDuty::SharedStore { primary_lock } = duty {
-        if !dest.exists() {
-            let birth = primary_lock
-                .and_then(|l| l.get_entry(repo_path))
-                .or(lock_entry.as_ref());
-            if let Err(error) = clone_member(vcs, repo_path, entry, &dest, birth, &emit) {
-                return FetchOutcome::Failed(error);
-            }
-        }
-        return match lock_entry {
-            Some(pin) => make_pin_local(vcs, repo_path, &dest, &pin.version, &emit),
-            None => FetchOutcome::Ok { add_to_lock: None },
-        };
-    }
-
-    if dest.exists() {
-        if let Some(lock_entry) = lock_entry {
-            emit(&format!(
-                "rwv fetch: aligning {} to {}",
-                repo_path.as_str(),
-                lock_entry.version,
-            ));
-            let resolved = match vcs.resolve_revision(&dest, lock_entry.version.as_str()) {
-                Ok(r) => r,
-                Err(e) => {
-                    return FetchOutcome::Failed(anyhow::Error::from(e).context(format!(
-                        "{}: failed to resolve {}",
-                        repo_path.as_str(),
-                        lock_entry.version,
-                    )));
-                }
-            };
-            if let Err(msg) =
-                realign_present_clone(vcs, repo_path, entry, &dest, &resolved, detach_checkouts)
-            {
-                return FetchOutcome::Failed(anyhow::anyhow!(msg));
-            }
-            return FetchOutcome::Ok { add_to_lock: None };
-        } else if existing_lock.is_some() {
-            // Lock exists but doesn't cover this repo — additive add at
-            // branch HEAD. The clone already exists; nothing to do
-            // beyond marking it for the lock write below.
-            emit(&format!(
-                "rwv fetch: adding {} to lock at branch HEAD (additive)",
-                repo_path.as_str()
-            ));
-            return FetchOutcome::Ok {
-                add_to_lock: Some(repo_path.clone()),
-            };
-        } else {
-            // Bootstrap (no lock yet) — clone is pre-existing, just
-            // record it. The lock-write step below will snapshot
-            // everything from disk.
-            emit(&format!(
-                "rwv fetch: skip {} (already exists)",
-                repo_path.as_str()
-            ));
-            return FetchOutcome::Ok { add_to_lock: None };
-        }
-    }
-
-    let pinned = lock_entry.is_some();
-    if let Err(error) = clone_member(vcs, repo_path, entry, &dest, lock_entry.as_ref(), &emit) {
-        return FetchOutcome::Failed(error);
-    }
-    if !pinned && existing_lock.is_some() {
-        emit(&format!(
-            "rwv fetch: cloned {} at branch HEAD (additive — no lock entry)",
-            repo_path.as_str()
-        ));
-        return FetchOutcome::Ok {
-            add_to_lock: Some(repo_path.clone()),
-        };
-    }
-    FetchOutcome::Ok { add_to_lock: None }
-}
-
-/// Clone the member at `repo_path` into `dest`: born attached at `birth` on
-/// the local counterpart of the branch the manifest declares, or, with no
-/// `birth`, at the remote's branch HEAD.
-fn clone_member(
-    vcs: &dyn Vcs,
-    repo_path: &RepoPath,
-    entry: &RepoEntry,
-    dest: &Path,
-    birth: Option<&LockEntry>,
-    emit: &dyn Fn(&str),
-) -> anyhow::Result<()> {
-    let clone_url = registry::resolve_to_clone_info(&entry.url)
-        .with_context(|| repo_path.to_string())?
-        .url;
-
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent).with_context(|| {
-            format!(
-                "{}: failed to create directory {}",
-                repo_path.as_str(),
-                parent.display()
-            )
-        })?;
-    }
-
-    emit(&format!(
-        "rwv fetch: cloning {} from {} (role: {})",
-        repo_path.as_str(),
-        clone_url,
-        entry.role
-    ));
-
-    // A lock-pinned clone is born ATTACHED AT THE PIN — one operation, not a
-    // clone followed by an align. Cloning to the remote tip and then moving
-    // to the pin would leave the member detached, which is not a state a
-    // fetch is entitled to put an operator's checkout in.
-    if let Some(birth) = birth {
-        let counterpart = entry.branch.local_counterpart();
-        emit(&format!(
-            "rwv fetch: cloning {} onto {counterpart} at {}",
-            repo_path.as_str(),
-            birth.version,
-        ));
-        vcs.clone_attached_at(&clone_url, dest, &counterpart, &birth.version)
-            .with_context(|| {
-                format!(
-                    "{}: failed to materialize {} at {}",
-                    repo_path.as_str(),
-                    clone_url,
-                    birth.version,
-                )
-            })?;
-        return Ok(());
-    }
-
-    vcs.clone_repo(&clone_url, dest).with_context(|| {
-        format!(
-            "{}: failed to clone {} into {}",
-            repo_path.as_str(),
-            clone_url,
-            dest.display()
-        )
-    })
-}
-
-/// Make `pin` resolvable in the canonical clone at `store`, fetching from its
-/// remote only when it is not already there. Nothing checked out moves.
-fn make_pin_local(
-    vcs: &dyn Vcs,
-    repo_path: &RepoPath,
-    store: &Path,
-    pin: &RawRevisionId,
-    emit: &dyn Fn(&str),
-) -> FetchOutcome {
-    if vcs.resolve_revision(store, pin.as_str()).is_ok() {
-        return FetchOutcome::Ok { add_to_lock: None };
-    }
-    emit(&format!(
-        "rwv fetch: fetching {pin} into the canonical clone of {}",
-        repo_path.as_str()
-    ));
-    if let Err(e) = vcs.fetch_remote(store) {
-        return FetchOutcome::Failed(anyhow::Error::from(e).context(format!(
-            "{}: failed to fetch {} into the canonical clone",
-            repo_path.as_str(),
-            vcs.conventional_remote_name(),
-        )));
-    }
-    match vcs.resolve_revision(store, pin.as_str()) {
-        Ok(_) => FetchOutcome::Ok { add_to_lock: None },
-        Err(e) => FetchOutcome::Failed(anyhow::Error::from(e).context(format!(
-            "{}: {pin} is not on {} either",
-            repo_path.as_str(),
-            vcs.conventional_remote_name(),
-        ))),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn resolve_source_passes_through_urls() {
-        let url = "https://github.com/org/repo.git";
-        assert_eq!(resolve_source(url).unwrap().to_string(), url);
-    }
-
-    #[test]
-    fn resolve_source_passes_through_ssh_urls() {
-        let url = "git@github.com:org/repo.git";
-        assert_eq!(resolve_source(url).unwrap().to_string(), url);
-    }
-
-    #[test]
-    fn resolve_source_passes_through_file_urls() {
-        let url = format!("file://{}", std::env::temp_dir().join("repo.git").display());
-        assert_eq!(resolve_source(&url).unwrap().to_string(), url);
-    }
-
-    #[test]
-    fn resolve_source_resolves_two_part_shorthand() {
-        let url = resolve_source("cwalv/repoweave").unwrap();
-        assert_eq!(url.to_string(), "https://github.com/cwalv/repoweave.git");
-    }
-
-    #[test]
-    fn resolve_source_resolves_three_part_shorthand() {
-        let url = resolve_source("gitlab/org/proj").unwrap();
-        assert_eq!(url.to_string(), "https://gitlab.com/org/proj.git");
-    }
-
-    #[test]
-    fn resolve_source_rejects_invalid_shorthand() {
-        assert!(resolve_source("not-a-valid-source").is_err());
-    }
-
-    #[test]
-    fn resolve_source_rejects_four_part_shorthand() {
-        assert!(resolve_source("a/b/c/d").is_err());
-    }
-
-    // find_incomplete_repos: --no-reference should exempt reference repos
-
-    fn make_entry(role: Role) -> crate::manifest::RepoEntry {
-        crate::manifest::RepoEntry {
-            vcs_type: crate::manifest::VcsType::Git,
-            url: "https://example.com/repo.git".parse().unwrap(),
-            branch: crate::vcs::TrackingRef::parse(crate::vcs::RawRefName::new("main")).unwrap(),
-            role,
-            recurse_submodules: crate::manifest::SubmoduleRecursion::Recurse,
-        }
-    }
-
-    fn selection(no_reference: bool) -> MemberSelection {
-        MemberSelection::new(
-            RepoFilter::parse(&[], &[]).expect("an empty filter parses"),
-            no_reference,
-        )
-    }
-
-    fn make_lock_entry() -> crate::manifest::LockEntry {
-        crate::manifest::LockEntry {
-            vcs_type: crate::manifest::VcsType::Git,
-            url: "https://example.com/repo.git".parse().unwrap(),
-            version: crate::vcs::RawRevisionId::new("abc123"),
-        }
-    }
-
-    #[test]
-    fn find_incomplete_repos_flags_reference_when_no_reference_is_false() {
-        let mut manifest = Manifest {
-            repositories: Default::default(),
-            integrations: Default::default(),
-            workweave: None,
-        };
-        let primary = RepoPath::new("github/org/primary").expect("known-safe literal");
-        let reference = RepoPath::new("github/org/reference").expect("known-safe literal");
-        manifest
-            .repositories
-            .insert(primary.clone(), make_entry(Role::Owned));
-        manifest
-            .repositories
-            .insert(reference.clone(), make_entry(Role::Reference));
-
-        // Lock covers only the primary — reference is incomplete.
-        let mut lock = LockFile {
-            repositories: Default::default(),
-        };
-        lock.repositories.insert(primary, make_lock_entry());
-
-        let incomplete = find_incomplete_repos(&manifest, &lock, &selection(false));
-        assert_eq!(incomplete, vec![reference]);
-    }
-
-    #[test]
-    fn find_incomplete_repos_excludes_reference_when_no_reference_is_true() {
-        let mut manifest = Manifest {
-            repositories: Default::default(),
-            integrations: Default::default(),
-            workweave: None,
-        };
-        let primary = RepoPath::new("github/org/primary").expect("known-safe literal");
-        let reference = RepoPath::new("github/org/reference").expect("known-safe literal");
-        manifest
-            .repositories
-            .insert(primary.clone(), make_entry(Role::Owned));
-        manifest
-            .repositories
-            .insert(reference, make_entry(Role::Reference));
-
-        let mut lock = LockFile {
-            repositories: Default::default(),
-        };
-        lock.repositories.insert(primary, make_lock_entry());
-
-        // With no_reference=true, the missing reference entry is not flagged.
-        let incomplete = find_incomplete_repos(&manifest, &lock, &selection(true));
-        assert!(incomplete.is_empty(), "expected empty, got {incomplete:?}");
-    }
-
-    // FetchMode enum tests
-
-    #[test]
-    fn fetch_mode_variants_are_distinct() {
-        assert_ne!(FetchMode::Default, FetchMode::Frozen);
-    }
-
-    #[test]
-    fn fetch_mode_default_is_default_variant() {
-        // The default mode (no flags) should be FetchMode::Default.
-        let mode = FetchMode::Default;
-        assert_eq!(mode, FetchMode::Default);
-    }
-
-    #[test]
-    fn fetch_mode_is_copy() {
-        // FetchMode should be Copy — it's a simple enum.
-        let a = FetchMode::Default;
-        let b = a; // Copy
-        assert_eq!(a, b);
-    }
-
-    #[test]
-    fn fetch_mode_debug() {
-        // Verify Debug is derived (used in error messages).
-        let s = format!("{:?}", FetchMode::Frozen);
-        assert!(s.contains("Frozen"));
     }
 }

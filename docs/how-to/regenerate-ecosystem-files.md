@@ -13,14 +13,14 @@ Repoweave separates authoring workspace config files, selecting the active proje
 
 | Task | Command | Works in |
 |---|---|---|
-| Mutate membership and automatically re-author managed files (install hooks run at the primary only) | `rwv member add`, `rwv member remove`, `rwv update`, `rwv member set-role` | Primary weave or workweave |
+| Mutate membership and automatically re-author managed files (install hooks run at the primary only) | `rwv member add`, `rwv member remove`, `rwv update --remote`, `rwv member set-role` | Primary weave or workweave |
 | Re-author managed files after hand-editing `rwv.toml` (author a newly enabled integration), or repair missing weave-root symlinks | `rwv doctor --fix` | Primary weave or workweave |
 | Strip artifacts from newly disabled integrations and run install hooks (`npm install`, `uv sync`, `cargo fetch`) | `rwv materialize` | Primary weave or workweave |
 | Switch `.rwv-active`, re-point weave-root symlinks to `<project>`, and run install hooks (never authors files) | `rwv activate <project>` | Primary weave only |
 
 ## After editing `rwv.toml` by hand
 
-The authoring verbs (`rwv member add`, `rwv member remove`, `rwv update`, `rwv member set-role`) update managed workspace files automatically. When you edit `rwv.toml` directly — for example, changing an integration setting or enabling a new integration — run:
+The authoring verbs (`rwv member add`, `rwv member remove`, `rwv update --remote`, `rwv member set-role`) update managed workspace files automatically. When you edit `rwv.toml` directly — for example, changing an integration setting or enabling a new integration — run:
 
 ```bash
 rwv doctor --fix
@@ -28,7 +28,7 @@ rwv doctor --fix
 
 `rwv doctor --fix` regenerates when `rwv doctor` reports something it can fix — a newly enabled integration's files missing, or managed content that differs from what `rwv.toml` implies. It updates the `rwv`-managed sections of hybrid files (`Cargo.toml`, `package.json`, `pnpm-workspace.yaml`, `go.work`, `pyproject.toml`, `<project>.code-workspace`) while preserving user-authored keys, rewrites the fully-owned `gita/` CSVs, runs the install hooks, and repairs any missing surfacing symlinks in the current workspace. A clean `rwv doctor` means `--fix` has nothing to do.
 
-Three settings are not compared by `rwv doctor`, so `rwv doctor --fix` alone does not pick up a change to them: `cargo-workspace`'s `patch` mode with the default `patch-surface = "manifest"`, `workspace-package`, and a `patch-surface` switch back to `manifest`. Any authoring verb (`rwv member add`, `remove`, `update`, `role`) always re-applies them, because it re-authors unconditionally; otherwise the change lands only at the next `rwv doctor --fix` that regenerates for another reason.
+Three settings are not compared by `rwv doctor`, so `rwv doctor --fix` alone does not pick up a change to them: `cargo-workspace`'s `patch` mode with the default `patch-surface = "manifest"`, `workspace-package`, and a `patch-surface` switch back to `manifest`. Any authoring verb (`rwv member add`, `remove`, `update --remote`, `role`) always re-applies them, because it re-authors unconditionally; otherwise the change lands only at the next `rwv doctor --fix` that regenerates for another reason.
 
 If your `rwv.toml` edit disabled an integration (`enabled = false`), follow up with `rwv materialize` to strip the disabled integration's managed blocks or files and run install hooks:
 

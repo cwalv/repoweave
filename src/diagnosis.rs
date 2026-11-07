@@ -38,13 +38,15 @@ pub enum Axis {
     Edits,
     /// Another checkout derives from what the verb would remove.
     Checkout,
+    /// A branch and the branch it takes in from or publishes to.
+    PushBranch,
     /// A name the verb was given is unusable.
     Name,
     /// What `rwv push` withheld.
     Publish,
     /// A project whose `rwv.toml` does not load.
     UnparseableProject,
-    /// A commit a live lock pins that a verb would leave nothing reaching.
+    /// The commit a lock pins for a member, and whether a ref reaches it.
     Pin,
 }
 
@@ -56,9 +58,10 @@ pub struct KindRow {
 }
 
 impl Axis {
-    pub const ALL: [Axis; 6] = [
+    pub const ALL: [Axis; 7] = [
         Self::Edits,
         Self::Checkout,
+        Self::PushBranch,
         Self::Name,
         Self::Publish,
         Self::UnparseableProject,
@@ -88,6 +91,15 @@ impl Axis {
                       every checkout derived from it, so a live one would be left pointing at \
                       nothing.",
                 sits: "[Clone topology](../explanation/joints/clone-topology.md).",
+            },
+            Self::PushBranch => &KindRow {
+                condition: "A branch and the remote branch it takes in from or publishes to \
+                            have each moved, or the remote has none to give.",
+                why: "Taking in a branch that has commits of its own would have to discard \
+                      them or tangle the two histories, and only a fast-forward does neither, \
+                      so a verb that takes in stops where the histories have diverged instead \
+                      of choosing for you.",
+                sits: "[Sync semantics](../explanation/joints/sync-semantics.md).",
             },
             Self::Name => &KindRow {
                 condition: "A name the verb was given cannot be used: another workweave \
@@ -124,14 +136,22 @@ impl Axis {
                        [Upgrade rwv](../how-to/upgrade-rwv.md) walks through the rewrite.",
             },
             Self::Pin => &KindRow {
-                condition: "A verb would delete, move or overwrite the last ref that reaches a \
+                condition: "A commit a lock pins is not there to be at: the lock has no entry \
+                            for a member, or pins a commit that no ref in the clone reaches; or \
+                            a verb would delete, move or overwrite the last ref that reaches a \
                             commit some project's live lock pins.",
                 why: "A lock pins each member at a commit so that a fresh clone can build the \
-                      project. Removing the last ref that reaches a pinned commit leaves the pin \
-                      unreachable: no clone can fetch it, and the lock describes a state nobody \
-                      can recreate. A pin is live in every project of the weave, not only the \
-                      one the verb runs in, because a member's clone is shared.",
-                sits: "[Destructive operations](../explanation/destructive-operations.md).",
+                      project. With no entry there is nothing to reproduce, and a commit no ref \
+                      reaches is one the remotes this clone has fetched no longer hold; the \
+                      member is checked out on its declared branch at the tip of the remote's \
+                      branch instead, so the weave is usable, and the lock is left as it was \
+                      for you to settle. Removing the last ref that reaches a pinned commit \
+                      leaves the pin unreachable: no clone can fetch it, and the lock describes \
+                      a state nobody can recreate. A pin is live in every project of the weave, \
+                      not only the one the verb runs in, because a member's clone is shared.",
+                sits: "[Lock as derived](../explanation/joints/lock-as-derived.md); \
+                       [Reconcile repos](../how-to/reconcile-repos.md); \
+                       [Destructive operations](../explanation/destructive-operations.md).",
             },
         }
     }
@@ -140,7 +160,12 @@ impl Axis {
     /// entry is then the findings page's, written there from this table.
     pub fn finding(self) -> Option<Finding> {
         match self {
-            Self::Edits | Self::Checkout | Self::Name | Self::Publish | Self::Pin => None,
+            Self::Edits
+            | Self::Checkout
+            | Self::PushBranch
+            | Self::Name
+            | Self::Publish
+            | Self::Pin => None,
             Self::UnparseableProject => Some(Finding::of(
                 crate::check::ViolationKind::UnparseableProject,
                 crate::check::UnparseableProjectKind::ALL.map(|sub_kind| SubKindRow {
@@ -225,6 +250,9 @@ pub enum State {
     EditsLockFilesUncommitted,
     CheckoutInAnotherWorkspace,
     CheckoutInRawWorktree,
+    PushBranchDiverged,
+    PinNone,
+    PinUnreachable,
     NameTaken,
     NameARevision,
     NameNoSuchBranch,
@@ -249,12 +277,15 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 12] = [
+    pub const ALL: [State; 15] = [
         Self::EditsDirty,
         Self::EditsMidOperation,
         Self::EditsLockFilesUncommitted,
         Self::CheckoutInAnotherWorkspace,
         Self::CheckoutInRawWorktree,
+        Self::PushBranchDiverged,
+        Self::PinNone,
+        Self::PinUnreachable,
         Self::NameTaken,
         Self::NameARevision,
         Self::NameNoSuchBranch,
@@ -315,6 +346,35 @@ impl State {
                 refused_by: "`rwv member remove --delete` in the primary, and replay's prune \
                              of a dropped member there",
                 offers: &[Form::C16Raw],
+                verb_offers: &[],
+            },
+            Self::PushBranchDiverged => &StateRow {
+                axis: Axis::PushBranch,
+                name: "diverged",
+                means: "the branch and its upstream each hold commits the other lacks, counted \
+                        on the line",
+                refused_by: "`rwv pull`, for the project branch",
+                offers: &[Form::C2Pull, Form::C3Pull],
+                verb_offers: &[],
+            },
+            Self::PinNone => &StateRow {
+                axis: Axis::Pin,
+                name: "none",
+                means: "the lock has no entry for the member, or there is no lock file; the \
+                        checkout is on the declared branch at the tip of the remote's branch",
+                refused_by: "`rwv clone`, which does not refuse: it completes, lists the member \
+                             and exits with status 3",
+                offers: &[Form::C25, Form::C1UpdateRemote],
+                verb_offers: &[],
+            },
+            Self::PinUnreachable => &StateRow {
+                axis: Axis::Pin,
+                name: "unreachable",
+                means: "the lock pins a commit that no ref in the clone reaches; the checkout \
+                        is on the declared branch at the tip of the remote's branch",
+                refused_by: "`rwv clone`, which does not refuse: it completes, lists the member \
+                             and exits with status 3",
+                offers: &[Form::C17, Form::C25, Form::C19],
                 verb_offers: &[],
             },
             Self::NameTaken => &StateRow {
@@ -864,13 +924,13 @@ impl Form {
                 choice: C::C1,
                 steps: &[Rwv("rwv pull")],
                 at: W::Any,
-                shipped: false,
+                shipped: true,
             },
             Self::C1UpdateRemote => &FormRow {
                 choice: C::C1,
                 steps: &[Rwv("rwv update --remote --repo <m>")],
                 at: W::Any,
-                shipped: false,
+                shipped: true,
             },
             Self::C2Pull => &FormRow {
                 choice: C::C2,
@@ -912,7 +972,7 @@ impl Form {
                 choice: C::C6,
                 steps: &[Rwv("rwv update")],
                 at: W::Here,
-                shipped: false,
+                shipped: true,
             },
             Self::C7Push => &FormRow {
                 choice: C::C7,
@@ -1170,7 +1230,7 @@ impl Form {
                 choice: C::C33,
                 steps: &[Rwv("rwv fetch")],
                 at: W::Any,
-                shipped: false,
+                shipped: true,
             },
             Self::C34 => &FormRow {
                 choice: C::C34,
@@ -1915,8 +1975,9 @@ fn kind_sections(axis: Axis, vcs: &dyn Vcs, vcs_name: &str) -> String {
     out.push_str(&format!("**Why.** {}\n\n", kind.why));
     out.push_str(&format!(
         // rwv-advice: not-an-invocation
-        "**States.** A refused verb prints `rwv <verb>: <repo>: {} <state>` for each repo it \
-         judged in one of these, with what the state lists beneath it.\n\n",
+        "**States.** A verb that judges a repo in one of these prints `rwv <verb>: <repo>: {} \
+         <state>`, with what the state lists beneath it, and refuses unless its row below \
+         says it completes.\n\n",
         axis.token()
     ));
     out.push_str("| State | Means | Refused by |\n|---|---|---|\n");
@@ -2039,10 +2100,11 @@ mod tests {
 
     #[test]
     fn a_form_runs_after_another_only_once_that_one_prints() {
-        assert!(Form::C14Keep.row().shipped);
-        assert!(!Form::C6.printable());
-        assert!(!Form::C14Keep.printable());
+        assert!(Form::C15AtCherryPick.row().shipped);
+        assert!(!Form::C40.printable());
+        assert!(!Form::C15AtCherryPick.printable());
         assert!(Form::C15.printable());
+        assert!(Form::C14Keep.printable());
     }
 
     #[test]

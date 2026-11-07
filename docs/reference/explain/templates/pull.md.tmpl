@@ -1,0 +1,111 @@
+# rwv pull
+
+## Purpose
+
+Take in what the remotes hold: run the pruning fetch of every repo, fast-forward
+the project branch to its upstream, then run `rwv update`, so the members are
+aligned to the lock the project branch now holds.
+
+`pull` only ever moves the project branch forward. A branch that is behind its
+upstream takes it in; one that is at its upstream, ahead of it, or has no
+upstream has nothing to take in; one that has diverged — each side holding
+commits the other lacks — is refused with nothing changed, as `push-branch`
+`diverged`.
+
+1. **Fetch.** The same pruning fetch as `rwv fetch`, of the project repo and
+   every member. A repo the fetch could not complete refuses the pull before
+   anything is taken in; `rwv update` aligns the members to the lock as it
+   stands without the network.
+2. **The project branch.** Before it moves, the project repo is judged for
+   uncommitted changes to tracked files and a VCS operation in progress
+   (`edits`); either refuses. A branch behind its upstream then fast-forwards,
+   and `pull` reports what the commits it took in changed:
+   - `re-pinned <member>: <was> -> <now>` for each member whose pin the pulled
+     lock moves to a commit that does not descend from the old one;
+   - `member-changed <member>: …` for each member entry the pulled `rwv.toml`
+     adds, removes or changes, with each changed field and both values.
+3. **Update.** `rwv update`, narrowed by `--role` and `--repo`: members missing
+   on disk are cloned, and the rest are aligned to the lock as the branch now
+   holds it. It writes no lock.
+
+## Invocation
+
+```
+rwv pull [--detach-checkouts] [--project <name>] [--role <role>]...
+         [--repo <selector>]... [-j <N>] [--json] [--no-materialize]
+```
+
+- `--role` / `--repo` — limit the update of step 3 to a subset of the manifest.
+  Repeat for union. The fetch of step 1 covers every repo.
+- `--detach-checkouts` — as for `rwv update`: align a member even where that
+  changes what its HEAD is attached to, by materializing the pin on a detached
+  HEAD instead of refusing.
+- `--project <name>` — operate on this project instead of the active project.
+  Does not change `.rwv-active`.
+- `-j <N>` — run up to `N` per-repo workers in parallel. Default:
+  `min(nproc, 8)`.
+- `--json` — emit machine-readable output (see Output below).
+- `--no-materialize` — as for `rwv update`.
+
+Run `rwv pull --help` for the full clap surface.
+
+## Output
+
+Default text output is the fetch's lines (`rwv fetch` documents them), one line
+for the project branch (`rwv pull: projects/<name>: took '<branch>' from <was>
+to <now>`, or the reason there was nothing to take in), the reports of step 2,
+and the lines of the update.
+
+Under `--json`, `pull` emits a single envelope when every step is done:
+
+```
+{
+  "$schema": "<url>",
+  "fetched":  [ { "path": "...", "status": "fetched", "moved": [ ... ] }, ... ],
+  "project":  { "path": "projects/<name>", "branch": "main", "result": "advanced", ... },
+  "outcomes": [ { "path": "...", "status": "ok" }, ... ],
+  "placements": [ ... ],
+  "skipped": [ ... ]
+}
+```
+
+`fetched` holds the records of `rwv fetch --json`'s `repos`, and `outcomes`,
+`placements` and `skipped` the update's, as `rwv update --json` has them.
+`project` carries `path`, `branch` (absent when the project repo is detached),
+`result` (`advanced`, `even`, `ahead`, `no-upstream` or `detached`), `from` and
+`to` for `advanced`, `re_pinned` (`path`, `from`, `to`) and `member_changes`
+(`path`, `change`, `fields`).
+
+Schema:
+
+{{SCHEMA}}
+
+## Exit codes
+
+- `0` — every step completed.
+- `1` — a refusal stopped the pull: a repo the fetch could not complete, a
+  project branch that has diverged, uncommitted changes the fast-forward would
+  disturb, or any refusal of the update.
+
+## Examples
+
+Take in the project branch and align the members to its lock:
+
+```
+rwv pull
+```
+
+Narrow the update to one member:
+
+```
+rwv pull --repo github/acme/server
+```
+
+## Common errors
+
+- *push-branch diverged* — the project branch and its upstream each hold
+  commits the other lacks. `pull` takes in a branch only by fast-forward.
+- *edits dirty* — the project repo has uncommitted changes to tracked files;
+  commit or stash them, then rerun.
+- *pull could not complete the fetch* — a remote was unreachable or refused;
+  `rwv update` aligns the members to the lock as it stands.

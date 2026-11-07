@@ -74,7 +74,7 @@ fn weaves() -> Weaves {
 
     let target = tmp.path().join("target");
     std::fs::create_dir_all(&target).unwrap();
-    succeed(&target, &["fetch", &common::file_url(&project)]);
+    succeed(&target, &["clone", &common::file_url(&project)]);
 
     succeed(&source, &["member", "add", &common::file_url(&beta)]);
     succeed(&source, &["lock"]);

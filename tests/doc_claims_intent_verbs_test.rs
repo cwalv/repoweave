@@ -10,7 +10,7 @@
 //!   - `rwv member add` / `rwv member remove` author only when every active repo the
 //!     manifest declares is on disk; over a partial member set they record
 //!     the membership change and leave the managed files alone
-//!   - `rwv fetch`, `rwv activate`, `rwv materialize`, workweave-create
+//!   - `rwv clone`, `rwv activate`, `rwv materialize`, workweave-create
 //!     and `rwv init --adopt` do not author (context mode)
 //!   - `rwv init --adopt` additionally must not re-author what the
 //!     authoring path owns, even when the adopted repo committed it: it
@@ -82,7 +82,7 @@ fn init_bare_go_module(path: &Path, module: &str) {
     common::git_in(&work, &["push", "origin", "main"]);
 }
 
-/// Clone `bare` to `repo_path` under the workspace, the way `rwv fetch` would.
+/// Clone `bare` to `repo_path` under the workspace, the way `rwv clone` would.
 fn clone_member(bare: &Path, ws: &Path, repo_path: &str) {
     let dest = ws.join(repo_path);
     std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
@@ -93,7 +93,7 @@ fn clone_member(bare: &Path, ws: &Path, repo_path: &str) {
 }
 
 /// A bare "project" repo whose HEAD carries `rwv.toml` (only) declaring
-/// `repos`. Used as an `rwv fetch` / `rwv init --adopt` source.
+/// `repos`. Used as an `rwv clone` / `rwv init --adopt` source.
 fn make_project_bare(tmp: &Path, name: &str, repos: &[(&str, &str)]) -> PathBuf {
     let bare = tmp.join(format!("{name}.git"));
     init_bare_repo(&bare);
@@ -355,11 +355,11 @@ fn remove_does_not_overwrite_managed_content_from_a_partial_member_set() {
 }
 
 // ===========================================================================
-// Context verbs: fetch / activate / materialize / workweave-create / init --adopt do not author
+// Context verbs: clone / activate / materialize / workweave-create / init --adopt do not author
 // ===========================================================================
 
 #[test]
-fn fetch_does_not_author_managed_content() {
+fn clone_does_not_author_managed_content() {
     let tmp = common::tempdir().unwrap();
     let ws = tmp.path().join("ws");
     std::fs::create_dir_all(&ws).unwrap();
@@ -368,7 +368,7 @@ fn fetch_does_not_author_managed_content() {
     let source = common::file_url(&project_bare);
 
     rwv()
-        .args(["fetch", &source])
+        .args(["clone", &source])
         .current_dir(&ws)
         .assert()
         .success();
@@ -376,11 +376,11 @@ fn fetch_does_not_author_managed_content() {
     let project_dir = ws.join("projects/myapp");
     assert!(
         project_dir.join("rwv.toml").exists(),
-        "fetch should clone the project"
+        "clone should clone the project"
     );
     assert!(
         !code_workspace(&project_dir, "myapp").exists(),
-        "`rwv fetch` is a context verb; it must not author managed content"
+        "`rwv clone` is a context verb; it must not author managed content"
     );
 }
 
@@ -917,10 +917,10 @@ resolver = \"2\"
         );
     }
     assert!(
-        stderr.contains("rwv fetch") && stderr.contains("rwv activate"),
-        "the skip must name the commands that resolve it. `rwv fetch` alone \
-         does not: the adopt wrote `.rwv-active`, so fetch skips its \
-         first-fetch auto-activate and the lock is generated only by the \
+        stderr.contains("rwv update") && stderr.contains("rwv activate"),
+        "the skip must name the commands that resolve it. `rwv update` alone \
+         does not: the adopt wrote `.rwv-active`, so update skips its \
+         auto-activate and the lock is generated only by the \
          explicit `rwv activate` that follows. Got:\n{stderr}"
     );
 

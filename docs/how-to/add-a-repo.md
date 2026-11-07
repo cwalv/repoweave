@@ -66,10 +66,10 @@ It edits `rwv.toml`, regenerates the ecosystem workspace files (a `reference` re
 $EDITOR projects/<project>/rwv.toml        # branch = "dev" on github/example/some-lib
 git -C github/example/some-lib fetch origin
 git -C github/example/some-lib switch dev
-rwv update --commit
+rwv update --remote --commit
 ```
 
-`rwv update --commit` advances the clone to the branch's remote tip and commits `rwv.lock` together with the edited `rwv.toml` and the integration files it regenerates. Editing `branch` alone does not move the clone: `rwv fetch` refuses to align a clone that sits on another branch, and for an entry not yet in `rwv.lock` it records the commit the clone is on.
+`rwv update --remote --commit` advances the clone to the branch's remote tip and commits `rwv.lock` together with the edited `rwv.toml` and the integration files it regenerates. Editing `branch` alone does not move the clone: `rwv update` refuses to align a clone that sits on another branch, and leaves a clone the lock has no entry for where it is.
 
 ## Create a new repository (`--new`)
 
@@ -106,7 +106,7 @@ If the *project repository* itself already exists on a remote and carries an `rw
 
 ```bash
 rwv init https://github.com/example/my-project.git --adopt
-rwv fetch
+rwv update
 ```
 
 ## Remove a repo

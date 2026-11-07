@@ -1,8 +1,8 @@
-//! `dangling-reference` names the repair its state needs: `rwv fetch` when
+//! `dangling-reference` names the repair its state needs: `rwv update` when
 //! nothing stands where the entry's URL places it, and a re-key when a clone
 //! of that URL stands there — the checkout, moved to its placement ahead of
 //! the re-key `placement-disagreement` asks for. Each is followed to a report
-//! with nothing on it, beside the `rwv fetch` the second state steers away
+//! with nothing on it, beside the `rwv update` the second state steers away
 //! from.
 
 use std::path::{Path, PathBuf};
@@ -100,7 +100,7 @@ fn rekey(ws: &Path, from: &str, to: &str) {
 }
 
 #[test]
-fn a_checkout_gone_from_disk_is_fetched_back() {
+fn a_checkout_gone_from_disk_is_restored_by_update() {
     let tmp = common::tempdir().unwrap();
     let (ws, url) = weave_with_misplaced_member(&tmp);
     std::fs::rename(
@@ -121,11 +121,11 @@ fn a_checkout_gone_from_disk_is_fetched_back() {
         serde_json::Value::Null
     );
     let advice = dangling_advice(&ws, "local/acme/new");
-    assert!(advice.contains("run `rwv fetch`"), "{advice}");
+    assert!(advice.contains("run `rwv update`"), "{advice}");
     assert!(!advice.contains("re-key"), "{advice}");
 
     common::rwv()
-        .arg("fetch")
+        .arg("update")
         .current_dir(&ws)
         .assert()
         .success();
@@ -171,7 +171,7 @@ fn a_checkout_moved_to_its_placement_is_re_keyed_and_locked() {
         ),
         "{advice}"
     );
-    assert!(!advice.contains("run `rwv fetch`"), "{advice}");
+    assert!(!advice.contains("run `rwv update`"), "{advice}");
 
     rekey(&ws, "local/acme/old", "local/acme/new");
     common::rwv()
@@ -184,10 +184,10 @@ fn a_checkout_moved_to_its_placement_is_re_keyed_and_locked() {
     assert!(!common::under(&ws, "local/acme/old").exists());
 }
 
-/// What the advice steers away from: `rwv fetch` clones the URL a second time
+/// What the advice steers away from: `rwv update` clones the URL a second time
 /// at the recorded path, and the moved checkout is then an orphan.
 #[test]
-fn fetching_while_the_checkout_sits_at_its_placement_makes_a_second_clone() {
+fn updating_while_the_checkout_sits_at_its_placement_makes_a_second_clone() {
     let tmp = common::tempdir().unwrap();
     let (ws, _url) = weave_with_misplaced_member(&tmp);
     std::fs::rename(
@@ -197,7 +197,7 @@ fn fetching_while_the_checkout_sits_at_its_placement_makes_a_second_clone() {
     .unwrap();
 
     common::rwv()
-        .arg("fetch")
+        .arg("update")
         .current_dir(&ws)
         .assert()
         .success();
@@ -213,7 +213,7 @@ fn fetching_while_the_checkout_sits_at_its_placement_makes_a_second_clone() {
 /// A clone of some other remote at the placement is not the entry's checkout,
 /// so it does not change the repair.
 #[test]
-fn a_clone_of_another_remote_at_the_placement_leaves_fetch_the_repair() {
+fn a_clone_of_another_remote_at_the_placement_leaves_update_the_repair() {
     let tmp = common::tempdir().unwrap();
     let (ws, _url) = weave_with_misplaced_member(&tmp);
     std::fs::remove_dir_all(common::under(&ws, "local/acme/old")).unwrap();
@@ -234,6 +234,6 @@ fn a_clone_of_another_remote_at_the_placement_leaves_fetch_the_repair() {
         dangling_record(&ws, "local/acme/old")["clone_at_placement"],
         serde_json::Value::Null
     );
-    assert!(dangling_advice(&ws, "local/acme/old").contains("run `rwv fetch`"));
+    assert!(dangling_advice(&ws, "local/acme/old").contains("run `rwv update`"));
     assert!(kinds(&ws).contains(&("orphaned-clone".to_owned(), "local/acme/new".to_owned())));
 }

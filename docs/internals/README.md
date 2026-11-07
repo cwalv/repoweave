@@ -52,10 +52,12 @@ backstop unnecessary.
   rule, abort's tip attribution, and the git realization of each mechanism.
 - [concurrency](./concurrency.md) — the budget for judging interference
   concerns: git's correctness effort as goal and ceiling, the two tiers of
-  state, and the attestation invariant.
-- [lock-freshness-surfaces](./lock-freshness-surfaces.md) — the three sites that
-  compare a tip against `rwv.lock`, the question each one answers, and why
-  `rwv doctor --locked` is not a renderer over the violation pipeline.
+  state (including the claim that serializes fetches into one object store),
+  and the attestation invariant.
+- [lock-freshness-surfaces](./lock-freshness-surfaces.md) — which verbs write
+  `rwv.lock` and which only read it, the three sites that compare a tip
+  against it, the question each one answers, and why `rwv doctor --locked` is
+  not a renderer over the violation pipeline.
 - [branch-model](./branch-model.md) — the MOVE / ATTACH / DESTROY /
   DESTROY-STORE classification and the type split (`AttachedRef`,
   `OwnedRef`, warrants, consent tokens) that makes ref discipline hold by

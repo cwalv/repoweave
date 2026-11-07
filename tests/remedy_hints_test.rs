@@ -300,10 +300,10 @@ fn push_names_lock_commit_for_a_member_missing_from_the_lock() {
     );
 }
 
-/// `rwv doctor --locked` over a missing checkout names in-place `rwv fetch`,
-/// the verb that re-materializes it.
+/// `rwv doctor --locked` over a missing checkout names `rwv update`, the verb
+/// that re-materializes it.
 #[test]
-fn doctor_locked_names_fetch_for_a_missing_checkout() {
+fn doctor_locked_names_update_for_a_missing_checkout() {
     let weave = Weave::new(&["web"]);
     let member = weave.ws.join("github/acme/web");
     std::fs::remove_dir_all(&member).unwrap();
@@ -311,16 +311,19 @@ fn doctor_locked_names_fetch_for_a_missing_checkout() {
     let report = weave.refused(&["doctor", "--locked"]);
     assert!(
         report.contains("github/acme/web: missing on disk (lock pins")
-            && report.contains("); run `rwv fetch` with no source to materialize it"),
-        "the line names in-place fetch:\n{report}"
+            && report.contains("); run `rwv update` to materialize it"),
+        "the line names update:\n{report}"
     );
     assert!(
         !report.contains("rwv sync"),
         "sync brings in another workspace's state; it is not the repair here:\n{report}"
     );
 
-    weave.ok(&["fetch"]);
-    assert!(member.join(".git").exists(), "the fetch re-materialized it");
+    weave.ok(&["update"]);
+    assert!(
+        member.join(".git").exists(),
+        "the update re-materialized it"
+    );
     weave.ok(&["doctor", "--locked"]);
 }
 
@@ -452,11 +455,11 @@ fn commit_project(ws: &Path, project: &str) {
 }
 
 /// A sync that needs a member of a project the primary does not present
-/// parks on its missing canonical clone. A bare `rwv fetch` at the primary
-/// fetches the presented project and leaves it parked; the fetch the refusal
+/// parks on its missing canonical clone. A bare `rwv update` at the primary
+/// updates the presented project and leaves it parked; the update the refusal
 /// names, with the workweave's project, lets `--continue` finish.
 #[test]
-fn missing_canonical_clone_names_the_fetch_of_the_workweaves_own_project() {
+fn missing_canonical_clone_names_the_update_of_the_workweaves_own_project() {
     let tmp = common::tempdir().unwrap();
     let ws = weave_with_two_projects(tmp.path());
     commit_project(&ws, "pb");
@@ -472,19 +475,22 @@ fn missing_canonical_clone_names_the_fetch_of_the_workweaves_own_project() {
 
     let parked = rwv_refused(&seat, &["sync", &ws.to_string_lossy()]);
     assert!(parked.contains("rwv explain op-parked"), "{parked}");
-    let fetch = named_rwv_command(&parked, "rwv fetch");
-    assert_eq!(fetch, ["fetch", "--project", "pb"], "{parked}");
+    let update = named_rwv_command(&parked, "rwv update");
+    assert_eq!(update, ["update", "--project", "pb"], "{parked}");
 
-    rwv_ok(&ws, &["fetch"]);
+    rwv_ok(&ws, &["update"]);
     assert!(
         !canonical.exists(),
-        "a bare fetch at the primary fetches only the project it presents"
+        "a bare update at the primary clones only for the project it presents"
     );
     rwv_refused(&seat, &["sync", "--continue"]);
 
-    let fetch: Vec<&str> = fetch.iter().map(String::as_str).collect();
-    rwv_ok(&ws, &fetch);
-    assert!(canonical.join(".git").is_dir(), "the named fetch clones it");
+    let update: Vec<&str> = update.iter().map(String::as_str).collect();
+    rwv_ok(&ws, &update);
+    assert!(
+        canonical.join(".git").is_dir(),
+        "the named update clones it"
+    );
     rwv_ok(&seat, &["sync", "--continue"]);
     assert!(
         common::under(&seat, "local/origins/x")
@@ -494,10 +500,10 @@ fn missing_canonical_clone_names_the_fetch_of_the_workweaves_own_project() {
     );
 }
 
-/// The full-clone repair names the same fetch when the canonical clone it
-/// would link into is gone, and replaces the clone once that fetch has run.
+/// The full-clone repair names the same update when the canonical clone it
+/// would link into is gone, and replaces the clone once that update has run.
 #[test]
-fn standalone_repair_names_the_fetch_of_the_workweaves_own_project() {
+fn standalone_repair_names_the_update_of_the_workweaves_own_project() {
     let tmp = common::tempdir().unwrap();
     let ws = weave_with_two_projects(tmp.path());
     let x = origin_with_commit(tmp.path(), "x");
@@ -521,11 +527,11 @@ fn standalone_repair_names_the_fetch_of_the_workweaves_own_project() {
         refused.contains("there is no canonical clone at"),
         "{refused}"
     );
-    let fetch = named_rwv_command(&refused, "rwv fetch");
-    assert_eq!(fetch, ["fetch", "--project", "pb"], "{refused}");
+    let update = named_rwv_command(&refused, "rwv update");
+    assert_eq!(update, ["update", "--project", "pb"], "{refused}");
 
-    let fetch: Vec<&str> = fetch.iter().map(String::as_str).collect();
-    rwv_ok(&ws, &fetch);
+    let update: Vec<&str> = update.iter().map(String::as_str).collect();
+    rwv_ok(&ws, &update);
     let (_, fixed) = rwv(&seat, &["doctor", "--fix"]);
     assert!(
         fixed.contains(

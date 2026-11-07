@@ -25,7 +25,7 @@ a worktree.
 
 The symlink shape went because it broke the first rule of §2: it changed
 behavior, not just cost. A symlinked member read the live canonical clone rather
-than the revision the workweave's lock pins, so a fetch in the primary changed every
+than the revision the workweave's lock pins, so an update in the primary changed every
 workweave's copy under it; a write through the link landed in the primary; its
 absolute target stranded every workweave when the weave moved; it needed privilege on
 Windows; and every verb that walks members had to branch on which shape it was
@@ -34,7 +34,7 @@ filesystems that support them.
 
 A member worktree is born in one place, `birth_ephemeral_worktree` in
 `src/workweave.rs`, reached from `workweave create`'s member loop and from
-`materialize_member` (which `fetch`, `add`, `sync`, `sync-to` and
+`materialize_member` (which `update`, `add`, `sync`, `sync-to` and
 `doctor --fix` use to give a workweave a member it lacks). Its `WorktreeFiles`
 argument says where the tracked files come from: `Shared` for members, placed
 as §4 describes; `Written` for the project repo, which the VCS checks out
@@ -191,9 +191,10 @@ from, ask `Vcs::changed_paths_between` what the move rewrote, and pass those
 paths to `reshare`. A file is replaced only if it still holds its recorded
 content, so a local change is never lost; the replacement is placed under a
 staged name beside the file and renamed over it, then verified and repaired
-like a placement. The revision a member moved from is the caller's: `update`
-records the old tip, `fetch` reads HEAD before aligning, `sync` and `sync-to`
-read each member's savepoint, and `abort` reads each member's tip before it restores it.
+like a placement. The revision a member moved from is the caller's:
+`update --remote` records the old tip, `clone` and `update` read HEAD before
+aligning, `sync` and `sync-to` read each member's savepoint, and `abort` reads
+each member's tip before it restores it.
 The backend's index is not refreshed afterwards: git's next status re-hashes a
 replaced file once and writes the result, and the content is the same.
 
@@ -201,16 +202,16 @@ replaced file once and writes the result, and the content is the same.
 
 `FilePlacement { reflinked, hardlinked, written }` says how a checkout's files
 were placed; `written` counts every tracked entry the backend wrote, repairs
-included. Text reports name the member on `workweave create`, `add`, `fetch`,
+included. Text reports name the member on `workweave create`, `add`, `clone`,
 `update`, `sync`, `sync-to`, `abort` and `doctor --fix`.
 
 Under `--json`, counts live only in placement records — `PlacementOutput`
 (`src/placement.rs`), `{path, absolute_path, files}` — each naming the checkout
-it describes, in `fetch`, `update`, `sync` and `sync-to`. The envelope carries
+it describes, in `clone`, `update`, `sync` and `sync-to`. The envelope carries
 a `placements` array, empty rather than absent when nothing was placed.
 Outcome records never carry counts, because a placement need
 not be of the checkout an outcome names: `sync-to` re-shares a repo in the workweave
-and in the target, and `fetch` in a workweave creates its worktree while
+and in the target, and `update` in a workweave creates its worktree while
 its outcome names the canonical clone. Only the placement's own
 `absolute_path` says which checkout it was.
 
@@ -236,7 +237,7 @@ is shared; nothing rwv makes is shared there only because no backend declares
 the hardlink mode on Windows. A Windows declaration needs a link count first.
 
 Every verb that writes or moves a member's files ends by settling it, in the
-primary and in workweaves alike: `fetch` and `update` (through `settle_moved`),
+primary and in workweaves alike: `clone` and `update` (through `settle_moved`),
 `add`, `workweave create` and every `materialize_member`, `sync` and `sync-to`
 (materialized members, then `settle_members` over every member after replay
 and after advancing the target), `abort` after its restore, `rwv member set-role`, and
@@ -338,9 +339,9 @@ Older releases materialized a workweave's `reference` members as a symlink to
 the canonical clone. rwv no longer operates on that shape:
 
 - **Refusal.** Every verb that walks a workweave's members — `sync`, `sync-to`,
-  `abort`, `workweave create` (from a workweave) and `delete`, `update`,
-  `status`, `lock`, `materialize` and `role` — refuses while any member slot is
-  a symlink, with the `workweave-drift` refusal naming
+  `abort`, `workweave create` (from a workweave) and `delete`,
+  `update --remote`, `status`, `lock`, `materialize` and `role` — refuses while any
+  member slot is a symlink, with the `workweave-drift` refusal naming
   `rwv -C <workweave> doctor --fix` (`refuse_symlinked_members` in
   `src/workweave.rs`). A symlink at a member slot in the primary is the
   operator's own arrangement and is not refused.
@@ -351,12 +352,12 @@ the canonical clone. rwv no longer operates on that shape:
   a worktree at that revision, through `materialize_member`, so its files are
   placed and settled like any member's; the link itself is removed and what it
   pointed at is never touched. A `symlink-unfetched` slot needs the revision
-  first: `rwv fetch` run in the workweave brings the pinned revision into the
+  first: `rwv update` run in the workweave brings the pinned revision into the
   canonical clone, cloning it if absent, then creates the worktree in place of
   the link.
 - **Relink.** `materialize_member` is also the repair for a member whose
   checkout is gone or whose worktree link dangles (`workweave-drift`
-  `missing` and `dangling-link`, and `rwv fetch` in the workweave). It acts on
+  `missing` and `dangling-link`, and `rwv update` in the workweave). It acts on
   what the canonical clone still holds: a registration of the slot is
   reattached (`Vcs::reattach_registered_worktree`, git's `worktree repair`);
   else the workweave's receipted branch is checked out where it stands
@@ -391,11 +392,11 @@ recorded commit is not there stays empty, and doctor reports it
 (`uninitialized-submodule` / `unfetched`), from the primary for every
 workweave and from a workweave for itself. Nothing in this path fetches.
 
-**The network verbs fill the store.** `rwv member add` and `rwv fetch` call
-`fetch_submodules` in `src/share.rs` on the canonical clone of every member
-they clone or find present, unless its entry says `recurse-submodules = false`. At
-each level, an empty submodule directory of the canonical clone's own is
-checked out from upstream with everything nested in it
+**The network verbs fill the store.** `rwv member add`, `rwv clone` and
+`rwv update` call `fetch_submodules` in `src/share.rs` on the canonical clone of
+every member they clone or find present, unless its entry says
+`recurse-submodules = false`. At each level, an empty submodule directory of the
+canonical clone's own is checked out from upstream with everything nested in it
 (`check_out_submodule_from_upstream`; git: `submodule update --init
 --recursive`) and settled for the member's role; then every commit the
 canonical clone or any of its worktrees records that the store's copy lacks

@@ -123,7 +123,7 @@ fn update_fails_on_dangling_active() {
     let ws = make_workspace(tmp.path());
     set_dangling_active(&ws, "missing-proj");
 
-    let stderr = fail(&ws, &["update"]);
+    let stderr = fail(&ws, &["update", "--remote"]);
     assert_dangling_error(&stderr, "missing-proj");
 }
 

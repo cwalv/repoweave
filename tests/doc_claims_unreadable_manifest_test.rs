@@ -89,8 +89,8 @@ fn every_verb_that_reads_the_manifest_refuses_naming_the_key_and_line() {
     let primary_dir = ws.to_str().unwrap().to_owned();
     let cases: Vec<(Vec<&str>, &Path)> = vec![
         (vec!["lock"], ws),
-        (vec!["fetch"], ws),
         (vec!["update"], ws),
+        (vec!["update", "--remote"], ws),
         (vec!["materialize"], ws),
         (vec!["activate", "app"], ws),
         (vec!["member", "add", &beta], ws),

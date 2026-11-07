@@ -1,28 +1,28 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "UpdateJsonOutput",
-  "description": "Top-level envelope for `rwv update --json`. `{ \"$schema\": \"<url>\", \"repos\": [<RepoUpdateRecord>, ...] }`",
+  "description": "Top-level envelope for `rwv update --json`.\n\nShape: `{ \"$schema\": \"<url>\", \"outcomes\": [<MemberOutcomeOutput>, ...] }`.",
   "type": "object",
   "required": [
     "$schema",
-    "placements",
-    "repos"
+    "outcomes",
+    "placements"
   ],
   "properties": {
     "$schema": {
       "type": "string"
     },
+    "outcomes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/MemberOutcomeOutput"
+      }
+    },
     "placements": {
-      "description": "How the files of each checkout the advance moved were placed. Empty, not absent, when it moved none.",
+      "description": "How the files of each checkout the update moved or created were placed: a canonical clone it realigned, and from a workweave each worktree it created there. Empty, not absent, when it placed none.",
       "type": "array",
       "items": {
         "$ref": "#/definitions/PlacementOutput"
-      }
-    },
-    "repos": {
-      "type": "array",
-      "items": {
-        "$ref": "#/definitions/RepoUpdateRecord"
       }
     },
     "resolution": {
@@ -71,7 +71,7 @@
           ]
         },
         {
-          "description": "Activating a fetched project: selecting it, surfacing its links and running its install hooks.",
+          "description": "Activating a cloned project: selecting it, surfacing its links and running its install hooks.",
           "type": "string",
           "enum": [
             "activation"
@@ -108,6 +108,48 @@
         }
       }
     },
+    "MemberOutcomeOutput": {
+      "description": "Per-member outcome record for `rwv update --json` and `rwv clone --json`.\n\n`status` is one of `\"ok\"`, `\"skipped\"`, or `\"failed\"`. `message` carries a human-readable description of the outcome (always present for `\"failed\"`; present for `\"skipped\"` to say why; `null` for `\"ok\"`).",
+      "type": "object",
+      "required": [
+        "absolute_path",
+        "path",
+        "status"
+      ],
+      "properties": {
+        "absolute_path": {
+          "$ref": "#/definitions/WirePath"
+        },
+        "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "refusal": {
+          "description": "The refusal token of a `failed` repo, resolvable with `rwv explain <token>`. Absent when the failure carries no classified refusal.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/definitions/MemberOutcomeStatus"
+        }
+      }
+    },
+    "MemberOutcomeStatus": {
+      "description": "Status discriminant for [`MemberOutcomeOutput`].",
+      "type": "string",
+      "enum": [
+        "ok",
+        "skipped",
+        "failed"
+      ]
+    },
     "PlacementOutput": {
       "description": "How the files of one checkout were placed when a verb created or moved it.",
       "type": "object",
@@ -135,63 +177,6 @@
         },
         "path": {
           "description": "Manifest-relative path of the repository.",
-          "type": "string"
-        }
-      }
-    },
-    "RepoUpdateRecord": {
-      "description": "Per-repo record in `rwv update --json` output.\n\n`old_sha` is the tip before the fetch; `new_sha` is the tip after checkout (the new branch HEAD). Both are `null` when the SHA could not be read (e.g. the repo was missing from disk before the advance). For `kind = failed`, `new_sha` is always `null`; `error` carries the human-readable failure message.",
-      "type": "object",
-      "required": [
-        "absolute_path",
-        "branch",
-        "kind",
-        "path"
-      ],
-      "properties": {
-        "absolute_path": {
-          "description": "Fully resolved absolute path.",
-          "allOf": [
-            {
-              "$ref": "#/definitions/WirePath"
-            }
-          ]
-        },
-        "branch": {
-          "description": "Branch name from the manifest `branch` field.",
-          "type": "string"
-        },
-        "error": {
-          "description": "Human-readable error message, only present when `kind = failed`.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "kind": {
-          "description": "Outcome discriminant.",
-          "allOf": [
-            {
-              "$ref": "#/definitions/UpdateKind"
-            }
-          ]
-        },
-        "new_sha": {
-          "description": "Tip SHA after the advance (`null` when `kind = failed`).",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "old_sha": {
-          "description": "Tip SHA before the advance (`null` if unreadable).",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "path": {
-          "description": "Manifest-relative path.",
           "type": "string"
         }
       }
@@ -291,14 +276,14 @@
           "additionalProperties": false
         },
         {
-          "description": "`rwv update` was narrowed by `--role` or `--repo`.",
+          "description": "`rwv update --remote` was narrowed by `--role` or `--repo`.",
           "type": "string",
           "enum": [
             "narrowed"
           ]
         },
         {
-          "description": "A project was already active, so the fetch selected none.",
+          "description": "A project was already active, so the verb selected none.",
           "type": "object",
           "required": [
             "project-already-active"
@@ -347,32 +332,6 @@
           "type": "string"
         }
       }
-    },
-    "UpdateKind": {
-      "description": "Per-repo outcome kind for `rwv update --json`.",
-      "oneOf": [
-        {
-          "description": "Repo was advanced to a new SHA (old_sha != new_sha).",
-          "type": "string",
-          "enum": [
-            "updated"
-          ]
-        },
-        {
-          "description": "Repo was already at the branch HEAD (old_sha == new_sha).",
-          "type": "string",
-          "enum": [
-            "up-to-date"
-          ]
-        },
-        {
-          "description": "Advance failed; see `error` for the message.",
-          "type": "string",
-          "enum": [
-            "failed"
-          ]
-        }
-      ]
     },
     "WirePath": {
       "description": "Absolute path, `/`-separated on every platform.",

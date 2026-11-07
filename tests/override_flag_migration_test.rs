@@ -1,10 +1,9 @@
 //! `--force` migration hints and the refusal for the verbs with none.
 //!
 //! Each waiver is named for the precondition it destroys, so the operator
-//! consents to a consequence rather than to a category. `fetch` still answers
-//! the old `--force` with the flag that replaced it. Every other verb answers
-//! it the way it answers a flag it lacks: rwv has no blanket force, and the
-//! message says so without naming a replacement. `push --force` is the
+//! consents to a consequence rather than to a category. Every verb answers
+//! `--force` the way it answers a flag it lacks: rwv has no blanket force, and
+//! the message says so without naming a replacement. `push --force` is the
 //! deliberate exception — it is git's force-push, not a precondition waiver —
 //! and must keep parsing.
 
@@ -33,16 +32,25 @@ fn stderr_of(args: &[&str]) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
-#[test]
-fn fetch_force_names_allow_non_empty_dir() {
-    let stderr = stderr_of(&["fetch", "https://example.com/x.git", "--force"]);
-    assert!(
-        stderr.contains("--allow-non-empty-dir"),
-        "expected the replacement flag; got: {stderr}"
-    );
-}
-
 const NO_BLANKET_FORCE: &str = "rwv has no blanket force";
+
+/// The take-in verbs carry no message mapping an old spelling to a new one:
+/// `--force` is refused as it is on any verb that lacks it.
+#[test]
+fn force_on_a_take_in_verb_gets_the_generic_refusal() {
+    for args in [
+        &["fetch", "--force"][..],
+        &["clone", "https://example.com/x.git", "--force"][..],
+        &["update", "--force"][..],
+        &["pull", "--force"][..],
+    ] {
+        let stderr = stderr_of(args);
+        assert!(
+            stderr.contains(NO_BLANKET_FORCE) && !stderr.contains("renamed"),
+            "{args:?}: expected the generic refusal and no rename message; got: {stderr}"
+        );
+    }
+}
 
 /// `--force` on a verb that never declared it, and on one whose old waiver was
 /// renamed in a release that no longer carries a hint: the same refusal, which
@@ -127,17 +135,21 @@ fn push_force_is_not_migrated() {
     );
 }
 
+/// `--detach-working-branch` was a flag name an earlier release shipped and
+/// renamed. No verb keeps a message for it: clap's own unknown-argument error
+/// answers it, naming no replacement.
 #[test]
-fn fetch_detach_working_branch_names_detach_checkouts() {
-    // Not a `--force` alias: `--detach-working-branch` was itself a shipped
-    // flag name that the branch model renames directly.
-    let stderr = stderr_of(&[
-        "fetch",
-        "https://example.com/x.git",
-        "--detach-working-branch",
-    ]);
-    assert!(
-        stderr.contains("--detach-checkouts"),
-        "expected the replacement flag; got: {stderr}"
-    );
+fn the_retired_detach_working_branch_spelling_is_an_unknown_argument() {
+    for verb in ["fetch", "update", "clone"] {
+        let mut args = vec![verb];
+        if verb == "clone" {
+            args.push("https://example.com/x.git");
+        }
+        args.push("--detach-working-branch");
+        let stderr = stderr_of(&args);
+        assert!(
+            stderr.contains("unexpected argument") && !stderr.contains("has been renamed"),
+            "{args:?}: expected clap's unknown-argument error; got: {stderr}"
+        );
+    }
 }

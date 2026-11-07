@@ -162,7 +162,7 @@ defense, never the only report.
   constant, so a tool is never typed twice.
 - **`member_incompatibility`** — report a member the integration's own tooling
   cannot build with. Results are collected in one place and shared by
-  `rwv doctor` and `rwv update`.
+  `rwv doctor` and `rwv update --remote`.
 
 ## `IntegrationContext`
 

@@ -1,11 +1,11 @@
-//! Integration tests anchoring documented behavior of `rwv update`.
+//! Integration tests anchoring documented behavior of `rwv update --remote`.
 //!
 //! Doc claims pinned here:
 //!
 //!   - update re-snapshots `rwv.lock` from each manifest repo's branch HEAD
 //!     (not from the previous lock SHA)
-//!   - update is the network-bumping counterpart to `rwv fetch` (which is
-//!     lock-aligning only); the two verbs are distinct
+//!   - `update --remote` is the network-bumping counterpart to `rwv clone`
+//!     (which is lock-aligning only); the two are distinct
 //!   - update advances disk state to the freshly-fetched branch HEAD before
 //!     re-snapshotting the lock
 //!   - update -j N runs the per-repo advance loop in parallel and still
@@ -21,14 +21,14 @@
 //!     -m / --message names it; -m without --commit is a usage error
 //!
 //! Style note: this fixture is the bare-remote-plus-clone-plus-project
-//! shape from `update_test.rs`; we keep it local rather than forking
-//! helpers (the constraint from the spec) since `update_test.rs` doesn't
+//! shape from `update_remote_test.rs`; we keep it local rather than forking
+//! helpers (the constraint from the spec) since `update_remote_test.rs` doesn't
 //! expose its helpers and the doc_claims_* convention is to be
-//! self-contained per file. The verb-vs-fetch contrast claim is the
-//! reason this file exists at all.
+//! self-contained per file. The contrast between `update --remote` and the
+//! lock-aligning verbs is the reason this file exists at all.
 
 use assert_cmd::Command;
-use repoweave::update::UPDATE_SCHEMA_URL;
+use repoweave::update_remote::UPDATE_REMOTE_SCHEMA_URL;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
@@ -203,7 +203,7 @@ fn update_re_snapshots_lock_from_branch_head() {
     assert_ne!(initial_lock_sha, new_remote_head);
 
     rwv()
-        .args(["update", "--dirty"])
+        .args(["update", "--remote", "--dirty"])
         .current_dir(&ws.workspace)
         .assert()
         .success();
@@ -224,27 +224,26 @@ fn update_re_snapshots_lock_from_branch_head() {
 }
 
 // ===========================================================================
-// 2. update is distinct from fetch (verb-vocabulary split)
+// 2. update --remote is distinct from clone (verb-vocabulary split)
 //
-// Doc claim: `rwv fetch` (default mode) aligns the clone to the existing
-// rwv.lock and does not advance to remote HEAD. `rwv update` advances to
-// remote HEAD and re-snapshots the lock. These are different verbs with
-// different side-effects.
+// Doc claim: `rwv clone` aligns the clone to the existing rwv.lock and does
+// not advance to remote HEAD. `rwv update --remote` advances to remote HEAD
+// and re-snapshots the lock. These have different side-effects.
 //
 // We exercise the distinction directly: starting from the same state, run
-// `rwv fetch` and `rwv update` in two separate workspaces and observe that
-// only the update path moves the lock SHA.
+// `rwv clone` and `rwv update --remote` in two separate workspaces and
+// observe that only the update path moves the lock SHA.
 // ===========================================================================
 
 #[test]
-fn update_advances_lock_while_fetch_does_not() {
+fn update_remote_advances_lock_while_clone_does_not() {
     // Build two workspaces from the same bare-repo seed. The bare advances
     // past the initial lock SHA in both, then:
-    //   - ws_fetch:  run `rwv fetch` from inside the active project dir
-    //                (default mode = aligns to lock, does not bump it).
-    //   - ws_update: run `rwv update` (bumps lock to branch HEAD).
+    //   - ws_clone:  run `rwv clone` of a project source (aligns to the lock,
+    //                does not bump it).
+    //   - ws_update: run `rwv update --remote` (bumps lock to branch HEAD).
     //
-    // The lock SHA in ws_fetch must be unchanged; the lock SHA in
+    // The member in ws_clone must sit at the pinned SHA; the lock SHA in
     // ws_update must equal the new branch HEAD.
     let repos = [("local/org/a", "owned")];
 
@@ -257,7 +256,7 @@ fn update_advances_lock_while_fetch_does_not() {
     assert_ne!(initial_lock_sha_update, new_head_update);
 
     rwv()
-        .args(["update", "--dirty"])
+        .args(["update", "--remote", "--dirty"])
         .current_dir(&ws_update.workspace)
         .assert()
         .success();
@@ -266,31 +265,30 @@ fn update_advances_lock_while_fetch_does_not() {
         read_lock_sha(&ws_update.workspace, &ws_update.project_name, "local/org/a");
     assert_eq!(
         post_lock_update, new_head_update,
-        "rwv update must move the lock to the new branch HEAD"
+        "rwv update --remote must move the lock to the new branch HEAD"
     );
 
-    // --- ws_fetch ---------------------------------------------------------
-    // Default `rwv fetch <source>` is a clone-and-align verb that creates a
-    // fresh workspace from a project source. It is NOT the same as
-    // `rwv update` (a re-snapshot verb on an existing workspace). Verify
-    // that aspect of the split: `rwv fetch <project_source>` reads the
-    // committed lock and pins clones at the lock SHA — the bare's new
-    // HEAD does NOT leak into the clone.
+    // --- ws_clone ---------------------------------------------------------
+    // `rwv clone <source>` creates a fresh workspace from a project source.
+    // It is NOT the same as `rwv update --remote` (a re-snapshot verb on an
+    // existing workspace). Verify that aspect of the split: `rwv clone
+    // <project_source>` reads the committed lock and pins clones at the lock
+    // SHA — the bare's new HEAD does NOT leak into the clone.
     //
-    // We mirror fetch_test.rs's setup: a bare project repo carrying rwv.toml
-    // + rwv.lock, fetched into an empty workspace. The fetched clone of
-    // the manifest repo must be at the LOCK sha, not the new bare HEAD.
-    let tmp_fetch = common::tempdir().unwrap();
-    let ws_fetch = tmp_fetch.path().join("ws");
-    std::fs::create_dir_all(&ws_fetch).unwrap();
+    // A bare project repo carries rwv.toml + rwv.lock, cloned into an empty
+    // workspace. The cloned member must be at the LOCK sha, not the new bare
+    // HEAD.
+    let tmp_clone = common::tempdir().unwrap();
+    let ws_clone = tmp_clone.path().join("ws");
+    std::fs::create_dir_all(&ws_clone).unwrap();
 
     // Set up the manifest-repo bare and capture the initial SHA.
-    let manifest_bare = tmp_fetch.path().join("manifest.git");
+    let manifest_bare = tmp_clone.path().join("manifest.git");
     init_bare_repo_with_commit(&manifest_bare);
     let manifest_url = common::file_url(&manifest_bare);
-    let dep_clone = tmp_fetch.path().join("dep_clone");
+    let dep_clone = tmp_clone.path().join("dep_clone");
     common::git_in(
-        tmp_fetch.path(),
+        tmp_clone.path(),
         &[
             "clone",
             manifest_bare.to_str().unwrap(),
@@ -300,11 +298,11 @@ fn update_advances_lock_while_fetch_does_not() {
     let initial_sha = common::git_in(&dep_clone, &["rev-parse", "HEAD"]);
 
     // Build the project bare with rwv.toml + rwv.lock pinning to initial_sha.
-    let project_bare = tmp_fetch.path().join("project.git");
+    let project_bare = tmp_clone.path().join("project.git");
     init_bare_repo_with_commit(&project_bare);
-    let project_work = tmp_fetch.path().join("project_work");
+    let project_work = tmp_clone.path().join("project_work");
     common::git_in(
-        tmp_fetch.path(),
+        tmp_clone.path(),
         &[
             "clone",
             project_bare.to_str().unwrap(),
@@ -325,7 +323,7 @@ fn update_advances_lock_while_fetch_does_not() {
     common::git_in(&project_work, &["commit", "-m", "manifest + lock"]);
     common::git_in(&project_work, &["push", "origin", "main"]);
 
-    // Advance the bare past the lock — proves fetch reads lock, not HEAD.
+    // Advance the bare past the lock — proves clone reads lock, not HEAD.
     common::git_in(&dep_clone, &["config", "user.email", "test@test.com"]);
     common::git_in(&dep_clone, &["config", "user.name", "Test"]);
     std::fs::write(dep_clone.join("after.txt"), "after").unwrap();
@@ -335,17 +333,17 @@ fn update_advances_lock_while_fetch_does_not() {
 
     let project_source = common::file_url(&project_bare);
     rwv()
-        .args(["fetch", &project_source])
-        .current_dir(&ws_fetch)
+        .args(["clone", &project_source])
+        .current_dir(&ws_clone)
         .assert()
         .success();
 
-    // The cloned dep should sit at initial_sha — proves default `rwv fetch`
-    // does not bump.
-    let fetched_head = common::git_in(ws_fetch.join("local/team/dep"), &["rev-parse", "HEAD"]);
+    // The cloned dep should sit at initial_sha — proves `rwv clone` does not
+    // bump.
+    let cloned_head = common::git_in(ws_clone.join("local/team/dep"), &["rev-parse", "HEAD"]);
     assert_eq!(
-        fetched_head, initial_sha,
-        "rwv fetch (default) aligns to the lock; it must NOT advance to branch HEAD"
+        cloned_head, initial_sha,
+        "rwv clone aligns to the lock; it must NOT advance to branch HEAD"
     );
 }
 
@@ -375,7 +373,7 @@ fn update_dash_j_parallel_advances_all_and_emits_prefix() {
     }
 
     let output = rwv()
-        .args(["update", "--dirty", "-j", "2"])
+        .args(["update", "--remote", "--dirty", "-j", "2"])
         .current_dir(&ws.workspace)
         .output()
         .expect("rwv update -j 2");
@@ -388,7 +386,7 @@ fn update_dash_j_parallel_advances_all_and_emits_prefix() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     // Reporter::Parallel wraps each repo's lines with `[<repo>]`. The exact
     // text varies (git output is captured) but at minimum the per-repo
-    // "rwv update: fetching <path>" line is emitted under the prefix.
+    // "rwv update --remote: fetching <path>" line is emitted under the prefix.
     let any_prefix = new_heads
         .iter()
         .any(|(rp, _)| stdout.contains(&format!("[{rp}]")));
@@ -431,7 +429,7 @@ fn update_json_emits_envelope_under_j1() {
     let new_sha = advance_bare_main(bare);
 
     let assert = rwv()
-        .args(["update", "--dirty", "--json", "-j", "1"])
+        .args(["update", "--remote", "--dirty", "--json", "-j", "1"])
         .current_dir(&ws.workspace)
         .assert()
         .success();
@@ -443,7 +441,7 @@ fn update_json_emits_envelope_under_j1() {
     let obj = parsed.as_object().expect("top level must be an object");
     assert_eq!(
         obj.get("$schema").and_then(Value::as_str),
-        Some(UPDATE_SCHEMA_URL),
+        Some(UPDATE_REMOTE_SCHEMA_URL),
         "envelope must have correct $schema URL"
     );
 
@@ -489,13 +487,16 @@ fn update_json_emits_the_envelope_under_j_gt_1() {
     }
 
     let assert = rwv()
-        .args(["update", "--dirty", "--json", "-j", "2"])
+        .args(["update", "--remote", "--dirty", "--json", "-j", "2"])
         .current_dir(&ws.workspace)
         .assert()
         .success();
 
-    let (_, paths) =
-        common::envelope_shape(&assert.get_output().stdout, UPDATE_SCHEMA_URL, "repos");
+    let (_, paths) = common::envelope_shape(
+        &assert.get_output().stdout,
+        UPDATE_REMOTE_SCHEMA_URL,
+        "repos",
+    );
     assert_eq!(paths, ["local/org/a", "local/org/b"]);
 }
 
@@ -550,7 +551,7 @@ fn update_commit_lands_generated_files_in_the_lock_commit() {
     advance_bare_main_adding_go_mod(bare, "example.com/a");
 
     rwv()
-        .args(["update", "--dirty", "--commit"])
+        .args(["update", "--remote", "--dirty", "--commit"])
         .current_dir(&ws.workspace)
         .assert()
         .success();
@@ -589,7 +590,13 @@ fn update_filtered_commit_is_lock_only() {
     advance_bare_main_adding_go_mod(bare, "example.com/a");
 
     rwv()
-        .args(["update", "--dirty", "--commit", "--repo=local/org/a"])
+        .args([
+            "update",
+            "--remote",
+            "--dirty",
+            "--commit",
+            "--repo=local/org/a",
+        ])
         .current_dir(&ws.workspace)
         .assert()
         .success();
@@ -618,7 +625,7 @@ fn update_commit_still_refuses_unrelated_dirt() {
     advance_bare_main(bare);
 
     rwv()
-        .args(["update", "--dirty", "--commit"])
+        .args(["update", "--remote", "--dirty", "--commit"])
         .current_dir(&ws.workspace)
         .assert()
         .failure()
@@ -636,16 +643,22 @@ fn update_commit_refuses_a_rename_onto_an_authored_path() {
     let ws = build_workspace("alpha", &repos);
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
 
+    let (_, bare) = &ws.manifest_bares[0];
+    advance_bare_main_adding_go_mod(bare, "example.com/a");
+    common::git_in(
+        ws.workspace.join("local/org/a"),
+        &["pull", "--ff-only", "origin", "main"],
+    );
+
     std::fs::write(project_dir.join("notes.md"), "go 1.21\n").unwrap();
     common::git_in(&project_dir, &["add", "notes.md"]);
     common::git_in(&project_dir, &["commit", "-m", "notes"]);
     common::git_in(&project_dir, &["mv", "notes.md", "go.work"]);
 
-    let (_, bare) = &ws.manifest_bares[0];
-    advance_bare_main_adding_go_mod(bare, "example.com/a");
+    advance_bare_main(bare);
 
     rwv()
-        .args(["update", "--dirty", "--commit"])
+        .args(["update", "--remote", "--dirty", "--commit"])
         .current_dir(&ws.workspace)
         .assert()
         .failure()
@@ -675,7 +688,7 @@ fn update_commit_skips_a_gitignored_generated_file() {
     advance_bare_main_adding_go_mod(bare, "example.com/a");
 
     rwv()
-        .args(["update", "--dirty", "--commit"])
+        .args(["update", "--remote", "--dirty", "--commit"])
         .current_dir(&ws.workspace)
         .assert()
         .success();
@@ -706,7 +719,7 @@ fn update_commit_carries_a_modified_manifest() {
     advance_bare_main(bare);
 
     rwv()
-        .args(["update", "--dirty", "--commit"])
+        .args(["update", "--remote", "--dirty", "--commit"])
         .current_dir(&ws.workspace)
         .assert()
         .success();
@@ -735,6 +748,7 @@ fn update_commit_message_flag_replaces_the_generated_summary() {
     rwv()
         .args([
             "update",
+            "--remote",
             "--dirty",
             "--commit",
             "--message",
@@ -759,7 +773,7 @@ fn update_message_without_commit_is_a_usage_error() {
 
     for message_flag in ["-m", "--message"] {
         rwv()
-            .args(["update", message_flag, "orphaned message"])
+            .args(["update", "--remote", message_flag, "orphaned message"])
             .current_dir(&ws.workspace)
             .assert()
             .code(2)

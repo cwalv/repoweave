@@ -36,7 +36,7 @@ rwv doctor --fix
 rwv materialize
 ```
 
-`rwv doctor --fix` authors files for an integration you just enabled; it does not remove a disabled integration's files, and says so. `rwv materialize` strips them, repairs the weave-root symlinks, and runs install hooks for the active project. An install hook whose tool is missing (`pnpm` here) prints a warning naming the tool and does not fail the command. `rwv member add`, `rwv member remove`, `rwv update`, and `rwv member set-role` regenerate integration files as they change membership, and in the primary weave they also run install hooks.
+`rwv doctor --fix` authors files for an integration you just enabled; it does not remove a disabled integration's files, and says so. `rwv materialize` strips them, repairs the weave-root symlinks, and runs install hooks for the active project. An install hook whose tool is missing (`pnpm` here) prints a warning naming the tool and does not fail the command. `rwv member add`, `rwv member remove`, `rwv update --remote`, and `rwv member set-role` regenerate integration files as they change membership, and in the primary weave they also run install hooks.
 
 ## Commit and publish the project repository
 
@@ -54,10 +54,10 @@ Teammates and CI can now clone and materialize the entire workspace with one com
 
 ```bash
 mkdir -p ~/weave && cd ~/weave
-rwv fetch https://github.com/chatly/web-app.git
+rwv clone https://github.com/chatly/web-app.git
 ```
 
-A missing ecosystem tool does not fail the fetch: the install hook that needs it is skipped with a `tool-missing` warning, and `rwv fetch` exits 0. A CI job that needs every install hook to have run gates on it next:
+A missing ecosystem tool does not fail the clone: the install hook that needs it is skipped with a `tool-missing` warning, and `rwv clone` exits 0 when every member sits at its pin. A member the lock does not pin, or pins at an unreachable commit, makes it exit 3 instead. A CI job that needs every install hook to have run gates on it next:
 
 ```bash
 rwv doctor --kind tool-missing

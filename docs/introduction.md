@@ -3,8 +3,8 @@
 **Monorepo ergonomics without the monorepo, built for parallel agents.** **repoweave** coordinates work across repositories that share a project — from a ten-repo polyrepo down to a single `owned` member repo paired with a `projects/<name>/` coordination envelope, read-only `reference` repos, and parallel agent workweaves. It gives you:
 
 - **A committable manifest and lock.** `rwv.toml` says which repos belong; `rwv.lock` pins every revision. `sha256sum rwv.lock` is the project fingerprint — the multi-repo equivalent of `git rev-parse HEAD`.
-- **One command reproduces the workspace.** `rwv fetch <url>` clones the project and every repo it lists, surfaces ecosystem workspace files at the weave root where they apply, and runs install commands. For toolchain pins, env activation, or full OS-level reproduction, drop a `.mise.toml` / `.envrc` / `devcontainer.json` into the project repo (they're cross-cutting artifacts) — `rwv fetch` carries them with everything else. See [adjacent-tools](./adjacent-tools.md).
-- **A dedicated `projects/<name>/` envelope for intent and cross-cutting artifacts.** Keeping `rwv.toml`, `rwv.lock`, deliberative design records, issue trackers, `CLAUDE.md`, operational scripts, k8s manifests, devcontainer configs, `.mise.toml` toolchain pins, and Nix flakes in `projects/<name>/` gives them versioned correspondence with your code without polluting any product repository's commit history or public landing page — and they come along on every `rwv fetch`.
+- **One command reproduces the workspace.** `rwv clone <url>` clones the project and every repo it lists at its pinned commit, surfaces ecosystem workspace files at the weave root where they apply, and runs install commands. For toolchain pins, env activation, or full OS-level reproduction, drop a `.mise.toml` / `.envrc` / `devcontainer.json` into the project repo (they're cross-cutting artifacts) — `rwv clone` carries them with everything else. See [adjacent-tools](./adjacent-tools.md).
+- **A dedicated `projects/<name>/` envelope for intent and cross-cutting artifacts.** Keeping `rwv.toml`, `rwv.lock`, deliberative design records, issue trackers, `CLAUDE.md`, operational scripts, k8s manifests, devcontainer configs, `.mise.toml` toolchain pins, and Nix flakes in `projects/<name>/` gives them versioned correspondence with your code without polluting any product repository's commit history or public landing page — and they come along on every `rwv clone`.
 - **Isolated parallel work via workweaves.** Worktree-derived sandboxed copies of the whole workspace, with automatic copy-on-write file sharing where the filesystem supports reflinks. Use them for feature branches, PR review, or agent sandboxes; the primary weave stays undisturbed.
 - **A bounded surface for automation.** `rwv prime` advertises the workspace; `rwv explain <verb>` returns a markdown bundle with the verb's JSON Schema embedded; `rwv setup claude` registers both `SessionStart`/`PreCompact` context hooks and `WorktreeCreate`/`WorktreeRemove` lifecycle hooks so `claude --worktree` creates a full multi-repo workweave; roles (`owned` / `fork` / `dependency` / `reference`) surface repo change-resistance (`reference` repos have read-only tracked files on disk; `dependency` repos are writable but excluded from `rwv push` by default); workweaves isolate the blast radius. Together they give an agent harness everything it needs to drive the workspace without scraping help text.
 - **Local cross-repo imports where languages line up.** Generated workspace files (`Cargo.toml [workspace]`, `go.work`, `package.json` workspaces, `pyproject.toml [tool.uv.workspace]`, ...) mean a change in a shared library is immediately visible to its consumer — no publish step during development.
@@ -13,7 +13,7 @@
 
 The repos themselves stay independent — separately ownable, with normal git history. repoweave is a coordination layer, not a monorepo migration. You still commit and push per repo; the project lock and ecosystem wiring make that feel less expensive than it usually does.
 
-The fundamental unit is the **project**: a small repo at `projects/<name>/` carrying a manifest (`rwv.toml`) of which repos belong to the project, a lock (`rwv.lock`) pinning their revisions, and any cross-cutting docs. `rwv fetch <project-url>` clones the project repo and every repo it lists; one command, reproducible workspace.
+The fundamental unit is the **project**: a small repo at `projects/<name>/` carrying a manifest (`rwv.toml`) of which repos belong to the project, a lock (`rwv.lock`) pinning their revisions, and any cross-cutting docs. `rwv clone <project-url>` clones the project repo and every repo it lists; one command, reproducible workspace.
 
 ## Install
 
@@ -59,7 +59,7 @@ Three doors in, depending on what shape "the problem" has for you.
 
 Start with the [workspace lens](./explanation/lenses/workspace.md). It explains how repoweave moves the source of truth for a development environment out of human memory and into a versioned project repo — and what that gets you.
 
-Then walk through the [tutorial](./tutorial.md): fetch a project, get the latest, make a change, lock the state.
+Then walk through the [tutorial](./tutorial.md): clone a project, get the latest, make a change, lock the state.
 
 ### "I want monorepo speed without a monorepo"
 

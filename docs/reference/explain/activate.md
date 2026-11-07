@@ -55,7 +55,7 @@ flow:
    link left out — except the outgoing project's on a switch, which is taken
    into that project first. If that project's own copy differs and neither
    version control nor rwv's record holds it, the switch is refused with
-   nothing changed (`conflicting-root-write`). `add`, `remove`, `update`,
+   nothing changed (`conflicting-root-write`). `add`, `remove`, `update --remote`,
    `materialize` and `rwv doctor --fix` take it in and restore the link.
 2. **Symlink creation:** new symlinks are created at the weave root pointing
    to `projects/<project>/<file>` for each file in the active integrations'

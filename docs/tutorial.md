@@ -31,17 +31,17 @@ git -C projects/web-app push -u origin main
 rm -rf /tmp/chatly-seed
 ```
 
-When running the steps below against this bootstrap, substitute `file:///tmp/chatly-remotes/web-app.git` for `https://github.com/chatly/web-app.git` (or `chatly/web-app`) in `rwv fetch`, and `local/chatly-remotes/server` for `github/chatly/server`. The bootstrap repos hold no build files, so skip the build command in Step 3.
+When running the steps below against this bootstrap, substitute `file:///tmp/chatly-remotes/web-app.git` for `https://github.com/chatly/web-app.git` (or `chatly/web-app`) in `rwv clone`, and `local/chatly-remotes/server` for `github/chatly/server`. The bootstrap repos hold no build files, so skip the build command in Step 3.
 
 </details>
 
-## 1. Fetch the project
+## 1. Clone the project
 
 You have a fresh machine. Someone else already created the project. You want to reproduce their environment:
 
 ```bash
 mkdir ~/work && cd ~/work
-rwv fetch chatly/web-app
+rwv clone chatly/web-app
 ```
 
 What happens:
@@ -67,25 +67,27 @@ The result:
 └── .rwv-active                       # "web-app"
 ```
 
-`rwv fetch` reads `rwv.lock` and aligns clones to the pinned commits — it never advances existing pins to upstream branch tips (if a member repo is missing from `rwv.lock` altogether and `--frozen` is not set, `rwv fetch` records its initial entry). To advance existing repos to their remote branch tips: `rwv update`.
+`rwv clone` places each member at the commit `rwv.lock` pins and lists any member it cannot place — one the lock has no entry for, or whose pinned commit no ref in the clone reaches. Such a member is cloned at the tip of its declared branch, and `rwv clone` exits with status 3 instead of 0. It never advances a pin to an upstream branch tip, and it writes no `rwv.lock`; `rwv lock` records a member the lock does not cover. To advance existing repos to their remote branch tips: `rwv update --remote`.
 
 ## 2. Get the latest
 
 ```bash
-rwv update
+rwv update --remote
 ```
 
-**`rwv update` is the verb that gets the latest.** It advances each member repo to the branch HEAD configured in `rwv.toml` (`branch = "main"`) on the remote, and re-snapshots `rwv.lock`. Equivalent in spirit to `cargo update` or `npm update` — pull the new world, re-pin.
+**`rwv update --remote` is the form that gets the latest.** It advances each member repo to the branch HEAD configured in `rwv.toml` (`branch = "main"`) on the remote, and re-snapshots `rwv.lock`. Equivalent in spirit to `cargo update` or `npm update` — pull the new world, re-pin.
 
 Compare:
 
 | Verb | What it does | Mutates lock? |
 |---|---|---|
-| `rwv fetch` | Read `rwv.lock`, align clones to pinned SHAs | Never advances existing pins (backfills missing entries unless `--frozen`) |
-| `rwv update` | Advance to tracked branch HEADs, re-snapshot lock | Yes |
+| `rwv update` | Clone members missing on disk, align each present member to its pinned SHA | No — never advances a pin, and a member the lock does not cover is left where it is |
+| `rwv update --remote` | Advance to tracked branch HEADs, re-snapshot lock | Yes |
 | `rwv lock` | Snapshot current local HEADs, no network | Yes |
 
-If you forget which to run: `update` to get the latest, `fetch` to reproduce a pinned state, `lock` to checkpoint local state.
+`rwv fetch` downloads every remote's new commits and moves no branch, checkout, or lock. When a teammate pushes a new `rwv.lock`, `rwv pull` takes in the project branch and then runs `rwv update`, so your members land on their new pins.
+
+If you forget which to run: `update --remote` to get the latest, `update` to reproduce a pinned state, `lock` to checkpoint local state.
 
 ## 3. Make a change
 
@@ -128,19 +130,20 @@ rwv push
 
 `rwv push` pushes every `owned` and `fork` member repo first, and only pushes `projects/web-app/` after all member pushes succeed — so no teammate ever pulls a `rwv.lock` referencing an unpushed member commit. It refuses before contacting any remote while `projects/web-app/` has uncommitted changes, or while a member repo's `HEAD` differs from `rwv.lock`.
 
-`sha256sum projects/web-app/rwv.lock` is the project fingerprint: two machines with the same checksum pin the same commit in every member repo, which is the state a fresh `rwv fetch` reproduces. A pin is not a checkout — a member committed past its pin shows as `ahead` in `rwv status` until `rwv lock` records it.
+`sha256sum projects/web-app/rwv.lock` is the project fingerprint: two machines with the same checksum pin the same commit in every member repo, which is the state a fresh `rwv clone` reproduces. A pin is not a checkout — a member committed past its pin shows as `ahead` in `rwv status` until `rwv lock` records it.
 
 Anyone else can now reproduce your exact state:
 
 ```bash
-rwv fetch chatly/web-app --frozen
+mkdir ~/work-ci && cd ~/work-ci
+rwv clone chatly/web-app
 ```
 
-`--frozen` errors if `rwv.lock` is incomplete — some member repo has no entry (suitable for CI). A CI job also runs `rwv doctor --kind tool-missing` after it: a missing ecosystem tool is only a warning to `rwv fetch`, and this check exits non-zero for it. Without `--frozen`, `rwv fetch` aligns each repo to the SHA recorded in `rwv.lock`, adding any missing entries; a stale lock (present but behind `HEAD`) is reported by `rwv doctor`.
+The exit status tells a CI job whether the state reproduced: `0` means every member sits at its pin, and `3` means a member is unpinned (`rwv.lock` has no entry for it) or its pinned commit is unreachable. A CI job also runs `rwv doctor --kind tool-missing` after it: a missing ecosystem tool is only a warning to `rwv clone`, and this check exits non-zero for it. A stale lock (present but behind `HEAD`) is reported by `rwv doctor`.
 
 ## Where to go next
 
-You've seen the day-to-day path: fetch, update, edit, lock. Common follow-ups have their own how-tos:
+You've seen the day-to-day path: clone, update, edit, lock. Common follow-ups have their own how-tos:
 
 - **Cross-repo branches and isolation:** [create a feature workweave](./how-to/create-feature-workweave.md)
 - **Review someone else's PR locally:** [review a PR with a workweave](./how-to/review-pr-with-workweave.md)

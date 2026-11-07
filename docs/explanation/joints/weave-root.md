@@ -74,10 +74,11 @@ carve-outs for the member trees below it, and a cleanup command at the root
 would reach into history it does not own. The second half versions outputs
 alongside their inputs: the project repo already records the intent
 (`rwv.toml`), the pin (`rwv.lock`), and the surfaced content the links resolve
-to, and the root is reconstructable from those — `rwv fetch` then activation
-rebuilds it from nothing. A root repo would be a second source of truth whose
-every disagreement with the first is a new failure mode with no owner, for the
-same reason a lockfile is derived rather than hand-held
+to, and the root is reconstructable from those — `rwv clone` rebuilds it from
+nothing, activating the project as its last step. A root repo would be a
+second source of truth whose every disagreement with the first is a new failure
+mode with no owner, for the same reason a lockfile is derived rather than
+hand-held
 ([lock-as-derived](./lock-as-derived.md)).
 
 The root's own resident state makes the same point from the other side:
@@ -108,7 +109,7 @@ a real file at a lock file's path — a renaming writer (`pnpm`, npm's
 `write-file-atomic`) meeting a link that dangles, so on a first generation,
 and any writer meeting a link that is missing. That file is the tool's write,
 not something to refuse, and rwv reconciles it: a verb that may write the
-project directory (`add`, `remove`, `update`, `materialize`, `rwv doctor
+project directory (`add`, `remove`, `update --remote`, `materialize`, `rwv doctor
 --fix`) takes it in and puts the link back, provided the project's own copy is
 absent, identical, still the generation rwv recorded, or committed with no
 edit since, so version control can give it back. Otherwise rwv names both

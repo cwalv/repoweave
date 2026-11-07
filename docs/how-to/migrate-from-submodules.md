@@ -1,6 +1,6 @@
 # Migrate from git submodules or git-repo
 
-Replace a parent repository's `.gitmodules` (or a `git-repo` manifest repository's `default.xml`) with a repoweave project in `projects/<name>/` and normal branch-attached clones under the weave root, then publish the project repo so teammates can `rwv fetch` it:
+Replace a parent repository's `.gitmodules` (or a `git-repo` manifest repository's `default.xml`) with a repoweave project in `projects/<name>/` and normal branch-attached clones under the weave root, then publish the project repo so teammates can `rwv clone` it:
 
 ```bash
 mkdir -p ~/weave && cd ~/weave
@@ -67,7 +67,7 @@ git -C projects/web-app add -A && git -C projects/web-app commit -m "Initialize 
 
 `rwv lock --commit` commits `rwv.lock` and `rwv.toml`; the `git` commit carries `.gitattributes` and the generated workspace files.
 
-To start from the exact commits the superproject's gitlinks pinned rather than from branch tips, check out each pinned commit in its canonical clone (`git -C github/chatly/server checkout --detach <gitlink-sha>`) and run `rwv lock --commit`. While a member is detached, `rwv lock` warns, `rwv doctor` reports it, `rwv push` refuses to push it, and a teammate's `rwv fetch` puts the member on the branch `rwv.toml` declares, at the pinned commit. When ready, re-attach with `git -C github/chatly/server switch main` and run `rwv lock --commit` again.
+To start from the exact commits the superproject's gitlinks pinned rather than from branch tips, check out each pinned commit in its canonical clone (`git -C github/chatly/server checkout --detach <gitlink-sha>`) and run `rwv lock --commit`. While a member is detached, `rwv lock` warns, `rwv doctor` reports it, `rwv push` refuses to push it, and a teammate's `rwv clone` puts the member on the branch `rwv.toml` declares, at the pinned commit. When ready, re-attach with `git -C github/chatly/server switch main` and run `rwv lock --commit` again.
 
 ### 5. Publish the project repository
 
@@ -79,11 +79,11 @@ git -C projects/web-app push -u origin main
 git -C projects/web-app remote set-head origin main
 ```
 
-Teammates can now replace their superproject checkout with `rwv fetch https://github.com/chatly/web-app.git` in an empty directory.
+Teammates can now replace their superproject checkout with `rwv clone https://github.com/chatly/web-app.git` in an empty directory.
 
 ### 6. Remove `.gitmodules` from the old superproject
 
-Once your team switches to `projects/web-app/` and `rwv fetch`, deinit and remove the submodule gitlinks from the old superproject repository, then push the result:
+Once your team switches to `projects/web-app/` and `rwv clone`, deinit and remove the submodule gitlinks from the old superproject repository, then push the result:
 
 ```bash
 cd ~/old-superproject

@@ -335,14 +335,14 @@ so none of it needs a network.
 
 **`entry.url` is a fact for locally-created members and a promise for
 remote ones.** A `local`-registry creation's URL points at a bare repository
-rwv itself created, so a second machine's `rwv fetch` against that URL
-genuinely materializes the member (driven in
+rwv itself created, so a second machine's `rwv clone` or `rwv update` of
+the project genuinely materializes the member (driven in
 `tests/add_remove_test.rs::add_new_local_registry_creates_a_bare_upstream_and_clones_the_member`).
 A domain-registry creation's URL is written before anything exists there —
 rwv has no HTTP client to create it — so nothing in the manifest currently
 distinguishes "this URL is real" from "this URL is a hope". Revisit if any
-verb that clones from `entry.url` (not only `rwv fetch` — `rwv sync`'s
-`materialize_missing_repo` does too) fails on a `--new` member's URL in
+verb that clones from `entry.url` (not only `rwv clone` and `rwv update` —
+`rwv sync`'s `materialize_missing_repo` does too) fails on a `--new` member's URL in
 practice; that is the trigger, not a specific verb.
 
 ## Related

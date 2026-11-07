@@ -656,7 +656,7 @@ fn refuses_while_there_is_no_canonical_clone_to_link_into() {
     assert!(out.contains("there is no canonical clone at"), "{out}");
     assert!(
         out.contains(&format!(
-            "`rwv fetch --project {PROJECT}` in the primary weave"
+            "`rwv update --project {PROJECT}` in the primary weave"
         )),
         "{out}"
     );

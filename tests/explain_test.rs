@@ -172,12 +172,25 @@ fn explain_fetch_includes_purpose_and_schema() {
 }
 
 #[test]
+fn explain_clone_and_pull_include_purpose_and_schema() {
+    for (verb, wire_type) in [("clone", "CloneJsonOutput"), ("pull", "PullJsonOutput")] {
+        rwv().args(["explain", verb]).assert().success().stdout(
+            predicate::str::contains(format!("# rwv {verb}"))
+                .and(predicate::str::contains("## Purpose"))
+                .and(predicate::str::contains(wire_type))
+                .and(predicate::str::contains("```json")),
+        );
+    }
+}
+
+#[test]
 fn explain_update_includes_schema_block() {
     // update is --json-capable; its bundle now embeds a JSON Schema block.
     rwv().args(["explain", "update"]).assert().success().stdout(
         predicate::str::contains("# rwv update")
             .and(predicate::str::contains("## Output"))
             .and(predicate::str::contains("UpdateJsonOutput"))
+            .and(predicate::str::contains("UpdateRemoteJsonOutput"))
             .and(predicate::str::contains("```json")),
     );
 }

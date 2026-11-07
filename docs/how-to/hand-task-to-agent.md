@@ -42,8 +42,11 @@ Every `--json`-capable verb prints one JSON object, `{ "$schema": "<url>", "<key
 |---|---|---|
 | `rwv status --json` | `repos` | — |
 | `rwv doctor --json` | `violations` | — |
-| `rwv fetch --json` | `outcomes` (+ `placements`) | `min(nproc, 8)` |
-| `rwv update --json` | `repos` (+ `placements`) | `min(nproc, 8)` |
+| `rwv clone --json` | `outcomes` (+ `left`, `placements`) | `min(nproc, 8)` |
+| `rwv fetch --json` | `repos` | `min(nproc, 8)` |
+| `rwv pull --json` | `outcomes` (+ `fetched`, `project`, `placements`) | `min(nproc, 8)` |
+| `rwv update --json` | `outcomes` (+ `placements`) | `min(nproc, 8)` |
+| `rwv update --remote --json` | `repos` (+ `placements`) | `min(nproc, 8)` |
 | `rwv push --json` | `outcomes` | `1` |
 | `rwv sync --json` | `outcomes` (+ `placements`) | `1` |
 | `rwv sync-to --json` | `outcomes` (+ `placements`) | `1` |
@@ -64,15 +67,15 @@ When the agent finishes committing across member repos, `rwv sync-to --retire` a
 
 ## Filter repos with selectors
 
-Verbs that scan repositories (`fetch`, `update`, `push`) accept `--role` and `--repo` filters (combined as a union; regexes match against the full `github/org/repo` manifest path):
+Verbs that scan repositories (`fetch`, `pull`, `update`, `push`) accept `--role` and `--repo` filters (combined as a union; regexes match against the full `github/org/repo` manifest path):
 
 ```bash
-rwv fetch chatly/web-app --role owned
+rwv fetch --role owned
 rwv push --repo glob:'github/chatly/*'
-rwv update --role owned --repo re:'proto'
+rwv update --remote --role owned --repo re:'proto'
 ```
 
-A narrowed `rwv update` regenerates no integration files and runs no install hooks, and says so:
+A narrowed `rwv update --remote` regenerates no integration files and runs no install hooks, and says so:
 
 ```text
 [skipped] core: the integration files were not regenerated (the update was narrowed by --role or --repo); `rwv doctor --fix` regenerates them

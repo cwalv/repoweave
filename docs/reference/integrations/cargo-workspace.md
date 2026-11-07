@@ -223,10 +223,10 @@ rustc-wrapper = "sccache"
 ```
 
 At each authoring pass and each materialization — `rwv member add`, `rwv member remove`,
-`rwv update`, `rwv member set-role`, a `rwv doctor --fix` that regenerates,
+`rwv update --remote`, `rwv member set-role`, a `rwv doctor --fix` that regenerates,
 `rwv materialize`, and, unless `--no-materialize` is passed, `rwv activate`,
-`rwv workweave create`, and the activation a `rwv fetch` performs — the
-named binary is looked up on `PATH`:
+`rwv workweave create`, and the activation a `rwv clone` or `rwv update`
+performs — the named binary is looked up on `PATH`:
 
 - **Present** — a `# managed by rwv`-marked `[build] rustc-wrapper` key is
   merged into `projects/<project>/.cargo/config.toml`, and the file is
@@ -272,7 +272,7 @@ table in `Cargo.toml`, marked as its own:
 ```
 
 `rwv` writes no keys into the table. An authoring verb (`add`, `remove`,
-`role`, `update`) authors it as soon as the knob is set; `rwv doctor --fix`
+`role`, `update --remote`) authors it as soon as the knob is set; `rwv doctor --fix`
 authors it only when other drift already makes it regenerate. Disabling the
 integration and running `rwv materialize` strips the table and its marker.
 With the knob unset (the default), `[workspace.package]` is left entirely to
@@ -325,7 +325,7 @@ A Cargo workspace weave produces three distinct lock/manifest artifacts with sep
 
 | Artifact | Produced by | Pins | Committable |
 |---|---|---|---|
-| `Cargo.toml` (managed) | Authoring verbs (`rwv member add`, `remove`, `update`, `role`, `doctor --fix`) | Workspace shape — which repos are members | Yes |
+| `Cargo.toml` (managed) | Authoring verbs (`rwv member add`, `remove`, `update --remote`, `role`, `doctor --fix`) | Workspace shape — which repos are members | Yes |
 | `Cargo.lock` | Install hook (`cargo generate-lockfile` for the first resolve, `cargo fetch` after) | External crate versions from crates.io | Operator's choice ([details](./index.md#committed-files-and-committability)) |
 | `rwv.lock` | `rwv lock` | Internal repo revisions (git SHAs) | Yes |
 
@@ -349,7 +349,7 @@ it, is the same for every integration: see [Hook points](./index.md#hook-points)
   `rwv doctor --fix`, which authors the file.
 - **Members not on disk** — when a member `Cargo.toml` names is not cloned
   yet (directly after `rwv init --adopt`), the hook skips with a warning
-  naming the missing members and `rwv fetch`.
+  naming the missing members and `rwv update`.
 - **Tool trouble** — with `cargo` absent from `PATH` the hook is skipped with
   a `tool-missing` warning and the verb continues. A Cargo run that fails is
   an error; its message names the two ways out of a duplicate crate name
@@ -368,7 +368,7 @@ Strips only the `# managed by rwv`-marked keys (`[workspace].members` and its `#
 
 ## Diagnostics
 
-Reported by `rwv doctor`. Verify rows also print as warnings on `rwv activate`, `rwv materialize`, `rwv workweave create` and the activation a `rwv fetch` performs; see [Hook points](./index.md#hook-points).
+Reported by `rwv doctor`. Verify rows also print as warnings on `rwv activate`, `rwv materialize`, `rwv workweave create` and the activation a `rwv clone` or `rwv update` performs; see [Hook points](./index.md#hook-points).
 
 | Kind | Severity | Condition | Repair |
 |---|---|---|---|

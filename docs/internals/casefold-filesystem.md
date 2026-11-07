@@ -145,29 +145,29 @@ written — run the suite against the mount and confirm it passes, folding
 arm, with output containing `different workweave, not this one` and `lists
 it as`.
 
-**Target 4 — the fetch materialization path.** No test in the tree exercises
+**Target 4 — the clone materialization path.** No test in the tree exercises
 this yet. Manual reproduction, run against the mount:
 
 ```sh
 mkdir -p /mnt/casefold/fixtures/remotes
 git init --bare --initial-branch=main /mnt/casefold/fixtures/remotes/chatly.git
-# ... push one commit to it, as any fetch fixture does ...
+# ... push one commit to it, as any clone fixture does ...
 
 mkdir /mnt/casefold/fixtures/ws && cd /mnt/casefold/fixtures/ws
-rwv fetch /mnt/casefold/fixtures/remotes/chatly.git      # mints projects/chatly
-rwv fetch /mnt/casefold/fixtures/remotes/Chatly.git      # same repo, case-twin name
+rwv clone file:///mnt/casefold/fixtures/remotes/chatly.git      # mints projects/chatly
+rwv clone file:///mnt/casefold/fixtures/remotes/Chatly.git      # same repo, case-twin name
 ```
 
-The second fetch must refuse, and the refusal must name the occupant as the
+The second clone must refuse, and the refusal must name the occupant as the
 parent lists it (`describe_existing`'s "lists it as" clause) rather than
 silently cloning into a directory the filesystem is about to fold onto the
 first. A permanent test would mirror
 `tests/case_equivalence_test.rs::workweave_reuse_refuses_to_adopt_a_case_twin_directory`
-against `tests/fetch_test.rs::fetch_existing_workspace_handles_gracefully`'s
-fixture shape — probe the projects directory for folding, fetch a case-twin
+against `tests/clone_test.rs::fetch_existing_workspace_handles_gracefully`'s
+fixture shape — probe the projects directory for folding, clone a case-twin
 source, and assert the refusal arm only where the probe says it folds. That
 test does not exist yet; writing it needs no privilege at all, only the same
 `filesystem_folds_case` idiom `tests/case_equivalence_test.rs` already uses
-(currently private to that file — a fetch test reusing it would move the
+(currently private to that file — a clone test reusing it would move the
 probe to `tests/common` first, or duplicate the dozen lines). That is what
 makes it runnable on ordinary CI the same way target 3's test now is.

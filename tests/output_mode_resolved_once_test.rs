@@ -8,7 +8,7 @@
 //!    re-derived the shape of the output from the flag,
 //!    and 5c8ad7e is the one that drifted.
 //! 2. `OutputMode::from_flag` is called by the dispatcher alone.
-//! 3. The `reference` role is tested in one place in `fetch.rs`,
+//! 3. The `reference` role is tested in one place in `member_selection.rs`,
 //!    `MemberSelection::leaves_out`; the test used to be re-derived at four
 //!    sites below dispatch.
 //!
@@ -17,8 +17,8 @@
 //! 1 reads parameters spelled `json: bool`, so a flag renamed
 //! or carried in a struct field is invisible to it, and `src/cli.rs`, whose
 //! clap arguments are those flags, and `src/bin/`, whose plugin is not this
-//! library, are not read. Prohibition 3 reads `Role::Reference` in `fetch.rs`
-//! only.
+//! library, are not read. Prohibition 3 reads `Role::Reference` in
+//! `member_selection.rs` only.
 
 mod common;
 
@@ -96,11 +96,11 @@ fn only_the_dispatcher_resolves_the_output_mode() {
 }
 
 #[test]
-fn the_reference_role_is_tested_once_in_fetch() {
+fn the_reference_role_is_tested_once_in_the_member_selection() {
     let lines = production_lines();
     let tests: Vec<String> = lines
         .iter()
-        .filter(|l| l.file == "fetch.rs" && tests_the_reference_role(&l.text))
+        .filter(|l| l.file == "member_selection.rs" && tests_the_reference_role(&l.text))
         .map(|l| format!("{}: {}", l.site(), l.text.trim()))
         .collect();
     assert_eq!(

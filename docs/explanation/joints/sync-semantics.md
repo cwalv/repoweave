@@ -144,7 +144,7 @@ repoweave it does not:
   workweave branch rewrites nothing anyone else can have seen.
 - **Landing rebases only the unpublished side.** `sync-to` rebases CWD (the
   workweave) against the target, then fast-forwards the target.
-- **Divergence that arrives through a remote** is `update`'s and git's to
+- **Divergence that arrives through a remote** is `update --remote`'s and git's to
   handle, not a sync strategy's.
 
 For two workspaces that share no origin and both carry published history,

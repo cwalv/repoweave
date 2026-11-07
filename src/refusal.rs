@@ -199,10 +199,6 @@ pub enum RefusalKind {
     MalformedProvider,
     /// `rwv member remove` names a path the manifest does not carry.
     RepoNotInManifest,
-    /// `--frozen` and no lock file.
-    MissingLock,
-    /// The lock covers fewer repos than the manifest lists.
-    IncompleteLock,
     /// The clone `--delete` would destroy is referenced by other projects.
     SharedCloneReferenced,
     /// The local clone has no conventional remote to read a URL from.
@@ -529,27 +525,17 @@ mod tests {
     #[test]
     fn a_shared_condition_spells_one_token_in_both_registers() {
         use crate::check::CheckViolation;
-        use crate::manifest::{ProjectName, RepoPath};
+        use crate::manifest::ProjectName;
 
         let project = ProjectName::new("proj").expect("fixture name must validate");
-        let repo = RepoPath::new("github/acme/server").expect("fixture path must validate");
 
-        let pairs: [(RefusalKind, CheckViolation); 2] = [
-            (
-                RefusalKind::LegacyManifestFormat,
-                CheckViolation::LegacyManifestFormat {
-                    project: project.clone(),
-                    legacy_path: std::path::PathBuf::from("/ws/projects/proj/rwv.yaml"),
-                },
-            ),
-            (
-                RefusalKind::IncompleteLock,
-                CheckViolation::IncompleteLock {
-                    project,
-                    repo: repo.clone(),
-                },
-            ),
-        ];
+        let pairs: [(RefusalKind, CheckViolation); 1] = [(
+            RefusalKind::LegacyManifestFormat,
+            CheckViolation::LegacyManifestFormat {
+                project,
+                legacy_path: std::path::PathBuf::from("/ws/projects/proj/rwv.yaml"),
+            },
+        )];
 
         for (kind, finding) in pairs {
             assert_eq!(kind.token(), finding.kind().to_string());

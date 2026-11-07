@@ -396,7 +396,11 @@ fn update_still_surfaces_inside_a_pointerless_workweave() {
     let surfaced = ww.join("demo.code-workspace");
     let _ = std::fs::remove_file(&surfaced);
 
-    rwv().args(["update"]).current_dir(&ww).assert().success();
+    rwv()
+        .args(["update", "--remote"])
+        .current_dir(&ww)
+        .assert()
+        .success();
 
     let clone = ww.join("github/org/repo");
     assert_eq!(

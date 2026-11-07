@@ -868,7 +868,7 @@ fn author_and_surface(
     // chain, answering from `.rwv-workweave` in a workweave root and from
     // `.rwv-active` at primary. Reading the pointer directly here would be
     // wrong in a workweave, whose root carries no pointer: every intent verb
-    // (`member add`, `member remove`, `update`) and `doctor --fix` run inside one would
+    // (`member add`, `member remove`, `update --remote`) and `doctor --fix` run inside one would
     // take the early return below and silently skip surfacing.
     //
     // Intent mode regenerates a project's content without choosing it, so it
@@ -1454,7 +1454,7 @@ pub(crate) fn activate_workweave(
 /// Install hooks are suppressed: an intent verb inside a workweave leaves
 /// them to `rwv materialize`.
 ///
-/// Used by the intent verbs (`member add`, `member remove`, `update`) when they run inside
+/// Used by the intent verbs (`member add`, `member remove`, `update --remote`) when they run inside
 /// a workweave. `rwv doctor --fix` deliberately does NOT come through here —
 /// it uses [`activate_intent_at`], which runs the hooks; see that function
 /// for why a repair verb cannot suppress them.
@@ -2659,7 +2659,7 @@ fn foreign_shared_name_links(
 /// A thin binding of
 /// [`run_member_incompatibilities`](crate::integration_runner::run_member_incompatibilities)
 /// to a weave directory, for callers that hold a `root` + manifest rather than
-/// an `IntegrationContextBase` — `rwv update`'s post-MOVE report. `rwv doctor`
+/// an `IntegrationContextBase` — `rwv update --remote`'s post-MOVE report. `rwv doctor`
 /// calls the runner directly with the context base it already built; both reach
 /// the same per-integration predicate, so the two surfacings cannot diverge.
 ///

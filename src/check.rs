@@ -655,7 +655,7 @@ pub enum CheckViolation {
     /// `classify_working_tree_drift` would misattribute the failure as
     /// `LiveEdits`. This variant surfaces the true root cause instead.
     ///
-    /// Repair: `rwv fetch --project <p>` at the primary weave clones it again,
+    /// Repair: `rwv update --project <p>` at the primary weave clones it again,
     /// and `rwv doctor --fix` there relinks this worktree. No auto-fix of the
     /// clone itself — doctor never clones (network stays behind explicit verbs).
     MissingCanonicalClone {
@@ -1268,7 +1268,7 @@ pub enum SubmoduleCommitKind {
     /// The canonical clone's copy of the submodule holds it. Auto-fixable:
     /// `--fix` checks the submodule out from there without the network.
     Fetched,
-    /// Nothing local holds it. Report-only: `rwv fetch` in the workweave
+    /// Nothing local holds it. Report-only: `rwv update` in the workweave
     /// fetches it into the canonical clone and checks it out.
     Unfetched,
 }
@@ -2235,7 +2235,7 @@ pub enum ViolationOutput {
         /// The path the entry's URL places it at, when a clone of the same
         /// remote stands there and no entry of the project names it; `null`
         /// otherwise. Present, the repair is to re-key the entry to it and run
-        /// `rwv lock`; absent, it is `rwv fetch`.
+        /// `rwv lock`; absent, it is `rwv update`.
         clone_at_placement: Option<String>,
     },
     MemberPermissions {
@@ -6581,7 +6581,7 @@ fn scan_leftover_checkouts(
 
 /// `--fix` for the [`MemberGap`]s the canonical clone can close on its own,
 /// through [`crate::workweave::materialize_member`]. One it cannot is left
-/// for `rwv fetch`, which doctor does not run — except a dangling checkout
+/// for `rwv update`, which doctor does not run — except a dangling checkout
 /// under `abandon_lost_pins`, which is relinked onto the workweave's branch
 /// created at the canonical clone's HEAD, its pinned commits given up.
 fn repair_member_gaps(
@@ -8418,7 +8418,7 @@ impl CheckViolation {
             } => format!(
                 "dangling reference in {project}: {repo} — \
                      listed in rwv.toml but not cloned on disk; \
-                     run `rwv fetch` from the workspace to re-materialize \
+                     run `rwv update` from the workspace to re-materialize \
                      missing manifest members, then re-run `rwv doctor` to verify"
             ),
             CheckViolation::DanglingReference {
@@ -8429,7 +8429,7 @@ impl CheckViolation {
                 "dangling reference in {project}: {repo} — listed in rwv.toml but not \
                      cloned on disk, while a clone of its URL stands at `{placed}`, where \
                      that URL places it; re-key the entry in rwv.toml from `{repo}` to \
-                     `{placed}` and run `rwv lock` (`rwv fetch` would clone it a second time \
+                     `{placed}` and run `rwv lock` (`rwv update` would clone it a second time \
                      at `{repo}`)"
             ),
             CheckViolation::MemberPermissions {
@@ -8491,7 +8491,7 @@ impl CheckViolation {
                 let fetch_then_fix = format!(
                     " — git cannot open it, and the canonical clone holds neither the \
                          workweave's branch nor the revision rwv.lock pins. If that revision \
-                         is on the remote, run `rwv fetch --project {}` at the primary weave, \
+                         is on the remote, run `rwv update --project {}` at the primary weave, \
                          then `rwv doctor --fix`, which relinks it onto that revision. If it is \
                          in no clone — its commits went with a deleted clone — \
                          `rwv doctor --fix --abandon-lost-pins` relinks it onto the \
@@ -8524,7 +8524,7 @@ impl CheckViolation {
                     DriftKind::MissingUnfetched => (
                         "missing worktree",
                         " — the canonical clone does not hold the revision rwv.lock \
-                             pins, or is not on disk; `rwv fetch` run in that workweave \
+                             pins, or is not on disk; `rwv update` run in that workweave \
                              fetches the revision into it, cloning it first if need be, and \
                              creates the worktree",
                     ),
@@ -8538,7 +8538,7 @@ impl CheckViolation {
                         "symlink instead of a worktree at",
                         " — rwv no longer operates on a symlinked member, and the \
                              canonical clone does not hold the revision rwv.lock pins, or is \
-                             not on disk; `rwv fetch` run in that workweave fetches the \
+                             not on disk; `rwv update` run in that workweave fetches the \
                              revision into it, cloning it first if need be, and replaces the \
                              link with a worktree",
                     ),
@@ -9586,7 +9586,7 @@ impl CheckViolation {
                 format!(
                     "{workweave}/{repo}: canonical clone for `{repo}` is absent \
                          (expected at {}), so git cannot open this worktree; run \
-                         `rwv fetch --project {project}` at the primary weave to clone it \
+                         `rwv update --project {project}` at the primary weave to clone it \
                          again, then `rwv doctor --fix` there, which relinks this checkout \
                          keeping its files — where its pinned commits went with the deleted \
                          clone, the finding that follows names `--abandon-lost-pins`",
@@ -9608,7 +9608,7 @@ impl CheckViolation {
                     }
                     SubmoduleCommitKind::Unfetched => format!(
                         "their recorded commits are not in the canonical clone's copies; \
-                             `rwv fetch --repo {repo}` run in that workweave fetches them \
+                             `rwv update --repo {repo}` run in that workweave fetches them \
                              there and checks them out"
                     ),
                 };
@@ -9884,8 +9884,8 @@ pub fn run_check_locked(ctx: &crate::workspace::WorkspaceContext) -> anyhow::Res
                 Ok(rev) => rev,
                 Err(_) => {
                     outln!(
-                        "{repo_path}: missing on disk (lock pins {}); run `rwv fetch` with no \
-                         source to materialize it",
+                        "{repo_path}: missing on disk (lock pins {}); run `rwv update` to \
+                         materialize it",
                         raw_entry.version.short_display()
                     );
                     any_drift = true;

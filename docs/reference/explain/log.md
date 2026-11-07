@@ -130,6 +130,13 @@ Schema:
           ]
         },
         {
+          "description": "A branch and the branch it takes in from or publishes to.",
+          "type": "string",
+          "enum": [
+            "push-branch"
+          ]
+        },
+        {
           "description": "A name the verb was given is unusable.",
           "type": "string",
           "enum": [
@@ -151,7 +158,7 @@ Schema:
           ]
         },
         {
-          "description": "A commit a live lock pins that a verb would leave nothing reaching.",
+          "description": "The commit a lock pins for a member, and whether a ref reaches it.",
           "type": "string",
           "enum": [
             "pin"

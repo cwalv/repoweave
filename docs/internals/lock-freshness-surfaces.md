@@ -25,6 +25,27 @@ the three compares two `ResolvedRevisionId`s with `==`; there is no algorithm to
 share. What each surface *enumerates* is where they part, and it is the
 enumeration that decides what each can and cannot report.
 
+## What writes the lock
+
+`rwv lock` (`lock` in `src/lock.rs`), `rwv update --remote`
+(`run_update_remote` in `src/update_remote.rs`) and the relock phase of
+`rwv sync` and `rwv sync-to` (`run_relock` in `src/sync.rs`) write `rwv.lock`.
+`rwv update --remote` writes it once its worker pool has joined and every repo
+advanced; it and `rwv lock` both go through `write_project_lock`, so the
+snapshot they take is the same function of the manifest and the checkouts.
+
+Every other verb that takes a project in reads the lock and writes nothing.
+`rwv clone` and `rwv update` (`bring_members` in `src/update.rs`) place each
+member at the commit its entry pins. When `bring_members` creates a member the
+lock has no entry for, or whose entry no ref in the clone reaches, it checks the
+member out on its declared branch at the remote tip and records nothing;
+`rwv clone` lists it as `pin` `none` or `pin` `unreachable` and exits with
+status 3, and `rwv update` leaves a present clone with no entry where it is.
+`rwv fetch` moves no checkout, and `rwv pull` writes no lock of its own: its
+`rwv update` step reads the lock the fast-forwarded project branch carries. A
+tip that differs from its entry after any of these is a state for `rwv doctor`
+to report as `stale-lock` or `incomplete-lock`, not one the verb repairs.
+
 ## Why `--locked` is not a renderer over `StaleLock`
 
 `--locked` is **lock-total**: it iterates the raw lock, so every entry gets a

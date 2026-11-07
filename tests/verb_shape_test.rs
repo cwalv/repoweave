@@ -1,9 +1,9 @@
 //! End-to-end tests for the verb-shape overhaul:
-//!   - `rwv fetch` reads lock by default; `rwv update` bumps it
+//!   - `rwv clone` and `rwv update` read the lock; `rwv update --remote` bumps it
 //!   - `rwv lock` has no hooks; install moves to `rwv activate`
 //!
-//! Lives alongside the existing fetch / lock / activate suites; the focus
-//! here is the new verb shape, not the per-feature corner cases.
+//! Lives alongside the existing clone / update / lock / activate suites; the
+//! focus here is the new verb shape, not the per-feature corner cases.
 
 use std::path::{Path, PathBuf};
 use std::process;
@@ -47,9 +47,10 @@ fn init_bare_with_commit(path: &Path) -> String {
     String::from_utf8(out.stdout).unwrap().trim().to_string()
 }
 
-/// Build a workspace bootstrapped via `rwv fetch`. Returns (workspace_root,
-/// project_dir, dep_bare_repo, initial_sha).
-fn bootstrap_via_fetch(tmp: &Path) -> (PathBuf, PathBuf, PathBuf, String) {
+/// Build a workspace bootstrapped via `rwv clone` of a project whose lock pins
+/// the dep at its remote's tip. Returns (workspace_root, project_dir,
+/// dep_bare_repo, initial_sha).
+fn bootstrap_via_clone(tmp: &Path) -> (PathBuf, PathBuf, PathBuf, String) {
     let workspace = tmp.join("ws");
     std::fs::create_dir_all(&workspace).unwrap();
 
@@ -76,13 +77,14 @@ fn bootstrap_via_fetch(tmp: &Path) -> (PathBuf, PathBuf, PathBuf, String) {
         "[repositories.\"local/team/dep\"]\ntype = \"git\"\nurl = \"{dep_url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
     );
     std::fs::write(work.join("rwv.toml"), &manifest_toml).unwrap();
-    common::git_in(&work, &["add", "rwv.toml"]);
-    common::git_in(&work, &["commit", "-m", "manifest"]);
+    common::fixture_lock_at_remote_tips(&work, &[("local/team/dep", &dep_url)]);
+    common::git_in(&work, &["add", "rwv.toml", "rwv.lock"]);
+    common::git_in(&work, &["commit", "-m", "manifest + lock"]);
     common::git_in(&work, &["push", "origin", "main"]);
 
     let source = common::file_url(&project_bare);
     rwv()
-        .args(["fetch", &source])
+        .args(["clone", &source])
         .current_dir(&workspace)
         .assert()
         .success();
@@ -91,22 +93,11 @@ fn bootstrap_via_fetch(tmp: &Path) -> (PathBuf, PathBuf, PathBuf, String) {
     (workspace, project_dir, dep_bare, initial_sha)
 }
 
-// Note: "default fetch reads lock without bumping" is exercised end-to-end
-// by `fetch_default_reads_lock_and_does_not_bump_it` in fetch_test.rs.
-
-// ---------------------------------------------------------------------------
-// `rwv update` advances repos to branch HEAD and re-snapshots
-// ---------------------------------------------------------------------------
-
-#[test]
-fn update_advances_dep_to_branch_head_and_relocks() {
-    let tmp = common::tempdir().unwrap();
-    let (workspace, project_dir, dep_bare, initial_sha) = bootstrap_via_fetch(tmp.path());
-
-    // Push a new commit to the dep's bare remote.
-    let work = tmp.path().join("dep-work");
+/// Push a new commit to the dep's bare remote and return its SHA.
+fn advance_dep(tmp: &Path, dep_bare: &Path) -> String {
+    let work = tmp.join("dep-work");
     common::git_in(
-        tmp.path(),
+        tmp,
         &[
             "clone",
             &dep_bare.to_string_lossy(),
@@ -120,35 +111,46 @@ fn update_advances_dep_to_branch_head_and_relocks() {
     common::git_in(&work, &["commit", "-m", "v2"]);
     common::git_in(&work, &["push", "origin", "main"]);
 
-    // Find the new SHA on the bare repo.
-    let new_sha = String::from_utf8(
+    String::from_utf8(
         common::git()
             .args(["rev-parse", "main"])
-            .current_dir(&dep_bare)
+            .current_dir(dep_bare)
             .output()
             .unwrap()
             .stdout,
     )
     .unwrap()
     .trim()
-    .to_string();
+    .to_string()
+}
+
+// ---------------------------------------------------------------------------
+// `rwv update --remote` advances repos to branch HEAD and re-snapshots
+// ---------------------------------------------------------------------------
+
+#[test]
+fn update_remote_advances_dep_to_branch_head_and_relocks() {
+    let tmp = common::tempdir().unwrap();
+    let (workspace, project_dir, dep_bare, initial_sha) = bootstrap_via_clone(tmp.path());
+
+    let new_sha = advance_dep(tmp.path(), &dep_bare);
     assert_ne!(new_sha, initial_sha);
 
     rwv()
-        .args(["update"])
+        .args(["update", "--remote"])
         .current_dir(&workspace)
         .assert()
         .success();
 
     let lock = std::fs::read_to_string(project_dir.join("rwv.lock")).unwrap();
     assert!(
-        lock.contains(&new_sha) || lock.contains(&new_sha[..7]),
-        "rwv update should snapshot the advanced SHA into rwv.lock; lock:\n{lock}"
+        lock.contains(&new_sha) && !lock.contains(&initial_sha),
+        "rwv update --remote should snapshot the advanced SHA into rwv.lock; lock:\n{lock}"
     );
 }
 
 // ---------------------------------------------------------------------------
-// `rwv update` re-authors managed content; a filtered run does not
+// `rwv update --remote` re-authors managed content; a filtered run does not
 // ---------------------------------------------------------------------------
 
 /// The generated file used to observe authoring: `vscode-workspace` is
@@ -159,49 +161,51 @@ fn code_workspace(project_dir: &Path) -> PathBuf {
 }
 
 #[test]
-fn update_authors_managed_content() {
+fn update_remote_authors_managed_content() {
     let tmp = common::tempdir().unwrap();
-    let (workspace, project_dir, _dep_bare, _initial_sha) = bootstrap_via_fetch(tmp.path());
+    let (workspace, project_dir, _dep_bare, _initial_sha) = bootstrap_via_clone(tmp.path());
 
-    // `rwv fetch` is a context verb, so nothing has authored yet.
+    // `rwv clone` is a context verb, so nothing has authored yet.
     assert!(
         !code_workspace(&project_dir).exists(),
-        "bootstrap via `rwv fetch` must not author managed content"
+        "bootstrap via `rwv clone` must not author managed content"
     );
 
     rwv()
-        .args(["update"])
+        .args(["update", "--remote"])
         .current_dir(&workspace)
         .assert()
         .success();
 
     assert!(
         code_workspace(&project_dir).exists(),
-        "`rwv update` must re-author the integrations' managed content"
+        "`rwv update --remote` must re-author the integrations' managed content"
     );
 }
 
 #[test]
-fn filtered_update_does_not_author_managed_content() {
+fn filtered_update_remote_does_not_author_managed_content() {
     let tmp = common::tempdir().unwrap();
-    let (workspace, project_dir, _dep_bare, _initial_sha) = bootstrap_via_fetch(tmp.path());
+    let (workspace, project_dir, dep_bare, _initial_sha) = bootstrap_via_clone(tmp.path());
+    let new_sha = advance_dep(tmp.path(), &dep_bare);
 
     // Selects the workspace's only repo, so the advance and the lock write do
     // exactly the same work as the unfiltered run above — the filter's
     // emptiness is the only difference.
     rwv()
-        .args(["update", "--repo", "local/team/dep"])
+        .args(["update", "--remote", "--repo", "local/team/dep"])
         .current_dir(&workspace)
         .assert()
         .success();
 
+    let lock = std::fs::read_to_string(project_dir.join("rwv.lock")).unwrap();
     assert!(
-        project_dir.join("rwv.lock").exists(),
-        "a filtered `rwv update` still writes the lock"
+        lock.contains(&new_sha),
+        "a filtered `rwv update --remote` still writes the lock; lock:\n{lock}"
     );
     assert!(
         !code_workspace(&project_dir).exists(),
-        "a filtered `rwv update` must not author from a tree it only partly covered"
+        "a filtered `rwv update --remote` must not author from a tree it only partly covered"
     );
 }
 

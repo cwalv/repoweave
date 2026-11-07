@@ -194,7 +194,7 @@ pub(crate) fn settle_manifest(
         for path in &missing {
             eprintln!("  - {path}");
         }
-        eprintln!("run `rwv fetch` to materialize them, then `rwv doctor --fix` to regenerate.");
+        eprintln!("run `rwv update` to materialize them, then `rwv doctor --fix` to regenerate.");
         return Ok(());
     }
 

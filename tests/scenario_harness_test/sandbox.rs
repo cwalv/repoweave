@@ -656,11 +656,11 @@ impl Sandbox {
             .unwrap_or_else(|e| panic!("rwv {args:?} in {} failed to start: {e}", dir.display()))
     }
 
-    pub fn fetch_command(&self, project: Repo) -> Vec<String> {
-        vec!["fetch".to_owned(), self.remote_url(Remote::origin(project))]
+    pub fn clone_command(&self, project: Repo) -> Vec<String> {
+        vec!["clone".to_owned(), self.remote_url(Remote::origin(project))]
     }
 
-    /// An empty weave root for `machine`, which `rwv fetch` then fills as a
+    /// An empty weave root for `machine`, which `rwv clone` then fills as a
     /// second computer would be set up.
     pub fn prepare_machine(&self, machine: Machine) -> PathBuf {
         let root = self.weave_root(machine);

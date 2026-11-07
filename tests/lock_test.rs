@@ -1711,7 +1711,7 @@ fn lock_detached_head_warning_matches_what_a_later_fetch_does() {
     std::fs::remove_dir_all(&member).unwrap();
 
     rwv_cmd()
-        .arg("fetch")
+        .arg("update")
         .current_dir(&project_dir)
         .assert()
         .success();

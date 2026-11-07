@@ -1,9 +1,9 @@
-//! `rwv fetch` run in a workweave, and the primary's canonical clones it
+//! `rwv update` run in a workweave, and the primary's canonical clones it
 //! shares with that workweave:
 //!
 //!   - it never moves the primary's branch, whether the workweave's pin is
 //!     behind the primary or ahead of it;
-//!   - it fetches a pinned revision the canonical clone lacks, so the advice
+//!   - it brings in a pinned revision the canonical clone lacks, so the advice
 //!     doctor prints for `missing-unfetched` and `symlink-unfetched`, followed
 //!     from the workweave, clears them;
 //!   - a canonical clone it creates is born at the primary's pin, and it does
@@ -17,7 +17,7 @@ const OWNED_PATH: &str = "github/org/owned";
 const LATE_PATH: &str = "github/org/late";
 const PROJECT: &str = "app";
 const SEAT_BRANCH: &str = "app--seat";
-const FOLLOW_THE_ADVICE: &str = "`rwv fetch` run in that workweave";
+const FOLLOW_THE_ADVICE: &str = "`rwv update` run in that workweave";
 
 fn commit(repo: &Path, file: &str) -> String {
     std::fs::write(repo.join(file), format!("{file}\n")).unwrap();
@@ -128,9 +128,9 @@ fn make_weave(tmp: &Path) -> (Weave, PathBuf) {
     (weave, seat)
 }
 
-fn fetch_in(seat: &Path) -> std::process::Output {
+fn update_in(seat: &Path) -> std::process::Output {
     common::rwv()
-        .args(["fetch"])
+        .args(["update"])
         .current_dir(seat)
         .output()
         .unwrap()
@@ -154,16 +154,16 @@ fn assert_on_main_at(canonical: &Path, tip: &str) {
 }
 
 #[test]
-fn fetch_in_a_workweave_behind_the_primary_leaves_the_primarys_branch_alone() {
+fn update_in_a_workweave_behind_the_primary_leaves_the_primarys_branch_alone() {
     let tmp = common::tempdir().unwrap();
     let (weave, seat) = make_weave(tmp.path());
     let canonical = weave.primary.join(OWNED_PATH);
     let seat_pin = common::git_in(seat.join(OWNED_PATH), &["rev-parse", "HEAD"]);
     let primary_tip = commit(&canonical, "PRIMARY-ONLY");
 
-    let fetched = fetch_in(&seat);
+    let updated = update_in(&seat);
 
-    assert!(fetched.status.success(), "{}", describe(&fetched));
+    assert!(updated.status.success(), "{}", describe(&updated));
     assert_on_main_at(&canonical, &primary_tip);
     assert_eq!(
         common::git_in(seat.join(OWNED_PATH), &["rev-parse", "HEAD"]),
@@ -172,7 +172,7 @@ fn fetch_in_a_workweave_behind_the_primary_leaves_the_primarys_branch_alone() {
 }
 
 #[test]
-fn fetch_in_a_workweave_ahead_of_the_primary_leaves_the_primarys_branch_alone() {
+fn update_in_a_workweave_ahead_of_the_primary_leaves_the_primarys_branch_alone() {
     let tmp = common::tempdir().unwrap();
     let (weave, seat) = make_weave(tmp.path());
     let canonical = weave.primary.join(OWNED_PATH);
@@ -187,9 +187,9 @@ fn fetch_in_a_workweave_ahead_of_the_primary_leaves_the_primarys_branch_alone() 
         )],
     );
 
-    let fetched = fetch_in(&seat);
+    let updated = update_in(&seat);
 
-    assert!(fetched.status.success(), "{}", describe(&fetched));
+    assert!(updated.status.success(), "{}", describe(&updated));
     assert_on_main_at(&canonical, &primary_tip);
 }
 
@@ -265,9 +265,9 @@ fn assert_advice_clears(seat: &Path, finding: &str, canonical: &Path, cloned: &s
     assert_eq!(findings, vec![finding.to_owned()]);
     assert!(report.contains(FOLLOW_THE_ADVICE), "{report}");
 
-    let fetched = fetch_in(seat);
+    let updated = update_in(seat);
 
-    assert!(fetched.status.success(), "{}", describe(&fetched));
+    assert!(updated.status.success(), "{}", describe(&updated));
     let checkout = seat.join(LATE_PATH);
     assert!(checkout.join(".git").is_file(), "a linked worktree");
     assert_eq!(
@@ -318,7 +318,7 @@ fn symlink_unfetched_advice_followed_from_the_workweave_clears_it() {
 }
 
 #[test]
-fn a_canonical_clone_fetch_creates_from_a_workweave_is_born_at_the_primarys_pin() {
+fn a_canonical_clone_update_creates_from_a_workweave_is_born_at_the_primarys_pin() {
     let tmp = common::tempdir().unwrap();
     let (weave, seat) = make_weave(tmp.path());
     let (source, upstream, primary_pin) = publish(&weave.tmp, "late");
@@ -337,9 +337,9 @@ fn a_canonical_clone_fetch_creates_from_a_workweave_is_born_at_the_primarys_pin(
         Some(&seat_pin),
     );
 
-    let fetched = fetch_in(&seat);
+    let updated = update_in(&seat);
 
-    assert!(fetched.status.success(), "{}", describe(&fetched));
+    assert!(updated.status.success(), "{}", describe(&updated));
     let canonical = weave.primary.join(LATE_PATH);
     assert_on_main_at(&canonical, &primary_pin);
     assert_eq!(
@@ -376,9 +376,9 @@ fn an_unpinned_symlinked_member_gets_a_worktree_at_the_canonical_head_and_the_lo
         vec!["workweave-drift/symlink-unfetched".to_owned()]
     );
 
-    let fetched = fetch_in(&seat);
+    let updated = update_in(&seat);
 
-    assert!(fetched.status.success(), "{}", describe(&fetched));
+    assert!(updated.status.success(), "{}", describe(&updated));
     let checkout = seat.join(LATE_PATH);
     assert!(!checkout.is_symlink() && checkout.join(".git").is_file());
     assert_eq!(common::git_in(&canonical, &["rev-parse", "HEAD"]), head);
@@ -392,20 +392,20 @@ fn an_unpinned_symlinked_member_gets_a_worktree_at_the_canonical_head_and_the_lo
     assert_eq!(
         std::fs::read_to_string(project_dir.join("rwv.lock")).unwrap(),
         lock_before,
-        "the workweave's lock records its worktrees; fetch does not write it"
+        "the workweave's lock records its worktrees; update does not write it"
     );
 }
 
 #[test]
-fn fetch_in_a_workweave_with_no_lock_writes_none() {
+fn update_in_a_workweave_with_no_lock_writes_none() {
     let tmp = common::tempdir().unwrap();
     let (_weave, seat) = make_weave(tmp.path());
     let lock = seat.join("projects").join(PROJECT).join("rwv.lock");
     std::fs::remove_file(&lock).unwrap();
 
-    let fetched = fetch_in(&seat);
+    let updated = update_in(&seat);
 
-    assert!(fetched.status.success(), "{}", describe(&fetched));
+    assert!(updated.status.success(), "{}", describe(&updated));
     assert!(
         !lock.exists(),
         "a lock bootstrapped here would record the primary's HEADs, not this \

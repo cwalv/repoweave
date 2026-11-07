@@ -16,8 +16,9 @@
 //! Not pinned: a path turned into a `&str` by hand (`to_str()`) and given to a
 //! text slot — a `&str` carries no record of where it came from, and nothing
 //! in this crate can make one that does. And the one door out of the module,
-//! `GitCommand::into_command`, is a `Command` that takes any argument; the
-//! count test below holds how many production lines in `src/git.rs` open it.
+//! `GitCommand::into_command`, is a `Command` that takes any argument; it
+//! exists only in test builds, and the test below holds that no production
+//! line opens it.
 
 mod common;
 
@@ -225,18 +226,22 @@ fn the_probes_see_a_field_widened_to_pub_super() {
 }
 
 #[test]
-fn the_door_out_of_the_command_has_one_production_caller() {
-    let callers: Vec<String> = production_lines()
-        .into_iter()
-        .filter(|l| l.file == "git.rs" && l.text.contains(".into_command()"))
+fn the_door_out_of_the_command_is_not_in_production() {
+    let lines = production_lines();
+    let callers: Vec<String> = lines
+        .iter()
+        .filter(|l| l.text.contains(".into_command()"))
         .map(|l| format!("{} {}", l.site(), l.text.trim()))
         .collect();
-    assert_eq!(
-        callers.len(),
-        1,
+    let definitions: Vec<String> = lines
+        .iter()
+        .filter(|l| l.text.contains("fn into_command"))
+        .map(|l| format!("{} {}", l.site(), l.text.trim()))
+        .collect();
+    assert!(
+        callers.is_empty() && definitions.is_empty(),
         "`into_command` hands back a `Command` that takes any argument, so each \
-         production use is a place a path can bypass `GitArg`. The one use is \
-         `fetch_all_prune_command`, whose caller spawns through the reporter. \
-         Found: {callers:#?}"
+         production use is a place a path can bypass `GitArg`. It exists for test \
+         fixtures only. Found: {callers:#?} {definitions:#?}"
     );
 }

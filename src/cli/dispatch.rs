@@ -19,17 +19,21 @@ use crate::check;
 use crate::cli::{
     consent, BackupAction, Cli, Commands, MemberAction, SetupAction, WorkweaveAction,
 };
+use crate::clone;
 use crate::explain;
 use crate::fetch;
 use crate::init;
 use crate::lock;
+use crate::member_selection::MemberSelection;
 use crate::plugins;
 use crate::prime;
+use crate::pull;
 use crate::push;
 use crate::setup;
 use crate::status;
 use crate::sync;
 use crate::update;
+use crate::update_remote;
 
 use crate::manifest::{ProjectName, WorkweaveName};
 use crate::parallel::OutputMode;
@@ -372,6 +376,9 @@ fn refuse_symlinked_members_here(ctx: &WorkspaceContext) -> anyhow::Result<()> {
 pub fn run_and_report() -> std::process::ExitCode {
     match run() {
         Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(err) if crate::exit_status::is_remainder(&err) => {
+            std::process::ExitCode::from(crate::exit_status::COMPLETED_WITH_REMAINDER)
+        }
         Err(err) => {
             let (verb, output) = invocation();
             crate::refusal::report(&err, &verb, output);
@@ -442,35 +449,6 @@ pub fn run() -> anyhow::Result<()> {
                    --allow-stale-lock        skip the lock-freshness precondition\n\
                    --discard-local-commits   discard CWD project commits not in source \
                  (recoverable via `rwv abort`)"
-            );
-            std::process::exit(2);
-        }
-        // Detect: `--force` on `rwv fetch`, whose precondition waiver was renamed
-        // to name the consequence it consents to.
-        if raw_args.get(1).map(|s| s.as_str()) == Some("fetch")
-            && raw_args.iter().any(|a| a == "--force")
-        {
-            eprintln!(
-                "error: `--force` has been renamed on `rwv fetch`.\n\
-                 \n\
-                 Use the specific override you need:\n\
-                   --allow-non-empty-dir  bootstrap into a non-empty directory \
-                 that is not a workspace\n\
-                   --detach-checkouts     realign a present clone even where that \
-                 changes what HEAD is attached to"
-            );
-            std::process::exit(2);
-        }
-        // Detect: `--detach-working-branch` on `rwv fetch` — an interim
-        // override that shipped ahead of the full branch model. The model
-        // renames it to `--detach-checkouts`, which also covers `rwv
-        // update` — rename, no alias (alpha, no back-compat shims).
-        if raw_args.get(1).map(|s| s.as_str()) == Some("fetch")
-            && raw_args.iter().any(|a| a == "--detach-working-branch")
-        {
-            eprintln!(
-                "error: `--detach-working-branch` has been renamed to `--detach-checkouts` \
-                 on `rwv fetch`."
             );
             std::process::exit(2);
         }
@@ -636,92 +614,29 @@ pub fn run() -> anyhow::Result<()> {
             let ctx = WorkspaceContext::resolve_unbound(origin_dir)?;
             outln!("{}", ctx.active_path().display());
         }
-        Some(Commands::Fetch {
+        Some(Commands::Clone {
             source,
-            frozen,
             allow_non_empty_dir,
             no_reference,
-            detach_checkouts,
-            selector,
             jobs,
             json,
-            project,
             no_materialize,
         }) => {
-            let mode = if frozen {
-                fetch::FetchMode::Frozen
-            } else {
-                fetch::FetchMode::Default
-            };
-            // Mint once from the parsed flag; the token threads down to
-            // fetch_one, where it gates the realign-detach refusal.
-            let detach_checkouts = consent::DetachConsent::from_flag(detach_checkouts);
             let jobs = crate::parallel::resolve_jobs(jobs);
             let output = OutputMode::from_flag(json);
-            let selection = fetch::MemberSelection::new(selector.parse_filter()?, no_reference);
-            match source {
-                Some(src) => {
-                    if project.is_some() {
-                        crate::refuse!(
-                            RefusalKind::InapplicableFlag,
-                            "rwv fetch: --project has no effect with SOURCE, which names the \
-                             project it clones; drop --project, or drop SOURCE to fetch the \
-                             members of a project already in this weave"
-                        );
-                    }
-                    // SOURCE-mode: bootstrap a project into the workspace (or
-                    // an empty directory, or a non-empty one under
-                    // --allow-non-empty-dir). The origin dir is the bootstrap
-                    // target — no invocation-context resolution yet.
-                    crate::workspace::require_workspace_or_empty(origin_dir, allow_non_empty_dir)?;
-                    fetch::run_fetch(
-                        &src,
-                        origin_dir,
-                        mode,
-                        &selection,
-                        detach_checkouts,
-                        jobs,
-                        output,
-                        activate::ActivateOptions { no_materialize },
-                    )?;
-                }
-                None => {
-                    // In-place mode: no SOURCE (in-place requires a
-                    // workspace). Re-materialize missing manifest members of
-                    // the active project. `--allow-non-empty-dir` is a
-                    // bootstrap knob (non-empty non-workspace directory); it
-                    // has no meaning in-place, so reject it to keep the UX
-                    // honest.
-                    if allow_non_empty_dir {
-                        crate::refuse!(
-                            RefusalKind::InapplicableFlag,
-                            "rwv fetch: --allow-non-empty-dir has no effect without SOURCE; \
-                             pass a SOURCE to bootstrap into a non-empty directory, \
-                             or drop --allow-non-empty-dir to re-materialize missing members \
-                             in place"
-                        );
-                    }
-                    let project_override =
-                        project.map(crate::manifest::ProjectName::new).transpose()?;
-                    let ctx = WorkspaceContext::resolve_invocation(origin_dir, project_override)
-                        .with_context(|| {
-                            format!(
-                                "rwv fetch: no SOURCE and no repoweave workspace found above {}",
-                                origin_dir.display(),
-                            )
-                        })?;
-                    let ctx = bind_project_scoped(ctx, use_workweave_flag)?;
-                    fetch::run_fetch_in_place(
-                        &ctx,
-                        mode,
-                        &selection,
-                        detach_checkouts,
-                        jobs,
-                        output,
-                        activate::ActivateOptions { no_materialize },
-                    )?;
-                }
-            }
+            let selection =
+                MemberSelection::new(crate::selector::RepoFilter::parse(&[], &[])?, no_reference);
+            // The origin dir is the clone target — no invocation-context
+            // resolution yet.
+            crate::workspace::require_workspace_or_empty(origin_dir, allow_non_empty_dir)?;
+            clone::run_clone(
+                &source,
+                origin_dir,
+                &selection,
+                jobs,
+                output,
+                activate::ActivateOptions { no_materialize },
+            )?;
         }
         Some(Commands::Init {
             project,
@@ -1228,7 +1143,45 @@ pub fn run() -> anyhow::Result<()> {
             };
             push::run_push(&ctx, mode, &filter, jobs, OutputMode::from_flag(json))?;
         }
+        Some(Commands::Fetch {
+            no_reference,
+            selector,
+            jobs,
+            json,
+            project,
+        }) => {
+            let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
+            let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+            let selection = MemberSelection::new(selector.parse_filter()?, no_reference);
+            fetch::run_fetch(
+                &ctx,
+                &selection,
+                crate::parallel::resolve_jobs(jobs),
+                OutputMode::from_flag(json),
+            )?;
+        }
+        Some(Commands::Pull {
+            detach_checkouts,
+            project,
+            selector,
+            jobs,
+            json,
+            no_materialize,
+        }) => {
+            let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
+            let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+            let selection = MemberSelection::new(selector.parse_filter()?, false);
+            pull::run_pull(
+                &ctx,
+                &selection,
+                consent::DetachConsent::from_flag(detach_checkouts),
+                crate::parallel::resolve_jobs(jobs),
+                OutputMode::from_flag(json),
+                activate::ActivateOptions { no_materialize },
+            )?;
+        }
         Some(Commands::Update {
+            remote,
             dirty,
             commit,
             message,
@@ -1240,24 +1193,49 @@ pub fn run() -> anyhow::Result<()> {
             no_materialize,
         }) => {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
-            let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+            let ctx = if remote {
+                resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?
+            } else {
+                // A bare update selects the weave's only project when none is
+                // active, so a missing selection is not yet a refusal.
+                let ctx = WorkspaceContext::resolve_invocation(origin_dir, project_override)
+                    .with_context(|| {
+                        format!(
+                            "rwv update: no repoweave workspace found above {}",
+                            origin_dir.display(),
+                        )
+                    })?;
+                bind_project_scoped(ctx, use_workweave_flag)?
+            };
             // Mint once from the parsed flag; the token threads down to
             // advance_checkout, where it gates the ff-or-refuse guard.
             let detach_checkouts = consent::DetachConsent::from_flag(detach_checkouts);
-            let filter = selector.parse_filter()?;
             let jobs = crate::parallel::resolve_jobs(jobs);
-            refuse_symlinked_members_here(&ctx)?;
-            let commit = commit.then(|| lock::CommitMessage::from_flag(message));
-            update::run_update(
-                &ctx,
-                dirty,
-                commit,
-                OutputMode::from_flag(json),
-                &filter,
-                jobs,
-                detach_checkouts,
-                activate::ActivateOptions { no_materialize },
-            )?;
+            let output = OutputMode::from_flag(json);
+            let opts = activate::ActivateOptions { no_materialize };
+            if remote {
+                refuse_symlinked_members_here(&ctx)?;
+                let commit = commit.then(|| lock::CommitMessage::from_flag(message));
+                update_remote::run_update_remote(
+                    &ctx,
+                    dirty,
+                    commit,
+                    output,
+                    &selector.parse_filter()?,
+                    jobs,
+                    detach_checkouts,
+                    opts,
+                )?;
+            } else {
+                update::run_update(
+                    &ctx,
+                    &MemberSelection::new(selector.parse_filter()?, false),
+                    detach_checkouts,
+                    jobs,
+                    output,
+                    opts,
+                )?;
+            }
         }
         Some(Commands::Completions { shell }) => {
             let mut cmd = Cli::command();

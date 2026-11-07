@@ -2668,13 +2668,12 @@ fn orphaned_clone_names_repair_verb() {
     );
 }
 
-/// `dangling reference` message names `rwv fetch` as the repair verb (its
-/// in-place mode re-materializes missing manifest members) and re-runs
-/// `rwv doctor` for verification. The stale "repair by hand: git clone …"
-/// advice must NOT appear — the verb now performs the repair. See
-/// fetch::run_fetch_in_place.
+/// `dangling reference` message names `rwv update` as the repair verb (it
+/// re-materializes missing manifest members) and re-runs `rwv doctor` for
+/// verification. The stale "repair by hand: git clone …" advice must NOT
+/// appear — the verb performs the repair. See update::run_update.
 #[test]
-fn dangling_reference_names_rwv_fetch_repair_verb() {
+fn dangling_reference_names_rwv_update_repair_verb() {
     let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
@@ -2707,10 +2706,9 @@ fn dangling_reference_names_rwv_fetch_repair_verb() {
         combined.contains("dangling"),
         "must report dangling reference; got:\n{combined}"
     );
-    // Repair verb is `rwv fetch` (in-place, no SOURCE).
     assert!(
-        combined.contains("rwv fetch"),
-        "dangling-reference message must name `rwv fetch` as the repair verb; \
+        combined.contains("run `rwv update` from the workspace"),
+        "dangling-reference message must name `rwv update` as the repair verb; \
          got:\n{combined}"
     );
     assert!(
@@ -2723,7 +2721,7 @@ fn dangling_reference_names_rwv_fetch_repair_verb() {
     assert!(
         !combined.contains("git clone"),
         "dangling-reference message must NOT advise manual `git clone` \
-         (repair verb `rwv fetch` performs the repair); got:\n{combined}"
+         (repair verb `rwv update` performs the repair); got:\n{combined}"
     );
 }
 

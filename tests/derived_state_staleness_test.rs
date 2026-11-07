@@ -507,7 +507,7 @@ fn a_bare_cargo_run_after_the_edit_is_caught_by_drift() {
     // Out-of-band: an operator building the workspace directly instead of
     // going through rwv.
     let status = std::process::Command::new("cargo")
-        .arg("fetch")
+        .arg("update")
         .current_dir(&ws)
         .status()
         .unwrap();
@@ -565,7 +565,7 @@ fn a_second_producer_between_regenerate_and_stamp_is_refused() {
     let project = repoweave::manifest::ProjectName::new("app").unwrap();
     let observed = repoweave::owned_state::ObservedInputs::observe(&project_dir, &project, &ws);
     let status = std::process::Command::new("cargo")
-        .arg("fetch")
+        .arg("update")
         .current_dir(&ws)
         .status()
         .unwrap();

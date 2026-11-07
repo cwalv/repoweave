@@ -421,7 +421,7 @@ fn fetch_reclones_a_member_added_by_registry_shorthand() {
     let workspace = shorthand_member_without_its_clone(&tmp);
 
     rwv_with_fake_github(tmp.path())
-        .arg("fetch")
+        .arg("update")
         .current_dir(&workspace)
         .assert()
         .success();
@@ -447,7 +447,7 @@ fn fetch_reclones_a_member_added_by_registry_shorthand_at_its_lock_pin() {
     );
 
     rwv_with_fake_github(tmp.path())
-        .arg("fetch")
+        .arg("update")
         .current_dir(&workspace)
         .assert()
         .success();
@@ -677,7 +677,7 @@ fn add_new_local_registry_creates_a_bare_upstream_and_clones_the_member() {
         "the second weave must be a separate directory"
     );
     rwv()
-        .args(["fetch"])
+        .args(["update"])
         .current_dir(&workspace2)
         .assert()
         .success();

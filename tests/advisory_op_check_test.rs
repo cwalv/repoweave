@@ -299,7 +299,7 @@ fn fetch_inherits_the_refusal_and_it_names_the_act() {
     std::fs::remove_file(ws.join(".rwv-active")).unwrap();
     std::fs::write(ws.join(".rwv-op"), owner_record_json(&ws)).unwrap();
 
-    let (ok, refused) = rwv(&["fetch", &refused_source], &ws);
+    let (ok, refused) = rwv(&["clone", &refused_source], &ws);
     assert!(
         !ok,
         "a fetch into a workspace with an op in flight must refuse:\n{refused}"
@@ -316,7 +316,7 @@ fn fetch_inherits_the_refusal_and_it_names_the_act() {
     // A second source, because the refused fetch had already cloned the first:
     // re-fetching it would report the clone, not the check.
     std::fs::remove_file(ws.join(".rwv-op")).unwrap();
-    let (ok, cleared) = rwv(&["fetch", &cleared_source], &ws);
+    let (ok, cleared) = rwv(&["clone", &cleared_source], &ws);
     assert!(
         ok,
         "and the refusal clears with the record, so the widening is a refusal \

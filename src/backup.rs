@@ -385,10 +385,9 @@ pub fn run_prune(ctx: &WorkspaceContext) -> anyhow::Result<()> {
     let (_, repos) = repos_of_project(ctx)?;
     let mut judged: Vec<(&BackupRepo, Vec<ListedBackup>)> = Vec::new();
     for repo in &repos {
-        let unconfirmed = repo
-            .vcs
-            .fetch_pruning(&repo.dir)
-            .with_context(|| format!("{}: the pruning fetch failed", repo.operand))?;
+        let unconfirmed = crate::fetch::pruning_fetch(repo.vcs.as_ref(), &repo.dir)
+            .with_context(|| format!("{}: the pruning fetch failed", repo.operand))?
+            .unconfirmed;
         for remote in &unconfirmed {
             eprintln!(
                 "{}: remote {} unconfirmed ({}); its remote-tracking branches do not count \

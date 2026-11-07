@@ -2,8 +2,8 @@
 //! `--no-materialize` to skip them.
 //!
 //! `rwv workweave create` runs them in the new seat by default; so do the
-//! authoring verbs at primary, a SOURCE fetch's first activation, and `init
-//! --adopt`. Each run below is paired with its control: the same verb without
+//! authoring verbs at primary, a clone's first activation, an update that
+//! selects the only project, and `init --adopt`. Each run below is paired with its control: the same verb without
 //! the flag, which must reach the hook, so a fixture that never reached the
 //! hooks cannot pass for one whose flag suppressed them.
 //!
@@ -92,6 +92,10 @@ impl Weave {
             manifest(&[("github/acme/web", &url)]),
         )
         .unwrap();
+        common::fixture_lock_at_remote_tips(
+            &ws.join("projects/app"),
+            &[("github/acme/web", url.as_str())],
+        );
         git_init_with_commit(&ws.join("projects/app"));
         std::fs::write(ws.join(".rwv-active"), "app\n").unwrap();
 
@@ -224,7 +228,7 @@ fn the_authoring_verbs_take_no_materialize() {
     weave.assert_flag_suppresses_hooks(&["member", "add", "--adopt", "github/acme/web3"]);
 
     weave.assert_flag_suppresses_hooks(&["member", "set-role", &member, "owned"]);
-    weave.assert_flag_suppresses_hooks(&["update"]);
+    weave.assert_flag_suppresses_hooks(&["update", "--remote"]);
     weave.assert_flag_suppresses_hooks(&["member", "remove", &member]);
 }
 
@@ -398,7 +402,7 @@ fn assert_hook_failure_handed_over(weave: &Weave, name: &str, stdout: &str, stde
 }
 
 #[test]
-fn a_source_fetch_takes_no_materialize_for_its_first_activation() {
+fn a_clone_takes_no_materialize_for_its_first_activation() {
     let weave = Weave::new();
     let project = weave.ws.join("projects/app");
     let source = weave.tmp.path().join("app.git");
@@ -417,7 +421,7 @@ fn a_source_fetch_takes_no_materialize_for_its_first_activation() {
         let _ = weave.npm_runs();
         let fresh = weave.tmp.path().join(dir);
         std::fs::create_dir_all(&fresh).unwrap();
-        let mut args = vec!["fetch", source.as_str()];
+        let mut args = vec!["clone", source.as_str()];
         if flagged {
             args.push("--no-materialize");
         }
@@ -439,16 +443,16 @@ fn a_source_fetch_takes_no_materialize_for_its_first_activation() {
     }
 }
 
-/// An in-place fetch activates the weave's only project when none is active,
-/// and that activation's hooks honor the flag as a bootstrap fetch's do.
+/// An update activates the weave's only project when none is active, and that
+/// activation's hooks honor the flag as a clone's do.
 #[test]
-fn an_in_place_fetch_takes_no_materialize_for_the_project_it_selects() {
+fn an_update_takes_no_materialize_for_the_project_it_selects() {
     let weave = Weave::new();
 
     for flagged in [true, false] {
         std::fs::remove_file(weave.ws.join(".rwv-active")).unwrap();
         let _ = weave.npm_runs();
-        let mut args = vec!["fetch"];
+        let mut args = vec!["update"];
         if flagged {
             args.push("--no-materialize");
         }

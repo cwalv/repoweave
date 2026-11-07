@@ -72,10 +72,14 @@ use repoweave::check::{
     BranchDisciplineKind, CheckViolation, DetachedAncestry, PlacementConvergence, ProvenanceKind,
     DOCTOR_SCHEMA_URL,
 };
+use repoweave::clone::{CloneJsonOutput, CLONE_SCHEMA_URL};
 use repoweave::diagnosis::{
     Axis, ChoiceOutput, FactKind, FactOutput, JudgedOutput, RefusalJsonOutput, REFUSAL_SCHEMA_URL,
 };
-use repoweave::fetch::{FetchJsonOutput, FetchOutcomeOutput, FetchOutcomeStatus, FETCH_SCHEMA_URL};
+use repoweave::fetch::{
+    BranchMoveKind, BranchMoveOutput, FetchJsonOutput, FetchStatus, FetchedRepoOutput,
+    FETCH_SCHEMA_URL,
+};
 use repoweave::integration::{Issue, IssueKind, IssueSource, Severity};
 use repoweave::integration::{MemberIncompatibility, MissingTool, Observed};
 use repoweave::integrations::GoWork;
@@ -84,6 +88,10 @@ use repoweave::log::{LogCommit, LogEndpoint, LogJsonOutput, LogRepo, LOG_SCHEMA_
 use repoweave::op_state::{OpPhase, OpVerb, Override};
 use repoweave::path_spelling::WirePath;
 use repoweave::placement::PlacementOutput;
+use repoweave::pull::{
+    EntryChange, MemberChangeOutput, ProjectTakeInOutput, PullJsonOutput, RePinnedOutput, TakeIn,
+    PULL_SCHEMA_URL,
+};
 use repoweave::push::{PushJsonOutput, PushOutcomeOutput, PUSH_SCHEMA_URL};
 use repoweave::share::FilePlacement;
 use repoweave::skipped::{SkipReason, SkippedEffect};
@@ -95,7 +103,12 @@ use repoweave::sync::{
     SyncFailureOutput, SyncJsonOutput, SyncOutcomeOutput, SyncToJsonOutput, SYNC_JSON_SCHEMA_URL,
     SYNC_TO_JSON_SCHEMA_URL,
 };
-use repoweave::update::{RepoUpdateRecord, UpdateJsonOutput, UpdateKind, UPDATE_SCHEMA_URL};
+use repoweave::update::{
+    MemberOutcomeOutput, MemberOutcomeStatus, UpdateJsonOutput, UPDATE_SCHEMA_URL,
+};
+use repoweave::update_remote::{
+    RepoUpdateRecord, UpdateKind, UpdateRemoteJsonOutput, UPDATE_REMOTE_SCHEMA_URL,
+};
 use repoweave::vcs::BackupMark;
 use repoweave::vcs::{ConflictOp, MidOperation, VcsErrorOutput};
 use repoweave::workspace::{AdvisoryKindOutput, AdvisoryOutput, Resolution};
@@ -137,6 +150,11 @@ fn cases() -> Vec<VerbCase> {
             corpus: doctor_corpus,
         },
         VerbCase {
+            verb: "clone",
+            schema_url: CLONE_SCHEMA_URL,
+            corpus: clone_corpus,
+        },
+        VerbCase {
             verb: "fetch",
             schema_url: FETCH_SCHEMA_URL,
             corpus: fetch_corpus,
@@ -145,6 +163,11 @@ fn cases() -> Vec<VerbCase> {
             verb: "log",
             schema_url: LOG_SCHEMA_URL,
             corpus: log_corpus,
+        },
+        VerbCase {
+            verb: "pull",
+            schema_url: PULL_SCHEMA_URL,
+            corpus: pull_corpus,
         },
         VerbCase {
             verb: "push",
@@ -170,6 +193,11 @@ fn cases() -> Vec<VerbCase> {
             verb: "update",
             schema_url: UPDATE_SCHEMA_URL,
             corpus: update_corpus,
+        },
+        VerbCase {
+            verb: "update-remote",
+            schema_url: UPDATE_REMOTE_SCHEMA_URL,
+            corpus: update_remote_corpus,
         },
         VerbCase {
             verb: "refusal",
@@ -442,25 +470,25 @@ fn doctor_corpus() -> Vec<(&'static str, Value)> {
 // fetch
 // ---------------------------------------------------------------------------
 
-/// Every [`FetchOutcomeStatus`], and `message` at both settings. The match is
+/// Every [`MemberOutcomeStatus`], and `message` at both settings. The match is
 /// exhaustive so a new status stops this file compiling.
-fn fetch_outcomes() -> Vec<FetchOutcomeOutput> {
+fn member_outcomes() -> Vec<MemberOutcomeOutput> {
     [
-        FetchOutcomeStatus::Ok,
-        FetchOutcomeStatus::Skipped,
-        FetchOutcomeStatus::Failed,
+        MemberOutcomeStatus::Ok,
+        MemberOutcomeStatus::Skipped,
+        MemberOutcomeStatus::Failed,
     ]
     .into_iter()
     .map(|status| {
         let message = match status {
-            FetchOutcomeStatus::Ok => None,
-            FetchOutcomeStatus::Skipped => Some("role: reference".to_owned()),
-            FetchOutcomeStatus::Failed => Some("remote unreachable".to_owned()),
+            MemberOutcomeStatus::Ok => None,
+            MemberOutcomeStatus::Skipped => Some("role: reference".to_owned()),
+            MemberOutcomeStatus::Failed => Some("remote unreachable".to_owned()),
         };
-        FetchOutcomeOutput {
+        MemberOutcomeOutput {
             path: REPO.to_owned(),
             absolute_path: wire(ABS),
-            refusal: (status == FetchOutcomeStatus::Failed)
+            refusal: (status == MemberOutcomeStatus::Failed)
                 .then(|| "unresolvable-repo-source".to_owned()),
             status,
             message,
@@ -488,13 +516,25 @@ fn every_skip() -> Vec<SkippedEffect> {
     skips
 }
 
-fn fetch_corpus() -> Vec<(&'static str, Value)> {
+/// The two states a clone lists a member in, and one judged line on every
+/// axis, since `left` carries the judged-line shape whole.
+fn left_members() -> Vec<JudgedOutput> {
+    let mut left = vec![
+        judged(Axis::Pin, "none", "rwv update --remote --repo x"),
+        judged(Axis::Pin, "unreachable", "git remote add"),
+    ];
+    left.extend(judged_on_every_axis());
+    left
+}
+
+fn clone_corpus() -> Vec<(&'static str, Value)> {
     vec![
         (
-            "every-status",
-            value(FetchJsonOutput {
-                schema: FETCH_SCHEMA_URL.to_owned(),
-                outcomes: fetch_outcomes(),
+            "every-status-and-every-pin-state",
+            value(CloneJsonOutput {
+                schema: CLONE_SCHEMA_URL.to_owned(),
+                outcomes: member_outcomes(),
+                left: left_members(),
                 placements: placements(),
                 resolution: Some(resolution()),
                 skipped: every_skip(),
@@ -502,8 +542,34 @@ fn fetch_corpus() -> Vec<(&'static str, Value)> {
         ),
         (
             "unresolved-workspace",
-            value(FetchJsonOutput {
-                schema: FETCH_SCHEMA_URL.to_owned(),
+            value(CloneJsonOutput {
+                schema: CLONE_SCHEMA_URL.to_owned(),
+                outcomes: Vec::new(),
+                left: Vec::new(),
+                placements: Vec::new(),
+                resolution: None,
+                skipped: Vec::new(),
+            }),
+        ),
+    ]
+}
+
+fn update_corpus() -> Vec<(&'static str, Value)> {
+    vec![
+        (
+            "every-status",
+            value(UpdateJsonOutput {
+                schema: UPDATE_SCHEMA_URL.to_owned(),
+                outcomes: member_outcomes(),
+                placements: placements(),
+                resolution: Some(resolution()),
+                skipped: every_skip(),
+            }),
+        ),
+        (
+            "unresolved-workspace",
+            value(UpdateJsonOutput {
+                schema: UPDATE_SCHEMA_URL.to_owned(),
                 outcomes: Vec::new(),
                 placements: Vec::new(),
                 resolution: None,
@@ -511,6 +577,153 @@ fn fetch_corpus() -> Vec<(&'static str, Value)> {
             }),
         ),
     ]
+}
+
+/// One record of every status a fetched repo takes, and one move of every
+/// kind. The matches are exhaustive so a new status or kind stops this file
+/// compiling.
+fn fetched_repos() -> Vec<FetchedRepoOutput> {
+    let moves: Vec<BranchMoveOutput> = [
+        BranchMoveKind::Created,
+        BranchMoveKind::Advanced,
+        BranchMoveKind::Rewritten,
+        BranchMoveKind::Pruned,
+    ]
+    .into_iter()
+    .map(|kind| {
+        let (from, to) = match kind {
+            BranchMoveKind::Created => (None, Some(sha('b'))),
+            BranchMoveKind::Advanced | BranchMoveKind::Rewritten => {
+                (Some(sha('a')), Some(sha('b')))
+            }
+            BranchMoveKind::Pruned => (Some(sha('a')), None),
+        };
+        BranchMoveOutput {
+            branch: "origin/main".to_owned(),
+            kind,
+            from,
+            to,
+        }
+    })
+    .collect();
+    [
+        FetchStatus::Fetched,
+        FetchStatus::Unconfirmed,
+        FetchStatus::Skipped,
+    ]
+    .into_iter()
+    .map(|status| {
+        let (moved, message, refusal) = match status {
+            FetchStatus::Fetched => (moves.clone(), None, None),
+            FetchStatus::Unconfirmed => (
+                Vec::new(),
+                Some("remote unreachable".to_owned()),
+                Some("state-claim-held".to_owned()),
+            ),
+            FetchStatus::Skipped => (Vec::new(), Some("not on disk".to_owned()), None),
+        };
+        FetchedRepoOutput {
+            path: REPO.to_owned(),
+            absolute_path: wire(ABS),
+            status,
+            moved,
+            message,
+            refusal,
+        }
+    })
+    .collect()
+}
+
+fn fetch_corpus() -> Vec<(&'static str, Value)> {
+    vec![
+        (
+            "every-status-and-move",
+            value(FetchJsonOutput {
+                schema: FETCH_SCHEMA_URL.to_owned(),
+                repos: fetched_repos(),
+                resolution: Some(resolution()),
+            }),
+        ),
+        (
+            "unresolved-workspace",
+            value(FetchJsonOutput {
+                schema: FETCH_SCHEMA_URL.to_owned(),
+                repos: Vec::new(),
+                resolution: None,
+            }),
+        ),
+    ]
+}
+
+/// One take-in of every result, the changes at both settings of their lists.
+fn project_take_ins() -> Vec<ProjectTakeInOutput> {
+    [
+        TakeIn::Advanced,
+        TakeIn::Even,
+        TakeIn::Ahead,
+        TakeIn::NoUpstream,
+        TakeIn::Detached,
+    ]
+    .into_iter()
+    .map(|result| {
+        let advanced = result == TakeIn::Advanced;
+        ProjectTakeInOutput {
+            path: "projects/web".to_owned(),
+            branch: (result != TakeIn::Detached).then(|| "main".to_owned()),
+            result,
+            from: advanced.then(|| sha('a')),
+            to: advanced.then(|| sha('b')),
+            re_pinned: if advanced {
+                vec![RePinnedOutput {
+                    path: REPO.to_owned(),
+                    from: sha('a'),
+                    to: sha('b'),
+                }]
+            } else {
+                Vec::new()
+            },
+            member_changes: if advanced {
+                [
+                    (EntryChange::Added, Vec::new()),
+                    (EntryChange::Removed, Vec::new()),
+                    (EntryChange::Changed, vec!["branch: main -> dev".to_owned()]),
+                ]
+                .into_iter()
+                .map(|(change, fields)| MemberChangeOutput {
+                    path: REPO.to_owned(),
+                    change,
+                    fields,
+                })
+                .collect()
+            } else {
+                Vec::new()
+            },
+        }
+    })
+    .collect()
+}
+
+fn pull_corpus() -> Vec<(&'static str, Value)> {
+    project_take_ins()
+        .into_iter()
+        .enumerate()
+        .map(|(i, project)| {
+            let name: &'static str = ["advanced", "even", "ahead", "no-upstream", "detached"][i];
+            let full = i == 0;
+            (
+                name,
+                value(PullJsonOutput {
+                    schema: PULL_SCHEMA_URL.to_owned(),
+                    fetched: if full { fetched_repos() } else { Vec::new() },
+                    project,
+                    outcomes: if full { member_outcomes() } else { Vec::new() },
+                    placements: if full { placements() } else { Vec::new() },
+                    resolution: full.then(resolution),
+                    skipped: if full { every_skip() } else { Vec::new() },
+                }),
+            )
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -1259,12 +1472,12 @@ fn update_records() -> Vec<RepoUpdateRecord> {
     .collect()
 }
 
-fn update_corpus() -> Vec<(&'static str, Value)> {
+fn update_remote_corpus() -> Vec<(&'static str, Value)> {
     vec![
         (
             "every-kind",
-            value(UpdateJsonOutput {
-                schema_url: UPDATE_SCHEMA_URL.to_owned(),
+            value(UpdateRemoteJsonOutput {
+                schema_url: UPDATE_REMOTE_SCHEMA_URL.to_owned(),
                 repos: update_records(),
                 placements: placements(),
                 resolution: Some(primary_resolution()),
@@ -1273,8 +1486,8 @@ fn update_corpus() -> Vec<(&'static str, Value)> {
         ),
         (
             "unresolved-workspace",
-            value(UpdateJsonOutput {
-                schema_url: UPDATE_SCHEMA_URL.to_owned(),
+            value(UpdateRemoteJsonOutput {
+                schema_url: UPDATE_REMOTE_SCHEMA_URL.to_owned(),
                 repos: Vec::new(),
                 placements: Vec::new(),
                 resolution: None,
@@ -1544,7 +1757,7 @@ fn first_doc(case: &VerbCase) -> Value {
 fn records_key(verb: &str) -> &'static str {
     match verb {
         "doctor" => "violations",
-        "status" | "update" | "log" => "repos",
+        "status" | "update-remote" | "fetch" | "log" => "repos",
         "refusal" => "refused",
         "backup" => "repos",
         _ => "outcomes",

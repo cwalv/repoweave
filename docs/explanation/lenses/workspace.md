@@ -4,7 +4,7 @@
 
 This lens is the foundation. Pick it up first if you've ever inherited a stale setup README, lost an afternoon to wrong-version clones, or stood in a folder of repositories not knowing which ones are the *right* ones for your current task.
 
-repoweave moves the source of truth for a development environment out of human memory and out of stale documentation, and into a versioned **project repo**. A new machine goes from `git clone` to a fully-functional, correctly-versioned environment via one `rwv fetch`.
+repoweave moves the source of truth for a development environment out of human memory and out of stale documentation, and into a versioned **project repo**. A new machine goes from `git clone` to a fully-functional, correctly-versioned environment via one `rwv clone`.
 
 ## The two kinds of directory
 
@@ -23,7 +23,7 @@ The member repos are the work surfaces. They're regular clones — `cd github/ch
 
 Most multi-repo setups put the "what" of the project — which repos at which versions — in a wiki page, a setup README, or someone's head. The project repo formalizes it:
 
-- **Discoverability.** `rwv fetch <url>` makes joining a project as easy as cloning a single repository.
+- **Discoverability.** `rwv clone <url>` makes joining a project as easy as cloning a single repository.
 - **History purity.** The project's coordination history (manifest changes, lock updates) is decoupled from any individual library's revision log. The "we adopted X dependency" decision lives where it belongs — alongside other project decisions — not in some library's commit history as noise.
 - **A home for scraps.** Project-wide notes, design documents, and small coordination scripts can land in the project repo without forking some other repository or inventing a "contrib" folder.
 - **Lightweight.** The project repo carries no code, so it stays fast to clone and move.
@@ -59,7 +59,7 @@ A weave can hold multiple projects. Only one is active at a time. The active pro
 
 Selection is primary-only. A workweave's project is fixed when the workweave is created and cannot be switched, so a workweave root carries a `.rwv-workweave` marker naming its project *instead of* a pointer — the two files are mutually exclusive, and `rwv doctor` reports a root carrying both as a `weave-root-identity-conflict`.
 
-The authoring verbs (`rwv member add`, `rwv member remove`, `rwv update`, `rwv member set-role`, and `rwv doctor --fix`) author and merge managed keys into ecosystem workspace files in the project directory (`package.json` workspaces, `go.work`, `Cargo.toml` with `[workspace]`, `pyproject.toml` with `[tool.uv.workspace]`), preserving user-authored content in each file. Then `rwv activate <project>` makes that project live at the primary weave root:
+The authoring verbs (`rwv member add`, `rwv member remove`, `rwv update --remote`, `rwv member set-role`, and `rwv doctor --fix`) author and merge managed keys into ecosystem workspace files in the project directory (`package.json` workspaces, `go.work`, `Cargo.toml` with `[workspace]`, `pyproject.toml` with `[tool.uv.workspace]`), preserving user-authored content in each file. Then `rwv activate <project>` makes that project live at the primary weave root:
 
 1. Updates `.rwv-active`.
 2. Verifies integration files in `projects/<project>/` and surfaces symlinks at the weave root so ecosystem tools see them where they expect.
@@ -94,7 +94,7 @@ Releases and milestones are represented at the project layer by branches and tag
 
 `sha256sum rwv.lock` is the project fingerprint. Two machines with the same checksum pin identical source for every repo in the project, though either may have committed past its pins (`rwv status` shows such a repo as `ahead`). This is the multi-repo analog of `git rev-parse HEAD` on a monorepo.
 
-The lock file is *derived state*: produced by `rwv lock`, `rwv update`, or `rwv sync`, not edited by hand. It is committed to the project repo so it has a history (you can trace exactly when which repo was at which revision), and regenerated whenever the cross-repo state changes. See [lock-as-derived](../joints/lock-as-derived.md) for why the lock is always derived.
+The lock file is *derived state*: produced by `rwv lock`, `rwv update --remote`, or `rwv sync`, not edited by hand. It is committed to the project repo so it has a history (you can trace exactly when which repo was at which revision), and regenerated whenever the cross-repo state changes. See [lock-as-derived](../joints/lock-as-derived.md) for why the lock is always derived.
 
 ## Provenance: the registry/owner/repo path
 
@@ -106,7 +106,7 @@ This follows Go's GOPATH precedent (`$GOPATH/src/github.com/owner/repo`), shorte
 - **No collisions.** Two `web-app` repos owned by different organizations can coexist on disk without renaming.
 - **Discovery.** `find github/chatly/` lists every chatly repo on disk; `find . -name '.git' -type d` lists everything across all owners.
 
-Project paths are simpler — `projects/{name}/`. They use short names because there's typically one of each per workspace; if names collide across organizations, `rwv fetch` refuses rather than merge them, and the second project goes in a weave of its own. The asymmetry is intentional: member repos are physical clones whose path encodes their origin; projects are coordination entities referred to by short name.
+Project paths are simpler — `projects/{name}/`. They use short names because there's typically one of each per workspace; if names collide across organizations, `rwv clone` refuses rather than merge them, and the second project goes in a weave of its own. The asymmetry is intentional: member repos are physical clones whose path encodes their origin; projects are coordination entities referred to by short name.
 
 ## What ecosystem tools see
 
@@ -118,7 +118,7 @@ Integrations (`npm-workspaces`, `go-work`, `cargo-workspace`, `uv-workspace`, `p
 
 ## The shape, in one paragraph
 
-A project repo lives at `projects/{name}/` and carries `rwv.toml` (which repos, with what roles), `rwv.lock` (pinned 40-character commit SHAs), and any cross-cutting docs. Member repos live at `{registry}/{owner}/{repo}/` as regular clones. The authoring verbs (`add`, `remove`, `update`, `role`) merge managed keys into ecosystem workspace files in `projects/{name}/`, preserving user-authored content; one project is *active* in a primary weave at a time (`.rwv-active`), and `rwv activate` surfaces those workspace files to the weave root via symlinks and runs install hooks. The lock is derived state — output of `rwv lock`, never an input to merge. Roles tag each repo's change resistance, doing triple duty as a human cognitive aid, an agent safety boundary, and a build-graph membership flag.
+A project repo lives at `projects/{name}/` and carries `rwv.toml` (which repos, with what roles), `rwv.lock` (pinned 40-character commit SHAs), and any cross-cutting docs. Member repos live at `{registry}/{owner}/{repo}/` as regular clones. The authoring verbs (`add`, `remove`, `update --remote`, `role`) merge managed keys into ecosystem workspace files in `projects/{name}/`, preserving user-authored content; one project is *active* in a primary weave at a time (`.rwv-active`), and `rwv activate` surfaces those workspace files to the weave root via symlinks and runs install hooks. The lock is derived state — output of `rwv lock`, never an input to merge. Roles tag each repo's change resistance, doing triple duty as a human cognitive aid, an agent safety boundary, and a build-graph membership flag.
 
 ## Related
 

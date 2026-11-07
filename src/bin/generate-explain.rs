@@ -96,12 +96,14 @@ use schemars::schema_for;
 use repoweave::backup::BackupJsonOutput;
 use repoweave::check::DoctorJsonOutput;
 use repoweave::cli::Cli;
+use repoweave::clone::CloneJsonOutput;
 use repoweave::diagnosis::{RefusalJsonOutput, REFUSAL_SCHEMA_URL};
 use repoweave::explain;
 use repoweave::fetch::FetchJsonOutput;
 use repoweave::log::LogJsonOutput;
 use repoweave::path_spelling::{weave_relative, CanonicalPath};
 use repoweave::plugins::envelope_vars;
+use repoweave::pull::PullJsonOutput;
 use repoweave::push::{PushJsonOutput, PUSH_SCHEMA_URL};
 use repoweave::status::StatusJsonOutput;
 use repoweave::sync::{
@@ -109,6 +111,7 @@ use repoweave::sync::{
     SYNC_TO_JSON_SCHEMA_URL,
 };
 use repoweave::update::{UpdateJsonOutput, UPDATE_SCHEMA_URL};
+use repoweave::update_remote::{UpdateRemoteJsonOutput, UPDATE_REMOTE_SCHEMA_URL};
 use repoweave::workspace::Resolution;
 
 // The bundled plugin's wire types and schema URLs, compiled into this binary
@@ -322,6 +325,21 @@ fn schema_log() -> String {
     serde_json::to_string_pretty(&schema).expect("log schema serializes")
 }
 
+fn schema_update_remote() -> String {
+    let schema = schema_for!(UpdateRemoteJsonOutput);
+    serde_json::to_string_pretty(&schema).expect("update --remote schema serializes")
+}
+
+fn schema_clone() -> String {
+    let schema = schema_for!(CloneJsonOutput);
+    serde_json::to_string_pretty(&schema).expect("clone schema serializes")
+}
+
+fn schema_pull() -> String {
+    let schema = schema_for!(PullJsonOutput);
+    serde_json::to_string_pretty(&schema).expect("pull schema serializes")
+}
+
 fn schema_refusal() -> String {
     let schema = schema_for!(RefusalJsonOutput);
     serde_json::to_string_pretty(&schema).expect("refusal schema serializes")
@@ -434,13 +452,23 @@ fn verbs() -> Vec<Verb> {
             schema: Some(schema_push),
         },
         Verb {
+            name: "clone",
+            summary: "clone a project and each member at the commit rwv.lock pins; exit status 3 when a member is left unpinned",
+            schema: Some(schema_clone),
+        },
+        Verb {
             name: "fetch",
-            summary: "clone a project, or align its repos to rwv.lock without advancing pins",
+            summary: "the pruning fetch of every remote of every repo; moves no branch, checkout or lock",
             schema: Some(schema_fetch),
         },
         Verb {
+            name: "pull",
+            summary: "fetch, fast-forward the project branch to its upstream, then update the members",
+            schema: Some(schema_pull),
+        },
+        Verb {
             name: "update",
-            summary: "advance each repo to its branch HEAD on the remote and re-snapshot the lock",
+            summary: "clone missing members and align the rest to rwv.lock; with --remote, advance each repo to its branch HEAD and re-snapshot the lock",
             schema: Some(schema_update),
         },
         Verb {
@@ -952,6 +980,17 @@ fn build_msg_registry() -> MsgRegistry {
     // parameter table, walked from `builtin_registries()` — see
     // `creation_params_table_md`.
     m.insert("creation_params_table", creation_params_table_md());
+
+    // "update_remote_schema": the JSON Schema of `rwv update --remote --json`,
+    // spliced into the `update` page beside the schema of the form without
+    // `--remote`, which that page's `{{SCHEMA}}` carries.
+    m.insert(
+        "update_remote_schema",
+        format!(
+            "```json\n{}\n```",
+            flatten_rustdoc_links(&schema_update_remote())
+        ),
+    );
 
     m
 }
@@ -3610,7 +3649,7 @@ const NON_TOKEN_WORDS: &[(&str, &str)] = &[
 ];
 
 /// Verbs an operator page names to say rwv does not have them.
-const ABSENT_VERBS: &[&str] = &["branch", "commit", "exec", "publish", "pull", "run"];
+const ABSENT_VERBS: &[&str] = &["branch", "commit", "exec", "publish", "run"];
 
 /// What a backticked token on an operator page may name.
 ///
@@ -4662,6 +4701,14 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
+    // `rwv update --remote` shares the `update` page; its schema is a file of
+    // its own, written the way the refusal envelope's is.
+    {
+        let mut schema = schema_update_remote();
+        schema.push('\n');
+        write_if_changed(&schemas_dir.join("update-remote.json"), &schema)?;
+    }
+
     // Sanity-check schema URLs the binary embeds match the artifact paths we
     // just wrote. If a URL drifts (e.g. someone changes the crate version
     // path), this surfaces immediately.
@@ -4692,6 +4739,18 @@ fn main() -> anyhow::Result<()> {
     assert!(
         UPDATE_SCHEMA_URL.ends_with("/docs/reference/schemas/update.json"),
         "UPDATE_SCHEMA_URL no longer points at the committed artifact"
+    );
+    assert!(
+        UPDATE_REMOTE_SCHEMA_URL.ends_with("/docs/reference/schemas/update-remote.json"),
+        "UPDATE_REMOTE_SCHEMA_URL no longer points at the committed artifact"
+    );
+    assert!(
+        repoweave::clone::CLONE_SCHEMA_URL.ends_with("/docs/reference/schemas/clone.json"),
+        "CLONE_SCHEMA_URL no longer points at the committed artifact"
+    );
+    assert!(
+        repoweave::pull::PULL_SCHEMA_URL.ends_with("/docs/reference/schemas/pull.json"),
+        "PULL_SCHEMA_URL no longer points at the committed artifact"
     );
     assert!(
         PUSH_SCHEMA_URL.ends_with("/docs/reference/schemas/push.json"),

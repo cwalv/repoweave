@@ -609,10 +609,6 @@ impl Vcs for FakeVcs {
         unsupported("branch_tips")
     }
 
-    fn fetch_pruning(&self, _repo: &Path) -> Result<Vec<UnconfirmedRemote>, VcsError> {
-        unsupported("fetch_pruning")
-    }
-
     fn cancel_in_flight_op(&self, _repo: &Path) {
         unsupported("cancel_in_flight_op")
     }
@@ -639,6 +635,18 @@ impl Vcs for FakeVcs {
 
     fn fetch_remote(&self, _repo: &Path) -> Result<(), VcsError> {
         unsupported("fetch_remote")
+    }
+
+    fn upstream_tip(&self, _on: &AttachedRef) -> Result<Option<ResolvedRevisionId>, VcsError> {
+        unsupported("upstream_tip")
+    }
+
+    fn fetch_pruning(
+        &self,
+        _claim: &crate::fetch_claim::FetchClaim,
+        _repo: &Path,
+    ) -> Result<PruningFetch, VcsError> {
+        unsupported("fetch_pruning")
     }
 
     fn refresh_index_to_head_if_safe(&self, _repo: &Path) {
@@ -769,8 +777,9 @@ impl Vcs for FakeVcs {
         _url: &CloneUrl,
         _dest: &Path,
         _name: &LocalRefName,
-        _at: &RawRevisionId,
-    ) -> Result<ResolvedRevisionId, VcsError> {
+        _declared: &RemoteRef,
+        _pin: Option<&RawRevisionId>,
+    ) -> Result<MemberBirth, VcsError> {
         unsupported("clone_attached_at")
     }
 

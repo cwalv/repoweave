@@ -226,7 +226,7 @@ records with `kind` `surfacing` rather than `violations[]` records.
 `member-incompatibility` findings travel that same integration-issue channel,
 as `issues[]` records keyed `member-incompatibility`; the kebab-case tag is
 also the message prefix. Doctor is the **standing observation
-arm** for the category — `rwv update` reports the same finding at the moment it
+arm** for the category — `rwv update --remote` reports the same finding at the moment it
 creates one. Neither gates: nothing refuses on this category, and `--fix`
 cannot repair it.
 
@@ -1710,7 +1710,7 @@ Schema:
           ]
         },
         {
-          "description": "Nothing local holds it. Report-only: `rwv fetch` in the workweave fetches it into the canonical clone and checks it out.",
+          "description": "Nothing local holds it. Report-only: `rwv update` in the workweave fetches it into the canonical clone and checks it out.",
           "type": "string",
           "enum": [
             "unfetched"
@@ -1797,7 +1797,7 @@ Schema:
               "$ref": "#/definitions/WirePath"
             },
             "clone_at_placement": {
-              "description": "The path the entry's URL places it at, when a clone of the same remote stands there and no entry of the project names it; `null` otherwise. Present, the repair is to re-key the entry to it and run `rwv lock`; absent, it is `rwv fetch`.",
+              "description": "The path the entry's URL places it at, when a clone of the same remote stands there and no entry of the project names it; `null` otherwise. Present, the repair is to re-key the entry to it and run `rwv lock`; absent, it is `rwv update`.",
               "type": [
                 "string",
                 "null"
