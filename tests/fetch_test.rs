@@ -430,4 +430,39 @@ mod claim {
         let status = waiting.wait().expect("the second fetch ends");
         assert!(status.success(), "the second fetch proceeds once released");
     }
+
+    /// The pruning fetch of `rwv backup prune` is the same fetch: it waits
+    /// for one holding the store.
+    #[test]
+    fn a_backup_prune_waits_for_a_fetch_holding_the_store() {
+        let weave = weave();
+        let pause_dir = weave.parent.join("pause");
+        let mut fetch = common::rwv_std();
+        fetch
+            .args(["fetch", "--repo", MEMBER])
+            .current_dir(&weave.primary);
+        let held = common::pause::Paused::spawn(fetch, "fetch-under-claim", &pause_dir)
+            .expect("the fetch is held under the claim");
+
+        let mut prune = common::rwv_std();
+        prune
+            .args(["backup", "prune"])
+            .current_dir(&weave.primary)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        let mut waiting = prune.spawn().expect("the prune starts");
+        let deadline = Instant::now() + Duration::from_millis(1500);
+        while Instant::now() < deadline {
+            assert!(
+                waiting.try_wait().unwrap().is_none(),
+                "the prune ran to the end while the fetch held the store"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        let fetch_out = held.release();
+        assert!(fetch_out.status.success());
+        let status = waiting.wait().expect("the prune ends");
+        assert!(status.success(), "the prune proceeds once released");
+    }
 }

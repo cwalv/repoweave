@@ -453,14 +453,14 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git.rs",
         pattern: "\"update-ref\"",
-        count: 5,
+        count: 4,
         callers: &[],
         justification: "(1) savepoint create, (2) savepoint drop, both \
             namespaced under refs/rwv/pre-op/<op-id> (relocated from \
             sync.rs). (3) create_unpopulated_submodule(): \
             detaches HEAD, with --no-deref, in a submodule repository the \
             same call cloned an instant before and that nothing else has \
-            seen; its branches are left as the clone made them. (5) \
+            seen; its branches are left as the clone made them. (4) \
             record_superseded_tip(): after a pruning fetch moved a \
             remote-tracking branch to a tip that does not descend from its \
             old one, names the old tip under refs/rwv/superseded/<remote>/ \
