@@ -254,10 +254,13 @@ pub(crate) fn update_members(
     ) {
         Ok(run) => run,
         Err(aborted) => {
-            return Ok(UpdateRun {
-                envelope: aborted.report.into_update_envelope(),
-                tail: Err(aborted.error),
-            });
+            return match aborted.report {
+                Some(report) => Ok(UpdateRun {
+                    envelope: report.into_update_envelope(),
+                    tail: Err(aborted.error),
+                }),
+                None => Err(aborted.error),
+            };
         }
     };
     let moved_or_created = run.moved_or_created;
@@ -438,9 +441,10 @@ fn materialize_workweave_members(
 }
 
 /// A run of [`bring_members`] that could not finish, and what it had to say
-/// about the members before it stopped.
+/// about the members before it stopped. A run that stopped before it looked
+/// at any member has no report: its refusal is all there is to print.
 pub(crate) struct MembersAborted {
-    pub(crate) report: MembersReport,
+    pub(crate) report: Option<MembersReport>,
     pub(crate) error: anyhow::Error,
 }
 
@@ -490,12 +494,6 @@ pub(crate) fn bring_members(
     resolution: Option<Resolution>,
     duty: CloneDuty<'_>,
 ) -> Result<MembersRun, Box<MembersAborted>> {
-    let empty_report = |resolution: Option<Resolution>| MembersReport {
-        outcomes: Vec::new(),
-        placements: Vec::new(),
-        resolution,
-        skipped: Vec::new(),
-    };
     let setup = || -> anyhow::Result<(Manifest, Option<LockFile>)> {
         let manifest_path = project_dir.join(Manifest::FILE_NAME);
         let manifest = Manifest::from_path(&manifest_path)
@@ -513,7 +511,7 @@ pub(crate) fn bring_members(
     };
     let (manifest, existing_lock) = setup().map_err(|error| {
         Box::new(MembersAborted {
-            report: empty_report(resolution.clone()),
+            report: None,
             error,
         })
     })?;
@@ -615,7 +613,12 @@ pub(crate) fn bring_members(
     let mut pins: Vec<MemberPin> = Vec::new();
 
     // Records follow work_items order whatever order the workers finished in.
-    let mut report = empty_report(resolution);
+    let mut report = MembersReport {
+        outcomes: Vec::new(),
+        placements: Vec::new(),
+        resolution,
+        skipped: Vec::new(),
+    };
 
     let moved_or_created = outcomes.iter().any(|(_, _, moved)| *moved);
     for ((step, files, _), (repo_path, entry, _vcs)) in outcomes.iter().zip(work_items.iter()) {
@@ -696,7 +699,7 @@ pub(crate) fn bring_members(
         // Under `--json` the caller prints the report before refusing, so a
         // partial failure still leaves parseable output.
         return Err(Box::new(MembersAborted {
-            report,
+            report: Some(report),
             error: crate::refusal::refusal(
                 RefusalKind::PartialRunAborted,
                 format!(

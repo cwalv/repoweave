@@ -169,8 +169,8 @@ pub fn run_clone(
     ) {
         Ok(run) => run,
         Err(aborted) => {
-            if output.is_json() {
-                let _ = aborted.report.into_clone_envelope(Vec::new()).print();
+            if let (true, Some(report)) = (output.is_json(), aborted.report) {
+                let _ = report.into_clone_envelope(Vec::new()).print();
             }
             return Err(aborted.error);
         }
