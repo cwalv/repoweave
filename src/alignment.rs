@@ -355,6 +355,8 @@ impl DetachedBecause {
 pub struct Plan {
     pub target: Target,
     pub pin: Pin,
+    /// The declared branch that exists nowhere, which no alignment creates.
+    pub unfound: Option<String>,
 }
 
 /// One member as the engine sees it: where it sits in this workspace.
@@ -492,6 +494,8 @@ impl Aligner {
         let pin = pin_of(m.vcs, m.dir, lock, m.path);
         let (branch, declared) = self.wanted(m.entry.role, m.entry);
         let found = find_e(m.vcs, m.dir, m.entry, &branch)?;
+        let unfound =
+            (declared && matches!(found, Found::Nowhere)).then(|| branch.as_str().to_owned());
         let target = match (&pin, self.mode == Mode::Detached) {
             (Pin::At(at), true) => Target::Detached {
                 at: at.clone(),
@@ -507,9 +511,14 @@ impl Aligner {
                 },
             },
             (Pin::Unreachable, _) => Target::AsFound,
+            (Pin::At(_), false) if unfound.is_some() => Target::AsFound,
             (Pin::At(at), false) => self.usable(m, &branch, declared, found, at.clone())?,
         };
-        Ok(Plan { target, pin })
+        Ok(Plan {
+            target,
+            pin,
+            unfound,
+        })
     }
 
     fn usable(
@@ -782,6 +791,13 @@ impl Aligner {
     }
 
     fn notes(&self, m: &Member<'_>, plan: &Plan, repo: &dyn std::fmt::Display) -> Vec<Judged> {
+        if let Some(branch) = &plan.unfound {
+            return vec![State::NameNoSuchBranch
+                .of(repo)
+                .member()
+                .subject(branch)
+                .judge(m.vcs)];
+        }
         match &plan.target {
             Target::Detached {
                 why: DetachedBecause::NotOnDeclaredBranch { branch },

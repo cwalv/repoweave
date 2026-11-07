@@ -237,3 +237,33 @@ fn update_never_writes_the_lock() {
         "the lock is read, never written"
     );
 }
+
+#[test]
+fn a_declared_branch_that_exists_nowhere_is_not_created_and_is_reported() {
+    let w = weave(&[(OWNED, "owned")]);
+    let manifest = project_dir(&w.workspace).join("rwv.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    assert!(text.contains("branch = \"main\""), "{text}");
+    std::fs::write(
+        &manifest,
+        text.replace("branch = \"main\"", "branch = \"ghost\""),
+    )
+    .unwrap();
+    let owned = w.workspace.join(OWNED);
+    let head = common::git_in(&owned, &["rev-parse", "HEAD"]);
+
+    rwv()
+        .arg("update")
+        .current_dir(&w.workspace)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("name no-such-branch"))
+        .stdout(predicate::str::contains("ghost"));
+
+    assert!(
+        !branches(&owned).contains(&"ghost".to_owned()),
+        "no alignment creates a declared branch"
+    );
+    assert_eq!(common::git_in(&owned, &["rev-parse", "HEAD"]), head);
+    assert_eq!(common::checkout_ref(&owned).as_deref(), Some("main"));
+}
