@@ -59,6 +59,21 @@ fn empty_repo() -> TempDir {
     dir
 }
 
+/// The handle of a remote git names `origin`, as the seam hands one out.
+fn a_remote_named_origin() -> repoweave::vcs::RemoteHandle {
+    let dir = empty_repo();
+    common::git_in(
+        dir.path(),
+        &["remote", "add", "origin", "file:///nowhere/origin.git"],
+    );
+    git_vcs()
+        .recorded_urls(dir.path())
+        .unwrap()
+        .pop()
+        .expect("the remote just added")
+        .remote
+}
+
 /// A repo with one commit on `main`.
 fn repo_with_commit() -> TempDir {
     let dir = empty_repo();
@@ -625,8 +640,9 @@ fn remote_default_branch_is_none_when_origin_head_is_unset() {
     // The shipped implementation fabricated "main" here, so the publish
     // gate compared an observation against an invention.
     let repo = repo_with_commit();
+    let origin = a_remote_named_origin();
     assert!(git_vcs()
-        .remote_default_branch(repo.path())
+        .remote_default_branch(repo.path(), &origin)
         .unwrap()
         .is_none());
 }
@@ -652,7 +668,10 @@ fn remote_default_branch_reads_the_symref_when_it_is_set() {
         ],
     );
 
-    let observed = git_vcs().remote_default_branch(repo.path()).unwrap();
+    let origin = a_remote_named_origin();
+    let observed = git_vcs()
+        .remote_default_branch(repo.path(), &origin)
+        .unwrap();
     let observed = observed.expect("symref is set");
     assert_eq!(observed.to_string(), "trunk");
     assert_eq!(
@@ -677,9 +696,10 @@ fn remote_default_branch_is_none_for_a_symref_outside_the_remote_namespace() {
         ],
     );
 
+    let origin = a_remote_named_origin();
     assert!(
         git_vcs()
-            .remote_default_branch(repo.path())
+            .remote_default_branch(repo.path(), &origin)
             .unwrap()
             .is_none(),
         "a symref pointing outside the remote namespace names no default — \
@@ -693,7 +713,8 @@ fn remote_default_branch_is_none_for_a_symref_outside_the_remote_namespace() {
 #[test]
 fn remote_default_branch_on_a_non_repo_is_an_error_not_an_absence() {
     let dir = common::tempdir().unwrap();
-    match git_vcs().remote_default_branch(dir.path()) {
+    let origin = a_remote_named_origin();
+    match git_vcs().remote_default_branch(dir.path(), &origin) {
         Err(VcsError::NotARepo(p)) => assert_eq!(p, dir.path()),
         other => panic!("expected NotARepo, got {other:?}"),
     }

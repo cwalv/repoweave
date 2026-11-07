@@ -2,17 +2,18 @@
 
 use crate::op_state::SavepointKey;
 use crate::path_spelling::CanonicalPath;
-use crate::registry::CloneUrl;
+use crate::registry::{CloneUrl, RecordedRemote};
 use crate::vcs::{
-    AttachedRef, Backup, BackupMark, BackupName, BackupSource, BranchChange, BranchTip, CommitId,
-    CommitSummary, ConflictOp, ContentIdentity, DerivedContentPolicy, DerivedContentResolution,
-    DiffBeyond, DiscardOutcome, Force, ForeignTipPolicy, HeadAttachment, HeadObservation,
-    ListedBackup, LocalRefName, MemberBirth, MidOperation, PinOutcome, PruningFetch, PublishRef,
-    RangeListing, RawRefName, RawRevisionId, RecordedSubmodule, RefOrigin, RegistrationPrune,
-    RemoteBranchCopies, RemoteBranchMove, RemoteDefaultBranch, RemoteRef, RemoteTracking,
+    AbsentRemote, AttachedRef, Backup, BackupMark, BackupName, BackupSource, BranchChange,
+    BranchTip, CommitId, CommitSummary, ConflictOp, ContentIdentity, DerivedContentPolicy,
+    DerivedContentResolution, DiffBeyond, DiscardOutcome, Force, ForeignTipPolicy, HeadAttachment,
+    HeadObservation, ListedBackup, LocalRefName, MemberBirth, MidOperation, PinOutcome,
+    PruningFetch, PublishRef, RangeListing, RawRefName, RawRevisionId, RecordedSubmodule,
+    RecordedUrl, RefOrigin, RegistrationPrune, RemoteBranchCopies, RemoteBranchMove,
+    RemoteDefaultBranch, RemoteHandle, RemoteNameTaken, RemoteRef, RemoteTracking,
     ReplayExclusionState, ResolvedEndpoint, ResolvedRevisionId, SavepointListing, SubmoduleBirth,
-    SubmoduleCheckout, TrackedFile, TrackedFileKind, UnconfirmedRemote, Vcs, VcsAction, VcsError,
-    VerifiedRestoreOutcome, WorkspacePopulation,
+    SubmoduleCheckout, TrackedFile, TrackedFileKind, UnconfirmedRemote, Upstream, UrlRemote, Vcs,
+    VcsAction, VcsError, VerifiedRestoreOutcome, WorkspacePopulation,
 };
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -122,15 +123,13 @@ macro_rules! under_both_line_endings {
 #[cfg(test)]
 pub(crate) use under_both_line_endings;
 
-/// The one remote name this backend clones to, resolves against, and
-/// pushes to.
-///
-/// Private on purpose. rwv core reaches a remote through the methods that
-/// act on it, and renders its name through
-/// [`Vcs::conventional_remote_name`]; a `use` of this constant from
-/// outside is `error[E0603]`, which is the seam rule holding at compile
-/// time rather than by review.
-const GIT_DEFAULT_REMOTE_NAME: &str = "origin";
+/// What git names the first remote of a repo that has none. It names a remote
+/// being added to such a repo and stands for no role: every use of a remote
+/// resolves the role it plays.
+const GIT_FIRST_REMOTE_NAME: &str = "origin";
+
+/// The local-config key recording the project repo's url remote.
+const PROJECT_URL_REMOTE_KEY: &str = "rwv.url-remote";
 
 /// `out`, which git printed for `args`, as the commit id it must be.
 fn commit_id_printed(out: &str, args: &[&str], repo: &Path) -> Result<CommitId, VcsError> {
@@ -141,15 +140,45 @@ fn commit_id_printed(out: &str, args: &[&str], repo: &Path) -> Result<CommitId, 
     })
 }
 
-fn remote_tracking_namespace() -> String {
-    format!("refs/remotes/{GIT_DEFAULT_REMOTE_NAME}/")
+fn remote_tracking_namespace(remote: &RemoteHandle) -> String {
+    format!("refs/remotes/{}/", remote.name())
 }
 
 /// The only spelling of a remote-tracking ref handed to git. The short
-/// `origin/<branch>` is never one: git resolves it to a local branch or tag of
-/// that name before `refs/remotes/origin/<branch>`.
-fn remote_tracking(branch: &str) -> String {
-    format!("{}{branch}", remote_tracking_namespace())
+/// `<remote>/<branch>` is never one: git resolves it to a local branch or tag
+/// of that name before `refs/remotes/<remote>/<branch>`.
+fn remote_tracking(remote: &RemoteHandle, branch: &str) -> String {
+    format!("{}{branch}", remote_tracking_namespace(remote))
+}
+
+/// The segment of `url` that names its owner: the one before the repository's
+/// own, whatever the url's scheme. `None` for a url with a single segment.
+fn owner_segment(url: &str) -> Option<String> {
+    let trimmed = url.trim().trim_end_matches('/');
+    let trimmed = trimmed.strip_suffix(".git").unwrap_or(trimmed);
+    let path = match trimmed.split_once("://") {
+        Some((_, rest)) if rest.starts_with('/') => rest,
+        Some((_, rest)) => rest.split_once('/').map_or("", |(_, path)| path),
+        None => match (trimmed.find(':'), trimmed.find('/')) {
+            (Some(colon), Some(slash)) if colon < slash => &trimmed[colon + 1..],
+            (Some(colon), None) => &trimmed[colon + 1..],
+            _ => trimmed,
+        },
+    };
+    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    let owner = segments.get(segments.len().checked_sub(2)?)?;
+    let name: String = owner
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let name = name.trim_matches(|c| c == '-' || c == '.').to_owned();
+    (!name.is_empty() && !name.ends_with(".lock")).then_some(name)
 }
 
 /// Where the tip a remote-tracking branch was rewritten away from is kept:
@@ -898,6 +927,81 @@ impl GitVcs {
         })
     }
 
+    /// The value of config `key` in `repo`, or `None` when it is unset.
+    fn config_get(repo: &Path, key: &str) -> Result<Option<String>, VcsError> {
+        let output = git_command()
+            .args(["config", "--get", key])
+            .current_dir(repo)
+            .output()
+            .map_err(|e| VcsError::Io {
+                ctx: format!("failed to spawn git config --get {key}"),
+                source: e,
+            })?;
+        if output.status.success() {
+            let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+            return Ok((!value.is_empty()).then_some(value));
+        }
+        if output.stdout.is_empty() && output.stderr.is_empty() {
+            return Ok(None);
+        }
+        Err(VcsError::CommandFailed {
+            args: vec!["config".into(), "--get".into(), key.to_owned()],
+            repo: repo.to_path_buf(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        })
+    }
+
+    /// The names of `repo`'s remotes.
+    fn remote_names(repo: &Path) -> Result<Vec<String>, VcsError> {
+        Ok(Self::run_trimmed(["remote"], repo)?
+            .lines()
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+            .map(str::to_owned)
+            .collect())
+    }
+
+    /// The remote of a repo that has exactly one: the remote a clone just
+    /// made.
+    fn only_remote(repo: &Path) -> Result<RemoteHandle, VcsError> {
+        match Self::remote_names(repo)?.as_slice() {
+            [only] => Ok(RemoteHandle::new(only.clone())),
+            names => Err(VcsError::CommandFailed {
+                args: vec!["remote".into()],
+                repo: repo.to_path_buf(),
+                stderr: format!(
+                    "expected the one remote a clone makes, found {}",
+                    names.len()
+                ),
+            }),
+        }
+    }
+
+    /// The remote-tracking refs, one per remote that has it, of `branch`.
+    fn remote_counterparts(repo: &Path, branch: &str) -> Result<Vec<String>, VcsError> {
+        let mut found = Vec::new();
+        for name in Self::remote_names(repo)? {
+            let qualified = remote_tracking(&RemoteHandle::new(name), branch);
+            let status = git_command()
+                .args(["rev-parse", "--verify", "--quiet", &qualified])
+                .current_dir(repo)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map_err(|e| VcsError::Io {
+                    ctx: format!(
+                        "failed to spawn git rev-parse --verify --quiet {qualified} in {}",
+                        repo.display()
+                    ),
+                    source: e,
+                })?;
+            if status.success() {
+                found.push(qualified);
+            }
+        }
+        Ok(found)
+    }
+
     /// Every remote-tracking branch of `repo`, remote-qualified, at its tip.
     /// A remote's `HEAD` is a symbolic ref that follows a branch, not a branch.
     fn remote_tracking_tips(repo: &Path) -> Result<BTreeMap<String, String>, VcsError> {
@@ -1577,20 +1681,216 @@ impl Vcs for GitVcs {
         Ok(())
     }
 
-    fn clone_repo(&self, url: &CloneUrl, dest: &Path) -> Result<(), VcsError> {
-        let dest = GitArg::from_path(dest, "destination path")?;
+    fn clone_repo(&self, url: &CloneUrl, dest: &Path) -> Result<RemoteHandle, VcsError> {
+        let dest_arg = GitArg::from_path(dest, "destination path")?;
         Self::run(
-            Argv::from(["clone", "--origin", GIT_DEFAULT_REMOTE_NAME])
-                .text(url.as_str())
-                .path(&dest),
+            Argv::from(["clone"]).text(url.as_str()).path(&dest_arg),
             Path::new("."),
+        )?;
+        Self::only_remote(dest)
+    }
+
+    fn fetch_remote(&self, repo: &Path, remote: &RemoteHandle) -> Result<(), VcsError> {
+        Self::run(["fetch", "--tags", remote.name()], repo)?;
+        Ok(())
+    }
+
+    fn upstream(&self, on: &AttachedRef) -> Result<Option<Upstream>, VcsError> {
+        self.verify_attachment(on)?;
+        let branch = on.to_string();
+        let remote = Self::config_get(on.repo(), &format!("branch.{branch}.remote"))?;
+        let merge = Self::config_get(on.repo(), &format!("branch.{branch}.merge"))?;
+        Ok(match (remote, merge) {
+            (Some(remote), Some(merge)) if remote != "." => merge
+                .strip_prefix(LOCAL_BRANCH_NAMESPACE)
+                .map(|upstream| Upstream {
+                    remote: RemoteHandle::new(remote),
+                    branch: RawRefName::new(upstream),
+                }),
+            _ => None,
+        })
+    }
+
+    fn push_target(
+        &self,
+        on: &AttachedRef,
+        url_remote: Option<&RemoteHandle>,
+    ) -> Result<Option<RemoteHandle>, VcsError> {
+        self.verify_attachment(on)?;
+        let branch = on.to_string();
+        for key in [
+            format!("branch.{branch}.pushRemote"),
+            "remote.pushDefault".to_owned(),
+            format!("branch.{branch}.remote"),
+        ] {
+            if let Some(name) = Self::config_get(on.repo(), &key)? {
+                if name != "." {
+                    return Ok(Some(RemoteHandle::new(name)));
+                }
+            }
+        }
+        Ok(url_remote.cloned())
+    }
+
+    fn push_branch(
+        &self,
+        on: &AttachedRef,
+        target: &RemoteHandle,
+    ) -> Result<Option<ResolvedRevisionId>, VcsError> {
+        self.verify_attachment(on)?;
+        let tracking = remote_tracking(target, &on.to_string());
+        let args = [
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("{tracking}^{{commit}}"),
+        ];
+        let output = git_command()
+            .args(args)
+            .current_dir(on.repo())
+            .output()
+            .map_err(|e| VcsError::Io {
+                ctx: format!("failed to spawn git rev-parse in {}", on.repo().display()),
+                source: e,
+            })?;
+        if !output.status.success() {
+            return Ok(None);
+        }
+        let printed = String::from_utf8_lossy(&output.stdout);
+        Ok(Some(ResolvedRevisionId::from_canonical(
+            commit_id_printed(printed.trim(), &args, on.repo())?,
+            None,
+        )))
+    }
+
+    fn home_remote(
+        &self,
+        repo: &Path,
+        url_remote: &RemoteHandle,
+    ) -> Result<RemoteHandle, VcsError> {
+        if let Some(name) = Self::config_get(repo, "checkout.defaultRemote")? {
+            if Self::remote_names(repo)?.contains(&name) {
+                return Ok(RemoteHandle::new(name));
+            }
+        }
+        Ok(url_remote.clone())
+    }
+
+    fn url_remote(&self, repo: &Path, url: &CloneUrl) -> Result<UrlRemote, VcsError> {
+        let recorded = self.recorded_urls(repo)?;
+        for r in &recorded {
+            if let RecordedRemote::Url(have) = RecordedRemote::read(r.url.clone()) {
+                if have.names_same_remote(url) {
+                    return Ok(UrlRemote::Present(r.remote.clone()));
+                }
+            }
+        }
+        let name = if recorded.is_empty() {
+            GIT_FIRST_REMOTE_NAME.to_owned()
+        } else {
+            owner_segment(url.as_str()).unwrap_or_else(|| GIT_FIRST_REMOTE_NAME.to_owned())
+        };
+        let remote = RemoteHandle::new(name);
+        Ok(match recorded.iter().find(|r| r.remote == remote) {
+            Some(holder) => UrlRemote::NameTaken(RemoteNameTaken {
+                remote,
+                holds: holder.url.clone(),
+                wanted: url.clone(),
+            }),
+            None => UrlRemote::Absent(AbsentRemote::new(remote, url.clone())),
+        })
+    }
+
+    fn add_url_remote(&self, repo: &Path, absent: &AbsentRemote) -> Result<RemoteHandle, VcsError> {
+        Self::run(
+            [
+                "remote",
+                "add",
+                absent.remote().name(),
+                absent.url().as_str(),
+            ],
+            repo,
+        )?;
+        Ok(absent.remote().clone())
+    }
+
+    fn project_url_remote(&self, repo: &Path) -> Result<Option<RemoteHandle>, VcsError> {
+        if !self.is_repo(repo) {
+            return Err(VcsError::NotARepo(repo.to_path_buf()));
+        }
+        let names = Self::remote_names(repo)?;
+        if let Some(recorded) = Self::config_get(repo, PROJECT_URL_REMOTE_KEY)? {
+            if names.contains(&recorded) {
+                return Ok(Some(RemoteHandle::new(recorded)));
+            }
+        }
+        Ok(match names.as_slice() {
+            [only] => Some(RemoteHandle::new(only.clone())),
+            _ => None,
+        })
+    }
+
+    fn record_project_url_remote(
+        &self,
+        repo: &Path,
+        remote: &RemoteHandle,
+    ) -> Result<(), VcsError> {
+        Self::run(
+            ["config", "--local", PROJECT_URL_REMOTE_KEY, remote.name()],
+            repo,
         )?;
         Ok(())
     }
 
-    fn fetch_remote(&self, repo: &Path) -> Result<(), VcsError> {
-        Self::run(["fetch", "--tags", GIT_DEFAULT_REMOTE_NAME], repo)?;
-        Ok(())
+    fn recorded_urls(&self, repo: &Path) -> Result<Vec<RecordedUrl>, VcsError> {
+        let listing = match Self::run(["config", "-z", "--get-regexp", r"^remote\..*\.url$"], repo)
+        {
+            Ok(listing) => listing,
+            Err(VcsError::CommandFailed { stderr, .. }) if stderr.trim().is_empty() => {
+                return Ok(Vec::new())
+            }
+            Err(e) => return Err(e),
+        };
+        let mut seen = BTreeSet::new();
+        let mut out = Vec::new();
+        for record in listing.split_terminator('\0') {
+            let (key, url) = record.split_once('\n').unwrap_or((record, ""));
+            let Some(name) = key
+                .strip_prefix("remote.")
+                .and_then(|rest| rest.strip_suffix(".url"))
+            else {
+                continue;
+            };
+            if seen.insert(name.to_owned()) {
+                out.push(RecordedUrl {
+                    remote: RemoteHandle::new(name),
+                    url: url.to_owned(),
+                });
+            }
+        }
+        Ok(out)
+    }
+
+    fn reached_by_remote(
+        &self,
+        repo: &Path,
+        commit: &ResolvedRevisionId,
+        remote: &RemoteHandle,
+    ) -> Result<bool, VcsError> {
+        let namespace = remote_tracking_namespace(remote);
+        let listing = Self::run_trimmed(
+            [
+                "for-each-ref",
+                "--contains",
+                commit.id().as_str(),
+                "--format=%(refname)",
+                namespace.as_str(),
+            ],
+            repo,
+        )?;
+        Ok(listing
+            .lines()
+            .any(|r| !r.trim().is_empty() && !r.ends_with("/HEAD")))
     }
 
     fn upstream_tip(&self, on: &AttachedRef) -> Result<Option<ResolvedRevisionId>, VcsError> {
@@ -1681,20 +1981,17 @@ impl Vcs for GitVcs {
         })
     }
 
-    fn conventional_remote_name(&self) -> &str {
-        GIT_DEFAULT_REMOTE_NAME
-    }
-
     fn resolve_branch_on_remote(
         &self,
         repo: &Path,
+        remote: &RemoteHandle,
         branch: &RemoteRef,
     ) -> Result<ResolvedRevisionId, VcsError> {
         let branch = branch.branch();
-        let tip = self.resolve_revision(repo, &remote_tracking(branch))?;
+        let tip = self.resolve_revision(repo, &remote_tracking(remote, branch))?;
         Ok(ResolvedRevisionId::from_canonical(
             tip.id().clone(),
-            Some(format!("{GIT_DEFAULT_REMOTE_NAME}/{branch}")),
+            Some(format!("{}/{branch}", remote.name())),
         ))
     }
 
@@ -1903,14 +2200,6 @@ impl Vcs for GitVcs {
     fn commit(&self, repo: &Path, message: &str) -> Result<(), VcsError> {
         Self::run(["commit", "-m", message], repo).map(|_| ())
     }
-    fn add_remote(&self, repo: &Path, url: &CloneUrl) -> Result<(), VcsError> {
-        Self::run(
-            ["remote", "add", GIT_DEFAULT_REMOTE_NAME, url.as_str()],
-            repo,
-        )
-        .map(|_| ())
-    }
-
     fn is_tracked(&self, repo: &Path, path: &Path) -> Result<bool, VcsError> {
         let path = GitArg::from_path(path, "path")?;
         match Self::run(
@@ -2560,22 +2849,7 @@ impl Vcs for GitVcs {
         repo: &Path,
         branch: &RawRefName,
     ) -> Result<bool, VcsError> {
-        let qualified = remote_tracking(branch.as_str());
-        let status = git_command()
-            .args(["rev-parse", "--verify", "--quiet", &qualified])
-            .current_dir(repo)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map_err(|e| VcsError::Io {
-                ctx: format!(
-                    "failed to spawn git rev-parse --verify --quiet {} in {}",
-                    qualified,
-                    repo.display()
-                ),
-                source: e,
-            })?;
-        Ok(status.success())
+        Ok(!Self::remote_counterparts(repo, branch.as_str())?.is_empty())
     }
 
     fn count_commits_ahead_of_remote(
@@ -2583,13 +2857,44 @@ impl Vcs for GitVcs {
         repo: &Path,
         branch: &RawRefName,
     ) -> Result<usize, VcsError> {
-        let range = format!(
-            "{}..{}",
-            remote_tracking(branch.as_str()),
-            local_branch(branch.as_str())
-        );
-        let out = Self::run_trimmed(["rev-list", "--count", &range], repo)?;
+        let mut args = vec![
+            "rev-list".to_owned(),
+            "--count".to_owned(),
+            local_branch(branch.as_str()),
+            "--not".to_owned(),
+        ];
+        args.extend(Self::remote_counterparts(repo, branch.as_str())?);
+        let out = Self::run_trimmed(&args, repo)?;
         Ok(out.trim().parse::<usize>().unwrap_or(0))
+    }
+
+    fn unpushed_commits(
+        &self,
+        repo: &Path,
+        branch: &RawRefName,
+    ) -> Result<Vec<CommitSummary>, VcsError> {
+        let tip = local_branch(branch.as_str());
+        let superseded = format!("--glob={SUPERSEDED_NAMESPACE}*");
+        let args = [
+            "log",
+            "--pretty=format:%H%x00%s",
+            tip.as_str(),
+            "--not",
+            "--remotes",
+            superseded.as_str(),
+            "--",
+        ];
+        Self::run_trimmed(&args, repo)?
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|line| {
+                let (id, subject) = line.split_once('\0').unwrap_or((line, ""));
+                Ok(CommitSummary {
+                    id: commit_id_printed(id, &args, repo)?,
+                    subject: subject.to_owned(),
+                })
+            })
+            .collect()
     }
 
     fn fetch_objects_from(&self, dst_repo: &Path, src_repo: &Path) {
@@ -2620,42 +2925,6 @@ impl Vcs for GitVcs {
         if let WorkingTreeState::RestorableFromHead(paths) = working_tree_state(repo) {
             let _ = restore_paths_from_head(repo, &paths);
         }
-    }
-
-    fn remote_url(&self, repo: &Path) -> Result<Option<String>, VcsError> {
-        let key = format!("remote.{GIT_DEFAULT_REMOTE_NAME}.url");
-        let output = git_command()
-            .args(["config", "--get", &key])
-            .current_dir(repo)
-            .output()
-            .map_err(|e| VcsError::Io {
-                ctx: format!("failed to spawn git config --get {key}"),
-                source: e,
-            })?;
-
-        if !output.status.success() {
-            // `git config --get` exits 1 with nothing on stdout or stderr
-            // when the key is unset — the remote doesn't exist. Any other
-            // failure (bad config file, ambiguous key) carries stderr and is
-            // a real error.
-            if output.stdout.is_empty() && output.stderr.is_empty() {
-                return Ok(None);
-            }
-            return Err(VcsError::CommandFailed {
-                args: vec!["config".into(), "--get".into(), key],
-                repo: repo.to_path_buf(),
-                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-            });
-        }
-
-        let url = String::from_utf8(output.stdout)
-            .map(|s| s.trim().to_string())
-            .map_err(|_| VcsError::CommandFailed {
-                args: vec!["config".into(), "--get".into(), key],
-                repo: repo.to_path_buf(),
-                stderr: "git output not valid UTF-8".into(),
-            })?;
-        Ok(Some(url))
     }
 
     fn commit_object_exists(&self, repo: &Path, id: &CommitId) -> Result<bool, VcsError> {
@@ -3127,16 +3396,12 @@ impl Vcs for GitVcs {
         // MOVE against it. That last part is what matters: bootstrapping
         // from a lock behind origin must not require a rewind's consent.
         Self::run(
-            Argv::from([
-                "clone",
-                "--origin",
-                GIT_DEFAULT_REMOTE_NAME,
-                "--no-checkout",
-            ])
-            .text(url.as_str())
-            .path(&dest_arg),
+            Argv::from(["clone", "--no-checkout"])
+                .text(url.as_str())
+                .path(&dest_arg),
             Path::new("."),
         )?;
+        let remote = Self::only_remote(dest)?;
         // Resolved in the new clone's own object store, so a pin origin has
         // but this clone does not is a resolution failure rather than a
         // silent network fetch — the same locality the present-clone arm has.
@@ -3144,13 +3409,13 @@ impl Vcs for GitVcs {
             Some(pin) => match self.resolve_revision(dest, pin.as_str()) {
                 Ok(at) => (at, PinOutcome::Reached),
                 Err(VcsError::RevisionNotFound { .. }) => (
-                    self.resolve_revision(dest, &remote_tracking(declared.branch()))?,
+                    self.resolve_revision(dest, &remote_tracking(&remote, declared.branch()))?,
                     PinOutcome::Unreachable,
                 ),
                 Err(e) => return Err(e),
             },
             None => (
-                self.resolve_revision(dest, &remote_tracking(declared.branch()))?,
+                self.resolve_revision(dest, &remote_tracking(&remote, declared.branch()))?,
                 PinOutcome::None,
             ),
         };
@@ -3267,12 +3532,18 @@ impl Vcs for GitVcs {
         Ok(())
     }
 
-    fn push_ref(&self, repo: &Path, r: &PublishRef, force: Force) -> Result<(), VcsError> {
+    fn push_ref(
+        &self,
+        repo: &Path,
+        target: &RemoteHandle,
+        r: &PublishRef,
+        force: Force,
+    ) -> Result<(), VcsError> {
         let mut args: Vec<&str> = vec!["push"];
         if let Force::Overwrite(_) = force {
             args.push("--force");
         }
-        args.push(GIT_DEFAULT_REMOTE_NAME);
+        args.push(target.name());
         let branch = local_branch(r.name().as_str());
         let refspec = format!("{branch}:{branch}");
         args.push(&refspec);
@@ -3280,40 +3551,45 @@ impl Vcs for GitVcs {
         Ok(())
     }
 
-    fn remote_default_branch(&self, repo: &Path) -> Result<Option<RemoteDefaultBranch>, VcsError> {
+    fn remote_default_branch(
+        &self,
+        repo: &Path,
+        remote: &RemoteHandle,
+    ) -> Result<Option<RemoteDefaultBranch>, VcsError> {
         // A non-repo is an error; an unset symref is an absence. Keeping
         // those apart is the same move `observe_head` makes, applied to the
         // other side of the L1 publish gate.
         if !self.is_repo(repo) {
             return Err(VcsError::NotARepo(repo.to_path_buf()));
         }
-        match Self::run_trimmed(["symbolic-ref", &remote_tracking("HEAD")], repo) {
+        match Self::run_trimmed(["symbolic-ref", &remote_tracking(remote, "HEAD")], repo) {
             // No fallback: an unset or malformed symref is an absence, not
             // a guess. A caller that invents a name here trades an honest
             // refusal for a comparison against a fabrication.
             Ok(target) => Ok(RemoteDefaultBranch::from_symref_target(
                 &target,
-                &remote_tracking_namespace(),
+                &remote_tracking_namespace(remote),
             )),
             Err(_) => Ok(None),
         }
     }
 
-    fn remote_default_branch_repair_hint(&self) -> String {
+    fn remote_default_branch_repair_hint(&self, remote: &RemoteHandle) -> String {
+        let remote = remote.name();
         format!(
-            "{GIT_DEFAULT_REMOTE_NAME}/HEAD is unset; run \
-             `git fetch {GIT_DEFAULT_REMOTE_NAME} && git remote set-head \
-             {GIT_DEFAULT_REMOTE_NAME} -a` there to record its canonical branch"
+            "{remote}/HEAD is unset; run `git fetch {remote} && git remote set-head \
+             {remote} -a` there to record its canonical branch"
         )
     }
 
     fn clone_default_branch_repair_hint(
         &self,
         clone: &Path,
+        remote: &RemoteHandle,
         copies: RemoteBranchCopies,
     ) -> Result<String, VcsError> {
-        let remote = GIT_DEFAULT_REMOTE_NAME;
-        let namespace = remote_tracking_namespace();
+        let namespace = remote_tracking_namespace(remote);
+        let remote = remote.name();
         let listing =
             Self::run_trimmed(["for-each-ref", "--format=%(refname)", &namespace], clone)?;
         let branches: Vec<String> = listing
@@ -4335,7 +4611,15 @@ impl WorkspacePopulation for GitVcs {
             Err(e) => return Err(e),
         };
         let dest = workspace.join(&submodule.path);
-        Self::run(["config", "--remove-section", "remote.origin"], &dest)?;
+        let cloned_remote = Self::only_remote(&dest)?;
+        Self::run(
+            [
+                "config",
+                "--remove-section",
+                &format!("remote.{}", cloned_remote.name()),
+            ],
+            &dest,
+        )?;
         for record in remotes.split_terminator('\0') {
             let (key, value) = record.split_once('\n').unwrap_or((record, ""));
             Self::run(["config", "--add", key, value], &dest)?;
@@ -4397,17 +4681,27 @@ impl WorkspacePopulation for GitVcs {
             return Ok(());
         }
         // A commit no branch or tag of the remote reaches is fetched by name,
-        // as `git submodule update` does.
-        Self::run(
-            [
-                "fetch",
-                "--quiet",
-                GIT_DEFAULT_REMOTE_NAME,
-                submodule.commit.as_str(),
-            ],
-            &source,
-        )
-        .map(|_| ())
+        // as `git submodule update` does, from whichever remote has it.
+        let mut last = None;
+        for remote in Self::remote_names(&source)? {
+            match Self::run(
+                [
+                    "fetch",
+                    "--quiet",
+                    remote.as_str(),
+                    submodule.commit.as_str(),
+                ],
+                &source,
+            ) {
+                Ok(_) => return Ok(()),
+                Err(e) => last = Some(e),
+            }
+        }
+        Err(last.unwrap_or(VcsError::CommandFailed {
+            args: vec!["fetch".into(), submodule.commit.as_str().to_owned()],
+            repo: source,
+            stderr: "the submodule's repository has no remote to fetch from".into(),
+        }))
     }
 }
 
@@ -5007,7 +5301,7 @@ mod branch_model_tests {
         git(&clone, &["branch", "origin/main"]);
 
         let resolved = GitVcs
-            .resolve_branch_on_remote(&clone, &on_remote("main"))
+            .resolve_branch_on_remote(&clone, &origin(), &on_remote("main"))
             .unwrap();
 
         assert_eq!(resolved, remote_tip);
@@ -5019,7 +5313,7 @@ mod branch_model_tests {
         git(&clone, &["tag", "origin/main"]);
 
         let resolved = GitVcs
-            .resolve_branch_on_remote(&clone, &on_remote("main"))
+            .resolve_branch_on_remote(&clone, &origin(), &on_remote("main"))
             .unwrap();
 
         assert_eq!(resolved, remote_tip);
@@ -5031,7 +5325,7 @@ mod branch_model_tests {
         git(&clone, &["branch", "origin/feature"]);
 
         let err = GitVcs
-            .resolve_branch_on_remote(&clone, &on_remote("feature"))
+            .resolve_branch_on_remote(&clone, &origin(), &on_remote("feature"))
             .expect_err("a local branch named origin/feature is not a remote-tracking ref");
 
         assert!(
@@ -5484,6 +5778,12 @@ mod branch_model_tests {
     /// Bare deliberately: pushing into a non-bare checkout's current branch
     /// is refused by git itself, which would make a push test pass or fail
     /// for a reason that has nothing to do with the ref being published.
+    /// The remote `git clone` names a clone's source: git's own default, which
+    /// is what the tests of git's ref handling clone from.
+    fn origin() -> RemoteHandle {
+        RemoteHandle::new("origin")
+    }
+
     fn clone_of_bare_origin() -> (tempfile::TempDir, PathBuf, PathBuf) {
         let tmp = crate::tempdir().unwrap();
         let bare = tmp.path().join("origin.git");
@@ -5539,7 +5839,7 @@ mod branch_model_tests {
         let local_tip = commit(&clone, "local");
 
         let err = GitVcs
-            .push_ref(&clone, &publish_ref_of(&clone), Force::FfOnly)
+            .push_ref(&clone, &origin(), &publish_ref_of(&clone), Force::FfOnly)
             .expect_err("a non-fast-forward push must refuse without force");
         assert_eq!(err.kind(), VcsErrorKind::CommandFailed);
         assert_eq!(
@@ -5551,6 +5851,7 @@ mod branch_model_tests {
         GitVcs
             .push_ref(
                 &clone,
+                &origin(),
                 &publish_ref_of(&clone),
                 Force::Overwrite(ForcePushConsent::granted()),
             )
@@ -5568,7 +5869,7 @@ mod branch_model_tests {
         git(&clone, &["tag", "main"]);
 
         GitVcs
-            .push_ref(&clone, &publish_ref_of(&clone), Force::FfOnly)
+            .push_ref(&clone, &origin(), &publish_ref_of(&clone), Force::FfOnly)
             .expect("a tag named like the branch must not make the push ambiguous");
 
         assert_eq!(
@@ -5592,7 +5893,9 @@ mod branch_model_tests {
         let side_tip = commit(&clone, "on-sideshow");
         assert_ne!(main_tip, side_tip, "the two branches must differ");
 
-        GitVcs.push_ref(&clone, &publish, Force::FfOnly).unwrap();
+        GitVcs
+            .push_ref(&clone, &origin(), &publish, Force::FfOnly)
+            .unwrap();
 
         assert_eq!(
             git_bare(&bare, &["rev-parse", "main"]),

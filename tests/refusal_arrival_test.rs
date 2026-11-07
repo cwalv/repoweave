@@ -514,11 +514,10 @@ fn a_provider_cannot_mint_url_routes_to_its_token() {
     assert_routes_to(&stderr, "provider-cannot-mint-url");
 }
 
-/// B5: `rwv member add --adopt <path>` on a clone with no `origin` remote — nothing
-/// to read a URL from, so there is nothing to register it under
-/// (refusals.md:520-529).
+/// B5: `rwv member add --adopt <path>` on a clone with no remote — nothing to
+/// read a URL from, so there is nothing to register it under.
 #[test]
-fn an_adopt_with_no_origin_remote_routes_to_no_remote_url() {
+fn an_adopt_of_a_clone_with_no_remote_routes_to_no_remote_url() {
     let tmp = common::tempdir().unwrap();
     let ws = plain_weave(tmp.path());
     let clone_dir = ws.join(SERVER_PATH);
@@ -528,7 +527,7 @@ fn an_adopt_with_no_origin_remote_routes_to_no_remote_url() {
 
     let stderr = refusal_stderr(&["member", "add", "--adopt", SERVER_PATH], &ws);
     assert!(
-        stderr.contains("has no origin remote to read a URL from"),
+        stderr.contains("has no remote to read a URL from"),
         "precondition: this is the no-remote-url refusal:\n{stderr}"
     );
     assert_routes_to(&stderr, "no-remote-url");

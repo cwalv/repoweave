@@ -34,6 +34,9 @@ struct BackupRepo {
     member: Option<RepoPath>,
     dir: PathBuf,
     vcs: Box<dyn Vcs>,
+    /// The url a member declares, whose remote a pruning fetch adds when the
+    /// clone lacks it.
+    url: Option<crate::registry::CloneUrl>,
 }
 
 fn repos_of_project(ctx: &WorkspaceContext) -> anyhow::Result<(ProjectName, Vec<BackupRepo>)> {
@@ -46,6 +49,7 @@ fn repos_of_project(ctx: &WorkspaceContext) -> anyhow::Result<(ProjectName, Vec<
         member: None,
         dir: project_dir(primary, &project),
         vcs: project_vcs(),
+        url: None,
     }];
     for (path, entry) in manifest.iter_entries() {
         repos.push(BackupRepo {
@@ -53,6 +57,9 @@ fn repos_of_project(ctx: &WorkspaceContext) -> anyhow::Result<(ProjectName, Vec<
             member: Some(path.clone()),
             dir: primary.join(path.as_path()),
             vcs: vcs_for(entry.vcs_type),
+            url: crate::registry::resolve_to_clone_info(&entry.url)
+                .ok()
+                .map(|info| info.url),
         });
     }
     repos.retain(|repo| repo.vcs.is_repo(&repo.dir));
@@ -77,6 +84,7 @@ fn repo_named(
                 member: None,
                 dir: project_dir(ctx.primary_path(), project),
                 vcs: project_vcs(),
+                url: None,
             })
         }
         RepoOperand::Member(path) => {
@@ -92,6 +100,7 @@ fn repo_named(
                 member: Some(path.clone()),
                 dir,
                 vcs,
+                url: None,
             })
         }
     }
@@ -384,8 +393,32 @@ pub fn run_prune(ctx: &WorkspaceContext) -> anyhow::Result<()> {
     crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
     let (_, repos) = repos_of_project(ctx)?;
     let mut judged: Vec<(&BackupRepo, Vec<ListedBackup>)> = Vec::new();
+    let mut taken = crate::diagnosis::Report::default();
+    let mut planned = Vec::with_capacity(repos.len());
     for repo in &repos {
-        let unconfirmed = crate::fetch::pruning_fetch(repo.vcs.as_ref(), &repo.dir)
+        let Some(url) = &repo.url else {
+            planned.push(None);
+            continue;
+        };
+        match crate::url_remote::find(
+            repo.vcs.as_ref(),
+            &repo.operand,
+            "backup prune",
+            &repo.dir,
+            url,
+        )?
+        .plan()
+        {
+            Ok(plan) => planned.push(plan.add),
+            Err(judged) => {
+                taken.add(judged);
+                planned.push(None);
+            }
+        }
+    }
+    taken.into_result()?;
+    for (repo, add) in repos.iter().zip(&planned) {
+        let unconfirmed = crate::fetch::pruning_fetch(repo.vcs.as_ref(), &repo.dir, add.as_ref())
             .with_context(|| format!("{}: the pruning fetch failed", repo.operand))?
             .unconfirmed;
         for remote in &unconfirmed {

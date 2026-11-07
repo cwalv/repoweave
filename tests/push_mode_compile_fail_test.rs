@@ -15,7 +15,7 @@ fn the_harness_can_push_in_each_mode() {
         use repoweave::parallel::OutputMode;
         use repoweave::push::{run_push, PushMode};
         use repoweave::selector::RepoFilter;
-        use repoweave::vcs::{Force, PublishRef, Vcs};
+        use repoweave::vcs::{Force, PublishRef, RemoteHandle, Vcs};
         use repoweave::workspace::WorkspaceContext;
         use std::path::Path;
         pub fn push(ctx: &WorkspaceContext, filter: &RepoFilter) {
@@ -28,8 +28,8 @@ fn the_harness_can_push_in_each_mode() {
                 OutputMode::Text,
             );
         }
-        pub fn push_one(vcs: &dyn Vcs, repo: &Path, r: &PublishRef) {
-            let _ = vcs.push_ref(repo, r, Force::FfOnly);
+        pub fn push_one(vcs: &dyn Vcs, repo: &Path, to: &RemoteHandle, r: &PublishRef) {
+            let _ = vcs.push_ref(repo, to, r, Force::FfOnly);
         }
         "#,
     );
@@ -58,10 +58,10 @@ fn push_ref_does_not_take_a_bool_for_force() {
         "E0308",
         "overwriting the remote takes a Force, not true",
         r#"
-        use repoweave::vcs::{PublishRef, Vcs};
+        use repoweave::vcs::{PublishRef, RemoteHandle, Vcs};
         use std::path::Path;
-        pub fn push_one(vcs: &dyn Vcs, repo: &Path, r: &PublishRef) {
-            let _ = vcs.push_ref(repo, r, true);
+        pub fn push_one(vcs: &dyn Vcs, repo: &Path, to: &RemoteHandle, r: &PublishRef) {
+            let _ = vcs.push_ref(repo, to, r, true);
         }
         "#,
     );

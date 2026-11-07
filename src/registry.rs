@@ -9,7 +9,7 @@
 use crate::manifest::{RepoPath, RepoUrl, VcsType};
 use crate::path_spelling::{file_url_suggestion, is_absolute_spelling, mint_file_url};
 use crate::refusal::RefusalKind;
-use crate::vcs::{Vcs, VcsError};
+use crate::vcs::{RemoteHandle, Vcs, VcsError};
 use std::path::{Path, PathBuf};
 
 /// A short name for a code host or directory that serves as the first path
@@ -501,7 +501,7 @@ pub enum RecordedRemote {
 }
 
 impl RecordedRemote {
-    fn read(text: String) -> RecordedRemote {
+    pub(crate) fn read(text: String) -> RecordedRemote {
         if is_absolute_spelling(&text) {
             RecordedRemote::Url(CloneUrl(mint_file_url(&text)))
         } else if names_a_local_path(&text) {
@@ -534,10 +534,16 @@ fn names_a_local_path(text: &str) -> bool {
     }
 }
 
-/// The remote `repo` records under the conventional name, or `None` when it
-/// records none.
-pub fn recorded_remote(vcs: &dyn Vcs, repo: &Path) -> Result<Option<RecordedRemote>, VcsError> {
-    Ok(vcs.remote_url(repo)?.map(RecordedRemote::read))
+/// Every remote `repo` records, each with the url it records.
+pub fn recorded_remotes(
+    vcs: &dyn Vcs,
+    repo: &Path,
+) -> Result<Vec<(RemoteHandle, RecordedRemote)>, VcsError> {
+    Ok(vcs
+        .recorded_urls(repo)?
+        .into_iter()
+        .map(|r| (r.remote, RecordedRemote::read(r.url)))
+        .collect())
 }
 
 impl std::fmt::Display for CloneUrl {

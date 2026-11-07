@@ -146,6 +146,7 @@ fn push_json_envelope_round_trips() {
             },
         ],
         refused: Vec::new(),
+        reported: Vec::new(),
         resolution: None,
     };
 

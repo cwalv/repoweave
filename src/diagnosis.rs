@@ -251,6 +251,11 @@ pub enum State {
     CheckoutInAnotherWorkspace,
     CheckoutInRawWorktree,
     PushBranchDiverged,
+    PushBranchBehind,
+    PushBranchAhead,
+    PushBranchGone,
+    PushBranchForeignUpstream,
+    PushBranchNoPushTarget,
     PinNone,
     PinUnreachable,
     NameTaken,
@@ -277,13 +282,18 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 15] = [
+    pub const ALL: [State; 20] = [
         Self::EditsDirty,
         Self::EditsMidOperation,
         Self::EditsLockFilesUncommitted,
         Self::CheckoutInAnotherWorkspace,
         Self::CheckoutInRawWorktree,
         Self::PushBranchDiverged,
+        Self::PushBranchBehind,
+        Self::PushBranchAhead,
+        Self::PushBranchGone,
+        Self::PushBranchForeignUpstream,
+        Self::PushBranchNoPushTarget,
         Self::PinNone,
         Self::PinUnreachable,
         Self::NameTaken,
@@ -357,6 +367,52 @@ impl State {
                 offers: &[Form::C2Pull, Form::C3Pull],
                 verb_offers: &[],
             },
+            Self::PushBranchBehind => &StateRow {
+                axis: Axis::PushBranch,
+                name: "behind",
+                means: "the branch is an ancestor of its push branch, as last fetched: the \
+                        remote holds commits the branch lacks",
+                refused_by: "`rwv push` skips it and reports it; `rwv status` reports it",
+                offers: &[Form::C1Pull, Form::C1UpdateRemote],
+                verb_offers: &[],
+            },
+            Self::PushBranchAhead => &StateRow {
+                axis: Axis::PushBranch,
+                name: "ahead",
+                means: "its push branch is an ancestor of the branch, as last fetched: the \
+                        branch holds commits the remote lacks",
+                refused_by: "`rwv status` reports it; `rwv push` publishes it",
+                offers: &[Form::C7Push, Form::C7PushRepo],
+                verb_offers: &[],
+            },
+            Self::PushBranchGone => &StateRow {
+                axis: Axis::PushBranch,
+                name: "gone",
+                means: "the branch takes in from a branch its remote no longer has, as last \
+                        fetched, and holds commits no remote-tracking branch reaches, listed",
+                refused_by: "`rwv push` skips it unless `--repo` names it; `rwv status` \
+                             reports it",
+                offers: &[Form::C15, Form::C7PushRepo],
+                verb_offers: &[],
+            },
+            Self::PushBranchForeignUpstream => &StateRow {
+                axis: Axis::PushBranch,
+                name: "foreign upstream",
+                means: "the branch takes in from a branch of another name, which the subject \
+                        names; a branch publishes to the branch of its own name",
+                refused_by: "`rwv push`; `rwv status` reports it",
+                offers: &[Form::C17],
+                verb_offers: &[],
+            },
+            Self::PushBranchNoPushTarget => &StateRow {
+                axis: Axis::PushBranch,
+                name: "no push target",
+                means: "no remote is configured for the branch to push to, and the repo has no \
+                        url remote to fall back on",
+                refused_by: "`rwv push`; `rwv status` reports it",
+                offers: &[Form::C17],
+                verb_offers: &[],
+            },
             Self::PinNone => &StateRow {
                 axis: Axis::Pin,
                 name: "none",
@@ -381,10 +437,23 @@ impl State {
                 axis: Axis::Name,
                 name: "taken",
                 means: "the project already records a workweave by this name at another path, \
-                        or the directory the workweave would take is another workweave's",
-                refused_by: "`rwv workweave create`",
-                offers: &[Form::AnotherName, Form::C9WorkweaveDelete],
-                verb_offers: &[],
+                        or the directory the workweave would take is another workweave's; or a \
+                        member's clone has a remote holding the name its url remote would take, \
+                        with another url",
+                refused_by: "`rwv workweave create`; for a member's url remote, `rwv fetch`, \
+                             `rwv pull`, `rwv update`, `rwv update --remote`, \
+                             `rwv backup prune`, `rwv init` and `rwv member add`",
+                offers: &[],
+                verb_offers: &[
+                    ("workweave create", Form::AnotherName),
+                    ("workweave create", Form::C9WorkweaveDelete),
+                    ("fetch", Form::C17),
+                    ("pull", Form::C17),
+                    ("backup prune", Form::C17),
+                    ("member add", Form::C17),
+                    ("update", Form::C17),
+                    ("init", Form::C17),
+                ],
             },
             Self::NameARevision => &StateRow {
                 axis: Axis::Name,
@@ -454,6 +523,7 @@ impl State {
     pub fn of(self, repo: impl fmt::Display) -> Judging {
         Judging {
             repo: repo.to_string(),
+            scope: None,
             state: self,
             subject: None,
             listed: Vec::new(),
@@ -758,6 +828,13 @@ impl Where {
         };
         places.get(placeholder).cloned()
     }
+}
+
+/// Which kind of repo a form is spelled for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Scope {
+    Project,
+    Member,
 }
 
 /// One step of a form.
@@ -1301,6 +1378,19 @@ impl Form {
         }
     }
 
+    /// Whether the form belongs to the project repo or to a member, where it
+    /// is spelled for one of them alone.
+    fn scope(self) -> Option<Scope> {
+        match self {
+            Self::C1Pull | Self::C2Pull | Self::C3Pull | Self::C7Push => Some(Scope::Project),
+            Self::C1UpdateRemote
+            | Self::C2UpdateRemote
+            | Self::C3UpdateRemote
+            | Self::C7PushRepo => Some(Scope::Member),
+            _ => None,
+        }
+    }
+
     /// Whether this form may be printed: its verb has shipped, and so has
     /// every form it runs after.
     pub fn printable(self) -> bool {
@@ -1374,6 +1464,7 @@ pub struct Fact {
 #[must_use]
 pub struct Judging {
     repo: String,
+    scope: Option<Scope>,
     state: State,
     subject: Option<String>,
     listed: Vec<String>,
@@ -1388,6 +1479,20 @@ impl Judging {
     /// What the state names: the operation in progress, the name taken.
     pub fn subject(mut self, subject: impl fmt::Display) -> Self {
         self.subject = Some(subject.to_string());
+        self
+    }
+
+    /// The repo is the project repo: the forms spelled for a member alone are
+    /// left out.
+    pub fn project_repo(mut self) -> Self {
+        self.scope = Some(Scope::Project);
+        self
+    }
+
+    /// The repo is a member: the forms spelled for the project repo alone are
+    /// left out.
+    pub fn member(mut self) -> Self {
+        self.scope = Some(Scope::Member);
         self
     }
 
@@ -1461,6 +1566,10 @@ impl Judging {
             .iter()
             .chain(verb_offers)
             .filter(|form| form.printable())
+            .filter(|form| match (self.scope, form.scope()) {
+                (Some(want), Some(have)) => want == have,
+                _ => true,
+            })
             .map(|form| Offered {
                 choice: form.row().choice,
                 at: form.row().at.at(&self.places),
@@ -2081,7 +2190,7 @@ mod tests {
                 seen.insert((state.axis(), state.name())),
                 "{state:?} repeats a name on its axis"
             );
-            if state.row().offers.is_empty() {
+            if state.row().offers.is_empty() && state.row().verb_offers.is_empty() {
                 offering_nothing.push(state);
             }
         }
@@ -2164,6 +2273,7 @@ mod tests {
             .bind("<project>", "proj")
             .bind("<ww>", "seat")
             .bind_place("<primary>", Path::new("/my weave"))
+            .by_verb("workweave create")
             .judge(vcs.as_ref());
         let out = judged.output();
         assert_eq!(out.axis, Axis::Name);

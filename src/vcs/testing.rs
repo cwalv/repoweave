@@ -321,17 +321,14 @@ impl Vcs for FakeVcs {
         unsupported("init_bare_repo")
     }
 
-    fn clone_repo(&self, _url: &CloneUrl, _dest: &Path) -> Result<(), VcsError> {
+    fn clone_repo(&self, _url: &CloneUrl, _dest: &Path) -> Result<RemoteHandle, VcsError> {
         unsupported("clone_repo")
-    }
-
-    fn conventional_remote_name(&self) -> &str {
-        unsupported("conventional_remote_name")
     }
 
     fn resolve_branch_on_remote(
         &self,
         _repo: &Path,
+        _remote: &RemoteHandle,
         _branch: &RemoteRef,
     ) -> Result<ResolvedRevisionId, VcsError> {
         unsupported("resolve_branch_on_remote")
@@ -420,10 +417,6 @@ impl Vcs for FakeVcs {
         unsupported("commit")
     }
 
-    fn add_remote(&self, _repo: &Path, _url: &CloneUrl) -> Result<(), VcsError> {
-        unsupported("add_remote")
-    }
-
     fn tag_at_head(&self, _repo: &Path) -> Result<Option<RawRefName>, VcsError> {
         unsupported("tag_at_head")
     }
@@ -440,13 +433,14 @@ impl Vcs for FakeVcs {
         unsupported("hint")
     }
 
-    fn remote_default_branch_repair_hint(&self) -> String {
+    fn remote_default_branch_repair_hint(&self, _remote: &RemoteHandle) -> String {
         unsupported("remote_default_branch_repair_hint")
     }
 
     fn clone_default_branch_repair_hint(
         &self,
         _clone: &Path,
+        _remote: &RemoteHandle,
         _copies: super::RemoteBranchCopies,
     ) -> Result<String, VcsError> {
         unsupported("clone_default_branch_repair_hint")
@@ -633,12 +627,85 @@ impl Vcs for FakeVcs {
         unsupported("fetch_objects_from")
     }
 
-    fn fetch_remote(&self, _repo: &Path) -> Result<(), VcsError> {
+    fn fetch_remote(&self, _repo: &Path, _remote: &RemoteHandle) -> Result<(), VcsError> {
         unsupported("fetch_remote")
     }
 
     fn upstream_tip(&self, _on: &AttachedRef) -> Result<Option<ResolvedRevisionId>, VcsError> {
         unsupported("upstream_tip")
+    }
+
+    fn unpushed_commits(
+        &self,
+        _repo: &Path,
+        _branch: &RawRefName,
+    ) -> Result<Vec<CommitSummary>, VcsError> {
+        unsupported("unpushed_commits")
+    }
+
+    fn upstream(&self, _on: &AttachedRef) -> Result<Option<Upstream>, VcsError> {
+        unsupported("upstream")
+    }
+
+    fn push_target(
+        &self,
+        _on: &AttachedRef,
+        _url_remote: Option<&RemoteHandle>,
+    ) -> Result<Option<RemoteHandle>, VcsError> {
+        unsupported("push_target")
+    }
+
+    fn push_branch(
+        &self,
+        _on: &AttachedRef,
+        _target: &RemoteHandle,
+    ) -> Result<Option<ResolvedRevisionId>, VcsError> {
+        unsupported("push_branch")
+    }
+
+    fn home_remote(
+        &self,
+        _repo: &Path,
+        _url_remote: &RemoteHandle,
+    ) -> Result<RemoteHandle, VcsError> {
+        unsupported("home_remote")
+    }
+
+    fn url_remote(&self, _repo: &Path, _url: &CloneUrl) -> Result<UrlRemote, VcsError> {
+        unsupported("url_remote")
+    }
+
+    fn add_url_remote(
+        &self,
+        _repo: &Path,
+        _absent: &AbsentRemote,
+    ) -> Result<RemoteHandle, VcsError> {
+        unsupported("add_url_remote")
+    }
+
+    fn project_url_remote(&self, _repo: &Path) -> Result<Option<RemoteHandle>, VcsError> {
+        unsupported("project_url_remote")
+    }
+
+    fn record_project_url_remote(
+        &self,
+        _repo: &Path,
+        _remote: &RemoteHandle,
+    ) -> Result<(), VcsError> {
+        unsupported("record_project_url_remote")
+    }
+
+    fn recorded_urls(&self, _repo: &Path) -> Result<Vec<RecordedUrl>, VcsError> {
+        unsupported("recorded_urls")
+    }
+
+    fn reached_by_remote(
+        &self,
+        _repo: &Path,
+        _commit: &ResolvedRevisionId,
+        _remote: &RemoteHandle,
+    ) -> Result<bool, VcsError> {
+        unsupported("reached_by_remote")
     }
 
     fn fetch_pruning(
@@ -655,10 +722,6 @@ impl Vcs for FakeVcs {
 
     fn refresh_working_tree_to_head_if_safe(&self, _repo: &Path) {
         unsupported("refresh_working_tree_to_head_if_safe")
-    }
-
-    fn remote_url(&self, _repo: &Path) -> Result<Option<String>, VcsError> {
-        unsupported("remote_url")
     }
 
     fn commit_object_exists(&self, _repo: &Path, _id: &CommitId) -> Result<bool, VcsError> {
@@ -804,11 +867,21 @@ impl Vcs for FakeVcs {
         unsupported("birth_ref_at_head")
     }
 
-    fn push_ref(&self, _repo: &Path, _r: &PublishRef, _force: Force) -> Result<(), VcsError> {
+    fn push_ref(
+        &self,
+        _repo: &Path,
+        _target: &RemoteHandle,
+        _r: &PublishRef,
+        _force: Force,
+    ) -> Result<(), VcsError> {
         unsupported("push_ref")
     }
 
-    fn remote_default_branch(&self, _repo: &Path) -> Result<Option<RemoteDefaultBranch>, VcsError> {
+    fn remote_default_branch(
+        &self,
+        _repo: &Path,
+        _remote: &RemoteHandle,
+    ) -> Result<Option<RemoteDefaultBranch>, VcsError> {
         unsupported("remote_default_branch")
     }
 

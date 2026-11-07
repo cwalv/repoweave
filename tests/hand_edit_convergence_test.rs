@@ -245,9 +245,10 @@ fn clones(clone: &Path, url: &str) -> bool {
     let wanted = repoweave::registry::resolve_to_clone_info(&source)
         .unwrap()
         .url;
-    repoweave::registry::recorded_remote(repoweave::git::git_vcs().as_ref(), clone)
+    repoweave::registry::recorded_remotes(repoweave::git::git_vcs().as_ref(), clone)
         .unwrap()
-        .is_some_and(|recorded| match recorded {
+        .iter()
+        .any(|(_, recorded)| match recorded {
             repoweave::registry::RecordedRemote::Url(url) => url.names_same_remote(&wanted),
             repoweave::registry::RecordedRemote::RelativePath(_) => false,
         })

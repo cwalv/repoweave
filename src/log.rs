@@ -291,8 +291,8 @@ fn read_weave_branch(
     Ok(Some(WeaveBranch { tip, lock }))
 }
 
-/// The tip of the branch `name`: the local branch, else the remote-tracking
-/// one as last fetched.
+/// The tip of the branch `name` in the project repo: the local branch, else the
+/// one on its url remote as last fetched.
 fn branch_tip(
     vcs: &dyn Vcs,
     repo: &Path,
@@ -305,7 +305,10 @@ fn branch_tip(
     let Ok(tracking) = TrackingRef::parse(raw) else {
         return Ok(None);
     };
-    match vcs.resolve_branch_on_remote(repo, &tracking.on_remote()) {
+    let Some(url_remote) = vcs.project_url_remote(repo)? else {
+        return Ok(None);
+    };
+    match vcs.resolve_branch_on_remote(repo, &url_remote, &tracking.on_remote()) {
         Ok(tip) => Ok(Some(tip)),
         Err(VcsError::RevisionNotFound { .. }) => Ok(None),
         Err(e) => Err(e.into()),

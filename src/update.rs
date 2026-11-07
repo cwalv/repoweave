@@ -832,14 +832,13 @@ fn realign_present_clone(
         return Err(format!(
             "{}: aligning '{attached}' to {} is not a fast-forward — the pin is \
              not a descendant of the branch tip, which is what materializing an \
-             older lock, or a branch carrying commits {} has not seen, looks \
-             like.\n  \
+             older lock, or a branch carrying commits its remote has not seen, \
+             looks like.\n  \
              Reconcile '{attached}' with the pin yourself (ordinary `git rebase` \
              / `git merge`) and re-run, or re-run with --detach-checkouts to \
              materialize {} on a detached HEAD (the branch ref is not moved).",
             repo_path.as_str(),
             target.display_str(),
-            vcs.conventional_remote_name(),
             target.display_str(),
         ));
     };
@@ -899,7 +898,7 @@ fn bring_one(
             }
         }
         return match lock_entry {
-            Some(pin) => make_pin_local(verb, vcs, repo_path, &dest, &pin.version, &emit),
+            Some(pin) => make_pin_local(verb, vcs, repo_path, entry, &dest, &pin.version, &emit),
             None => MemberStep::Ok {
                 pin: PinOutcome::None,
             },
@@ -1036,6 +1035,7 @@ fn make_pin_local(
     verb: &'static str,
     vcs: &dyn Vcs,
     repo_path: &RepoPath,
+    entry: &RepoEntry,
     store: &Path,
     pin: &RawRevisionId,
     emit: &dyn Fn(&str),
@@ -1050,19 +1050,29 @@ fn make_pin_local(
         "rwv {verb}: fetching {pin} into the canonical clone of {}",
         repo_path.as_str()
     ));
-    if let Err(e) = vcs.fetch_remote(store) {
+    let url_remote = match registry::resolve_to_clone_info(&entry.url)
+        .map_err(anyhow::Error::from)
+        .and_then(|info| crate::url_remote::ensure(vcs, repo_path, verb, store, &info.url))
+    {
+        Ok(remote) => remote,
+        Err(e) => {
+            return MemberStep::Failed(e.context(format!(
+                "{}: no url remote to fetch from",
+                repo_path.as_str()
+            )));
+        }
+    };
+    if let Err(e) = vcs.fetch_remote(store, &url_remote) {
         return MemberStep::Failed(anyhow::Error::from(e).context(format!(
-            "{}: failed to fetch {} into the canonical clone",
+            "{}: failed to fetch {url_remote} into the canonical clone",
             repo_path.as_str(),
-            vcs.conventional_remote_name(),
         )));
     }
     match vcs.resolve_revision(store, pin.as_str()) {
         Ok(_) => reached,
         Err(e) => MemberStep::Failed(anyhow::Error::from(e).context(format!(
-            "{}: {pin} is not on {} either",
+            "{}: {pin} is not on {url_remote} either",
             repo_path.as_str(),
-            vcs.conventional_remote_name(),
         ))),
     }
 }

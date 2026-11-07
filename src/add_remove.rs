@@ -9,10 +9,12 @@ use crate::manifest::{
 use crate::path_spelling::{file_url_suggestion, CanonicalPath};
 use crate::refusal::{refusal, RefusalKind};
 use crate::registry::{
-    builtin_registries, recorded_remote, resolve_to_clone_info, CloneUrl, CreationParamError,
+    builtin_registries, recorded_remotes, resolve_to_clone_info, CloneUrl, CreationParamError,
     ParamKind, ParamMap, RecordedRemote, RegistryName, Upstream,
 };
-use crate::vcs::{vcs_for, HeadAttachment, RemoteBranchCopies, TrackingRef, Vcs};
+use crate::vcs::{
+    vcs_for, HeadAttachment, RemoteBranchCopies, RemoteHandle, TrackingRef, UrlRemote, Vcs,
+};
 use crate::workspace::{project_dir, Checkout, WorkspaceContext};
 use anyhow::Context;
 use std::path::{Path, PathBuf};
@@ -397,16 +399,23 @@ pub fn run_add(
             left.clone = Some(dest.clone());
         }
 
-        let Some(remote_default) = vcs.remote_default_branch(&dest).with_context(|| {
-            format!("failed to determine default branch for {}", dest.display())
-        })?
+        let url_remote = present_url_remote(vcs.as_ref(), &dest, &clone_url)?;
+        let Some(remote_default) =
+            vcs.remote_default_branch(&dest, &url_remote)
+                .with_context(|| {
+                    format!("failed to determine default branch for {}", dest.display())
+                })?
         else {
             crate::refuse!(
                 RefusalKind::NoRemoteDefaultBranch,
                 "rwv member add: '{}' at {}: {}, then re-run `rwv member add {}`",
                 repo_path.as_str(),
                 dest.display(),
-                vcs.clone_default_branch_repair_hint(&dest, RemoteBranchCopies::JustCloned)?,
+                vcs.clone_default_branch_repair_hint(
+                    &dest,
+                    &url_remote,
+                    RemoteBranchCopies::JustCloned
+                )?,
                 url
             );
         };
@@ -510,29 +519,32 @@ fn refuse_non_clone_at(
 }
 
 /// A clone already at the placement stands in for the one this add would make
-/// only when its origin names the same repo. Any other clone is registered
-/// through `--adopt`, under its own origin.
+/// only when one of its remotes names the same repo. Any other clone is
+/// registered through `--adopt`, under its own remote.
 fn refuse_foreign_clone_at_placement(
     vcs: &dyn Vcs,
     clone_url: &CloneUrl,
     dest: &Path,
     repo_path: &RepoPath,
 ) -> anyhow::Result<()> {
-    let recorded = recorded_remote(vcs, dest).with_context(|| {
-        format!(
-            "could not determine the {} URL for '{}'",
-            vcs.conventional_remote_name(),
-            dest.display()
-        )
-    })?;
-    if let Some(RecordedRemote::Url(r)) = &recorded {
-        if r.names_same_remote(clone_url) {
-            return Ok(());
-        }
+    let recorded = recorded_remotes(vcs, dest)
+        .with_context(|| format!("could not determine the remotes of '{}'", dest.display()))?;
+    if recorded.iter().any(
+        |(_, remote)| matches!(remote, RecordedRemote::Url(r) if r.names_same_remote(clone_url)),
+    ) {
+        return Ok(());
     }
-    let found = match &recorded {
-        Some(r) => format!("a clone of '{r}'"),
-        None => format!("a clone with no {} remote", vcs.conventional_remote_name()),
+    let found = match recorded.as_slice() {
+        [] => "a clone with no remote".to_owned(),
+        [(_, only)] => format!("a clone of '{only}'"),
+        several => format!(
+            "a clone of {}",
+            several
+                .iter()
+                .map(|(_, r)| format!("'{r}'"))
+                .collect::<Vec<_>>()
+                .join(" and ")
+        ),
     };
     crate::refuse!(
         RefusalKind::ForeignCloneAtPlacement,
@@ -872,6 +884,17 @@ fn untrackable_remote_default(repo_path: &RepoPath, clone: &Path) -> String {
     )
 }
 
+/// The remote of the clone at `dest` that has `url`.
+fn present_url_remote(vcs: &dyn Vcs, dest: &Path, url: &CloneUrl) -> anyhow::Result<RemoteHandle> {
+    match vcs.url_remote(dest, url)? {
+        UrlRemote::Present(remote) => Ok(remote),
+        UrlRemote::Absent(_) | UrlRemote::NameTaken(_) => Err(refusal(
+            RefusalKind::NoRemoteUrl,
+            format!("'{}' has no remote with the url '{url}'", dest.display()),
+        )),
+    }
+}
+
 fn clone_into(vcs: &dyn Vcs, clone_url: &CloneUrl, dest: &Path) -> anyhow::Result<()> {
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)
@@ -910,24 +933,34 @@ fn run_add_from_local_path(
         role,
         recurse_submodules,
     } = settings;
-    let recorded = recorded_remote(vcs, clone_dir)
-        .with_context(|| {
-            format!(
-                "could not determine the {} URL for '{}'",
-                vcs.conventional_remote_name(),
-                clone_dir.display()
-            )
-        })?
-        .ok_or_else(|| {
-            refusal(
-                RefusalKind::NoRemoteUrl,
-                format!(
-                    "'{}' has no {} remote to read a URL from",
-                    clone_dir.display(),
-                    vcs.conventional_remote_name()
-                ),
-            )
-        })?;
+    let remotes = recorded_remotes(vcs, clone_dir).with_context(|| {
+        format!(
+            "could not determine the remotes of '{}'",
+            clone_dir.display()
+        )
+    })?;
+    let (url_remote, recorded) = match remotes.as_slice() {
+        [] => crate::refuse!(
+            RefusalKind::NoRemoteUrl,
+            "'{}' has no remote to read a URL from",
+            clone_dir.display()
+        ),
+        [only] => only.clone(),
+        several => crate::refuse!(
+            RefusalKind::NoRemoteUrl,
+            "'{dir}' has {count} remotes ({listed}), and `--adopt` records the url of a \
+             clone's only remote, which is a choice among these. Remove the remotes that are \
+             not the member's, or, for a clone at the placement of one of these urls, name \
+             that url: `rwv member add <url>`",
+            dir = clone_dir.display(),
+            count = several.len(),
+            listed = several
+                .iter()
+                .map(|(remote, url)| format!("{remote} = {url}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        ),
+    };
     let recorded = match recorded {
         RecordedRemote::Url(url) => url,
         RecordedRemote::RelativePath(path) => crate::refuse!(
@@ -937,7 +970,7 @@ fn run_add_from_local_path(
              give it an absolute URL (`git -C {dir} remote set-url {remote} <url>`) and \
              re-run `rwv member add --adopt {adopted}`",
             dir = clone_dir.display(),
-            remote = vcs.conventional_remote_name(),
+            remote = url_remote,
             adopted = adopted.display(),
         ),
     };
@@ -951,19 +984,25 @@ fn run_add_from_local_path(
         return Ok(None);
     }
 
-    let Some(remote_default) = vcs.remote_default_branch(clone_dir).with_context(|| {
-        format!(
-            "failed to determine default branch for {}",
-            clone_dir.display()
-        )
-    })?
+    let Some(remote_default) = vcs
+        .remote_default_branch(clone_dir, &url_remote)
+        .with_context(|| {
+            format!(
+                "failed to determine default branch for {}",
+                clone_dir.display()
+            )
+        })?
     else {
         crate::refuse!(
             RefusalKind::NoRemoteDefaultBranch,
             "rwv member add: '{}' at {}: {}, then re-run `rwv member add --adopt {}`",
             repo_path.as_str(),
             clone_dir.display(),
-            vcs.clone_default_branch_repair_hint(clone_dir, RemoteBranchCopies::AsLastFetched)?,
+            vcs.clone_default_branch_repair_hint(
+                clone_dir,
+                &url_remote,
+                RemoteBranchCopies::AsLastFetched
+            )?,
             adopted.display()
         );
     };
@@ -1560,9 +1599,14 @@ pub fn run_add_new(
                     left.made.push(Made::Repo(dest.clone()));
                     vcs.init_repo(&dest)
                         .with_context(|| format!("failed to init repo at {}", dest.display()))?;
-                    vcs.add_remote(&dest, &plan.url).with_context(|| {
-                        format!("failed to add the remote in {}", dest.display())
-                    })?;
+                    crate::url_remote::ensure(
+                        vcs.as_ref(),
+                        dest.display(),
+                        "member add",
+                        &dest,
+                        &plan.url,
+                    )
+                    .with_context(|| format!("failed to add the remote in {}", dest.display()))?;
                 }
             }
         }

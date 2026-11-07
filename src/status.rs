@@ -28,6 +28,11 @@ pub struct StatusJsonOutput {
     /// Projects whose `rwv.toml` or `rwv.lock` did not load: none of their
     /// repos is in `repos`.
     pub unreadable_projects: Vec<UnreadableProject>,
+    /// Each repo whose branch stands apart from the one it publishes to,
+    /// judged on the `push-branch` axis with that state's choices: behind,
+    /// ahead, diverged, gone with commits of its own, with a foreign upstream
+    /// or with no push target. Empty, not absent, when none does.
+    pub judged: Vec<crate::diagnosis::JudgedOutput>,
     /// Resolved workspace coordinates (weave root, optional workweave
     /// identity, project). Absent when no project is resolved.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -272,6 +277,7 @@ pub fn run_status(
 
     let mut entries: Vec<RepoStatus> = Vec::new();
     let mut unreadable_projects: Vec<UnreadableProject> = Vec::new();
+    let mut judged = crate::diagnosis::Report::default();
 
     for pname in project_names_for_ctx(ctx) {
         let project_dir = project_dir(&workspace_dir, &pname);
@@ -386,6 +392,10 @@ pub fn run_status(
                 continue;
             }
 
+            if let Some(line) = judge_push_branch(vcs.as_ref(), repo_path, &repo_abs, entry) {
+                judged.add(line);
+            }
+
             let branch = checkout_branch(vcs.as_ref(), &repo_abs);
 
             let tip = vcs.head_revision(&repo_abs).ok();
@@ -441,6 +451,7 @@ pub fn run_status(
             schema_url: STATUS_SCHEMA_URL.to_string(),
             repos: entries,
             unreadable_projects,
+            judged: judged.output(),
             resolution: Some(ctx.resolution()),
             op: op.as_ref().map(OpStatus::from),
         };
@@ -457,9 +468,40 @@ pub fn run_status(
             print_op_header(op);
         }
         print_table(&entries);
+        if !judged.is_empty() {
+            outln!();
+            outln!("{}", judged.render("status").trim_end_matches('\n'));
+        }
     }
 
     Ok(())
+}
+
+/// Where the branch `repo_abs` is on stands to the branch it publishes to,
+/// when that is worth a line: judged read-only, on refs as last fetched.
+fn judge_push_branch(
+    vcs: &dyn Vcs,
+    repo_path: &crate::manifest::RepoPath,
+    repo_abs: &Path,
+    entry: &crate::manifest::RepoEntry,
+) -> Option<crate::diagnosis::Judged> {
+    use crate::vcs::HeadAttachment;
+    let Ok(HeadAttachment::Attached(attached)) = vcs.head_attachment(repo_abs) else {
+        return None;
+    };
+    let url_remote = crate::url_remote::present(vcs, repo_abs, &entry.url).ok()?;
+    let (standing, _) = crate::push_branch::standing(vcs, &attached, url_remote.as_ref()).ok()?;
+    crate::push_branch::judge(
+        vcs,
+        &crate::push_branch::Subject {
+            repo: repo_path,
+            checkout: repo_abs,
+            branch: &attached.to_string(),
+            declared: Some(&entry.branch),
+            member: true,
+        },
+        &standing,
+    )
 }
 
 /// The header `rwv status` prints ahead of the table when this workspace owns
@@ -558,6 +600,7 @@ mod tests {
         let envelope = StatusJsonOutput {
             schema_url: STATUS_SCHEMA_URL.to_string(),
             unreadable_projects: Vec::new(),
+            judged: Vec::new(),
             repos: vec![RepoStatus {
                 path: "github/org/repo".into(),
                 branch: Some("main".into()),
@@ -621,6 +664,7 @@ mod tests {
             schema_url: STATUS_SCHEMA_URL.to_string(),
             repos: vec![],
             unreadable_projects: Vec::new(),
+            judged: Vec::new(),
             resolution: None,
             op: Some(OpStatus {
                 id: "1779769917405921588".into(),
@@ -660,6 +704,7 @@ mod tests {
         let envelope = StatusJsonOutput {
             schema_url: STATUS_SCHEMA_URL.to_string(),
             unreadable_projects: Vec::new(),
+            judged: Vec::new(),
             repos: vec![RepoStatus {
                 path: "github/org/repo".into(),
                 branch: Some("app--wwb/app--wwa/main".into()),

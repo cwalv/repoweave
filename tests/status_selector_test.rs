@@ -132,7 +132,7 @@ fn text_table_lists_only_matching_repos() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let rows: Vec<&str> = stdout.lines().collect();
+    let rows: Vec<&str> = stdout.lines().take_while(|line| !line.is_empty()).collect();
     assert_eq!(rows.len(), 1, "one row expected, got:\n{stdout}");
     assert!(rows[0].starts_with(TOOL), "got:\n{stdout}");
 }

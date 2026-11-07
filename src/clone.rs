@@ -133,9 +133,17 @@ pub fn run_clone(
     } else {
         outln!("rwv clone: cloning project '{name}'");
     }
-    project_vcs
+    let url_remote = project_vcs
         .clone_repo(&url, &project_dir)
         .with_context(|| format!("failed to clone project source '{url}'"))?;
+    project_vcs
+        .record_project_url_remote(&project_dir, &url_remote)
+        .with_context(|| {
+            format!(
+                "failed to record the url remote in {}",
+                project_dir.display()
+            )
+        })?;
 
     // Unlike `init`/`init_adopt`, clone never calls `set_replay_exclusion` —
     // it clones a project that already exists, and whether `rwv.lock` is

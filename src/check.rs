@@ -4486,7 +4486,7 @@ pub fn scan_provenance(
     projects: &[Project],
 ) -> Vec<CheckViolation> {
     use crate::manifest::Role;
-    use crate::registry::{recorded_remote, resolve_to_clone_info, RecordedRemote};
+    use crate::registry::{recorded_remotes, resolve_to_clone_info, RecordedRemote};
     use crate::vcs::vcs_for;
 
     let mut violations = Vec::new();
@@ -4537,35 +4537,53 @@ pub fn scan_provenance(
                 continue;
             }
 
-            let recorded = match recorded_remote(vcs.as_ref(), &repo_abs) {
-                Ok(Some(r)) => r,
-                Ok(None) => continue, // no remote recorded — not this check's concern
-                Err(_) => continue,   // can't read remote — skip silently
+            let recorded = match recorded_remotes(vcs.as_ref(), &repo_abs) {
+                Ok(r) if !r.is_empty() => r,
+                _ => continue, // no remote recorded, or none readable — not this check's concern
             };
             let declared = resolve_to_clone_info(&entry.url).ok().map(|info| info.url);
 
-            let sub_kind = match recorded {
-                RecordedRemote::RelativePath(path) => ProvenanceKind::RelativeRemote {
-                    path,
-                    remote: vcs.conventional_remote_name().to_owned(),
-                    manifest_remote: declared.map(|url| url.to_string()),
-                },
-                RecordedRemote::Url(actual) => match declared {
+            let relative: Vec<ProvenanceKind> = recorded
+                .iter()
+                .filter_map(|(remote, recorded)| match recorded {
+                    RecordedRemote::RelativePath(path) => Some(ProvenanceKind::RelativeRemote {
+                        path: path.clone(),
+                        remote: remote.to_string(),
+                        manifest_remote: declared.as_ref().map(|url| url.to_string()),
+                    }),
+                    RecordedRemote::Url(_) => None,
+                })
+                .collect();
+            let sub_kinds = if !relative.is_empty() {
+                relative
+            } else {
+                let Some(declared) = declared else {
                     // A url that resolves to no remote has nothing to compare.
-                    None => continue,
-                    Some(declared) if declared.names_same_remote(&actual) => continue,
-                    Some(_) => ProvenanceKind::OriginUrlMismatch {
-                        manifest_url: entry.url.to_string(),
-                        actual_url: actual.to_string(),
-                        is_reference_role: entry.role == Role::Reference,
-                    },
-                },
+                    continue;
+                };
+                let urls: Vec<&crate::registry::CloneUrl> = recorded
+                    .iter()
+                    .filter_map(|(_, recorded)| match recorded {
+                        RecordedRemote::Url(url) => Some(url),
+                        RecordedRemote::RelativePath(_) => None,
+                    })
+                    .collect();
+                if urls.iter().any(|actual| declared.names_same_remote(actual)) {
+                    continue;
+                }
+                vec![ProvenanceKind::OriginUrlMismatch {
+                    manifest_url: entry.url.to_string(),
+                    actual_url: urls.first().map(|u| u.to_string()).unwrap_or_default(),
+                    is_reference_role: entry.role == Role::Reference,
+                }]
             };
-            violations.push(CheckViolation::Provenance {
-                project: project.name.clone(),
-                repo: repo_path.clone(),
-                sub_kind,
-            });
+            for sub_kind in sub_kinds {
+                violations.push(CheckViolation::Provenance {
+                    project: project.name.clone(),
+                    repo: repo_path.clone(),
+                    sub_kind,
+                });
+            }
         }
 
         // --- lock-sha-unreachable ---
@@ -5555,11 +5573,13 @@ impl CanonicalStore {
     fn local_counterpart(&self, vcs: &dyn crate::vcs::Vcs) -> Option<crate::vcs::LocalRefName> {
         match &self.tracking {
             TrackingSource::Declared(t) => Some(t.local_counterpart()),
-            TrackingSource::RemoteDefault => vcs
-                .remote_default_branch(&self.path)
-                .ok()
-                .flatten()
-                .map(|d| d.local_counterpart()),
+            TrackingSource::RemoteDefault => {
+                let url_remote = vcs.project_url_remote(&self.path).ok().flatten()?;
+                vcs.remote_default_branch(&self.path, &url_remote)
+                    .ok()
+                    .flatten()
+                    .map(|d| d.local_counterpart())
+            }
             TrackingSource::Unresolvable => None,
         }
     }
@@ -7990,7 +8010,7 @@ fn clone_at_placement(
     repo: &RepoPath,
     entry: &crate::manifest::RepoEntry,
 ) -> Option<RepoPath> {
-    use crate::registry::{recorded_remote, resolve_to_clone_info, RecordedRemote};
+    use crate::registry::{recorded_remotes, resolve_to_clone_info, RecordedRemote};
     let placed = crate::registry::placement(&entry.url)?;
     if &placed == repo || manifest.get_entry(&placed).is_some() {
         return None;
@@ -8001,12 +8021,11 @@ fn clone_at_placement(
         return None;
     }
     let declared = resolve_to_clone_info(&entry.url).ok()?.url;
-    match recorded_remote(vcs.as_ref(), &clone) {
-        Ok(Some(RecordedRemote::Url(actual))) if declared.names_same_remote(&actual) => {
-            Some(placed)
-        }
-        _ => None,
-    }
+    let recorded = recorded_remotes(vcs.as_ref(), &clone).ok()?;
+    recorded
+        .iter()
+        .any(|(_, remote)| matches!(remote, RecordedRemote::Url(actual) if declared.names_same_remote(actual)))
+        .then_some(placed)
 }
 
 /// Collect all convention violations from the check inputs.

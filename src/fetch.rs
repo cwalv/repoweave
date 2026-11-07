@@ -10,7 +10,9 @@ use crate::manifest::{Manifest, ProjectName};
 use crate::member_selection::MemberSelection;
 use crate::parallel::{run_in_parallel, OutputMode};
 use crate::refusal::RefusalKind;
-use crate::vcs::{project_vcs, vcs_for, BranchChange, PruningFetch, RemoteBranchMove, Vcs};
+use crate::vcs::{
+    project_vcs, vcs_for, AbsentRemote, BranchChange, PruningFetch, RemoteBranchMove, Vcs,
+};
 use crate::workspace::{project_dir, Checkout, Resolution, WorkspaceContext};
 use anyhow::Context;
 use schemars::JsonSchema;
@@ -155,9 +157,17 @@ impl FetchJsonOutput {
 }
 
 /// Fetch every remote of the repo at `dir` under the claim on its object
-/// store, recording each superseded tip, and report what moved.
-pub(crate) fn pruning_fetch(vcs: &dyn Vcs, dir: &Path) -> anyhow::Result<PruningFetch> {
+/// store, recording each superseded tip, and report what moved. `add` is the
+/// url remote the repo lacks, added first under the same claim.
+pub(crate) fn pruning_fetch(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    add: Option<&AbsentRemote>,
+) -> anyhow::Result<PruningFetch> {
     FetchClaim::hold(vcs, dir, |claim| {
+        if let Some(absent) = add {
+            vcs.add_url_remote(dir, absent)?;
+        }
         vcs.fetch_pruning(claim, dir).map_err(anyhow::Error::from)
     })
 }
@@ -166,6 +176,9 @@ struct Target {
     path: String,
     dir: PathBuf,
     vcs: Box<dyn Vcs>,
+    /// The url the member declares: its url remote is added before the fetch
+    /// when the clone lacks it. The project repo has none.
+    url: Option<crate::registry::CloneUrl>,
 }
 
 /// The repos `rwv fetch` covers in `ctx`'s project: the project repo, unless a
@@ -184,6 +197,7 @@ fn targets(
             path: crate::workspace::project_rel_path(project).to_string(),
             dir: project_dir(ctx.primary_path(), project),
             vcs: project_vcs(),
+            url: None,
         });
     }
     targets.extend(
@@ -194,9 +208,45 @@ fn targets(
                 path: path.to_string(),
                 dir: ctx.primary_path().join(path.as_path()),
                 vcs: vcs_for(entry.vcs_type),
+                url: crate::registry::resolve_to_clone_info(&entry.url)
+                    .ok()
+                    .map(|info| info.url),
             }),
     );
     Ok(targets)
+}
+
+/// The url remote each member target lacks, `None` for the targets that have
+/// theirs; a name held by another url refuses, for every target that has one,
+/// before any remote is added or fetched.
+fn url_remotes_to_add(targets: &[Target]) -> anyhow::Result<Vec<Option<AbsentRemote>>> {
+    let mut report = crate::diagnosis::Report::default();
+    let mut adds = Vec::with_capacity(targets.len());
+    for target in targets {
+        let planned = match (&target.url, target.dir.exists()) {
+            (Some(url), true) => crate::url_remote::find(
+                target.vcs.as_ref(),
+                &target.path,
+                "fetch",
+                &target.dir,
+                url,
+            )?
+            .plan(),
+            _ => {
+                adds.push(None);
+                continue;
+            }
+        };
+        match planned {
+            Ok(planned) => adds.push(planned.add),
+            Err(judged) => {
+                report.add(judged);
+                adds.push(None);
+            }
+        }
+    }
+    report.into_result()?;
+    Ok(adds)
 }
 
 fn project_of(ctx: &WorkspaceContext) -> anyhow::Result<ProjectName> {
@@ -264,13 +314,14 @@ pub(crate) fn fetch_repos(
 ) -> anyhow::Result<FetchedRepos> {
     let project = project_of(ctx)?;
     let targets = targets(ctx, &project, selection)?;
+    let adds = url_remotes_to_add(&targets)?;
 
     let results: Vec<anyhow::Result<Option<PruningFetch>>> =
-        run_in_parallel(&targets, jobs, |_idx, target| {
+        run_in_parallel(&targets, jobs, |idx, target| {
             if !target.dir.exists() {
                 return Ok(None);
             }
-            pruning_fetch(target.vcs.as_ref(), &target.dir).map(Some)
+            pruning_fetch(target.vcs.as_ref(), &target.dir, adds[idx].as_ref()).map(Some)
         });
 
     let mut records = Vec::new();

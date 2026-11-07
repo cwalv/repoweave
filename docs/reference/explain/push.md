@@ -99,7 +99,8 @@ Schema:
   "required": [
     "$schema",
     "outcomes",
-    "refused"
+    "refused",
+    "reported"
   ],
   "properties": {
     "$schema": {
@@ -113,6 +114,13 @@ Schema:
     },
     "refused": {
       "description": "Each repo push judged before refusing, with that state's choices. Empty, not absent, when nothing was refused on a repo's state; a project repo withheld because members' pushes failed lists each of those members as `publish` `withheld`.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/JudgedOutput"
+      }
+    },
+    "reported": {
+      "description": "Each repo push judged and went past without pushing it: a branch behind its push branch, or one whose upstream is gone, with that state's choices.",
       "type": "array",
       "items": {
         "$ref": "#/definitions/JudgedOutput"

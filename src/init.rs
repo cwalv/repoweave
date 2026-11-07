@@ -161,8 +161,15 @@ pub fn init(
         .context("failed to plant merge.rwv-ours config")?;
 
     if let Some(url) = remote_url {
-        vcs.add_remote(&project_dir, &url)
+        let remote = crate::url_remote::ensure(vcs.as_ref(), name, "init", &project_dir, &url)
             .with_context(|| format!("failed to add the remote in {}", project_dir.display()))?;
+        vcs.record_project_url_remote(&project_dir, &remote)
+            .with_context(|| {
+                format!(
+                    "failed to record the url remote in {}",
+                    project_dir.display()
+                )
+            })?;
     }
 
     eprintln!(
@@ -267,8 +274,16 @@ pub fn init_adopt(
     // Clone the repo
     let vcs = project_vcs();
     eprintln!("Cloning {} into {}", clone_url, project_dir.display());
-    vcs.clone_repo(&clone_url, &project_dir)
+    let url_remote = vcs
+        .clone_repo(&clone_url, &project_dir)
         .with_context(|| format!("failed to clone {}", clone_url))?;
+    vcs.record_project_url_remote(&project_dir, &url_remote)
+        .with_context(|| {
+            format!(
+                "failed to record the url remote in {}",
+                project_dir.display()
+            )
+        })?;
 
     let manifest_path = project_dir.join(Manifest::FILE_NAME);
     if !manifest_path.exists() {

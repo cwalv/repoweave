@@ -173,6 +173,9 @@ struct WorkItem {
     /// The backend resolved from this entry's `vcs_type`, resolved once here
     /// and borrowed by the worker rather than re-resolved per repo.
     vcs: Box<dyn Vcs>,
+    /// The member's url remote, and the one still to add before the fetch;
+    /// `None` where the checkout is missing or the url resolves to no remote.
+    planned: Option<crate::url_remote::Planned>,
 }
 
 /// Internal: do the update for a specific project under `ctx.active_path()`.
@@ -235,9 +238,11 @@ fn update_for_project(
                 checkout,
                 old,
                 vcs,
+                planned: None,
             }
         })
         .collect();
+    let work_items = plan_url_remotes(work_items)?;
 
     let parallel = jobs > 1;
     // Under JSON mode we suppress text-mode prefix output so stdout only
@@ -255,6 +260,7 @@ fn update_for_project(
             item.vcs.as_ref(),
             &item.repo_path,
             &item.entry,
+            item.planned.as_ref(),
             &item.checkout,
             detach_checkouts,
             &reporter,
@@ -464,8 +470,37 @@ fn update_for_project(
     Ok(())
 }
 
-/// Per-repo worker: `git fetch --all --tags`, resolve the conventional
-/// remote branch, then advance the checkout onto it ([`advance_checkout`]).
+/// Find each member's url remote before anything is fetched or added: a name
+/// held by another url refuses for every member that has one.
+fn plan_url_remotes(mut items: Vec<WorkItem>) -> anyhow::Result<Vec<WorkItem>> {
+    let mut report = crate::diagnosis::Report::default();
+    for item in &mut items {
+        if !item.checkout.path().exists() {
+            continue;
+        }
+        let Ok(info) = crate::registry::resolve_to_clone_info(&item.entry.url) else {
+            continue;
+        };
+        match crate::url_remote::find(
+            item.vcs.as_ref(),
+            &item.repo_path,
+            "update",
+            item.checkout.path(),
+            &info.url,
+        )?
+        .plan()
+        {
+            Ok(planned) => item.planned = Some(planned),
+            Err(judged) => report.add(judged),
+        }
+    }
+    report.into_result()?;
+    Ok(items)
+}
+
+/// Per-repo worker: the pruning fetch of every remote, resolve the branch on
+/// the member's url remote, then advance the checkout onto it
+/// ([`advance_checkout`]).
 ///
 /// Returns `Ok(new_sha)` on success (the SHA the repo is now at) or
 /// `Err(msg)` on failure. `use_reporter` suppresses progress lines under
@@ -479,6 +514,7 @@ fn advance_one(
     vcs: &dyn Vcs,
     repo_path: &RepoPath,
     entry: &RepoEntry,
+    planned: Option<&crate::url_remote::Planned>,
     checkout: &MemberCheckout,
     detach_checkouts: Option<DetachConsent>,
     reporter: &Reporter<'_>,
@@ -502,9 +538,16 @@ fn advance_one(
     }
 
     let branch = entry.branch.on_remote();
+    let Some(planned) = planned else {
+        return Err(format!(
+            "{}: its url '{}' resolves to no remote, so there is no remote to advance \
+             from; respell the entry's `url` in rwv.toml",
+            repo_path.as_str(),
+            entry.url,
+        ));
+    };
 
-    // git fetch the remote(s). Run from the repo dir so default remote
-    // selection applies.
+    // The pruning fetch of every remote, the url remote added first.
     //
     // `--prune` removes remote-tracking refs that no longer exist on the
     // remote. Without it, a branch deleted or renamed upstream leaves a
@@ -522,7 +565,7 @@ fn advance_one(
             repo_path.as_str()
         ));
     }
-    let fetched = crate::fetch::pruning_fetch(vcs, repo_dir)
+    let fetched = crate::fetch::pruning_fetch(vcs, repo_dir, planned.add.as_ref())
         .map_err(|e| format!("{}: fetch failed: {e:#}", repo_path.as_str()))?;
     if let Some(remote) = fetched.unconfirmed.first() {
         return Err(format!(
@@ -547,7 +590,7 @@ fn advance_one(
     // `branch`, this resolution will now correctly fail rather than
     // resolving against a ghost ref. The error below names the state and
     // the two actionable exits so the operator knows what to do.
-    let resolved = match vcs.resolve_branch_on_remote(repo_dir, &branch) {
+    let resolved = match vcs.resolve_branch_on_remote(repo_dir, &planned.remote, &branch) {
         Ok(r) => r,
         Err(_) => {
             return Err(format!(
@@ -569,6 +612,7 @@ fn advance_one(
         repo_dir,
         in_workweave,
         &resolved,
+        &planned.remote,
         detach_checkouts,
     )?;
 
@@ -583,7 +627,7 @@ fn advance_one(
 }
 
 /// Advance one checkout onto `target`, the tracking branch's tip on the
-/// conventional remote.
+/// member's url remote, `remote`.
 ///
 /// Which ref is the legal object of the move depends on the checkout:
 ///
@@ -617,6 +661,7 @@ fn advance_checkout(
     repo_dir: &Path,
     in_workweave: bool,
     target: &ResolvedRevisionId,
+    remote: &crate::vcs::RemoteHandle,
     detach_checkouts: Option<DetachConsent>,
 ) -> Result<(), String> {
     let describe = |e: VcsError| format!("{}: {e:#}", repo_path.as_str());
@@ -660,7 +705,7 @@ fn advance_checkout(
              re-run `rwv update --remote`.",
             repo_path.as_str(),
             target.display_str(),
-            vcs.conventional_remote_name(),
+            remote,
         ));
     }
 

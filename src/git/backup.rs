@@ -700,7 +700,7 @@ mod tests {
         git(origin.path(), &["branch", "-D", "gone-soon"]);
         git(&c, &["remote", "add", "lost", "/nonexistent/remote/path"]);
 
-        let unconfirmed = crate::fetch::pruning_fetch(&GitVcs, &c)
+        let unconfirmed = crate::fetch::pruning_fetch(&GitVcs, &c, None)
             .unwrap()
             .unconfirmed;
 

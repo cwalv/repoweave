@@ -2749,6 +2749,7 @@ fn name_taken(
     crate::diagnosis::State::NameTaken
         .of(project_rel_path(project))
         .subject(name)
+        .by_verb("workweave create")
         .listing(held_by)
 }
 

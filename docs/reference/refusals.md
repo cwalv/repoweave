@@ -121,11 +121,24 @@ The others follow.
 | State | Means | Refused by |
 |---|---|---|
 | `diverged` | the branch and its upstream each hold commits the other lacks, counted on the line | `rwv pull`, for the project branch |
+| `behind` | the branch is an ancestor of its push branch, as last fetched: the remote holds commits the branch lacks | `rwv push` skips it and reports it; `rwv status` reports it |
+| `ahead` | its push branch is an ancestor of the branch, as last fetched: the branch holds commits the remote lacks | `rwv status` reports it; `rwv push` publishes it |
+| `gone` | the branch takes in from a branch its remote no longer has, as last fetched, and holds commits no remote-tracking branch reaches, listed | `rwv push` skips it unless `--repo` names it; `rwv status` reports it |
+| `foreign upstream` | the branch takes in from a branch of another name, which the subject names; a branch publishes to the branch of its own name | `rwv push`; `rwv status` reports it |
+| `no push target` | no remote is configured for the branch to push to, and the repo has no url remote to fall back on | `rwv push`; `rwv status` reports it |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
 
 | State | Choice | Spelled | Where | Keeps work because |
 |---|---|---|---|---|
+| `behind` | C1: take in theirs | `rwv pull` | any workspace | fast-forward only |
+| `behind` | C1: take in theirs | `rwv update --remote --repo <m>` | any workspace | fast-forward only |
+| `ahead` | C7: publish it (again) | `rwv push` | here | adds only |
+| `ahead` | C7: publish it (again) | `rwv push --repo <m>` | here | adds only |
+| `gone` | C15: copy these commits onto `<b>` | VCS action (git: `git -C <checkout> cherry-pick <ids>`); then `rwv lock --commit` | where `<b>` is checked out | a copy adds only |
+| `gone` | C7: publish it (again) | `rwv push --repo <m>` | here | adds only |
+| `foreign upstream` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
+| `no push target` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
 
 **Where this sits.** [Sync semantics](../explanation/joints/sync-semantics.md).
 
@@ -139,7 +152,7 @@ The others follow.
 
 | State | Means | Refused by |
 |---|---|---|
-| `taken` | the project already records a workweave by this name at another path, or the directory the workweave would take is another workweave's | `rwv workweave create` |
+| `taken` | the project already records a workweave by this name at another path, or the directory the workweave would take is another workweave's; or a member's clone has a remote holding the name its url remote would take, with another url | `rwv workweave create`; for a member's url remote, `rwv fetch`, `rwv pull`, `rwv update`, `rwv update --remote`, `rwv backup prune`, `rwv init` and `rwv member add` |
 | `a revision` | the branch `rwv member add` would declare reads as a commit id (seven or more hex digits) or a release tag (`v2.0`, `v0.3.4-rc1`) | `rwv member add`, for the remote's default branch or, with `--new`, the branch the new repo is on |
 | `no-such-branch` | a branch or revision the verb was asked to read names nothing in this repo, spelled as the repo's VCS resolves it; the name is listed with the repo it is missing from, and the repos that have it are still read | `rwv log`, for a range endpoint a member lacks, and for the weave branch `--against` names |
 
@@ -147,8 +160,14 @@ The others follow.
 
 | State | Choice | Spelled | Where | Keeps work because |
 |---|---|---|---|---|
-| `taken` | use another name | — | here | nothing changes |
-| `taken` | C9: delete what is landed | `rwv workweave delete <ww> --project <project>` | the primary | deletes only what is landed elsewhere; local only |
+| `taken`, for `rwv workweave create` | use another name | — | here | nothing changes |
+| `taken`, for `rwv workweave create` | C9: delete what is landed | `rwv workweave delete <ww> --project <project>` | the primary | deletes only what is landed elsewhere; local only |
+| `taken`, for `rwv fetch` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
+| `taken`, for `rwv pull` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
+| `taken`, for `rwv backup prune` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
+| `taken`, for `rwv member add` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
+| `taken`, for `rwv update` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
+| `taken`, for `rwv init` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
 | `no-such-branch` | C33: look for what may be published but not yet fetched | `rwv fetch` | any workspace | downloads only |
 
 **Where this sits.** [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md); [Lock as derived](../explanation/joints/lock-as-derived.md).

@@ -89,15 +89,59 @@ fn clone_attached_at_does_not_take_text() {
 }
 
 #[test]
-fn add_remote_does_not_take_text() {
+fn add_url_remote_does_not_take_text() {
     assert_fails_with(
         "E0308",
-        "a remote is recorded from a CloneUrl, not a string",
+        "a url remote is added from the one the seam found absent, not from a string",
         r#"
         use repoweave::vcs::Vcs;
         use std::path::Path;
         pub fn remote(vcs: &dyn Vcs, repo: &Path) {
-            let _ = vcs.add_remote(repo, "x");
+            let _ = vcs.add_url_remote(repo, "x");
+        }
+        "#,
+    );
+}
+
+#[test]
+fn a_remote_is_not_named_with_text() {
+    assert_fails_with(
+        "E0308",
+        "a remote handle comes from the seam; core cannot spell one",
+        r#"
+        use repoweave::vcs::{RemoteHandle, Vcs};
+        use std::path::Path;
+        pub fn fetch(vcs: &dyn Vcs, repo: &Path) {
+            let _ = vcs.fetch_remote(repo, "origin");
+        }
+        pub fn keep(_: Option<RemoteHandle>) {}
+        "#,
+    );
+}
+
+#[test]
+fn a_remote_handle_has_no_constructor_outside_the_crate() {
+    assert_fails_with(
+        "E0624",
+        "only a backend makes a handle",
+        r#"
+        use repoweave::vcs::RemoteHandle;
+        pub fn spell() -> RemoteHandle {
+            RemoteHandle::new("origin")
+        }
+        "#,
+    );
+}
+
+#[test]
+fn a_remote_handle_does_not_give_its_name_back_as_text() {
+    assert_fails_with(
+        "E0624",
+        "a handle displays; it is not read as a string",
+        r#"
+        use repoweave::vcs::RemoteHandle;
+        pub fn spell(remote: &RemoteHandle) -> String {
+            remote.name().to_owned()
         }
         "#,
     );

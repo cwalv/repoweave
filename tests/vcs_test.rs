@@ -710,34 +710,29 @@ fn on_remote(branch: &str) -> RemoteRef {
         .on_remote()
 }
 
-#[test]
-fn resolve_branch_on_remote_resolves_against_origin() {
-    let (_ws, local) = repo_with_remote("origin");
-    let expected_sha = common::git_in(&local, &["rev-parse", "origin/main"]);
-
-    let vcs = git_vcs();
-    let resolved = vcs
-        .resolve_branch_on_remote(&local, &on_remote("main"))
-        .unwrap();
-
-    assert_eq!(resolved.id().as_str(), &expected_sha);
-    assert_eq!(resolved.display_str(), "origin/main");
+/// The one remote of a clone, as the seam hands it out.
+fn only_remote(
+    vcs: &dyn repoweave::vcs::Vcs,
+    repo: &std::path::Path,
+) -> repoweave::vcs::RemoteHandle {
+    let mut remotes = vcs.recorded_urls(repo).unwrap();
+    assert_eq!(remotes.len(), 1, "the fixture clone has one remote");
+    remotes.pop().unwrap().remote
 }
 
 #[test]
-fn resolve_branch_on_remote_missing_remote_errors() {
-    // Repo has a remote named `other` but not `origin` — resolution must fail
-    // clearly rather than silently falling back to a local branch tip.
+fn resolve_branch_on_remote_resolves_against_the_remote_it_is_given() {
     let (_ws, local) = repo_with_remote("other");
+    let expected_sha = common::git_in(&local, &["rev-parse", "other/main"]);
 
     let vcs = git_vcs();
-    let result = vcs.resolve_branch_on_remote(&local, &on_remote("main"));
+    let remote = only_remote(vcs.as_ref(), &local);
+    let resolved = vcs
+        .resolve_branch_on_remote(&local, &remote, &on_remote("main"))
+        .unwrap();
 
-    let err = result.expect_err("missing origin remote must error");
-    assert!(
-        matches!(err, VcsError::RevisionNotFound { ref rev, .. } if rev == "refs/remotes/origin/main"),
-        "expected RevisionNotFound for refs/remotes/origin/main, got {err:?}"
-    );
+    assert_eq!(resolved.id().as_str(), &expected_sha);
+    assert_eq!(resolved.display_str(), "other/main");
 }
 
 // ============================================================================
@@ -757,7 +752,8 @@ fn resolve_branch_on_remote_missing_branch_errors() {
     let (_ws, local) = repo_with_remote("origin");
 
     let vcs = git_vcs();
-    let result = vcs.resolve_branch_on_remote(&local, &on_remote("nonexistent-branch"));
+    let remote = only_remote(vcs.as_ref(), &local);
+    let result = vcs.resolve_branch_on_remote(&local, &remote, &on_remote("nonexistent-branch"));
 
     let err = result.expect_err("nonexistent branch on remote must error");
     assert!(

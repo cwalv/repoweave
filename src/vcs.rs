@@ -1045,6 +1045,110 @@ pub struct UnconfirmedRemote {
     pub cause: String,
 }
 
+/// A remote of a repo, as its backend names one.
+///
+/// Core receives a handle from the method that resolved a role and gives it
+/// back to the methods that act on it; it never spells one. Rendering a handle
+/// into an operator message is the one use of its name, so it displays and
+/// does nothing else: it has no `as_str`, no constructor outside the backends
+/// and no comparison with text.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RemoteHandle(String);
+
+impl RemoteHandle {
+    pub(crate) fn new(name: impl Into<String>) -> Self {
+        Self(name.into())
+    }
+
+    pub(crate) fn name(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for RemoteHandle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// How a repo stands to the remote that has a url.
+#[derive(Debug, Clone)]
+pub enum UrlRemote {
+    /// A remote has the url.
+    Present(RemoteHandle),
+    /// No remote has the url and the name one would take is free:
+    /// [`Vcs::add_url_remote`] adds it.
+    Absent(AbsentRemote),
+    /// No remote has the url, and the name one would take holds another.
+    NameTaken(RemoteNameTaken),
+}
+
+/// A remote [`Vcs::url_remote`] found missing, and the name it would take.
+#[derive(Debug, Clone)]
+pub struct AbsentRemote {
+    remote: RemoteHandle,
+    url: CloneUrl,
+}
+
+impl AbsentRemote {
+    pub(crate) fn new(remote: RemoteHandle, url: CloneUrl) -> Self {
+        Self { remote, url }
+    }
+
+    pub(crate) fn remote(&self) -> &RemoteHandle {
+        &self.remote
+    }
+
+    pub(crate) fn url(&self) -> &CloneUrl {
+        &self.url
+    }
+}
+
+impl fmt::Display for AbsentRemote {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} for {}", self.remote, self.url)
+    }
+}
+
+/// The name a url remote would take is held by a remote with another url.
+#[derive(Debug, Clone)]
+pub struct RemoteNameTaken {
+    pub remote: RemoteHandle,
+    /// The url the remote holds, as recorded.
+    pub holds: String,
+    /// The url the remote was wanted for.
+    pub wanted: CloneUrl,
+}
+
+/// One remote of a repo and the url it records, as configured: not as a
+/// rewrite rule resolves it for a transport.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordedUrl {
+    pub remote: RemoteHandle,
+    pub url: String,
+}
+
+/// The remote branch a branch takes in from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Upstream {
+    pub remote: RemoteHandle,
+    /// The branch on that remote.
+    pub branch: RawRefName,
+}
+
+/// How a branch tip stands to another, by ancestry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Relation {
+    /// The same commit.
+    Even,
+    /// The tip is an ancestor of the other.
+    Behind,
+    /// The other is an ancestor of the tip.
+    Ahead,
+    /// Neither is an ancestor of the other.
+    Diverged,
+}
+
 /// A branch of a repo and where it stands, local or remote-tracking.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BranchTip {
@@ -2494,23 +2598,108 @@ pub trait Vcs: Send + Sync {
     /// against the very thing creation was for.
     fn init_bare_repo(&self, dest: &Path) -> Result<(), VcsError>;
 
-    /// Clone `url` into `dest`, naming the remote by the convention this VCS
-    /// uses for a repo rwv manages.
+    /// Clone `url` into `dest`, and the remote the clone made.
     ///
-    /// The name is not left to the VCS's own default: git's is settable
-    /// per-operator via `clone.defaultRemoteName`, and a clone whose remote is
-    /// named something else is one every later resolution here would miss.
-    fn clone_repo(&self, url: &CloneUrl, dest: &Path) -> Result<(), VcsError>;
+    /// The VCS names it as it names the remote of any clone it makes, and no
+    /// caller relies on the name: every later use of a remote resolves its
+    /// role, the url remote of a member by the url it records.
+    fn clone_repo(&self, url: &CloneUrl, dest: &Path) -> Result<RemoteHandle, VcsError>;
 
-    /// Bring the conventional remote's branches and tags into `repo`'s object
-    /// store, updating only its remote-tracking refs: no local branch and no
-    /// checkout moves.
-    fn fetch_remote(&self, repo: &Path) -> Result<(), VcsError>;
+    /// Bring `remote`'s branches and tags into `repo`'s object store, updating
+    /// only its remote-tracking refs: no local branch and no checkout moves.
+    fn fetch_remote(&self, repo: &Path, remote: &RemoteHandle) -> Result<(), VcsError>;
 
     /// The tip of the branch `on` takes in from — the remote branch the VCS
     /// records for it — or `None` when it records none, or the remote has
     /// not got the branch (git: `@{upstream}`).
     fn upstream_tip(&self, on: &AttachedRef) -> Result<Option<ResolvedRevisionId>, VcsError>;
+
+    /// The remote branch `on` takes in from, or `None` when the VCS records
+    /// none (git: `branch.<b>.remote` and `branch.<b>.merge`). The branch may
+    /// not exist on the remote: this reads the record, not the remote.
+    fn upstream(&self, on: &AttachedRef) -> Result<Option<Upstream>, VcsError>;
+
+    /// Where a branch publishes, in the VCS's own order, ending with the url
+    /// remote `url_remote` names; `None` where the order yields nothing and
+    /// `url_remote` is `None`: the branch has no push target.
+    ///
+    /// For git: `branch.<b>.pushRemote`, then `remote.pushDefault`, then
+    /// `branch.<b>.remote`, then `url_remote`.
+    fn push_target(
+        &self,
+        on: &AttachedRef,
+        url_remote: Option<&RemoteHandle>,
+    ) -> Result<Option<RemoteHandle>, VcsError>;
+
+    /// The tip of the branch on `target` named as `on` is, as last fetched, or
+    /// `None` when `target` has no such branch: the push branch.
+    fn push_branch(
+        &self,
+        on: &AttachedRef,
+        target: &RemoteHandle,
+    ) -> Result<Option<ResolvedRevisionId>, VcsError>;
+
+    /// Where a new branch is taken from: the remote the operator configured
+    /// for it, else `url_remote` (git: `checkout.defaultRemote`).
+    fn home_remote(&self, repo: &Path, url_remote: &RemoteHandle)
+        -> Result<RemoteHandle, VcsError>;
+
+    /// The remote that has `url`. Nothing is written: an absent remote comes
+    /// back as the one [`Vcs::add_url_remote`] would add, so a verb judges
+    /// every repo before it changes one.
+    ///
+    /// Urls are compared as [`CloneUrl::names_same_remote`] compares them. The
+    /// name an absent remote would take is the VCS's (git: the url's owner
+    /// segment, `origin` for a repo with no remote yet), and a name that
+    /// holds another url is [`UrlRemote::NameTaken`].
+    fn url_remote(&self, repo: &Path, url: &CloneUrl) -> Result<UrlRemote, VcsError>;
+
+    /// Add the remote [`Vcs::url_remote`] found absent.
+    fn add_url_remote(&self, repo: &Path, absent: &AbsentRemote) -> Result<RemoteHandle, VcsError>;
+
+    /// The project repo's url remote: the one `record_project_url_remote`
+    /// recorded; else its only remote; else `None`. A recorded remote the repo
+    /// no longer has counts as none recorded.
+    fn project_url_remote(&self, repo: &Path) -> Result<Option<RemoteHandle>, VcsError>;
+
+    /// Record `remote` as the project repo's url remote, in the repo's own
+    /// configuration (git: `rwv.url-remote` in the local config).
+    fn record_project_url_remote(&self, repo: &Path, remote: &RemoteHandle)
+        -> Result<(), VcsError>;
+
+    /// Every remote of `repo` with the url it records.
+    fn recorded_urls(&self, repo: &Path) -> Result<Vec<RecordedUrl>, VcsError>;
+
+    /// Whether a remote-tracking branch of `remote` reaches `commit`, as last
+    /// fetched.
+    fn reached_by_remote(
+        &self,
+        repo: &Path,
+        commit: &ResolvedRevisionId,
+        remote: &RemoteHandle,
+    ) -> Result<bool, VcsError>;
+
+    /// How `tip` stands to `other`, by ancestry.
+    fn relation(
+        &self,
+        repo: &Path,
+        tip: &ResolvedRevisionId,
+        other: &ResolvedRevisionId,
+    ) -> Result<Relation, VcsError> {
+        if tip == other {
+            return Ok(Relation::Even);
+        }
+        Ok(
+            match (
+                self.is_ancestor(repo, other, tip)?,
+                self.is_ancestor(repo, tip, other)?,
+            ) {
+                (true, _) => Relation::Ahead,
+                (_, true) => Relation::Behind,
+                _ => Relation::Diverged,
+            },
+        )
+    }
 
     /// Bring every remote's branches and tags into `repo`'s object store,
     /// dropping remote-tracking branches a remote no longer has, and report
@@ -2527,20 +2716,11 @@ pub trait Vcs: Send + Sync {
         repo: &Path,
     ) -> Result<PruningFetch, VcsError>;
 
-    /// What this backend calls the remote every method here acts on.
+    /// Resolve `branch` on `remote`, as last fetched.
     ///
-    /// For operator output only. No method on this trait accepts a remote
-    /// name: rwv manages one remote per clone, the backend names it, and a
-    /// caller that has to hand the name back in is a caller that had to
-    /// know it. Reading it to render a message is the one legitimate use,
-    /// and the value read is whichever backend the frame was given.
-    fn conventional_remote_name(&self) -> &str;
-
-    /// Resolve `branch` on `repo`'s conventional remote.
-    ///
-    /// For git: resolves the remote-tracking ref `refs/remotes/origin/{branch}`
-    /// via [`resolve_revision`] and displays it as `origin/{branch}`. There is
-    /// no bare-branch fallback — a missing `origin` remote yields
+    /// For git: resolves the remote-tracking ref `refs/remotes/<remote>/{branch}`
+    /// via [`resolve_revision`] and displays it as `<remote>/{branch}`. There
+    /// is no bare-branch fallback — a branch the remote lacks yields
     /// [`VcsError::RevisionNotFound`] naming the qualified ref, so callers
     /// don't silently advance to the local branch tip.
     ///
@@ -2548,6 +2728,7 @@ pub trait Vcs: Send + Sync {
     fn resolve_branch_on_remote(
         &self,
         repo: &Path,
+        remote: &RemoteHandle,
         branch: &RemoteRef,
     ) -> Result<ResolvedRevisionId, VcsError>;
 
@@ -2721,14 +2902,6 @@ pub trait Vcs: Send + Sync {
     /// For git: runs
     /// `git commit -m <message>`.
     fn commit(&self, repo: &Path, message: &str) -> Result<(), VcsError>;
-
-    /// Register `url` as `repo`'s conventional remote.
-    ///
-    /// Fails when that remote already exists.
-    ///
-    /// For git: runs
-    /// `git remote add origin <url>`.
-    fn add_remote(&self, repo: &Path, url: &CloneUrl) -> Result<(), VcsError>;
 
     /// Return the tag name pointing at HEAD, if any.
     ///
@@ -3133,8 +3306,8 @@ pub trait Vcs: Send + Sync {
     /// [`mid_op`]: Vcs::mid_op
     fn cancel_in_flight_op(&self, repo: &Path);
 
-    /// Return `true` when `branch` in `repo` has a counterpart on the
-    /// conventional remote (`refs/remotes/origin/<branch>` for git).
+    /// Return `true` when `branch` in `repo` has a counterpart on some remote
+    /// (`refs/remotes/<remote>/<branch>` for git).
     ///
     /// Used by `prune_dropped_repo` to refuse pruning a clone that has
     /// local-only branches: a branch with no remote counterpart is
@@ -3145,8 +3318,8 @@ pub trait Vcs: Send + Sync {
         branch: &RawRefName,
     ) -> Result<bool, VcsError>;
 
-    /// Count commits reachable from `branch` but not from its
-    /// conventional remote counterpart in `repo`.
+    /// Count commits reachable from `branch` but not from any remote
+    /// counterpart of it in `repo`.
     ///
     /// Returns 0 when the branch is fully merged into its counterpart, and
     /// `>0` when it carries unique local commits. Caller is responsible
@@ -3155,7 +3328,8 @@ pub trait Vcs: Send + Sync {
     /// does not.
     ///
     /// For git: runs
-    /// `git rev-list --count refs/remotes/<remote>/<branch>..refs/heads/<branch>`.
+    /// `git rev-list --count refs/heads/<branch> --not refs/remotes/<remote>/<branch>...`,
+    /// the negation naming every remote that has the branch.
     ///
     /// [`branch_has_remote_counterpart`]: Vcs::branch_has_remote_counterpart
     fn count_commits_ahead_of_remote(
@@ -3163,6 +3337,17 @@ pub trait Vcs: Send + Sync {
         repo: &Path,
         branch: &RawRefName,
     ) -> Result<usize, VcsError>;
+
+    /// The commits of `branch` that no remote-tracking branch reaches and no
+    /// superseded tip reaches, newest first: its unpushed commits.
+    ///
+    /// For git: `git log refs/heads/<branch> --not --remotes
+    /// --glob=refs/rwv/superseded/*`.
+    fn unpushed_commits(
+        &self,
+        repo: &Path,
+        branch: &RawRefName,
+    ) -> Result<Vec<CommitSummary>, VcsError>;
 
     /// Fetch objects from `src_repo` into `dst_repo` so SHAs reachable in
     /// `src_repo` are reachable in `dst_repo`.
@@ -3204,25 +3389,6 @@ pub trait Vcs: Send + Sync {
     /// via `git rev-list --objects` of the last 200 commits. Infallible —
     /// failures along the way silently leave the working tree alone.
     fn refresh_working_tree_to_head_if_safe(&self, repo: &Path);
-
-    /// Return the configured URL of a named remote in `repo`, or `None` when
-    /// that remote does not exist. Never applies a rewrite rule (git's
-    /// `url.<base>.insteadOf`) — the value as recorded, not as resolved for
-    /// a transport operation.
-    ///
-    /// For git: runs
-    /// `git config --get remote.origin.url`, which reads the config entry
-    /// directly instead of `git remote get-url origin`, whose job is
-    /// exactly to apply `insteadOf`. Returns `None` when the remote is
-    /// absent (the key is unset; git exits non-zero with nothing on stdout
-    /// or stderr). Returns `Some(url)` with the configured URL string.
-    /// Other errors (I/O failures, non-UTF-8 output) propagate as
-    /// [`VcsError`].
-    ///
-    /// Every caller compares the result against, or writes it into,
-    /// `rwv.toml`, which holds the URL the operator configured, not one a
-    /// local `insteadOf` rule happens to resolve it to.
-    fn remote_url(&self, repo: &Path) -> Result<Option<String>, VcsError>;
 
     /// Return `true` when `id` names a commit object that exists in
     /// `repo`'s object store.
@@ -3944,17 +4110,27 @@ pub trait Vcs: Send + Sync {
 
     // ---- publish ----------------------------------------------------------
 
-    /// Push `r` to `repo`'s conventional remote.
+    /// Push `r` to `target`.
     ///
-    /// The ref is a **parameter**, so the choice of what to publish is made
-    /// at one site in `push.rs` instead of being implicit inside the VCS
-    /// impl. What that site passes is still policy; this signature only
-    /// makes the decision visible.
-    fn push_ref(&self, repo: &Path, r: &PublishRef, force: Force) -> Result<(), VcsError>;
+    /// The ref and the remote are **parameters**, so the choice of what to
+    /// publish and where is made at one site in `push.rs` instead of being
+    /// implicit inside the VCS impl. What that site passes is still policy;
+    /// this signature only makes the decision visible.
+    fn push_ref(
+        &self,
+        repo: &Path,
+        target: &RemoteHandle,
+        r: &PublishRef,
+        force: Force,
+    ) -> Result<(), VcsError>;
 
-    /// The remote's declared primary branch, or `None` when it is unset or
+    /// `remote`'s declared primary branch, or `None` when it is unset or
     /// malformed. **No fallback** — see [`RemoteDefaultBranch`].
-    fn remote_default_branch(&self, repo: &Path) -> Result<Option<RemoteDefaultBranch>, VcsError>;
+    fn remote_default_branch(
+        &self,
+        repo: &Path,
+        remote: &RemoteHandle,
+    ) -> Result<Option<RemoteDefaultBranch>, VcsError>;
 
     /// Human-readable hint for the `None` arm of [`remote_default_branch`]:
     /// what is unset, and the VCS-native ways to record it. Embedded verbatim
@@ -3976,7 +4152,7 @@ pub trait Vcs: Send + Sync {
     ///
     /// [`remote_default_branch`]: Vcs::remote_default_branch
     /// [`conflict_resolution_hint`]: Vcs::conflict_resolution_hint
-    fn remote_default_branch_repair_hint(&self) -> String;
+    fn remote_default_branch_repair_hint(&self, remote: &RemoteHandle) -> String;
 
     /// [`remote_default_branch_repair_hint`] for `clone`, read from the
     /// clone's copies of the remote's branches. Where those copies show
@@ -3991,6 +4167,7 @@ pub trait Vcs: Send + Sync {
     fn clone_default_branch_repair_hint(
         &self,
         clone: &Path,
+        remote: &RemoteHandle,
         copies: RemoteBranchCopies,
     ) -> Result<String, VcsError>;
 

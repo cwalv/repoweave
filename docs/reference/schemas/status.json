@@ -5,12 +5,20 @@
   "type": "object",
   "required": [
     "$schema",
+    "judged",
     "repos",
     "unreadable_projects"
   ],
   "properties": {
     "$schema": {
       "type": "string"
+    },
+    "judged": {
+      "description": "Each repo whose branch stands apart from the one it publishes to, judged on the `push-branch` axis with that state's choices: behind, ahead, diverged, gone with commits of its own, with a foreign upstream or with no push target. Empty, not absent, when none does.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/JudgedOutput"
+      }
     },
     "op": {
       "description": "The sync/sync-to op parked at this workspace, or leased to one elsewhere, if any. Absent when no op is in progress — the same disclosure the in-flight refusal makes, before an operator has to attempt a mutation to learn it.",
@@ -49,10 +57,240 @@
     }
   },
   "definitions": {
+    "Axis": {
+      "description": "What a refusal judged a repo on. Its token is the kind `rwv explain` serves; the order here is the order a repo's lines print in.",
+      "oneOf": [
+        {
+          "description": "Uncommitted work, or a VCS operation in progress, in a checkout.",
+          "type": "string",
+          "enum": [
+            "edits"
+          ]
+        },
+        {
+          "description": "Another checkout derives from what the verb would remove.",
+          "type": "string",
+          "enum": [
+            "checkout"
+          ]
+        },
+        {
+          "description": "A branch and the branch it takes in from or publishes to.",
+          "type": "string",
+          "enum": [
+            "push-branch"
+          ]
+        },
+        {
+          "description": "A name the verb was given is unusable.",
+          "type": "string",
+          "enum": [
+            "name"
+          ]
+        },
+        {
+          "description": "What `rwv push` withheld.",
+          "type": "string",
+          "enum": [
+            "publish"
+          ]
+        },
+        {
+          "description": "A project whose `rwv.toml` does not load.",
+          "type": "string",
+          "enum": [
+            "unparseable-project"
+          ]
+        },
+        {
+          "description": "The commit a lock pins for a member, and whether a ref reaches it.",
+          "type": "string",
+          "enum": [
+            "pin"
+          ]
+        }
+      ]
+    },
+    "ChoiceOutput": {
+      "type": "object",
+      "required": [
+        "phrase",
+        "run"
+      ],
+      "properties": {
+        "id": {
+          "description": "The choice's id on the axis's page; null for one it does not number.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "phrase": {
+          "type": "string"
+        },
+        "run": {
+          "description": "The commands, one per line, as the terminal prints them.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "where": {
+          "description": "The directory it must run in; null where it runs here or names its own directory.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/WirePath"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
     "CommitId": {
       "description": "A full commit id: 40 lowercase hex digits, or 64 in a SHA-256 repository.",
       "type": "string",
       "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "FactKind": {
+      "description": "A fact about a judged repo. Facts are reported; they never select a choice.",
+      "oneOf": [
+        {
+          "description": "A superseded tip was recorded for the branch.",
+          "type": "string",
+          "enum": [
+            "rewritten"
+          ]
+        },
+        {
+          "description": "The branch is an ancestor of where it lands.",
+          "type": "string",
+          "enum": [
+            "landed"
+          ]
+        },
+        {
+          "description": "Another project's live lock pins the commits.",
+          "type": "string",
+          "enum": [
+            "pinned-by"
+          ]
+        },
+        {
+          "description": "Other live weave branches declare the branch.",
+          "type": "string",
+          "enum": [
+            "shared"
+          ]
+        },
+        {
+          "description": "The pin is on the branch it lands into.",
+          "type": "string",
+          "enum": [
+            "pin-landed"
+          ]
+        },
+        {
+          "description": "The member was left detached because its branch is checked out elsewhere.",
+          "type": "string",
+          "enum": [
+            "checkout"
+          ]
+        },
+        {
+          "description": "The unlanded commits carry changes equivalent to commits where they land.",
+          "type": "string",
+          "enum": [
+            "patch-equivalent"
+          ]
+        }
+      ]
+    },
+    "FactOutput": {
+      "type": "object",
+      "required": [
+        "fact"
+      ],
+      "properties": {
+        "about": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fact": {
+          "$ref": "#/definitions/FactKind"
+        }
+      }
+    },
+    "JudgedOutput": {
+      "description": "One judged repo, as `--json` carries it.",
+      "type": "object",
+      "required": [
+        "axis",
+        "choices",
+        "facts",
+        "listed",
+        "path",
+        "state"
+      ],
+      "properties": {
+        "axis": {
+          "description": "What it was judged on; `rwv explain <axis>` serves the axis's page.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Axis"
+            }
+          ]
+        },
+        "choices": {
+          "description": "What this state can run, in the order the page lists it.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ChoiceOutput"
+          }
+        },
+        "facts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/FactOutput"
+          }
+        },
+        "listed": {
+          "description": "The files, paths or commits the state lists.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "path": {
+          "description": "The repo's path, `projects/<name>` for the project repo.",
+          "type": "string"
+        },
+        "state": {
+          "description": "The state it was judged in, as that page names it.",
+          "type": "string"
+        },
+        "subject": {
+          "description": "What the state names, when it names something.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspace": {
+          "description": "The workspace the repo was judged in, when that is not the one the verb ran in.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/WirePath"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
     },
     "LockRelation": {
       "description": "Relation between the current branch tip and the lock SHA.\n\nThe two clone-health variants (`Missing` / `Unreachable`) name distinct failure modes, neither of which is `NoLock`:\n\n- `Missing` — the clone directory is absent from disk entirely (out-of-band `rm -rf`, never fetched, etc.). The lock entry may be fine; the repair verb is a re-clone / `rwv update`.\n\n- `Unreachable` — the clone directory exists but the SHA pinned in the lock is not present in the local object store (history rewritten, shallow clone, object pruned). The repair is `git fetch` in that clone, which re-materializes the missing object; `rwv update` does not fetch into a clone that is present.\n\nNeither state should be attributed to the lock file itself — surfacing them as `no-lock` misdirects operators at the wrong repair path.",

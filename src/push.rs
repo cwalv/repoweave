@@ -12,7 +12,9 @@ use crate::manifest::{
 use crate::parallel::{run_in_parallel, OutputMode, Reporter};
 use crate::refusal::RefusalKind;
 use crate::selector::RepoFilter;
-use crate::vcs::{project_vcs, vcs_for, Force, HeadAttachment, PublishRef, RawRevisionId, Vcs};
+use crate::vcs::{
+    project_vcs, vcs_for, Force, HeadAttachment, PublishRef, RawRevisionId, RemoteHandle, Vcs,
+};
 use crate::workspace::{project_dir, project_rel_path, Checkout, Resolution, WorkspaceContext};
 use anyhow::Context;
 use schemars::JsonSchema;
@@ -97,6 +99,10 @@ pub struct PushJsonOutput {
     /// project repo withheld because members' pushes failed lists each of
     /// those members as `publish` `withheld`.
     pub refused: Vec<crate::diagnosis::JudgedOutput>,
+    /// Each repo push judged and went past without pushing it: a branch
+    /// behind its push branch, or one whose upstream is gone, with that
+    /// state's choices.
+    pub reported: Vec<crate::diagnosis::JudgedOutput>,
     /// Resolved workspace coordinates (weave root, optional workweave
     /// identity, project). Absent when no project is resolved.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -171,23 +177,15 @@ pub fn run_push(
     //    gateway-to-collaboration operation; require a stable primary
     //    context so collaborators see a predictable target branch.
     //
-    //    "Canonical branch" is the remote's own declaration
-    //    (`RemoteDefaultBranch`) — not a fabricated default. `None` means
-    //    `origin/HEAD` is unset, and the gate refuses rather than guessing
-    //    "main". A non-repo project dir surfaces as `VcsError::NotARepo`
-    //    here, before HEAD is ever read, instead of being misreported as a
-    //    detached checkout.
-    let project_remote_default = project_vcs
-        .remote_default_branch(&project_dir)
-        .with_context(|| format!("failed to determine canonical branch for {project_name}"))?;
-    let Some(project_remote_default) = project_remote_default else {
-        crate::refuse!(
-            RefusalKind::NoRemoteDefaultBranch,
-            "rwv push: project repo at projects/{project_name}/: {}, then re-run `rwv push`",
-            project_vcs.remote_default_branch_repair_hint()
-        );
-    };
-    let project_canonical = project_remote_default.local_counterpart();
+    //    "Canonical branch" is the declaration of the remote the branch
+    //    publishes to (`RemoteDefaultBranch`) — not a fabricated default.
+    //    `None` means that remote's HEAD is unset, and the gate refuses
+    //    rather than guessing "main". A non-repo project dir surfaces as
+    //    `VcsError::NotARepo` at the first read of its remotes, before HEAD
+    //    is ever read, instead of being misreported as a detached checkout.
+    let project_url_remote = project_vcs
+        .project_url_remote(&project_dir)
+        .with_context(|| format!("failed to read the remotes of {project_name}"))?;
 
     let project_attachment = project_vcs
         .head_attachment(&project_dir)
@@ -202,21 +200,63 @@ pub fn run_push(
         HeadAttachment::Detached(_) => crate::refuse!(
             RefusalKind::HeadNotOnBranch,
             "rwv push: project repo at projects/{project_name}/ is on a detached HEAD; \
-             check out the canonical branch ({project_canonical}) first"
+             check out its canonical branch first"
         ),
     };
-    if !project_attached.is_named(&project_canonical) {
-        crate::refuse!(
-            RefusalKind::ProjectRepoOffCanonicalBranch,
-            "rwv push: project repo at projects/{project_name}/ is on branch '{project_attached}', \
-             not the canonical branch '{project_canonical}'. \
-             Switch to '{project_canonical}' before pushing — publishing requires a stable primary context."
-        );
+    let project_current = project_attached.to_string();
+    let mut refusals = Report::default();
+    let project_target = project_vcs
+        .push_target(&project_attached, project_url_remote.as_ref())
+        .with_context(|| format!("failed to find where {project_name} publishes"))?;
+    match &project_target {
+        None => {
+            let (standing, _) = crate::push_branch::standing(
+                project_vcs.as_ref(),
+                &project_attached,
+                project_url_remote.as_ref(),
+            )?;
+            if let Some(judged) = crate::push_branch::judge(
+                project_vcs.as_ref(),
+                &crate::push_branch::Subject {
+                    repo: &project_rel_path(&project_name),
+                    checkout: &project_dir,
+                    branch: &project_current,
+                    declared: None,
+                    member: false,
+                },
+                &standing,
+            ) {
+                refusals.add(judged);
+            }
+        }
+        Some(target) => {
+            let project_remote_default = project_vcs
+                .remote_default_branch(&project_dir, target)
+                .with_context(|| {
+                    format!("failed to determine canonical branch for {project_name}")
+                })?;
+            let Some(project_remote_default) = project_remote_default else {
+                crate::refuse!(
+                    RefusalKind::NoRemoteDefaultBranch,
+                    "rwv push: project repo at projects/{project_name}/: {}, then re-run `rwv push`",
+                    project_vcs.remote_default_branch_repair_hint(target)
+                );
+            };
+            let project_canonical = project_remote_default.local_counterpart();
+            if !project_attached.is_named(&project_canonical) {
+                crate::refuse!(
+                    RefusalKind::ProjectRepoOffCanonicalBranch,
+                    "rwv push: project repo at projects/{project_name}/ is on branch \
+                     '{project_attached}', not the canonical branch '{project_canonical}'. \
+                     Switch to '{project_canonical}' before pushing — publishing requires a \
+                     stable primary context."
+                );
+            }
+        }
     }
     // The single decision site: `from_attached` publishes whatever the
     // checkout is on, never the manifest's declared branch.
     let project_publish_ref = PublishRef::from_attached(&project_attached);
-    let project_current = project_attached.to_string();
 
     if let Err(e) =
         refuse_uncommitted_project_state(project_vcs.as_ref(), &project_dir, &project_name)
@@ -369,6 +409,8 @@ pub fn run_push(
     };
     let mut branch_errors: Vec<String> = Vec::new();
     let mut plan: Vec<PushPlanItem> = Vec::with_capacity(filtered_repos.len());
+    let mut reported = Report::default();
+    let mut state_skipped: Vec<RepoPath> = Vec::new();
     for (repo_path, entry) in &filtered_repos {
         let vcs = vcs_for(entry.vcs_type);
         let repo_dir = primary_root.join(repo_path.as_path());
@@ -407,11 +449,55 @@ pub fn run_push(
                 entry.branch,
             );
         }
+        let url_remote = crate::url_remote::present(vcs.as_ref(), &repo_dir, &entry.url)?;
+        let (standing, target) =
+            crate::push_branch::standing(vcs.as_ref(), attached, url_remote.as_ref())
+                .with_context(|| {
+                    format!("{}: failed to find where the branch publishes", repo_path)
+                })?;
+        let judged = crate::push_branch::judge(
+            vcs.as_ref(),
+            &crate::push_branch::Subject {
+                repo: repo_path,
+                checkout: &repo_dir,
+                branch: &attached.to_string(),
+                declared: Some(&entry.branch),
+                member: true,
+            },
+            &standing,
+        );
+        use crate::push_branch::Standing;
+        let overwriting = matches!(mode, PushMode::Publish(Force::Overwrite(_)));
+        match (&standing, judged) {
+            (Standing::NoPushTarget | Standing::ForeignUpstream { .. }, Some(judged)) => {
+                refusals.add(judged);
+                continue;
+            }
+            (Standing::Diverged { .. }, Some(judged))
+                if standing.diverged_with_unpushed() && !overwriting =>
+            {
+                refusals.add(judged);
+                continue;
+            }
+            (Standing::Behind | Standing::Diverged { .. }, Some(judged)) if !overwriting => {
+                reported.add(judged);
+                state_skipped.push(repo_path.clone());
+                continue;
+            }
+            (Standing::Gone { .. }, Some(judged)) if using_default => {
+                reported.add(judged);
+                state_skipped.push(repo_path.clone());
+                continue;
+            }
+            _ => {}
+        }
+        let target = target.expect("a standing other than no push target has one");
         plan.push(PushPlanItem {
             repo_path: repo_path.clone(),
             branch: attached.to_string(),
             vcs_type: entry.vcs_type,
             publish_ref: PublishRef::from_attached(attached),
+            target,
         });
     }
     if !branch_errors.is_empty() {
@@ -427,6 +513,20 @@ pub fn run_push(
             "aborted before network — fix per-repo branch state and retry"
         );
     }
+    if !refusals.is_empty() {
+        let refusal = refusals
+            .into_result()
+            .expect_err("a report holding a line refuses");
+        if output.is_json() {
+            print_envelope(Vec::new(), &refusal, ctx);
+        }
+        return Err(refusal);
+    }
+    if output == OutputMode::Text && !reported.is_empty() {
+        eprint!("{}", reported.render("push"));
+    }
+
+    let project_target = project_target.expect("a project branch with no push target was refused");
 
     // 5. Dry-run: print the plan.
     let force = match mode {
@@ -434,12 +534,11 @@ pub fn run_push(
         PushMode::DryRun => {
             outln!("rwv push (dry-run):");
             for item in &plan {
-                let vcs = vcs_for(item.vcs_type);
                 outln!(
                     "  {}: would push {} -> {}",
                     item.repo_path.as_str(),
                     item.branch,
-                    vcs.conventional_remote_name(),
+                    item.target,
                 );
             }
             for (repo_path, _) in &default_skipped_repos {
@@ -452,7 +551,7 @@ pub fn run_push(
                 "  projects/{}: would push {} -> {} (last)",
                 project_name,
                 project_current,
-                project_vcs.conventional_remote_name(),
+                project_target,
             );
             return Ok(());
         }
@@ -485,6 +584,7 @@ pub fn run_push(
             branch: item.branch.clone(),
             vcs_type: item.vcs_type,
             publish_ref: item.publish_ref.clone(),
+            target: item.target.clone(),
         })
         .collect();
 
@@ -535,6 +635,15 @@ pub fn run_push(
         json_outcomes.push(PushOutcomeOutput::Skipped {
             path: path_str,
             absolute_path: abs_str,
+        });
+    }
+
+    for repo_path in &state_skipped {
+        json_outcomes.push(PushOutcomeOutput::Skipped {
+            path: repo_path.as_str().to_string(),
+            absolute_path: crate::path_spelling::WirePath::of(
+                &primary_root.join(repo_path.as_path()),
+            ),
         });
     }
 
@@ -618,10 +727,11 @@ pub fn run_push(
             "rwv push: pushing project repo projects/{} ({} -> {})",
             project_name,
             project_current,
-            project_vcs.conventional_remote_name(),
+            project_target,
         );
     }
-    let project_push_result = project_vcs.push_ref(&project_dir, &project_publish_ref, force);
+    let project_push_result =
+        project_vcs.push_ref(&project_dir, &project_target, &project_publish_ref, force);
 
     let project_wire = match &project_push_result {
         Ok(()) => PushOutcomeOutput::ProjectRepoPushed {
@@ -646,6 +756,7 @@ pub fn run_push(
                 schema_url: PUSH_SCHEMA_URL.to_string(),
                 outcomes: json_outcomes,
                 refused: Vec::new(),
+                reported: reported.output(),
                 resolution: Some(ctx.resolution()),
             };
             if let Ok(out) = serde_json::to_string_pretty(&envelope) {
@@ -665,6 +776,7 @@ pub fn run_push(
             schema_url: PUSH_SCHEMA_URL.to_string(),
             outcomes: json_outcomes,
             refused: Vec::new(),
+            reported: reported.output(),
             resolution: Some(ctx.resolution()),
         };
         let out = serde_json::to_string_pretty(&envelope)
@@ -688,6 +800,7 @@ fn print_envelope(
         schema_url: PUSH_SCHEMA_URL.to_string(),
         outcomes,
         refused: crate::diagnosis::refused_output(refusal),
+        reported: Vec::new(),
         resolution: Some(ctx.resolution()),
     };
     if let Ok(out) = serde_json::to_string_pretty(&envelope) {
@@ -747,6 +860,8 @@ struct PushPlanItem {
     branch: String,
     vcs_type: VcsType,
     publish_ref: PublishRef,
+    /// Where the branch publishes: its push target.
+    target: RemoteHandle,
 }
 
 /// Outcome of pushing a single manifest repo.
@@ -785,9 +900,9 @@ fn push_one(
         "rwv push: pushing {} ({} -> {})",
         item.repo_path.as_str(),
         item.branch,
-        vcs.conventional_remote_name(),
+        item.target,
     ));
-    match vcs.push_ref(&repo_dir, &item.publish_ref, force) {
+    match vcs.push_ref(&repo_dir, &item.target, &item.publish_ref, force) {
         Ok(()) => PushOutcome::Pushed,
         Err(e) => PushOutcome::Failed(format!(
             "{}: git push failed: {e:#}",
@@ -841,6 +956,7 @@ mod tests {
             branch: "main".to_string(),
             vcs_type: VcsType::Git,
             publish_ref: test_publish_ref("main"),
+            target: RemoteHandle::new("origin"),
         };
         assert_eq!(item.repo_path.as_str(), "github/cwalv/repoweave");
         assert_eq!(item.branch, "main");
@@ -857,18 +973,21 @@ mod tests {
                 branch: "main".into(),
                 vcs_type: VcsType::Git,
                 publish_ref: test_publish_ref("main"),
+                target: RemoteHandle::new("origin"),
             },
             PushPlanItem {
                 repo_path: RepoPath::new("b").expect("known-safe literal"),
                 branch: "main".into(),
                 vcs_type: VcsType::Git,
                 publish_ref: test_publish_ref("main"),
+                target: RemoteHandle::new("origin"),
             },
             PushPlanItem {
                 repo_path: RepoPath::new("c").expect("known-safe literal"),
                 branch: "main".into(),
                 vcs_type: VcsType::Git,
                 publish_ref: test_publish_ref("main"),
+                target: RemoteHandle::new("origin"),
             },
         ];
         let paths: Vec<&str> = plan.iter().map(|i| i.repo_path.as_str()).collect();

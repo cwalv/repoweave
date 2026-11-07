@@ -479,6 +479,10 @@ fn against_reads_a_remote_tracking_branch_as_last_fetched() {
     let main_tip = common::git_in(w.project(), &["rev-parse", "main"]);
     common::git_in(
         w.project(),
+        &["remote", "add", "origin", "file:///nowhere/proj.git"],
+    );
+    common::git_in(
+        w.project(),
         &["update-ref", "refs/remotes/origin/stable", &main_tip],
     );
 
