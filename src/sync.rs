@@ -1948,9 +1948,9 @@ fn refuse_standing_receipts(
 /// incidentally the only thing that has been keeping `remove_dir_all` off a
 /// live workweave's object store, so excluding recorded rwv refs from its
 /// predicate would remove that protection. Unblocking prune is not a payoff
-/// of ownership-by-receipt. What R2 adds here
-/// is [`check_store_unclaimed`] in *front* of the destroy, not a relaxation
-/// behind it.
+/// of ownership-by-receipt. What R2 adds here is [`judge_store_checkouts`]
+/// and [`refuse_standing_receipts`] in *front* of the destroy, not a
+/// relaxation behind it.
 fn prune_dropped_repo(
     vcs: &dyn Vcs,
     ctx: &WorkspaceContext,
@@ -8239,7 +8239,8 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // check_store_unclaimed — R4, in front of the store destroy
+    // judge_store_checkouts, refuse_standing_receipts — R4, in front of the
+    // store destroy
     // -----------------------------------------------------------------------
 
     /// A canonical store plus the primary root and project name its receipt

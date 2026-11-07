@@ -456,8 +456,8 @@ the test is what keeps it from coming back.
   (`sync.rs:1521-1524`) `[V]` — the second remedy works. This refusal was also
   the only thing standing between a live workweave's git backing and
   `remove_dir_all`; that is no longer true, because R4 now gates the destroy
-  independently (`check_store_unclaimed` at `sync.rs:1530`, before the
-  `remove_dir_all` at `:1531-1532`) `[V]`. See the `prune_dropped_repo` row
+  independently (`judge_store_checkouts` and `refuse_standing_receipts` in
+  `sync.rs`, before the `remove_dir_all`) `[V]`. See the `prune_dropped_repo` row
   in §5.
 
 ### 2.2 The shipped justification was false in premise — and is now true
@@ -536,9 +536,10 @@ DESTROY-STORE exists because a store-level destroy deletes every ref and
 every object at once, so no ref-level rule can gate it (Q11 first recorded
 this) — and therefore no §5 row may rely on ref-level reasoning to permit
 one. rwv performs store-level destroys in three places, and all three are now
-R4-gated: `prune_dropped_repo` (`check_store_unclaimed` at `sync.rs:1530`,
-destroy at `:1531-1532`) `[V]`, `rwv remove --delete` (`refuse_claimed_store`
-at `add_remove.rs:493`, destroy at `:518`) `[V]`, and `workweave delete`
+R4-gated: `prune_dropped_repo` and `rwv remove --delete`, which share
+`plan_checkout_removal` (`judge_store_checkouts` and
+`refuse_standing_receipts` in `sync.rs`, before the destroy) `[V]`, and
+`workweave delete`
 (`workweave.rs:2848-2851`, call at `:2850`, reached only after
 `retire_recorded_refs` has run the store's receipts dry) `[V]`.
 
@@ -1791,8 +1792,8 @@ one names where.
 | `push` (member repo) | none (reads) | — | **Shipped.** The publish ref is an explicit `&PublishRef` argument to `Vcs::push_ref` (`vcs.rs:3027`, impl `git.rs:2104-2119`) instead of an implicit `current_ref` read inside the impl `[V]`. Test: `git.rs:3029 push_ref_publishes_the_ref_it_was_given_not_the_one_head_is_on`. **Q6 stays open** — the split relocated the decision, it did not make it, and `PublishRef::from_attached` is the shipped choice. |
 | `workweave delete` / `sync-to --retire` | `retire_recorded_refs` (`workweave.rs:2421-2503`) `[V]` | DESTROY | **Shipped.** Deletes recorded refs with a `Merged` (or `OperatorDiscarded`) warrant (`:2444-2449`); **reports** everything else in the namespace (`:2485-2500`). The set/singleton mismatch is gone because both the check and the deletion range over the recorded set. Tests: `tests/branch_model_lifecycle_test.rs:161`, `:231`, `:305`. |
 | `doctor --fix` (stale ephemerals) | `fix_stale_ephemeral_branches` (`check.rs:4619-4713`) `[V]` | DESTROY | **Shipped.** Recorded refs only, re-resolved through the registry and re-warranted at fix time (`:4657-4690`); hand-made look-alikes survive. Tests: `tests/branch_discipline_test.rs:1028`, `:1080`. |
-| `prune_dropped_repo` | removes the worktree; on `Checkout::Primary`, removes the entire store (`sync.rs:1392-1534`) `[V]` | DESTROY-STORE | **Unchanged at the ref level, gated at the store level.** The local-only refusal (`sync.rs:1478-1519`) is unchanged, and recorded rwv refs were deliberately *not* excluded from it: **unblocking prune is not a payoff of R2.** What changed is that the refusal is no longer the only thing standing between a live workweave's backing and `remove_dir_all` — `check_store_unclaimed` (`sync.rs:1311`, called at `:1530`) implements R4 directly. In a workweave the removal is `workweave::release_checkout`, the release `workweave delete` runs per member: it unregisters the worktree and retires the workweave's recorded ref with a `Merged` warrant against the parent's and the primary's checkouts, so the receipts that would hold the primary's store claimed run dry with the checkout. Tests: `sync.rs:5734`, `:5745`, `:5773`, `:5808`, `:5860`, `:5874`, `:5904`, `:5945`; `tests/sync_prune_direction_test.rs` for the release. |
-| `remove --delete` | `remove_dir_all` on the whole store (`CheckoutRemoval::perform`, `src/sync.rs`) `[V]` | DESTROY-STORE | **Shipped.** `refuse_claimed_store` (`add_remove.rs:493`, fn at `:548`) refuses while any live worktree is registered against the store or any receipt for it stands — across all projects on disk — and refuses rather than guesses when a registration is unreadable. It runs *before* the manifest write, so a refused destroy leaves the manifest as it found it. Dirty state and unpushed work refuse in the same pre-flight, through the guards `prune_dropped_repo` holds (`plan_checkout_removal` in `src/sync.rs`). |
+| `prune_dropped_repo` | removes the worktree; on `Checkout::Primary`, removes the entire store (`sync.rs:1392-1534`) `[V]` | DESTROY-STORE | **Unchanged at the ref level, gated at the store level.** The local-only refusal (`sync.rs:1478-1519`) is unchanged, and recorded rwv refs were deliberately *not* excluded from it: **unblocking prune is not a payoff of R2.** What changed is that the refusal is no longer the only thing standing between a live workweave's backing and `remove_dir_all` — `judge_store_checkouts` and `refuse_standing_receipts` (`sync.rs`) implement R4 directly. In a workweave the removal is `workweave::release_checkout`, the release `workweave delete` runs per member: it unregisters the worktree and retires the workweave's recorded ref with a `Merged` warrant against the parent's and the primary's checkouts, so the receipts that would hold the primary's store claimed run dry with the checkout. Tests: `sync.rs:5734`, `:5745`, `:5773`, `:5808`, `:5860`, `:5874`, `:5904`, `:5945`; `tests/sync_prune_direction_test.rs` for the release. |
+| `remove --delete` | `remove_dir_all` on the whole store (`CheckoutRemoval::perform`, `src/sync.rs`) `[V]` | DESTROY-STORE | **Shipped.** `plan_checkout_removal` (`src/sync.rs`), the guards `prune_dropped_repo` holds too, judges the clone's uncommitted changes and every live checkout derived from the store together and refuses with both, then refuses while any receipt for the store stands — across all projects on disk — and refuses rather than guesses when a registration is unreadable. It runs *before* the manifest write, so a refused destroy leaves the manifest as it found it. Unpushed work refuses in the same pre-flight. |
 | `add` (inside a workweave) | mints an ephemeral name (`add_remove.rs:94`) `[V]` | birth | **Shipped.** Uses `EphemeralRefName::mint`; the inlined derivation and its private truncation are deleted (`add_remove.rs:41-48` records the removal). Emits a receipt first (`:93`), so `workweave delete` visits it. |
 | `doctor` I3 scan | none | — | **Shipped.** Attachment is checked against the **receipt** (`OwnedRef::is_attached_by`, used at `check.rs:3632` and `:3887`), never against a name shape; detached is a finding at the canonical too (§4.5); scope extends to `projects/<project>/` (§5.1). |
 
@@ -2559,15 +2560,15 @@ check, and no unpushed check, and `rwv doctor` reported nothing afterwards
 because the manifest entry was removed first `[S]`. It destroys the refdb
 every recorded ref lives in. No ref-level rule can defend against that — it is
 a store-level operation. **DESTROY-STORE (§3.2) and R4 classify it and state
-its consent shape**, and R4 is now enforced: `refuse_claimed_store`
-(`add_remove.rs:493`, fn at `:548`) refuses on any live worktree registration
-or any standing receipt, across all projects on disk, and runs before the
-manifest write so a refusal is retryable `[V]`. `prune_dropped_repo` gained
-the same gate (`check_store_unclaimed`, `sync.rs:1311`, called at `:1530`).
+its consent shape**, and R4 is now enforced: `plan_checkout_removal` judges
+every live checkout derived from the store as a `checkout` state and refuses
+on any standing receipt — across all projects on disk for `remove --delete`
+— before the manifest write, so a refusal is retryable `[V]`.
+`prune_dropped_repo` runs the same gate.
 What stays open is exactly what this entry said: the verb-level
 named-precondition set (dirty state, unpushed work — the set `workweave
 delete` has), which this model scopes but does not specify, and which
-`refuse_claimed_store`'s own doc comment defers to this question.
+`plan_checkout_removal`'s receipt check defers to this question.
 
 **Q12 — What is the legal grammar for project and workweave names? —
 ANSWERED, at the parse boundary.** The grammar exists, is stated in the type,
@@ -2633,8 +2634,8 @@ The general principle — does the model protect positions, or only attachments?
 §6 item 5 picks the home and the key, and both shipped. Still open: what
 invalidates a receipt; whether R4's retraction step on a store destroy is a
 per-ref DESTROY needing its own warrant each time or a bulk operation with its
-own consent — the shipped `refuse_claimed_store` sidesteps this by *refusing*
-while any receipt stands rather than retracting them (`add_remove.rs:548`)
+own consent — the shipped `refuse_standing_receipts` sidesteps this by
+*refusing* while any receipt stands rather than retracting them (`src/sync.rs`)
 `[V]`, which is the conservative reading and not a decision; what a receipt
 pointing into a store that no longer exists means for doctor — partially
 answered by `scan_dangling_receipts` (`check.rs:4096-4230`), which reports and

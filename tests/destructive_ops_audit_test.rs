@@ -102,11 +102,12 @@ const ALLOWLIST: &[Allowed] = &[
             variants are private to sync.rs and plan_checkout_removal is \
             its only constructor, so every caller of perform (sync's \
             prune_dropped_repo, and rwv remove --delete, which in the \
-            primary also runs the shared-clone check and \
-            refuse_claimed_store before it) holds a removal that passed \
-            these guards. plan_checkout_removal: both arms behind the \
-            uncommitted-changes refusal at the top of the function (fails \
-            safe: unwrap_or(true) refuses when git cannot be asked). \
+            primary also runs the shared-clone check before it) holds a \
+            removal that passed these guards. plan_checkout_removal: both \
+            arms behind the uncommitted-changes judgment at the top of the \
+            function, which refuses with every checkout derived from a \
+            primary store judged beside it (fails safe: a status git \
+            cannot read refuses). \
             Each arm additionally establishes WHAT it is about to delete \
             before deleting it, because the two removals are different \
             operations and the preconditions that gate them do not \
@@ -116,8 +117,9 @@ const ALLOWLIST: &[Allowed] = &[
             the object database and the worktree administration of every \
             live workweave checkout of that repo with it. Behind the \
             local-only-branch scan AND, in FRONT of the delete, R4 via \
-            check_store_unclaimed — no worktree still registered against \
-            the store, no ownership receipt still keyed to it. The \
+            judge_store_checkouts and refuse_standing_receipts — no \
+            worktree still registered against the store, no ownership \
+            receipt still keyed to it. The \
             local-only refusal is NOT relaxed in exchange: it is \
             incidentally what has been keeping this call off a live \
             workweave's store, so recorded rwv refs stay inside its \
