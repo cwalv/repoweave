@@ -1,0 +1,131 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BackupJsonOutput",
+  "description": "The envelope `rwv backup list --json` prints.",
+  "type": "object",
+  "required": [
+    "$schema",
+    "repos"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "repos": {
+      "description": "Only repos that hold a backup.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/RepoBackupsOutput"
+      }
+    }
+  },
+  "definitions": {
+    "BackupMark": {
+      "description": "What a backup says about the step that made it. An ordinary backup says nothing.",
+      "oneOf": [
+        {
+          "description": "Made before a rebase rewrote the branch.",
+          "type": "string",
+          "enum": [
+            "rebased"
+          ]
+        },
+        {
+          "description": "The tip `rwv abort --abandon-foreign-tip` gave up.",
+          "type": "string",
+          "enum": [
+            "abandoned"
+          ]
+        }
+      ]
+    },
+    "BackupOutput": {
+      "type": "object",
+      "required": [
+        "held",
+        "name",
+        "redundant",
+        "tip"
+      ],
+      "properties": {
+        "held": {
+          "description": "The commits the backup holds that no branch reaches, newest first.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/HeldCommitOutput"
+          }
+        },
+        "mark": {
+          "description": "`rebased` for a branch a rebase rewrote, `abandoned` for a tip `rwv abort --abandon-foreign-tip` gave up; absent for any other.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/BackupMark"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "description": "The name `rwv backup drop` takes.",
+          "type": "string"
+        },
+        "redundant": {
+          "description": "A branch reaches everything the backup holds, so dropping it loses nothing.",
+          "type": "boolean"
+        },
+        "tip": {
+          "description": "The commit the backup holds.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/CommitId"
+            }
+          ]
+        }
+      }
+    },
+    "CommitId": {
+      "description": "A full commit id: 40 lowercase hex digits, or 64 in a SHA-256 repository.",
+      "type": "string",
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "HeldCommitOutput": {
+      "type": "object",
+      "required": [
+        "sha",
+        "short",
+        "subject"
+      ],
+      "properties": {
+        "sha": {
+          "$ref": "#/definitions/CommitId"
+        },
+        "short": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        }
+      }
+    },
+    "RepoBackupsOutput": {
+      "type": "object",
+      "required": [
+        "backups",
+        "path"
+      ],
+      "properties": {
+        "backups": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/BackupOutput"
+          }
+        },
+        "path": {
+          "description": "The repo as `rwv backup drop` names it: its workspace-relative path, or `projects/<name>` for the project repo.",
+          "type": "string"
+        }
+      }
+    }
+  }
+}

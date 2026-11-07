@@ -230,13 +230,14 @@ fn a_floor_recorded_as_a_describe_string_is_replaced() {
     );
 }
 
-/// Pin 2b: a report-only warning does not block the floor. A live orphaned
-/// savepoint is the plant: rwv will not drop it (`--fix` leaves it for the
-/// reviewed operator sweep), so a weave carrying one can never reach
-/// zero-violations — the floor must record over it or such a weave has no
-/// floor at all. Same reasoning covers the other report-only observatories:
-/// version skew across sovereign repos, submodules in reference checkouts,
-/// a sibling weave's workweaves in the shared container.
+/// Pin 2b: a report-only warning does not block the floor. A ref in the
+/// savepoint namespace that no op id names is the plant: rwv did not file it
+/// and will not drop it (`--fix` never touches what it cannot name), so a
+/// weave carrying one can never reach zero-violations — the floor must record
+/// over it or such a weave has no floor at all. Same reasoning covers the
+/// other report-only observatories: version skew across sovereign repos,
+/// submodules in reference checkouts, a sibling weave's workweaves in the
+/// shared container.
 ///
 /// **Mutation evidence**: reverting the record condition's violation check
 /// to `violations.is_empty()` reddens this pin and only this pin.
@@ -246,20 +247,10 @@ fn report_only_warnings_do_not_block_the_floor() {
     let root = healable_workspace(tmp.path());
     heal_and_clear(&root);
 
-    // A savepoint anchoring a commit no live ref reaches: LIVE, report-only.
     let repo_abs = root.join("github").join("acme").join("server");
-    let tree = common::git_in(&repo_abs, &["rev-parse", "HEAD^{tree}"]);
-    let dangling = common::git_in(
-        &repo_abs,
-        &["commit-tree", &tree, "-p", "HEAD", "-m", "orphaned work"],
-    );
     common::git_in(
         &repo_abs,
-        &[
-            "update-ref",
-            "refs/rwv/pre-op/622222222222222222",
-            &dangling,
-        ],
+        &["update-ref", "refs/rwv/pre-op/not.a.key", "HEAD"],
     );
 
     let out = rwv()
@@ -269,7 +260,7 @@ fn report_only_warnings_do_not_block_the_floor() {
         .unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("live orphaned-savepoint finding"),
+        stdout.contains("unrecognized-savepoint-ref"),
         "the plant must fire — a floor recorded over a clean weave proves \
          nothing about report-only findings; report was:\n{stdout}"
     );

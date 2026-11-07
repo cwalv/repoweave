@@ -247,7 +247,7 @@ Remove the repository from `rwv.toml`, regenerate integration-managed workspace 
 
 | Flag | Effect |
 |---|---|
-| `--delete` | Also delete this workspace's checkout of the repo: the canonical clone at primary, the workweave's worktree inside a workweave, along with the branch the workweave holds in the canonical clone. Refuses over uncommitted changes or commits nothing else reaches |
+| `--delete` | Also delete this workspace's checkout of the repo: the canonical clone at primary, the workweave's worktree inside a workweave, along with the branch the workweave holds in the canonical clone. Refuses over uncommitted changes or commits nothing else reaches, a [backup](#rwv-backup) holding such commits included (`dropped-repo-has-unique-commits`) |
 | `--delete-shared-clone` | Requires `--delete`. At primary, removes the clone even if other projects still reference it. Without it, a clone another project lists refuses (`shared-clone-referenced`); the check runs only at primary, since a workweave's worktree is that workweave's own |
 | `--no-materialize` | Skip the install hooks; regeneration still runs, and `rwv materialize` runs the hooks later |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
@@ -358,19 +358,39 @@ See [push a cross-repo feature](../how-to/push-cross-repo-feature.md).
 
 ### `rwv abort [--abandon-foreign-tip <repo>]`
 
-Roll an in-flight `sync` or `sync-to` back to its savepoints in every workspace the op touched: `refs/rwv/pre-op/<op-id>`, and `refs/rwv/pre-op/<op-id>-target` for the repos of a `sync-to`'s target, whose checkouts share a ref store with the workweave's. Run it from either workspace of the op: the verdict for each repo is the same, and op-state is cleared in both. Runs VCS-native abort for in-progress operations (`git rebase --abort`, `git merge --abort`). Lines for the workspace abort runs in carry no prefix; lines for the op's other workspace are labeled with its side, `[target] <repo>` or `[source] <repo>`.
+Roll an in-flight `sync` or `sync-to` back to its savepoints in every workspace the op touched: `refs/rwv/pre-op/<op-id>`, and `refs/rwv/pre-op/<op-id>-target` for the repos of a `sync-to`'s target, whose checkouts share a ref store with the workweave's. Run it from either workspace of the op: the verdict for each repo is the same, and op-state is cleared in both. Runs VCS-native abort for in-progress operations (`git rebase --abort`, `git merge --abort`). Lines for the workspace abort runs in carry no prefix; lines for the op's other workspace are labeled with its side, `[target] <repo>` or `[source] <repo>`. A repo is named as the flag takes it: its workspace-relative path, or `projects/<name>` for the project repo.
 
 | Flag | Effect |
 |---|---|
-| `--abandon-foreign-tip <repo>` | Consent to restoring this repo over a tip abort cannot attribute to the op. Repeatable, one repo per occurrence; **no all-repos form**. Spell `<repo>` as abort's per-repo output does — the workspace-relative path, or `(project)`. The abandoned commits stay reachable at the pre-abort reference abort prints — `refs/rwv/pre-abort/<op-id>`, or `refs/rwv/pre-abort/<op-id>-target` for a repo on a `sync-to`'s target side; where that reference does not already hold the tip, abort refuses even with the flag. |
+| `--abandon-foreign-tip <repo>` | Consent to restoring this repo over a tip abort cannot attribute to the op. Repeatable, one repo per occurrence; **no all-repos form**. Spell `<repo>` as abort's per-repo output does — the workspace-relative path, or `projects/<name>` for the project repo (the project of the op in progress; another project's repo is refused). The abandoned commits are first kept as a backup marked `abandoned`, which [`rwv backup list`](#rwv-backup-list---json) shows and `rwv backup drop` drops. |
 
-Errors if no sync operation is in progress. Without the flag, a repo whose tip is unattributable is refused, not reset.
+Errors if no sync operation is in progress. Without the flag, a repo whose tip is unattributable is refused, not reset, and the refusal writes nothing. A restore over the op's own tips writes no backup either: what abort throws away is what the op made.
 
 An op record this rwv cannot fully parse is still aborted when its op id, verb, project and workspaces parse. Abort says so, reads none of the tips the record holds, and attributes only a tip at its savepoint or mid-op; every other tip is refused as `foreign-tip`, for `--abandon-foreign-tip <repo>` to settle. A record where even those fields do not parse names no op, and abort refuses it; the error names what removing the file leaves behind and the command that clears each part.
 
 **Exit codes:**
 - `0` — all repositories restored cleanly to their savepoints and op-state removed.
 - `1` — a refusal (`no-op-recorded` with nothing in progress, or `foreign-tip` without `--abandon-foreign-tip <repo>`), or a partial restore failure (`abort completed with failures`: at least one repository failed to reset, and op-state is retained so `rwv abort` can be retried).
+
+### `rwv backup`
+
+List, drop or prune the backups rwv keeps. A **backup** is a ref an rwv verb makes before any step that would leave a commit or an uncommitted edit unpreserved: `rwv workweave delete --discard-unmerged-commits` and `--discard-uncommitted` make one first, `rwv abort --abandon-foreign-tip` keeps the tip it gives up as one marked `abandoned`, and `rwv doctor --fix` turns a savepoint no operation owns any more into one. A backup is named `<branch>/<id>`, `<branch>` being the branch it backs up (`HEAD` for a detached HEAD), and stays until it is dropped. Each subcommand acts on the repos of the active project, its project repo (`projects/<name>`) and its members, and takes `--project <name>` to act on another project's (does not change `.rwv-active`). `drop` and `prune` refuse while an operation is in progress; `list` does not.
+
+### `rwv backup list [--json]`
+
+List each repo's backups, one line each: the name, the commit it holds, `[abandoned]` or `[rebased]` where the backup says so, and `[redundant]` where a branch or remote-tracking branch reaches everything it holds. Under each, the commits no branch reaches, newest first (20 at most in text; `--json` carries them all). A repo with no backup is left out. Reads refs as last fetched and contacts no remote.
+
+`--json` emits the envelope `{"$schema": "...", "repos": [...]}`. Each repo record has `path` (as `rwv backup drop` names the repo) and `backups`; each backup has `name`, `tip`, `mark` (`rebased` or `abandoned`, absent otherwise), `redundant` and `held` (`sha`, `short`, `subject`). See [JSON envelope convention](#--json-envelope-convention).
+
+### `rwv backup drop <repo> [<name>...]`
+
+Drop the named backups of one repo, or all of that repo's when no name is given, printing each tip as it goes. `<repo>` is the workspace-relative path of a member, or `projects/<name>` for the project repo; no form drops across repos. A name `rwv backup list` does not show is reported and skipped, so a drop interrupted partway is finished by running it again.
+
+Refused under the **pin rule** (`pin` `would be unreachable`) when it would leave a commit some project's live lock pins reached by no branch, remote-tracking branch or backup. A pin is live in every project of the weave, not only the active one: it is the commit a member's pin names in the `rwv.lock` at the tip of any local or remote-tracking branch of any project's repo. The refusal names the commits and the locks, and nothing is dropped. Dropping a backup that holds commits nothing else reaches loses them; the drop prints what it dropped, and that is the whole record.
+
+### `rwv backup prune`
+
+Fetch every remote of every repo of the project with pruning, then drop each backup a branch or remote-tracking branch reaches in full (`[redundant]` in the list). A remote that cannot be fetched is named and its remote-tracking branches are not counted, so a backup is dropped only on what a confirmed fetch or a local branch vouches for. Obeys the pin rule as `drop` does. Prints `nothing to prune` when no backup is redundant. A backup holding commits no branch reaches is never pruned; only `drop` removes it.
 
 ### `rwv status [--json] [...]`
 
@@ -462,6 +482,8 @@ Record the default basedir for the project: the directory `rwv workweave create`
 ### `rwv workweave delete <name> [--discard-uncommitted] [--discard-unmerged-commits]`
 
 Delete a workweave. Default refuses if any checkout under it is dirty (`edits`), or holds commits contained in neither the workweave's recorded parent nor the primary weave (`unmerged-commits`; work in a nested workweave counts as merged once its parent has it). `--discard-uncommitted` waives the first refusal, `--discard-unmerged-commits` the second. The `edits` refusal prints `rwv workweave delete <name> --discard-uncommitted` among its choices. `--project <name>` selects the project whose workweave it deletes.
+
+Neither flag discards for good: each keeps what it consents to losing as a [backup](#rwv-backup) before anything is removed, and a backup that cannot be written stops the delete with nothing changed. `--discard-uncommitted` keeps each checkout's uncommitted edits as a commit on its HEAD (untracked files included, ignored ones not). `--discard-unmerged-commits` keeps each workweave branch it deletes at its tip, and the commits a detached HEAD holds that no branch reaches. The delete prints each backup it made; `rwv backup list` shows them afterwards.
 
 Both checks cover every checkout under the workweave, not only the members the project's manifest names: a member replay could not prune, one the workweave added that has not landed, or a clone put there by hand. Such a checkout is listed with the suffix `(not a manifest member)`, and one whose commits no baseline holds at all is reported rather than skipped. `create --replace-existing` weighs the same set.
 

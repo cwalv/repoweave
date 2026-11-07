@@ -440,11 +440,11 @@ const ALLOWLIST: &[Allowed] = &[
             is reached (design § 5) — and from the foreign-tip branch under \
             ForeignTipPolicy::Abandon, which is the operator's \
             --abandon-foreign-tip naming that one repo. That fourth branch \
-            waives the attributability precondition and no other: it is \
-            still gated on the pre-abort ref already resolving to the \
-            observed tip, so the commits it moves the branch off remain \
-            reachable and the flag consents to abandonment rather than \
-            loss. The unverified \
+            waives the attributability precondition and no other: it keeps \
+            the observed tip as an `abandoned` backup first (a \
+            BackupWitness it holds before the reset), so the commits it \
+            moves the branch off remain reachable and the flag consents to \
+            abandonment rather than loss. The unverified \
             restore_savepoint() that used to sit between these two — a bare \
             `reset --hard` on the public trait, gated by nothing — was \
             deleted, so verified_restore_savepoint is the only way to reach \
@@ -453,23 +453,41 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git.rs",
         pattern: "\"update-ref\"",
-        count: 4,
+        count: 3,
         callers: &[],
         justification: "(1) savepoint create, (2) savepoint drop, both \
             namespaced under refs/rwv/pre-op/<op-id> (relocated from \
-            sync.rs). (3) create_pre_abort_ref(): writes \
-            refs/rwv/pre-abort/<op-id> at HEAD before any abort-time \
-            restore; information-preserving rail (design § 5) — abort is \
-            itself undoable via this ref and the \
-            ref is never deleted by abort cleanup. The same line covers \
-            both first-write and the first-write-wins-along-divergence \
-            advance (under --abandon-foreign-tip, an existing capture that \
-            is an ancestor of HEAD is advanced to HEAD; ancestry keeps the \
-            earlier capture reachable). (4) create_unpopulated_submodule(): \
+            sync.rs). (3) create_unpopulated_submodule(): \
             detaches HEAD, with --no-deref, in a submodule repository the \
             same call cloned an instant before and that nothing else has \
             seen; its branches are left as the clone made them. None touch \
             user refs.",
+    },
+    Allowed {
+        file: "git/backup.rs",
+        pattern: "\"update-ref\"",
+        count: 2,
+        callers: &[],
+        justification: "(1) write_backup_ref: creates \
+            refs/rwv/backup/<branch>/<id> where no ref of that name exists \
+            (or one already holds the same tip), so it adds a ref and moves \
+            or removes none. Its only entry is Vcs::write_backup, reached \
+            from Vcs::create_backup, the sole producer of a BackupWitness. \
+            (2) drop_backup_ref: deletes one ref under refs/rwv/backup/, \
+            the name having come from a listing of that namespace; the \
+            caller's pin rule runs first, and the operator names the \
+            repo (`rwv backup drop <repo>`) or runs `rwv backup prune`, \
+            which drops only backups a branch already reaches in full.",
+    },
+    Allowed {
+        file: "git/backup.rs",
+        pattern: "remove_file",
+        count: 1,
+        callers: &[],
+        justification: "snapshot_working_tree: removes the temporary index \
+            file it named under the checkout's private git directory for \
+            this process, after the snapshot commit is built. The checkout's \
+            real index and working tree are never opened for writing.",
     },
     Allowed {
         file: "activate.rs",

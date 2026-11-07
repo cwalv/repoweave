@@ -43,7 +43,7 @@
 //! commits hang off, versus moving which name they hang off — so they mint
 //! two tokens, not one `ChangeAttachmentConsent`.
 
-use crate::manifest::RepoKey;
+use crate::manifest::{ProjectName, RepoKey, RepoOperand};
 
 /// Proof that the operator consented to leaving a checkout on no
 /// branch. Minted from `--detach-checkouts`.
@@ -371,7 +371,7 @@ pub enum DriftConsent {
 /// mint from, and the empty set — the operator passing nothing — covers
 /// nothing rather than everything.
 #[derive(Debug, Clone, Default)]
-pub struct AbandonForeignTipConsent(std::collections::BTreeSet<RepoKey>);
+pub struct AbandonForeignTipConsent(std::collections::BTreeSet<RepoOperand>);
 
 impl AbandonForeignTipConsent {
     // No `granted()`: see [`AdoptDetachedConsent`]. The tests that
@@ -382,18 +382,27 @@ impl AbandonForeignTipConsent {
     /// per occurrence of the flag. `pub(in crate::cli)`: see
     /// [`DetachConsent::from_flag`]'s doc comment.
     ///
-    /// Each value is a [`RepoKey`] as the operator typed it, which already
+    /// Each value is a [`RepoOperand`] as the operator typed it, which already
     /// reads a completed path, a `./` prefix and a Windows separator as the
     /// repo abort's own per-repo output names.
-    pub(in crate::cli) fn from_flag(abandon_foreign_tip: &[RepoKey]) -> Self {
+    pub(in crate::cli) fn from_flag(abandon_foreign_tip: &[RepoOperand]) -> Self {
         Self(abandon_foreign_tip.iter().cloned().collect())
     }
 
-    /// Whether the operator named this repo. `repo_key` is the same key
-    /// abort's per-repo maps use, so a `sync-to` op consults it once per
-    /// side: consent is given for a repo, and both workspaces' copies of
-    /// that repo are covered by it.
-    pub fn covers(&self, repo_key: &RepoKey) -> bool {
-        self.0.contains(repo_key)
+    /// Whether the operator named this repo of the op of `project`.
+    /// `repo_key` is the same key abort's per-repo maps use, so a `sync-to`
+    /// op consults it once per side: consent is given for a repo, and both
+    /// workspaces' copies of that repo are covered by it.
+    pub fn covers(&self, repo_key: &RepoKey, project: &ProjectName) -> bool {
+        self.0.contains(&RepoOperand::of(repo_key, project))
+    }
+
+    /// A project other than `project` whose repo the operator named, if any:
+    /// consent given for it reaches nothing in this op.
+    pub fn names_another_project(&self, project: &ProjectName) -> Option<&ProjectName> {
+        self.0
+            .iter()
+            .filter_map(RepoOperand::project)
+            .find(|named| *named != project)
     }
 }

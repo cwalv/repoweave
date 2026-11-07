@@ -1,18 +1,17 @@
-//! The reference namespace rwv keeps its savepoints and pre-abort refs under
-//! is spelled only in `git.rs`, the backend whose layout it is.
+//! The reference namespace rwv keeps its savepoints and backups under is
+//! spelled only in `git.rs`, the backend whose layout it is.
 //!
-//! `savepoint_ref` and `pre_abort_ref` mint the names there, and the `Vcs`
-//! trait relays them out: `create_pre_abort_ref` returns a `PreAbortRef` whose
-//! `label` carries the spellable name, `savepoint_label` and
-//! `savepoint_namespace` do the same for the savepoint side. Callers hold an
-//! opaque op-id and an opaque label. The trait says so in as many words, and
+//! `savepoint_ref` and the backup namespace constant mint the names there, and
+//! the `Vcs` trait relays them out: a `Backup` carries its operator-spellable
+//! `BackupName`, `savepoint_label` and `savepoint_namespace` do the same for
+//! the savepoint side. Callers hold an opaque op-id and an opaque label. The trait says so in as many words, and
 //! the claim was false where it stood — `sync.rs` composed the namespace three
 //! times, once into a runnable `git reset --hard` an operator is invited to
 //! paste. A second backend relaying a different layout would leave that
 //! command pointing at nothing.
 //!
 //! The needle is the namespace root, so it covers both the savepoint and the
-//! pre-abort halves. What it asserts is a module boundary rather than a single
+//! backup halves. What it asserts is a module boundary rather than a single
 //! site: within `git.rs` the layout is spelled by the mints and by the
 //! recognizer that filters rwv's own refs out of foreign tag names, which
 //! matches the `refs/`-less spelling too and reads worse derived than written.
@@ -37,10 +36,10 @@ mod common;
 
 use common::src_scan::{production_lines, SourceLine};
 
-/// The namespace root, and the constant that declares the savepoint half.
+/// The namespace root, and the constants that declare its two halves.
 const NAMESPACE: &str = "refs/rwv";
 const DECLARED_AS: &str = "SAVEPOINT_NAMESPACE";
-const PRE_ABORT_HALF: &str = "refs/rwv/pre-abort/";
+const BACKUP_DECLARED_AS: &str = "BACKUP_NAMESPACE";
 
 fn sites<'a>(lines: &'a [SourceLine], needle: &str) -> Vec<&'a SourceLine> {
     lines.iter().filter(|l| l.text.contains(needle)).collect()
@@ -80,7 +79,7 @@ fn the_ref_namespace_is_spelled_only_in_its_backend() {
         "`{NAMESPACE}` must be spelled only in git.rs, which owns the layout. \
          A site elsewhere is a caller composing a name it should have taken \
          from `Vcs::savepoint_label`, `Vcs::savepoint_namespace` or a returned \
-         `PreAbortRef`. Found: {strays:?}"
+         `Backup`. Found: {strays:?}"
     );
 
     let declarations: Vec<&str> = found
@@ -101,16 +100,21 @@ fn the_ref_namespace_is_spelled_only_in_its_backend() {
         declarations[0]
     );
 
-    let pre_abort_mints: Vec<String> = found
+    let backup_declarations: Vec<&str> = found
         .iter()
-        .filter(|l| l.text.contains(PRE_ABORT_HALF) && l.text.contains("format!"))
-        .map(|l| l.site())
+        .filter(|l| l.text.contains(BACKUP_DECLARED_AS))
+        .map(|l| l.text.trim())
         .collect();
     assert_eq!(
-        pre_abort_mints.len(),
+        backup_declarations.len(),
         1,
-        "the pre-abort half must be minted at exactly one site. Found: \
-         {pre_abort_mints:?}"
+        "the backup namespace must be declared at exactly one site, as \
+         `{BACKUP_DECLARED_AS}`. Found: {backup_declarations:?}"
+    );
+    assert!(
+        backup_declarations[0].contains("const"),
+        "`{BACKUP_DECLARED_AS}` is no longer a constant: {}",
+        backup_declarations[0]
     );
 }
 

@@ -149,6 +149,13 @@ Schema:
           "enum": [
             "unparseable-project"
           ]
+        },
+        {
+          "description": "A commit a live lock pins that a verb would leave nothing reaching.",
+          "type": "string",
+          "enum": [
+            "pin"
+          ]
         }
       ]
     },

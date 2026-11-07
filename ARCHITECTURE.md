@@ -404,16 +404,18 @@ point by `PhaseTips::converge`. It has no serde impls of its own; the
 `WireOwnerRecord` shim flattens it into two independent YAML keys,
 `advanced_tips` and `converged_tips`.
 
-That distinction is what `abort` consumes. `run_abort` (`src/sync.rs`) runs
-two rails per repo: it first writes a pre-abort ref at the current tip, then
-performs a **verified restore** — resetting to the savepoint only when the
+That distinction is what `abort` consumes. `run_abort` (`src/sync.rs`) performs
+a **verified restore** per repo — resetting to the savepoint only when the
 observed tip is attributable to the operation. `VerifiedRestoreOutcome`
 (`src/vcs.rs`) enumerates the answers, including `ForeignTip`, which is
 reported rather than reset and blocks the record from being cleared
-(`src/sync.rs`).
+(`src/sync.rs`). A foreign tip the operator consents to abandon is first kept
+as a backup, and the outcome carries the `BackupWitness` that proves it.
 
-Savepoints are git refs under `refs/rwv/pre-op/<key>`; pre-abort refs under
-`refs/rwv/pre-abort/<key>`. Every `Vcs` savepoint method takes a `SavepointKey`
+Savepoints are git refs under `refs/rwv/pre-op/<key>`; backups, which outlive
+any operation, are refs under `refs/rwv/backup/<branch>/<id>` (see
+`src/git/backup.rs`; `src/backup.rs` is `rwv backup`, with the pin rule).
+Every `Vcs` savepoint method takes a `SavepointKey`
 (`src/op_state.rs`): `Op(OpId)` for the workspace the op replayed in,
 `SyncToTarget(OpId)` for a `sync-to` target's repos, whose ref leaf carries a
 `-target` suffix because a worktree pair shares one ref store and the first

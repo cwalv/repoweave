@@ -281,10 +281,11 @@ the manifest `(not a manifest member)`. Options:
   --discard-uncommitted --discard-unmerged-commits`
 
 **`--discard-uncommitted`** waives the first refusal, **`--discard-unmerged-commits`**
-the second. Passing both is the `git branch -D` contract: it consents to
-destroying whatever is in the workweave. The same sequence runs as retire's
-delete step (worktrees removed, branches force-deleted, directory removed),
-but without the waived check.
+the second. Passing both consents to losing the workweave's branches and
+checkouts, and keeps their contents: each flag makes a backup of what it waives
+before anything is removed (`rwv backup list` shows them, `rwv backup drop`
+drops them). The same sequence runs as retire's delete step (worktrees
+removed, branches deleted, directory removed), but without the waived check.
 
 The diverged-commit check uses **both** the recorded parent and the primary
 weave as baselines: work counts as merged when it is reachable from either.

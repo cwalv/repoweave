@@ -92,28 +92,19 @@ a savepoint ref, `refs/rwv/pre-op/<op-id>`, and a `sync-to` target's repos get
 `refs/rwv/pre-op/<op-id>-target`, because worktrees of one repo share a ref
 store.
 
-**Rail 1 — a pre-abort ref.** Before restoring any repo, abort writes
-`refs/rwv/pre-abort/<op-id>` (`-target` on the target side) at the repo's
-current tip, and never deletes it. Whatever abort resets away stays
-reachable there.
-
-**Rail 2 — HEAD-verified restore.** Abort resets a repo to its savepoint only
+**Verified restore.** Abort resets a repo to its savepoint only
 when the repo's tip is one the operation accounts for: the savepoint itself
 (nothing to restore), a tip the op recorded while advancing or converging
-that repo, or a rebase, merge or cherry-pick the op left in progress. Any
-other tip, such as a commit made after the op stopped, is a foreign tip:
-abort refuses that repo, keeps the op-state, and lists the blocking commits.
-`--abandon-foreign-tip <repo>` consents to restoring over it, and the
-abandoned commits stay reachable at the pre-abort ref.
-
-**First write wins, with one exception.** A pre-abort ref an earlier abort
-attempt wrote is kept rather than overwritten, because by then it may be the
-only name left for that tip. The exception is a repo named by
-`--abandon-foreign-tip` whose earlier capture is an ancestor of its current
-tip: the ref advances to the current tip, which still reaches every commit
-the earlier capture named. A capture that has diverged from the current tip,
-after a foreign rebase or reset, is kept, and abort refuses to abandon that
-repo until the branch is reconciled or the ref is deleted.
+that repo, or a rebase, merge or cherry-pick the op left in progress. Every
+such tip is a commit the op made, so a clean abort writes no ref: what it
+discards is the op's own output. Any other tip, such as a commit made after
+the op stopped, is a foreign tip: abort refuses that repo, leaves its tip in
+place, keeps the op-state, and lists the blocking commits.
+`--abandon-foreign-tip <repo>` consents to restoring over it, and the tip is
+first kept as a backup marked `abandoned`, named for the branch it moves
+off. The consent applies to the tip abort finds when it runs, so a foreign
+agent that kept committing between two runs has the tip as it then stands
+kept. `rwv backup list` shows the backup and `rwv backup drop` drops it.
 
 ## Snapshot reads
 
@@ -174,8 +165,8 @@ own override:
   the project repo has uncommitted changes, which the reset would destroy
   unrecoverably. The discarded commits outlive the op: the project repo's
   savepoint is kept as a tombstone, and once `rwv abort` no longer applies,
-  `git reset --hard refs/rwv/pre-op/<op-id>` in the project repo recovers
-  them.
+  `rwv doctor --fix` turns it into a backup, which `rwv backup list` shows and
+  `rwv backup drop` drops.
 
 `--continue` resumes with the overrides the op started with. The naming rule
 behind these flags, and why `push --force` is exempt from it, is stated once

@@ -11,7 +11,7 @@ use crate::integration_runner::enabled_integrations;
 use crate::integrations::builtin_integrations;
 use crate::lock::{commit_lock_file_with_message, generate_lock};
 use crate::manifest::{
-    IntegrationConfig, LockFile, Manifest, Project, ProjectName, RepoKey, RepoPath,
+    IntegrationConfig, LockFile, Manifest, Project, ProjectName, RepoKey, RepoOperand, RepoPath,
     ResolvedLockFile, WorkweaveName,
 };
 use crate::op_state::{
@@ -25,8 +25,8 @@ use crate::share::FilePlacement;
 use crate::status::{compute_relation, LockRelation};
 use crate::vcs::{
     project_vcs, vcs_for, AttachedRef, CommitId, ConflictOp, DerivedContentPolicy, DiscardWarrant,
-    ForeignTipPolicy, HeadAttachment, ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput,
-    VerifiedRestoreOutcome,
+    ForeignTipPolicy, HeadAttachment, RemoteTracking, ResolvedRevisionId, Vcs, VcsError,
+    VcsErrorOutput, VerifiedRestoreOutcome,
 };
 use crate::wire_token::wire_token;
 use crate::workspace::{
@@ -2260,6 +2260,31 @@ pub(crate) fn plan_checkout_removal(
                     RefusalKind::DroppedRepoHasUniqueCommits,
                     "{repo_path}: {dropped} but clone has local-only commits; {}",
                     cause.then_rerun("push them")
+                );
+            }
+            let kept_alone: Vec<String> = vcs
+                .list_backups(&dest, RemoteTracking::Counted)
+                .with_context(|| {
+                    format!(
+                        "{repo_path}: {dropped}, but its backups could not be listed; refusing \
+                         to remove a clone whose backups could not be ruled out"
+                    )
+                })
+                .map_err(|e| crate::refusal::refusing(RefusalKind::DroppedRepoHasUniqueCommits, e))?
+                .into_iter()
+                .filter(|listed| !listed.redundant())
+                .map(|listed| listed.backup.name.to_string())
+                .collect();
+            if !kept_alone.is_empty() {
+                crate::refuse!(
+                    RefusalKind::DroppedRepoHasUniqueCommits,
+                    "{repo_path}: {dropped} but clone holds backups with commits nothing else \
+                     reaches ({}); `rwv backup list` shows them. {}",
+                    kept_alone.join(", "),
+                    cause.then_rerun(&format!(
+                        "publish the work you keep (`rwv push`) or drop the backups \
+                         (`rwv backup drop {repo_path}`)"
+                    ))
                 );
             }
             // DESTROY-STORE: `dest` in the primary IS the canonical
@@ -6647,7 +6672,7 @@ enum AbortSide {
     Replay,
     /// The workspace a `sync-to` advanced, savepointed under
     /// [`SavepointKey::SyncToTarget`] so that worktree pairs sharing one refdb
-    /// don't collide on savepoint or pre-abort ref names. Nothing journals intent
+    /// don't collide on savepoint ref names. Nothing journals intent
     /// for it; its tips land in `converged_tips` at relock.
     SyncToTarget,
 }
@@ -6697,24 +6722,16 @@ impl AbortTally {
 /// workspaces, and the per-repo `converged_tips` recorded at relock. For
 /// `sync-to` ops, both the owner and the recorded target are rolled back.
 ///
-/// Two hardening rails:
+/// The `reset --hard` to the savepoint happens ONLY if the repo's current
+/// tip is attributable to the op (== savepoint, == recorded converged tip,
+/// or a VCS-native mid-op state). Anything else is reported with a named
+/// `foreign-tip` violation and recovery hints, and the repo's tip is left
+/// untouched. The op-state is RETAINED on a foreign-tip refusal so the
+/// operator can re-run `rwv abort` after reconciling.
 ///
-/// 1. **Pre-abort reference**: BEFORE restoring any repo, a durable
-///    [`Vcs::create_pre_abort_ref`] reference is written at the repo's
-///    current tip. The reference is never deleted by abort's cleanup —
-///    abort is itself information-preserving and undoable via the ref.
-/// 2. **HEAD-verified restore**: the `reset --hard` to the savepoint
-///    happens ONLY if the repo's current tip is attributable to the op
-///    (== savepoint, == recorded converged tip, or a VCS-native mid-op
-///    state). Anything else is reported with a named `foreign-tip`
-///    violation and recovery hints, and the repo's tip is left untouched.
-///    The op-state is RETAINED on a foreign-tip refusal so the operator
-///    can re-run `rwv abort` after manually reconciling.
-///
-/// `abandon` is the operator's per-repo waiver of rail 2, and rail 1 is what
-/// keeps it a waiver rather than a demolition: the repos it names are
-/// restored over their foreign tips only where the pre-abort reference
-/// already holds the tip being left behind.
+/// `abandon` is the operator's per-repo waiver of that rail: the repos it
+/// names are restored over their foreign tips, each tip kept first as an
+/// `abandoned` backup.
 pub fn run_abort(
     ctx: &WorkspaceContext,
     abandon: &crate::cli::consent::AbandonForeignTipConsent,
@@ -6753,6 +6770,14 @@ pub fn run_abort(
     // name a different project by the time an operator aborts, and that
     // project's repos are not the ones this op advanced.
     let op_project_name = header.project.clone();
+    if let Some(named) = abandon.names_another_project(&op_project_name) {
+        crate::refuse!(
+            RefusalKind::InapplicableFlag,
+            "--abandon-foreign-tip names the repo of project `{named}`, but the operation in \
+             progress belongs to project `{op_project_name}`; name its project repo as `{}`",
+            RepoOperand::Project(op_project_name.clone())
+        );
+    }
     let cwd_project_dir = project_dir(&workspace_dir, &op_project_name);
     // Use the lockless loader: abort's contract is "the state is bad, get me
     // out". rwv.lock may contain git conflict markers from the half-completed
@@ -6909,8 +6934,14 @@ fn restore_abort_workspace(
             project_vcs,
             project_dir.to_path_buf(),
         )));
+    let mut moved_from: std::collections::BTreeMap<PathBuf, ResolvedRevisionId> =
+        std::collections::BTreeMap::new();
     for (repo_key, vcs, abs) in repos {
-        let consented = abandon.covers(&repo_key);
+        let consented = abandon.covers(&repo_key, &project.name);
+        let named = RepoOperand::of(&repo_key, &project.name);
+        if let Ok(head) = vcs.head_revision(&abs) {
+            moved_from.insert(abs.clone(), head);
+        }
         match abort_one_repo(
             vcs.as_ref(),
             &abs,
@@ -6921,15 +6952,14 @@ fn restore_abort_workspace(
         ) {
             Ok(outcome) => report_abort_outcome(
                 vcs.as_ref(),
-                &format!("{label}{repo_key}"),
+                &format!("{label}{named}"),
                 &outcome,
                 Some(abs.as_path()),
-                consented,
                 &mut tally.noise,
                 &mut tally.any_foreign,
             ),
             Err(e) => {
-                eprintln!("  {label}{repo_key}: {e:#}");
+                eprintln!("  {label}{named}: {e:#}");
                 tally.any_failure = true;
             }
         }
@@ -6937,37 +6967,25 @@ fn restore_abort_workspace(
     settle_members(
         workspace_dir,
         project_dir,
-        &|vcs, member| {
-            vcs.resolve_pre_abort_ref(member, &restore_key)
-                .map(|captured| captured.revision)
-        },
+        &|_, member| moved_from.get(member).cloned(),
         None,
     );
 }
 
 /// Restore a single repo as part of `rwv abort`.
 ///
-/// Two rails:
-///
-/// 1. **Pre-abort ref**: a durable reference at the repo's current tip is
-///    written *before* any restore is attempted — abort is itself
-///    information-preserving and undoable via that ref.
-/// 2. **HEAD-verified restore**: the destructive `reset --hard` to the
-///    savepoint is gated on the current tip being attributable to the op
-///    (== savepoint, == recorded intent tip, == recorded converged tip,
-///    or mid-op). Anything else is reported as foreign, not reset.
+/// The destructive `reset --hard` to the savepoint is gated on the current tip
+/// being attributable to the op (== savepoint, == recorded intent tip,
+/// == recorded converged tip, or mid-op). Anything else is reported as
+/// foreign, not reset.
 ///
 /// `recorded_intent_tip` is the SHA from the owner record's `advanced_tips`
 /// map for this repo (source/owner side only — target side passes `None`).
 /// `recorded_converged_tip` is from `converged_tips` (written at relock).
 ///
 /// `abandon_foreign_tip` is whether the operator named THIS repo on
-/// `--abandon-foreign-tip`. It reaches rail 2 as a policy and also reaches
-/// rail 1, where it narrows first-write-wins to first-write-wins-along-
-/// divergence: an existing capture is advanced to HEAD when it is an
-/// ancestor of HEAD, so a retry after a stale-capture refusal (foreign
-/// agent committed on top between runs) proceeds. A diverged capture is
-/// still returned unchanged and rail 2's guard refuses the abandon.
+/// `--abandon-foreign-tip`: a foreign tip is then kept as an `abandoned`
+/// backup and the repo restored over it.
 fn abort_one_repo(
     vcs: &dyn Vcs,
     repo: &Path,
@@ -6981,21 +6999,6 @@ fn abort_one_repo(
     } else {
         ForeignTipPolicy::Refuse
     };
-
-    // Rail 1: write the pre-abort ref BEFORE any verified restore. Even if
-    // the verified restore decides to refuse, the tip is durably captured
-    // so the operator can roll the branch back later if desired.
-    //
-    // Best-effort: if writing the pre-abort ref fails, surface as an error
-    // and continue with the verified restore — but only if we can determine
-    // the failure is benign. Today we propagate the error: failing to
-    // preserve information is itself a violation of the doctrine.
-    vcs.create_pre_abort_ref(repo, key, policy)
-        .context("create pre-abort ref failed")?;
-
-    // Rail 2: HEAD-verified restore. `verified_restore_savepoint` performs
-    // the classification + restore-if-attributable atomically; foreign tips
-    // are returned as `ForeignTip` for the caller to report.
     vcs.verified_restore_savepoint(
         repo,
         key,
@@ -7023,17 +7026,11 @@ struct AbortNoiseSummary {
 /// `repo_abs` is the absolute path to the repo on disk, used only for the
 /// read-only `git log` lookup on foreign-tip refusals; pass `None` when the
 /// path is unavailable (e.g. the repo does not exist on disk).
-///
-/// `consented` is whether the operator named this repo on
-/// `--abandon-foreign-tip`. A refusal that arrives despite it is the one the
-/// operator is owed an explanation for, so it earns an extra line naming the
-/// pre-abort ref's stale capture as the reason.
 fn report_abort_outcome(
     vcs: &dyn Vcs,
     label: &str,
     outcome: &VerifiedRestoreOutcome,
     repo_abs: Option<&Path>,
-    consented: bool,
     summary: &mut AbortNoiseSummary,
     any_foreign: &mut bool,
 ) {
@@ -7058,20 +7055,19 @@ fn report_abort_outcome(
         VerifiedRestoreOutcome::AbandonedForeignTip {
             abandoned_tip,
             savepoint,
-            pre_abort_ref,
+            backup,
         } => {
             outln!(
                 "  {label}: restored (abandoned foreign tip, per --abandon-foreign-tip)\n\
-                 \tabandoned tip: {abandoned_tip} — still reachable at {ref_label}\n\
+                 \tabandoned tip: {abandoned_tip} — kept as backup {name} (`rwv backup list`)\n\
                  \trestored to:   {savepoint}",
-                ref_label = pre_abort_ref.label,
+                name = backup.backup().name,
             );
         }
         VerifiedRestoreOutcome::ForeignTip {
             observed_tip,
             savepoint,
             recorded_converged_tip,
-            pre_abort_ref,
         } => {
             *any_foreign = true;
             let converged_text = match recorded_converged_tip {
@@ -7113,67 +7109,11 @@ fn report_abort_outcome(
                 "\tblocking commits: (repo path unavailable)".to_string()
             };
 
-            // Consent that did not take effect: the only way to reach here
-            // having passed the flag is that the pre-abort capture from an
-            // earlier abort run has DIVERGED from HEAD (foreign rebase or
-            // reset). An ancestor-only advance would have been done by rail 1
-            // and this branch would not be reached. Say so, and name a
-            // seat-runnable remedy — abandoning a tip nothing else names is
-            // destruction, which the flag deliberately does not authorize.
-            let consent_note = if consented {
-                let captured = pre_abort_ref.revision.id();
-                let diverged_note = repo_abs
-                    .map(|repo| {
-                        let observed = ResolvedRevisionId::from(observed_tip.clone());
-                        vcs.is_ancestor(repo, &pre_abort_ref.revision, &observed)
-                            .map(|is_anc| {
-                                if is_anc {
-                                    "unexpected: capture is an ancestor of the observed tip \
-                                     (rail 1 should have advanced it — please file this)"
-                                        .to_string()
-                                } else {
-                                    format!(
-                                        "the pre-abort ref holds {captured}, which has DIVERGED \
-                                         from the observed tip (foreign rebase or reset — the \
-                                         captured commits are not reachable from HEAD, so \
-                                         abandoning would leave them named only by the \
-                                         ref about to be moved off)"
-                                    )
-                                }
-                            })
-                            .unwrap_or_else(|_| {
-                                format!(
-                                    "the pre-abort ref holds {captured}; ancestry against the \
-                                     observed tip could not be checked, so refusing to move the \
-                                     branch off"
-                                )
-                            })
-                    })
-                    .unwrap_or_else(|| {
-                        format!(
-                            "the pre-abort ref holds {captured}; repo path unavailable, so \
-                             ancestry against the observed tip could not be checked"
-                        )
-                    });
-                format!(
-                    "\n\t--abandon-foreign-tip named this repo, but {diverged_note} — refusing.\n\
-                     \tto proceed: reconcile the foreign branch by hand first (move HEAD to \
-                     a commit whose history includes {captured}, or delete {ref_label} if the \
-                     captured commits are safe to lose), then re-run `rwv abort \
-                     --abandon-foreign-tip=<repo>`.",
-                    ref_label = pre_abort_ref.label,
-                )
-            } else {
-                String::new()
-            };
-
             eprintln!(
                 "  {label}: foreign-tip violation — refusing to reset.\n\
-                 \tobserved tip:  {observed_tip}\n\
+                 \tobserved tip:  {observed_tip} (left in place)\n\
                  \texpected one of: savepoint {savepoint}, {converged_text}, or a VCS-native mid-op state\n\
-                 \ttip preserved at: {ref_label}\n\
-                 {shape_and_commits}{consent_note}",
-                ref_label = pre_abort_ref.label,
+                 {shape_and_commits}",
             );
         }
     }
@@ -7188,11 +7128,10 @@ fn print_abort_recovery_options() {
          \t- if the foreign commits are wanted, move the branch back to them yourself \
            and re-run `rwv abort`.\n\
          \t- if they are not, re-run naming the repo: \
-           `rwv abort --abandon-foreign-tip=<repo>` (repeat per repo). The branch \
-           returns to the savepoint and the abandoned commits stay reachable at the \
-           pre-abort ref shown above.\n\
-         \t- if you want to keep the foreign tip and discard the op, move the branch \
-           off the pre-abort ref and delete the savepoint manually."
+           `rwv abort --abandon-foreign-tip <repo>` (repeat per repo; `projects/<name>` \
+           names the project repo). The branch returns to the savepoint and the \
+           abandoned commits are kept as an `abandoned` backup that `rwv backup list` \
+           shows and `rwv backup drop` drops."
     );
 }
 

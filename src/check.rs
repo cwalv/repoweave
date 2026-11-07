@@ -587,7 +587,7 @@ pub enum CheckViolation {
     /// in any `.rwv-op` file in this workspace tree. Sub-kind picks the
     /// classification — savepoint tip reachable from current HEAD
     /// (redundant, safely droppable) vs unreachable (the savepoint is
-    /// the last pointer to discarded work; keep).
+    /// the last pointer to discarded work; `--fix` converts it to a backup).
     OrphanedSavepoint {
         /// The workweave the holding repo lives in; `None` for the primary.
         workweave: Option<WorkweaveId>,
@@ -844,8 +844,7 @@ impl CheckViolation {
                 | BranchDisciplineKind::StaleEphemeralBranchUnowned { .. } => ReportOnly,
             },
             CheckViolation::OrphanedSavepoint { sub_kind, .. } => match sub_kind {
-                OrphanedSavepointKind::Redundant => Auto,
-                OrphanedSavepointKind::Live => ReportOnly,
+                OrphanedSavepointKind::Redundant | OrphanedSavepointKind::Live => Auto,
             },
             CheckViolation::UnrecognizedSavepointRef { .. } => ReportOnly,
             CheckViolation::ConfusableSiblings { .. } => ReportOnly,
@@ -1118,9 +1117,9 @@ pub enum OrphanedSavepointKind {
     Redundant,
     /// The savepoint tip is **not** reachable from the current branch
     /// tip. The ref is the last pointer to commits that would otherwise
-    /// become unreachable. `--fix` must not drop these — the reflog is
-    /// on the FORBIDDEN tripwire list, same rationale: don't cut the
-    /// last recovery path.
+    /// become unreachable. Auto-fixable: `--fix` keeps them as a backup,
+    /// then drops the savepoint, so the commits stay reachable and
+    /// `rwv backup` reaches them.
     Live,
 }
 
@@ -7823,6 +7822,10 @@ pub fn fix_pre_flat_receipts(
 ///   [`OrphanedSavepointKind::Redundant`] → [`crate::vcs::Vcs::drop_savepoint`].
 ///   The ref tip is reachable from the current branch, so dropping the
 ///   ref does not unanchor any commits.
+/// - [`CheckViolation::OrphanedSavepoint`] with
+///   [`OrphanedSavepointKind::Live`] → the tip is kept as a backup, then the
+///   savepoint is dropped. This is the only route from a savepoint to a
+///   backup; nothing reads a savepoint as one.
 /// - [`CheckViolation::DeadOpLease`] → [`crate::op_state::fix_dead_lease`]
 ///   removes the dangling `.rwv-op-lease`. Safe by construction: the
 ///   classification proved the lease is paired with no live owner record
@@ -7830,8 +7833,8 @@ pub fn fix_pre_flat_receipts(
 ///   op), so no in-flight op can be disrupted. Structural — no wall-clock
 ///   input.
 ///
-/// All other variants (`StaleOpState`, `OrphanedSavepoint { Live, .. }`)
-/// return `Ok(false)`: not auto-fixable, the caller should report only.
+/// All other variants (`StaleOpState`) return `Ok(false)`: not
+/// auto-fixable, the caller should report only.
 /// Returns `Ok(true)` when a fix was actually applied; `Ok(false)` when
 /// the violation isn't in the `--fix` set; `Err` only when the
 /// underlying VCS operation itself errored.
@@ -7861,12 +7864,34 @@ pub fn fix_state_hygiene(
             vcs.drop_savepoint(repo_abs, key);
             Ok(true)
         }
+        CheckViolation::OrphanedSavepoint {
+            key,
+            sub_kind: OrphanedSavepointKind::Live,
+            ..
+        } => {
+            let Some(tip) = vcs.resolve_savepoint(repo_abs, key) else {
+                return Ok(false);
+            };
+            vcs.create_backup(
+                repo_abs,
+                &crate::vcs::BackupSource::DetachedHead,
+                &tip,
+                None,
+            )
+            .with_context(|| {
+                format!(
+                    "could not keep the savepoint {key} as a backup in {}",
+                    repo_abs.display()
+                )
+            })?;
+            vcs.drop_savepoint(repo_abs, key);
+            Ok(true)
+        }
         CheckViolation::DeadOpLease { workspace_dir, .. } => {
             crate::op_state::fix_dead_lease(workspace_dir);
             Ok(true)
         }
-        // Live orphaned savepoints, stale op-state, and every other variant
-        // are not in the `--fix` set.
+        // Stale op-state and every other variant are not in the `--fix` set.
         _ => Ok(false),
     }
 }
@@ -8135,10 +8160,9 @@ fn reattach_advice(recorded_ref: Option<&str>, expected_prefix: &str) -> String 
 ///
 /// * RECLAMATION — `stale-registry-entry`, `stale-worktree-registration`,
 ///   `stale-ephemeral-branch-safe`, `dead-op-lease`, `dangling-ref-receipt`,
-///   redundant orphaned savepoints.
-/// * Frozen legacy — live orphaned savepoints (teardown-leak backlog; the
-///   leak is fixed and the newest orphan predates the fix),
-///   `stale-ephemeral-branch-live` / `-unowned` (only legacy/refused ones
+///   redundant orphaned savepoints, live orphaned savepoints (kept as backups).
+/// * Frozen legacy — `stale-ephemeral-branch-live` / `-unowned` (only
+///   legacy/refused ones
 ///   linger — deletion reaps the branch on the current path), and
 ///   `shared-branch` (the pre-scheme workweave backlog; the count line
 ///   keeps a fresh instance visible as regrowth).
@@ -8204,10 +8228,10 @@ impl CollapsedClass {
             | Self::StaleEphemeralBranchSafe
             | Self::DeadOpLease
             | Self::DanglingRefReceipt
-            | Self::RedundantSavepoint => true,
+            | Self::RedundantSavepoint
+            | Self::LiveSavepoint => true,
             Self::StaleEphemeralBranchLive
             | Self::StaleEphemeralBranchUnowned
-            | Self::LiveSavepoint
             | Self::SharedBranch => false,
         }
     }
@@ -8260,8 +8284,8 @@ impl CollapsedClass {
             ),
             Self::LiveSavepoint => format!(
                 "{n} live orphaned-savepoint finding{s} — savepoint{s} holding \
-                 commits no live ref anchors; report-only: recover or delete \
-                 each by hand, as `rwv doctor --kind orphaned-savepoint` itemizes"
+                 commits no live ref anchors; `rwv doctor --fix` keeps them as \
+                 backups, which `rwv backup list` shows"
             ),
             Self::SharedBranch => format!(
                 "{n} shared-branch finding{s} — checkout{s} standing on a \
@@ -9487,7 +9511,7 @@ impl CheckViolation {
                     }
                     OrphanedSavepointKind::Live => {
                         "orphaned-savepoint (last pointer to unreachable commits; \
-                             keep — recover or delete by hand with `git branch <name> <sha>`)"
+                             run `rwv doctor --fix` to keep them as a backup)"
                     }
                 };
                 format!("{location}: {detail} op_id={key}")
@@ -10417,12 +10441,18 @@ fn apply_finding_repairs(
                 workweave,
                 repo,
                 key,
-                sub_kind: OrphanedSavepointKind::Redundant,
+                sub_kind,
             } => match repo_locations.get(&(workweave.clone(), repo.clone())) {
                 Some(repo_abs) => match fix_state_hygiene(vcs, &v, repo_abs) {
                     Ok(true) => {
+                        let done = match sub_kind {
+                            OrphanedSavepointKind::Redundant => "dropped",
+                            OrphanedSavepointKind::Live => {
+                                "kept as a backup (`rwv backup list`) and dropped"
+                            }
+                        };
                         outln!(
-                            "[fixed] core: orphaned-savepoint for {}: dropped op_id={key}",
+                            "[fixed] core: orphaned-savepoint for {}: {done} op_id={key}",
                             location_of(workweave, repo)
                         );
                         true

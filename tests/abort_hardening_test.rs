@@ -1,16 +1,17 @@
-//! E2E acceptance tests for `rwv abort`'s two hardening rails
-//! (design § 5):
+//! E2E acceptance tests for `rwv abort`'s hardening:
 //!
-//! 1. **Pre-abort reference**: a durable `refs/rwv/pre-abort/<op-id>` ref
-//!    is written at every restored repo's tip BEFORE the restore happens,
-//!    and is NOT removed by abort's cleanup. Information-preserving:
-//!    abort itself is undoable.
-//! 2. **HEAD-verified restore**: `reset --hard` is gated on the tip being
+//! 1. **HEAD-verified restore**: `reset --hard` is gated on the tip being
 //!    attributable to the op — equal to the savepoint, equal to the
 //!    recorded converged tip, or the repo is in a VCS-native mid-op
 //!    state. Anything else (foreign commits landed after a crash, or
 //!    another agent built on an advanced target) is REPORTED with a named
-//!    `foreign-tip` violation and recovery hints, never reset.
+//!    `foreign-tip` violation and recovery hints, never reset, and the
+//!    refusal writes nothing.
+//! 2. **Abandon keeps a backup**: `--abandon-foreign-tip <repo>` moves a
+//!    repo off a foreign tip only after the tip is kept as an `abandoned`
+//!    backup, which `rwv backup list` shows and `rwv backup drop` drops.
+//!    No other abort writes a ref: the commits an abort discards are the
+//!    ones the op itself made.
 //!
 //! Each case manufactures the op-state file and savepoint by hand (the
 //! same shape `phase_reentry_test.rs` and the conflict-marker abort test
@@ -52,6 +53,14 @@ mod common;
 
 fn rwv() -> AssertCommand {
     common::rwv()
+}
+
+fn assert_routes_to(stderr: &str, token: &str) {
+    let routes: Vec<&str> = stderr
+        .lines()
+        .filter_map(|l| l.strip_prefix("rwv explain "))
+        .collect();
+    assert_eq!(routes, vec![token], "stderr was:\n{stderr}");
 }
 
 fn try_git(args: &[&str], dir: &Path) -> bool {
@@ -165,20 +174,26 @@ fn plant_savepoint(repo: &Path, op_id: &str, sha: &str) {
     );
 }
 
-fn pre_abort_ref_path(op_id: &str) -> String {
-    format!("refs/rwv/pre-abort/{op_id}")
+/// Every ref under `prefix` in `repo`, as `(refname, sha)`.
+fn refs_under(repo: &Path, prefix: &str) -> Vec<(String, String)> {
+    let out = common::git_in(
+        repo,
+        &["for-each-ref", "--format=%(refname) %(objectname)", prefix],
+    );
+    out.lines()
+        .filter_map(|l| l.split_once(' '))
+        .map(|(r, o)| (r.to_owned(), o.to_owned()))
+        .collect()
 }
 
-fn pre_abort_ref_sha(repo: &Path, op_id: &str) -> Option<String> {
-    let out = common::git()
-        .args(["rev-parse", "--verify", &pre_abort_ref_path(op_id)])
-        .current_dir(repo)
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    Some(String::from_utf8(out.stdout).ok()?.trim().to_string())
+/// The ref abort used to write before it restored anything. No abort writes
+/// one now.
+const PRE_ABORT: &str = "refs/rwv/pre-abort/";
+const BACKUP: &str = "refs/rwv/backup/";
+
+fn assert_writes_no_ref(repo: &Path) {
+    assert_eq!(refs_under(repo, PRE_ABORT), vec![], "no pre-abort ref");
+    assert_eq!(refs_under(repo, BACKUP), vec![], "no backup");
 }
 
 fn savepoint_sha(repo: &Path, op_id: &str) -> Option<String> {
@@ -259,11 +274,10 @@ fn make_multi_repo_fixture(parent: &Path, name: &str, repo_paths: &[&str]) -> Mu
 // Case 1: Untouched — repo tip == savepoint
 // ---------------------------------------------------------------------------
 
-/// When the repo's tip never moved, abort succeeds and the pre-abort ref
-/// records the (unchanged) tip. Verifies the information-preserving rail
-/// runs even on the no-op restore path.
+/// When the repo's tip never moved, abort succeeds and writes no ref: there
+/// is nothing the op made to keep.
 #[test]
-fn abort_untouched_is_noop_and_writes_pre_abort_ref() {
+fn abort_untouched_is_a_noop_and_writes_no_ref() {
     let tmp = common::tempdir().unwrap();
     let ws = make_fixture(tmp.path(), "primary");
 
@@ -282,7 +296,6 @@ fn abort_untouched_is_noop_and_writes_pre_abort_ref() {
         .success()
         .stdout(predicate::str::contains("untouched"));
 
-    // Tips unchanged.
     assert_eq!(
         common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]),
         server_pre
@@ -291,18 +304,8 @@ fn abort_untouched_is_noop_and_writes_pre_abort_ref() {
         common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]),
         project_pre
     );
-    // Pre-abort refs written for both repos at the (unchanged) tip.
-    assert_eq!(
-        pre_abort_ref_sha(&ws.server_dir, op_id).as_deref(),
-        Some(server_pre.as_str()),
-        "pre-abort ref should record server's pre-abort tip"
-    );
-    assert_eq!(
-        pre_abort_ref_sha(&ws.project_dir, op_id).as_deref(),
-        Some(project_pre.as_str()),
-        "pre-abort ref should record project's pre-abort tip"
-    );
-    // Op-state cleared on clean abort.
+    assert_writes_no_ref(&ws.server_dir);
+    assert_writes_no_ref(&ws.project_dir);
     assert!(!ws.root.join(".rwv-op").exists());
 }
 
@@ -311,16 +314,16 @@ fn abort_untouched_is_noop_and_writes_pre_abort_ref() {
 // ---------------------------------------------------------------------------
 
 /// When the repo's tip is the recorded converged tip (relock completed),
-/// abort resets back to the savepoint and the pre-abort ref preserves the
-/// converged tip. This is the "post-replay crash" path.
+/// abort resets back to the savepoint. The converged tip is a commit the op
+/// made, so nothing is kept for it and the output names no backup. This is
+/// the "post-replay crash" path.
 #[test]
-fn abort_converged_resets_to_savepoint_and_preserves_converged_tip() {
+fn abort_converged_resets_to_savepoint_and_keeps_nothing_the_op_made() {
     let tmp = common::tempdir().unwrap();
     let ws = make_fixture(tmp.path(), "primary");
 
     let op_id = "20991231T000002Z";
 
-    // Savepoint = original tip; advance the repo to a "converged" tip.
     let server_savepoint = common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]);
     let server_converged = make_commit(
         &ws.server_dir,
@@ -340,95 +343,34 @@ fn abort_converged_resets_to_savepoint_and_preserves_converged_tip() {
         &[(SERVER_PATH, &server_converged)],
     );
 
-    rwv()
-        .arg("abort")
-        .current_dir(&ws.root)
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("restored"));
-
-    // Server is back at the savepoint.
-    assert_eq!(
-        common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]),
-        server_savepoint
-    );
-    // Project never moved; abort is a no-op there.
-    assert_eq!(
-        common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]),
-        project_savepoint
-    );
-    // Pre-abort ref preserved the converged tip on the server repo.
-    assert_eq!(
-        pre_abort_ref_sha(&ws.server_dir, op_id).as_deref(),
-        Some(server_converged.as_str()),
-        "pre-abort ref should preserve the converged tip on the restored repo"
-    );
-    // Savepoint dropped after restore (matches restore_savepoint contract).
-    assert!(
-        savepoint_sha(&ws.server_dir, op_id).is_none(),
-        "savepoint should be dropped after a successful restore"
-    );
-}
-
-/// `report_abort_outcome`'s restored arms (`RestoredFrom*`) print only
-/// `restored (from ...)`; the pre-abort ref label and op-id appear nowhere
-/// in a clean abort's output (only the `AbandonedForeignTip`/`ForeignTip`
-/// arms name it). `docs/how-to/resume-or-abort-mid-op-sync.md` documents
-/// the real discovery path for a clean restore: `git for-each-ref
-/// refs/rwv/pre-abort`. Revert this test's claim to watch it go red: the
-/// doc used to say abort's output names the reference unconditionally.
-#[test]
-fn abort_clean_restore_output_does_not_name_the_pre_abort_ref() {
-    let tmp = common::tempdir().unwrap();
-    let ws = make_fixture(tmp.path(), "primary");
-
-    let op_id = "20991231T000009Z";
-    let server_savepoint = common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]);
-    let server_converged = make_commit(
-        &ws.server_dir,
-        "converged9.txt",
-        "converged\n",
-        "server: converged",
-    );
-    let project_savepoint = common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]);
-
-    plant_savepoint(&ws.server_dir, op_id, &server_savepoint);
-    plant_savepoint(&ws.project_dir, op_id, &project_savepoint);
-    plant_owner_record(
-        &ws.root,
-        op_id,
-        "relock",
-        &[(SERVER_PATH, &server_converged)],
-    );
-
     let output = rwv()
         .arg("abort")
         .current_dir(&ws.root)
         .assert()
         .success()
+        .stdout(predicate::str::contains("restored"))
         .get_output()
         .clone();
-    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("restored"),
-        "fixture: expected a clean restore:\n{stdout}"
-    );
-    assert!(
-        !stdout.contains("pre-abort") && !stdout.contains(op_id),
-        "a clean restore's output must name neither the ref nor the op-id:\n{stdout}"
+        !stdout.contains("backup") && !stdout.contains(op_id),
+        "a clean restore's output names neither a backup nor the op-id:\n{stdout}"
     );
 
-    // The pre-abort ref exists and is how an operator finds it instead.
-    let for_each_ref = common::git()
-        .args(["for-each-ref", "refs/rwv/pre-abort"])
-        .current_dir(&ws.server_dir)
-        .output()
-        .expect("git should run");
-    let listing = String::from_utf8_lossy(&for_each_ref.stdout).into_owned();
+    assert_eq!(
+        common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]),
+        server_savepoint
+    );
+    assert_eq!(
+        common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]),
+        project_savepoint,
+        "the project never moved; abort is a no-op there"
+    );
+    assert_writes_no_ref(&ws.server_dir);
+    assert_writes_no_ref(&ws.project_dir);
     assert!(
-        listing.contains(&pre_abort_ref_path(op_id)),
-        "git for-each-ref refs/rwv/pre-abort must list the ref a clean abort's \
-         own output did not name:\n{listing}"
+        savepoint_sha(&ws.server_dir, op_id).is_none(),
+        "savepoint should be dropped after a successful restore"
     );
 }
 
@@ -437,9 +379,8 @@ fn abort_clean_restore_output_does_not_name_the_pre_abort_ref() {
 // ---------------------------------------------------------------------------
 
 /// When the repo is mid-rebase (VCS-native wreckage), abort cancels the
-/// rebase + resets to the savepoint. The pre-abort ref captures the tip
-/// observed at abort time (which for mid-rebase is the "onto" commit, not
-/// the savepoint).
+/// rebase + resets to the savepoint. A rebase in flight is the op's own
+/// wreckage, so nothing is kept for it.
 #[test]
 fn abort_mid_op_cancels_and_resets_to_savepoint() {
     let tmp = common::tempdir().unwrap();
@@ -499,13 +440,7 @@ fn abort_mid_op_cancels_and_resets_to_savepoint() {
         common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]),
         server_savepoint
     );
-    // Pre-abort ref written for the server (the mid-op HEAD is "main" =
-    // the post-rebase-attempt tip — what matters is that the ref EXISTS,
-    // not its exact value, since mid-op semantics vary by git version).
-    assert!(
-        pre_abort_ref_sha(&ws.server_dir, op_id).is_some(),
-        "pre-abort ref must exist after a mid-op restore"
-    );
+    assert_writes_no_ref(&ws.server_dir);
 }
 
 // ---------------------------------------------------------------------------
@@ -518,10 +453,9 @@ fn abort_mid_op_cancels_and_resets_to_savepoint() {
 /// Acceptance:
 /// - exit nonzero
 /// - violation named in output (`foreign-tip`)
-/// - the foreign repo's tip is UNCHANGED
-/// - the pre-abort ref is present (recording the foreign tip for recovery)
-/// - the pre-abort ref name is surfaced in the refusal so the operator
-///   can locate the captured tip
+/// - the foreign repo's tip is UNCHANGED, and the refusal says it was left
+///   in place
+/// - the refusal writes no ref: nothing moved, so nothing needs keeping
 /// - the savepoint ref is NOT dropped (so re-running abort after manual
 ///   reconciliation can still find it)
 /// - op-state is RETAINED so the operator can re-run abort
@@ -532,8 +466,6 @@ fn abort_foreign_tip_refuses_and_preserves_state() {
 
     let op_id = "20991231T000004Z";
 
-    // Server: savepoint at original HEAD; advance to a "foreign" tip
-    // distinct from any recorded converged tip.
     let server_savepoint = common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]);
     let foreign_tip = make_commit(
         &ws.server_dir,
@@ -543,7 +475,6 @@ fn abort_foreign_tip_refuses_and_preserves_state() {
     );
     plant_savepoint(&ws.server_dir, op_id, &server_savepoint);
 
-    // Project: untouched (so abort succeeds there in isolation).
     let project_savepoint = common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]);
     plant_savepoint(&ws.project_dir, op_id, &project_savepoint);
 
@@ -565,47 +496,36 @@ fn abort_foreign_tip_refuses_and_preserves_state() {
         .failure()
         .stderr(predicate::str::contains("foreign-tip"))
         .stderr(predicate::str::contains(SERVER_PATH))
-        .stderr(predicate::str::contains(pre_abort_ref_path(op_id)));
+        .stderr(predicate::str::contains("(left in place)"));
 
-    // Foreign repo's tip is UNCHANGED.
     assert_eq!(
         common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]),
         foreign_tip,
         "foreign-tip refusal must not reset the repo"
     );
-    // Pre-abort ref present and points at the foreign tip.
-    assert_eq!(
-        pre_abort_ref_sha(&ws.server_dir, op_id).as_deref(),
-        Some(foreign_tip.as_str()),
-        "pre-abort ref must preserve the observed foreign tip"
-    );
-    // Savepoint NOT dropped on a foreign refusal.
+    assert_writes_no_ref(&ws.server_dir);
     assert_eq!(
         savepoint_sha(&ws.server_dir, op_id).as_deref(),
         Some(server_savepoint.as_str()),
         "savepoint must be retained when restore is refused so re-run is possible"
     );
-    // Op-state retained so the operator can re-run abort after reconciling.
     assert!(
         ws.root.join(".rwv-op").exists(),
         "op-state must be retained on foreign-tip refusal"
     );
 }
 
-/// First-write-wins: re-running abort for the same op must not overwrite the
-/// original pre-abort capture. Scenario: abort refuses (foreign tip), the
-/// operator moves the branch back to the savepoint, abort is re-run and
-/// succeeds — the pre-abort ref must still point at the ORIGINAL foreign tip
-/// (by then the only reference to it), not the reconciled tip.
+/// A refused abort writes nothing, so the operator reconciling by hand and
+/// re-running abort finds a plain restore: it succeeds and keeps nothing.
 #[test]
-fn pre_abort_ref_first_write_wins_across_abort_reruns() {
+fn abort_rerun_after_reconciling_a_foreign_tip_succeeds_and_keeps_nothing() {
     let tmp = common::tempdir().unwrap();
     let ws = make_fixture(tmp.path(), "primary");
 
     let op_id = "20991231T000006Z";
 
     let server_savepoint = common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]);
-    let foreign_tip = make_commit(
+    make_commit(
         &ws.server_dir,
         "foreign.txt",
         "foreign commit\n",
@@ -618,91 +538,23 @@ fn pre_abort_ref_first_write_wins_across_abort_reruns() {
 
     plant_owner_record(&ws.root, op_id, "relock", &[]);
 
-    // First abort: refuses on the foreign tip; pre-abort ref captures it.
     rwv()
         .arg("abort")
         .current_dir(&ws.root)
         .assert()
         .failure()
         .stderr(predicate::str::contains("foreign-tip"));
-    assert_eq!(
-        pre_abort_ref_sha(&ws.server_dir, op_id).as_deref(),
-        Some(foreign_tip.as_str()),
-        "first abort run must capture the foreign tip"
-    );
+    assert_writes_no_ref(&ws.server_dir);
 
-    // Operator reconciles: move the branch back to the savepoint.
     common::git_in(&ws.server_dir, &["reset", "--hard", &server_savepoint]);
 
-    // Second abort: succeeds; pre-abort ref must STILL hold the foreign tip.
     rwv().arg("abort").current_dir(&ws.root).assert().success();
-    assert_eq!(
-        pre_abort_ref_sha(&ws.server_dir, op_id).as_deref(),
-        Some(foreign_tip.as_str()),
-        "re-run must not overwrite the original pre-abort capture (first write wins)"
-    );
+    assert_writes_no_ref(&ws.server_dir);
 }
 
 // ---------------------------------------------------------------------------
 // Cross-cutting: pre-abort refs are written on every clean abort.
 // ---------------------------------------------------------------------------
-
-/// Asserts the information-preserving rail unconditionally: after ANY
-/// successful abort, every restored repo has a `refs/rwv/pre-abort/<op-id>`
-/// reference. The exact tip recorded depends on the case (savepoint for
-/// untouched; pre-restore HEAD for converged/mid-op).
-#[test]
-fn pre_abort_refs_persist_after_clean_abort() {
-    let tmp = common::tempdir().unwrap();
-    let ws = make_fixture(tmp.path(), "primary");
-
-    let op_id = "20991231T000005Z";
-    let server_savepoint = common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]);
-    let server_converged = make_commit(
-        &ws.server_dir,
-        "converged.txt",
-        "converged\n",
-        "server: converged",
-    );
-    let project_savepoint = common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]);
-
-    plant_savepoint(&ws.server_dir, op_id, &server_savepoint);
-    plant_savepoint(&ws.project_dir, op_id, &project_savepoint);
-    plant_owner_record(
-        &ws.root,
-        op_id,
-        "relock",
-        &[(SERVER_PATH, &server_converged)],
-    );
-
-    rwv().arg("abort").current_dir(&ws.root).assert().success();
-
-    // Pre-abort refs exist on BOTH repos (server: restored from converged;
-    // project: untouched). Information-preserving doctrine: abort never
-    // deletes the only reference to a tip.
-    assert!(
-        pre_abort_ref_sha(&ws.server_dir, op_id).is_some(),
-        "pre-abort ref must persist on the server repo after abort"
-    );
-    assert!(
-        pre_abort_ref_sha(&ws.project_dir, op_id).is_some(),
-        "pre-abort ref must persist on the project repo after abort"
-    );
-
-    // And the captured tips really do exist as commits (a `git cat-file`
-    // sanity check, not just a ref pointer to an unreachable SHA).
-    assert!(
-        try_git(
-            &[
-                "cat-file",
-                "-e",
-                &format!("{}^{{commit}}", server_converged)
-            ],
-            &ws.server_dir
-        ),
-        "pre-abort tip must be a reachable commit"
-    );
-}
 
 // ---------------------------------------------------------------------------
 // Legible refusal output
@@ -898,7 +750,7 @@ fn abort_foreign_tip_shows_blocking_commits() {
 /// A tip slot holding a name rather than a commit id is a corrupt record.
 /// Abort reads only its header, so the name is never resolved: the repo the
 /// tag points at is not attributed to the op and is refused as foreign, its
-/// tip captured by the pre-abort ref and left in place.
+/// tip left in place.
 #[test]
 fn abort_never_resolves_a_tag_name_in_an_owner_records_tip_slot() {
     let tmp = common::tempdir().unwrap();
@@ -936,11 +788,7 @@ fn abort_never_resolves_a_tag_name_in_an_owner_records_tip_slot() {
         stderr.contains("foreign-tip violation"),
         "the tagged tip is not attributed to the op.\nstderr:\n{stderr}"
     );
-    assert_eq!(
-        pre_abort_ref_sha(&ws.server_dir, op_id).as_deref(),
-        Some(server_converged.as_str()),
-        "rail 1 captures the refused tip"
-    );
+    assert_writes_no_ref(&ws.server_dir);
     assert_eq!(
         common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]),
         server_converged
@@ -954,13 +802,12 @@ fn abort_never_resolves_a_tag_name_in_an_owner_records_tip_slot() {
 /// The flag's happy path, and the ordering proof that makes "abandon" the
 /// honest word for it.
 ///
-/// After abort restores over the foreign tip, the pre-abort ref must hold the
-/// FOREIGN tip — not the savepoint. That single assertion is what separates
-/// abandonment from destruction: rail 1 writing after the reset, or not at
-/// all, leaves the ref at the savepoint (or absent) and the foreign commits
-/// named by nothing.
+/// After abort restores over the foreign tip, an `abandoned` backup must hold
+/// the FOREIGN tip, and `rwv backup list` must show it. That is what
+/// separates abandonment from destruction: a backup written after the reset,
+/// or not at all, leaves the foreign commits named by nothing.
 #[test]
-fn abandon_foreign_tip_restores_and_leaves_the_abandoned_tip_reachable() {
+fn abandon_foreign_tip_restores_and_keeps_the_abandoned_tip_as_a_backup() {
     let tmp = common::tempdir().unwrap();
     let ws = make_fixture(tmp.path(), "primary");
 
@@ -985,7 +832,8 @@ fn abandon_foreign_tip_restores_and_leaves_the_abandoned_tip_reachable() {
         .current_dir(&ws.root)
         .assert()
         .success()
-        .stdout(predicate::str::contains("abandoned foreign tip"));
+        .stdout(predicate::str::contains("abandoned foreign tip"))
+        .stdout(predicate::str::contains("kept as backup"));
 
     assert_eq!(
         common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]),
@@ -993,24 +841,38 @@ fn abandon_foreign_tip_restores_and_leaves_the_abandoned_tip_reachable() {
         "consent must let the restore proceed to the savepoint"
     );
 
-    // The ordering pin. Rail 1 runs before the move, so the ref names the tip
-    // the branch was moved OFF; a ref holding `server_savepoint` here would
-    // mean the capture happened after the reset and the foreign commit is
-    // unreachable.
+    let kept = refs_under(&ws.server_dir, BACKUP);
+    assert_eq!(kept.len(), 1, "{kept:?}");
     assert_eq!(
-        pre_abort_ref_sha(&ws.server_dir, op_id).as_deref(),
-        Some(foreign_tip.as_str()),
-        "the abandoned tip must stay reachable through the pre-abort ref"
+        kept[0].1, foreign_tip,
+        "the abandoned tip must stay reachable through the backup"
     );
     assert!(
-        try_git(
-            &["cat-file", "-e", &format!("{foreign_tip}^{{commit}}")],
-            &ws.server_dir
-        ),
-        "the abandoned commit object must survive the abort"
+        kept[0].0.contains("/abandoned-"),
+        "the backup is marked abandoned: {kept:?}"
+    );
+    assert_eq!(
+        refs_under(&ws.server_dir, PRE_ABORT),
+        vec![],
+        "abandoning keeps a backup, not a pre-abort ref"
     );
 
-    // A resolved repo is not a refusal: op-state clears and the savepoint goes.
+    let listing = rwv()
+        .args(["backup", "list", "--json"])
+        .current_dir(&ws.root)
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&listing.stdout).unwrap();
+    let repos = json["repos"].as_array().unwrap();
+    assert_eq!(repos.len(), 1, "{json}");
+    assert_eq!(repos[0]["path"], SERVER_PATH);
+    let backup = &repos[0]["backups"][0];
+    assert_eq!(backup["tip"], foreign_tip);
+    assert_eq!(backup["mark"], "abandoned");
+    assert_eq!(backup["held"][0]["sha"], foreign_tip);
+
     assert!(
         !ws.root.join(".rwv-op").exists(),
         "op-state must clear once every repo is resolved"
@@ -1020,6 +882,15 @@ fn abandon_foreign_tip_restores_and_leaves_the_abandoned_tip_reachable() {
         None,
         "the savepoint is consumed by a completed restore"
     );
+
+    let name = backup["name"].as_str().unwrap().to_owned();
+    rwv()
+        .args(["backup", "drop", SERVER_PATH, &name])
+        .current_dir(&ws.root)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(&name));
+    assert_eq!(refs_under(&ws.server_dir, BACKUP), vec![], "dropped");
 }
 
 /// A shell completes a path typed from the workspace root as `./<path>/`, and
@@ -1169,219 +1040,77 @@ fn abandon_foreign_tip_has_no_all_repos_spelling() {
     }
 }
 
-/// First-write-wins narrows to first-write-wins-along-divergence: when the
-/// existing capture is an ancestor of HEAD (foreign agent committed on top of
-/// the previously-captured tip), rail 1 ADVANCES the capture to HEAD under
-/// `--abandon-foreign-tip` and the abandon proceeds. Ancestry keeps the
-/// original captured commits reachable through the advanced ref, so the
-/// rationale that motivates first-write-wins (never orphan the original
-/// capture) is preserved verbatim.
+/// Consent applies to the tip as it stands when abort runs. A refusal leaves
+/// the foreign agent free to keep going — a plain commit on top, or a reset
+/// and a different line of work — and either way a rerun with consent keeps
+/// the tip it finds, the whole of it, as a backup.
 #[test]
-fn abandon_advances_capture_along_ancestry_and_proceeds() {
-    let tmp = common::tempdir().unwrap();
-    let ws = make_fixture(tmp.path(), "primary");
+fn abandon_keeps_the_tip_as_it_stands_however_the_foreign_agent_moved_it() {
+    for (n, diverge) in [false, true].into_iter().enumerate() {
+        let tmp = common::tempdir().unwrap();
+        let ws = make_fixture(tmp.path(), "primary");
+        let op_id = format!("20991231T00004{n}Z");
 
-    let op_id = "20991231T000022Z";
+        let server_savepoint = common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]);
+        let first = make_commit(&ws.server_dir, "f1.txt", "f1\n", "foreign: first");
+        plant_savepoint(&ws.server_dir, &op_id, &server_savepoint);
+        let project_savepoint = common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]);
+        plant_savepoint(&ws.project_dir, &op_id, &project_savepoint);
+        plant_owner_record(&ws.root, &op_id, "relock", &[]);
 
-    let server_savepoint = common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]);
-    let first_foreign = make_commit(&ws.server_dir, "f1.txt", "f1\n", "foreign: first");
-    plant_savepoint(&ws.server_dir, op_id, &server_savepoint);
+        rwv()
+            .arg("abort")
+            .current_dir(&ws.root)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("foreign-tip"));
+        assert_writes_no_ref(&ws.server_dir);
 
-    let project_savepoint = common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]);
-    plant_savepoint(&ws.project_dir, op_id, &project_savepoint);
-    plant_owner_record(&ws.root, op_id, "relock", &[]);
-
-    // Run 1, no consent: refuses and captures the tip as it stands.
-    rwv()
-        .arg("abort")
-        .current_dir(&ws.root)
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("foreign-tip"));
-    assert_eq!(
-        pre_abort_ref_sha(&ws.server_dir, op_id).as_deref(),
-        Some(first_foreign.as_str()),
-    );
-
-    // The foreign agent keeps going, LINEARLY — a plain commit on top of the
-    // captured tip. This is the shape addendum E1 rules on: the capture is an
-    // ancestor of the observed tip, so nothing held only by the capture is
-    // about to be orphaned.
-    let second_foreign = make_commit(&ws.server_dir, "f2.txt", "f2\n", "foreign: second");
-    assert!(
-        try_git(
-            &[
-                "merge-base",
-                "--is-ancestor",
-                &first_foreign,
-                &second_foreign,
-            ],
-            &ws.server_dir,
-        ),
-        "fixture invariant: the first foreign tip must be an ancestor of the second"
-    );
-
-    // Run 2, with consent: rail 1 advances the capture from f1 to f2, rail
-    // 2's guard (capture == observed) then holds and the abandon proceeds.
-    rwv()
-        .arg("abort")
-        .arg(format!("--abandon-foreign-tip={SERVER_PATH}"))
-        .current_dir(&ws.root)
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("abandoned foreign tip"));
-
-    // The branch is back at the savepoint.
-    assert_eq!(
-        common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]),
-        server_savepoint,
-        "the branch must be restored to the savepoint"
-    );
-    // The advanced capture points at the abandoned tip.
-    assert_eq!(
-        pre_abort_ref_sha(&ws.server_dir, op_id).as_deref(),
-        Some(second_foreign.as_str()),
-        "the pre-abort ref must have advanced to the observed tip"
-    );
-    // The ORIGINAL captured commit stays reachable through the advanced ref
-    // (this is why the advance is safe): first_foreign is an ancestor of
-    // second_foreign, so it is reachable from the ref that now points there.
-    assert!(
-        try_git(
-            &[
-                "merge-base",
-                "--is-ancestor",
-                &first_foreign,
-                &pre_abort_ref_path(op_id),
-            ],
-            &ws.server_dir,
-        ),
-        "the original captured tip must remain reachable through the advanced ref \
-         (the invariant that makes the advance safe)"
-    );
-    // And both abandoned commits' objects still exist — abandonment, not
-    // destruction.
-    for sha in [&first_foreign, &second_foreign] {
-        assert!(
+        if diverge {
+            common::git_in(&ws.server_dir, &["reset", "--hard", &server_savepoint]);
+        }
+        let latest = make_commit(&ws.server_dir, "f2.txt", "f2\n", "foreign: second");
+        assert_eq!(
             try_git(
-                &["cat-file", "-e", &format!("{sha}^{{commit}}")],
-                &ws.server_dir,
+                &["merge-base", "--is-ancestor", &first, &latest],
+                &ws.server_dir
             ),
-            "the abandoned commit {sha} must survive the abort"
+            !diverge,
+            "fixture: the first foreign tip is an ancestor of the latest only when not diverged"
         );
+
+        rwv()
+            .arg("abort")
+            .arg(format!("--abandon-foreign-tip={SERVER_PATH}"))
+            .current_dir(&ws.root)
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("abandoned foreign tip"));
+
+        assert_eq!(
+            common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]),
+            server_savepoint
+        );
+        let kept = refs_under(&ws.server_dir, BACKUP);
+        assert_eq!(kept.len(), 1, "diverge={diverge}: {kept:?}");
+        assert_eq!(kept[0].1, latest, "diverge={diverge}");
+        if !diverge {
+            assert!(
+                try_git(
+                    &["merge-base", "--is-ancestor", &first, &kept[0].0],
+                    &ws.server_dir
+                ),
+                "the earlier foreign commit is reachable through the backup"
+            );
+        }
     }
 }
 
-/// A DIVERGED capture (foreign rebase or reset — the capture is NOT an
-/// ancestor of HEAD) still refuses under `--abandon-foreign-tip`. There is
-/// now genuinely something the capture is the only witness to (the commits
-/// on the branch that HEAD moved off of), so advancing it would orphan them.
-/// The refusal must name the divergence AND a seat-runnable path forward.
+/// The project repo is named by its directory, `projects/<name>`, in the
+/// flag and in abort's own per-repo output. The record spelling `(project)` is
+/// no operand, and another project's repo is refused by name.
 #[test]
-fn abandon_refuses_when_capture_has_diverged_from_observed_tip() {
-    let tmp = common::tempdir().unwrap();
-    let ws = make_fixture(tmp.path(), "primary");
-
-    let op_id = "20991231T000025Z";
-
-    let server_savepoint = common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]);
-    let first_foreign = make_commit(&ws.server_dir, "f1.txt", "f1\n", "foreign: first");
-    plant_savepoint(&ws.server_dir, op_id, &server_savepoint);
-
-    let project_savepoint = common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]);
-    plant_savepoint(&ws.project_dir, op_id, &project_savepoint);
-    plant_owner_record(&ws.root, op_id, "relock", &[]);
-
-    // Run 1: captures the current tip (first_foreign).
-    rwv()
-        .arg("abort")
-        .current_dir(&ws.root)
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("foreign-tip"));
-    assert_eq!(
-        pre_abort_ref_sha(&ws.server_dir, op_id).as_deref(),
-        Some(first_foreign.as_str()),
-    );
-
-    // Foreign agent RESETS the branch off first_foreign back to the
-    // savepoint and commits a different line of work. first_foreign is no
-    // longer reachable from HEAD — the capture and HEAD have diverged.
-    common::git_in(&ws.server_dir, &["reset", "--hard", &server_savepoint]);
-    let diverged_foreign = make_commit(&ws.server_dir, "d1.txt", "d1\n", "foreign: diverged line");
-    assert!(
-        !try_git(
-            &[
-                "merge-base",
-                "--is-ancestor",
-                &first_foreign,
-                &diverged_foreign,
-            ],
-            &ws.server_dir,
-        ),
-        "fixture invariant: the captured tip must NOT be an ancestor of the diverged tip"
-    );
-
-    // Run 2, with consent: the capture is diverged from HEAD, so rail 1
-    // does NOT advance it, and rail 2's guard refuses.
-    let output = rwv()
-        .arg("abort")
-        .arg(format!("--abandon-foreign-tip={SERVER_PATH}"))
-        .current_dir(&ws.root)
-        .assert()
-        .failure()
-        .get_output()
-        .clone();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    // The branch is untouched — refusal, not destruction.
-    assert_eq!(
-        common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]),
-        diverged_foreign,
-        "a diverged capture must not be treated as consent to destroy the tip"
-    );
-    // The capture is unchanged: first-write-wins still holds along the
-    // divergence — there is now genuinely something to lose.
-    assert_eq!(
-        pre_abort_ref_sha(&ws.server_dir, op_id).as_deref(),
-        Some(first_foreign.as_str()),
-        "the diverged capture must not be advanced"
-    );
-    // The refusal must name the divergence as the reason (not merely say
-    // "refused"), and must name a path the operator can actually walk. A
-    // message naming a stale-along-ancestry cause here would be wrong — the
-    // ancestry case is auto-advanced.
-    let consent_line = stderr
-        .lines()
-        .find(|line| line.contains("--abandon-foreign-tip named this repo"))
-        .unwrap_or_else(|| {
-            panic!("a refusal that arrives despite consent must say why.\nstderr:\n{stderr}")
-        });
-    assert!(
-        consent_line.contains("DIVERGED"),
-        "the refusal must name the divergence as the cause.\nconsent line: {consent_line}"
-    );
-    assert!(
-        consent_line.contains(&first_foreign),
-        "the refusal must name the diverged capture ({first_foreign}) so the operator \
-         can locate it.\nconsent line: {consent_line}"
-    );
-    assert!(
-        stderr.contains("to proceed:") && stderr.contains("reconcile"),
-        "the refusal must name a seat-runnable path forward (reconcile by hand, then \
-         re-run).\nstderr:\n{stderr}"
-    );
-    assert!(
-        ws.root.join(".rwv-op").exists(),
-        "op-state must be retained on this refusal like any other"
-    );
-}
-
-/// The project repo is reachable through the flag under the same key abort
-/// prints for it — the one repo whose spelling an operator would otherwise
-/// have to guess, since it is not a path.
-#[test]
-fn abandon_foreign_tip_accepts_the_project_repo_key() {
+fn abandon_foreign_tip_names_the_project_repo_by_its_directory() {
     let tmp = common::tempdir().unwrap();
     let ws = make_fixture(tmp.path(), "primary");
 
@@ -1395,9 +1124,50 @@ fn abandon_foreign_tip_accepts_the_project_repo_key() {
     plant_savepoint(&ws.project_dir, op_id, &project_savepoint);
     plant_owner_record(&ws.root, op_id, "relock", &[]);
 
+    let refused = rwv()
+        .arg("abort")
+        .current_dir(&ws.root)
+        .assert()
+        .failure()
+        .get_output()
+        .clone();
+    assert!(
+        String::from_utf8_lossy(&refused.stderr)
+            .contains("projects/web-app: foreign-tip violation"),
+        "abort names the project repo as the flag takes it:\n{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+
     rwv()
         .arg("abort")
         .arg("--abandon-foreign-tip=(project)")
+        .current_dir(&ws.root)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--abandon-foreign-tip"))
+        .stderr(predicate::str::contains("projects/<name>"));
+
+    let other = rwv()
+        .arg("abort")
+        .arg("--abandon-foreign-tip=projects/other")
+        .current_dir(&ws.root)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("project `other`"))
+        .stderr(predicate::str::contains("projects/web-app"))
+        .get_output()
+        .clone();
+    let refusal = String::from_utf8_lossy(&other.stderr);
+    assert_routes_to(&refusal, "inapplicable-flag");
+    assert_eq!(
+        common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]),
+        project_foreign,
+        "the refusals moved nothing"
+    );
+
+    rwv()
+        .arg("abort")
+        .arg("--abandon-foreign-tip=projects/web-app")
         .current_dir(&ws.root)
         .assert()
         .success();
@@ -1405,11 +1175,12 @@ fn abandon_foreign_tip_accepts_the_project_repo_key() {
     assert_eq!(
         common::git_in(&ws.project_dir, &["rev-parse", "HEAD"]),
         project_savepoint,
-        "`(project)` must name the project repo"
+        "`projects/web-app` must name the project repo"
     );
+    let kept = refs_under(&ws.project_dir, BACKUP);
+    assert_eq!(kept.len(), 1, "{kept:?}");
     assert_eq!(
-        pre_abort_ref_sha(&ws.project_dir, op_id).as_deref(),
-        Some(project_foreign.as_str()),
+        kept[0].1, project_foreign,
         "the abandoned project-repo tip must stay reachable"
     );
 }
@@ -1442,7 +1213,7 @@ fn foreign_tip_recovery_options_name_the_flag_not_raw_git() {
     let stderr = String::from_utf8_lossy(&output.stderr);
 
     assert!(
-        stderr.contains("rwv abort --abandon-foreign-tip=<repo>"),
+        stderr.contains("rwv abort --abandon-foreign-tip <repo>"),
         "the recovery options must name the verb that does this.\nstderr:\n{stderr}"
     );
     assert!(

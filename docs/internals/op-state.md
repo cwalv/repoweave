@@ -56,13 +56,26 @@ a key fails to parse rather than defaulting.
 | `target` | Absolute path of the target workspace. For `sync`: same as the owner workspace. For `sync-to`: the named target workspace |
 | `retire` | Whether `--retire` was passed |
 | `phase` | Current phase in execution order: `replay` → `relock` → `advance-target` (sync-to only) → `retire` (`--retire` only) |
-| `advanced_tips` | Replay-phase intent per repo. Key: repo path relative to workspace root. Value: SHA string. Empty before replay entry; cleared at relock in the same write that populates `converged_tips` |
-| `converged_tips` | Per-repo converged tips written at relock completion. Empty before. Consumed by advance-target and abort's HEAD check |
+| `advanced_tips` | Replay-phase intent per repo. Key: repo path relative to workspace root, or `(project)` for the project repo (the flag spelling `projects/<name>` is the operator's, and is not stored). Value: SHA string. Empty before replay entry; cleared at relock in the same write that populates `converged_tips` |
+| `converged_tips` | Per-repo converged tips written at relock completion. Empty before. Consumed by advance-target and abort's HEAD check. Keyed as `advanced_tips` is |
 | `overrides` | Named overrides supplied at invocation (e.g. `allow-stale-lock`, `discard-local-commits`). Recorded for audit fidelity on `--continue` — resume re-applies the same consents |
 | `started_at` | RFC3339 UTC timestamp when the op started |
 
 Lives at the workspace root (same directory as `.rwv-active`). Source:
 `src/op_state.rs`.
+
+### What the record's refs hold
+
+An op's savepoints (`refs/rwv/pre-op/<id>`, `<id>-target` on a `sync-to`
+target's side) live exactly as long as the record: cleanup drops them with it,
+and `rwv abort` consumes them. They are the only refs an op owns. Abort writes
+none of its own: every tip it resets is a commit the op made, and a tip the op
+did not make is refused and left in place. The one thing abort keeps is a
+foreign tip `--abandon-foreign-tip` moves a branch off, and that is a backup
+(`refs/rwv/backup/<branch>/<id>`, marked `abandoned`), which outlives the
+record and belongs to `rwv backup`. A savepoint that outlives its record is not
+a backup either: `rwv doctor` reports it as `orphaned-savepoint`, and `--fix`
+is what turns one that holds the last reference to its commits into a backup.
 
 ## `.rwv-op-lease` — thin lease pointer
 

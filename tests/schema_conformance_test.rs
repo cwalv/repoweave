@@ -65,6 +65,9 @@
 mod common;
 
 use common::json_schema;
+use repoweave::backup::{
+    BackupJsonOutput, BackupOutput, HeldCommitOutput, RepoBackupsOutput, BACKUP_SCHEMA_URL,
+};
 use repoweave::check::{
     BranchDisciplineKind, CheckViolation, DetachedAncestry, PlacementConvergence, ProvenanceKind,
     DOCTOR_SCHEMA_URL,
@@ -93,6 +96,7 @@ use repoweave::sync::{
     SYNC_TO_JSON_SCHEMA_URL,
 };
 use repoweave::update::{RepoUpdateRecord, UpdateJsonOutput, UpdateKind, UPDATE_SCHEMA_URL};
+use repoweave::vcs::BackupMark;
 use repoweave::vcs::{ConflictOp, MidOperation, VcsErrorOutput};
 use repoweave::workspace::{AdvisoryKindOutput, AdvisoryOutput, Resolution};
 use serde_json::{json, Value};
@@ -122,6 +126,11 @@ struct VerbCase {
 
 fn cases() -> Vec<VerbCase> {
     vec![
+        VerbCase {
+            verb: "backup",
+            schema_url: BACKUP_SCHEMA_URL,
+            corpus: backup_corpus,
+        },
         VerbCase {
             verb: "doctor",
             schema_url: DOCTOR_SCHEMA_URL,
@@ -263,6 +272,76 @@ fn advisories() -> Vec<AdvisoryOutput> {
 
 fn value(envelope: impl serde::Serialize) -> Value {
     serde_json::to_value(envelope).expect("envelope serializes")
+}
+
+// ---------------------------------------------------------------------------
+// backup
+// ---------------------------------------------------------------------------
+
+fn held(byte: char, subject: &str) -> HeldCommitOutput {
+    let id = sha(byte);
+    HeldCommitOutput {
+        sha: repoweave::vcs::CommitId::parse(&id).expect("a full commit id"),
+        short: id[..12].to_owned(),
+        subject: subject.to_owned(),
+    }
+}
+
+fn backup(name: &str, byte: char, mark: Option<BackupMark>, redundant: bool) -> BackupOutput {
+    BackupOutput {
+        name: name.to_owned(),
+        tip: repoweave::vcs::CommitId::parse(&sha(byte)).expect("a full commit id"),
+        mark,
+        redundant,
+        held: if redundant {
+            Vec::new()
+        } else {
+            vec![held(byte, "work only this backup holds")]
+        },
+    }
+}
+
+fn backup_corpus() -> Vec<(&'static str, Value)> {
+    vec![
+        (
+            "every-mark-and-none",
+            value(BackupJsonOutput {
+                schema_url: BACKUP_SCHEMA_URL.to_owned(),
+                repos: vec![
+                    RepoBackupsOutput {
+                        path: REPO.to_owned(),
+                        backups: vec![
+                            backup("proj--anon/aaaaaaaaaaaa", 'a', None, false),
+                            backup(
+                                "proj--anon/rebased-bbbbbbbbbbbb",
+                                'b',
+                                Some(BackupMark::Rebased),
+                                false,
+                            ),
+                            backup(
+                                "HEAD/abandoned-cccccccccccc",
+                                'c',
+                                Some(BackupMark::Abandoned),
+                                false,
+                            ),
+                            backup("proj--old/dddddddddddd", 'd', None, true),
+                        ],
+                    },
+                    RepoBackupsOutput {
+                        path: "projects/web-app".to_owned(),
+                        backups: vec![backup("main/eeeeeeeeeeee", 'e', None, false)],
+                    },
+                ],
+            }),
+        ),
+        (
+            "none",
+            value(BackupJsonOutput {
+                schema_url: BACKUP_SCHEMA_URL.to_owned(),
+                repos: Vec::new(),
+            }),
+        ),
+    ]
 }
 
 // ---------------------------------------------------------------------------
@@ -509,7 +588,7 @@ fn log_commit(byte: char, subject: &str) -> LogCommit {
 
 fn log_repo(path: &str) -> LogRepo {
     LogRepo {
-        path: path.parse().unwrap(),
+        path: serde_json::from_value(json!(path)).unwrap(),
         head: Some(repoweave::vcs::CommitId::parse(&sha('a')).unwrap()),
         pin: None,
         endpoints: Vec::new(),
@@ -1467,6 +1546,7 @@ fn records_key(verb: &str) -> &'static str {
         "doctor" => "violations",
         "status" | "update" | "log" => "repos",
         "refusal" => "refused",
+        "backup" => "repos",
         _ => "outcomes",
     }
 }

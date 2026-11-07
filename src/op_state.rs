@@ -198,7 +198,7 @@ impl fmt::Display for OpId {
     }
 }
 
-/// The name an op's savepoint, and its pre-abort reference, is filed under.
+/// The name an op's savepoint is filed under.
 ///
 /// A `sync-to` savepoints two workspaces, and the target's repos may share a
 /// ref store with the owner's when both are worktrees of one clone. Filed

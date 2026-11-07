@@ -132,7 +132,88 @@ pub fn workweave_without_b_given_up_before_publishing() -> Scenario {
                     "anon",
                     "--discard-unmerged-commits",
                 ],
+            )
+            .expect(Exit::Succeeds)
+            .claim(Claim::WorkweaveGone(ww("anon")))
+            .claim(Claim::BackedUp {
+                repo: Repo::App,
+                mark: "anon-app",
+                marked: None,
+            }),
+            Step::rwv(&a(), &["backup", "list"]).expect(Exit::Succeeds),
+        ],
+    )
+}
+
+/// dc10-store-destroy: a member's clone holding a backup is not destroyed by
+/// `member remove --delete`, which names `rwv backup list` and refuses; the
+/// operator's `backup drop` is what releases the commits.
+pub fn dc10_store_destroy() -> Scenario {
+    let app = Repo::App.rel_path();
+    scenario(
+        "dc10: a clone holding a backup is not destroyed",
+        vec![
+            create("anon"),
+            Step::commit(&ww("anon"), Repo::App, "anon-app"),
+            Step::rwv(
+                &a(),
+                &[
+                    "workweave",
+                    "delete",
+                    "--project",
+                    "proj",
+                    "anon",
+                    "--discard-unmerged-commits",
+                ],
+            )
+            .expect(Exit::Succeeds)
+            .claim(Claim::BackedUp {
+                repo: Repo::App,
+                mark: "anon-app",
+                marked: None,
+            }),
+            Step::rwv(
+                &a(),
+                &["member", "remove", &app, "--delete", "--project", "proj"],
+            )
+            .expect(Exit::Fails)
+            .claim(Claim::BackedUp {
+                repo: Repo::App,
+                mark: "anon-app",
+                marked: None,
+            }),
+            Step::rwv(&a(), &["backup", "drop", &app, "--project", "proj"])
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::App]),
+        ],
+    )
+}
+
+/// tombstone-to-backup: a savepoint an earlier release left behind, the only
+/// ref to commits it discarded, becomes a backup under `doctor --fix`, and
+/// `backup drop` releases it.
+pub fn tombstone_to_backup() -> Scenario {
+    scenario(
+        "tombstone-to-backup",
+        vec![
+            Step::commit(&a(), Repo::Proj, "tombstoned"),
+            Step::git(
+                &a(),
+                Repo::Proj,
+                &["update-ref", "refs/rwv/pre-op/1779769917405921588", "HEAD"],
             ),
+            Step::git(&a(), Repo::Proj, &["reset", "--hard", "HEAD~1"]).may_rewrite(&[Repo::Proj]),
+            Step::rwv(&a(), &["doctor", "--fix"]).claim(Claim::BackedUp {
+                repo: Repo::Proj,
+                mark: "tombstoned",
+                marked: None,
+            }),
+            Step::rwv(
+                &a(),
+                &["backup", "drop", "projects/proj", "--project", "proj"],
+            )
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::Proj]),
         ],
     )
 }

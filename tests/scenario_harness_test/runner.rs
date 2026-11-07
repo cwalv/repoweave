@@ -193,6 +193,13 @@ pub enum Claim {
         mark: &'static str,
     },
     WorkweaveGone(Place),
+    /// A backup in machine A's primary clone of `repo` reaches the commit
+    /// `mark` names, and, where `marked` is given, is marked so.
+    BackedUp {
+        repo: Repo,
+        mark: &'static str,
+        marked: Option<&'static str>,
+    },
 }
 
 /// The outcome a step is expected to have. A step whose outcome the adopted
@@ -942,6 +949,34 @@ impl Run<'_> {
                 } else {
                     Ok(())
                 }
+            }
+            Claim::BackedUp { repo, mark, marked } => {
+                let sha = self.mark(mark)?;
+                let dir = sb.checkout(&Place::Primary(Machine::A), *repo);
+                let holders = sb.git_ok(
+                    &dir,
+                    &[
+                        "for-each-ref",
+                        "--contains",
+                        sha,
+                        "--format=%(refname)",
+                        "refs/rwv/backup/",
+                    ],
+                );
+                let holder = holders.lines().find(|name| {
+                    marked.is_none_or(|marked| {
+                        name.rsplit('/')
+                            .next()
+                            .is_some_and(|id| id.starts_with(&format!("{marked}-")))
+                    })
+                });
+                holder.map(|_| ()).ok_or_else(|| {
+                    format!(
+                        "no backup in {} reaches {mark} ({sha}){}; backups reaching it: {holders:?}",
+                        dir.display(),
+                        marked.map(|m| format!(" marked {m}")).unwrap_or_default()
+                    )
+                })
             }
         }
     }

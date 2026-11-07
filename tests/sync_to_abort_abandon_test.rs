@@ -1,16 +1,13 @@
 //! E2E acceptance tests for `rwv abort --abandon-foreign-tip` on the
-//! sync-to TWO-WORKSPACE path (design § 5).
+//! sync-to TWO-WORKSPACE path.
 //!
 //! `abort_hardening_test.rs` pins the flag's semantics for a sync-shaped op
 //! in one workspace. A sync-to op adds a second workspace whose repos are
-//! worktree pairs of the first, sharing one refdb — so the target side's
-//! savepoint and pre-abort references live under the `<op-id>-target`
-//! namespace (`target_savepoint_id` / `restore_id_for` in `src/sync.rs`),
-//! and a consent given for a repo covers BOTH copies of that repo
-//! (`AbandonForeignTipConsent::covers`). The shared refdb is exactly where
-//! a misrouted namespace would make one side's capture stand in for the
-//! other side's tip, so every test here asserts against the side-specific
-//! reference names, not just outcomes.
+//! worktree pairs of the first, sharing one refdb, and a consent given for a
+//! repo covers BOTH copies of that repo (`AbandonForeignTipConsent::covers`).
+//! The shared refdb is exactly where a misrouted backup would let one side's
+//! abandoned tip stand in for the other's, so every test here asserts that
+//! each side's backup is named for its own branch and holds its own tip.
 //!
 //! Fixture shape mirrors `phase_reentry_test.rs` / `crash_matrix_test.rs`:
 //! the op-state file, lease, and savepoints are planted by hand so the unit
@@ -186,27 +183,34 @@ fn plant_savepoint(repo: &Path, restore_id: &str) -> String {
     head
 }
 
-/// The target side's restore id: savepoints and pre-abort refs for repos in
-/// the op's target workspace are keyed `<op-id>-target` so worktree pairs
-/// sharing one refdb do not collide on ref names.
+/// The target side's restore id: savepoints for repos in the op's target
+/// workspace are keyed `<op-id>-target` so worktree pairs sharing one refdb
+/// do not collide on ref names.
 fn target_restore_id(op_id: &str) -> String {
     format!("{op_id}-target")
 }
 
-fn pre_abort_ref_name(restore_id: &str) -> String {
-    format!("refs/rwv/pre-abort/{restore_id}")
+const BACKUP: &str = "refs/rwv/backup/";
+const PRE_ABORT: &str = "refs/rwv/pre-abort/";
+
+/// Every ref under `prefix` in `repo`, as `(refname, sha)`.
+fn refs_under(repo: &Path, prefix: &str) -> Vec<(String, String)> {
+    let out = common::git_in(
+        repo,
+        &["for-each-ref", "--format=%(refname) %(objectname)", prefix],
+    );
+    out.lines()
+        .filter_map(|l| l.split_once(' '))
+        .map(|(r, o)| (r.to_owned(), o.to_owned()))
+        .collect()
 }
 
-fn pre_abort_sha(repo: &Path, restore_id: &str) -> Option<String> {
-    let out = common::git()
-        .args(["rev-parse", "--verify", &pre_abort_ref_name(restore_id)])
-        .current_dir(repo)
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    Some(String::from_utf8(out.stdout).ok()?.trim().to_string())
+/// The backup under `branch` holding `tip`, if one is there.
+fn backup_of(repo: &Path, branch: &str, tip: &str) -> Option<String> {
+    refs_under(repo, &format!("{BACKUP}{branch}/"))
+        .into_iter()
+        .find(|(_, sha)| sha == tip)
+        .map(|(name, _)| name)
 }
 
 /// Plant the full crashed-mid-replay sync-to state: owner record at ww,
@@ -243,9 +247,7 @@ fn plant_crashed_sync_to(primary: &Workspace, ww: &Workspace, op_id: &str) -> (S
 // ---------------------------------------------------------------------------
 
 /// A foreign tip on the TARGET workspace's copy refuses without the flag,
-/// exactly as the one-workspace shape does — and the pre-abort reference
-/// the refusal names is the target-side one (`<op-id>-target`), written
-/// despite the refusal (rail 1 runs before rail 2 on both sides).
+/// exactly as the one-workspace shape does, and the refusal writes nothing.
 #[test]
 fn sync_to_abort_refuses_target_side_foreign_tip_without_the_flag() {
     let tmp = common::tempdir().unwrap();
@@ -268,25 +270,13 @@ fn sync_to_abort_refuses_target_side_foreign_tip_without_the_flag() {
         stderr.contains(&format!("[target] {SERVER_PATH}: foreign-tip violation")),
         "the refusal must name the target-side copy.\nstderr:\n{stderr}"
     );
-    let tid = target_restore_id(op_id);
-    assert!(
-        stderr.contains(&pre_abort_ref_name(&tid)),
-        "the refusal must name the target-side pre-abort reference.\nstderr:\n{stderr}"
-    );
     assert_eq!(
         common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
         foreign_tip,
         "a refusal must not move the target-side branch"
     );
-    assert_eq!(
-        pre_abort_sha(&primary.server_dir, &tid).as_deref(),
-        Some(foreign_tip.as_str()),
-        "rail 1 must capture the target-side tip under the -target id despite the refusal"
-    );
-    assert!(
-        pre_abort_sha(&ww.server_dir, op_id).is_some(),
-        "the owner side gets its own capture under the base op id"
-    );
+    assert_eq!(refs_under(&primary.server_dir, BACKUP), vec![]);
+    assert_eq!(refs_under(&primary.server_dir, PRE_ABORT), vec![]);
     assert!(
         ww.root.join(".rwv-op").exists(),
         "owner record must be retained on a foreign-tip refusal"
@@ -302,13 +292,12 @@ fn sync_to_abort_refuses_target_side_foreign_tip_without_the_flag() {
 // ---------------------------------------------------------------------------
 
 /// One consent, foreign tips on BOTH copies of the named repo: both are
-/// abandoned, and each side's abandoned tip is captured under that side's
-/// reference — owner under `<op-id>`, target under `<op-id>-target` — in the
-/// one shared refdb. If the namespaces were collapsed, the second side's
-/// capture would be first-write-wins'd into the first side's, and the
-/// abandon would move a branch off a tip its own reference never held.
+/// abandoned, and each side's abandoned tip is kept as a backup named for that
+/// side's own branch — the owner's `ww/main`, the target's `main` — in the one
+/// shared refdb. If the sides were confused, one side's branch would be moved
+/// off a tip no backup of its own held.
 #[test]
-fn sync_to_abandon_covers_both_copies_under_side_specific_refs() {
+fn sync_to_abandon_covers_both_copies_with_a_backup_each() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww) = make_shared_workspaces(tmp.path());
     let op_id = "sync-to-abandon-both";
@@ -353,25 +342,17 @@ fn sync_to_abandon_covers_both_copies_under_side_specific_refs() {
         primary_server_sp,
         "target-side branch must be restored to the target-side savepoint"
     );
+    let owner_backup = backup_of(&ww.server_dir, "ww/main", &src_foreign)
+        .expect("the owner-side tip is kept under the owner's branch");
+    let target_backup = backup_of(&primary.server_dir, "main", &tgt_foreign)
+        .expect("the target-side tip is kept under the target's branch");
+    assert_ne!(owner_backup, target_backup);
     assert_eq!(
-        pre_abort_sha(&ww.server_dir, op_id).as_deref(),
-        Some(src_foreign.as_str()),
-        "the owner-side abandoned tip must be captured under the base op id"
+        refs_under(&primary.server_dir, BACKUP).len(),
+        2,
+        "one backup per side, and nothing else"
     );
-    assert_eq!(
-        pre_abort_sha(&primary.server_dir, &target_restore_id(op_id)).as_deref(),
-        Some(tgt_foreign.as_str()),
-        "the target-side abandoned tip must be captured under the -target id"
-    );
-    for sha in [&src_foreign, &tgt_foreign] {
-        assert!(
-            try_git(
-                &["cat-file", "-e", &format!("{sha}^{{commit}}")],
-                &primary.server_dir,
-            ),
-            "abandoned commit {sha} must survive the abort"
-        );
-    }
+    assert_eq!(refs_under(&primary.server_dir, PRE_ABORT), vec![]);
     assert!(
         !ww.root.join(".rwv-op").exists(),
         "owner record must be cleared by a clean abort"
@@ -422,7 +403,7 @@ fn sync_to_abandon_consent_does_not_reach_an_unnamed_repo_on_the_target_side() {
         "the named repo's target-side branch must be restored"
     );
     assert!(
-        stderr.contains("[target] (project): foreign-tip violation"),
+        stderr.contains("[target] projects/web-app: foreign-tip violation"),
         "the unnamed repo's target-side refusal must stand.\nstderr:\n{stderr}"
     );
     assert_eq!(
@@ -434,166 +415,77 @@ fn sync_to_abandon_consent_does_not_reach_an_unnamed_repo_on_the_target_side() {
         ww.root.join(".rwv-op").exists(),
         "owner record must be retained while any repo refused"
     );
-}
-
-// ---------------------------------------------------------------------------
-// Capture-advance along ancestry, target side
-// ---------------------------------------------------------------------------
-
-/// The first-write-wins-along-divergence advance works on the target side's
-/// `-target` reference: refusal captures f1, the foreign agent commits f2 on
-/// top, and the consented re-run advances the capture to f2 and abandons —
-/// with f1 still reachable through the advanced target-side reference.
-#[test]
-fn sync_to_abandon_advances_target_side_capture_along_ancestry() {
-    let tmp = common::tempdir().unwrap();
-    let (primary, ww) = make_shared_workspaces(tmp.path());
-    let op_id = "sync-to-abandon-advance";
-
-    let (_, primary_server_sp) = plant_crashed_sync_to(&primary, &ww, op_id);
-    let first_foreign = make_commit(&primary.server_dir, "f1.txt", "f1\n", "foreign: first");
-
-    rwv()
-        .arg("abort")
-        .current_dir(&ww.root)
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("foreign-tip"));
-    let tid = target_restore_id(op_id);
     assert_eq!(
-        pre_abort_sha(&primary.server_dir, &tid).as_deref(),
-        Some(first_foreign.as_str()),
-        "run 1 must capture the target-side foreign tip under the -target id"
-    );
-
-    let second_foreign = make_commit(&primary.server_dir, "f2.txt", "f2\n", "foreign: second");
-
-    rwv()
-        .arg("abort")
-        .arg(format!("--abandon-foreign-tip={SERVER_PATH}"))
-        .current_dir(&ww.root)
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(format!(
-            "[target] {SERVER_PATH}: restored (abandoned foreign tip"
-        )));
-
-    assert_eq!(
-        common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
-        primary_server_sp,
-        "the target-side branch must be restored to its savepoint"
-    );
-    assert_eq!(
-        pre_abort_sha(&primary.server_dir, &tid).as_deref(),
-        Some(second_foreign.as_str()),
-        "the target-side capture must have advanced to the observed tip"
-    );
-    assert!(
-        try_git(
-            &[
-                "merge-base",
-                "--is-ancestor",
-                &first_foreign,
-                &pre_abort_ref_name(&tid),
-            ],
-            &primary.server_dir,
-        ),
-        "the original capture must remain reachable through the advanced target-side ref"
-    );
-    assert!(
-        !ww.root.join(".rwv-op").exists() && !primary.root.join(".rwv-op-lease").exists(),
-        "op-state must be cleared on both sides after the clean abort"
+        refs_under(&primary.project_dir, BACKUP),
+        vec![],
+        "the unnamed repo's tip was not abandoned, so nothing was kept for it"
     );
 }
 
 // ---------------------------------------------------------------------------
-// Diverged capture still refuses, target side
+// A foreign agent that keeps going between a refusal and the consented rerun
 // ---------------------------------------------------------------------------
 
-/// A diverged target-side capture (foreign reset off the captured tip, then
-/// a different line of work) refuses under consent, naming the DIVERGENCE
-/// and the reconcile-by-hand path — same refusal the one-workspace shape
-/// gives, keyed on the `-target` reference.
+/// Consent applies to the target-side tip as it stands when abort runs: after
+/// a refusal the foreign agent commits on top, or resets and does something
+/// else, and the rerun keeps the tip it finds as a backup under the target's
+/// branch.
 #[test]
-fn sync_to_abandon_refuses_diverged_target_side_capture() {
-    let tmp = common::tempdir().unwrap();
-    let (primary, ww) = make_shared_workspaces(tmp.path());
-    let op_id = "sync-to-abandon-diverge";
+fn sync_to_abandon_keeps_the_target_side_tip_as_it_stands() {
+    for (n, diverge) in [false, true].into_iter().enumerate() {
+        let tmp = common::tempdir().unwrap();
+        let (primary, ww) = make_shared_workspaces(tmp.path());
+        let op_id = format!("sync-to-abandon-rerun-{n}");
 
-    let (_, primary_server_sp) = plant_crashed_sync_to(&primary, &ww, op_id);
-    let first_foreign = make_commit(&primary.server_dir, "f1.txt", "f1\n", "foreign: first");
+        let (_, primary_server_sp) = plant_crashed_sync_to(&primary, &ww, &op_id);
+        let first = make_commit(&primary.server_dir, "f1.txt", "f1\n", "foreign: first");
 
-    rwv()
-        .arg("abort")
-        .current_dir(&ww.root)
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("foreign-tip"));
-    let tid = target_restore_id(op_id);
-    assert_eq!(
-        pre_abort_sha(&primary.server_dir, &tid).as_deref(),
-        Some(first_foreign.as_str()),
-    );
+        rwv()
+            .arg("abort")
+            .current_dir(&ww.root)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("foreign-tip"));
+        assert_eq!(refs_under(&primary.server_dir, BACKUP), vec![]);
 
-    common::git_in(
-        &primary.server_dir,
-        &["reset", "--hard", &primary_server_sp],
-    );
-    let diverged_foreign = make_commit(&primary.server_dir, "d1.txt", "d1\n", "foreign: diverged");
-    assert!(
-        !try_git(
-            &[
-                "merge-base",
-                "--is-ancestor",
-                &first_foreign,
-                &diverged_foreign,
-            ],
-            &primary.server_dir,
-        ),
-        "fixture invariant: the captured tip must not be an ancestor of the diverged tip"
-    );
+        if diverge {
+            common::git_in(
+                &primary.server_dir,
+                &["reset", "--hard", &primary_server_sp],
+            );
+        }
+        let latest = make_commit(&primary.server_dir, "f2.txt", "f2\n", "foreign: second");
+        assert_eq!(
+            try_git(
+                &["merge-base", "--is-ancestor", &first, &latest],
+                &primary.server_dir
+            ),
+            !diverge,
+            "fixture: the first foreign tip is an ancestor of the latest only when not diverged"
+        );
 
-    let output = rwv()
-        .arg("abort")
-        .arg(format!("--abandon-foreign-tip={SERVER_PATH}"))
-        .current_dir(&ww.root)
-        .assert()
-        .failure()
-        .get_output()
-        .clone();
-    let stderr = String::from_utf8_lossy(&output.stderr);
+        rwv()
+            .arg("abort")
+            .arg(format!("--abandon-foreign-tip={SERVER_PATH}"))
+            .current_dir(&ww.root)
+            .assert()
+            .success()
+            .stdout(predicate::str::contains(format!(
+                "[target] {SERVER_PATH}: restored (abandoned foreign tip"
+            )));
 
-    assert_eq!(
-        common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
-        diverged_foreign,
-        "a diverged capture must not become consent to move the target-side branch"
-    );
-    assert_eq!(
-        pre_abort_sha(&primary.server_dir, &tid).as_deref(),
-        Some(first_foreign.as_str()),
-        "the diverged target-side capture must not be advanced"
-    );
-    let consent_line = stderr
-        .lines()
-        .find(|line| line.contains("--abandon-foreign-tip named this repo"))
-        .unwrap_or_else(|| {
-            panic!("a refusal that arrives despite consent must say why.\nstderr:\n{stderr}")
-        });
-    assert!(
-        consent_line.contains("DIVERGED"),
-        "the refusal must name the divergence.\nconsent line: {consent_line}"
-    );
-    assert!(
-        consent_line.contains(&first_foreign),
-        "the refusal must name the diverged capture so the operator can locate it.\n\
-         consent line: {consent_line}"
-    );
-    assert!(
-        stderr.contains("to proceed:") && stderr.contains("reconcile"),
-        "the refusal must name the reconcile-by-hand path.\nstderr:\n{stderr}"
-    );
-    assert!(
-        ww.root.join(".rwv-op").exists(),
-        "owner record must be retained on this refusal"
-    );
+        assert_eq!(
+            common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
+            primary_server_sp,
+            "the target-side branch must be restored to its savepoint"
+        );
+        assert!(
+            backup_of(&primary.server_dir, "main", &latest).is_some(),
+            "diverge={diverge}: the tip as it stood is kept"
+        );
+        assert!(
+            !ww.root.join(".rwv-op").exists() && !primary.root.join(".rwv-op-lease").exists(),
+            "op-state must be cleared on both sides after the clean abort"
+        );
+    }
 }

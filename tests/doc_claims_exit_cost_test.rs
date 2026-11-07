@@ -2,9 +2,9 @@
 //! give leaves plain standalone clones, with exactly two traces: a
 //! `reference` member's tracked files without write bits, and the recovery
 //! refs under `refs/rwv/`. The list is closed, so this drives a weave
-//! through a workweave, an aborted `sync-to` and a landed one, leaves by
-//! those steps, and compares each clone with a fresh `git clone` of the same
-//! upstream.
+//! through a workweave, an aborted `sync-to`, a landed one and a workweave
+//! given up with its unmerged commits, leaves by those steps, and compares
+//! each clone with a fresh `git clone` of the same upstream.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -138,6 +138,29 @@ fn leaving_rwv_by_the_documented_steps_leaves_only_the_two_named_traces() {
     succeed(&seat, &["sync-to"]);
     succeed(&ws, &["workweave", "delete", "--project", PROJECT, "s1"]);
 
+    succeed(&ws, &["workweave", "create", "--project", PROJECT, "s2"]);
+    let given_up = tmp
+        .path()
+        .join(".workweaves")
+        .join(format!("{PROJECT}--s2"));
+    commit_file(
+        &common::under(&given_up, LIB),
+        "e.txt",
+        "given up\n",
+        "s2: lib",
+    );
+    succeed(
+        &ws,
+        &[
+            "workweave",
+            "delete",
+            "--project",
+            PROJECT,
+            "s2",
+            "--discard-unmerged-commits",
+        ],
+    );
+
     std::fs::remove_dir_all(ws.join("projects")).unwrap();
     std::fs::remove_file(ws.join(".rwv-active")).unwrap();
     for entry in std::fs::read_dir(&ws).unwrap() {
@@ -201,6 +224,6 @@ fn leaving_rwv_by_the_documented_steps_leaves_only_the_two_named_traces() {
     }
     assert!(
         recovery_refs > 0,
-        "the abort must leave its recovery ref, or the second trace is untested"
+        "the given-up workweave must leave its backup, or the second trace is untested"
     );
 }

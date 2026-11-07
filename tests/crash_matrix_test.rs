@@ -342,11 +342,22 @@ fn plant_savepoint_at(repo: &Path, op_id: &str, sha: &str) {
 }
 
 /// `sync-to` plants two savepoint refs per worktree pair: `<id>` on the
-/// owner/source side, `<id>-target` on the target side. The pre-abort ref
-/// uses `<id>` for the owner side and `<id>-target` for target — matching
+/// owner/source side, `<id>-target` on the target side — matching
 /// `restore_id_for` in `src/sync.rs`.
 fn target_op_id(op_id: &str) -> String {
     format!("{op_id}-target")
+}
+
+/// A refused abort moved nothing, so it wrote no pre-abort ref and kept no
+/// backup.
+fn assert_no_abort_refs(repo: &Path) {
+    for prefix in ["refs/rwv/pre-abort", "refs/rwv/backup"] {
+        assert_eq!(
+            common::git_in(repo, &["for-each-ref", prefix]),
+            "",
+            "a refused abort leaves nothing under {prefix}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1605,14 +1616,8 @@ fn cell_j_advance_target_sync_to_foreign_tip_abort_refuses() {
         "target lease must be retained on foreign-tip refusal"
     );
 
-    // Pre-abort ref must have been written before the refusal.
-    assert!(
-        ref_exists(
-            &primary.server_dir,
-            &format!("refs/rwv/pre-abort/{target_id}")
-        ),
-        "pre-abort ref must be written before the refusal (information-preserving rail)"
-    );
+    // The refusal moved nothing, so it keeps nothing.
+    assert_no_abort_refs(&primary.server_dir);
 }
 
 // ===========================================================================
@@ -2431,13 +2436,13 @@ fn cell_advanced_tips_rebase_captured_project_at_t1_abort_restores() {
 // T1 is not in {savepoint, mid-op, advanced_tips, converged_tips} → foreign.
 //
 // Abort: project head = T1 → ForeignTip refusal. Nonzero exit, op-state
-//        retained, pre-abort ref written. Asserts the documented floor (§6).
+//        retained, no ref written. Asserts the documented floor (§6).
 // ---------------------------------------------------------------------------
 
 /// Cell 4 (§8.4): rebase one-write window — project at T1 but
 /// advanced_tips[(project)] absent. T1 is foreign from abort's perspective.
-/// Asserts the documented floor: nonzero exit, op-state retained, pre-abort
-/// ref present, tip unchanged.
+/// Asserts the documented floor: nonzero exit, op-state retained, no ref
+/// written, tip unchanged.
 #[test]
 fn cell_advanced_tips_one_write_window_project_at_t1_abort_refuses() {
     let tmp = common::tempdir().unwrap();
@@ -2504,11 +2509,7 @@ fn cell_advanced_tips_one_write_window_project_at_t1_abort_refuses() {
         ww.root.join(".rwv-op").exists(),
         "[cell4] owner record must be retained on foreign-tip refusal"
     );
-    // Pre-abort ref must be present (information-preserving rail).
-    assert!(
-        ref_exists(&ww.project_dir, &format!("refs/rwv/pre-abort/{op_id}")),
-        "[cell4] pre-abort ref must be written before the refusal"
-    );
+    assert_no_abort_refs(&ww.project_dir);
 }
 
 // ---------------------------------------------------------------------------
@@ -2699,11 +2700,7 @@ fn cell_advanced_tips_mixed_foreign_server_refuses_intent_project_restores() {
         ww.root.join(".rwv-op").exists(),
         "[cell6] owner record must be retained when a foreign-tip refusal occurs"
     );
-    // Pre-abort ref written for the server (information-preserving rail).
-    assert!(
-        ref_exists(&ww.server_dir, &format!("refs/rwv/pre-abort/{op_id}")),
-        "[cell6] pre-abort ref must be written for the foreign repo"
-    );
+    assert_no_abort_refs(&ww.server_dir);
 }
 
 // ---------------------------------------------------------------------------

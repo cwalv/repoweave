@@ -130,11 +130,12 @@ fn the_op_lease_is_syncs_tool_and_not_a_verb_surface_mutex() {
 /// Every module that takes the advisory check, so a docstring never has to
 /// carry the list.
 ///
-/// Four came with the check; `activate.rs` holds the two `materialize` and
-/// `activate_with_options` added, which is why it is the only entry with a
-/// count above one.
-const ADVISORY_REFUSAL_SITES: [(&str, usize); 5] = [
+/// A module with more than one site holds a verb per site: `activate.rs`
+/// the two `materialize` and `activate_with_options` added, `backup.rs` the
+/// two backup verbs that write.
+const ADVISORY_REFUSAL_SITES: [(&str, usize); 6] = [
     ("activate.rs", 2),
+    ("backup.rs", 2),
     ("check.rs", 1),
     ("lock.rs", 1),
     ("update.rs", 1),

@@ -91,6 +91,7 @@ pub(crate) fn tempdir() -> std::io::Result<tempfile::TempDir> {
 mod stdout;
 pub mod activate;
 pub mod add_remove;
+pub mod backup;
 pub mod check;
 pub mod cli;
 pub mod diagnosis;

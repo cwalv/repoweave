@@ -4,12 +4,13 @@ use crate::op_state::SavepointKey;
 use crate::path_spelling::CanonicalPath;
 use crate::registry::CloneUrl;
 use crate::vcs::{
-    CommitId, CommitSummary, ConflictOp, ContentIdentity, DerivedContentPolicy,
-    DerivedContentResolution, DiffBeyond, DiscardOutcome, Force, ForeignTipPolicy, HeadAttachment,
-    HeadObservation, LocalRefName, MidOperation, PreAbortRef, PublishRef, RangeListing, RawRefName,
-    RawRevisionId, RecordedSubmodule, RefOrigin, RegistrationPrune, RemoteBranchCopies,
-    RemoteDefaultBranch, RemoteRef, ReplayExclusionState, ResolvedEndpoint, ResolvedRevisionId,
-    SavepointListing, SubmoduleBirth, SubmoduleCheckout, TrackedFile, TrackedFileKind, Vcs,
+    Backup, BackupMark, BackupName, BackupSource, BranchTip, CommitId, CommitSummary, ConflictOp,
+    ContentIdentity, DerivedContentPolicy, DerivedContentResolution, DiffBeyond, DiscardOutcome,
+    Force, ForeignTipPolicy, HeadAttachment, HeadObservation, ListedBackup, LocalRefName,
+    MidOperation, PublishRef, RangeListing, RawRefName, RawRevisionId, RecordedSubmodule,
+    RefOrigin, RegistrationPrune, RemoteBranchCopies, RemoteDefaultBranch, RemoteRef,
+    RemoteTracking, ReplayExclusionState, ResolvedEndpoint, ResolvedRevisionId, SavepointListing,
+    SubmoduleBirth, SubmoduleCheckout, TrackedFile, TrackedFileKind, UnconfirmedRemote, Vcs,
     VcsAction, VcsError, VerifiedRestoreOutcome, WorkspacePopulation,
 };
 use std::borrow::Cow;
@@ -19,6 +20,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 mod argv;
+mod backup;
 
 use argv::{Argv, GitArg, GitCommand, NotUtf8};
 
@@ -1455,14 +1457,13 @@ fn is_revision_not_found(stderr: &str) -> bool {
 /// symbolic name. Mirrors the ref-spaces rwv uses for its own bookkeeping —
 /// `savepoint/*` (operator/tool savepoints), `rwv/pre-op/*` (sync abort
 /// recovery refs under `refs/rwv/pre-op/*` when surfaced as tag names),
-/// and `rwv/pre-abort/*` (pre-abort recovery refs under
-/// `refs/rwv/pre-abort/*`).
+/// and `rwv/backup/*` (backups under `refs/rwv/backup/*`).
 fn is_transient_tag(tag: &str) -> bool {
     tag.starts_with("savepoint/")
         || tag.starts_with("rwv/pre-op/")
         || tag.starts_with("refs/rwv/pre-op/")
-        || tag.starts_with("rwv/pre-abort/")
-        || tag.starts_with("refs/rwv/pre-abort/")
+        || tag.starts_with("rwv/backup/")
+        || tag.starts_with("refs/rwv/backup/")
         || tag.starts_with("rwv-savepoint/")
 }
 
@@ -2294,47 +2295,6 @@ impl Vcs for GitVcs {
         let _ = Self::run(["update-ref", "-d", &ref_name], repo);
     }
 
-    fn create_pre_abort_ref(
-        &self,
-        repo: &Path,
-        key: &SavepointKey,
-        foreign_tip_policy: ForeignTipPolicy,
-    ) -> Result<PreAbortRef, VcsError> {
-        // First write wins, narrowed to first-write-wins-along-divergence:
-        // an existing capture is returned unchanged EXCEPT when the operator
-        // has consented to abandoning a foreign tip AND the existing capture
-        // is an ancestor of HEAD. Ancestry keeps the earlier capture
-        // reachable from the new one, so advancing the ref cannot orphan
-        // any commit the ref was the only witness to — the rationale that
-        // motivates first-write-wins is preserved verbatim. A diverged
-        // capture (foreign rebase/reset) is returned unchanged; the shipped
-        // guard in `verified_restore_savepoint` then refuses the abandon.
-        let head = self.head_revision(repo)?;
-        let label = pre_abort_ref(key);
-        if let Some(existing) = self.resolve_pre_abort_ref(repo, key) {
-            let should_advance = foreign_tip_policy == ForeignTipPolicy::Abandon
-                && existing.revision.id() != head.id()
-                && self.is_ancestor(repo, &existing.revision, &head)?;
-            if !should_advance {
-                return Ok(existing);
-            }
-        }
-        Self::run(["update-ref", &label, head.id().as_str()], repo)?;
-        Ok(PreAbortRef {
-            label,
-            revision: head,
-        })
-    }
-
-    fn resolve_pre_abort_ref(&self, repo: &Path, key: &SavepointKey) -> Option<PreAbortRef> {
-        let label = pre_abort_ref(key);
-        let canonical = Self::run_trimmed(["rev-parse", &label], repo).ok()?;
-        Some(PreAbortRef {
-            revision: ResolvedRevisionId::from_rev_parse_output(&canonical)?,
-            label,
-        })
-    }
-
     fn verified_restore_savepoint(
         &self,
         repo: &Path,
@@ -2368,8 +2328,7 @@ impl Vcs for GitVcs {
 
         if head_id == savepoint.id() {
             // Untouched — restore is a no-op. Still drop the savepoint so
-            // abort's cleanup leaves no stale refs (matches restore_savepoint's
-            // post-condition; the pre-abort ref preserves the tip regardless).
+            // abort's cleanup leaves no stale refs.
             self.drop_savepoint(repo, key);
             return Ok(VerifiedRestoreOutcome::Untouched);
         }
@@ -2399,30 +2358,12 @@ impl Vcs for GitVcs {
             }
         }
 
-        // Foreign tip: refuse to reset. The caller writes a pre-abort ref for
-        // every repo before calling this, so a reference exists — but which
-        // tip it holds is a separate question, answered below. The label is
-        // surfaced either way so the refusal message can name it.
-        let resolved_pre_abort = self.resolve_pre_abort_ref(repo, key);
-        let pre_abort = resolved_pre_abort.clone().unwrap_or_else(|| {
-            // Should not happen: run_abort writes the pre-abort ref before
-            // every verified_restore_savepoint call. Synthesize a label so
-            // the refusal still names a recovery anchor.
-            PreAbortRef {
-                label: pre_abort_ref(key),
-                revision: head.clone(),
-            }
-        });
-
-        // Consent widens the classification only where the tip about to be
-        // moved off is already named by a reference that outlives the move.
-        // `create_pre_abort_ref` is first-write-wins, so a re-run can hand
-        // back a reference holding an earlier tip; resetting then would drop
-        // the commits between it and HEAD with nothing left pointing at them.
-        let captured_by_pre_abort_ref = resolved_pre_abort
-            .as_ref()
-            .is_some_and(|r| r.revision.id() == head_id);
-        if foreign_tip_policy == ForeignTipPolicy::Abandon && captured_by_pre_abort_ref {
+        // Foreign tip: the reset is refused unless the operator named this
+        // repo, and then only after the tip is kept as a backup, so the
+        // consent buys moving off the commits and never losing them.
+        if foreign_tip_policy == ForeignTipPolicy::Abandon {
+            let source = self.head_backup_source(repo)?;
+            let backup = self.create_backup(repo, &source, &head, Some(BackupMark::Abandoned))?;
             return self.reset_and_drop_savepoint(
                 repo,
                 key,
@@ -2430,7 +2371,7 @@ impl Vcs for GitVcs {
                 VerifiedRestoreOutcome::AbandonedForeignTip {
                     abandoned_tip: head_id.clone(),
                     savepoint: savepoint.id().clone(),
-                    pre_abort_ref: pre_abort,
+                    backup,
                 },
             );
         }
@@ -2439,7 +2380,6 @@ impl Vcs for GitVcs {
             observed_tip: head_id.clone(),
             savepoint: savepoint.id().clone(),
             recorded_converged_tip: recorded_converged_tip.cloned(),
-            pre_abort_ref: pre_abort,
         })
     }
 
@@ -2774,6 +2714,58 @@ impl Vcs for GitVcs {
         )?;
         Self::run(["reset", "--quiet"], checkout)?;
         Ok(())
+    }
+
+    fn write_backup(
+        &self,
+        repo: &Path,
+        source: &BackupSource,
+        tip: &ResolvedRevisionId,
+        mark: Option<BackupMark>,
+    ) -> Result<Backup, VcsError> {
+        Self::write_backup_ref(repo, source, tip, mark)
+    }
+
+    fn list_backups(
+        &self,
+        repo: &Path,
+        remote_tracking: RemoteTracking,
+    ) -> Result<Vec<ListedBackup>, VcsError> {
+        Self::backups(repo, remote_tracking)
+    }
+
+    fn drop_backup(&self, repo: &Path, name: &BackupName) -> Result<(), VcsError> {
+        Self::drop_backup_ref(repo, name)
+    }
+
+    fn left_unreached_by_dropping(
+        &self,
+        repo: &Path,
+        commits: &[CommitId],
+        dropping: &[BackupName],
+    ) -> Result<Vec<CommitId>, VcsError> {
+        self.unreached_without(repo, commits, dropping)
+    }
+
+    fn reached_by_no_branch(
+        &self,
+        repo: &Path,
+        tip: &ResolvedRevisionId,
+        remote_tracking: RemoteTracking,
+    ) -> Result<Vec<CommitSummary>, VcsError> {
+        Self::commits_reached_by_no_branch(&Self::work_dir_for_store(repo), tip, remote_tracking)
+    }
+
+    fn snapshot_edits(&self, repo: &Path) -> Result<Option<ResolvedRevisionId>, VcsError> {
+        Self::snapshot_working_tree(repo)
+    }
+
+    fn branch_tips(&self, repo: &Path) -> Result<Vec<BranchTip>, VcsError> {
+        Self::branch_tip_listing(repo)
+    }
+
+    fn fetch_pruning(&self, repo: &Path) -> Result<Vec<UnconfirmedRemote>, VcsError> {
+        Self::fetch_every_remote_pruning(repo)
     }
 
     fn list_savepoints(&self, repo: &Path) -> Result<SavepointListing, VcsError> {
@@ -3241,15 +3233,8 @@ fn savepoint_ref(key: &SavepointKey) -> String {
     format!("{SAVEPOINT_NAMESPACE}/{key}")
 }
 
-/// Build the pre-abort ref path for `key` under the rwv pre-abort namespace.
-///
-/// The namespacing (`refs/rwv/pre-abort/<key>`) is a git impl detail —
-/// callers of the [`Vcs`] trait receive a [`PreAbortRef`] whose `label`
-/// carries this string for recovery hints, but never spell the ref
-/// directly. Centralizing the format here keeps create / resolve in sync.
-fn pre_abort_ref(key: &SavepointKey) -> String {
-    format!("refs/rwv/pre-abort/{key}")
-}
+/// The ref namespace backups live under.
+const BACKUP_NAMESPACE: &str = "refs/rwv/backup";
 
 impl GitVcs {
     /// Reset `repo` to `savepoint` via `git reset --hard`, drop the savepoint
@@ -4707,12 +4692,12 @@ mod branch_model_tests {
     }
 
     #[test]
-    fn an_unmerged_ref_is_destroyed_only_on_the_operator_s_say_so() {
+    fn an_unmerged_ref_is_destroyed_only_on_the_operator_s_say_so_and_kept_as_a_backup() {
         let store = repo();
         let base = GitVcs.head_revision(store.path()).unwrap();
         git(store.path(), &["branch", "p--ww"]);
         git(store.path(), &["checkout", "p--ww"]);
-        commit(store.path(), "unmerged-work");
+        let work = commit(store.path(), "unmerged-work");
         git(store.path(), &["checkout", "main"]);
         let r = receipt(store.path(), "p--ww", &base);
 
@@ -4723,11 +4708,59 @@ mod branch_model_tests {
 
         // The named override is the only remaining route, and it is a
         // token the operator has to have produced.
-        let warrant = DeletionWarrant::operator_discarded(DiscardUnmergedConsent::granted());
+        let warrant =
+            DeletionWarrant::operator_discarded(&GitVcs, &r, DiscardUnmergedConsent::granted())
+                .unwrap();
+        let kept = warrant
+            .backup()
+            .expect("rests on a backup")
+            .backup()
+            .clone();
         GitVcs.delete_owned_ref(&r, warrant).unwrap();
         assert!(GitVcs
             .resolve_local_branch_tip(store.path(), &RawRefName::new("p--ww"))
             .unwrap()
+            .is_none());
+
+        assert_eq!(kept.tip, work);
+        let listed = GitVcs
+            .list_backups(store.path(), RemoteTracking::Counted)
+            .unwrap();
+        assert_eq!(
+            listed.iter().map(|l| &l.backup).collect::<Vec<_>>(),
+            vec![&kept],
+            "the discarded tip stays reachable through the backup the warrant rests on"
+        );
+        assert_eq!(
+            listed[0]
+                .held
+                .iter()
+                .map(|c| c.id.clone())
+                .collect::<Vec<_>>(),
+            vec![work.id().clone()]
+        );
+    }
+
+    #[test]
+    fn a_warrant_says_which_check_licensed_the_destroy() {
+        let store = repo();
+        let base = GitVcs.head_revision(store.path()).unwrap();
+        git(store.path(), &["branch", "p--ww"]);
+        let r = receipt(store.path(), "p--ww", &base);
+
+        let discarded =
+            DeletionWarrant::operator_discarded(&GitVcs, &r, DiscardUnmergedConsent::granted())
+                .unwrap();
+        assert_eq!(
+            discarded.describe(),
+            format!(
+                "operator passed --discard-unmerged-commits; kept as backup {}",
+                discarded.backup().unwrap().backup().name
+            )
+        );
+        assert!(DeletionWarrant::unmoved(&GitVcs, &r)
+            .unwrap()
+            .backup()
             .is_none());
     }
 
@@ -5097,14 +5130,11 @@ mod branch_model_tests {
     }
 
     #[test]
-    fn savepoint_and_pre_abort_refs_keep_their_names_on_both_sides() {
+    fn savepoint_refs_keep_their_names_on_both_sides() {
         let p = repo();
         let head = GitVcs.head_revision(p.path()).unwrap();
         for (key, leaf) in both_sides("1779769917405921588") {
             GitVcs.create_savepoint(p.path(), &key).unwrap();
-            GitVcs
-                .create_pre_abort_ref(p.path(), &key, ForeignTipPolicy::Refuse)
-                .unwrap();
 
             assert_eq!(
                 git(p.path(), &["rev-parse", &format!("refs/rwv/pre-op/{leaf}")]),
@@ -5113,17 +5143,6 @@ mod branch_model_tests {
             assert_eq!(
                 GitVcs.savepoint_label(&key),
                 format!("refs/rwv/pre-op/{leaf}")
-            );
-            assert_eq!(
-                git(
-                    p.path(),
-                    &["rev-parse", &format!("refs/rwv/pre-abort/{leaf}")]
-                ),
-                head.id().as_str()
-            );
-            assert_eq!(
-                GitVcs.resolve_pre_abort_ref(p.path(), &key).unwrap().label,
-                format!("refs/rwv/pre-abort/{leaf}")
             );
         }
     }

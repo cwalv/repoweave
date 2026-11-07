@@ -26,6 +26,7 @@ src/add_remove.rs	unknown-registry	-	1
 src/add_remove.rs	unresolvable-repo-source	tests/project_and_source_spelling_test.rs	1
 src/add_remove.rs	unspellable-directory-name	tests/adopt_unspellable_directory_name_test.rs	1
 src/add_remove.rs	unusable-creation-param	tests/refusal_arrival_test.rs	10
+src/backup.rs	pin would be unreachable	tests/backup_verb_test.rs	1
 src/bin/rwv-each/select.rs	(untokened:plugin)	-	6
 src/check.rs	repair-target-changed	-	5
 src/check.rs	unknown-finding-kind	-	1
@@ -98,9 +99,10 @@ src/sync.rs	checkout in a raw worktree	tests/refusal_arrival_test.rs	1
 src/sync.rs	checkout in another workspace	tests/refusal_arrival_test.rs	1
 src/sync.rs	clone-topology	-	1
 src/sync.rs	dangling-parent	-	1
-src/sync.rs	dropped-repo-has-unique-commits	-	3
+src/sync.rs	dropped-repo-has-unique-commits	tests/backup_verb_test.rs	5
 src/sync.rs	edits dirty	tests/refusal_arrival_test.rs	1
 src/sync.rs	foreign-tip	-	1
+src/sync.rs	inapplicable-flag	tests/project_and_source_spelling_test.rs	1
 src/sync.rs	head-not-on-branch	-	5
 src/sync.rs	missing-replay-exclusion	-	4
 src/sync.rs	no-op-recorded	tests/refusal_arrival_test.rs	1

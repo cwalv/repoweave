@@ -261,12 +261,12 @@ fn a_record_whose_header_parses_is_discarded_by_the_abort_its_error_names() {
     let stderr = stderr_of(&out);
     assert!(!out.status.success(), "{}", transcript(&out));
     assert!(
-        stderr.contains("  (project): foreign-tip violation"),
+        stderr.contains("  projects/app: foreign-tip violation"),
         "with its recorded tip unreadable, the replayed project repo is foreign:\n{}",
         transcript(&out)
     );
     assert!(
-        stderr.contains("`rwv abort --abandon-foreign-tip=<repo>`"),
+        stderr.contains("`rwv abort --abandon-foreign-tip <repo>`"),
         "the refusal must name the flag that settles it:\n{}",
         transcript(&out)
     );
@@ -277,7 +277,7 @@ fn a_record_whose_header_parses_is_discarded_by_the_abort_its_error_names() {
 
     succeed(
         &parked.seat.root,
-        &["abort", "--abandon-foreign-tip=(project)"],
+        &["abort", "--abandon-foreign-tip=projects/app"],
     );
 
     assert_no_op_residue(&parked);

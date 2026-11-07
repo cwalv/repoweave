@@ -16,7 +16,9 @@
 use crate::activate;
 use crate::add_remove;
 use crate::check;
-use crate::cli::{consent, Cli, Commands, MemberAction, SetupAction, WorkweaveAction};
+use crate::cli::{
+    consent, BackupAction, Cli, Commands, MemberAction, SetupAction, WorkweaveAction,
+};
 use crate::explain;
 use crate::fetch;
 use crate::init;
@@ -1067,6 +1069,30 @@ pub fn run() -> anyhow::Result<()> {
                 &crate::cli::consent::AbandonForeignTipConsent::from_flag(&abandon_foreign_tip),
             )?;
         }
+        Some(Commands::Backup { action }) => match action {
+            BackupAction::List { json, project } => {
+                let project_override =
+                    project.map(crate::manifest::ProjectName::new).transpose()?;
+                let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+                crate::backup::run_list(&ctx, OutputMode::from_flag(json))?;
+            }
+            BackupAction::Drop {
+                repo,
+                names,
+                project,
+            } => {
+                let project_override =
+                    project.map(crate::manifest::ProjectName::new).transpose()?;
+                let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+                crate::backup::run_drop(&ctx, &repo, &names)?;
+            }
+            BackupAction::Prune { project } => {
+                let project_override =
+                    project.map(crate::manifest::ProjectName::new).transpose()?;
+                let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+                crate::backup::run_prune(&ctx)?;
+            }
+        },
         Some(Commands::Sync {
             source,
             strategy,

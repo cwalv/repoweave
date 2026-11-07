@@ -226,7 +226,7 @@ fn abort_restores_both_workspaces(from: Invoked) {
         Invoked::Workweave => "",
     };
     for line in [
-        format!("  {seat_label}(project): restored (from recorded intent tip)"),
+        format!("  {seat_label}projects/{PROJECT}: restored (from recorded intent tip)"),
         format!("  {seat_label}{LIB}: restored (from mid-op state)"),
     ] {
         assert!(
@@ -275,7 +275,7 @@ fn target_at_the_seats_journaled_tip_is_foreign(from: Invoked) {
         Invoked::Workweave => "[target] ",
     };
     let stderr = String::from_utf8_lossy(&out.stderr);
-    let refusal = format!("  {target_label}(project): foreign-tip violation");
+    let refusal = format!("  {target_label}projects/{PROJECT}: foreign-tip violation");
     assert!(
         stderr.lines().any(|l| l.starts_with(&refusal)),
         "{from:?}: expected {refusal:?}\n{}",

@@ -301,9 +301,15 @@ pub enum Commands {
     // ── Multi-workspace ops ───────────────────────────────────────────────────
     /// Roll an in-flight sync or sync-to back to its savepoints in every workspace it touched, run from any of them
     Abort {
-        /// Consent to restoring THIS repo over a foreign tip — commits the operation did not create, which abort otherwise refuses to move the branch off. Name the repo as abort's own output does (its workspace-relative path, or `(project)`); repeat the flag per repo. There is deliberately no all-repos form. The abandoned commits stay reachable through the pre-abort ref, which abort writes before it moves anything; where that ref does not already hold the tip, abort refuses even with this flag rather than destroy it.
+        /// Consent to restoring THIS repo over a foreign tip — commits the operation did not create, which abort otherwise refuses to move the branch off. Name the repo as abort's own output does (its workspace-relative path, or `projects/<name>` for the project repo); repeat the flag per repo. There is deliberately no all-repos form. The abandoned commits are first kept as an `abandoned` backup, which `rwv backup list` shows and `rwv backup drop` drops.
         #[arg(long = "abandon-foreign-tip", value_name = "REPO")]
-        abandon_foreign_tip: Vec<crate::manifest::RepoKey>,
+        abandon_foreign_tip: Vec<crate::manifest::RepoOperand>,
+    },
+    /// List, drop or prune the backups rwv keeps before any step that would leave a commit or an edit unpreserved
+    #[command(arg_required_else_help = true)]
+    Backup {
+        #[command(subcommand)]
+        action: BackupAction,
     },
     /// Bring another workspace's committed state into this one (pull/align; use `rwv sync-to` to land work upward)
     ///
@@ -506,6 +512,35 @@ pub enum Commands {
     // repeated flags, and anything else the plugin needs verbatim.
     #[command(external_subcommand)]
     External(Vec<OsString>),
+}
+
+#[derive(Subcommand)]
+pub enum BackupAction {
+    /// List each repo's backups, marking redundant, `rebased` and `abandoned` ones, each with the commits only it holds
+    List {
+        /// Emit one `{ "$schema": ..., "repos": [...] }` JSON envelope. See `rwv explain backup`.
+        #[arg(long)]
+        json: bool,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
+    },
+    /// Drop the named backups of one repo, or all of that repo's, printing each tip. Refused where it would leave a commit some project's live lock pins reached by no branch, remote-tracking branch or backup
+    Drop {
+        /// The repo: its workspace-relative path, or `projects/<name>` for the project repo
+        repo: crate::manifest::RepoOperand,
+        /// Backups to drop, as `rwv backup list` names them; none drops every backup of the repo
+        names: Vec<String>,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
+    },
+    /// Fetch every remote of every repo with pruning, then drop each backup a branch or remote-tracking branch reaches in full. Refused where it would leave a live pin unreachable
+    Prune {
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]

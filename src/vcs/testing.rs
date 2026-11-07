@@ -550,19 +550,6 @@ impl Vcs for FakeVcs {
         unsupported("drop_savepoint")
     }
 
-    fn create_pre_abort_ref(
-        &self,
-        _repo: &Path,
-        _key: &SavepointKey,
-        _foreign_tip_policy: ForeignTipPolicy,
-    ) -> Result<PreAbortRef, VcsError> {
-        unsupported("create_pre_abort_ref")
-    }
-
-    fn resolve_pre_abort_ref(&self, _repo: &Path, _key: &SavepointKey) -> Option<PreAbortRef> {
-        unsupported("resolve_pre_abort_ref")
-    }
-
     fn verified_restore_savepoint(
         &self,
         _repo: &Path,
@@ -572,6 +559,58 @@ impl Vcs for FakeVcs {
         _foreign_tip_policy: ForeignTipPolicy,
     ) -> Result<VerifiedRestoreOutcome, VcsError> {
         unsupported("verified_restore_savepoint")
+    }
+
+    fn write_backup(
+        &self,
+        _repo: &Path,
+        _source: &BackupSource,
+        _tip: &ResolvedRevisionId,
+        _mark: Option<BackupMark>,
+    ) -> Result<Backup, VcsError> {
+        unsupported("write_backup")
+    }
+
+    fn list_backups(
+        &self,
+        _repo: &Path,
+        _remote_tracking: RemoteTracking,
+    ) -> Result<Vec<ListedBackup>, VcsError> {
+        unsupported("list_backups")
+    }
+
+    fn drop_backup(&self, _repo: &Path, _name: &BackupName) -> Result<(), VcsError> {
+        unsupported("drop_backup")
+    }
+
+    fn left_unreached_by_dropping(
+        &self,
+        _repo: &Path,
+        _commits: &[CommitId],
+        _dropping: &[BackupName],
+    ) -> Result<Vec<CommitId>, VcsError> {
+        unsupported("left_unreached_by_dropping")
+    }
+
+    fn reached_by_no_branch(
+        &self,
+        _repo: &Path,
+        _tip: &ResolvedRevisionId,
+        _remote_tracking: RemoteTracking,
+    ) -> Result<Vec<CommitSummary>, VcsError> {
+        unsupported("reached_by_no_branch")
+    }
+
+    fn snapshot_edits(&self, _repo: &Path) -> Result<Option<ResolvedRevisionId>, VcsError> {
+        unsupported("snapshot_edits")
+    }
+
+    fn branch_tips(&self, _repo: &Path) -> Result<Vec<BranchTip>, VcsError> {
+        unsupported("branch_tips")
+    }
+
+    fn fetch_pruning(&self, _repo: &Path) -> Result<Vec<UnconfirmedRemote>, VcsError> {
+        unsupported("fetch_pruning")
     }
 
     fn cancel_in_flight_op(&self, _repo: &Path) {

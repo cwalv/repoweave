@@ -7,6 +7,7 @@ use crate::integration::Integration;
 use crate::registry::RegistryName;
 use crate::state_file::{StateFile, StatePath};
 use crate::vcs::{RawRevisionId, ResolvedRevisionId, TrackingRef};
+use crate::workspace::PROJECTS_DIR;
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -282,35 +283,90 @@ impl schemars::JsonSchema for RepoKey {
     }
 }
 
+/// A repo as an operator names it on a flag or an argument: a member's
+/// workspace-relative path, or `projects/<name>` for the project repo `<name>`
+/// is the project of.
+///
+/// Unlike a [`RepoKey`], which says "the project repo" of whatever op it is
+/// read in, an operand names which project's repo it means, so a flag aimed at
+/// another project's repo is refused rather than read as this one's.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum RepoOperand {
+    Project(ProjectName),
+    Member(RepoPath),
+}
+
+impl RepoOperand {
+    /// The operand that names `key` in the op of `project`.
+    pub fn of(key: &RepoKey, project: &ProjectName) -> Self {
+        match key {
+            RepoKey::Project => Self::Project(project.clone()),
+            RepoKey::Member(path) => Self::Member(path.clone()),
+        }
+    }
+
+    /// The project this operand names the repo of, if it names a project's repo.
+    pub fn project(&self) -> Option<&ProjectName> {
+        match self {
+            Self::Project(name) => Some(name),
+            Self::Member(_) => None,
+        }
+    }
+}
+
+impl fmt::Display for RepoOperand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Project(name) => write!(f, "{PROJECTS_DIR}/{name}"),
+            Self::Member(path) => f.write_str(path.as_str()),
+        }
+    }
+}
+
 /// Text that names no repo.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RepoKeyError;
+pub struct RepoOperandError {
+    text: String,
+}
 
-impl fmt::Display for RepoKeyError {
+impl fmt::Display for RepoOperandError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "a repo is named by its workspace-relative path, or `{PROJECT_REPO_SPELLING}` for the \
-             project repo; got nothing"
+            "a repo is named by its workspace-relative path, or `{PROJECTS_DIR}/<name>` for a \
+             project repo; got `{}`",
+            self.text
         )
     }
 }
 
-impl std::error::Error for RepoKeyError {}
+impl std::error::Error for RepoOperandError {}
 
-impl FromStr for RepoKey {
-    type Err = RepoKeyError;
+impl FromStr for RepoOperand {
+    type Err = RepoOperandError;
 
     /// A repo as an operator types it. A shell's completion routinely prefixes
     /// `./` and appends a separator, and a Windows shell writes the separators
     /// as `\`; all of that names the same repo as the bare path.
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let refused = || RepoOperandError { text: s.to_owned() };
         let slashed = s.trim().replace('\\', "/");
         let bare = slashed.trim_start_matches("./").trim_end_matches('/');
         if bare.is_empty() {
-            return Err(RepoKeyError);
+            return Err(refused());
         }
-        Self::from_record_text(bare).map_err(|_| RepoKeyError)
+        match bare
+            .strip_prefix(PROJECTS_DIR)
+            .and_then(|rest| rest.strip_prefix('/'))
+        {
+            Some(name) => ProjectName::new(name)
+                .map(Self::Project)
+                .map_err(|_| refused()),
+            None => match RepoKey::from_record_text(bare) {
+                Ok(RepoKey::Member(path)) => Ok(Self::Member(path)),
+                Ok(RepoKey::Project) | Err(_) => Err(refused()),
+            },
+        }
     }
 }
 
@@ -2459,23 +2515,69 @@ mod tests {
             "  ./github/o/r  ",
         ] {
             assert_eq!(
-                spelling.parse::<RepoKey>().unwrap(),
-                member("github/o/r"),
+                spelling.parse::<RepoOperand>().unwrap(),
+                RepoOperand::Member(RepoPath::new("github/o/r").unwrap()),
                 "{spelling:?}"
             );
         }
-        assert_eq!("(project)".parse::<RepoKey>().unwrap(), RepoKey::Project);
-        assert_eq!(" (project) ".parse::<RepoKey>().unwrap(), RepoKey::Project);
+    }
+
+    #[test]
+    fn the_project_repo_is_named_by_its_directory() {
+        let web = ProjectName::new("web").unwrap();
+        for spelling in ["projects/web", "./projects/web/", " projects\\web "] {
+            assert_eq!(
+                spelling.parse::<RepoOperand>().unwrap(),
+                RepoOperand::Project(web.clone()),
+                "{spelling:?}"
+            );
+        }
+        assert_eq!(
+            "projects/org/app".parse::<RepoOperand>().unwrap(),
+            RepoOperand::Project(ProjectName::new("org/app").unwrap()),
+            "a project name may nest"
+        );
+        assert_eq!(RepoOperand::Project(web).to_string(), "projects/web");
+    }
+
+    #[test]
+    fn an_operand_names_the_project_it_means() {
+        let web = ProjectName::new("web").unwrap();
+        let other = ProjectName::new("other").unwrap();
+        assert_eq!(
+            RepoOperand::of(&RepoKey::Project, &web),
+            RepoOperand::Project(web.clone())
+        );
+        assert_ne!(
+            RepoOperand::of(&RepoKey::Project, &web),
+            RepoOperand::of(&RepoKey::Project, &other),
+            "another project's repo is not this one's"
+        );
+        assert_eq!(
+            RepoOperand::of(&member("github/o/r"), &web),
+            RepoOperand::of(&member("github/o/r"), &other),
+            "a member is the same repo in every project"
+        );
+    }
+
+    #[test]
+    fn the_record_spelling_of_the_project_repo_is_no_operand() {
+        assert!("(project)".parse::<RepoOperand>().is_err());
     }
 
     #[test]
     fn an_operator_spelling_that_names_nothing_is_refused() {
-        for spelling in ["", "  ", "./", "/", ".\\", "\\"] {
-            assert_eq!(
-                spelling.parse::<RepoKey>(),
-                Err(RepoKeyError),
-                "{spelling:?}"
-            );
+        for spelling in ["", "  ", "./", "/", ".\\", "\\", "projects"] {
+            let parsed = spelling.parse::<RepoOperand>();
+            if spelling == "projects" {
+                assert_eq!(
+                    parsed.unwrap(),
+                    RepoOperand::Member(RepoPath::new("projects").unwrap()),
+                    "a member directory may be called projects"
+                );
+            } else {
+                assert!(parsed.is_err(), "{spelling:?}");
+            }
         }
     }
 

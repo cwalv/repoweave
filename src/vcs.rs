@@ -152,7 +152,7 @@ impl ResolvedRevisionId {
     /// Returns `None` when `s` is not a canonical commit id, so a value
     /// obtained this way is canonical by construction rather than by
     /// assertion. Callers resolving a fully-qualified ref (a savepoint, a
-    /// pre-abort reference) use this instead of re-running the value
+    /// backup) use this instead of re-running the value
     /// through [`Vcs::resolve_revision`]: it costs no extra VCS
     /// invocation and, unlike the assertion it replaces, it actually runs
     /// the check.
@@ -881,48 +881,28 @@ impl std::error::Error for VcsError {
     }
 }
 
-/// A pre-abort reference: the durable record of a repo's tip captured by
-/// [`Vcs::create_pre_abort_ref`] just before `rwv abort` restores it.
-///
-/// `label` is an operator-spellable, VCS-native name for the reference
-/// (e.g. for git: `refs/rwv/pre-abort/<op-id>`). The label is the recovery
-/// hint surfaced in abort output so an operator can locate the pre-abort
-/// tip and undo the abort. `revision` is the captured tip itself.
-///
-/// Information-preserving doctrine: pre-abort refs are written before any
-/// restore and never deleted by abort's cleanup — abort is itself
-/// undoable, and the pre-abort ref is the cheapest path back.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PreAbortRef {
-    /// VCS-native, operator-spellable name of the reference (impl detail
-    /// of the underlying VCS, surfaced for recovery hints only).
-    pub label: String,
-    /// The captured pre-abort tip.
-    pub revision: ResolvedRevisionId,
-}
-
 /// Whether a caller has consented to restoring over a foreign tip.
 ///
 /// A foreign tip is one [`Vcs::verified_restore_savepoint`] cannot attribute
 /// to the op. [`Self::Refuse`] is the default everywhere; [`Self::Abandon`]
 /// is reached only from an operator flag naming one repo at a time, and even
-/// then the restore proceeds only when the pre-abort reference already holds
-/// the tip being moved off — the consent buys abandonment, never destruction.
+/// then the restore proceeds only after the tip being moved off is kept as an
+/// `abandoned` backup — the consent buys abandonment, never destruction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ForeignTipPolicy {
     /// Report [`VerifiedRestoreOutcome::ForeignTip`] and leave HEAD alone.
     Refuse,
-    /// Restore to the savepoint anyway, provided the foreign tip is already
-    /// captured by the pre-abort reference.
+    /// Keep the foreign tip as an `abandoned` backup, then restore to the
+    /// savepoint.
     Abandon,
 }
 
 /// Outcome of a [`Vcs::verified_restore_savepoint`] call.
 ///
 /// Encodes the classification of the repo's current tip *before* any
-/// restore happened, plus what (if anything) was restored. Foreign tips
-/// are reported with a named violation and the pre-abort reference so the
-/// caller can decline the destructive action and surface recovery hints.
+/// restore happened, plus what (if anything) was restored. A foreign tip is
+/// reported with a named violation so the caller can decline the destructive
+/// action and surface recovery hints.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VerifiedRestoreOutcome {
     /// No savepoint exists for the key in this repo. Nothing to do.
@@ -936,8 +916,8 @@ pub enum VerifiedRestoreOutcome {
     RestoredFromConverged,
     /// The current tip equals the op's recorded intent tip for this repo
     /// (from the owner record's `advanced_tips` map). The op advanced
-    /// the repo during replay before crashing; the repo was reset back
-    /// to the savepoint. Exact-match only — no heuristic.
+    /// the repo during replay before crashing; the repo was reset back to
+    /// the savepoint. Exact-match only — no heuristic.
     RestoredFromIntent,
     /// The repo was in a VCS-native mid-op state (rebase/merge/cherry-
     /// pick). The mid-op was canceled and the repo was reset back to
@@ -945,8 +925,9 @@ pub enum VerifiedRestoreOutcome {
     RestoredFromMidOp,
     /// The repo's tip is not attributable to the op — it is neither the
     /// savepoint, nor the recorded converged tip, nor a mid-op state.
-    /// Restore was REFUSED. The caller is expected to report the
-    /// violation and continue with other repos; do not silently reset.
+    /// Restore was REFUSED and the tip left where it is. The caller is
+    /// expected to report the violation and continue with other repos; do
+    /// not silently reset.
     ForeignTip {
         /// The repo's current tip at the moment of classification.
         observed_tip: CommitId,
@@ -956,30 +937,144 @@ pub enum VerifiedRestoreOutcome {
         /// if any. `None` when the op crashed before relock recorded any
         /// converged tips, or when no entry exists for this repo.
         recorded_converged_tip: Option<CommitId>,
-        /// The pre-abort reference that already captured `observed_tip`
-        /// (written by [`Vcs::create_pre_abort_ref`] before this call).
-        /// Surfaced in the refusal so operators can locate the tip if it
-        /// is later determined safe to keep.
-        ///
-        /// First-write-wins means a re-run can return a reference holding an
-        /// EARLIER tip than `observed_tip`; a caller that passed
-        /// [`ForeignTipPolicy::Abandon`] and still received this variant can
-        /// tell the two apart by comparing `revision` against `observed_tip`.
-        pre_abort_ref: PreAbortRef,
     },
     /// The repo's tip was foreign, the caller consented via
-    /// [`ForeignTipPolicy::Abandon`], and the pre-abort reference already
-    /// held that tip — so the repo was reset back to the savepoint and the
-    /// foreign commits remain reachable through `pre_abort_ref`.
+    /// [`ForeignTipPolicy::Abandon`], and the tip was kept as an `abandoned`
+    /// backup — so the repo was reset back to the savepoint and the foreign
+    /// commits remain reachable through `backup`.
     AbandonedForeignTip {
-        /// The foreign tip the branch was moved off, now named only by
-        /// `pre_abort_ref`.
+        /// The foreign tip the branch was moved off.
         abandoned_tip: CommitId,
         /// The savepoint the repo was reset to.
         savepoint: CommitId,
-        /// The reference the abandoned tip stays reachable through.
-        pre_abort_ref: PreAbortRef,
+        /// The backup holding the abandoned tip.
+        backup: BackupWitness,
     },
+}
+
+// ===========================================================================
+// Backups
+// ===========================================================================
+//
+// A backup is a ref an rwv verb makes before any step that would leave a
+// commit or an edit unpreserved. It is named for the branch it backs up and
+// an id, listed and dropped by name, and counts as a ref that reaches its
+// commits wherever the design asks whether something is preserved. How a
+// backend spells one is its own business: core holds [`BackupName`]s it was
+// handed and never composes one.
+
+/// What a backup says about the step that made it. An ordinary backup says
+/// nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum BackupMark {
+    /// Made before a rebase rewrote the branch.
+    Rebased,
+    /// The tip `rwv abort --abandon-foreign-tip` gave up.
+    Abandoned,
+}
+
+/// What a backup backs up.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BackupSource {
+    /// A branch's tip, or the edits made on it.
+    Branch(RawRefName),
+    /// What a detached HEAD held, or the edits made on it.
+    DetachedHead,
+}
+
+/// The name a backup is listed and dropped by: the branch it backs up and an
+/// id, in the backend's spelling.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BackupName(String);
+
+impl BackupName {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self(name.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for BackupName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// A backup a repo holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Backup {
+    pub name: BackupName,
+    pub tip: ResolvedRevisionId,
+    pub mark: Option<BackupMark>,
+}
+
+/// A backup and the commits it keeps that nothing else does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ListedBackup {
+    pub backup: Backup,
+    /// The commits it reaches that no branch reaches, newest first.
+    pub held: Vec<CommitSummary>,
+}
+
+impl ListedBackup {
+    /// A branch reaches everything the backup holds, so dropping it loses
+    /// nothing.
+    pub fn redundant(&self) -> bool {
+        self.held.is_empty()
+    }
+}
+
+/// Which branches count as reaching a commit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteTracking {
+    /// Local branches and remote-tracking branches, as last fetched.
+    Counted,
+    /// Local branches only: the remote-tracking branches are not known to be
+    /// current.
+    Ignored,
+}
+
+/// A remote a pruning fetch could not complete.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnconfirmedRemote {
+    pub remote: String,
+    pub cause: String,
+}
+
+/// A branch of a repo and where it stands, local or remote-tracking.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchTip {
+    /// The branch as the backend spells it for an operator.
+    pub label: String,
+    pub tip: ResolvedRevisionId,
+}
+
+/// Proof that a backup has been written.
+///
+/// Minted only by [`Vcs::create_backup`], whose body is in this module — so a
+/// value of this type is proof the ref exists on disk, not a claim that one
+/// will be written. [`DeletionWarrant::operator_discarded`] takes the proof
+/// by running the backup itself, which is what makes a discard without one
+/// unrepresentable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackupWitness {
+    repo: PathBuf,
+    backup: Backup,
+}
+
+impl BackupWitness {
+    /// The repo holding the backup.
+    pub fn repo(&self) -> &Path {
+        &self.repo
+    }
+
+    pub fn backup(&self) -> &Backup {
+        &self.backup
+    }
 }
 
 // ===========================================================================
@@ -1992,8 +2087,11 @@ enum WarrantKind {
     Unmoved { recorded_tip: ResolvedRevisionId },
     /// The ref's tip is an ancestor of a named baseline.
     Merged { baseline: ResolvedRevisionId },
+    /// The ref's tip was kept as a backup before the operator's named
+    /// override discarded it.
+    BackedUp { backup: BackupWitness },
     /// The operator passed the named override that consents to this loss.
-    OperatorDiscarded,
+    OperatorAdopted,
 }
 
 impl DeletionWarrant {
@@ -2023,15 +2121,32 @@ impl DeletionWarrant {
             }))
     }
 
-    /// The operator passed `--discard-unmerged-commits`. No check to run —
-    /// the consent *is* the warrant, and the token proves it was given.
+    /// The operator passed `--discard-unmerged-commits`: the ref's tip is
+    /// kept as a backup, and the warrant rests on that backup.
     ///
     /// `consent` is not otherwise inspected: its field is private to
     /// `cli::consent`, so this module (a different one) cannot even
-    /// destructure it. Holding a value of the type is the whole proof.
-    pub fn operator_discarded(consent: DiscardUnmergedConsent) -> Self {
+    /// destructure it. Holding a value of the type is the proof of the
+    /// operator's say-so; the backup is what makes the loss none.
+    pub fn operator_discarded(
+        vcs: &dyn Vcs,
+        r: &OwnedRef,
+        consent: DiscardUnmergedConsent,
+    ) -> Result<Self, VcsError> {
         let _ = consent;
-        Self(WarrantKind::OperatorDiscarded)
+        let tip = vcs
+            .resolve_local_branch_tip(r.store(), r.name())?
+            .ok_or_else(|| VcsError::RevisionNotFound {
+                repo: r.store().to_path_buf(),
+                rev: r.name().as_str().to_owned(),
+            })?;
+        let backup = vcs.create_backup(
+            r.store(),
+            &BackupSource::Branch(r.name().clone()),
+            &tip,
+            None,
+        )?;
+        Ok(Self(WarrantKind::BackedUp { backup }))
     }
 
     /// The operator passed `--adopt-detached-checkouts`, the consent for
@@ -2046,7 +2161,17 @@ impl DeletionWarrant {
     /// records only that the operator asked for it.
     pub fn adopt_detached(consent: AdoptDetachedConsent) -> Self {
         let _ = consent;
-        Self(WarrantKind::OperatorDiscarded)
+        Self(WarrantKind::OperatorAdopted)
+    }
+
+    /// The backup this warrant rests on, when it rests on one.
+    pub fn backup(&self) -> Option<&BackupWitness> {
+        match &self.0 {
+            WarrantKind::BackedUp { backup } => Some(backup),
+            WarrantKind::Unmoved { .. }
+            | WarrantKind::Merged { .. }
+            | WarrantKind::OperatorAdopted => None,
+        }
     }
 
     /// One line naming which warrant this is and what it rests on, for
@@ -2062,9 +2187,13 @@ impl DeletionWarrant {
             WarrantKind::Merged { baseline } => {
                 format!("merged into {}", baseline.display_str())
             }
-            WarrantKind::OperatorDiscarded => {
-                "operator passed --discard-unmerged-commits".to_owned()
+            WarrantKind::BackedUp { backup } => {
+                format!(
+                    "operator passed --discard-unmerged-commits; kept as backup {}",
+                    backup.backup().name
+                )
             }
+            WarrantKind::OperatorAdopted => "operator passed --adopt-detached-checkouts".to_owned(),
         }
     }
 }
@@ -2831,7 +2960,7 @@ pub trait Vcs: Send + Sync {
 
     /// The operator-spellable, VCS-native name of the savepoint reference
     /// filed under `key`, for recovery hints that must name a resolvable
-    /// reference. The [`PreAbortRef::label`] of the savepoint side.
+    /// reference.
     ///
     /// For git: `refs/rwv/pre-op/<key>`.
     fn savepoint_label(&self, key: &SavepointKey) -> String;
@@ -2852,50 +2981,6 @@ pub trait Vcs: Send + Sync {
     /// no such savepoint exists; ignores ref-update failures (the
     /// savepoint is purely a recovery aid — its absence is benign).
     fn drop_savepoint(&self, repo: &Path, key: &SavepointKey);
-
-    /// Capture `repo`'s current tip in a durable pre-abort reference
-    /// keyed by `key`, returning the captured tip and the operator-
-    /// spellable label of the reference.
-    ///
-    /// For git: writes
-    /// `refs/rwv/pre-abort/<key>` pointing at `HEAD`. The ref namespace
-    /// is a VCS impl detail — callers receive the [`PreAbortRef`] back
-    /// with `label` containing the spellable name for refusal messages.
-    ///
-    /// **Information-preserving contract:** `rwv abort` calls this for
-    /// EVERY repo it is about to restore, BEFORE any restore is attempted.
-    /// The reference is NEVER deleted by abort's cleanup — abort is
-    /// itself undoable, and the pre-abort ref is the cheapest recovery
-    /// path. (`rwv doctor` may garbage-collect these refs once their op
-    /// is provably no longer referenced; abort itself does not.)
-    ///
-    /// **First write wins, narrowed to first-write-wins-along-divergence.**
-    /// If a pre-abort reference already exists for this `key`, it is
-    /// returned unchanged in all cases EXCEPT one: under
-    /// [`ForeignTipPolicy::Abandon`], if the existing capture is an
-    /// ancestor of `HEAD`, it is ADVANCED to `HEAD`. Ancestry guarantees
-    /// the earlier capture stays reachable from the new one, so no commit
-    /// held only by the reference is lost — the first-write-wins rationale
-    /// (never orphan the original capture) is preserved verbatim. A
-    /// diverged capture (foreign rebase/reset — genuinely something new to
-    /// lose) is still returned unchanged, and the shipped guard in
-    /// [`Vcs::verified_restore_savepoint`] refuses the abandon.
-    fn create_pre_abort_ref(
-        &self,
-        repo: &Path,
-        key: &SavepointKey,
-        foreign_tip_policy: ForeignTipPolicy,
-    ) -> Result<PreAbortRef, VcsError>;
-
-    /// Resolve the pre-abort reference captured under `key` in `repo`,
-    /// returning `None` when no such reference exists.
-    ///
-    /// For git: reads
-    /// `refs/rwv/pre-abort/<key>`.
-    ///
-    /// Used by tests and recovery tooling to verify that abort wrote the
-    /// pre-abort ref and to locate the captured tip.
-    fn resolve_pre_abort_ref(&self, repo: &Path, key: &SavepointKey) -> Option<PreAbortRef>;
 
     /// HEAD-verified restore: classify the repo's current tip and restore
     /// to the savepoint ONLY when the tip is attributable to the op.
@@ -2920,13 +3005,10 @@ pub trait Vcs: Send + Sync {
     ///   of attributable states.
     ///
     /// `foreign_tip_policy` widens that last case and nothing else. Under
-    /// [`ForeignTipPolicy::Abandon`] a foreign tip is restored over and
-    /// reported as [`VerifiedRestoreOutcome::AbandonedForeignTip`] — but
-    /// only when [`Vcs::resolve_pre_abort_ref`] already resolves to exactly
-    /// the observed tip. Where it does not, the outcome is
-    /// [`VerifiedRestoreOutcome::ForeignTip`] as if no consent had been
-    /// given: moving off a tip nothing else names is destruction, which no
-    /// flag on this call can authorize.
+    /// [`ForeignTipPolicy::Abandon`] a foreign tip is first kept as an
+    /// `abandoned` backup, then restored over, and reported as
+    /// [`VerifiedRestoreOutcome::AbandonedForeignTip`] carrying the backup.
+    /// The consent never buys a restore over a tip nothing else names.
     ///
     /// `recorded_intent_tip` is the SHA the owner record's `advanced_tips`
     /// map holds for this repo (written at replay entry), or `None` when no
@@ -3896,6 +3978,121 @@ pub trait Vcs: Send + Sync {
         })
     }
 
+    // ---- backups ----------------------------------------------------------
+
+    /// Write the backup of `tip` for `source`, and return it.
+    ///
+    /// Idempotent: backing up a tip already held under the same source and
+    /// mark names the backup that exists. A caller that must hold proof goes
+    /// through [`create_backup`], which is the only producer of one.
+    ///
+    /// [`create_backup`]: Vcs::create_backup
+    fn write_backup(
+        &self,
+        repo: &Path,
+        source: &BackupSource,
+        tip: &ResolvedRevisionId,
+        mark: Option<BackupMark>,
+    ) -> Result<Backup, VcsError>;
+
+    /// Write a backup and return **proof it exists**.
+    ///
+    /// Provided: this body is the only place a [`BackupWitness`] is
+    /// constructed, so the type cannot be minted for a backup that was only
+    /// planned.
+    fn create_backup(
+        &self,
+        repo: &Path,
+        source: &BackupSource,
+        tip: &ResolvedRevisionId,
+        mark: Option<BackupMark>,
+    ) -> Result<BackupWitness, VcsError> {
+        let backup = self.write_backup(repo, source, tip, mark)?;
+        Ok(BackupWitness {
+            repo: repo.to_path_buf(),
+            backup,
+        })
+    }
+
+    /// Every backup `repo` holds, with the commits each keeps that no branch
+    /// reaches. `remote_tracking` says whether remote-tracking branches count
+    /// as reaching them.
+    fn list_backups(
+        &self,
+        repo: &Path,
+        remote_tracking: RemoteTracking,
+    ) -> Result<Vec<ListedBackup>, VcsError>;
+
+    /// Drop the backup `name`. The pin rule is the caller's to apply first.
+    fn drop_backup(&self, repo: &Path, name: &BackupName) -> Result<(), VcsError>;
+
+    /// Of `commits`, those that no branch, remote-tracking branch or backup
+    /// other than `dropping` reaches. A commit `repo` does not have is not
+    /// one: dropping a backup cannot unreach it.
+    fn left_unreached_by_dropping(
+        &self,
+        repo: &Path,
+        commits: &[CommitId],
+        dropping: &[BackupName],
+    ) -> Result<Vec<CommitId>, VcsError>;
+
+    /// The commits `tip` reaches that no branch reaches, newest first.
+    fn reached_by_no_branch(
+        &self,
+        repo: &Path,
+        tip: &ResolvedRevisionId,
+        remote_tracking: RemoteTracking,
+    ) -> Result<Vec<CommitSummary>, VcsError>;
+
+    /// A commit on HEAD holding `repo`'s uncommitted edits as the working
+    /// tree stands (untracked files included, ignored ones not), referenced
+    /// by nothing; `None` when the checkout is clean. The checkout is not
+    /// touched.
+    fn snapshot_edits(&self, repo: &Path) -> Result<Option<ResolvedRevisionId>, VcsError>;
+
+    /// Keep `repo`'s uncommitted edits as a backup before anything discards
+    /// them; `None` when there are none.
+    fn backup_edits(&self, repo: &Path) -> Result<Option<BackupWitness>, VcsError> {
+        let Some(snapshot) = self.snapshot_edits(repo)? else {
+            return Ok(None);
+        };
+        let source = self.head_backup_source(repo)?;
+        self.create_backup(repo, &source, &snapshot, None).map(Some)
+    }
+
+    /// Keep what a detached HEAD holds as a backup when no branch reaches it;
+    /// `None` when HEAD is attached or a branch holds its commits.
+    fn backup_unpreserved_head(&self, repo: &Path) -> Result<Option<BackupWitness>, VcsError> {
+        let HeadObservation::Detached { at } = self.observe_head(repo)? else {
+            return Ok(None);
+        };
+        if self
+            .reached_by_no_branch(repo, &at, RemoteTracking::Counted)?
+            .is_empty()
+        {
+            return Ok(None);
+        }
+        self.create_backup(repo, &BackupSource::DetachedHead, &at, None)
+            .map(Some)
+    }
+
+    /// What a backup of `repo`'s HEAD is a backup of.
+    fn head_backup_source(&self, repo: &Path) -> Result<BackupSource, VcsError> {
+        Ok(match self.observe_head(repo)? {
+            HeadObservation::Attached { name } | HeadObservation::Unborn { name } => {
+                BackupSource::Branch(name)
+            }
+            HeadObservation::Detached { .. } => BackupSource::DetachedHead,
+        })
+    }
+
+    /// Every local and remote-tracking branch of `repo` with its tip.
+    fn branch_tips(&self, repo: &Path) -> Result<Vec<BranchTip>, VcsError>;
+
+    /// Fetch every remote of `repo`, pruning the remote-tracking branches a
+    /// remote no longer has; the remotes it could not complete.
+    fn fetch_pruning(&self, repo: &Path) -> Result<Vec<UnconfirmedRemote>, VcsError>;
+
     // ---- population -------------------------------------------------------
 
     /// The population questions, when this backend answers them.
@@ -4217,12 +4414,6 @@ mod tests {
         };
         assert!(owned.is_attached_by(&same));
         assert!(!owned.is_attached_by(&other));
-    }
-
-    #[test]
-    fn a_warrant_says_which_check_licensed_the_destroy() {
-        let w = DeletionWarrant::operator_discarded(DiscardUnmergedConsent::granted());
-        assert_eq!(w.describe(), "operator passed --discard-unmerged-commits");
     }
 
     // -----------------------------------------------------------------------

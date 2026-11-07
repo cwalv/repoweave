@@ -93,6 +93,7 @@ use clap::CommandFactory;
 use regex::Regex;
 use schemars::schema_for;
 
+use repoweave::backup::BackupJsonOutput;
 use repoweave::check::DoctorJsonOutput;
 use repoweave::cli::Cli;
 use repoweave::diagnosis::{RefusalJsonOutput, REFUSAL_SCHEMA_URL};
@@ -395,6 +396,11 @@ fn schema_push() -> String {
     serde_json::to_string_pretty(&schema).expect("push schema serializes")
 }
 
+fn schema_backup() -> String {
+    let schema = schema_for!(BackupJsonOutput);
+    serde_json::to_string_pretty(&schema).expect("backup schema serializes")
+}
+
 fn verbs() -> Vec<Verb> {
     vec![
         Verb {
@@ -456,6 +462,11 @@ fn verbs() -> Vec<Verb> {
             name: "abort",
             summary: "roll an in-flight sync or sync-to back to its savepoints, from either workspace it touched",
             schema: None,
+        },
+        Verb {
+            name: "backup",
+            summary: "list, drop or prune the backups kept before a step that would leave a commit or an edit unpreserved",
+            schema: Some(schema_backup),
         },
         Verb {
             name: "member",
@@ -4685,6 +4696,10 @@ fn main() -> anyhow::Result<()> {
     assert!(
         PUSH_SCHEMA_URL.ends_with("/docs/reference/schemas/push.json"),
         "PUSH_SCHEMA_URL no longer points at the committed artifact"
+    );
+    assert!(
+        repoweave::backup::BACKUP_SCHEMA_URL.ends_with("/docs/reference/schemas/backup.json"),
+        "BACKUP_SCHEMA_URL no longer points at the committed artifact"
     );
     assert!(
         REFUSAL_SCHEMA_URL.ends_with("/docs/reference/schemas/refusal.json"),

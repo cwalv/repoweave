@@ -29,14 +29,15 @@ Examples in the current tree:
 - `rwv workweave delete` checks every checkout under the workweave, a
   manifest member or not, for uncommitted changes and unmerged commits
   before removing the workweave directory. Both refusals fire with
-  actionable error messages.
+  actionable error messages. Its two override flags keep what they
+  consent to losing as a backup first (rule 3).
 - `rwv sync-to --retire` refuses to delete a workweave that still holds a
   checkout replay refused to prune (`retire-unpruned-checkout`), and its
   dirty check covers every checkout under the workweave the same way.
 - `rwv member remove --delete` refuses to delete a checkout with uncommitted
-  changes or commits no other clone reaches, and refuses to delete the
-  canonical store while another project's manifest still references the
-  repo.
+  changes or commits no other clone reaches, a backup holding such commits
+  included, and refuses to delete the canonical store while another
+  project's manifest still references the repo.
 - `rwv sync --discard-local-commits` Phase 1' discards commits only after the
   clean-project precondition has passed; the discarded commits remain
   recoverable via the `refs/rwv/pre-op/<op-id>` savepoint.
@@ -72,17 +73,15 @@ Each named override is narrow — it bypasses one named precondition at a
 time. It does not turn into "disable all checks" — each precondition
 that an override bypasses is enumerated at the call site.
 
-`abort --abandon-foreign-tip=<repo>` shows how narrow "narrow" is meant
+`abort --abandon-foreign-tip <repo>` shows how narrow "narrow" is meant
 to be. It waives one precondition (the tip must be attributable to the
 op) for one repo per occurrence, and has no all-repos form — whether a
 particular repo's foreign commits are expendable is a judgment about
 those commits, so a blanket spelling would answer it for repos the
 operator never looked at. It is also the case where rule 3 does the
-naming: the flag says *abandon*, not *discard*, because the pre-abort
-ref written before the move keeps the commits reachable. Where that ref
-does not already hold the tip in question, the override does not apply
-and the refusal stands — an override buys a waiver of the precondition
-it names, never of rule 3.
+naming: the flag says *abandon*, not *discard*, because the tip is kept
+as an `abandoned` backup before the branch moves off it. An override
+buys a waiver of the precondition it names, never of rule 3.
 
 `push --force` is the one exception to the naming rule: it is
 not a precondition waiver but a **mode switch** — git's own vocabulary
@@ -93,19 +92,47 @@ keeps git's name.
 ### 3. Discards stay recoverable
 
 Discard-by-design operations — `rwv abort`, `rwv sync --discard-local-commits`,
+`rwv workweave delete --discard-uncommitted` and `--discard-unmerged-commits`,
 ref surgery during phase replay — must keep what they discard
 recoverable where possible, and the operation's documentation must
-say where.
+say where. Two mechanisms do it, one per kind of discard.
 
-The mechanism is **named savepoints**: ref surgery operations write a
-`refs/rwv/pre-op/<op-id>` ref pointing at the pre-operation state before
-any destructive write — `refs/rwv/pre-op/<op-id>-target` in a `sync-to`
-target's repos, which share a ref store with the source's. The ref
-namespace is rwv-internal (no user ref ever lives under `refs/rwv/`); the
-ref is tied to a specific operation id; and `rwv abort` knows how to roll
-back to it. Abort holds itself to the same rule: before resetting a repo it
-writes `refs/rwv/pre-abort/<op-id>` (`-target` on the target side) at the
-tip it is about to move, and never deletes it.
+**Named savepoints** cover what an operation itself moves. Ref surgery
+operations write a `refs/rwv/pre-op/<op-id>` ref pointing at the
+pre-operation state before any destructive write —
+`refs/rwv/pre-op/<op-id>-target` in a `sync-to` target's repos, which
+share a ref store with the source's. The ref is tied to a specific
+operation id, and `rwv abort` knows how to roll back to it. A savepoint
+lasts one operation: abort restores a repo only over tips the operation
+itself made, so what it throws away is the operation's own output.
+
+**Backups** cover a discard the operator consents to. A backup is a ref
+an rwv verb makes before any step that would leave a commit or an
+uncommitted edit unpreserved — reached by no branch, no remote-tracking
+branch and no other backup. It lives under `refs/rwv/backup/<branch>/<id>`
+(`<branch>` is `HEAD` for a detached HEAD), outside every namespace a
+user ref lives in, and `rwv backup list` shows it with the commits only
+it holds. Three discards make one first:
+
+- `rwv workweave delete --discard-unmerged-commits` keeps each branch tip
+  it deletes, and what a detached HEAD holds that no branch reaches;
+- `rwv workweave delete --discard-uncommitted` keeps the edits of each
+  checkout as a commit on its HEAD (untracked files included, ignored
+  ones not), then the backup ref;
+- `rwv abort --abandon-foreign-tip <repo>` keeps the foreign tip, marked
+  `abandoned`.
+
+The backup is written first and the delete or the reset runs only once it
+exists: a backup that cannot be written stops the verb with nothing
+changed.
+
+A backup stays until it is dropped. `rwv backup drop <repo> [<name>...]`
+drops the named backups of one repo, or all of them, and `rwv backup
+prune` drops those a branch or remote-tracking branch reaches in full,
+after a pruning fetch. Both obey the **pin rule**: nothing is dropped
+that would leave a commit some project's live lock pins reached by no
+branch, no remote-tracking branch and no backup — in any project of the
+weave, not only the one the verb runs in. The refusal names the locks.
 
 Operations that *cannot* leave a recoverable artifact — e.g., disk
 removal of a fully unreferenced workweave directory after every
@@ -156,10 +183,14 @@ When a PR introduces a destructive call:
    allowed to bypass the precondition, the refusal output must list
    what would be lost, and the verb's clap-derive doc on that flag
    must describe what consent is being granted.
-3. **Add a savepoint if a roll-back is meaningful.** For ref surgery
-   and `git reset --hard` paths, write a `refs/rwv/pre-op/<op-id>`
-   ref before the destructive write. Wire the abort path to consume
-   it.
+3. **Add a savepoint or a backup.** For ref surgery and `git reset
+   --hard` paths an operation can be aborted out of, write a
+   `refs/rwv/pre-op/<op-id>` ref before the destructive write and wire
+   the abort path to consume it. For a discard the operator consents to,
+   make the backup first through `Vcs::create_backup` and take the
+   witness it returns: the proof that destroys a ref
+   (`DeletionWarrant::operator_discarded`) runs the backup itself, so a
+   discard without one does not build.
 4. **Update the allowlist.** Add an entry to `ALLOWLIST` in
    `tests/destructive_ops_audit_test.rs` with the file name, pattern,
    count, and a one-paragraph justification that names the
@@ -176,7 +207,8 @@ The reviewer's checklist mirrors the rules:
 - Does the refusal enumerate what would be lost?
 - If a named override bypasses the precondition, is the loss-list shown
   unconditionally before the bypass?
-- Is a savepoint written if the operation can be aborted?
+- Is a savepoint written if the operation can be aborted, and a backup
+  made first if the operator consents to the loss?
 - Is the allowlist entry concrete enough that a future contributor
   reading it can audit the site without re-deriving the policy?
 
@@ -208,3 +240,5 @@ call sites*.
   preconditions above.
 - [sync-semantics](./joints/sync-semantics.md) — the
   phase model that the `refs/rwv/pre-op/<op-id>` savepoint protects.
+- [`rwv backup`](../reference/cli.md#rwv-backup) — listing, dropping and
+  pruning backups.

@@ -588,8 +588,13 @@ now". Three warrants, and no others:
   and `retire_recorded_refs` (`workweave.rs:2421-2503`) establishes one per
   recorded ref against `baseline_tips_in_store` (`:2286-2302`) before any
   delete `[V]`.
-- **OperatorDiscarded** — the operator passed the named override that consents
-  to this specific loss.
+- **BackedUp** — the operator passed `--discard-unmerged-commits`, which
+  consents to this specific loss, *and* the ref's tip has been kept as a
+  backup (`refs/rwv/backup/<ref>/<id>`). `DeletionWarrant::operator_discarded`
+  takes the consent, the receipt and the `Vcs`, writes the backup through
+  `Vcs::create_backup` and holds the `BackupWitness` it returns, so a discard
+  with no backup behind it is unrepresentable. The loss the flag consents to is
+  the ref name; the commits stay reachable until `rwv backup drop`.
 
 **R4 — a DESTROY-STORE requires the store to be unclaimed.**
 
@@ -764,7 +769,7 @@ types.
   repo), `from_canonical` (`:46`, mint with a known SHA), and
   `from_rev_parse_output` (`:67`, mint from raw ref-resolution output,
   **verifying** the canonical form — added since this precedent was first
-  written, to give savepoint/pre-abort-ref resolution a real constructor
+  written, to give savepoint and backup resolution a real constructor
   instead of the escape hatch the next bullet used to name).
 - "There is no public way to mint a `ResolvedRevisionId` from a free string —
   the parse boundary lives in `RawRevisionId`."
@@ -1279,7 +1284,7 @@ lost its `granted()` outright, because no fixture needed one `[V]`.
 
 Two consent types shipped beyond this list, both needed by §7: 
 `DiscardUnmergedConsent` (`src/cli/consent.rs:105`, the `workweave delete`
-override R3's `OperatorDiscarded` warrant is minted from) and
+override R3's `BackedUp` warrant is minted from) and
 `AdoptDetachedConsent` (`src/cli/consent.rs:140`, §7.1 arms 3/5). A third,
 `DiscardLocalCommitsConsent`, lived in `vcs.rs` with a `pub(crate)` mint in
 `sync.rs`, because `sync --continue` must re-mint it from the persisted owner
@@ -1320,7 +1325,8 @@ pub struct DeletionWarrant(WarrantKind);            // field private
 enum WarrantKind {
     Unmoved { recorded_tip: ResolvedRevisionId },
     Merged { baseline: ResolvedRevisionId },
-    OperatorDiscarded,
+    BackedUp { backup: BackupWitness },
+    OperatorAdopted,
 }
 impl DeletionWarrant {
     /// Some(_) iff the ref's current tip equals the receipt's recorded tip.
@@ -1328,9 +1334,17 @@ impl DeletionWarrant {
     /// Some(_) iff the ref's tip is an ancestor of `baseline`.
     pub fn merged(vcs: &dyn Vcs, r: &OwnedRef,
                   baseline: &ResolvedRevisionId) -> Option<Self>;
-    /// The operator passed --discard-unmerged-commits.
-    pub fn operator_discarded(consent: DiscardUnmergedConsent) -> Self;
+    /// The operator passed --discard-unmerged-commits: the ref's tip is
+    /// kept as a backup first, and the warrant rests on that backup.
+    pub fn operator_discarded(vcs: &dyn Vcs, r: &OwnedRef,
+                              consent: DiscardUnmergedConsent) -> Result<Self, VcsError>;
 }
+
+/// Proof that a backup ref has been written. Its fields are private to
+/// `vcs.rs`, and its only producer is the provided `Vcs::create_backup`,
+/// which calls the backend's `write_backup` and then mints the witness, the
+/// way `create_savepoint_ref` mints a `SavepointRef`.
+pub struct BackupWitness { repo: PathBuf, backup: Backup }
 ```
 
 A note on direction, replacing a miscited precedent from an earlier draft:
@@ -1385,6 +1399,49 @@ with the flag it reattaches, without it the store stays detached.
 gates §7.1's arms 3 and 5 — it is named for what it does to a legacy branch's
 tip rather than to an attachment, which is why it is not a spelling of
 `--reattach-checkouts` `[V]`.
+
+### 4.4.1 Backups and the witness that proves one
+
+A **backup** is a ref an rwv verb makes before any step that would leave a
+commit or an uncommitted edit reached by no branch, no remote-tracking branch
+and no other backup. It is the third kind of proof a destroy or a rewind can
+rest on, beside "landed" (`Merged`) and "unmoved": the operator's consent
+buys the loss of a *name*, and the backup keeps the *commits*.
+
+The seam (`vcs.rs`) owns the shape and the backend owns every spelling:
+
+- `Vcs::write_backup(repo, source, tip, mark)` is the backend's primitive:
+  idempotent, creating the ref where none exists, or naming the one that already
+  holds the same tip. `BackupSource` is a branch or a detached HEAD; `mark` is
+  `Rebased`, `Abandoned` or none. Git spells the ref
+  `refs/rwv/backup/<branch>/<id>`, `<branch>` being `HEAD` when detached, the id
+  the abbreviated tip behind the mark (`src/git/backup.rs`). The namespace is
+  declared once, as `BACKUP_NAMESPACE` in `src/git.rs`, and
+  `tests/savepoint_refs_have_one_owner_test.rs` holds that nothing else spells
+  it.
+- `Vcs::create_backup` is *provided* and is the only producer of a
+  `BackupWitness`: it calls `write_backup`, then mints the witness in `vcs.rs`,
+  where its fields are visible. A value of the type is proof the ref exists, not
+  a plan to write one. `DeletionWarrant::operator_discarded` runs the backup
+  itself; `verified_restore_savepoint` under `ForeignTipPolicy::Abandon` makes
+  one before its `reset --hard` and returns the witness in
+  `VerifiedRestoreOutcome::AbandonedForeignTip`.
+- `Vcs::list_backups(repo, RemoteTracking)` returns each backup with the commits
+  it holds that no branch reaches (`held`); a backup with none is *redundant*.
+  `RemoteTracking::Ignored` judges on local branches alone, which `backup prune`
+  uses for a repo with a remote its pruning fetch could not complete.
+- `Vcs::left_unreached_by_dropping` answers the pin rule's question for a set of
+  backups to drop: which of the given commits would be reached by no branch,
+  remote-tracking branch or backup once they are gone. Core collects the live
+  pins (`src/backup.rs`) and the seam answers per repo.
+- `Vcs::backup_edits` snapshots a checkout's working tree (untracked files
+  included, ignored ones not) into a commit on HEAD without touching the
+  checkout's index, then backs it up; `Vcs::backup_unpreserved_head` backs up a
+  detached HEAD no branch reaches.
+
+A backup is never read by a fallback. A savepoint that outlived its op (a
+tombstone) is not a backup until `rwv doctor --fix` converts it; no verb treats
+`refs/rwv/pre-op/*` as one.
 
 ### 4.5 Q9: "no current branch" is not one state
 
@@ -1790,7 +1847,7 @@ one names where.
 | `lock` | none (reads HEAD) | — | **Shipped.** Matches all three `HeadAttachment` arms (`lock.rs:113-119`), warns from the `DetachedHead` witness (`:139-147`), and refuses by name on an unreadable ref database instead of falling silent `[V]`. |
 | `push` (project repo) | none (reads) | — | **Shipped.** The gate survives; the non-repo case reports `NotARepo` (§4.5), the canonical branch comes from `remote_default_branch` rather than a fabricated `"main"` (`push.rs:179`), and the mismatch test is `AttachedRef::is_named` (`:204`) `[V]`. |
 | `push` (member repo) | none (reads) | — | **Shipped.** The publish ref is an explicit `&PublishRef` argument to `Vcs::push_ref` (`vcs.rs:3027`, impl `git.rs:2104-2119`) instead of an implicit `current_ref` read inside the impl `[V]`. Test: `git.rs:3029 push_ref_publishes_the_ref_it_was_given_not_the_one_head_is_on`. **Q6 stays open** — the split relocated the decision, it did not make it, and `PublishRef::from_attached` is the shipped choice. |
-| `workweave delete` / `sync-to --retire` | `retire_recorded_refs` (`workweave.rs:2421-2503`) `[V]` | DESTROY | **Shipped.** Deletes recorded refs with a `Merged` (or `OperatorDiscarded`) warrant (`:2444-2449`); **reports** everything else in the namespace (`:2485-2500`). The set/singleton mismatch is gone because both the check and the deletion range over the recorded set. Tests: `tests/branch_model_lifecycle_test.rs:161`, `:231`, `:305`. |
+| `workweave delete` / `sync-to --retire` | `retire_recorded_refs` (`workweave.rs:2421-2503`) `[V]` | DESTROY | **Shipped.** Deletes recorded refs with a `Merged` (or `BackedUp`) warrant (`:2444-2449`); **reports** everything else in the namespace (`:2485-2500`). The set/singleton mismatch is gone because both the check and the deletion range over the recorded set. Tests: `tests/branch_model_lifecycle_test.rs:161`, `:231`, `:305`. |
 | `doctor --fix` (stale ephemerals) | `fix_stale_ephemeral_branches` (`check.rs:4619-4713`) `[V]` | DESTROY | **Shipped.** Recorded refs only, re-resolved through the registry and re-warranted at fix time (`:4657-4690`); hand-made look-alikes survive. Tests: `tests/branch_discipline_test.rs:1028`, `:1080`. |
 | `prune_dropped_repo` | removes the worktree; on `Checkout::Primary`, removes the entire store (`sync.rs:1392-1534`) `[V]` | DESTROY-STORE | **Unchanged at the ref level, gated at the store level.** The local-only refusal (`sync.rs:1478-1519`) is unchanged, and recorded rwv refs were deliberately *not* excluded from it: **unblocking prune is not a payoff of R2.** What changed is that the refusal is no longer the only thing standing between a live workweave's backing and `remove_dir_all` — `judge_store_checkouts` and `refuse_standing_receipts` (`sync.rs`) implement R4 directly. In a workweave the removal is `workweave::release_checkout`, the release `workweave delete` runs per member: it unregisters the worktree and retires the workweave's recorded ref with a `Merged` warrant against the parent's and the primary's checkouts, so the receipts that would hold the primary's store claimed run dry with the checkout. Tests: `sync.rs:5734`, `:5745`, `:5773`, `:5808`, `:5860`, `:5874`, `:5904`, `:5945`; `tests/sync_prune_direction_test.rs` for the release. |
 | `remove --delete` | `remove_dir_all` on the whole store (`CheckoutRemoval::perform`, `src/sync.rs`) `[V]` | DESTROY-STORE | **Shipped.** `plan_checkout_removal` (`src/sync.rs`), the guards `prune_dropped_repo` holds too, judges the clone's uncommitted changes and every live checkout derived from the store together and refuses with both, then refuses while any receipt for the store stands — across all projects on disk — and refuses rather than guesses when a registration is unreadable. It runs *before* the manifest write, so a refused destroy leaves the manifest as it found it. Unpushed work refuses in the same pre-flight. |
@@ -2344,8 +2401,7 @@ Recorded with reasons, so a settled question is not re-proposed.
 
 **Rejected.** This is the theoretically clean answer to "which refs are
 rwv's" — ownership by namespace, by analogy to the `refs/rwv/pre-op/*` and
-`refs/rwv/pre-abort/*` refs that already exist (`vcs.rs:2178`, `:2184`,
-`:2189`, `:2211`, `:2221`) `[V]`. Two independent reviewers proposed it.
+`refs/rwv/backup/*` refs that already exist `[V]`. Two independent reviewers proposed it.
 
 It is rejected because **worktree checkouts need a branch under `refs/heads/`
 to commit onto**. Git will not attach a worktree's HEAD to a ref outside

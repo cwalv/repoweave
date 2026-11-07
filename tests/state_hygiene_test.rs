@@ -12,8 +12,10 @@
 //!      into:
 //!        - `redundant` (savepoint tip reachable from current HEAD) →
 //!          `--fix` may drop.
-//!        - `live` (savepoint tip not reachable) → `--fix` must NOT
-//!          drop; the ref is the last anchor for unreachable commits.
+//!        - `live` (savepoint tip not reachable) → `--fix` keeps the
+//!          commits as a backup, then drops the savepoint; the ref is the
+//!          last anchor for unreachable commits, and a tombstone an
+//!          earlier release left is one.
 //!
 //! Each kind has a fixture test asserting the report shape, and the
 //! `--fix` behavior (where applicable) is exercised plus its
@@ -487,14 +489,46 @@ fn orphaned_savepoint_redundant_fixable() {
 }
 
 // ===========================================================================
-// 4. orphaned-savepoint — Live (unreachable, MUST be kept)
+// 4. orphaned-savepoint — Live (unreachable, converted to a backup)
 // ===========================================================================
+
+/// The backups `rwv backup list --json` reports for `repo_rel`, as
+/// `(name, tip)`.
+fn backups_of(root: &Path, repo_rel: &str) -> Vec<(String, String)> {
+    let out = rwv_cmd()
+        .args(["backup", "list", "--json", "--project", "my-app"])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "backup list failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    json["repos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["path"] == repo_rel)
+        .flat_map(|r| r["backups"].as_array().unwrap().clone())
+        .map(|b| {
+            (
+                b["name"].as_str().unwrap().to_owned(),
+                b["tip"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect()
+}
 
 /// A savepoint pointing at a commit no longer reachable from the current
 /// branch (the branch was reset back, leaving the savepoint as the only
-/// pointer to the discarded work). `--fix` must NOT drop it.
+/// pointer to the discarded work) is what a tombstone an earlier release's
+/// `--discard-local-commits` left looks like once its op has ended.
+/// `--fix` turns it into a backup: the commits stay reachable, `rwv backup`
+/// lists and drops it, and until then nothing reads the savepoint as one.
 #[test]
-fn orphaned_savepoint_live_is_kept_under_fix() {
+fn orphaned_savepoint_live_is_converted_to_a_backup_by_fix() {
     let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
@@ -508,14 +542,9 @@ fn orphaned_savepoint_live_is_kept_under_fix() {
         &[(repo_rel, "https://github.com/acme/server.git")],
     );
 
-    // Advance HEAD past `first_sha`, then create a savepoint at the new
-    // commit and reset HEAD back so the savepoint tip is no longer
-    // reachable from the current branch.
     let later_sha = add_empty_commit(&repo_abs, "later");
     let op_id = "222222222222222222";
     add_savepoint(&repo_abs, op_id, &later_sha);
-    // Move main back to first_sha, leaving the savepoint pointing at an
-    // unreachable commit.
     let out = common::git()
         .args(["update-ref", "refs/heads/main", &first_sha])
         .current_dir(&repo_abs)
@@ -523,7 +552,6 @@ fn orphaned_savepoint_live_is_kept_under_fix() {
         .unwrap();
     assert!(out.status.success());
 
-    // Sanity: savepoint exists and tip is NOT an ancestor of HEAD.
     assert!(savepoint_exists(&repo_abs, op_id));
     let is_anc = common::git()
         .args(["merge-base", "--is-ancestor", &later_sha, &first_sha])
@@ -536,38 +564,83 @@ fn orphaned_savepoint_live_is_kept_under_fix() {
         "test setup invariant: savepoint tip must NOT be reachable from HEAD"
     );
 
-    // Without --fix: reported as live (not safe-to-fix).
+    // Without --fix: reported as live, and not read as a backup.
     let out = rwv_cmd().arg("doctor").current_dir(&root).output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
         stdout.contains("orphaned-savepoint"),
-        "live orphaned-savepoint should still be reported; got:\n{stdout}"
+        "live orphaned-savepoint should be reported; got:
+{stdout}"
     );
     assert!(
-        stdout.contains("no live ref anchors") && stdout.contains("report-only"),
-        "live finding should warn the operator that the ref is load-bearing \
-         and that `--fix` will not touch it; got:\n{stdout}"
+        stdout.contains("no live ref anchors") && stdout.contains("keeps them as backups"),
+        "live finding should say that `--fix` keeps the commits as a backup; got:
+{stdout}"
+    );
+    assert_eq!(
+        backups_of(&root, repo_rel),
+        vec![],
+        "no backup reads a savepoint as one before --fix converts it"
     );
 
-    // With --fix: the savepoint MUST NOT be dropped (it's the last pointer
-    // to the unreachable commit).
+    // With --fix: the savepoint becomes a backup holding the same commit.
+    let out = rwv_cmd()
+        .args(["doctor", "--fix"])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("[fixed]") && stdout.contains("kept as a backup"),
+        "doctor --fix should say it kept the savepoint as a backup; got:
+{stdout}"
+    );
+    assert!(
+        !savepoint_exists(&repo_abs, op_id),
+        "the savepoint is dropped once its commits are kept"
+    );
+    let kept = backups_of(&root, repo_rel);
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    assert_eq!(kept[0].1, later_sha, "the backup holds the savepoint's tip");
+    assert!(
+        kept[0].0.starts_with("HEAD/"),
+        "a savepoint names no branch, so its backup is a HEAD's: {kept:?}"
+    );
+
+    // Re-run reports clean, and a second --fix changes nothing.
+    let out = rwv_cmd().arg("doctor").current_dir(&root).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("orphaned-savepoint"),
+        "after --fix, no orphaned-savepoint should remain; got:
+{stdout}"
+    );
     let _ = rwv_cmd()
         .args(["doctor", "--fix"])
         .current_dir(&root)
         .output()
         .unwrap();
-    assert!(
-        savepoint_exists(&repo_abs, op_id),
-        "doctor --fix must NOT drop a live (unreachable-tip) savepoint"
-    );
+    assert_eq!(backups_of(&root, repo_rel), kept);
 
-    // Re-run reports the same finding (no false-positive escalation).
-    let out = rwv_cmd().arg("doctor").current_dir(&root).output().unwrap();
-    let stdout = String::from_utf8_lossy(&out.stdout);
+    // The backup is `rwv backup`'s: dropped by name.
+    let out = rwv_cmd()
+        .args([
+            "backup",
+            "drop",
+            repo_rel,
+            &kept[0].0,
+            "--project",
+            "my-app",
+        ])
+        .current_dir(&root)
+        .output()
+        .unwrap();
     assert!(
-        stdout.contains("orphaned-savepoint"),
-        "live orphaned-savepoint must continue to be reported after --fix; got:\n{stdout}"
+        out.status.success(),
+        "backup drop failed: {}",
+        String::from_utf8_lossy(&out.stderr)
     );
+    assert_eq!(backups_of(&root, repo_rel), vec![]);
 }
 
 // ===========================================================================
@@ -579,7 +652,8 @@ fn orphaned_savepoint_live_is_kept_under_fix() {
 /// single `--fix` pass must:
 ///   - Prune the stale worktree.
 ///   - Drop the redundant savepoint.
-///   - Leave the `.rwv-op` and the live savepoint untouched.
+///   - Keep the live savepoint's commits as a backup, and drop the savepoint.
+///   - Leave the `.rwv-op` untouched.
 ///
 /// A second `--fix` pass must be a no-op (idempotent).
 #[test]
@@ -648,15 +722,23 @@ fn fix_is_idempotent_across_all_three_kinds() {
         !savepoint_exists(&repo_abs, redundant_op),
         "first --fix must drop the redundant savepoint"
     );
-    // Live savepoint kept.
+    // Live savepoint converted: its commits are a backup now.
     assert!(
-        savepoint_exists(&repo_abs, live_op),
-        "first --fix must keep the live savepoint"
+        !savepoint_exists(&repo_abs, live_op),
+        "first --fix must convert the live savepoint"
+    );
+    assert_eq!(
+        backups_of(&root, repo_rel)
+            .into_iter()
+            .map(|(_, tip)| tip)
+            .collect::<Vec<_>>(),
+        vec![later.clone()],
+        "first --fix must keep the live savepoint's commits as a backup"
     );
 
     // Second --fix pass — must be a no-op. The only finding that should
-    // surface is the stale-op-state report (still present) and the live
-    // orphaned-savepoint (still present); nothing should change on disk.
+    // surface is the stale-op-state report (still present); nothing should
+    // change on disk.
     let out = rwv_cmd()
         .args(["doctor", "--fix"])
         .current_dir(&root)
@@ -667,19 +749,20 @@ fn fix_is_idempotent_across_all_three_kinds() {
         !stdout.contains("stale-worktree-registration"),
         "stale-worktree-registration should be gone after first --fix; got:\n{stdout}"
     );
-    // Live op-state and live savepoint must still surface.
+    // Live op-state must still surface; the converted savepoint must not.
     assert!(
         stdout.contains("stale-op-state"),
         "live op-state must continue to be reported; got:\n{stdout}"
     );
     assert!(
-        stdout.contains("orphaned-savepoint"),
-        "live orphaned-savepoint must continue to be reported; got:\n{stdout}"
+        !stdout.contains("orphaned-savepoint"),
+        "a converted savepoint is not reported again; got:\n{stdout}"
     );
-    // And neither was disturbed.
+    // And nothing moved.
     assert!(root.join(".rwv-op").exists());
-    assert!(savepoint_exists(&repo_abs, live_op));
+    assert!(!savepoint_exists(&repo_abs, live_op));
     assert!(!savepoint_exists(&repo_abs, redundant_op));
+    assert_eq!(backups_of(&root, repo_rel).len(), 1);
 }
 
 // ===========================================================================

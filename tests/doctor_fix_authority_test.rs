@@ -1230,15 +1230,15 @@ fn the_doc_check_reports_a_comment_that_drifted_from_the_register() {
     let register = register();
 
     let flipped = CHECK_RS.replace(
-        "    /// The savepoint tip is **not** reachable",
-        "    /// Auto-fixable. The savepoint tip is **not** reachable",
+        "    /// A ref under the savepoint namespace that no op id names. rwv filed",
+        "    /// Auto-fixable. A ref under the savepoint namespace that no op id names. rwv filed",
     );
     assert_ne!(flipped, CHECK_RS, "the seeded edit matched nothing");
     let found = doc_contradictions(&flipped, &register);
     assert!(
         found
             .iter()
-            .any(|f| f.contains("OrphanedSavepointKind::Live") && f.contains("Auto-fixable")),
+            .any(|f| f.contains("UnrecognizedSavepointRef") && f.contains("Auto-fixable")),
         "a doc claiming a repair the register withholds must be reported; got:\n  {}",
         found.join("\n  ")
     );

@@ -159,7 +159,8 @@ rwv sync-to [<target>] [--json] [--strategy <ff|rebase>] [-j <N>] [--allow-stale
   fidelity on `--continue`.
 - `--discard-local-commits` hard-resets CWD's project repo to target's tip,
   discarding local committed divergence (pre-op savepoint preserved as
-  tombstone; refused if uncommitted changes are present). Recorded as
+  tombstone, which `rwv doctor --fix` turns into a backup; refused if
+  uncommitted changes are present). Recorded as
   `discard-local-commits` in `overrides`; `--continue` resumes with the same
   consent.
 - `--retire` deletes the current workweave on success (after all three steps
@@ -370,6 +371,13 @@ Schema:
           "type": "string",
           "enum": [
             "unparseable-project"
+          ]
+        },
+        {
+          "description": "A commit a live lock pins that a verb would leave nothing reaching.",
+          "type": "string",
+          "enum": [
+            "pin"
           ]
         }
       ]

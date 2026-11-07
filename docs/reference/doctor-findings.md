@@ -119,7 +119,7 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`working-tree-drift`](#working-tree-drift) / `safe-to-fix` | Warning | Auto-fixable |
 | [`working-tree-drift`](#working-tree-drift) / `live-edits` | Warning | Report-only |
 | [`orphaned-savepoint`](#orphaned-savepoint) / `redundant` | Warning | Auto-fixable |
-| [`orphaned-savepoint`](#orphaned-savepoint) / `live` | Warning | Report-only |
+| [`orphaned-savepoint`](#orphaned-savepoint) / `live` | Warning | Auto-fixable |
 | [`unrecognized-savepoint-ref`](#unrecognized-savepoint-ref) | Warning | Report-only |
 | [`stale-op-state`](#stale-op-state) | Warning | Report-only |
 | [`dead-op-lease`](#dead-op-lease) (`owner-record-absent`, `owner-op-id-mismatch`) | Warning | Auto-fixable |
@@ -1592,11 +1592,15 @@ branch tip, so the commits are still anchored by a live branch.
 
 #### `live`
 
-**Warning. Report-only.** The savepoint tip is *not* reachable. The ref is the
+**Warning. Auto-fixable.** The savepoint tip is *not* reachable. The ref is the
 last pointer to commits that would otherwise become unreachable — the same
-reason the reflog is never cut.
+reason the reflog is never cut. A savepoint an earlier release's `rwv sync
+--discard-local-commits` kept after its operation ended (a tombstone) is one.
 
-**What to do:** recover what you want from it, then delete it by hand.
+**What to do:** `rwv doctor --fix` keeps the commits as a backup, then drops the
+savepoint: `rwv backup list` shows what it holds and `rwv backup drop` drops it
+when it is not wanted. Nothing reads a savepoint as a backup before `--fix`
+converts it, and no commit is lost in the conversion.
 
 A savepoint that belongs to an operation still in flight is never reported as
 orphaned: that covers both of a `sync-to`'s savepoints, the one in the

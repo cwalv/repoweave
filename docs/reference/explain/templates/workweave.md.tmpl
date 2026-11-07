@@ -172,8 +172,17 @@ waives the second. Each names exactly what it destroys; passing both is the
 `git branch -D` contract, which consents to destroying whatever is in the
 workweave. The operator must have reviewed the contents (or not care). Once a
 refusal is waived, `delete` removes worktrees, prunes stale `.git/worktrees/` entries,
-force-deletes all ephemeral branches, and removes the workweave directory.
+deletes all ephemeral branches, and removes the workweave directory.
 The canonical clones keep everything but this workweave's own branches.
+
+**What the flags keep.** Neither flag discards for good. Before anything is
+removed, each keeps what it consents to losing as a backup (`rwv backup list`):
+`--discard-uncommitted` keeps each checkout's uncommitted edits as a commit on
+its HEAD (untracked files included, ignored ones not), and
+`--discard-unmerged-commits` keeps the tip of each workweave branch it deletes
+and the commits a detached HEAD holds that no branch reaches. The delete prints
+each backup it made, named `<branch>/<id>`. A backup that cannot be written
+stops the delete with nothing changed.
 
 **Child adoption.** Before the workweave is destroyed, any living child
 workweave that records it as `parent:` is re-pointed to the retiree's OWN

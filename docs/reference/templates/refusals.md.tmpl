@@ -221,18 +221,21 @@ and `create` lists them.
 ### `dropped-repo-has-unique-commits`
 
 **Condition.** A checkout being dropped from the lock, or deleted by `rwv
-member remove --delete`, carries commits no other clone reaches.
+member remove --delete`, carries commits no other clone reaches: a branch
+whose commits no remote-tracking branch holds, or a [backup](../explanation/destructive-operations.md)
+holding commits no branch reaches.
 
 **Why.** Dropping a repo removes its checkout. If it holds the only copy of
 some commits, removal destroys them, and no `rwv abort` recovers work that was
-never anywhere else.
+never anywhere else. A backup is the only copy by construction, so it counts.
 
 **Exits.** Push the commits to their remote, or merge them somewhere that
-survives, then re-run `rwv member remove --delete`. If the commits are genuinely
-unwanted, remove the checkout by hand so the loss is a deliberate act. A sync
-whose replay refuses this prune still completes, reports the checkout and
-exits 1; re-running it will not prune the checkout, so remove it by hand once
-nothing in it is needed.
+survives, then re-run `rwv member remove --delete`. `rwv backup list` shows the
+backups and what each holds; `rwv backup drop <repo>` drops the ones that are
+not wanted. If the commits are genuinely unwanted, remove the checkout by hand
+so the loss is a deliberate act. A sync whose replay refuses this prune still
+completes, reports the checkout and exits 1; re-running it will not prune the
+checkout, so remove it by hand once nothing in it is needed.
 
 **Where this sits.** [Destructive operations](../explanation/destructive-operations.md).
 
@@ -291,9 +294,9 @@ change the operation is not responsible for.
 **Exits.** Inspect the named repos and decide: if the foreign commits are
 wanted, move them somewhere safe first; if not, reset the ref yourself and
 re-run `rwv abort`, or pass `--abandon-foreign-tip <repo>` to restore that repo
-anyway, keeping the abandoned commits at the pre-abort reference the refusal
-names (`refs/rwv/pre-abort/<op-id>`, with a `-target` suffix for a repo on a
-`sync-to`'s target side).
+anyway, first keeping the abandoned commits as a backup marked `abandoned`,
+which `rwv backup list` shows and `rwv backup drop` drops. Name the project
+repo as `projects/<name>`. The refusal moves nothing and writes nothing.
 
 **Where this sits.** [Shared refs and drift](../explanation/joints/shared-refs-drift.md).
 
@@ -1138,7 +1141,9 @@ separately from uncommitted changes, which is a different loss and has its own
 flag.
 
 **Exits.** `rwv sync-to` to land the commits, then delete; or pass
-`--discard-unmerged-commits` to accept losing them.
+`--discard-unmerged-commits` to accept losing the branch. The commits are not
+lost with it: each branch tip is kept as a backup first, and `rwv backup list`
+shows them.
 
 **Where this sits.** [Workweave lifecycle](../explanation/joints/workweave-lifecycle.md).
 

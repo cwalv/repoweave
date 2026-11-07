@@ -193,7 +193,7 @@ content, so a local change is never lost; the replacement is placed under a
 staged name beside the file and renamed over it, then verified and repaired
 like a placement. The revision a member moved from is the caller's: `update`
 records the old tip, `fetch` reads HEAD before aligning, `sync` and `sync-to`
-read each member's savepoint, and `abort` reads each member's pre-abort ref.
+read each member's savepoint, and `abort` reads each member's tip before it restores it.
 The backend's index is not refreshed afterwards: git's next status re-hashes a
 replaced file once and writes the result, and the content is the same.
 

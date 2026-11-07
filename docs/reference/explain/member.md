@@ -354,7 +354,9 @@ Every guard runs before the manifest is written, so a refused delete leaves
   `edits` and `checkout` kinds, with the choices each state prints;
 - *commits no other clone reaches* refuse
   (`dropped-repo-has-unique-commits`): in the primary, any branch with no
-  remote counterpart or with commits ahead of it; in a workweave, a worktree
+  remote counterpart or with commits ahead of it, and any backup that holds
+  commits no branch reaches (`rwv backup list` shows them; `rwv backup drop
+  <repo>` drops the ones that are not wanted); in a workweave, a worktree
   tip the canonical clone does not contain;
 - in the primary, a clone rwv still holds **ownership receipts** for refuses
   (`store-still-claimed`).
@@ -432,8 +434,9 @@ rwv member remove github/myorg/old-repo --delete --delete-shared-clone
 - *path not in manifest* — the given path does not appear in `rwv.toml` and no
   leftover checkout of this project's is there. Check the exact manifest path
   with `rwv status`.
-- *uncommitted changes* or *unique commits* — `--delete` would lose work.
-  Commit and push it, or discard it, then re-run.
+- *uncommitted changes* or *unique commits* — `--delete` would lose work,
+  a backup's included. Commit and push it, or discard it (`rwv backup drop`
+  for a backup), then re-run.
 - *another project references this path; refusing --delete without
   --delete-shared-clone* — the clone is shared. Verify the other project and
   use `--delete-shared-clone` only when safe.

@@ -338,13 +338,14 @@ Exception: when `--discard-local-commits` discarded project commits
 (recorded as the `discard-local-commits` override), the project
 savepoint is preserved as a tombstone even after the sync completes —
 the only remaining reference to the discarded commits (`rwv abort` will
-refuse once op-state is cleared, but `git reset --hard refs/rwv/pre-op/<op-id>`
-in the project repo still recovers them). Member-repo savepoints are
-dropped regardless.
+refuse once op-state is cleared). `rwv doctor --fix` reports it as a live
+`orphaned-savepoint` and turns it into a backup, which `rwv backup list` shows
+and `rwv backup drop` drops; nothing reads the tombstone as a backup before
+then. Member-repo savepoints are dropped regardless.
 
 ## Abort internals
 
-The operator contract — savepoints, the two rails, the foreign-tip refusal
+The operator contract — savepoints, verified restore, the foreign-tip refusal
 and `--abandon-foreign-tip` — is on the joint. What follows is how abort
 attributes a tip and what it prints.
 
@@ -360,8 +361,8 @@ classification of the rest:
 | Equal to `advanced_tips[repo]` (the op's recorded intent tip) | `RestoredFromIntent` — op advanced this repo during replay; reset to savepoint |
 | Equal to `converged_tips[repo]` (the recorded converged tip) | `RestoredFromConverged` — op converged this repo; reset to savepoint |
 | Repo is in a VCS-native mid-op state (rebase / merge / cherry-pick) | `RestoredFromMidOp` — mid-op canceled; reset to savepoint |
-| Anything else | `ForeignTip` — restore **refused**; violation reported; op-state retained |
-| Anything else, with `--abandon-foreign-tip` naming the repo and the pre-abort ref holding that tip | `AbandonedForeignTip` — reset to savepoint; the tip stays reachable at the pre-abort ref |
+| Anything else | `ForeignTip` — restore **refused**; tip left in place; violation reported; op-state retained; nothing written |
+| Anything else, with `--abandon-foreign-tip` naming the repo | `AbandonedForeignTip` — the tip is first kept as a backup marked `abandoned` (`Vcs::create_backup`, which hands back the `BackupWitness` the outcome carries), then reset to savepoint |
 
 **`advanced_tips` — the advancement-intent journal.** The `advanced_tips`
 owner-record map closes the mid-replay attribution gap. It is written during
@@ -391,7 +392,7 @@ crash), plus the irreducible one-write window between a rebase completing and
 its tip being persisted into `advanced_tips`. That window is an irreducible
 floor: the tip cannot be recorded before it exists.
 During that instant abort treats the repo as foreign — it refuses that one
-repo and preserves its tip at the pre-abort ref.
+repo and leaves its tip in place.
 
 **Refusal output.** When `ForeignTip` fires, abort emits to stderr (per
 repo): a one-line noise summary (skipped/untouched repos), per-refused-repo
@@ -402,70 +403,19 @@ contains only operator-facing choices: a tip the op itself converged is
 attributable through `advanced_tips` and `converged_tips`, so it needs no
 option.
 
-### Pre-abort ref writes
+### Abandoned tips
 
-A pre-abort ref that already exists for this op, from an earlier abort
-attempt, is returned unchanged rather than overwritten: the earlier capture
-is the more valuable one, and by the time abort is re-run it may be the only
-remaining reference to that tip. `Vcs::create_pre_abort_ref` resolves the ref
-first and skips the write when it exists.
+Abandoning a foreign tip is the one place abort writes a ref. The backup is
+named for the branch HEAD is attached to (`HEAD` when detached) and the tip's
+abbreviated id behind the `abandoned` mark, so it is the same backup however
+many times abort is re-run against that tip, and a foreign agent that moved
+the tip between runs gets a second backup beside the first rather than
+displacing it. The reset to the savepoint runs only once the backup exists: a
+backup that cannot be written fails that repo's restore with the repo left
+where it was, and abort carries on with the others.
 
-The one exception is the abandon path. When the operator passed
-`--abandon-foreign-tip` for the repo and the existing capture is a strict
-ancestor of HEAD, the ref advances to HEAD: the earlier capture stays
-reachable from the new one, so no commit loses its only name. A capture that
-has diverged from HEAD (a foreign rebase or reset) is returned unchanged,
-and `verified_restore_savepoint` then refuses the abandon, naming the two
-ways to reconcile.
-
-## Snapshot-read internals
-
-The source pin is one `HEAD` resolution of the source project repo; the
-manifest and lock are then read at that revision through
-`Vcs::read_file_at_revision` (git: `git show <rev>:<path>`).
-
-**The tips-as-truth pull is the one read that is not content-addressed.**
-A member checkout's committed tip is a live ref, so it is read at T₀
-alongside the project `HEAD` and carried on the snapshot. The source's
-lock↔HEAD classification is taken exactly once there, and everything
-downstream — the staleness refusals, the note naming the lag, and the
-per-repo replay targets — reads that one result. Classifying a second
-time to serve a second surface reads the refs at a second instant: a
-member that is `Ok` at the first read and `Ahead` at the second pins no
-tip, so replay targets the lock while the note announces committed tips.
-The op guard does not exclude a plain `git commit` into the source, and
-that is precisely the scenario tips-as-truth exists for, so the window is
-reachable rather than theoretical.
-
-## Replay exclusion: three layers
-
-`--strategy=rebase` requires `rwv.lock merge=rwv-ours`
-in the project repo's **committed** `.gitattributes`, though no `merge`
-*strategy* exists: git rebase replays each commit as a 3-way merge against
-the new base, so the
-`merge=rwv-ours` driver is what keeps a lock-only commit from conflicting
-on `rwv.lock` during replay. Three layers keep the exclusion active:
-
-1. The committed `.gitattributes` line `rwv.lock merge=rwv-ours` assigns the
-   driver to `rwv.lock`.
-2. `rwv` passes `-c merge.rwv-ours.driver=true` on each `git rebase` and
-   `git rebase --continue` invocation (defines the driver for that process).
-3. Before each rebase-strategy sync, rwv plants a durable
-   `merge.rwv-ours.driver=true` repo-local config in the project repo, so
-   bare `git rebase --continue` — the fallback resume path — is safe
-   without rwv's inline flags.
-
-Layer 3 reaches the project repo only. A repo that adopts the same
-declaration for its own derived content gets layers 1 and 2 and no plant,
-so a hand-run merge or rebase there falls back to an ordinary textual
-conflict every time rather than in an edge case — noisy, but decided
-either way by the regeneration that follows. That asymmetry is stated in
-full in [vcs-as-seam](../explanation/joints/vcs-as-seam.md).
-
-The check fires against the committed file
-(via `git show HEAD:.gitattributes`), not the working tree, because the
-invariant must survive rebases. Run `rwv doctor --fix` to add the line
-(or migrate a legacy `merge=ours` spelling).
+A refused foreign tip writes nothing: the tip is still on its branch, and the
+refusal names none.
 
 ## VCS mapping (git)
 
@@ -476,8 +426,7 @@ mechanism is:
 |---|---|
 | Durable pre-op snapshot reference | `refs/rwv/pre-op/<op-id>` |
 | Target-side pre-op snapshot reference | `refs/rwv/pre-op/<op-id>-target` |
-| Pre-abort reference | `refs/rwv/pre-abort/<op-id>` |
-| Target-side pre-abort reference | `refs/rwv/pre-abort/<op-id>-target` |
+| Backup of an abandoned foreign tip | `refs/rwv/backup/<branch>/abandoned-<short id>` |
 | VCS-native mid-op state / continue / abort | rebase/cherry-pick state dirs; `--continue` / `--abort` |
 | Atomic source pin (T₀) | one `HEAD` resolution of the source project repo |
 | Read manifest/lock at a revision | `git show <rev>:<path>` (`Vcs::read_file_at_revision`) |

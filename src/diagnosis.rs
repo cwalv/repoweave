@@ -44,6 +44,8 @@ pub enum Axis {
     Publish,
     /// A project whose `rwv.toml` does not load.
     UnparseableProject,
+    /// A commit a live lock pins that a verb would leave nothing reaching.
+    Pin,
 }
 
 /// An axis's page prose: what it judges, why, and where the rule sits.
@@ -54,12 +56,13 @@ pub struct KindRow {
 }
 
 impl Axis {
-    pub const ALL: [Axis; 5] = [
+    pub const ALL: [Axis; 6] = [
         Self::Edits,
         Self::Checkout,
         Self::Name,
         Self::Publish,
         Self::UnparseableProject,
+        Self::Pin,
     ];
 
     pub fn token(self) -> String {
@@ -120,6 +123,16 @@ impl Axis {
                 sits: "[Formats](./formats.md) states the member-entry keys; \
                        [Upgrade rwv](../how-to/upgrade-rwv.md) walks through the rewrite.",
             },
+            Self::Pin => &KindRow {
+                condition: "A verb would delete, move or overwrite the last ref that reaches a \
+                            commit some project's live lock pins.",
+                why: "A lock pins each member at a commit so that a fresh clone can build the \
+                      project. Removing the last ref that reaches a pinned commit leaves the pin \
+                      unreachable: no clone can fetch it, and the lock describes a state nobody \
+                      can recreate. A pin is live in every project of the weave, not only the \
+                      one the verb runs in, because a member's clone is shared.",
+                sits: "[Destructive operations](../explanation/destructive-operations.md).",
+            },
         }
     }
 
@@ -127,7 +140,7 @@ impl Axis {
     /// entry is then the findings page's, written there from this table.
     pub fn finding(self) -> Option<Finding> {
         match self {
-            Self::Edits | Self::Checkout | Self::Name | Self::Publish => None,
+            Self::Edits | Self::Checkout | Self::Name | Self::Publish | Self::Pin => None,
             Self::UnparseableProject => Some(Finding::of(
                 crate::check::ViolationKind::UnparseableProject,
                 crate::check::UnparseableProjectKind::ALL.map(|sub_kind| SubKindRow {
@@ -218,6 +231,7 @@ pub enum State {
     PublishWithheld,
     UnparseableProjectHere,
     UnparseableProjectMalformed,
+    PinWouldBeUnreachable,
 }
 
 /// A state's row: its axis and name, the page prose, and the forms it offers,
@@ -235,7 +249,7 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 11] = [
+    pub const ALL: [State; 12] = [
         Self::EditsDirty,
         Self::EditsMidOperation,
         Self::EditsLockFilesUncommitted,
@@ -247,6 +261,7 @@ impl State {
         Self::PublishWithheld,
         Self::UnparseableProjectHere,
         Self::UnparseableProjectMalformed,
+        Self::PinWouldBeUnreachable,
     ];
 
     pub fn row(self) -> &'static StateRow {
@@ -361,6 +376,15 @@ impl State {
                              the project repo is replayed; `rwv doctor` reports it for every \
                              project",
                 offers: &[],
+                verb_offers: &[],
+            },
+            Self::PinWouldBeUnreachable => &StateRow {
+                axis: Axis::Pin,
+                name: "would be unreachable",
+                means: "a live lock pins a commit that only the backups being dropped reach, \
+                        listed with the locks that pin it",
+                refused_by: "`rwv backup drop` and `rwv backup prune`",
+                offers: &[Form::C7Push, Form::C27],
                 verb_offers: &[],
             },
         }

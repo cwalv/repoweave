@@ -1314,7 +1314,7 @@ Schema:
           ]
         },
         {
-          "description": "The savepoint tip is **not** reachable from the current branch tip. The ref is the last pointer to commits that would otherwise become unreachable. `--fix` must not drop these — the reflog is on the FORBIDDEN tripwire list, same rationale: don't cut the last recovery path.",
+          "description": "The savepoint tip is **not** reachable from the current branch tip. The ref is the last pointer to commits that would otherwise become unreachable. Auto-fixable: `--fix` keeps them as a backup, then drops the savepoint, so the commits stay reachable and `rwv backup` reaches them.",
           "type": "string",
           "enum": [
             "live"

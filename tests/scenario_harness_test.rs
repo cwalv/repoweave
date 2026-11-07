@@ -118,27 +118,23 @@ fn shared_member_pinned_behind() {
     runner::run(scenarios::shared_member_pinned_behind()).assert_green();
 }
 
-/// `workweave delete --discard-unmerged-commits` leaves the discarded commit
-/// reachable from no ref. The consent is explicit, but the commit is stranded
-/// all the same, and the adopted design decides whether that stays.
+/// `workweave delete --discard-unmerged-commits` consents to losing the
+/// branch, not the commits: a backup is made first, so no commit is stranded,
+/// and `backup list` shows it.
 #[test]
-fn giving_up_before_publishing_strands_the_discarded_commit() {
-    let report = runner::run(scenarios::workweave_without_b_given_up_before_publishing());
-    assert!(
-        report.unmet.is_empty() && report.pending.is_none(),
-        "{report}"
-    );
-    assert_eq!(
-        report.violations,
-        vec![(
-            "rwv workweave delete --project proj anon --discard-unmerged-commits".to_owned(),
-            Violation::Stranded {
-                repo: Repo::App,
-                commit: report.marks["anon-app"].clone(),
-            }
-        )],
-        "{report}"
-    );
+fn giving_up_before_publishing_keeps_the_discarded_commit_as_a_backup() {
+    runner::run(scenarios::workweave_without_b_given_up_before_publishing())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_clone_holding_a_backup_is_not_destroyed_by_member_remove() {
+    runner::run(scenarios::dc10_store_destroy()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_tombstone_becomes_a_backup_and_backup_drop_releases_it() {
+    runner::run(scenarios::tombstone_to_backup()).assert_green();
 }
 
 macro_rules! pending_on {

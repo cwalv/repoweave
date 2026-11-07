@@ -3408,15 +3408,37 @@ fn retire_recorded_refs(
                 }
             }
             _ => {
-                let warrant = baseline_tips
+                let merged = baseline_tips
                     .iter()
-                    .find_map(|baseline| DeletionWarrant::merged(vcs, &owned, baseline))
-                    .or_else(|| discard_unmerged.map(DeletionWarrant::operator_discarded));
+                    .find_map(|baseline| DeletionWarrant::merged(vcs, &owned, baseline));
+                let warrant = match (merged, discard_unmerged) {
+                    (Some(warrant), _) => Some(warrant),
+                    (None, Some(consent)) => {
+                        match DeletionWarrant::operator_discarded(vcs, &owned, consent) {
+                            Ok(warrant) => Some(warrant),
+                            Err(e) => {
+                                eprintln!(
+                                    "{say}warning: {label}: could not keep branch {owned} as \
+                                     a backup before discarding it ({e:#}); left in place"
+                                );
+                                return;
+                            }
+                        }
+                    }
+                    (None, None) => None,
+                };
                 match warrant {
                     Some(warrant) => {
                         let why = warrant.describe();
+                        let kept = warrant.backup().map(|b| b.backup().name.to_string());
                         match vcs.delete_owned_ref(&owned, warrant) {
                             Ok(()) => {
+                                if let Some(name) = kept {
+                                    eprintln!(
+                                        "{say}backup: {label}: branch {owned} kept as {name} \
+                                         (`rwv backup list`)"
+                                    );
+                                }
                                 if let Err(e) = registry.retract(store, &raw) {
                                     eprintln!(
                                         "{say}warning: {label}: branch {owned} deleted \
@@ -3643,6 +3665,82 @@ pub fn delete_workweave(
     )
 }
 
+/// Which kinds of work a delete's discard flags consent to losing.
+#[derive(Clone, Copy)]
+struct DiscardsKept {
+    uncommitted: bool,
+    unmerged: bool,
+}
+
+/// Keep, as backups, the work in `workweave_dir`'s checkouts that the discard
+/// flags in `discards` consent to losing and nothing else preserves: each
+/// linked checkout's uncommitted edits, and what a detached HEAD holds that no
+/// branch reaches. A checkout that is its own store is removed with its refs,
+/// so a backup written there would keep nothing; the branch-tip backups are
+/// made where the workweave's branch is destroyed.
+fn keep_work_before_discarding(
+    ws_root: &Path,
+    workweave_dir: &Path,
+    project: &ProjectName,
+    manifest: &Manifest,
+    discards: DiscardsKept,
+) -> anyhow::Result<()> {
+    if !discards.uncommitted && !discards.unmerged {
+        return Ok(());
+    }
+    let project_vcs = project_vcs();
+    let project_rel = project_rel_dir(project);
+    let mut checkouts: Vec<(String, PathBuf, PathBuf, Box<dyn Vcs>)> = Vec::new();
+    let project_worktree = workweave_dir.join(&project_rel);
+    if project_worktree.exists() && crate::git::is_linked_worktree(&project_worktree) {
+        checkouts.push((
+            project_rel_path(project),
+            project_worktree,
+            ws_root.join(&project_rel),
+            project_vcs,
+        ));
+    }
+    for checkout in member_depth_checkouts(workweave_dir, manifest) {
+        let worktree = workweave_dir.join(checkout.repo_path.as_path());
+        if worktree.exists() {
+            checkouts.push((
+                checkout.label(),
+                worktree,
+                ws_root.join(checkout.repo_path.as_path()),
+                checkout.vcs,
+            ));
+        }
+    }
+    for (label, worktree, fallback, vcs) in checkouts {
+        if resolved_worktree_parent(vcs.as_ref(), &worktree, &fallback)
+            == CanonicalPath::of(&worktree)
+        {
+            continue;
+        }
+        let mut kept = Vec::new();
+        if discards.uncommitted {
+            kept.extend(vcs.backup_edits(&worktree).with_context(|| {
+                format!("{label}: its uncommitted edits could not be kept as a backup")
+            })?);
+        }
+        if discards.unmerged {
+            kept.extend(vcs.backup_unpreserved_head(&worktree).with_context(|| {
+                format!(
+                    "{label}: the commits its detached HEAD holds could not be kept as a backup"
+                )
+            })?);
+        }
+        for witness in kept {
+            eprintln!(
+                "{}backup: {label}: kept as {} (`rwv backup list`)",
+                Releaser::Delete.prefix(),
+                witness.backup().name
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Delete a workweave as the terminal step of the op that owns it (`sync-to
 /// --retire`).
 ///
@@ -3790,6 +3888,22 @@ fn delete_workweave_inner_at(
                 diverged.join("\n  ")
             );
         }
+    }
+
+    // A discard flag consents to losing work, never to losing it with no
+    // way back: what each consents to is kept as a backup before anything is
+    // removed, and a backup that cannot be written stops the delete here.
+    if workweave_dir.exists() {
+        keep_work_before_discarding(
+            ws_root,
+            &workweave_dir,
+            project,
+            &manifest,
+            DiscardsKept {
+                uncommitted: discard_uncommitted.is_some(),
+                unmerged: discard_unmerged.is_some(),
+            },
+        )?;
     }
 
     // Strip the managed regions this checkout's integrations own before the

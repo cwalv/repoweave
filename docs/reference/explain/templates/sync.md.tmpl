@@ -89,8 +89,8 @@ rwv sync <source> [--json] [--strategy <ff|rebase>] [-j <N>] [--allow-stale-lock
   fidelity on `--continue`.
 - `--discard-local-commits` hard-resets the CWD project repo to the source
   tip, discarding any destination-only committed divergence. The pre-op
-  savepoint is kept as a tombstone at `refs/rwv/pre-op/<id>` so
-  `git reset --hard` can recover them manually. Refused if the project repo
+  savepoint is kept as a tombstone at `refs/rwv/pre-op/<id>`, which
+  `rwv doctor --fix` turns into a backup that `rwv backup list` shows. Refused if the project repo
   has uncommitted changes (those would be destroyed unrecoverably by the
   reset). Recorded as `discard-local-commits` in the op-state `overrides`
   field; `--continue` resumes with the same consent without requiring the

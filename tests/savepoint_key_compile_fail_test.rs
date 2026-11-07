@@ -1,8 +1,8 @@
 //! A savepoint is filed under a `SavepointKey`, never under text, and no op id
 //! can hold the target-side namespace.
 //!
-//! The target side of a `sync-to` files its savepoints and pre-abort references
-//! under `<op id>-target`, so that a worktree pair sharing one refdb does not
+//! The target side of a `sync-to` files its savepoints under
+//! `<op id>-target`, so that a worktree pair sharing one refdb does not
 //! collide. When that name was composed into an `OpId` it was an op id in type
 //! only, and every `Vcs` savepoint method took text, so any string reached the
 //! ref layout. Each of those methods takes a `SavepointKey`, an `OpId` has no
@@ -34,8 +34,6 @@ fn the_harness_can_file_a_savepoint_under_a_key() {
             let _ = vcs.savepoint_label(&key);
             let _ = vcs.resolve_savepoint(repo, &key);
             vcs.drop_savepoint(repo, &key);
-            let _ = vcs.create_pre_abort_ref(repo, &key, ForeignTipPolicy::Refuse);
-            let _ = vcs.resolve_pre_abort_ref(repo, &key);
             let _ = vcs.verified_restore_savepoint(repo, &key, None, None, ForeignTipPolicy::Refuse);
             let _ = vcs.create_savepoint_ref(repo, &key);
             let _ = vcs.resolve_savepoint_ref(repo, &key);
@@ -49,8 +47,8 @@ fn the_harness_can_file_a_savepoint_under_a_key() {
 fn no_savepoint_method_takes_text() {
     assert_fails_n_times(
         "E0308",
-        9,
-        "each of the nine savepoint methods takes a SavepointKey, not a string",
+        7,
+        "each savepoint method takes a SavepointKey, not a string",
         r#"
         use repoweave::vcs::{ForeignTipPolicy, Vcs};
         use std::path::Path;
@@ -59,8 +57,6 @@ fn no_savepoint_method_takes_text() {
             let _ = vcs.savepoint_label("x");
             let _ = vcs.resolve_savepoint(repo, "x");
             vcs.drop_savepoint(repo, "x");
-            let _ = vcs.create_pre_abort_ref(repo, "x", ForeignTipPolicy::Refuse);
-            let _ = vcs.resolve_pre_abort_ref(repo, "x");
             let _ = vcs.verified_restore_savepoint(repo, "x", None, None, ForeignTipPolicy::Refuse);
             let _ = vcs.create_savepoint_ref(repo, "x");
             let _ = vcs.resolve_savepoint_ref(repo, "x");
