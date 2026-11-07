@@ -9,8 +9,8 @@ use crate::vcs::{
     HeadObservation, LocalRefName, MidOperation, PreAbortRef, PublishRef, RawRefName,
     RawRevisionId, RecordedSubmodule, RefOrigin, RegistrationPrune, RemoteBranchCopies,
     RemoteDefaultBranch, RemoteRef, ReplayExclusionState, ResolvedRevisionId, SavepointListing,
-    SubmoduleBirth, SubmoduleCheckout, TrackedFile, TrackedFileKind, UniqueDiff, Vcs, VcsError,
-    VerifiedRestoreOutcome, WorkspacePopulation,
+    SubmoduleBirth, SubmoduleCheckout, TrackedFile, TrackedFileKind, UniqueDiff, Vcs, VcsAction,
+    VcsError, VerifiedRestoreOutcome, WorkspacePopulation,
 };
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
@@ -1779,6 +1779,27 @@ impl Vcs for GitVcs {
 
     fn conflict_resolution_hint(&self, op: ConflictOp) -> String {
         git_conflict_resolution_hint(op)
+    }
+
+    fn hint(&self, action: VcsAction) -> &'static str {
+        match action {
+            VcsAction::Commit => "git -C <checkout> commit",
+            VcsAction::Stash => "git -C <checkout> stash push",
+            VcsAction::Status => "git -C <checkout> status",
+            VcsAction::RemoveWorktree => "git -C <checkout> worktree remove <worktree>",
+            VcsAction::BranchAt => "git -C <checkout> branch <name> <sha>",
+            VcsAction::SwitchTo => "git -C <checkout> switch <E>",
+            VcsAction::SwitchDetached => "git -C <checkout> switch --detach <r>/<b>",
+            VcsAction::CherryPick => "git -C <checkout> cherry-pick <ids>",
+            VcsAction::Revert => "git -C <checkout> revert <ids>",
+            VcsAction::MergeNoFastForward => "git -C <checkout> merge --no-ff <rev>",
+            VcsAction::PushCommitAs => "git -C <checkout> push <r> <sha>:refs/heads/<name>",
+            VcsAction::SetPushRemote => "git -C <checkout> config branch.<b>.pushRemote <r>",
+            VcsAction::SetPushDefault => "git -C <checkout> config remote.pushDefault <r>",
+            VcsAction::SetDefaultRemote => "git -C <checkout> config checkout.defaultRemote <r>",
+            VcsAction::AddRemote => "git -C <checkout> remote add <r> <url>",
+            VcsAction::UnsetUpstream => "git -C <checkout> branch --unset-upstream",
+        }
     }
 
     fn rebase(

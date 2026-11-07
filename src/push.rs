@@ -5,6 +5,7 @@
 //! committed lock that pins manifest SHAs, so collaborators' `rwv fetch`
 //! must never see a committed lock referencing unpushed manifest commits.
 
+use crate::diagnosis::{Report, State};
 use crate::manifest::{
     LockFile, Manifest, Project, ProjectName, RepoEntry, RepoPath, Role, VcsType,
 };
@@ -91,6 +92,11 @@ pub struct PushJsonOutput {
     #[serde(rename = "$schema")]
     pub schema_url: String,
     pub outcomes: Vec<PushOutcomeOutput>,
+    /// Each repo push judged before refusing, with that state's choices.
+    /// Empty, not absent, when nothing was refused on a repo's state; a
+    /// project repo withheld because members' pushes failed lists each of
+    /// those members as `publish` `withheld`.
+    pub refused: Vec<crate::diagnosis::JudgedOutput>,
     /// Resolved workspace coordinates (weave root, optional workweave
     /// identity, project). Absent when no project is resolved.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -212,7 +218,14 @@ pub fn run_push(
     let project_publish_ref = PublishRef::from_attached(&project_attached);
     let project_current = project_attached.to_string();
 
-    refuse_uncommitted_project_state(project_vcs.as_ref(), &project_dir, &project_name)?;
+    if let Err(e) =
+        refuse_uncommitted_project_state(project_vcs.as_ref(), &project_dir, &project_name)
+    {
+        if output.is_json() {
+            print_envelope(Vec::new(), &e, ctx);
+        }
+        return Err(e);
+    }
 
     // Snapshot manifest repos into a Vec so we can iterate twice (precondition
     // checks + push loop) without re-walking the BTreeMap.
@@ -505,6 +518,7 @@ pub fn run_push(
     // project-repo record.
     let mut json_outcomes: Vec<PushOutcomeOutput> = Vec::new();
     let mut push_errors: Vec<String> = Vec::new();
+    let mut withheld = Report::default();
     let mut pushed = 0usize;
     let mut skipped = 0usize;
 
@@ -524,7 +538,7 @@ pub fn run_push(
         });
     }
 
-    for ((repo_path, abs_path, _item), raw) in plan_with_paths.iter().zip(raw_outcomes) {
+    for ((repo_path, abs_path, item), raw) in plan_with_paths.iter().zip(raw_outcomes) {
         let path_str = repo_path.to_string();
         let abs_str = crate::path_spelling::WirePath::of(abs_path);
 
@@ -538,6 +552,14 @@ pub fn run_push(
             }
             PushOutcome::Failed(msg) => {
                 push_errors.push(msg.clone());
+                withheld.add(
+                    State::PublishWithheld
+                        .of(repo_path)
+                        .listing(msg.lines())
+                        .checkout(abs_path)
+                        .bind("<b>", &item.branch)
+                        .judge(vcs_for(item.vcs_type).as_ref()),
+                );
                 PushOutcomeOutput::Failed {
                     path: path_str,
                     absolute_path: abs_str,
@@ -561,24 +583,16 @@ pub fn run_push(
             }
         }
 
-        // Under --json, emit whatever outcomes we have before bailing so the
-        // caller gets machine-readable failure records.
+        withheld.note(format!(
+            "projects/{project_name} was not pushed; member pushes that succeeded are published"
+        ));
+        let refusal = withheld
+            .into_result()
+            .expect_err("a failed member push is judged withheld");
         if output.is_json() {
-            let envelope = PushJsonOutput {
-                schema_url: PUSH_SCHEMA_URL.to_string(),
-                outcomes: json_outcomes,
-                resolution: Some(ctx.resolution()),
-            };
-            if let Ok(out) = serde_json::to_string_pretty(&envelope) {
-                outln!("{out}");
-            }
+            print_envelope(json_outcomes, &refusal, ctx);
         }
-
-        crate::refuse!(
-            RefusalKind::ProjectPushWithheld,
-            "member-repo push failures aborted before project-repo push; \
-             member-side partial state may exist — inspect and retry"
-        );
+        return Err(refusal);
     }
 
     if output == OutputMode::Text {
@@ -631,6 +645,7 @@ pub fn run_push(
             let envelope = PushJsonOutput {
                 schema_url: PUSH_SCHEMA_URL.to_string(),
                 outcomes: json_outcomes,
+                refused: Vec::new(),
                 resolution: Some(ctx.resolution()),
             };
             if let Ok(out) = serde_json::to_string_pretty(&envelope) {
@@ -649,6 +664,7 @@ pub fn run_push(
         let envelope = PushJsonOutput {
             schema_url: PUSH_SCHEMA_URL.to_string(),
             outcomes: json_outcomes,
+            refused: Vec::new(),
             resolution: Some(ctx.resolution()),
         };
         let out = serde_json::to_string_pretty(&envelope)
@@ -659,6 +675,24 @@ pub fn run_push(
     }
 
     Ok(())
+}
+
+/// The envelope a refused `rwv push --json` prints: what it pushed, and every
+/// repo it judged in `refusal`.
+fn print_envelope(
+    outcomes: Vec<PushOutcomeOutput>,
+    refusal: &anyhow::Error,
+    ctx: &WorkspaceContext,
+) {
+    let envelope = PushJsonOutput {
+        schema_url: PUSH_SCHEMA_URL.to_string(),
+        outcomes,
+        refused: crate::diagnosis::refused_output(refusal),
+        resolution: Some(ctx.resolution()),
+    };
+    if let Ok(out) = serde_json::to_string_pretty(&envelope) {
+        outln!("{out}");
+    }
 }
 
 /// Push publishes the project repo's last commit but plans from `rwv.toml`
@@ -680,14 +714,23 @@ fn refuse_uncommitted_project_state(
     if uncommitted.is_empty() {
         return Ok(());
     }
-    crate::refuse!(
-        RefusalKind::DirtyCheckout,
-        "rwv push: project repo at projects/{project_name}/ has uncommitted changes: {}. \
-         Push publishes the project repo's last commit, so they would not reach the remote. \
-         Commit them first with `rwv lock --commit` or `rwv update --commit` (for a relock), \
-         or `git -C projects/{project_name} commit`, then re-run `rwv push`",
-        uncommitted.join(", ")
+    let only_lock_files = uncommitted
+        .iter()
+        .all(|name| name == Manifest::FILE_NAME || name == LockFile::FILE_NAME);
+    let state = if only_lock_files {
+        State::EditsLockFilesUncommitted
+    } else {
+        State::EditsDirty
+    };
+    let mut report = Report::default();
+    report.add(
+        state
+            .of(project_rel_path(project_name))
+            .listing(uncommitted)
+            .checkout(project_dir)
+            .judge(vcs),
     );
+    report.into_result()
 }
 
 /// One manifest repo's resolved plan entry — what branch it's on and which

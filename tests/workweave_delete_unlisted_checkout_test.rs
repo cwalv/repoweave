@@ -176,12 +176,12 @@ fn delete_refuses_over_untracked_work_in_a_checkout_no_member_covers() {
     assert_refused_with_the_work_intact(
         &out,
         &s1,
-        "uncommitted-work",
-        &format!("  {EXTRA} {OUTSIDE}"),
+        "edits",
+        &format!("rwv workweave delete: {EXTRA}: edits dirty {OUTSIDE}\n    scratch.txt\n"),
     );
     assert!(
-        String::from_utf8_lossy(&out.stderr).contains("--discard-uncommitted"),
-        "the refusal must name the flag that waives the loss"
+        String::from_utf8_lossy(&out.stderr).contains("commit your edits, or set them aside"),
+        "the refusal must print the state's choice"
     );
 }
 
@@ -308,7 +308,7 @@ fn a_delete_with_only_members_is_unchanged() {
     assert!(!out.status.success(), "{stderr}");
     assert!(
         stderr.contains(&format!(
-            "has uncommitted changes; refusing to delete without --discard-uncommitted:\n  {LIB}\n"
+            "rwv workweave delete: {LIB}: edits dirty\n    scratch.txt\n"
         )) && !stderr.contains(OUTSIDE),
         "{stderr}"
     );
@@ -458,10 +458,9 @@ fn retire_refuses_over_untracked_work_in_a_checkout_no_member_covers() {
     );
     assert!(!out.status.success(), "{stderr}");
     assert!(
-        stderr.contains("\n\nrwv explain dirty-checkout\n")
+        stderr.ends_with("\n\nrwv explain edits\n")
             && stderr.contains(&format!(
-                "--retire: workweave has uncommitted changes after sync-to; refusing to \
-                 delete:\n  local/owner/stray {OUTSIDE}\n"
+                "rwv sync-to: local/owner/stray: edits dirty {OUTSIDE}\n    scratch.txt\n"
             )),
         "{stderr}"
     );

@@ -325,12 +325,23 @@ fn assert_push_refuses_uncommitted(ws: &common::PushWorkspace, files: &str, dry_
         "push must refuse uncommitted project state; stderr: {stderr}"
     );
     let project = &ws.project_name;
+    let project_dir = ws.workspace.join("projects").join(project);
+    let lock_files_only = files == "rwv.lock" || files == "rwv.toml";
+    let (state, choice) = if lock_files_only {
+        (
+            "rwv.toml or rwv.lock uncommitted",
+            "    rwv lock --commit\n".to_owned(),
+        )
+    } else {
+        (
+            "dirty",
+            format!("    git -C {} commit\n", project_dir.display()),
+        )
+    };
     for needle in [
-        format!("project repo at projects/{project}/ has uncommitted changes: {files}."),
-        "`rwv lock --commit`".to_string(),
-        "`rwv update --commit`".to_string(),
-        format!("`git -C projects/{project} commit`"),
-        "\n\nrwv explain dirty-checkout\n".to_string(),
+        format!("rwv push: projects/{project}: edits {state}\n    {files}\n"),
+        choice,
+        "\n\nrwv explain edits\n".to_string(),
     ] {
         assert!(
             stderr.contains(&needle),

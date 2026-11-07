@@ -130,7 +130,7 @@ The advance is a **fast-forward of the branch the checkout is on**, not a checko
 | `-j N` | Parallel per-repo workers (default: min(nproc, 8)) |
 | `--json` | Structured output: one JSON envelope, whatever `-j` is |
 | `--dirty` | Allow update with uncommitted changes in repos when relocking |
-| `--commit` | Commit `rwv.lock` together with the integration files regenerated against the new tips, and with `rwv.toml` when it has uncommitted changes. Other uncommitted changes in the project repo refuse (`dirty-checkout`) |
+| `--commit` | Commit `rwv.lock` together with the integration files regenerated against the new tips, and with `rwv.toml` when it has uncommitted changes. Other uncommitted changes in the project repo refuse (`edits`) |
 | `-m` / `--message <msg>` | The commit message for `--commit`, in place of the generated summary. Without `--commit` it is a usage error (exit 2) |
 | `--no-materialize` | Skip the install hooks of the regeneration `update` runs at primary; `rwv materialize` runs them later. Inside a workweave `update` runs no hooks either way |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
@@ -148,7 +148,7 @@ Reads HEAD from each repo and records its resolved 40-character hex commit SHA i
 | Flag | Effect |
 |---|---|
 | `--dirty` | Allow locking repos with uncommitted changes to tracked files |
-| `--commit` | Commit `rwv.lock` after writing it, together with `rwv.toml` when it is modified or has never been committed. Other uncommitted changes in the project repo refuse (`dirty-checkout`) |
+| `--commit` | Commit `rwv.lock` after writing it, together with `rwv.toml` when it is modified or has never been committed. Other uncommitted changes in the project repo refuse (`edits`) |
 | `-m` / `--message <msg>` | The commit message for `--commit`, in place of the generated summary. Without `--commit` it is a usage error (exit 2) |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
@@ -295,7 +295,7 @@ Advance `<target>` to CWD's tip via a three-step orchestration: (1) rebase CWD a
 | Flag | Effect |
 |---|---|
 | `--strategy ff\|rebase` | Default `rebase` (unlike `rwv sync`). Step 3 is always FF regardless. (`merge` is not offered — see [sync semantics](../explanation/joints/sync-semantics.md#why-no-merge-strategy).) |
-| `--retire` | Delete the workweave on success. Requires a workweave context; warning + no-op in a primary weave. Refuses, after the landing has completed and with the op parked at the retire phase, while the workweave holds divergent work (`retire-not-converged`), uncommitted changes in any checkout (`dirty-checkout`), or a checkout replay could not prune (`retire-unpruned-checkout`); resolve it and `--continue`, or `rwv abort` |
+| `--retire` | Delete the workweave on success. Requires a workweave context; warning + no-op in a primary weave. Refuses, after the landing has completed and with the op parked at the retire phase, while the workweave holds divergent work (`retire-not-converged`), uncommitted changes in any checkout (`edits`), or a checkout replay could not prune (`retire-unpruned-checkout`); resolve it and `--continue`, or `rwv abort` |
 | `--allow-stale-lock` | Consent: skip the lock-freshness precondition on both source and destination |
 | `--discard-local-commits` | Consent: discard CWD's project commits not reachable from target, hard-resetting the project repo to target's tip. Pre-sync state preserved in `refs/rwv/pre-op/<id>` |
 | `--continue` | Resume after resolving a mid-op conflict. All parameters are read from the in-progress op-state file |
@@ -325,7 +325,7 @@ Coordinated cross-repo push from the primary weave. Default scope: `owned` and `
 **Preconditions** (evaluated in this order, before any network call, under `--dry-run` too):
 - **Primary weave only** — refused inside a workweave (`push-from-workweave`); land work into primary with `rwv sync-to` first.
 - **Project repo branch** — `projects/<project>` must be on the branch its remote declares as default (`origin/HEAD`), whatever that branch is called. With `origin/HEAD` unset push refuses rather than guess (`no-remote-default-branch`, naming `git remote set-head origin -a`); a detached or unborn HEAD refuses with `head-not-on-branch`, and any other branch with `project-repo-off-canonical-branch`.
-- **Committed project state** — the project repo has no staged or unstaged change to a tracked file, and `rwv.toml` and `rwv.lock` are tracked (`dirty-checkout`). Push publishes the project repo's last commit, so commit first with `rwv lock --commit` or `rwv update --commit`. Other untracked files pass.
+- **Committed project state** — the project repo has no staged or unstaged change to a tracked file, and `rwv.toml` and `rwv.lock` are tracked (`edits`). Push publishes the project repo's last commit, so commit first: `rwv lock --commit` when only those two files are uncommitted. Other untracked files pass.
 - **Lock agreement** — every member repo's HEAD must match the committed `rwv.lock` entry (`lock-state-mismatch`).
 - **Pushable member branches** — every repo in the plan must be on a branch (`unpushable-repo-branch`).
 
@@ -338,7 +338,7 @@ Coordinated cross-repo push from the primary weave. Default scope: `owned` and `
 | `--dry-run` | Print the push plan without executing |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
-`--json` emits the envelope `{"$schema": "...", "outcomes": [...]}`. Member-repo records use `kind` `pushed`, `skipped`, or `failed`; the project-repo record (always last) uses `kind` `project-repo-pushed` or `project-repo-failed`. See [JSON envelope convention](#--json-envelope-convention).
+`--json` emits the envelope `{"$schema": "...", "outcomes": [...], "refused": [...]}`. Member-repo records use `kind` `pushed`, `skipped`, or `failed`; the project-repo record (always last) uses `kind` `project-repo-pushed` or `project-repo-failed`. When a member's push is rejected, the project repo is withheld: `refused` lists each such member as `publish` `withheld`. See [JSON envelope convention](#--json-envelope-convention).
 
 See [push a cross-repo feature](../how-to/push-cross-repo-feature.md).
 
@@ -427,7 +427,7 @@ Record the workweave container for `project`. Writes the `container` field of `p
 
 ### `rwv workweave <project> delete <name> [--discard-uncommitted] [--discard-unmerged-commits]`
 
-Delete a workweave. Default refuses if any checkout under it is dirty (`uncommitted-work`), or holds commits contained in neither the workweave's recorded parent nor the primary weave (`unmerged-commits`; work in a nested workweave counts as merged once its parent has it). `--discard-uncommitted` waives the first refusal, `--discard-unmerged-commits` the second.
+Delete a workweave. Default refuses if any checkout under it is dirty (`edits`), or holds commits contained in neither the workweave's recorded parent nor the primary weave (`unmerged-commits`; work in a nested workweave counts as merged once its parent has it). `--discard-uncommitted` waives the first refusal, `--discard-unmerged-commits` the second.
 
 Both checks cover every checkout under the workweave, not only the members the project's manifest names: a member replay could not prune, one the workweave added that has not landed, or a clone put there by hand. Such a checkout is listed with the suffix `(not a manifest member)`, and one whose commits no baseline holds at all is reported rather than skipped. `create --replace-existing` weighs the same set.
 
@@ -574,7 +574,10 @@ Reporting verbs do not refuse: `rwv status` warns, naming `--project <name>` and
 Each of these is a refusal and carries a token; the message ends with `rwv
 explain <token>`, which serves that token's entry. [Refusals](./refusals.md)
 lists every token, and a condition `rwv doctor` also reports keeps its entry on
-[Doctor findings](./doctor-findings.md).
+[Doctor findings](./doctor-findings.md). A refusal that judged repo states
+instead prints `rwv <verb>: <repo>: <kind> <state>` for each, its choices,
+and one `rwv explain <kind>` per kind; the same page lists every kind, its
+states and the choices each prints.
 
 - **No active project** (`no-active-project`) — CWD is at a workspace primary with neither `--project` nor `.rwv-active` set. The error names the fix commands and, if projects exist under `projects/`, lists them as a menu:
 
@@ -669,13 +672,25 @@ Every JSON-capable verb emits a self-describing envelope:
 
 The `sync` and `sync-to` envelopes also carry `complete`: `true` when the op ran its last phase and cleared op-state, `false` when a phase parked it.
 
+### Refused repos under `--json`
+
+A refusal that judged repo states carries them as records, one per repo and axis:
+
+```json
+{ "repo": "github/acme/lib", "axis": "edits", "state": "dirty", "subject": "…", "listed": ["src/lib.rs"], "facts": [], "choices": [ { "id": "C13", "phrase": "commit your edits, or set them aside", "where": null, "run": ["git -C /work/github/acme/lib commit", "git -C /work/github/acme/lib stash push"] } ] }
+```
+
+- `axis` is the kind `rwv explain <axis>` serves; `state` is named as that page names it, and `choices` are the ones it lists for the state, in its order, with the commands spelled out under `run`. `where` is the directory a choice runs in when that is not where the verb ran, else `null`; `subject` is absent when the state names nothing.
+- `rwv push --json` and `rwv sync`'s and `rwv sync-to`'s envelopes carry them in `refused`, empty when nothing was refused on a repo's state; a `prune-refused` member record carries the checkout's in its own `refused`.
+- A verb that refused on repo states before printing anything prints the refusal envelope instead, `{ "$schema": "<url>", "refused": [...] }`, schema at `docs/reference/schemas/refusal.json`.
+
 Schemas live at `docs/reference/schemas/<verb>.json` and are also embedded as fenced code blocks inside the corresponding `rwv explain <verb>` bundle.
 
 ### The envelope and `-j`
 
 `-j` changes how a verb runs, never what `--json` prints: the envelope is the same under `-j 1` and `-j N`, printed once the verb is done, with its per-repo records sorted by repo path (`push`'s project-repo record last). Nothing streams on stdout. For per-repo progress as each repo finishes, use [`rwv each`](./rwv-each.md)'s `--joblog` and `--results`.
 
-Exit semantics under `--json` match the text mode: non-zero when at least one per-repo outcome is `failed`, when a refusal stopped the verb, and for `sync` and `sync-to` when a checkout replay could not prune is left on disk. The envelope still prints in that last case.
+Exit semantics under `--json` match the text mode: non-zero when at least one per-repo outcome is `failed`, when a refusal stopped the verb, and for `sync` and `sync-to` when a checkout replay could not prune is left on disk. The envelope still prints in that last case. A refusal's text always goes to stderr, under `--json` too.
 
 ## External commands
 

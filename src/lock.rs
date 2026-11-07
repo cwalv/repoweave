@@ -1,7 +1,7 @@
 //! Lock logic: snapshot repo HEADs into `rwv.lock`.
 
+use crate::diagnosis::{Report, State};
 use crate::manifest::{LockFile, Manifest, Project, ResolvedLockEntry, ResolvedLockFile};
-use crate::refusal::RefusalKind;
 use crate::vcs::{project_vcs, vcs_for, HeadAttachment, Vcs};
 use crate::workspace::{project_dir, Checkout, WorkspaceContext};
 use anyhow::Context;
@@ -91,21 +91,32 @@ pub fn generate_lock(
 ) -> anyhow::Result<ResolvedLockFile> {
     let mut repositories = BTreeMap::new();
 
+    if !dirty {
+        let mut report = Report::default();
+        for (repo_path, entry) in &manifest.repositories {
+            let checkout =
+                crate::workspace::member_checkout_dir(repo_path, workspace_root, workweave_dir);
+            let vcs = vcs_for(entry.vcs_type);
+            let tracked = vcs.tracked_dirty_file_names(checkout.path())?;
+            if !tracked.is_empty() {
+                report.add(
+                    State::EditsDirty
+                        .of(repo_path)
+                        .listing(tracked)
+                        .checkout(checkout.path())
+                        .judge(vcs.as_ref()),
+                );
+            }
+        }
+        report.into_result()?;
+    }
+
     for (repo_path, entry) in &manifest.repositories {
         let checkout =
             crate::workspace::member_checkout_dir(repo_path, workspace_root, workweave_dir);
         let repo_dir = checkout.path();
 
         let vcs = vcs_for(entry.vcs_type);
-
-        // Check for uncommitted changes unless --dirty is set.
-        if !dirty && !vcs.tracked_dirty_file_names(repo_dir)?.is_empty() {
-            crate::refuse!(
-                RefusalKind::DirtyCheckout,
-                "repo {} has uncommitted changes to tracked files; commit or use --dirty to override",
-                repo_path
-            );
-        }
 
         // Ask what HEAD *is* before asking what it resolves to.
         //
@@ -273,6 +284,7 @@ impl CommitMessage {
 /// the auto-commit must not bundle unrelated work-in-progress.
 fn commit_lock_file(
     vcs: &dyn Vcs,
+    project: &crate::manifest::ProjectName,
     project_dir: &Path,
     new_lock: &ResolvedLockFile,
     old_lock: Option<&ResolvedLockFile>,
@@ -294,12 +306,17 @@ fn commit_lock_file(
     let carried = |path: &str| {
         path == LockFile::FILE_NAME || path == Manifest::FILE_NAME || authored.contains(path)
     };
-    if tracked_dirty.iter().any(|path| !carried(path)) {
-        crate::refuse!(
-            RefusalKind::DirtyCheckout,
-            "project repo has uncommitted changes outside rwv.lock and rwv.toml; \
-             commit or stash them before using --commit"
+    let unrelated: Vec<&String> = tracked_dirty.iter().filter(|path| !carried(path)).collect();
+    if !unrelated.is_empty() {
+        let mut report = Report::default();
+        report.add(
+            State::EditsDirty
+                .of(crate::workspace::project_rel_path(project))
+                .listing(unrelated)
+                .checkout(project_dir)
+                .judge(vcs),
         );
+        report.into_result()?;
     }
 
     let mut paths = vec![LockFile::FILE_NAME];
@@ -352,6 +369,7 @@ pub fn lock(
 /// content splits it, because the authoring pass has to run between the
 /// write and the commit for both changes to land together.
 pub(crate) struct PendingLockCommit {
+    project_name: crate::manifest::ProjectName,
     project_dir: PathBuf,
     new_lock: ResolvedLockFile,
     old_lock: Option<ResolvedLockFile>,
@@ -421,6 +439,7 @@ pub(crate) fn write_project_lock(
     eprintln!("Wrote {lock_path}");
 
     Ok(commit.map(|message| PendingLockCommit {
+        project_name,
         project_dir,
         new_lock: lock,
         old_lock,
@@ -436,6 +455,7 @@ pub(crate) fn commit_project_lock(
 ) -> anyhow::Result<()> {
     commit_lock_file(
         project_vcs().as_ref(),
+        &pending.project_name,
         &pending.project_dir,
         &pending.new_lock,
         pending.old_lock.as_ref(),

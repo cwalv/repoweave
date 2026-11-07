@@ -1328,3 +1328,173 @@ holding_rwv! {
         bad_steps("unarmed", steps).assert_green();
     }
 }
+
+/// Every ref the sandbox holds, local and remote, and every lock and record
+/// it reads, as one comparable value.
+fn refs_and_locks(sandbox: &Sandbox) -> String {
+    let snapshot = invariants::snapshot(sandbox);
+    format!(
+        "{:?}\n{:?}\n{:?}\n{:?}",
+        snapshot.branches, snapshot.remote_refs, snapshot.pins, snapshot.records
+    )
+}
+
+/// The ids a kind's page lists for `state`, read off `rwv explain <kind>` as
+/// the binary serves it: the `Choice` column of the choices table, `-` for a
+/// choice the table does not number.
+fn explained_choice_ids(sandbox: &Sandbox, kind: &str, state: &str) -> Vec<String> {
+    let out = sandbox.rwv(&sandbox.root, &["explain", kind]);
+    assert!(out.status.success(), "rwv explain {kind}");
+    let page = String::from_utf8_lossy(&out.stdout).into_owned();
+    let prefix = format!("| `{state}` | ");
+    let rows: Vec<String> = page
+        .lines()
+        .filter(|line| line.starts_with(&prefix) && line.matches(" | ").count() == 4)
+        .map(|line| {
+            let choice = line[prefix.len()..].split(" | ").next().unwrap_or_default();
+            match choice.split_once(':') {
+                Some((id, _)) if id.starts_with('C') => id.to_owned(),
+                _ => "-".to_owned(),
+            }
+        })
+        .collect();
+    assert!(
+        !rows.is_empty(),
+        "`rwv explain {kind}` lists no choice for `{state}`:\n{page}"
+    );
+    rows
+}
+
+/// dc27-envelope: one refusal judging a repo on two kinds prints a line per
+/// state, then the choices, then exactly one route line per kind and nothing
+/// after; it changes nothing on disk or in any ref; and `--json` carries the
+/// same axes and states with the choices `rwv explain` lists for each.
+///
+/// `rwv remove --delete` judges the clone's edits and every checkout derived
+/// from it before refusing. It has no `--json`, so the JSON half drives the
+/// same judgment where a verb that has one reaches it: a sync whose replay
+/// drops the member prunes its clone through those same guards, and records
+/// the refused prune in its envelope.
+#[test]
+fn dc27_envelope_routes_once_per_kind_last_and_changes_nothing() {
+    let sandbox = Sandbox::new(Seed::default());
+    runner::run_in(
+        &sandbox,
+        Scenario {
+            name: "a workweave sharing the primary's clones",
+            seed: Seed::default(),
+            steps: vec![
+                Step::rwv(&a(), &["workweave", "proj", "create", "other"]).expect(Exit::Succeeds)
+            ],
+        },
+    )
+    .assert_green();
+    let primary = sandbox.place_root(&a());
+    let lib = sandbox.canonical(Machine::A, Repo::Lib);
+    std::fs::write(lib.join("scratch.txt"), "untracked\n").unwrap();
+    let raw = sandbox.root.join("raw-lib");
+    sandbox.git_ok(
+        &lib,
+        &["worktree", "add", "--detach", raw.to_str().unwrap()],
+    );
+    let lib_path = Repo::Lib.rel_path();
+    let manifest = primary.join("projects/proj/rwv.toml");
+    let manifest_before = std::fs::read(&manifest).unwrap();
+    let before = refs_and_locks(&sandbox);
+
+    let out = sandbox.rwv(&primary, &["remove", &lib_path, "--delete"]);
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    for line in [
+        format!("rwv remove: {lib_path}: edits dirty\n    scratch.txt\n"),
+        format!("rwv remove: {lib_path}: checkout in another workspace (proj--other)\n"),
+        format!(
+            "rwv remove: {lib_path}: checkout in a raw worktree\n    {}\n",
+            raw.display()
+        ),
+        "choices:\n".to_owned(),
+        "  free the other checkout\n    rwv workweave proj delete other\n".to_owned(),
+        format!(
+            "    git -C {} worktree remove {}\n",
+            lib.display(),
+            raw.display()
+        ),
+    ] {
+        assert!(stderr.contains(&line), "expected {line:?}:\n{stderr}");
+    }
+    let routes: Vec<&str> = stderr
+        .lines()
+        .filter_map(|l| l.strip_prefix("rwv explain "))
+        .collect();
+    assert_eq!(routes, ["edits", "checkout"], "{stderr}");
+    assert!(
+        stderr.ends_with("\n\nrwv explain edits\nrwv explain checkout\n"),
+        "the route lines are last, after a blank one:\n{stderr}"
+    );
+    assert_eq!(refs_and_locks(&sandbox), before, "a refusal moves no ref");
+    assert_eq!(std::fs::read(&manifest).unwrap(), manifest_before);
+    assert!(lib.join("scratch.txt").is_file() && raw.is_dir());
+
+    let seat = sandbox.place_root(&ww("drops"));
+    assert!(sandbox
+        .rwv(&primary, &["workweave", "proj", "create", "drops"])
+        .status
+        .success());
+    for args in [
+        &["remove", lib_path.as_str(), "--delete"][..],
+        &["lock", "--commit"][..],
+    ] {
+        let out = sandbox.rwv(&seat, args);
+        assert!(
+            out.status.success(),
+            "rwv {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let out = sandbox.rwv(&primary, &["sync", "drops", "--json"]);
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let envelope: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_else(|e| {
+        panic!(
+            "one JSON document ({e}):\n{stdout}\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        )
+    });
+    let pruned: Vec<&serde_json::Value> = envelope["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["kind"] == "prune-refused" && m["path"] == lib_path.as_str())
+        .collect();
+    assert_eq!(pruned.len(), 1, "{envelope:#}");
+    let refused = pruned[0]["refused"].as_array().unwrap();
+    let judged: Vec<(&str, &str)> = refused
+        .iter()
+        .map(|r| (r["axis"].as_str().unwrap(), r["state"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        judged,
+        [
+            ("edits", "dirty"),
+            ("checkout", "in another workspace"),
+            ("checkout", "in a raw worktree"),
+        ],
+        "{envelope:#}"
+    );
+    for record in refused {
+        let (kind, state) = (
+            record["axis"].as_str().unwrap(),
+            record["state"].as_str().unwrap(),
+        );
+        let ids: Vec<String> = record["choices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["id"].as_str().unwrap_or("-").to_owned())
+            .collect();
+        assert_eq!(
+            ids,
+            explained_choice_ids(&sandbox, kind, state),
+            "{kind} {state}"
+        );
+    }
+}

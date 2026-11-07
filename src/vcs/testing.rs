@@ -432,6 +432,10 @@ impl Vcs for FakeVcs {
         unsupported("conflict_resolution_hint")
     }
 
+    fn hint(&self, _action: VcsAction) -> &'static str {
+        unsupported("hint")
+    }
+
     fn remote_default_branch_repair_hint(&self) -> String {
         unsupported("remote_default_branch_repair_hint")
     }

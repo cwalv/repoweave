@@ -5,9 +5,15 @@
 > operating on them directly is not supported.
 
 The maintainer-facing half of the refusal register. The operator-facing half is
-[Refusals](../reference/refusals.md), which has one entry per token; this page
-is the rule for deciding whether a refusal gets a token at all, where the token
-is allowed to come from, and what the funnel prints.
+[Refusals](../reference/refusals.md), which has one entry per kind and per
+token; this page is the rule for deciding whether a refusal gets a token at
+all, where the token is allowed to come from, and what the funnel prints.
+
+A refusal has one of two shapes. One that judges repo states is a
+**report**: one line per repo and axis, each axis a **kind**, from the
+state-to-choices table in `src/diagnosis.rs`. One that names a condition no
+axis carries is a **token**, a `RefusalKind`. Both are refusals in the class
+below, and both route through `rwv explain`.
 
 ## What carries a token
 
@@ -40,11 +46,28 @@ defect even when its message is good.
 
 ## One producer
 
-**The token string is minted in exactly one place**: `rename_all = "kebab-case"`
-on `RefusalKind`. Nothing else spells a token — no `match` arm returning a
-literal, no table, no doc heading typed by hand. A second spelling is a thing to
-keep in sync rather than a convenience, and the doctor kind's three-place
-minting is the worked example of what that costs.
+**A token string is minted in exactly one place**: `rename_all = "kebab-case"`
+on `RefusalKind`, and a kind's on `Axis`. Nothing else spells one — no `match`
+arm returning a literal, no doc heading typed by hand. A second spelling is a
+thing to keep in sync rather than a convenience, and the doctor kind's
+three-place minting is the worked example of what that costs.
+
+**A kind's states, facts and choices live in one table**, `src/diagnosis.rs`:
+`Axis::row` for a kind's prose, `State::row` for each state's name, meaning and
+the forms it offers, `ChoiceId::row` and `Form::row` for every choice and its
+spellings, each with its Where. The terminal text, every `--json` record that
+carries a judged repo, and the kind's entry on the refusals page are rendered
+from it; the page is generated, so it cannot say something the refusal does not
+print. A VCS action's spelling is the backend's (`Vcs::hint`); core fills its
+placeholders from what the site judged.
+
+**A choice prints only once its verb ships.** Every choice is data, shipped or
+not; a form whose `shipped` is false, or that runs after one that is, prints on
+no surface. Shipping a verb is flipping `shipped` on the forms that spell it;
+a form's spelling is the CLI's as it stands, so renaming a verb renames its
+forms. `tests/diagnosis_table_test.rs` parses every line a state prints, and
+every shipped form, through the clap tree, refusing the plugin fallback that
+would otherwise accept any verb.
 
 The kind rides the error value, not its text:
 
@@ -67,7 +90,7 @@ reads both out of the code that owns them rather than asserting a literal.
 ## What the funnel prints
 
 One funnel, at the `main` boundary. Verbs return errors; they do not print
-them.
+them. A token refusal prints:
 
 ```
 Error: <headline>
@@ -79,17 +102,45 @@ Caused by:
 rwv explain <token>
 ```
 
+A report prints, any context wrapped above it first:
+
+```
+rwv <verb>: <repo>: <kind> <state>[ (<subject>)]
+    <fact or listed item>
+[<note>]
+choices:
+  <phrase>[, in <directory>]
+    <command>
+
+rwv explain <kind>
+[rwv explain <kind>]
+```
+
+- **Route lines, one per kind.** A report prints one bare `rwv explain <kind>`
+  per distinct kind it judged, in the order their first lines print, and
+  nothing after them. A token refusal prints exactly one.
+- **Lines, then choices.** A repo's lines print in axis order, repos in the
+  order they were judged. Each choice prints once per phrase and directory,
+  the commands every judged line offered beneath it.
+- **Every judged state before any change.** A verb judges every repo its
+  preflight covers, on every axis that preflight reads, before refusing, so
+  one run names every state it found. A token refusal still stops at its own
+  check, in the order the verb runs them.
+- **`--json`.** A verb's envelope carries the judged repos in `refused`; a
+  verb that refused before printing anything gets the refusal envelope
+  (`docs/reference/schemas/refusal.json`) from the funnel, which knows nothing
+  was printed because every stdout write goes through `crate::stdout`.
+
 - **The route line is bare.** Exactly `rwv explain <token>`, no prose around
   it. Constancy is what makes it skippable: a reader learns to stop at a fixed
-  last line in one exposure, and prose would take that back.
-- **Exactly one route line per error**, naming the outermost kind in the chain.
+  run of last lines in one exposure, and prose would take that back.
+- **One route line per token refusal**, naming the outermost kind in the chain.
   A wrapped refusal routes to the condition that fired, not to the wrapper.
 - **No kind in the chain ⇒ no route line**, and the output is byte-identical to
   what the runtime's own reporter produced before the funnel existed. Errors
   outside the class gain nothing.
-- **Exit codes are unchanged.** A refusal exits 1 with a capitalized `Error:`;
-  argv rejection exits 2 with a lowercase `error:`. That case split is the only
-  class marker, and it is now deliberate rather than incidental.
+- **Exit codes.** A refusal exits 1, with a capitalized `Error:` or with its
+  `rwv <verb>:` lines; argv rejection exits 2 with a lowercase `error:`.
 
 ## Adding a token
 
@@ -97,12 +148,29 @@ rwv explain <token>
    else.
 2. Attach it at the site, or in the shared helper if the condition has several
    sites.
-3. Write its entry. A refusal-only token gets a `###` section on
-   [Refusals](../reference/refusals.md); a shared one already has an entry on
-   [Doctor findings](../reference/doctor-findings.md) and must not get a second.
+3. Write its entry. A refusal-only token gets a `###` section under Tokens in
+   `docs/reference/templates/refusals.md.tmpl`, from which `cargo run --example
+   generate-explain` renders [Refusals](../reference/refusals.md); a shared one
+   already has an entry on [Doctor findings](../reference/doctor-findings.md)
+   and must not get a second.
 4. `tests/refusal_entry_test.rs` checks both directions — a token with no entry,
    and an entry naming no token — and derives both populations rather than
    listing them.
+
+## Adding a state
+
+1. Add the `State` variant, its arm in `State::row` and its place in
+   `State::ALL`; a new axis adds an `Axis` variant and its `Axis::row` arm
+   too, in the order its lines should print.
+2. Offer the forms the state prints, in order. A choice whose verb has not
+   shipped is offered all the same, marked unshipped on its form; it prints
+   once its verb ships and the mark is flipped.
+3. Judge it at each site — `State::…of(repo)`, its listing and bindings,
+   `.judge(vcs)` — into the verb's `Report`, and refuse once every repo the
+   check covers has been judged.
+4. Regenerate. The kind's entry on the refusals page is the table's output;
+   `tests/refusal_entry_test.rs` holds the page to it, and the gate's drift
+   stage to what was committed.
 
 An entry is a junction, not a gloss: the condition, why the rule exists, the
 exits **with the circumstances that select between them**, and where the rule

@@ -1,12 +1,14 @@
-//! Every refusal token reaches an entry, and `rwv explain <token>` serves that
-//! entry's own bytes.
+//! Every refusal token and every kind reaches an entry, and `rwv explain
+//! <token>` serves that entry's own bytes.
 //!
 //! The property that makes this worth pinning is not "the page exists" but
 //! that there is ONE text: a token's entry lives on exactly one published
 //! page, and what the terminal prints is a slice of that page rather than a
-//! copy of it. Two spellings is the failure D1 forbids, and a copy is how it
-//! arrives.
+//! copy of it. Two spellings is the failure being guarded, and a copy is how
+//! it arrives. A kind's entry is generated from the state-to-choices table, so
+//! the page carrying exactly the generated text is pinned here as well.
 
+use repoweave::diagnosis::Axis;
 use repoweave::refusal::RefusalKind;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -17,6 +19,13 @@ use common::json_schema;
 /// Every token the register mints, from the schema derived for `RefusalKind`.
 fn minted_tokens() -> Vec<String> {
     json_schema::derived_enum_tokens::<RefusalKind>()
+        .into_iter()
+        .collect()
+}
+
+/// Every kind a judged refusal routes to, from the schema derived for `Axis`.
+fn kind_tokens() -> Vec<String> {
+    json_schema::derived_enum_tokens::<Axis>()
         .into_iter()
         .collect()
 }
@@ -54,7 +63,8 @@ fn every_minted_token_has_an_entry() {
 /// section nothing can reach, and it outlives the code silently.
 #[test]
 fn every_entry_names_a_minted_token() {
-    let minted: std::collections::BTreeSet<String> = minted_tokens().into_iter().collect();
+    let minted: std::collections::BTreeSet<String> =
+        minted_tokens().into_iter().chain(kind_tokens()).collect();
     let documented = repoweave::explain::documented_tokens();
     assert!(
         documented.len() > 90,
@@ -300,6 +310,7 @@ fn explain_serves_the_page_section_verbatim() {
         "push-from-workweave",
         "stale-lock",
         "dangling-parent",
+        "edits",
         &last_entry,
     ] {
         let out = common::rwv()
@@ -377,4 +388,42 @@ fn a_verb_serves_its_bundle_and_no_token_contests_one() {
         "these tokens are spelled like verbs, so `rwv explain` now has a real \
          precedence decision to make rather than a hypothetical one: {contested:?}"
     );
+}
+
+/// Each kind's entry on the page is the one the state-to-choices table
+/// generates, byte for byte, and `rwv explain <kind>` reaches it: the page is
+/// the table's output, not a hand copy that could say something the refusal
+/// does not print.
+#[test]
+fn every_kind_serves_the_entry_the_table_generates() {
+    let generated = repoweave::diagnosis::kind_entries_markdown(repoweave::manifest::VcsType::Git);
+    let kinds = kind_tokens();
+    assert!(
+        kinds.len() >= 4 && kinds.contains(&"edits".to_owned()),
+        "the kind walk read {kinds:?}"
+    );
+    for kind in &kinds {
+        let entry = repoweave::explain::entry_for_token(kind)
+            .unwrap_or_else(|| panic!("`rwv explain {kind}` reaches no entry"));
+        assert!(
+            entry.starts_with(&format!("### `{kind}`\n")),
+            "`{kind}` is served from another heading:\n{entry}"
+        );
+        assert!(
+            generated.contains(entry),
+            "the page's `{kind}` entry is not what the table generates; regenerate with \
+             `cargo run --example generate-explain`:\n{entry}"
+        );
+    }
+}
+
+/// The seeded failure for the pin above: an entry that differs from the
+/// table's by one word is reported.
+#[test]
+fn a_kind_entry_edited_by_hand_is_not_the_generated_one() {
+    let generated = repoweave::diagnosis::kind_entries_markdown(repoweave::manifest::VcsType::Git);
+    let entry = repoweave::explain::entry_for_token("edits").expect("edits is served");
+    let edited = entry.replacen("commit your edits", "commit your work", 1);
+    assert_ne!(edited, entry, "the seed must change the entry");
+    assert!(!generated.contains(&edited));
 }

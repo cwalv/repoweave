@@ -281,11 +281,14 @@ fn a_change_to_reference_refuses_over_uncommitted_changes() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(1), "{}", describe(&out));
     assert!(
-        stderr.contains("src/lib.rs")
-            && stderr.contains("Commit them, stash them, or discard them"),
-        "the refusal names the file and the remedies: {stderr}"
+        stderr.contains(&format!(
+            "rwv role: {}: edits dirty\n    src/lib.rs\n",
+            weave.beta
+        )) && stderr.contains("commit your edits, or set them aside")
+            && stderr.contains(&format!("git -C {} commit", beta.display())),
+        "the refusal names the file and the choices: {stderr}"
     );
-    assert_routes_to(&stderr, "dirty-checkout");
+    assert_routes_to(&stderr, "edits");
     assert_eq!(
         std::fs::read(weave.project_dir(&weave.ws).join("rwv.toml")).unwrap(),
         manifest,

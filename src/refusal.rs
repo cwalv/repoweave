@@ -2,10 +2,11 @@
 //! rendering that puts it in front of the operator.
 //!
 //! A refusal is rwv declining on purpose — a precondition it will not cross,
-//! an input it will not accept. Those get a [`RefusalKind`]; an environment
-//! failure, an IO error and an internal invariant do not, and an error with no
-//! kind anywhere in its chain renders exactly as it did before this module
-//! existed.
+//! an input it will not accept. One that judged repo states carries a
+//! [`crate::diagnosis::Report`]; one that names a condition carries a
+//! [`RefusalKind`]. An environment failure, an IO error and an internal
+//! invariant carry neither, and an error with no kind anywhere in its chain
+//! renders exactly as it did before this module existed.
 //!
 //! The kind rides the error value rather than its text, so a message can be
 //! rewritten without renaming the condition, and a wrapping `.context()` does
@@ -44,12 +45,7 @@ pub enum RefusalKind {
     UnrenderableName,
     /// A name is not usable as a ref-name component.
     InvalidRefName,
-    /// `version:` names a revision where it must name a branch.
-    VersionIsAPin,
 
-    /// A checkout the verb must move, record or delete carries uncommitted
-    /// tracked changes.
-    DirtyCheckout,
     /// The dirty-state read failed, so the operation fails closed.
     UnreadableStatus,
     /// The atomic op-state create lost to a peer whose record then vanished.
@@ -66,13 +62,9 @@ pub enum RefusalKind {
     LockStateMismatch,
     /// Repos in the push plan are not on a pushable branch.
     UnpushableRepoBranch,
-    /// The manifest push failed, so the lock carrier is deliberately
-    /// unpublished.
-    ProjectPushWithheld,
     /// Preflight: tips are not in the fast-forward relation the strategy needs.
     NotFastForwardable,
-    /// Live worktrees or standing receipts claim the store a delete would
-    /// destroy.
+    /// Standing ownership receipts claim the store a delete would destroy.
     StoreStillClaimed,
     /// The records that would prove a store unclaimed could not be read, so
     /// the delete fails closed.
@@ -108,8 +100,6 @@ pub enum RefusalKind {
     MissingCanonicalClone,
     /// A clone sits in a topology rwv does not maintain.
     CloneTopology,
-    /// The repository is mid-rebase, mid-merge or otherwise mid-operation.
-    MidOperation,
     /// A lock entry names a revision that does not resolve.
     UnresolvableLockEntry,
     /// The lock↔HEAD relation is not `ok`.
@@ -159,10 +149,6 @@ pub enum RefusalKind {
     UnownedBranchInNamespace,
     /// The receipted ref is off its recorded tip.
     OwnedBranchMoved,
-    /// The index records this workweave name at another path.
-    WorkweaveNameTaken,
-    /// The target directory is another workweave's.
-    ForeignWorkweaveInTargetDir,
     /// The directory slot is taken by a non-addressable occupant.
     TargetDirOccupied,
     /// The reuse/replace target holds work no flag here can consent to lose.
@@ -170,9 +156,6 @@ pub enum RefusalKind {
     /// The source project directory is dirty and `--capture-dirty` was not
     /// given.
     DirtyProjectDir,
-    /// A workweave holds uncommitted changes and `--discard-uncommitted` was
-    /// not given.
-    UncommittedWork,
     /// A workweave holds unlanded commits and `--discard-unmerged-commits` was
     /// not given.
     UnmergedCommits,
@@ -370,13 +353,13 @@ fn kind_of_link(link: &(dyn std::error::Error + 'static)) -> Option<RefusalKind>
         return Some(refusal.kind);
     }
     if let Some(e) = link.downcast_ref::<crate::naming::WorkweaveNameError>() {
-        return Some(workweave_name_kind(e));
+        return workweave_name_kind(e);
     }
     if let Some(e) = link.downcast_ref::<crate::naming::ProjectNameError>() {
-        return Some(project_name_kind(e));
+        return project_name_kind(e);
     }
     if let Some(e) = link.downcast_ref::<crate::naming::RefNameError>() {
-        return Some(ref_name_kind(e));
+        return ref_name_kind(e);
     }
     if let Some(e) = link.downcast_ref::<crate::manifest::RepoPathError>() {
         return Some(repo_path_kind(e));
@@ -387,18 +370,18 @@ fn kind_of_link(link: &(dyn std::error::Error + 'static)) -> Option<RefusalKind>
     None
 }
 
-fn workweave_name_kind(e: &crate::naming::WorkweaveNameError) -> RefusalKind {
+fn workweave_name_kind(e: &crate::naming::WorkweaveNameError) -> Option<RefusalKind> {
     use crate::naming::WorkweaveNameError as E;
     match e {
-        E::Slash(_) | E::AmbiguousDelimiter(_) => RefusalKind::UnrenderableName,
+        E::Slash(_) | E::AmbiguousDelimiter(_) => Some(RefusalKind::UnrenderableName),
         E::InvalidRef(inner) => ref_name_kind(inner),
     }
 }
 
-fn project_name_kind(e: &crate::naming::ProjectNameError) -> RefusalKind {
+fn project_name_kind(e: &crate::naming::ProjectNameError) -> Option<RefusalKind> {
     use crate::naming::ProjectNameError as E;
     match e {
-        E::AmbiguousDelimiter(_) | E::EncodedSeparator(_) => RefusalKind::UnrenderableName,
+        E::AmbiguousDelimiter(_) | E::EncodedSeparator(_) => Some(RefusalKind::UnrenderableName),
         E::InvalidRef(inner) => ref_name_kind(inner),
     }
 }
@@ -424,25 +407,52 @@ fn filter_kind(e: &crate::selector::FilterError) -> RefusalKind {
     }
 }
 
-fn ref_name_kind(e: &crate::naming::RefNameError) -> RefusalKind {
+/// A revision-shaped name carries no kind: it is refused where it is read, as
+/// the `name` state of the repo it would have named, and a site that lets it
+/// reach the terminal raw has dropped that repo.
+fn ref_name_kind(e: &crate::naming::RefNameError) -> Option<RefusalKind> {
     use crate::naming::RefNameError as E;
     match e {
-        E::ShaShaped(_) | E::TagShaped(_) => RefusalKind::VersionIsAPin,
-        E::Empty | E::Malformed { .. } => RefusalKind::InvalidRefName,
+        E::ShaShaped(_) | E::TagShaped(_) => None,
+        E::Empty | E::Malformed { .. } => Some(RefusalKind::InvalidRefName),
     }
 }
 
-/// Everything a refused run writes to stderr, as bytes.
+/// The tokens `rwv explain` serves for `err`: each distinct axis a report
+/// judged, else the one kind it carries, else none.
+pub fn routes(err: &anyhow::Error) -> Vec<String> {
+    match crate::diagnosis::report_of(err) {
+        Some(report) => report.kinds().into_iter().map(|k| k.token()).collect(),
+        None => kind_of(err).map(RefusalKind::token).into_iter().collect(),
+    }
+}
+
+/// Everything a refused `rwv <verb>` writes to stderr, as bytes.
 ///
-/// An error carrying no kind goes through `Debug`, which is the formatter the
-/// runtime's own reporter uses, so it produces the same bytes here as it did
-/// when `main` returned a `Result` — the backtrace `RUST_BACKTRACE` asks for
-/// included. A refusal prints the same headline and chain without one: it
-/// was declined on purpose, and where in rwv it was declined is no help to
-/// the operator it routes. The route line is a bare command and nothing
-/// else: a reader who has learned to skip it must be able to skip it on
-/// shape alone.
-pub fn render(err: &anyhow::Error) -> String {
+/// A refusal that judged repos prints each judged line under `rwv <verb>:`,
+/// any context wrapped above it first, then its choices and a route line per
+/// axis. Otherwise an error carrying no kind goes through `Debug`, which is
+/// the formatter the runtime's own reporter uses, so it produces the same
+/// bytes here as it did when `main` returned a `Result` — the backtrace
+/// `RUST_BACKTRACE` asks for included. A refusal prints the same headline and
+/// chain without one: it was declined on purpose, and where in rwv it was
+/// declined is no help to the operator it routes. The route line is a bare
+/// command and nothing else: a reader who has learned to skip it must be able
+/// to skip it on shape alone.
+pub fn render(err: &anyhow::Error, verb: &str) -> String {
+    if let Some(report) = crate::diagnosis::report_of(err) {
+        let prefix = if verb.is_empty() {
+            "rwv: ".to_owned()
+        } else {
+            format!("rwv {verb}: ")
+        };
+        let mut out: String = crate::diagnosis::contexts_above_report(err)
+            .into_iter()
+            .map(|context| format!("{prefix}{context}\n"))
+            .collect();
+        out.push_str(&report.render(verb));
+        return out;
+    }
     let kind = kind_of(err);
     let body = match kind {
         Some(_) => headline_and_causes(err),
@@ -482,9 +492,21 @@ fn headline_and_causes(err: &anyhow::Error) -> String {
     out
 }
 
-/// [`render`], to stderr.
-pub fn report(err: &anyhow::Error) {
-    eprint!("{}", render(err));
+/// [`render`], to stderr; and, for a `--json` invocation refused on the
+/// repos it judged before it printed anything, those repos to stdout.
+pub fn report(err: &anyhow::Error, verb: &str, json: bool) {
+    if let Some(report) = crate::diagnosis::report_of(err) {
+        if json && !crate::stdout::written() {
+            let envelope = crate::diagnosis::RefusalJsonOutput {
+                schema: crate::diagnosis::REFUSAL_SCHEMA_URL.to_owned(),
+                refused: report.output(),
+            };
+            if let Ok(out) = serde_json::to_string_pretty(&envelope) {
+                outln!("{out}");
+            }
+        }
+    }
+    eprint!("{}", render(err, verb));
 }
 
 #[cfg(test)]
@@ -499,7 +521,7 @@ mod tests {
             RefusalKind::PushFromWorkweave.token(),
             "push-from-workweave"
         );
-        assert_eq!(RefusalKind::VersionIsAPin.token(), "version-is-a-pin");
+        assert_eq!(RefusalKind::InvalidRefName.token(), "invalid-ref-name");
     }
 
     /// Where a refusal names a state doctor already names, the two spell it
@@ -557,7 +579,7 @@ mod tests {
             .context("the headline");
 
         assert_eq!(
-            render(&err),
+            render(&err, ""),
             "Error: the headline\n\
              \n\
              Caused by:\n    \
@@ -577,7 +599,7 @@ mod tests {
             .context("the headline\nHint: try a scoped path: projects/{owner}/web-app/");
 
         assert_eq!(
-            render(&err),
+            render(&err, ""),
             "Error: the headline\n\
              Hint: try a scoped path: projects/{owner}/web-app/\n\
              \n\
@@ -590,7 +612,7 @@ mod tests {
     #[test]
     fn an_untagged_error_gets_no_route_line() {
         let err = anyhow::Error::msg("nothing was declined here").context("wrapped");
-        assert!(!render(&err).contains("rwv explain"));
+        assert!(!render(&err, "").contains("rwv explain"));
     }
 
     #[test]
@@ -600,7 +622,7 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(
-            render(&err),
+            render(&err, ""),
             "Error: materialize does not start while an operation is in flight\n\
              \n\
              Caused by:\n    \
@@ -635,7 +657,7 @@ mod tests {
     /// reader who can only run one.
     #[test]
     fn two_kinds_render_one_route_line() {
-        let rendered = render(&two_kinds_in_one_chain());
+        let rendered = render(&two_kinds_in_one_chain(), "");
         assert_eq!(rendered.matches("rwv explain").count(), 1);
         assert!(rendered.ends_with("\nrwv explain op-parked\n"));
     }
@@ -658,7 +680,7 @@ mod tests {
         let pinned = anyhow::Error::new(WorkweaveNameError::InvalidRef(RefNameError::TagShaped(
             "v1.2.3".into(),
         )));
-        assert_eq!(kind_of(&pinned), Some(RefusalKind::VersionIsAPin));
+        assert_eq!(kind_of(&pinned), None);
 
         let empty = anyhow::Error::new(RefNameError::Empty);
         assert_eq!(kind_of(&empty), Some(RefusalKind::InvalidRefName));

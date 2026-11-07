@@ -14,7 +14,6 @@ use crate::registry::{
 };
 use crate::vcs::{vcs_for, HeadAttachment, RemoteBranchCopies, TrackingRef, Vcs};
 use crate::workspace::{project_dir, Checkout, WorkspaceContext};
-use crate::workweave_index::RefRegistry;
 use anyhow::Context;
 use std::path::{Path, PathBuf};
 
@@ -389,8 +388,16 @@ pub fn run_add(
                 url
             );
         };
-        let version = TrackingRef::try_from(&remote_default)
-            .with_context(|| untrackable_remote_default(&repo_path, &dest))?;
+        let version = declared_branch(
+            TrackingRef::try_from(&remote_default),
+            vcs.as_ref(),
+            &repo_path,
+            &format!(
+                "the default branch of the remote cloned at {}",
+                dest.display()
+            ),
+            || untrackable_remote_default(&repo_path, &dest),
+        )?;
 
         // Add entry to manifest.
         let entry = RepoEntry {
@@ -778,6 +785,33 @@ impl AddLeftovers {
     }
 }
 
+/// The branch `rwv add` declares for `repo_path`, from `parsed`; one that
+/// reads as a revision is refused as that repo's `name` state, `whose` saying
+/// where the name came from, and any other unusable name under `context`.
+fn declared_branch(
+    parsed: Result<TrackingRef, crate::naming::RefNameError>,
+    vcs: &dyn Vcs,
+    repo_path: &RepoPath,
+    whose: &str,
+    context: impl FnOnce() -> String,
+) -> anyhow::Result<TrackingRef> {
+    use crate::naming::RefNameError as E;
+    let (name, shape) = match parsed {
+        Ok(declared) => return Ok(declared),
+        Err(E::ShaShaped(name)) => (name, "a commit id"),
+        Err(E::TagShaped(name)) => (name, "a release tag"),
+        Err(other) => return Err(anyhow::Error::new(other).context(context())),
+    };
+    Err(crate::diagnosis::State::NameARevision
+        .of(repo_path)
+        .subject(&name)
+        .listing([format!(
+            "{whose} reads as {shape}, so there is no branch to track"
+        )])
+        .judge(vcs)
+        .refused())
+}
+
 fn untrackable_remote_default(repo_path: &RepoPath, clone: &Path) -> String {
     format!(
         "rwv add: '{}' at {}: the remote's default branch cannot be its `version`",
@@ -877,8 +911,16 @@ fn run_add_from_local_path(
             adopted.display()
         );
     };
-    let version = TrackingRef::try_from(&remote_default)
-        .with_context(|| untrackable_remote_default(repo_path, clone_dir))?;
+    let version = declared_branch(
+        TrackingRef::try_from(&remote_default),
+        vcs,
+        repo_path,
+        &format!(
+            "the default branch of the remote of the clone at {}",
+            clone_dir.display()
+        ),
+        || untrackable_remote_default(repo_path, clone_dir),
+    )?;
 
     let entry = RepoEntry {
         vcs_type,
@@ -968,10 +1010,6 @@ pub fn run_remove(
                 &repo_path,
                 removal.waives_shared_clone_guard(),
             )?;
-            let repo_dir = ctx.primary_path().join(repo_path.as_path());
-            if repo_dir.exists() {
-                refuse_claimed_store(vcs.as_ref(), ctx.primary_path(), &repo_dir)?;
-            }
         }
         Some(crate::sync::plan_checkout_removal(
             vcs.as_ref(),
@@ -1082,86 +1120,6 @@ fn refuse_shared_clone_delete(
         );
     }
     Ok(())
-}
-
-/// R4: refuse a DESTROY-STORE while the store is still claimed.
-///
-/// `remove --delete` deletes an entire ref store and its object database,
-/// which destroys every ref and every object at once — so no ref-level rule
-/// can gate it, and none is allowed to be read as permitting it. R4 names the
-/// two claims that must be gone first:
-///
-/// - **no live worktree registered against the store.** Every workweave
-///   checkout of this repo is a linked worktree of this store, so deleting it
-///   guts live workweaves — their `.git` files point into the directory being
-///   removed. `git worktree list` reports the store itself plus one line per
-///   linked worktree; anything beyond the first is a live claim.
-/// - **every receipt keyed to the store retracted.** A standing receipt says
-///   rwv created a ref here and has not destroyed it, which is exactly the
-///   per-ref DESTROY discipline not having run dry yet. Receipts are checked
-///   across *all* projects in the weave, not just the active one: a clone is
-///   shared by path, so another project's workweave can hold a ref in this
-///   same store.
-fn refuse_claimed_store(vcs: &dyn Vcs, primary_root: &Path, repo_dir: &Path) -> anyhow::Result<()> {
-    let mut claims: Vec<String> = Vec::new();
-
-    match vcs.list_worktrees(repo_dir) {
-        Ok(worktrees) => {
-            let store = CanonicalPath::of(repo_dir);
-            for wt in worktrees {
-                if CanonicalPath::of(&wt) != store {
-                    claims.push(format!("live worktree registered at {}", wt.display()));
-                }
-            }
-        }
-        // Not a repo, or git could not answer. A directory that is not a ref
-        // store is not a DESTROY-STORE, and a store that cannot be
-        // interrogated is not one this verb may assume is unclaimed.
-        Err(e) => {
-            if vcs.is_repo(repo_dir) {
-                crate::refuse!(
-                    RefusalKind::StoreClaimsUnreadable,
-                    "refusing to delete '{}': it is a repo whose worktree registrations \
-                     could not be read ({e:#}), so rwv cannot establish that no live \
-                     worktree is using it.",
-                    repo_dir.display()
-                );
-            }
-        }
-    }
-
-    for project in crate::workspace::discover_projects(primary_root) {
-        let registry = RefRegistry::for_project(primary_root, &project);
-        match registry.list_for_store(repo_dir) {
-            Ok(receipts) => claims.extend(receipts.into_iter().map(|r| {
-                format!(
-                    "ownership receipt for branch {r} (project {})",
-                    project.as_str()
-                )
-            })),
-            Err(e) => crate::refuse!(
-                RefusalKind::StoreClaimsUnreadable,
-                "refusing to delete '{}': the ownership receipts for project `{}` could \
-                 not be read ({e:#}), so rwv cannot establish that no ref it created still \
-                 lives in this store.",
-                repo_dir.display(),
-                project.as_str()
-            ),
-        }
-    }
-
-    if claims.is_empty() {
-        return Ok(());
-    }
-    crate::refuse!(
-        RefusalKind::StoreStillClaimed,
-        "refusing to delete '{}': the store is still claimed:\n  {}\n\n\
-         Deleting it would take every ref and object with it at once. Delete the \
-         workweaves that hold these first (`rwv workweave <project> delete <name>`), \
-         which removes their worktrees and retracts their receipts, then re-run.",
-        repo_dir.display(),
-        claims.join("\n  "),
-    )
 }
 
 /// Parse an `rwv add --new` creation address into the registry it names and
@@ -1571,13 +1529,20 @@ pub fn run_add_new(
             },
         };
 
-        let version = created_on.with_context(|| {
-            format!(
-                "rwv add: '{}' at {}: the branch the repo was created on cannot be its `version`",
-                repo_path.as_str(),
-                dest.display(),
-            )
-        })?;
+        let version = declared_branch(
+            created_on,
+            vcs.as_ref(),
+            &repo_path,
+            &format!("the branch the repo at {} was created on", dest.display()),
+            || {
+                format!(
+                    "rwv add: '{}' at {}: the branch the repo was created on cannot be its \
+                     `version`",
+                    repo_path.as_str(),
+                    dest.display(),
+                )
+            },
+        )?;
 
         let entry = RepoEntry {
             vcs_type,

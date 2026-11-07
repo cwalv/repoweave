@@ -14,6 +14,12 @@ use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static READER_GONE: AtomicBool = AtomicBool::new(false);
+static WRITTEN: AtomicBool = AtomicBool::new(false);
+
+/// Whether this process has written anything to its standard output.
+pub(crate) fn written() -> bool {
+    WRITTEN.load(Ordering::Relaxed)
+}
 
 fn settle(result: io::Result<()>) -> io::Result<()> {
     match result {
@@ -26,6 +32,7 @@ fn settle(result: io::Result<()>) -> io::Result<()> {
 }
 
 pub(crate) fn write(args: fmt::Arguments<'_>, newline: bool) -> io::Result<()> {
+    WRITTEN.store(true, Ordering::Relaxed);
     if READER_GONE.load(Ordering::Relaxed) {
         return Ok(());
     }
@@ -40,6 +47,7 @@ pub(crate) fn write(args: fmt::Arguments<'_>, newline: bool) -> io::Result<()> {
 }
 
 pub(crate) fn write_bytes(bytes: &[u8]) -> io::Result<()> {
+    WRITTEN.store(true, Ordering::Relaxed);
     if READER_GONE.load(Ordering::Relaxed) {
         return Ok(());
     }

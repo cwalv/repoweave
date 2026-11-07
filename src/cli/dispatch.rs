@@ -391,10 +391,29 @@ pub fn run_and_report() -> std::process::ExitCode {
     match run() {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(err) => {
-            crate::refusal::report(&err);
+            let (verb, json) = invocation();
+            crate::refusal::report(&err, &verb, json);
             std::process::ExitCode::FAILURE
         }
     }
+}
+
+/// The subcommand path this process was invoked with — `workweave delete` for
+/// `rwv workweave <project> delete <name>` — and whether it asked for `--json`,
+/// read again from argv: `run` takes none, and a parse it already passed
+/// passes here the same way.
+fn invocation() -> (String, bool) {
+    let Ok(matches) = Cli::command().try_get_matches_from(std::env::args_os()) else {
+        return (String::new(), false);
+    };
+    let mut path: Vec<String> = Vec::new();
+    let mut at = &matches;
+    while let Some((name, sub)) = at.subcommand() {
+        path.push(name.to_owned());
+        at = sub;
+    }
+    let json = matches!(at.try_get_one::<bool>("json"), Ok(Some(true)));
+    (path.join(" "), json)
 }
 
 /// Parse `argv` and run the requested verb. The whole of `rwv`'s behavior

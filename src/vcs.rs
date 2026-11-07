@@ -344,6 +344,55 @@ pub struct UniqueDiff {
     pub text: String,
 }
 
+/// One action in one repo that a refusal can print as a choice: the backend
+/// spells it, as a line the operator runs by hand.
+///
+/// A spelling may hold `<placeholder>` words, which core fills from what the
+/// refusal judged and leaves standing where the operator chooses the value.
+/// `<checkout>` is the repo's checkout directory. No action may drop a commit
+/// or an edit, or name a force, reset, delete, reflog or another hint's
+/// commit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum VcsAction {
+    Commit,
+    Stash,
+    Status,
+    RemoveWorktree,
+    BranchAt,
+    SwitchTo,
+    SwitchDetached,
+    CherryPick,
+    Revert,
+    MergeNoFastForward,
+    PushCommitAs,
+    SetPushRemote,
+    SetPushDefault,
+    SetDefaultRemote,
+    AddRemote,
+    UnsetUpstream,
+}
+
+impl VcsAction {
+    pub const ALL: [VcsAction; 16] = [
+        Self::Commit,
+        Self::Stash,
+        Self::Status,
+        Self::RemoveWorktree,
+        Self::BranchAt,
+        Self::SwitchTo,
+        Self::SwitchDetached,
+        Self::CherryPick,
+        Self::Revert,
+        Self::MergeNoFastForward,
+        Self::PushCommitAs,
+        Self::SetPushRemote,
+        Self::SetPushDefault,
+        Self::SetDefaultRemote,
+        Self::AddRemote,
+        Self::UnsetUpstream,
+    ];
+}
+
 /// In-flight VCS operation whose conflict needs human resolution.
 ///
 /// Passed to [`Vcs::conflict_resolution_hint`] so sync's conflict-bail
@@ -409,6 +458,14 @@ impl MidOperation {
         match self {
             Self::Conflict(op) => Some(op),
             Self::Bisect => None,
+        }
+    }
+
+    /// The operation's own name, `rebase` for a repo stopped mid-rebase.
+    pub fn operation(self) -> String {
+        match self {
+            Self::Conflict(op) => op.to_string(),
+            Self::Bisect => Self::BISECT.to_owned(),
         }
     }
 
@@ -2479,6 +2536,9 @@ pub trait Vcs: Send + Sync {
     /// `rwv sync-to --continue` line — rwv vocabulary must not appear inside
     /// a VCS impl.
     fn conflict_resolution_hint(&self, op: ConflictOp) -> String;
+
+    /// The line an operator runs for `action`, with its placeholders unfilled.
+    fn hint(&self, action: VcsAction) -> &'static str;
 
     /// Rebase commits in the range `upstream..` of `repo`'s current branch
     /// onto `onto`, resolving declared derived content per `derived`.

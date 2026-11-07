@@ -728,10 +728,10 @@ fn a_dirty_repo_at_lock_time_routes_to_its_token() {
 
     let stderr = refusal_stderr(&["lock"], &primary);
     assert!(
-        stderr.contains("uncommitted changes"),
-        "precondition: the dirty-checkout preflight fired:\n{stderr}"
+        stderr.contains(&format!("rwv lock: {SERVER_PATH}: edits dirty\n")),
+        "precondition: the dirt preflight fired:\n{stderr}"
     );
-    assert_routes_to(&stderr, "dirty-checkout");
+    assert_routes_to(&stderr, "edits");
 }
 
 /// `rwv sync` over a destination carrying uncommitted tracked changes. A
@@ -750,10 +750,10 @@ fn a_dirty_destination_at_sync_time_routes_to_its_token() {
 
     let stderr = refusal_stderr(&["sync", &primary.to_string_lossy()], &workweave);
     assert!(
-        stderr.contains("uncommitted tracked changes"),
+        stderr.contains("rwv sync: projects/web-app: edits dirty\n    rwv.toml\n"),
         "precondition: the sync dirt preflight fired:\n{stderr}"
     );
-    assert_routes_to(&stderr, "dirty-checkout");
+    assert_routes_to(&stderr, "edits");
 }
 
 /// Both halves of that same body at once: one repo whose dirt cannot be read,
@@ -818,14 +818,159 @@ fn a_dirty_repo_outranks_an_unreadable_one_in_the_same_refusal() {
         "sync was expected to refuse:\n{stderr}"
     );
     assert!(
-        stderr.contains("uncommitted tracked changes"),
+        stderr.contains("rwv sync: projects/web-app: edits dirty\n    .gitattributes\n"),
         "precondition: the actionable half is present:\n{stderr}"
     );
     assert!(
-        stderr.contains("git status could not be read"),
+        stderr.contains(&format!("status could not be read in:\n  {SERVER_PATH}\n")),
         "precondition: the unreadable half is present too:\n{stderr}"
     );
-    assert_routes_to(&stderr, "dirty-checkout");
+    assert_routes_to(&stderr, "edits");
+}
+
+/// `rwv remove --delete` of a clone a workweave's worktree derives from: the
+/// clone is judged on the `checkout` kind, the workweave named and its delete
+/// offered, and nothing else is refused first.
+#[test]
+fn a_clone_a_workweave_derives_from_routes_to_checkout() {
+    let tmp = common::tempdir().unwrap();
+    let (primary, _workweave) = primary_and_workweave(tmp.path());
+
+    let stderr = refusal_stderr(&["remove", SERVER_PATH, "--delete"], &primary);
+    assert!(
+        stderr.contains(&format!(
+            "rwv remove: {SERVER_PATH}: checkout in another workspace (web-app--ww)\n"
+        )) && stderr.contains("  free the other checkout\n    rwv workweave web-app delete ww\n"),
+        "precondition: the store's checkouts were judged:\n{stderr}"
+    );
+    assert_routes_to(&stderr, "checkout");
+    assert!(primary.join(SERVER_PATH).join(".git").exists());
+}
+
+/// A workweave name the index already records at another path is the `name`
+/// kind's `taken`, refused before anything is created.
+#[test]
+fn a_workweave_name_recorded_elsewhere_routes_to_name() {
+    let tmp = common::tempdir().unwrap();
+    let (primary, _workweave) = primary_and_workweave(tmp.path());
+    let elsewhere = tmp.path().join("elsewhere");
+
+    let stderr = refusal_stderr(
+        &[
+            "workweave",
+            "web-app",
+            "create",
+            "ww",
+            "--dir",
+            &elsewhere.to_string_lossy(),
+        ],
+        &primary,
+    );
+    assert!(
+        stderr.contains("rwv workweave create: projects/web-app: name taken (ww)\n")
+            && stderr.contains("  use another name\n"),
+        "precondition: the index's record was judged:\n{stderr}"
+    );
+    assert_routes_to(&stderr, "name");
+    assert!(!elsewhere.exists(), "a refused create makes nothing");
+}
+
+/// A member whose push the remote rejects withholds the project repo: the
+/// member is judged `publish` `withheld`, in the terminal and in the `--json`
+/// envelope, which also still records what was pushed.
+#[test]
+fn a_rejected_member_push_routes_to_publish() {
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
+    let member = ws.workspace.join("local/org/a");
+    std::fs::write(member.join("advance.txt"), "advance").unwrap();
+    common::git_in(&member, &["add", "."]);
+    common::git_in(&member, &["commit", "-m", "advance"]);
+    let lock = common::rwv()
+        .args(["lock", "--commit"])
+        .current_dir(&ws.workspace)
+        .output()
+        .unwrap();
+    assert!(
+        lock.status.success(),
+        "{}",
+        String::from_utf8_lossy(&lock.stderr)
+    );
+    let gone = ws._tmp.path().join("no-such-remote.git");
+    common::git_in(
+        &member,
+        &["remote", "set-url", "origin", &gone.to_string_lossy()],
+    );
+
+    let stderr = refusal_stderr(&["push"], &ws.workspace);
+    assert!(
+        stderr.contains("rwv push: local/org/a: publish withheld\n")
+            && stderr.contains("projects/alpha was not pushed")
+            && stderr.contains("  publish it (again)\n    rwv push\n"),
+        "precondition: the rejected push was judged:\n{stderr}"
+    );
+    assert_routes_to(&stderr, "publish");
+
+    let out = common::rwv()
+        .args(["push", "--json"])
+        .current_dir(&ws.workspace)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let envelope: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_else(|e| {
+        panic!(
+            "one JSON document ({e}): {}",
+            String::from_utf8_lossy(&out.stdout)
+        )
+    });
+    assert_eq!(envelope["refused"][0]["axis"], "publish", "{envelope:#}");
+    assert_eq!(envelope["refused"][0]["state"], "withheld", "{envelope:#}");
+    assert_eq!(
+        envelope["refused"][0]["repo"], "local/org/a",
+        "{envelope:#}"
+    );
+    assert_eq!(envelope["outcomes"][0]["kind"], "failed", "{envelope:#}");
+}
+
+/// A verb refused on the repos it judged before printing anything prints
+/// the refusal envelope under `--json`, carrying each judged repo.
+#[test]
+fn a_judged_refusal_before_any_output_prints_the_refusal_envelope() {
+    let tmp = common::tempdir().unwrap();
+    let (primary, workweave) = primary_and_workweave(tmp.path());
+    std::fs::write(
+        workweave.join("projects/web-app/rwv.toml"),
+        "[repositories]\n# edited, uncommitted\n",
+    )
+    .unwrap();
+
+    let out = common::rwv()
+        .args(["sync", &primary.to_string_lossy(), "--json"])
+        .current_dir(&workweave)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    let envelope: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_else(|e| {
+        panic!(
+            "one JSON document ({e}): {}",
+            String::from_utf8_lossy(&out.stdout)
+        )
+    });
+    assert_eq!(
+        envelope["$schema"],
+        repoweave::diagnosis::REFUSAL_SCHEMA_URL,
+        "{envelope:#}"
+    );
+    assert_eq!(
+        envelope["refused"][0]["repo"], "projects/web-app",
+        "{envelope:#}"
+    );
+    assert_eq!(envelope["refused"][0]["axis"], "edits", "{envelope:#}");
+    assert_eq!(
+        envelope["refused"][0]["choices"][0]["id"], "C13",
+        "{envelope:#}"
+    );
+    assert_routes_to(&stderr, "edits");
 }
 
 // ---------------------------------------------------------------------------

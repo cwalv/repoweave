@@ -11,9 +11,10 @@ Refuses if invoked from a workweave (workweave branches shouldn't leak to
 shared remotes). Refuses if the project repo has uncommitted changes to any
 tracked file, or holds a `rwv.toml` or `rwv.lock` it has never committed: push
 publishes the project repo's last commit, so the lock it checks has to be the
-lock it publishes. Commit with `rwv lock --commit` or `rwv update --commit`
-after a relock, or with `git commit` in `projects/<name>/`. Untracked files
-other than those two do not refuse. Refuses if any member repo's HEAD disagrees
+lock it publishes. The refusal judges the project repo on the `edits` kind:
+`rwv.toml or rwv.lock uncommitted` when those are all that is, offering `rwv
+lock --commit`, else `dirty`, offering the VCS's commit or stash. Untracked
+files other than those two do not refuse. Refuses if any member repo's HEAD disagrees
 with its lock entry (lock-precondition check). Use `rwv lock --commit` to
 record each repo's HEAD in the lock, or move the repo's branch to its lock
 commit without detaching it: `git reset --keep <lock commit>` (after
@@ -70,7 +71,8 @@ Under `--json`, output is the pretty-printed envelope, whatever `-j` is:
 ```
 {
   "$schema": "<url>",
-  "outcomes": [ { "kind": "...", "path": "...", "absolute_path": "...", ... }, ... ]
+  "outcomes": [ { "kind": "...", "path": "...", "absolute_path": "...", ... }, ... ],
+  "refused": [ { "repo": "...", "axis": "...", "state": "...", "choices": [ ... ], ... }, ... ]
 }
 ```
 
@@ -79,6 +81,12 @@ by selector), `failed`. The project-repo record is always the last entry in `out
 uses kind `project-repo-pushed` or `project-repo-failed` — its kind tag is the
 only way to distinguish it from member-repo records in the flat array. Failed
 records carry a `message` field with the free-form error from the git push.
+
+`refused` lists each repo push judged when it refused, with that state's
+choices as `rwv explain <axis>` lists them: the project repo's `edits` when it
+has uncommitted changes, before anything is pushed; and each member whose
+push the remote rejected, as `publish` `withheld`, when the project repo was
+not pushed because of it. It is empty, not absent, otherwise.
 
 Schema:
 
@@ -90,7 +98,8 @@ Schema:
   "type": "object",
   "required": [
     "$schema",
-    "outcomes"
+    "outcomes",
+    "refused"
   ],
   "properties": {
     "$schema": {
@@ -100,6 +109,13 @@ Schema:
       "type": "array",
       "items": {
         "$ref": "#/definitions/PushOutcomeOutput"
+      }
+    },
+    "refused": {
+      "description": "Each repo push judged before refusing, with that state's choices. Empty, not absent, when nothing was refused on a repo's state; a project repo withheld because members' pushes failed lists each of those members as `publish` `withheld`.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/JudgedOutput"
       }
     },
     "resolution": {
@@ -115,6 +131,200 @@ Schema:
     }
   },
   "definitions": {
+    "Axis": {
+      "description": "What a refusal judged a repo on. Its token is the kind `rwv explain` serves; the order here is the order a repo's lines print in.",
+      "oneOf": [
+        {
+          "description": "Uncommitted work, or a VCS operation in progress, in a checkout.",
+          "type": "string",
+          "enum": [
+            "edits"
+          ]
+        },
+        {
+          "description": "Another checkout derives from what the verb would remove.",
+          "type": "string",
+          "enum": [
+            "checkout"
+          ]
+        },
+        {
+          "description": "A name the verb would record is unusable.",
+          "type": "string",
+          "enum": [
+            "name"
+          ]
+        },
+        {
+          "description": "What `rwv push` withheld.",
+          "type": "string",
+          "enum": [
+            "publish"
+          ]
+        }
+      ]
+    },
+    "ChoiceOutput": {
+      "type": "object",
+      "required": [
+        "phrase",
+        "run"
+      ],
+      "properties": {
+        "id": {
+          "description": "The choice's id on the axis's page; null for one it does not number.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "phrase": {
+          "type": "string"
+        },
+        "run": {
+          "description": "The commands, one per line, as the terminal prints them.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "where": {
+          "description": "The directory it must run in; null where it runs here or names its own directory.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "FactKind": {
+      "description": "A fact about a judged repo. Facts are reported; they never select a choice.",
+      "oneOf": [
+        {
+          "description": "A superseded tip was recorded for the branch.",
+          "type": "string",
+          "enum": [
+            "rewritten"
+          ]
+        },
+        {
+          "description": "The branch is an ancestor of where it lands.",
+          "type": "string",
+          "enum": [
+            "landed"
+          ]
+        },
+        {
+          "description": "Another project's live lock pins the commits.",
+          "type": "string",
+          "enum": [
+            "pinned-by"
+          ]
+        },
+        {
+          "description": "Other live weave branches declare the branch.",
+          "type": "string",
+          "enum": [
+            "shared"
+          ]
+        },
+        {
+          "description": "The pin is on the branch it lands into.",
+          "type": "string",
+          "enum": [
+            "pin-landed"
+          ]
+        },
+        {
+          "description": "The member was left detached because its branch is checked out elsewhere.",
+          "type": "string",
+          "enum": [
+            "checkout"
+          ]
+        },
+        {
+          "description": "The unlanded commits carry changes equivalent to commits where they land.",
+          "type": "string",
+          "enum": [
+            "patch-equivalent"
+          ]
+        }
+      ]
+    },
+    "FactOutput": {
+      "type": "object",
+      "required": [
+        "fact"
+      ],
+      "properties": {
+        "about": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fact": {
+          "$ref": "#/definitions/FactKind"
+        }
+      }
+    },
+    "JudgedOutput": {
+      "description": "One judged repo, as `--json` carries it.",
+      "type": "object",
+      "required": [
+        "axis",
+        "choices",
+        "facts",
+        "listed",
+        "repo",
+        "state"
+      ],
+      "properties": {
+        "axis": {
+          "description": "What it was judged on; `rwv explain <axis>` serves the axis's page.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Axis"
+            }
+          ]
+        },
+        "choices": {
+          "description": "What this state can run, in the order the page lists it.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ChoiceOutput"
+          }
+        },
+        "facts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/FactOutput"
+          }
+        },
+        "listed": {
+          "description": "The files, paths or commits the state lists.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "repo": {
+          "description": "The repo's path, `projects/<name>` for the project repo.",
+          "type": "string"
+        },
+        "state": {
+          "description": "The state it was judged in, as that page names it.",
+          "type": "string"
+        },
+        "subject": {
+          "description": "What the state names, when it names something.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
     "PushOutcomeOutput": {
       "description": "One per-repo outcome record in `rwv push --json` output.\n\nMember-repo records use `kind` values `pushed`, `skipped`, and `failed`. The project-repo record uses `kind` values `project-repo-pushed` and `project-repo-failed`, making it distinguishable from member-repo records in the same flat `outcomes` array.",
       "oneOf": [
@@ -332,10 +542,10 @@ rwv push -j 4
 
 ## Common errors
 
-- *project repo has uncommitted changes* — the files named would not reach
-  the remote, since push publishes the project repo's last commit. Commit them
-  (`rwv lock --commit` or `rwv update --commit` after a relock, `git -C
-  projects/<name> commit` otherwise) and re-run.
+- *`projects/<name>: edits …`* — the files listed would not reach the remote,
+  since push publishes the project repo's last commit. Run the choice printed
+  beneath it (`rwv lock --commit` when only `rwv.toml` or `rwv.lock` is
+  uncommitted, the VCS's commit or stash otherwise) and re-run.
 - *lock-state mismatch* — one or more member repos' HEAD differs from the
   recorded lock SHA. Run `rwv lock --commit` to record each repo's HEAD in
   the lock, or move the repo's branch to its lock commit without detaching
@@ -345,6 +555,7 @@ rwv push -j 4
   `rwv sync-to`) to land changes on primary, then push from there.
 - *project repo not on canonical branch* — check out the canonical branch
   before pushing.
-- *member-repo push failures* — inspect the `failed` outcomes in `--json`
-  output. The project repo is NOT pushed when any manifest push fails; retry
-  after resolving the failures.
+- *`<member>: publish withheld`* — that member's push was rejected, listed
+  beneath it, so the project repo was not pushed; members that pushed are
+  published. Resolve the rejection, or choose where the member pushes, then
+  re-run `rwv push`.

@@ -4,6 +4,7 @@
 //! `rwv.lock`. `rwv abort` rolls back to pre-sync state using savepoint refs.
 
 use crate::cli::consent::DiscardLocalCommitsConsent;
+use crate::diagnosis::{Report, State};
 use crate::integration::Integration;
 use crate::integration_runner::enabled_integrations;
 use crate::integrations::builtin_integrations;
@@ -702,6 +703,9 @@ pub struct SyncJsonOutput {
     /// with its op-state held. A complete op exits 1 when `members` carries a
     /// `prune-refused` entry.
     pub complete: bool,
+    /// Each repo the op judged when it refused, with that state's choices.
+    /// Empty, not absent, when it refused on none.
+    pub refused: Vec<crate::diagnosis::JudgedOutput>,
     /// Standing advisories raised during this sync (e.g. delivered changes
     /// touching a materialized input). Empty, not absent, when there are
     /// none — a consumer branches on length rather than presence.
@@ -776,6 +780,9 @@ pub struct SyncToJsonOutput {
     /// with its op-state held. A complete op exits 1 when `members` carries a
     /// `prune-refused` entry.
     pub complete: bool,
+    /// Each repo the op judged when it refused, with that state's choices.
+    /// Empty, not absent, when it refused on none.
+    pub refused: Vec<crate::diagnosis::JudgedOutput>,
     /// Step-3 advance of the project repo (`projects/<project>/.git`). Omitted
     /// when the project repo was already at CWD's tip (no-op fast-forward).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -810,10 +817,16 @@ pub enum MemberOutput {
     PruneRefused {
         path: String,
         absolute_path: crate::path_spelling::WirePath,
-        /// The refusal token, resolvable with `rwv explain <token>`. Absent
-        /// when the removal failed without a classified refusal.
+        /// The refusal token, resolvable with `rwv explain <token>`, when the
+        /// removal was refused on a condition. Absent when it was refused on
+        /// the checkout's state, which `refused` then carries, or failed
+        /// without a classified refusal.
         #[serde(skip_serializing_if = "Option::is_none")]
         refusal: Option<String>,
+        /// Each state the checkout was judged in that refused the removal,
+        /// with that state's choices; `rwv explain <axis>` serves each axis.
+        /// Empty, not absent, when none was.
+        refused: Vec<crate::diagnosis::JudgedOutput>,
         /// Free-form display message, the full cause chain. Not a typed
         /// discriminant.
         message: String,
@@ -854,6 +867,7 @@ impl MemberOutput {
             path: repo_path.to_string(),
             absolute_path: crate::path_spelling::WirePath::of(checkout),
             refusal: crate::refusal::kind_of(error).map(RefusalKind::token),
+            refused: crate::diagnosis::refused_output(error),
             message: format!("{error:#}"),
         }
     }
@@ -1780,34 +1794,24 @@ fn materialize_missing_repo(
     Ok(None)
 }
 
-/// R4: refuse to destroy `store` while anything still claims it.
+/// R4, first half: every live checkout derived from `store`, judged on the
+/// `checkout` axis — a recorded workweave's as in another workspace, any
+/// other as in a raw worktree. Only a verb in the primary destroys a store,
+/// so the choices that run there run here.
 ///
-/// A store-level destroy takes out every ref and every object at once, so
-/// no ref-level rule can gate it. Two things must
-/// both be true first:
-///
-/// - **No live worktree is registered against the store.** `git worktree
-///   add` writes its administration *into* the canonical store
-///   (`.git/worktrees/<name>`), so `remove_dir_all` on the store does not
-///   merely delete a clone — it deletes the object database and the
-///   worktree administration that every live workweave checkout of that
-///   repo depends on. The registration is what makes those checkouts
-///   findable, and it is what this reads.
-/// - **Every receipt keyed to the store has been retracted.** A standing
-///   receipt says rwv still accounts for a ref in there; destroying the
-///   store would strand it with nothing left to retract it against.
-///
-/// Fail-closed on an unreadable store: a claim we could not enumerate is
-/// treated as a claim that stands.
-fn check_store_unclaimed(
+/// `git worktree add` writes its administration *into* the canonical store
+/// (`.git/worktrees/<name>`), so `remove_dir_all` on the store does not
+/// merely delete a clone — it deletes the object database and the worktree
+/// administration every live checkout of that repo depends on. The
+/// registration is what makes those checkouts findable, and it is what this
+/// reads. Fail-closed: a registration that could not be enumerated refuses.
+fn judge_store_checkouts(
     vcs: &dyn Vcs,
     store: &Path,
     primary_root: &Path,
-    project: &ProjectName,
     repo_path: &RepoPath,
-    cause: RemovalCause,
+    report: &mut Report,
 ) -> anyhow::Result<()> {
-    let (dropped, rerun) = (cause.situation(), cause.rerun());
     let registered = vcs
         .list_worktrees(store)
         .with_context(|| {
@@ -1823,37 +1827,94 @@ fn check_store_unclaimed(
     // store path here is built by joining onto the workspace root, which
     // may reach it through a symlink.
     let store_key = CanonicalPath::of(store);
-    let live: Vec<String> = registered
+    let live: Vec<&PathBuf> = registered
         .iter()
         .filter(|p| CanonicalPath::of(p) != store_key)
-        .map(|p| p.display().to_string())
         .collect();
-    if !live.is_empty() {
-        crate::refuse!(
-            RefusalKind::StoreStillClaimed,
-            "{repo_path}: {dropped}, but {} still has live worktrees registered \
-             against it:\n  {}\n\
-             \n\
-             Removing the store would delete their object database and worktree \
-             administration along with it. Remove those workweaves first \
-             (`rwv workweave {project} delete <name>`), then {rerun}.",
-            store.display(),
-            live.join("\n  "),
+    if live.is_empty() {
+        return Ok(());
+    }
+    let recorded = recorded_workweaves(primary_root)?;
+    for checkout in live {
+        let at = CanonicalPath::of(checkout);
+        let judged = match recorded.iter().find(|(_, dir)| dir.contains(&at)) {
+            Some((workweave, dir)) => State::CheckoutInAnotherWorkspace
+                .of(repo_path)
+                .subject(workweave.flat())
+                .listing([checkout.display()])
+                .bind("<project>", &workweave.project)
+                .bind("<ww>", &workweave.name)
+                .bind("<other>", dir.as_path().display()),
+            None => State::CheckoutInRawWorktree
+                .of(repo_path)
+                .listing([checkout.display()])
+                .checkout(store)
+                .bind("<worktree>", checkout.display()),
+        };
+        report.add(judged.judge(vcs));
+    }
+    Ok(())
+}
+
+/// Every workweave the primary's projects record, with its directory.
+fn recorded_workweaves(
+    primary_root: &Path,
+) -> anyhow::Result<Vec<(crate::manifest::WorkweaveId, CanonicalPath)>> {
+    let mut out = Vec::new();
+    for project in crate::workspace::discover_projects(primary_root) {
+        let Some(index) = crate::workweave_index::read(primary_root, &project)? else {
+            continue;
+        };
+        for (name, dir) in index.workweaves {
+            out.push((
+                crate::manifest::WorkweaveId {
+                    project: project.clone(),
+                    name,
+                },
+                dir,
+            ));
+        }
+    }
+    Ok(out)
+}
+
+/// R4, second half: refuse while a receipt keyed to `store` stands. A standing
+/// receipt says rwv still accounts for a ref in there; destroying the store
+/// would strand it with nothing left to retract it against. Fail-closed on
+/// receipts that could not be read. A prune reads `project`'s receipts; a
+/// `remove --delete` reads every project's, since a clone is shared by path and
+/// another project's workweave can hold a ref in it.
+fn refuse_standing_receipts(
+    store: &Path,
+    primary_root: &Path,
+    project: &ProjectName,
+    repo_path: &RepoPath,
+    cause: RemovalCause,
+) -> anyhow::Result<()> {
+    let (dropped, rerun) = (cause.situation(), cause.rerun());
+    let projects = match cause {
+        RemovalCause::DroppedFromLock => vec![project.clone()],
+        RemovalCause::RemoveDelete => crate::workspace::discover_projects(primary_root),
+    };
+    let mut standing: Vec<String> = Vec::new();
+    for owner in &projects {
+        let receipts = crate::workweave_index::RefRegistry::for_project(primary_root, owner)
+            .list_for_store(store)
+            .with_context(|| {
+                format!(
+                    "{repo_path}: cannot read project `{owner}`'s ownership receipts for {}; \
+                     refusing to destroy a store whose claims could not be read",
+                    store.display()
+                )
+            })
+            .map_err(|e| crate::refusal::refusing(RefusalKind::StoreClaimsUnreadable, e))?;
+        standing.extend(
+            receipts
+                .iter()
+                .map(|r| format!("ownership receipt for branch {r} (project {owner})")),
         );
     }
-
-    let standing = crate::workweave_index::RefRegistry::for_project(primary_root, project)
-        .list_for_store(store)
-        .with_context(|| {
-            format!(
-                "{repo_path}: cannot read the ownership receipts for {}; \
-                 refusing to destroy a store whose claims could not be read",
-                store.display()
-            )
-        })
-        .map_err(|e| crate::refusal::refusing(RefusalKind::StoreClaimsUnreadable, e))?;
     if !standing.is_empty() {
-        let names: Vec<String> = standing.iter().map(|r| r.to_string()).collect();
         crate::refuse!(
             RefusalKind::StoreStillClaimed,
             "{repo_path}: {dropped}, but rwv still holds ownership receipts for \
@@ -1861,9 +1922,10 @@ fn check_store_unclaimed(
              \n\
              Each receipt must be retracted through its own ref delete — with a receipt \
              and a warrant — before the store itself may be destroyed. Delete the \
-             workweaves that own these refs, then {rerun}.",
+             workweaves that own these refs (`rwv workweave <project> delete <name>`), \
+             then {rerun}.",
             store.display(),
-            names.join("\n  "),
+            standing.join("\n  "),
         );
     }
     Ok(())
@@ -2011,13 +2073,28 @@ pub(crate) fn plan_checkout_removal(
     if !dest.exists() {
         return Ok(CheckoutRemoval(Removal::Absent));
     }
-    if vcs.has_uncommitted_changes(&dest).unwrap_or(true) {
-        crate::refuse!(
-            RefusalKind::DirtyCheckout,
-            "{repo_path}: {dropped} but worktree has uncommitted changes; {}",
-            cause.then_rerun("commit/discard")
+    let mut report = Report::default();
+    let dirty = vcs
+        .dirty_file_names(&dest)
+        .with_context(|| format!("{repo_path}: {dropped}, but its status could not be read"))
+        .map_err(|e| crate::refusal::refusing(RefusalKind::UnreadableStatus, e))?;
+    if !dirty.is_empty() {
+        report.add(
+            State::EditsDirty
+                .of(repo_path)
+                .listing(dirty)
+                .checkout(&dest)
+                .judge(vcs),
         );
     }
+    if let Checkout::Primary { .. } = &ctx.checkout {
+        judge_store_checkouts(vcs, &dest, ctx.primary_path(), repo_path, &mut report)?;
+    }
+    report.note(format!(
+        "{repo_path}: {dropped}; once nothing above refuses it, {}",
+        cause.rerun()
+    ));
+    report.into_result()?;
 
     match &ctx.checkout {
         Checkout::Workweave {
@@ -2103,6 +2180,15 @@ pub(crate) fn plan_checkout_removal(
             }
         }
         Checkout::Primary { .. } => {
+            if let RemovalCause::RemoveDelete = cause {
+                refuse_standing_receipts(
+                    &dest,
+                    ctx.primary_path(),
+                    project_name,
+                    repo_path,
+                    cause,
+                )?;
+            }
             // Primary: refuse if local-only branches with unique commits exist.
             // Conservative — any branch with commits not on origin is grounds.
             let any_local_only = match vcs.list_local_branch_names(&dest) {
@@ -2157,15 +2243,17 @@ pub(crate) fn plan_checkout_removal(
             }
             // DESTROY-STORE: `dest` in the primary IS the canonical
             // store — the refdb and object database every workweave worktree
-            // of this repo is registered in. R4 gates it.
-            check_store_unclaimed(
-                vcs,
-                &dest,
-                ctx.primary_path(),
-                project_name,
-                repo_path,
-                cause,
-            )?;
+            // of this repo is registered in. R4 gates it: its checkouts were
+            // judged above, its receipts here.
+            if let RemovalCause::DroppedFromLock = cause {
+                refuse_standing_receipts(
+                    &dest,
+                    ctx.primary_path(),
+                    project_name,
+                    repo_path,
+                    cause,
+                )?;
+            }
             Ok(CheckoutRemoval(Removal::Store(dest)))
         }
     }
@@ -2990,13 +3078,55 @@ fn run_preconditions_after_acquire(
     handler: &dyn OutputHandler,
 ) -> anyhow::Result<PreconditionOutcome> {
     let emit_text = handler.emit_text();
-    // CWD project repo must not be mid-op.
-    if let Some(op) = project_vcs.mid_op(cwd_project_dir) {
-        crate::refuse!(
-            RefusalKind::MidOperation,
-            "CWD project repo is mid-{op}; resolve before running sync"
-        );
+    // Pre-flight edits scans: refuse before any mutation when a repo the op
+    // will rebase or fast-forward is stopped mid-operation or carries
+    // uncommitted tracked changes. Every such repo, on every side the op
+    // moves, is judged before the first refusal, so the operator sees the
+    // whole list at once. Acquired op-state is released by the caller on Err
+    // (no trace left on disk).
+    //
+    // Ordering: an in-flight-op refusal outranks every other refusal, so a
+    // dirty workspace never masks a concurrent op. `acquire_op` has already
+    // emitted that refusal atomically by the time control reaches here, and
+    // the scans below run before the snapshot pin and lock-freshness gate.
+    let mut edits = Report::default();
+    let cwd_project_preflight = Project::from_dir(cwd_project_dir, cwd_project_name.clone())
+        .context("failed to load CWD project for the edits scan")?;
+    match verb {
+        MachineVerb::Sync => {
+            // sync (pull): replay rebases or ff-advances the CWD repos onto the
+            // source lock. Scan the CWD workspace — the destination that
+            // mutates. The source workspace is read-only (snapshot read only);
+            // dirt there does not affect the op.
+            judge_edits_preflight_sync(
+                project_vcs,
+                &cwd_project_preflight,
+                cwd_workspace_dir,
+                cwd_project_dir,
+                &mut edits,
+            )?;
+        }
+        MachineVerb::SyncTo => {
+            // Source before target: the operator's own workspace is the first
+            // thing they can fix, and a dirty source is the state we most
+            // want to define away.
+            judge_edits_source_preflight(
+                project_vcs,
+                &cwd_project_preflight,
+                cwd_workspace_dir,
+                cwd_project_dir,
+                &mut edits,
+            );
+            judge_edits_target_preflight(
+                project_vcs,
+                &cwd_project_preflight,
+                dest_workspace_dir,
+                dest_project_dir,
+                &mut edits,
+            );
+        }
     }
+    edits.into_result()?;
 
     // sync-to: --strategy=ff has special semantics (CWD must be strictly
     // ahead of target). Bail before any side effects on a refusal.
@@ -3004,72 +3134,23 @@ fn run_preconditions_after_acquire(
         check_sync_to_ff_precondition(project_vcs, cwd_project_dir, dest_project_dir)?;
     }
 
-    // Pre-flight dirt scans: refuse before any mutation when
-    // the workspaces the op will rebase or fast-forward carry uncommitted
-    // tracked changes. All dirty repos are collected before the first bail so
-    // the operator sees the full list in one message. Acquired op-state is
-    // released by the caller on Err (no trace left on disk).
-    //
-    // Ordering: an in-flight-op refusal outranks every other refusal, so a
-    // dirty workspace never masks a concurrent op. `acquire_op` has already
-    // emitted that refusal atomically by the time control reaches here, and
-    // the dirt scans below run before the snapshot pin and lock-freshness
-    // gate.
-    match verb {
-        MachineVerb::Sync => {
-            // sync (pull): replay rebases or ff-advances the CWD repos onto the
-            // source lock. Scan the CWD workspace — the destination that mutates.
-            // The source workspace is read-only (snapshot read only); dirt there
-            // does not affect the op.
-            let cwd_project_preflight =
-                Project::from_dir(cwd_project_dir, cwd_project_name.clone())
-                    .context("failed to load CWD project for sync dirt scan")?;
-            check_dirty_preflight_sync(
-                project_vcs,
-                &cwd_project_preflight,
-                cwd_workspace_dir,
-                cwd_project_dir,
-            )?;
-        }
-        MachineVerb::SyncTo => {
-            // sync-to preflights (all refuse before any side effects):
-            //   - dirty-source: CWD-side tracked dirt would go stale mid-rebase.
-            //   - dirty-target: the target's uncommitted work advance-target overwrites.
-            //   - detached-source: the work to land would sit on no branch.
-            //   - detached-target: advance-target would have no branch to land on.
-            // Source before target: the operator's own workspace is the first thing they
-            // can fix, and a dirty source is the state we most want to define away.
-            let cwd_project_preflight =
-                Project::from_dir(cwd_project_dir, cwd_project_name.clone())
-                    .context("failed to load CWD project for sync-to preflights")?;
-            check_dirty_source_preflight(
-                project_vcs,
-                &cwd_project_preflight,
-                cwd_workspace_dir,
-                cwd_project_dir,
-            )?;
-            check_detached_source_preflight(
-                project_vcs,
-                &cwd_project_preflight,
-                cwd_ctx,
-                cwd_workspace_dir,
-                cwd_project_dir,
-            )?;
-            check_dirty_target_preflight(
-                project_vcs,
-                &cwd_project_preflight,
-                dest_workspace_dir,
-                dest_project_dir,
-                cli_path,
-            )?;
-            check_detached_target_preflight(
-                project_vcs,
-                &cwd_project_preflight,
-                dest_workspace_dir,
-                dest_project_dir,
-                cli_path,
-            )?;
-        }
+    if matches!(verb, MachineVerb::SyncTo) {
+        //   - detached-source: the work to land would sit on no branch.
+        //   - detached-target: advance-target would have no branch to land on.
+        check_detached_source_preflight(
+            project_vcs,
+            &cwd_project_preflight,
+            cwd_ctx,
+            cwd_workspace_dir,
+            cwd_project_dir,
+        )?;
+        check_detached_target_preflight(
+            project_vcs,
+            &cwd_project_preflight,
+            dest_workspace_dir,
+            dest_project_dir,
+            cli_path,
+        )?;
     }
 
     // Pin the source snapshot now so the remaining replay preconditions are
@@ -3276,20 +3357,24 @@ fn run_preconditions_after_acquire(
         .head_revision(cwd_project_dir)
         .context("failed to read CWD project HEAD")?;
     let discard_local_commits = if let Some(consent) = discard_local_commits {
-        if project_vcs
-            .has_uncommitted_changes(cwd_project_dir)
-            .unwrap_or(true)
-        {
-            crate::refuse!(RefusalKind::DirtyCheckout,
-                "--discard-local-commits precondition failed: project repo at {dir} has uncommitted \
-                 changes.\n\
-                 --discard-local-commits discards committed divergence (recoverable via \
-                 {savepoints}), but the hard-reset would destroy uncommitted changes \
-                 unrecoverably. Commit or stash them, then re-run.",
-                dir = cwd_project_dir.display(),
-                savepoints = project_vcs.savepoint_namespace(),
-            );
-        }
+        let dirty = project_vcs
+            .dirty_file_names(cwd_project_dir)
+            .unwrap_or_else(|_| vec!["(status unreadable)".to_string()]);
+        let mut edits = Report::default();
+        judge_edits_in(
+            project_vcs,
+            project_rel_path(cwd_project_name),
+            cwd_project_dir,
+            dirty,
+            None,
+            &mut edits,
+        );
+        edits.note(format!(
+            "--discard-local-commits discards committed divergence (recoverable via {}), but \
+             its hard reset would destroy uncommitted changes unrecoverably",
+            project_vcs.savepoint_namespace()
+        ));
+        edits.into_result()?;
         (!cwd_is_ancestor_or_equal(
             project_vcs,
             cwd_project_dir,
@@ -3980,15 +4065,16 @@ fn load_continuing_context<'a>(
         let cwd_project_preflight =
             Project::from_dir(&cwd_project_dir, cwd_project_name.clone())
                 .context("failed to load CWD project for the resumed op's dirt scan")?;
-        if let Err(e) = check_dirty_target_preflight(
+        let mut edits = Report::default();
+        judge_edits_target_preflight(
             project_vcs.as_ref(),
             &cwd_project_preflight,
             &dest_workspace_dir,
             &dest_project_dir,
-            &cli_path,
-        ) {
-            return Err(parked_op_refusal(e, record.verb));
-        }
+            &mut edits,
+        );
+        edits.note(parked_note(record.verb));
+        edits.into_result()?;
     }
 
     // The re-pin, stated. The banner above announces continuation of the
@@ -4115,48 +4201,63 @@ fn check_sync_to_ff_precondition(
 /// doesn't have an answer until replay has picked CWD's tips, which is after
 /// this preflight runs; [`ff_advance_repo`] catches an actual collision at
 /// advance time instead, where git itself refuses to clobber it.
-fn check_dirty_target_preflight(
+fn judge_edits_target_preflight(
     project_vcs: &dyn Vcs,
     cwd_project: &Project,
     target_workspace_dir: &Path,
     target_project_dir: &Path,
-    target_path: &Path,
-) -> anyhow::Result<()> {
-    let mut dirty: Vec<RepoKey> = Vec::new();
+    report: &mut Report,
+) {
     for (repo_path, entry) in cwd_project.manifest.iter_entries() {
         let target_repo = target_workspace_dir.join(repo_path.as_path());
         if target_repo.exists() {
-            let tracked = vcs_for(entry.vcs_type)
-                .tracked_dirty_file_names(&target_repo)
-                .unwrap_or_else(|_| vec!["(status unreadable)".to_string()]);
-            if !tracked.is_empty() {
-                dirty.push(RepoKey::Member(repo_path.clone()));
-            }
+            let vcs = vcs_for(entry.vcs_type);
+            let tracked = tracked_or_unreadable(vcs.as_ref(), &target_repo);
+            judge_edits_in(
+                vcs.as_ref(),
+                repo_path,
+                &target_repo,
+                tracked,
+                Some(target_workspace_dir),
+                report,
+            );
         }
     }
-    let project_tracked = project_vcs
-        .tracked_dirty_file_names(target_project_dir)
-        .unwrap_or_else(|_| vec!["(status unreadable)".to_string()]);
-    if !project_tracked.is_empty() {
-        dirty.push(RepoKey::Project);
+    let project_tracked = tracked_or_unreadable(project_vcs, target_project_dir);
+    judge_edits_in(
+        project_vcs,
+        project_rel_path(&cwd_project.name),
+        target_project_dir,
+        project_tracked,
+        Some(target_workspace_dir),
+        report,
+    );
+}
+
+/// A repo's tracked dirt, or a status that could not be read standing in as
+/// dirt, so the scan fails closed rather than moving over an unknown state.
+fn tracked_or_unreadable(vcs: &dyn Vcs, repo: &Path) -> Vec<String> {
+    vcs.tracked_dirty_file_names(repo)
+        .unwrap_or_else(|_| vec!["(status unreadable)".to_string()])
+}
+
+/// [`crate::diagnosis::judge_edits`] into `report`, the repo named in the
+/// workspace `elsewhere` when that is not the one the verb runs in.
+fn judge_edits_in(
+    vcs: &dyn Vcs,
+    repo: impl std::fmt::Display,
+    dir: &Path,
+    dirty: Vec<String>,
+    elsewhere: Option<&Path>,
+    report: &mut Report,
+) {
+    let repo = match elsewhere {
+        Some(workspace) => format!("{repo} in {}", workspace.display()),
+        None => repo.to_string(),
+    };
+    if let Some(judged) = crate::diagnosis::judge_edits(vcs, repo, dir, dirty) {
+        report.add(judged);
     }
-    if !dirty.is_empty() {
-        crate::refuse!(
-            RefusalKind::DirtyCheckout,
-            "sync-to precondition failed: target workweave has uncommitted tracked changes \
-             in:\n  {}\n\
-             \n\
-             advance-target fast-forwards the target's worktrees over this work. Commit or \
-             stash in the target ({}), then re-run.",
-            dirty
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join("\n  "),
-            target_path.display(),
-        );
-    }
-    Ok(())
 }
 
 /// sync-to detached-source preflight: refuse if the source project repo or any
@@ -4344,7 +4445,7 @@ fn check_detached_target_preflight(
 
 /// Classify one dirty checkout for the sync dirt scan.
 ///
-/// Returns `None` when every tracked difference is **rwv-attributable**:
+/// Returns `false` when every tracked difference is **rwv-attributable**:
 /// doctor's structural drift classification ([`crate::check::classify_drift`])
 /// reports the index tree as an ancestor commit's tree
 /// ([`crate::check::IndexDriftKind::SafeToFix`]) and every modified
@@ -4361,28 +4462,17 @@ fn check_detached_target_preflight(
 /// designed behavior and teach the operator to `git commit` a moved-branch
 /// diff they never authored.
 ///
-/// Returns `Some(annotated_label)` for genuine user dirt — live staged
-/// content and/or live working-tree edits — annotated with which kind was
-/// found so the operator sees what the commit/stash advice applies to.
+/// Returns `true` for genuine user dirt — live staged content and/or live
+/// working-tree edits.
 ///
 /// The attribution is purely structural (tree/blob reachability in the DAG);
 /// no timestamps or heuristics. `classify_drift`'s own conservative fallback
 /// (git errors during classification → live) keeps the scan fail-closed.
-fn classify_sync_dirt(repo: &Path, label: String) -> Option<String> {
+fn is_live_dirt(repo: &Path) -> bool {
     use crate::check::{IndexDriftKind, WorkingTreeDriftKind};
     let (index_drift, wt_drift) = crate::check::classify_drift(repo);
-    let index_live = matches!(index_drift, Some(IndexDriftKind::LiveStaged));
-    let wt_live = matches!(wt_drift, Some(WorkingTreeDriftKind::LiveEdits));
-    let detail = match (index_live, wt_live) {
-        // Every difference is attributable drift (or the repo settled between
-        // the status read and this classification). The replay loop's
-        // safe-refresh heals it; nothing to refuse.
-        (false, false) => return None,
-        (true, true) => "staged changes + working-tree edits",
-        (true, false) => "staged changes",
-        (false, true) => "working-tree edits",
-    };
-    Some(format!("{label} ({detail})"))
+    matches!(index_drift, Some(IndexDriftKind::LiveStaged))
+        || matches!(wt_drift, Some(WorkingTreeDriftKind::LiveEdits))
 }
 
 /// Pre-flight dirt scan for `rwv sync` (pull): refuse before any mutation if
@@ -4408,7 +4498,7 @@ fn classify_sync_dirt(repo: &Path, label: String) -> Option<String> {
 /// advance) shows tracked differences in `git status` that the operator never
 /// authored: the index/working tree simply lag the moved tip. Doctor's
 /// structural drift classification distinguishes that state from live user
-/// work (see [`classify_sync_dirt`]); attributable drift is excluded from the
+/// work (see [`is_live_dirt`]); attributable drift is excluded from the
 /// refusal set and self-heals in the replay loop's safe-refresh step. Only
 /// live staged content / live working-tree edits refuse.
 ///
@@ -4423,7 +4513,7 @@ fn classify_sync_dirt(repo: &Path, label: String) -> Option<String> {
 ///
 /// ## No rwv.lock carve-out for sync
 ///
-/// Unlike [`check_dirty_source_preflight`] (the sync-to source-side scan),
+/// Unlike [`judge_edits_source_preflight`] (the sync-to source-side scan),
 /// this function does NOT carve out `rwv.lock`. The distinction:
 ///
 /// - **sync-to**: replay rebases the manifest repos; the project repo's lock
@@ -4438,110 +4528,73 @@ fn classify_sync_dirt(repo: &Path, label: String) -> Option<String> {
 /// ## Scope
 ///
 /// Covers every CWD manifest repo on disk and the project repo.
-fn check_dirty_preflight_sync(
+fn judge_edits_preflight_sync(
     project_vcs: &dyn Vcs,
     cwd_project: &Project,
     cwd_workspace_dir: &Path,
     cwd_project_dir: &Path,
+    report: &mut Report,
 ) -> anyhow::Result<()> {
-    let mut user_dirt: Vec<String> = Vec::new();
     let mut unreadable: Vec<RepoKey> = Vec::new();
-
-    for (repo_path, entry) in cwd_project.manifest.iter_entries() {
-        let repo = cwd_workspace_dir.join(repo_path.as_path());
-        if !repo.exists() {
-            continue;
-        }
-        match vcs_for(entry.vcs_type).tracked_dirty_file_names(&repo) {
-            // Clean (tracked-wise): untracked-only repos land here too.
-            Ok(tracked) if tracked.is_empty() => {}
-            Ok(_) => {
-                if let Some(label) = classify_sync_dirt(&repo, repo_path.to_string()) {
-                    user_dirt.push(label);
-                }
-                // None → fully attributable drift; replay self-heals it.
+    let mut scan = |vcs: &dyn Vcs, key: RepoKey, label: String, dir: &Path| {
+        match vcs.tracked_dirty_file_names(dir) {
+            // Only live work is dirt: attributable drift self-heals in replay.
+            Ok(tracked) => {
+                let live = if tracked.is_empty() || !is_live_dirt(dir) {
+                    Vec::new()
+                } else {
+                    tracked
+                };
+                judge_edits_in(vcs, label, dir, live, None, report);
             }
             // Unreadable status → fail closed rather than silently rebasing
             // over an unknown state, but don't prescribe commit/stash for
             // changes we cannot enumerate.
-            Err(_) => unreadable.push(RepoKey::Member(repo_path.clone())),
+            Err(_) => unreadable.push(key),
+        }
+    };
+    for (repo_path, entry) in cwd_project.manifest.iter_entries() {
+        let repo = cwd_workspace_dir.join(repo_path.as_path());
+        if repo.exists() {
+            scan(
+                vcs_for(entry.vcs_type).as_ref(),
+                RepoKey::Member(repo_path.clone()),
+                repo_path.to_string(),
+                &repo,
+            );
         }
     }
+    // Project repo: no rwv.lock carve-out (unlike the sync-to source scan).
+    // For sync (pull), Phase 1' ff's or rebases the project repo directly, and
+    // git refuses on any tracked dirty file including rwv.lock.
+    scan(
+        project_vcs,
+        RepoKey::Project,
+        project_rel_path(&cwd_project.name),
+        cwd_project_dir,
+    );
 
-    // Project repo: no rwv.lock carve-out (unlike check_dirty_source_preflight
-    // for sync-to). For sync (pull), Phase 1' ff's or rebases the project repo
-    // directly, and git refuses on any tracked dirty file including rwv.lock.
-    // Name the specific tracked files so the operator sees exactly what refuses.
-    match project_vcs.tracked_dirty_file_names(cwd_project_dir) {
-        Ok(tracked) if tracked.is_empty() => {}
-        Ok(tracked) => {
-            let files = tracked
-                .iter()
-                .map(|p| p.as_str())
-                .collect::<Vec<_>>()
-                .join(", ");
-            if let Some(label) =
-                classify_sync_dirt(cwd_project_dir, format!("{}: {files}", RepoKey::Project))
-            {
-                user_dirt.push(label);
-            }
-        }
-        Err(_) => unreadable.push(RepoKey::Project),
-    }
-
-    if user_dirt.is_empty() && unreadable.is_empty() {
+    if unreadable.is_empty() {
         return Ok(());
     }
-
-    // Assemble the refusal. Commit/stash remediation is attached ONLY to the
-    // user-dirt section — for unreadable repos we state what is known and
-    // stop; advising `git commit` for a repo whose state we could not read
-    // (or for drift the operator never authored) would be harmful.
-    let mut msg = String::from("sync precondition failed: ");
-    if !user_dirt.is_empty() {
-        msg.push_str(&format!(
-            "destination workspace has uncommitted tracked changes in:\n  {}\n\
-             \n\
-             sync rebases or fast-forwards these repos onto the source lock; running with tracked \
-             dirt mid-op would leave a half-rebased state requiring `rwv abort` to clear. \
-             Commit or stash the changes in the destination ({}), then re-run.\n\
-             \n\
-             To commit: git -C <repo> commit\n\
-             To stash:  git stash push -u -C <repo>   # or: cd <repo> && git stash push -u\n",
-            user_dirt.join("\n  "),
-            cwd_workspace_dir.display(),
+    let listed = unreadable
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n  ");
+    if !report.is_empty() {
+        report.note(format!(
+            "status could not be read in:\n  {listed}\ninspect these with the VCS before re-running"
         ));
+        return Ok(());
     }
-    if !unreadable.is_empty() {
-        if !user_dirt.is_empty() {
-            msg.push('\n');
-        }
-        msg.push_str(&format!(
-            "git status could not be read in:\n  {}\n\
-             \n\
-             Refusing to sync over unknown state. Inspect these repos manually \
-             (`git -C <repo> status`), then re-run.\n",
-            unreadable
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join("\n  "),
-        ));
-    }
-    msg.push_str(
-        "\n(Untracked files are fine — they survive rebase and fast-forward untouched. \
-         Stale index/working-tree drift from a shared-ref advance is reconciled by sync \
-         itself and does not refuse.)",
-    );
-    // Both halves can be present at once. `dirty-checkout` dominates because
-    // its remedy — commit or stash, then re-run — is the one the operator can
-    // act on; an unreadable repo is the state you get told about and inspect.
-    let kind = if user_dirt.is_empty() {
-        RefusalKind::UnreadableStatus
-    } else {
-        RefusalKind::DirtyCheckout
-    };
-    Err(crate::refusal::refusal(kind, msg))
+    crate::refuse!(
+        RefusalKind::UnreadableStatus,
+        "sync precondition failed: status could not be read in:\n  {listed}\n\
+         \n\
+         Refusing to sync over unknown state. Inspect these repos manually \
+         (`git -C <repo> status`), then re-run."
+    )
 }
 
 /// sync-to source-side cleanliness preflight.
@@ -4562,63 +4615,36 @@ fn check_dirty_preflight_sync(
 ///   is dirty *only* in `rwv.lock` passes; any other tracked project-repo change
 ///   still refuses (and the project entry names the specific files so the lock
 ///   carve-out is auditable).
-fn check_dirty_source_preflight(
+fn judge_edits_source_preflight(
     project_vcs: &dyn Vcs,
     cwd_project: &Project,
     cwd_workspace_dir: &Path,
     cwd_project_dir: &Path,
-) -> anyhow::Result<()> {
-    let mut dirty: Vec<String> = Vec::new();
-
+    report: &mut Report,
+) {
     for (repo_path, entry) in cwd_project.manifest.iter_entries() {
         let repo = cwd_workspace_dir.join(repo_path.as_path());
         if repo.exists() {
-            let tracked = vcs_for(entry.vcs_type)
-                .tracked_dirty_file_names(&repo)
-                .unwrap_or_else(|_| {
-                    // Treat an unreadable repo as dirty so we fail closed rather
-                    // than silently rebasing over an unknown state.
-                    vec!["(status unreadable)".to_string()]
-                });
-            if !tracked.is_empty() {
-                dirty.push(repo_path.to_string());
-            }
+            let vcs = vcs_for(entry.vcs_type);
+            let tracked = tracked_or_unreadable(vcs.as_ref(), &repo);
+            judge_edits_in(vcs.as_ref(), repo_path, &repo, tracked, None, report);
         }
     }
 
     // Project repo: apply the rwv.lock carve-out. A project repo dirty ONLY in
     // rwv.lock is the auto-relock's expected input, not dirt.
-    let project_tracked = project_vcs
-        .tracked_dirty_file_names(cwd_project_dir)
-        .unwrap_or_else(|_| vec!["(status unreadable)".to_string()]);
-    let non_lock: Vec<&String> = project_tracked
-        .iter()
+    let non_lock: Vec<String> = tracked_or_unreadable(project_vcs, cwd_project_dir)
+        .into_iter()
         .filter(|p| p.as_str() != LockFile::FILE_NAME)
         .collect();
-    if !non_lock.is_empty() {
-        // Name the specific tracked files so the operator sees exactly what
-        // refuses (and can confirm the rwv.lock carve-out was applied).
-        let files = non_lock
-            .iter()
-            .map(|p| p.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        dirty.push(format!("{}: {files}", RepoKey::Project));
-    }
-
-    if !dirty.is_empty() {
-        crate::refuse!(RefusalKind::DirtyCheckout,
-            "sync-to precondition failed: source workspace has uncommitted tracked changes in:\n  {}\n\
-             \n\
-             replay rebases these repos onto the target and regenerates the lock; committing \
-             mid-op would leave a half-rebased op with a stale lock. Commit or stash the tracked \
-             changes in the source ({}), then re-run. (Untracked files are fine; a dirty rwv.lock \
-             alone is committed by the op.)",
-            dirty.join("\n  "),
-            cwd_workspace_dir.display(),
-        );
-    }
-    Ok(())
+    judge_edits_in(
+        project_vcs,
+        project_rel_path(&cwd_project.name),
+        cwd_project_dir,
+        non_lock,
+        None,
+        report,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -4790,14 +4816,16 @@ fn classify_for(verb: MachineVerb, overrides: &Overrides, source: SourceKind) ->
 /// routed to the parking rather than to the condition that did the refusing.
 fn parked_op_refusal(refusal: anyhow::Error, verb: op_state::OpVerb) -> anyhow::Error {
     let kind = crate::refusal::kind_of(&refusal).unwrap_or(RefusalKind::OpParked);
-    crate::refusal::refusal(
-        kind,
-        format!(
-            "{refusal:#}\n\
-             This op is still parked at its recorded phase; the refusal changed nothing. \
-             Fix the source, then `{resume}` — or `rwv abort` to roll the whole op back.",
-            resume = op_state::resume_command(verb),
-        ),
+    crate::refusal::refusal(kind, format!("{refusal:#}\n{}", parked_note(verb)))
+}
+
+/// What is true of a refused resume and of no fresh refusal: the op is still
+/// recorded, and both ways out of it are still open.
+fn parked_note(verb: op_state::OpVerb) -> String {
+    format!(
+        "This op is still parked at its recorded phase; the refusal changed nothing. \
+         Fix the source, then `{resume}` — or `rwv abort` to roll the whole op back.",
+        resume = op_state::resume_command(verb),
     )
 }
 
@@ -5207,8 +5235,8 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             Err(e) => {
                 if emit_text {
                     eprintln!("  {repo_path}: materialize failed: {e:#}");
-                    if let Some(kind) = crate::refusal::kind_of(&e) {
-                        eprintln!("rwv explain {}", kind.token());
+                    for route in crate::refusal::routes(&e) {
+                        eprintln!("rwv explain {route}");
                     }
                 }
                 ctx.handler
@@ -6375,19 +6403,13 @@ fn retire_workweave_after_sync_to(
     }
 
     // Reuse the shared dirty-path check. Any dirty worktree blocks retire.
-    let dirty =
-        crate::workweave::collect_dirty_paths(project_vcs, workweave_dir, project, &manifest);
-    if !dirty.is_empty() {
-        crate::refuse!(RefusalKind::DirtyCheckout,
-            "--retire: workweave has uncommitted changes after sync-to; refusing to delete:\n  {dirty}\n\
-             \n\
-             Commit or discard the changes, then run:\n\
-               {resume}   # re-runs the retire check\n\
-             \n\
-             To roll back the entire op: `rwv abort`.",
-            dirty = dirty.join("\n  "),
-        );
-    }
+    let mut dirty =
+        crate::workweave::judge_dirty_checkouts(project_vcs, workweave_dir, project, &manifest);
+    dirty.note(format!(
+        "--retire: the landing is done and the workweave was not deleted; once these \
+         are clean, `{resume}` re-runs the retire check, or `rwv abort` rolls the whole op back"
+    ));
+    dirty.into_result()?;
 
     crate::workweave::delete_workweave_for_retire(
         ctx.primary_path(),
@@ -7245,6 +7267,15 @@ fn run_sync_json(ctx: &WorkspaceContext, request: SyncRequest) -> anyhow::Result
     )
 }
 
+/// The repos a failed op's refusal judged, for its envelope.
+fn refused_by(result: &anyhow::Result<()>) -> Vec<crate::diagnosis::JudgedOutput> {
+    result
+        .as_ref()
+        .err()
+        .map(crate::diagnosis::refused_output)
+        .unwrap_or_default()
+}
+
 /// Shared JSON exit/return tail for `run_sync_json_impl` and `run_sync_to_json`.
 ///
 /// After serialization is done, both callers share
@@ -7307,6 +7338,7 @@ fn run_sync_json_impl(
         placements,
         members,
         complete,
+        refused: refused_by(&project_level_result),
         advisories,
         resolution,
     };
@@ -7411,7 +7443,11 @@ pub fn sync_to_json_run(ctx: &WorkspaceContext, request: SyncRequest) -> SyncToJ
     let outcome = recorder.into_outcome();
     SyncToJsonRun {
         any_failure: outcome.any_failure(),
-        envelope: outcome.envelope(project_level_result.is_err(), Some(ctx.resolution())),
+        envelope: outcome.envelope(
+            refused_by(&project_level_result),
+            project_level_result.is_err(),
+            Some(ctx.resolution()),
+        ),
         project_level_result,
     }
 }
@@ -7542,17 +7578,17 @@ fn ff_advance_repo(
     // doesn't: a fast-forward only clobbers an untracked path that collides
     // with one the incoming tree writes, and `advance_attached_ref` below
     // catches that collision natively and re-mints it as a named refusal.
-    let tracked = vcs
-        .tracked_dirty_file_names(target_repo)
-        .unwrap_or_else(|_| vec!["(status unreadable)".to_string()]);
-    if !tracked.is_empty() {
-        crate::refuse!(
-            RefusalKind::DirtyCheckout,
-            "target repo at {} has uncommitted tracked changes; refusing to fast-forward \
-             over them. Commit or stash in the target, then re-run.",
-            target_repo.display(),
-        );
-    }
+    let tracked = tracked_or_unreadable(vcs, target_repo);
+    let mut edits = Report::default();
+    judge_edits_in(
+        vcs,
+        target_repo.display(),
+        target_repo,
+        tracked,
+        None,
+        &mut edits,
+    );
+    edits.into_result()?;
 
     // Check that target is an ancestor of cwd_tip (ff precondition).
     // Bring objects across first via the Vcs trait so merge-base has the
@@ -8224,28 +8260,35 @@ mod tests {
         RepoPath::new("github/example/server").unwrap()
     }
 
+    /// Every line `judge_store_checkouts` adds for `store`.
+    fn judged_checkouts(store: &Path, primary: &Path) -> anyhow::Result<Report> {
+        let mut report = Report::default();
+        judge_store_checkouts(git_vcs().as_ref(), store, primary, &dropped(), &mut report)?;
+        Ok(report)
+    }
+
     #[test]
-    fn check_store_unclaimed_passes_on_a_store_nothing_claims() {
-        // The control: without it the two refusals below could be passing on
-        // a fixture that can never be unclaimed.
+    fn a_store_nothing_claims_judges_no_checkout_and_no_receipt() {
+        // The control: without it the refusals below could be passing on a
+        // fixture that can never be unclaimed.
         let tmp = crate::tempdir().unwrap();
         let (store, primary, project) = store_fixture(tmp.path());
 
-        check_store_unclaimed(
-            git_vcs().as_ref(),
+        assert!(judged_checkouts(&store, &primary).unwrap().is_empty());
+        refuse_standing_receipts(
             &store,
             &primary,
             &project,
             &dropped(),
             RemovalCause::DroppedFromLock,
         )
-        .expect("no worktrees registered and no receipts standing");
+        .expect("no receipts standing");
     }
 
     #[test]
-    fn check_store_unclaimed_refuses_while_a_worktree_is_registered() {
+    fn a_registered_worktree_no_workweave_records_is_judged_a_raw_worktree() {
         let tmp = crate::tempdir().unwrap();
-        let (store, primary, project) = store_fixture(tmp.path());
+        let (store, primary, _project) = store_fixture(tmp.path());
 
         // `git worktree add` writes its administration into the canonical
         // store, so `remove_dir_all` on the store takes this checkout's refdb
@@ -8257,28 +8300,26 @@ mod tests {
             &["worktree", "add", "--detach", live.to_str().unwrap()],
         );
 
-        let err = check_store_unclaimed(
-            git_vcs().as_ref(),
-            &store,
-            &primary,
-            &project,
-            &dropped(),
-            RemovalCause::DroppedFromLock,
-        )
-        .expect_err("a store with a live worktree registered against it is claimed");
-        let msg = format!("{err:#}");
-        assert!(
-            msg.contains("still has live worktrees registered"),
-            "the refusal must name the registration, not the receipts; got:\n{msg}"
+        let report = judged_checkouts(&store, &primary).unwrap();
+        let lines: Vec<(State, &str)> = report
+            .lines()
+            .iter()
+            .map(|j| (j.state(), j.repo()))
+            .collect();
+        assert_eq!(
+            lines,
+            [(State::CheckoutInRawWorktree, "github/example/server")]
         );
+        let out = report.render("sync");
         assert!(
-            msg.contains("live-workweave"),
-            "the refusal must list the worktree that claims the store; got:\n{msg}"
+            out.contains("live-workweave"),
+            "the worktree is listed:\n{out}"
         );
+        assert!(out.ends_with("\nrwv explain checkout\n"), "{out}");
     }
 
     #[test]
-    fn check_store_unclaimed_refuses_while_a_receipt_stands() {
+    fn refuse_standing_receipts_refuses_while_a_receipt_stands() {
         let tmp = crate::tempdir().unwrap();
         let (store, primary, project) = store_fixture(tmp.path());
         let at = git_vcs().head_revision(&store).unwrap();
@@ -8298,8 +8339,7 @@ mod tests {
             )
             .unwrap();
 
-        let err = check_store_unclaimed(
-            git_vcs().as_ref(),
+        let err = refuse_standing_receipts(
             &store,
             &primary,
             &project,
@@ -8321,8 +8361,7 @@ mod tests {
         registry
             .retract(&store, &crate::vcs::RawRefName::new("web-app--hotfix"))
             .unwrap();
-        check_store_unclaimed(
-            git_vcs().as_ref(),
+        refuse_standing_receipts(
             &store,
             &primary,
             &project,
@@ -8333,21 +8372,14 @@ mod tests {
     }
 
     #[test]
-    fn check_store_unclaimed_refuses_when_the_claims_cannot_be_read() {
+    fn judge_store_checkouts_refuses_when_the_claims_cannot_be_read() {
         // Fail-closed: a claim we could not enumerate is a claim that stands.
         let tmp = crate::tempdir().unwrap();
         let not_a_repo = tmp.path().join("not-a-repo");
         std::fs::create_dir_all(&not_a_repo).unwrap();
 
-        let err = check_store_unclaimed(
-            git_vcs().as_ref(),
-            &not_a_repo,
-            tmp.path(),
-            &ProjectName::new("web-app").unwrap(),
-            &dropped(),
-            RemovalCause::DroppedFromLock,
-        )
-        .expect_err("an unreadable store must not be destroyed on the strength of a guess");
+        let err = judged_checkouts(&not_a_repo, tmp.path())
+            .expect_err("an unreadable store must not be destroyed on the strength of a guess");
         assert!(
             format!("{err:#}").contains("cannot enumerate the worktrees registered against"),
             "the refusal must say the enumeration failed; got:\n{err:#}"
@@ -8419,20 +8451,27 @@ mod tests {
 
         let err = prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped(), &project)
             .expect_err("a store a live workweave is registered against is claimed");
-        let msg = format!("{err:#}");
-        assert!(
-            msg.contains("still has live worktrees registered"),
+        let judged: Vec<State> = crate::diagnosis::report_of(&err)
+            .map(|r| r.lines().iter().map(|j| j.state()).collect())
+            .unwrap_or_default();
+        assert_eq!(
+            judged,
+            [State::CheckoutInRawWorktree],
             "R4's registration arm must be what refused — not the local-only scan, \
-             which this fixture satisfies; got:\n{msg}"
+             which this fixture satisfies; got:\n{err:#}"
         );
         assert!(
             store.exists() && live.exists(),
             "a refused prune must leave both the store and the live checkout on disk"
         );
+        let msg = format!("{err:#}");
         assert!(
-            msg.contains(&format!("rwv workweave {project} delete <name>")),
-            "the remedy must name the CLI's real spelling, with this fixture's \
-             project bound in; got:\n{msg}"
+            msg.contains(&format!(
+                "git -C {} worktree remove {}",
+                store.display(),
+                live.display()
+            )),
+            "the choice must spell the removal of this worktree from this store; got:\n{msg}"
         );
 
         // `rwv workweave <project> delete <name>` retracts the registration;
@@ -8511,20 +8550,13 @@ mod tests {
         let (ctx, store, project) = primary_with_cloned_store(tmp.path());
         let at = git_vcs().head_revision(&store).unwrap();
 
-        let live = tmp.path().join("live-workweave");
-        git(
-            &store,
-            &[
-                "worktree",
-                "add",
-                "-b",
-                "web-app--feat",
-                live.to_str().unwrap(),
-            ],
-        );
-        git(&live, &["config", "user.email", "t@t"]);
-        git(&live, &["config", "user.name", "T"]);
-        let unique = commit(&live, "only-here");
+        // The branch holds the unique commit with no checkout of it left, so
+        // the store's checkouts pass and the local-only scan is what decides.
+        git(&store, &["switch", "-c", "web-app--feat"]);
+        git(&store, &["config", "user.email", "t@t"]);
+        git(&store, &["config", "user.name", "T"]);
+        let unique = commit(&store, "only-here");
+        git(&store, &["switch", "main"]);
 
         crate::workweave_index::RefRegistry::for_project(ctx.primary_path(), &project)
             .record_created(
@@ -8548,7 +8580,7 @@ mod tests {
              receipt for; got:\n{err:#}"
         );
         assert_eq!(
-            git(&live, &["rev-parse", "HEAD"]),
+            git(&store, &["rev-parse", "web-app--feat"]),
             unique.id().as_str(),
             "the unique commit must survive the refused prune"
         );

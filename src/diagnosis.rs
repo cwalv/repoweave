@@ -1,0 +1,1784 @@
+//! The state-to-choices table: every axis a verb judges a repo on, the states
+//! of each, the choices each state prints, and the rendering of a refusal that
+//! judged repos — its terminal text, its `--json` records and its `rwv
+//! explain` page all read this one table.
+//!
+//! A refusal built here prints one line per repo and axis, then its choices,
+//! then one route line per distinct axis. A refusal that names a condition
+//! rather than a repo state carries a [`crate::refusal::RefusalKind`] instead.
+//!
+//! Adding a state is one arm in [`State::row`] and its entry in
+//! [`State::ALL`]; shipping a verb is flipping `shipped` on the forms that
+//! spell it. A form that is not shipped is never printed, by any state, on any
+//! surface.
+
+use std::collections::BTreeMap;
+use std::fmt;
+use std::path::Path;
+
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use crate::vcs::{Vcs, VcsAction};
+
+/// What a refusal judged a repo on. Its token is the kind `rwv explain`
+/// serves; the order here is the order a repo's lines print in.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "kebab-case")]
+pub enum Axis {
+    /// Uncommitted work, or a VCS operation in progress, in a checkout.
+    Edits,
+    /// Another checkout derives from what the verb would remove.
+    Checkout,
+    /// A name the verb would record is unusable.
+    Name,
+    /// What `rwv push` withheld.
+    Publish,
+}
+
+/// An axis's page prose: what it judges, why, and where the rule sits.
+pub struct KindRow {
+    pub condition: &'static str,
+    pub why: &'static str,
+    pub sits: &'static str,
+}
+
+impl Axis {
+    pub const ALL: [Axis; 4] = [Self::Edits, Self::Checkout, Self::Name, Self::Publish];
+
+    pub fn token(self) -> String {
+        crate::wire_token::wire_token(&self)
+    }
+
+    pub fn row(self) -> &'static KindRow {
+        match self {
+            Self::Edits => &KindRow {
+                condition: "A checkout the verb must move, rewrite, record or remove holds \
+                            uncommitted changes, or is stopped in the middle of a VCS operation.",
+                why: "Moving or removing a checkout over uncommitted changes would lose them or \
+                      tangle them into a half-applied result, and recording its tip would \
+                      describe something other than what is on disk. An operation in progress \
+                      holds a partial result that only the tool which started it can finish.",
+                sits: "[Destructive operations](../explanation/destructive-operations.md); \
+                       [Sync semantics](../explanation/joints/sync-semantics.md).",
+            },
+            Self::Checkout => &KindRow {
+                condition: "Another checkout derives from the clone a verb would delete: a \
+                            workweave's, or a worktree added with the VCS directly.",
+                why: "Deleting a clone's store takes every ref and object with it at once, for \
+                      every checkout derived from it, so a live one would be left pointing at \
+                      nothing.",
+                sits: "[Clone topology](../explanation/joints/clone-topology.md).",
+            },
+            Self::Name => &KindRow {
+                condition: "A name the verb would record cannot be used: another workweave \
+                            already holds it, or it reads as a revision where a branch belongs.",
+                why: "A workweave name maps to one workweave; recording a second would make \
+                      every later address ambiguous, and a delete would remove whichever was \
+                      found first. A member entry's `version` declares a branch to track while \
+                      the lock records where you are, so a commit id or release tag there leaves \
+                      nothing to track.",
+                sits: "[Workweave hierarchy](../explanation/joints/workweave-hierarchy.md); \
+                       [Lock as derived](../explanation/joints/lock-as-derived.md).",
+            },
+            Self::Publish => &KindRow {
+                condition: "`rwv push` published member repos but withheld the project repo.",
+                why: "The project repo carries the lock that pins each member's commit. \
+                      Publishing it while a member's push failed would advertise a commit \
+                      collaborators cannot fetch, so the lock is withheld until every member it \
+                      pins is published.",
+                sits: "",
+            },
+        }
+    }
+}
+
+/// One state a repo can be judged in, on its axis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum State {
+    EditsDirty,
+    EditsMidOperation,
+    EditsLockFilesUncommitted,
+    CheckoutInAnotherWorkspace,
+    CheckoutInRawWorktree,
+    NameTaken,
+    NameARevision,
+    PublishWithheld,
+}
+
+/// A state's row: its axis and name, the page prose, and the forms it offers,
+/// in the order they print.
+pub struct StateRow {
+    pub axis: Axis,
+    pub name: &'static str,
+    pub means: &'static str,
+    pub refused_by: &'static str,
+    pub offers: &'static [Form],
+}
+
+impl State {
+    pub const ALL: [State; 8] = [
+        Self::EditsDirty,
+        Self::EditsMidOperation,
+        Self::EditsLockFilesUncommitted,
+        Self::CheckoutInAnotherWorkspace,
+        Self::CheckoutInRawWorktree,
+        Self::NameTaken,
+        Self::NameARevision,
+        Self::PublishWithheld,
+    ];
+
+    pub fn row(self) -> &'static StateRow {
+        match self {
+            Self::EditsDirty => &StateRow {
+                axis: Axis::Edits,
+                name: "dirty",
+                means: "the checkout has uncommitted changes, listed by file",
+                refused_by: "`rwv sync` and `rwv sync-to`, for a repo they would rebase or \
+                             fast-forward (tracked changes only); `rwv lock` without `--dirty`, \
+                             for a member (tracked changes only); `rwv lock --commit` and `rwv \
+                             update --commit`, for project-repo changes outside `rwv.lock` and \
+                             `rwv.toml`; `rwv push`, for the project repo; `rwv role <repo> \
+                             reference`; `rwv remove --delete` and replay's prune of a dropped \
+                             member; `rwv workweave <project> delete` and `rwv sync-to --retire`, \
+                             for every checkout in the workweave",
+                offers: &[Form::C13],
+            },
+            Self::EditsMidOperation => &StateRow {
+                axis: Axis::Edits,
+                name: "mid-operation",
+                means: "a rebase, merge, cherry-pick or bisect is in progress, named",
+                refused_by: "`rwv sync` and `rwv sync-to`, for a repo they would rebase or \
+                             fast-forward",
+                offers: &[Form::C32],
+            },
+            Self::EditsLockFilesUncommitted => &StateRow {
+                axis: Axis::Edits,
+                name: "rwv.toml or rwv.lock uncommitted",
+                means: "the project repo's only uncommitted changes are to `rwv.toml` or \
+                        `rwv.lock`, or either is not yet tracked",
+                refused_by: "`rwv push`",
+                offers: &[Form::C5Lock],
+            },
+            Self::CheckoutInAnotherWorkspace => &StateRow {
+                axis: Axis::Checkout,
+                name: "in another workspace",
+                means: "a workweave's checkout derives from the clone, named",
+                refused_by: "`rwv remove --delete` in the primary, and replay's prune of a \
+                             dropped member there",
+                offers: &[Form::C16Switch, Form::C16WorkweaveDelete],
+            },
+            Self::CheckoutInRawWorktree => &StateRow {
+                axis: Axis::Checkout,
+                name: "in a raw worktree",
+                means: "a worktree no workweave records derives from the clone, named by path",
+                refused_by: "`rwv remove --delete` in the primary, and replay's prune of a \
+                             dropped member there",
+                offers: &[Form::C16Raw],
+            },
+            Self::NameTaken => &StateRow {
+                axis: Axis::Name,
+                name: "taken",
+                means: "the project already records a workweave by this name at another path, \
+                        or the directory the workweave would take is another workweave's",
+                refused_by: "`rwv workweave <project> create`",
+                offers: &[Form::AnotherName, Form::C9WorkweaveDelete],
+            },
+            Self::NameARevision => &StateRow {
+                axis: Axis::Name,
+                name: "a revision",
+                means: "the branch `rwv add` would declare reads as a commit id (seven or more \
+                        hex digits) or a release tag (`v2.0`, `v0.3.4-rc1`)",
+                refused_by: "`rwv add`, for the remote's default branch or, with `--new`, the \
+                             branch the new repo is on",
+                offers: &[Form::C11SetBranch],
+            },
+            Self::PublishWithheld => &StateRow {
+                axis: Axis::Publish,
+                name: "withheld",
+                means: "the remote rejected this member's push, so the project repo was not \
+                        pushed; what the remote answered is listed",
+                refused_by: "`rwv push`",
+                offers: &[Form::C7Push, Form::C17],
+            },
+        }
+    }
+
+    /// Start judging `repo` in this state.
+    pub fn of(self, repo: impl fmt::Display) -> Judging {
+        Judging {
+            repo: repo.to_string(),
+            state: self,
+            subject: None,
+            listed: Vec::new(),
+            facts: Vec::new(),
+            bindings: BTreeMap::new(),
+        }
+    }
+
+    pub fn axis(self) -> Axis {
+        self.row().axis
+    }
+
+    pub fn name(self) -> &'static str {
+        self.row().name
+    }
+}
+
+/// A choice: one rwv verb, or one VCS action, that a state can print.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ChoiceId {
+    C1,
+    C2,
+    C3,
+    C5,
+    C6,
+    C7,
+    C9,
+    C10,
+    C11,
+    C12,
+    C13,
+    C14,
+    C15,
+    C16,
+    C17,
+    C18,
+    C19,
+    C22,
+    C23,
+    C24,
+    C25,
+    C26,
+    C27,
+    C30,
+    C31,
+    C32,
+    C33,
+    C34,
+    C35,
+    C36,
+    C37,
+    C38,
+    C39,
+    C40,
+    AnotherName,
+}
+
+/// A choice's id, as `--json` and the page print it (none for a choice the
+/// table does not number), what it does, and why it keeps work.
+pub struct ChoiceRow {
+    pub id: Option<&'static str>,
+    pub phrase: &'static str,
+    pub keeps_work: &'static str,
+}
+
+impl ChoiceId {
+    pub fn row(self) -> &'static ChoiceRow {
+        match self {
+            Self::C1 => &ChoiceRow {
+                id: Some("C1"),
+                phrase: "take in theirs",
+                keeps_work: "fast-forward only",
+            },
+            Self::C2 => &ChoiceRow {
+                id: Some("C2"),
+                phrase: "merge yours and theirs, theirs first (commits they dropped come back, \
+                         unless only their rewrite held them)",
+                keeps_work: "a merge discards nothing; never across lineages; `rwv abort` undoes \
+                             it",
+            },
+            Self::C3 => &ChoiceRow {
+                id: Some("C3"),
+                phrase: "take theirs; yours is kept in a backup",
+                keeps_work: "backup first",
+            },
+            Self::C5 => &ChoiceRow {
+                id: Some("C5"),
+                phrase: "record it: the lock, and `rwv.toml` as it stands",
+                keeps_work: "records only",
+            },
+            Self::C6 => &ChoiceRow {
+                id: Some("C6"),
+                phrase: "align members for the checked-out branch",
+                keeps_work: "moves only what alignment moves",
+            },
+            Self::C7 => &ChoiceRow {
+                id: Some("C7"),
+                phrase: "publish it (again)",
+                keeps_work: "adds only",
+            },
+            Self::C9 => &ChoiceRow {
+                id: Some("C9"),
+                phrase: "delete what is landed",
+                keeps_work: "deletes only what is landed elsewhere; local only",
+            },
+            Self::C10 => &ChoiceRow {
+                id: Some("C10"),
+                phrase: "name it, or adopt the remote branch you name",
+                keeps_work: "renames or links only",
+            },
+            Self::C11 => &ChoiceRow {
+                id: Some("C11"),
+                phrase: "declare a branch for it, or keep, restore or port the entry's value",
+                keeps_work: "re-pins by name, backup kept",
+            },
+            Self::C12 => &ChoiceRow {
+                id: Some("C12"),
+                phrase: "say how this branch is used: feature work onto `<T>`, or declared",
+                keeps_work: "records only",
+            },
+            Self::C13 => &ChoiceRow {
+                id: Some("C13"),
+                phrase: "commit your edits, or set them aside",
+                keeps_work: "both keep edits",
+            },
+            Self::C14 => &ChoiceRow {
+                id: Some("C14"),
+                phrase: "keep this work on a branch, then return to the expected branch",
+                keeps_work: "the branch holds the work before anything moves",
+            },
+            Self::C15 => &ChoiceRow {
+                id: Some("C15"),
+                phrase: "copy these commits onto `<b>`",
+                keeps_work: "a copy adds only",
+            },
+            Self::C16 => &ChoiceRow {
+                id: Some("C16"),
+                phrase: "free the other checkout",
+                keeps_work: "removal refuses over edits",
+            },
+            Self::C17 => &ChoiceRow {
+                id: Some("C17"),
+                phrase: "choose where it pushes and pulls",
+                keeps_work: "config only",
+            },
+            Self::C18 => &ChoiceRow {
+                id: Some("C18"),
+                phrase: "start `<m>`'s `<b>` at a commit you choose",
+                keeps_work: "creates only",
+            },
+            Self::C19 => &ChoiceRow {
+                id: Some("C19"),
+                phrase: "wait until the PR lands or its branch is deleted, then rerun",
+                keeps_work: "nothing changes",
+            },
+            Self::C22 => &ChoiceRow {
+                id: Some("C22"),
+                phrase: "squashed, rebase-merged or on another lineage: reset yours to the \
+                         target's here",
+                keeps_work: "backup kept; local only",
+            },
+            Self::C23 => &ChoiceRow {
+                id: Some("C23"),
+                phrase: "say how `<T>` accepts landings",
+                keeps_work: "records only",
+            },
+            Self::C24 => &ChoiceRow {
+                id: Some("C24"),
+                phrase: "look at it without a weave branch",
+                keeps_work: "the left HEAD holds nothing unpreserved",
+            },
+            Self::C25 => &ChoiceRow {
+                id: Some("C25"),
+                phrase: "pin it at a commit you choose on its declared branch",
+                keeps_work: "re-pins by name; backup for a detached HEAD",
+            },
+            Self::C26 => &ChoiceRow {
+                id: Some("C26"),
+                phrase: "merge `<rev>` in as a merge commit",
+                keeps_work: "a merge adds only",
+            },
+            Self::C27 => &ChoiceRow {
+                id: Some("C27"),
+                phrase: "publish this commit under a branch name you choose",
+                keeps_work: "creates or fast-forwards",
+            },
+            Self::C30 => &ChoiceRow {
+                id: Some("C30"),
+                phrase: "return the project repo to a branch, or start one carrying the edits",
+                keeps_work: "moves only what alignment moves",
+            },
+            Self::C31 => &ChoiceRow {
+                id: Some("C31"),
+                phrase: "land these changes too",
+                keeps_work: "only named entries change",
+            },
+            Self::C32 => &ChoiceRow {
+                id: Some("C32"),
+                phrase: "finish or abandon the operation in progress first",
+                keeps_work: "rwv moves nothing until it ends",
+            },
+            Self::C33 => &ChoiceRow {
+                id: Some("C33"),
+                phrase: "look for what may be published but not yet fetched",
+                keeps_work: "downloads only",
+            },
+            Self::C34 => &ChoiceRow {
+                id: Some("C34"),
+                phrase: "start from this clone's `<T>`",
+                keeps_work: "starts only",
+            },
+            Self::C35 => &ChoiceRow {
+                id: Some("C35"),
+                phrase: "land the dependent into `<W>` first (a landed one: retire it)",
+                keeps_work: "a landing only fast-forwards",
+            },
+            Self::C36 => &ChoiceRow {
+                id: Some("C36"),
+                phrase: "take the target's new work in first",
+                keeps_work: "by the target's setting; `rwv abort` undoes it",
+            },
+            Self::C37 => &ChoiceRow {
+                id: Some("C37"),
+                phrase: "port it in a feature onto this branch",
+                keeps_work: "creates only",
+            },
+            Self::C38 => &ChoiceRow {
+                id: Some("C38"),
+                phrase: "pick it against parent `<n>`",
+                keeps_work: "ports only",
+            },
+            Self::C39 => &ChoiceRow {
+                id: Some("C39"),
+                phrase: "undo these commits on `<b>` by new commits",
+                keeps_work: "a revert adds only",
+            },
+            Self::C40 => &ChoiceRow {
+                id: Some("C40"),
+                phrase: "leave `<m>` out of the pick, recording it as it stands",
+                keeps_work: "records its tip forward only",
+            },
+            Self::AnotherName => &ChoiceRow {
+                id: None,
+                phrase: "use another name",
+                keeps_work: "nothing changes",
+            },
+        }
+    }
+}
+
+/// Where a form runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Where {
+    Here,
+    Any,
+    Checkout,
+    Primary,
+    OtherCheckout,
+    WithBranch,
+    WhereBranchCheckedOut,
+    BranchNotCheckedOut,
+    OnTarget,
+    WithFeature,
+    DependentsWorkspace,
+    Nowhere,
+}
+
+impl Where {
+    pub fn describe(self) -> &'static str {
+        match self {
+            Self::Here => "here",
+            Self::Any => "any workspace",
+            Self::Checkout => "the checkout",
+            Self::Primary => "the primary",
+            Self::OtherCheckout => "the other checkout",
+            Self::WithBranch => "a workspace with the branch checked out",
+            Self::WhereBranchCheckedOut => "where `<b>` is checked out",
+            Self::BranchNotCheckedOut => "a workspace where `<W>` is not checked out",
+            Self::OnTarget => "a workspace on `<T>`",
+            Self::WithFeature => "the workspace with that feature",
+            Self::DependentsWorkspace => "the dependent's workspace, on its machine",
+            Self::Nowhere => "nowhere",
+        }
+    }
+
+    /// The directory a printed form names because it does not run here, or
+    /// `None` where it runs here or locates itself.
+    fn at(self, bindings: &BTreeMap<&'static str, String>) -> Option<String> {
+        let placeholder = match self {
+            Self::Primary => "<primary>",
+            Self::OtherCheckout => "<other>",
+            _ => return None,
+        };
+        bindings.get(placeholder).cloned()
+    }
+}
+
+/// One step of a form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Step {
+    /// An rwv command, `<placeholder>` words filled from what was judged.
+    Rwv(&'static str),
+    /// A VCS action, spelled by the backend.
+    Vcs(VcsAction),
+    /// Another form, run after the steps before it.
+    Then(Form),
+    /// A flag to rerun the refused verb with.
+    Rerun(&'static str),
+}
+
+/// One spelling of a choice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Form {
+    C1Pull,
+    C1UpdateRemote,
+    C2Pull,
+    C2UpdateRemote,
+    C3Pull,
+    C3UpdateRemote,
+    C5Lock,
+    C5LockRepo,
+    C6,
+    C7Push,
+    C7PushRepo,
+    C7PushBranch,
+    C9BranchDelete,
+    C9WorkweaveDelete,
+    C10,
+    C10Adopt,
+    C11SetBranch,
+    C11SetBranchNew,
+    C11SetUrl,
+    C11SetRole,
+    C11SetRecurseSubmodules,
+    C11SetHistory,
+    C11UnsetHistory,
+    C11MemberAdd,
+    C11MemberRemove,
+    C12Feature,
+    C12Declared,
+    C13,
+    C14Keep,
+    C14Return,
+    C15,
+    C15AtCherryPick,
+    C16Switch,
+    C16WorkweaveDelete,
+    C16Raw,
+    C17,
+    C18,
+    C19,
+    C22,
+    C23SetHistory,
+    C23Rerun,
+    C24,
+    C25,
+    C26,
+    C27,
+    C30Switch,
+    C30BranchCreate,
+    C31,
+    C32,
+    C33,
+    C34,
+    C35,
+    C35Retire,
+    C36,
+    C37BranchCreate,
+    C37WorkweaveCreate,
+    C38,
+    C39,
+    C40,
+    AnotherName,
+}
+
+/// A form's choice, steps and Where, and whether its verb has shipped.
+pub struct FormRow {
+    pub choice: ChoiceId,
+    pub steps: &'static [Step],
+    pub at: Where,
+    pub shipped: bool,
+}
+
+impl Form {
+    pub const ALL: [Form; 60] = [
+        Self::C1Pull,
+        Self::C1UpdateRemote,
+        Self::C2Pull,
+        Self::C2UpdateRemote,
+        Self::C3Pull,
+        Self::C3UpdateRemote,
+        Self::C5Lock,
+        Self::C5LockRepo,
+        Self::C6,
+        Self::C7Push,
+        Self::C7PushRepo,
+        Self::C7PushBranch,
+        Self::C9BranchDelete,
+        Self::C9WorkweaveDelete,
+        Self::C10,
+        Self::C10Adopt,
+        Self::C11SetBranch,
+        Self::C11SetBranchNew,
+        Self::C11SetUrl,
+        Self::C11SetRole,
+        Self::C11SetRecurseSubmodules,
+        Self::C11SetHistory,
+        Self::C11UnsetHistory,
+        Self::C11MemberAdd,
+        Self::C11MemberRemove,
+        Self::C12Feature,
+        Self::C12Declared,
+        Self::C13,
+        Self::C14Keep,
+        Self::C14Return,
+        Self::C15,
+        Self::C15AtCherryPick,
+        Self::C16Switch,
+        Self::C16WorkweaveDelete,
+        Self::C16Raw,
+        Self::C17,
+        Self::C18,
+        Self::C19,
+        Self::C22,
+        Self::C23SetHistory,
+        Self::C23Rerun,
+        Self::C24,
+        Self::C25,
+        Self::C26,
+        Self::C27,
+        Self::C30Switch,
+        Self::C30BranchCreate,
+        Self::C31,
+        Self::C32,
+        Self::C33,
+        Self::C34,
+        Self::C35,
+        Self::C35Retire,
+        Self::C36,
+        Self::C37BranchCreate,
+        Self::C37WorkweaveCreate,
+        Self::C38,
+        Self::C39,
+        Self::C40,
+        Self::AnotherName,
+    ];
+
+    pub fn row(self) -> &'static FormRow {
+        use ChoiceId as C;
+        use Step::{Rerun, Rwv, Then, Vcs};
+        use VcsAction as A;
+        use Where as W;
+        match self {
+            Self::C1Pull => &FormRow {
+                choice: C::C1,
+                steps: &[Rwv("rwv pull")],
+                at: W::Any,
+                shipped: false,
+            },
+            Self::C1UpdateRemote => &FormRow {
+                choice: C::C1,
+                steps: &[Rwv("rwv update --remote --repo <m>")],
+                at: W::Any,
+                shipped: false,
+            },
+            Self::C2Pull => &FormRow {
+                choice: C::C2,
+                steps: &[Rwv("rwv pull --merge-upstream")],
+                at: W::WithBranch,
+                shipped: false,
+            },
+            Self::C2UpdateRemote => &FormRow {
+                choice: C::C2,
+                steps: &[Rwv("rwv update --remote --merge-upstream --repo <m>")],
+                at: W::WithBranch,
+                shipped: false,
+            },
+            Self::C3Pull => &FormRow {
+                choice: C::C3,
+                steps: &[Rwv("rwv pull --reset-to-upstream <repo>")],
+                at: W::WithBranch,
+                shipped: false,
+            },
+            Self::C3UpdateRemote => &FormRow {
+                choice: C::C3,
+                steps: &[Rwv("rwv update --remote --reset-to-upstream <repo>")],
+                at: W::WithBranch,
+                shipped: false,
+            },
+            Self::C5Lock => &FormRow {
+                choice: C::C5,
+                steps: &[Rwv("rwv lock --commit")],
+                at: W::WithBranch,
+                shipped: true,
+            },
+            Self::C5LockRepo => &FormRow {
+                choice: C::C5,
+                steps: &[Rwv("rwv lock --repo <m> --commit")],
+                at: W::WithBranch,
+                shipped: false,
+            },
+            Self::C6 => &FormRow {
+                choice: C::C6,
+                steps: &[Rwv("rwv update")],
+                at: W::Here,
+                shipped: false,
+            },
+            Self::C7Push => &FormRow {
+                choice: C::C7,
+                steps: &[Rwv("rwv push")],
+                at: W::Here,
+                shipped: true,
+            },
+            Self::C7PushRepo => &FormRow {
+                choice: C::C7,
+                steps: &[Rwv("rwv push --repo <m>")],
+                at: W::Here,
+                shipped: true,
+            },
+            Self::C7PushBranch => &FormRow {
+                choice: C::C7,
+                steps: &[Rwv("rwv push --branch <W>")],
+                at: W::Any,
+                shipped: false,
+            },
+            Self::C9BranchDelete => &FormRow {
+                choice: C::C9,
+                steps: &[Rwv("rwv branch delete <W>")],
+                at: W::BranchNotCheckedOut,
+                shipped: false,
+            },
+            Self::C9WorkweaveDelete => &FormRow {
+                choice: C::C9,
+                steps: &[Rwv("rwv workweave <project> delete <ww>")],
+                at: W::Primary,
+                shipped: true,
+            },
+            Self::C10 => &FormRow {
+                choice: C::C10,
+                steps: &[Rwv("rwv branch rename <new>")],
+                at: W::Here,
+                shipped: false,
+            },
+            Self::C10Adopt => &FormRow {
+                choice: C::C10,
+                steps: &[Rwv("rwv branch rename <new> --adopt")],
+                at: W::Here,
+                shipped: false,
+            },
+            Self::C11SetBranch => &FormRow {
+                choice: C::C11,
+                steps: &[Rwv("rwv member set-branch <m> <b>")],
+                at: W::WithBranch,
+                shipped: false,
+            },
+            Self::C11SetBranchNew => &FormRow {
+                choice: C::C11,
+                steps: &[Rwv("rwv member set-branch <m> <b> --new")],
+                at: W::WithBranch,
+                shipped: false,
+            },
+            Self::C11SetUrl => &FormRow {
+                choice: C::C11,
+                steps: &[Rwv("rwv member set-url <m> <url>")],
+                at: W::WithBranch,
+                shipped: false,
+            },
+            Self::C11SetRole => &FormRow {
+                choice: C::C11,
+                steps: &[Rwv("rwv role <m> <role>")],
+                at: W::WithBranch,
+                shipped: true,
+            },
+            Self::C11SetRecurseSubmodules => &FormRow {
+                choice: C::C11,
+                steps: &[Rwv("rwv member set-recurse-submodules <m> <bool>")],
+                at: W::WithBranch,
+                shipped: false,
+            },
+            Self::C11SetHistory => &FormRow {
+                choice: C::C11,
+                steps: &[Rwv("rwv branch set-history <h> --repo <m>")],
+                at: W::WithBranch,
+                shipped: false,
+            },
+            Self::C11UnsetHistory => &FormRow {
+                choice: C::C11,
+                steps: &[Rwv("rwv branch set-history --unset --repo <m>")],
+                at: W::WithBranch,
+                shipped: false,
+            },
+            Self::C11MemberAdd => &FormRow {
+                choice: C::C11,
+                steps: &[Rwv("rwv add <url>")],
+                at: W::WithBranch,
+                shipped: true,
+            },
+            Self::C11MemberRemove => &FormRow {
+                choice: C::C11,
+                steps: &[Rwv("rwv remove <m>")],
+                at: W::WithBranch,
+                shipped: true,
+            },
+            Self::C12Feature => &FormRow {
+                choice: C::C12,
+                steps: &[Rwv("rwv branch set-mode <W> feature --target <T>")],
+                at: W::Any,
+                shipped: false,
+            },
+            Self::C12Declared => &FormRow {
+                choice: C::C12,
+                steps: &[Rwv("rwv branch set-mode <W> declared")],
+                at: W::Any,
+                shipped: false,
+            },
+            Self::C13 => &FormRow {
+                choice: C::C13,
+                steps: &[Vcs(A::Commit), Vcs(A::Stash)],
+                at: W::Checkout,
+                shipped: true,
+            },
+            Self::C14Keep => &FormRow {
+                choice: C::C14,
+                steps: &[Vcs(A::BranchAt), Then(Self::C6)],
+                at: W::Any,
+                shipped: true,
+            },
+            Self::C14Return => &FormRow {
+                choice: C::C14,
+                steps: &[Vcs(A::SwitchTo)],
+                at: W::Any,
+                shipped: true,
+            },
+            Self::C15 => &FormRow {
+                choice: C::C15,
+                steps: &[Vcs(A::CherryPick), Then(Self::C5Lock)],
+                at: W::WhereBranchCheckedOut,
+                shipped: true,
+            },
+            Self::C15AtCherryPick => &FormRow {
+                choice: C::C15,
+                steps: &[Vcs(A::CherryPick), Then(Self::C40)],
+                at: W::WhereBranchCheckedOut,
+                shipped: true,
+            },
+            Self::C16Switch => &FormRow {
+                choice: C::C16,
+                steps: &[Rwv("rwv switch <other>")],
+                at: W::OtherCheckout,
+                shipped: false,
+            },
+            Self::C16WorkweaveDelete => &FormRow {
+                choice: C::C16,
+                steps: &[Rwv("rwv workweave <project> delete <ww>")],
+                at: W::Primary,
+                shipped: true,
+            },
+            Self::C16Raw => &FormRow {
+                choice: C::C16,
+                steps: &[Vcs(A::RemoveWorktree)],
+                at: W::Checkout,
+                shipped: true,
+            },
+            Self::C17 => &FormRow {
+                choice: C::C17,
+                steps: &[
+                    Vcs(A::SetPushRemote),
+                    Vcs(A::SetPushDefault),
+                    Vcs(A::SetDefaultRemote),
+                    Vcs(A::AddRemote),
+                    Vcs(A::UnsetUpstream),
+                ],
+                at: W::Any,
+                shipped: true,
+            },
+            Self::C18 => &FormRow {
+                choice: C::C18,
+                steps: &[Vcs(A::BranchAt), Then(Self::C6)],
+                at: W::Any,
+                shipped: true,
+            },
+            Self::C19 => &FormRow {
+                choice: C::C19,
+                steps: &[],
+                at: W::Nowhere,
+                shipped: true,
+            },
+            Self::C22 => &FormRow {
+                choice: C::C22,
+                steps: &[Rwv("rwv sync --reset-to-target <m>")],
+                at: W::WithFeature,
+                shipped: false,
+            },
+            Self::C23SetHistory => &FormRow {
+                choice: C::C23,
+                steps: &[Rwv("rwv branch set-history <h>")],
+                at: W::OnTarget,
+                shipped: false,
+            },
+            Self::C23Rerun => &FormRow {
+                choice: C::C23,
+                steps: &[Rerun("--history <h>")],
+                at: W::Here,
+                shipped: false,
+            },
+            Self::C24 => &FormRow {
+                choice: C::C24,
+                steps: &[Vcs(A::SwitchDetached)],
+                at: W::Any,
+                shipped: true,
+            },
+            Self::C25 => &FormRow {
+                choice: C::C25,
+                steps: &[Rwv("rwv member pin <m> <rev> --commit")],
+                at: W::WithBranch,
+                shipped: false,
+            },
+            Self::C26 => &FormRow {
+                choice: C::C26,
+                steps: &[Vcs(A::MergeNoFastForward)],
+                at: W::Checkout,
+                shipped: true,
+            },
+            Self::C27 => &FormRow {
+                choice: C::C27,
+                steps: &[Vcs(A::PushCommitAs)],
+                at: W::Any,
+                shipped: true,
+            },
+            Self::C30Switch => &FormRow {
+                choice: C::C30,
+                steps: &[Rwv("rwv switch <b>")],
+                at: W::Here,
+                shipped: false,
+            },
+            Self::C30BranchCreate => &FormRow {
+                choice: C::C30,
+                steps: &[Rwv("rwv branch create <W>")],
+                at: W::Here,
+                shipped: false,
+            },
+            Self::C31 => &FormRow {
+                choice: C::C31,
+                steps: &[Rwv("rwv land --allow-member-change <m>")],
+                at: W::WithFeature,
+                shipped: false,
+            },
+            Self::C32 => &FormRow {
+                choice: C::C32,
+                steps: &[Vcs(A::Status)],
+                at: W::Checkout,
+                shipped: true,
+            },
+            Self::C33 => &FormRow {
+                choice: C::C33,
+                steps: &[Rwv("rwv fetch")],
+                at: W::Any,
+                shipped: false,
+            },
+            Self::C34 => &FormRow {
+                choice: C::C34,
+                steps: &[Rerun("--at <T>")],
+                at: W::Here,
+                shipped: false,
+            },
+            Self::C35 => &FormRow {
+                choice: C::C35,
+                steps: &[Rwv("rwv land")],
+                at: W::DependentsWorkspace,
+                shipped: false,
+            },
+            Self::C35Retire => &FormRow {
+                choice: C::C35,
+                steps: &[Rwv("rwv land --retire")],
+                at: W::DependentsWorkspace,
+                shipped: false,
+            },
+            Self::C36 => &FormRow {
+                choice: C::C36,
+                steps: &[Rwv("rwv sync")],
+                at: W::WithFeature,
+                shipped: false,
+            },
+            Self::C37BranchCreate => &FormRow {
+                choice: C::C37,
+                steps: &[Rwv("rwv branch create <W>")],
+                at: W::Here,
+                shipped: false,
+            },
+            Self::C37WorkweaveCreate => &FormRow {
+                choice: C::C37,
+                steps: &[Rwv("rwv workweave create <ww>")],
+                at: W::Here,
+                shipped: false,
+            },
+            Self::C38 => &FormRow {
+                choice: C::C38,
+                steps: &[Rwv("rwv cherry-pick <rev> -m <n>")],
+                at: W::Here,
+                shipped: false,
+            },
+            Self::C39 => &FormRow {
+                choice: C::C39,
+                steps: &[Vcs(A::Revert), Then(Self::C40)],
+                at: W::WhereBranchCheckedOut,
+                shipped: true,
+            },
+            Self::C40 => &FormRow {
+                choice: C::C40,
+                steps: &[Rwv("rwv cherry-pick <rev> --except <m>")],
+                at: W::Here,
+                shipped: false,
+            },
+            Self::AnotherName => &FormRow {
+                choice: C::AnotherName,
+                steps: &[],
+                at: W::Here,
+                shipped: true,
+            },
+        }
+    }
+
+    /// Whether this form may be printed: its verb has shipped, and so has
+    /// every form it runs after.
+    pub fn printable(self) -> bool {
+        let row = self.row();
+        row.shipped
+            && row.steps.iter().all(|step| match step {
+                Step::Then(next) => next.printable(),
+                Step::Rwv(_) | Step::Vcs(_) | Step::Rerun(_) => true,
+            })
+    }
+
+    /// Every rwv command this form prints, `then` forms included, with its
+    /// placeholders unfilled.
+    pub fn rwv_commands(self) -> Vec<&'static str> {
+        self.row()
+            .steps
+            .iter()
+            .flat_map(|step| match step {
+                Step::Rwv(command) => vec![*command],
+                Step::Then(next) => next.rwv_commands(),
+                Step::Vcs(_) | Step::Rerun(_) => Vec::new(),
+            })
+            .collect()
+    }
+
+    fn lines(self, vcs: &dyn Vcs) -> Vec<String> {
+        self.row()
+            .steps
+            .iter()
+            .flat_map(|step| match step {
+                Step::Rwv(command) => vec![(*command).to_owned()],
+                Step::Vcs(action) => vec![vcs.hint(*action).to_owned()],
+                Step::Then(next) => next.lines(vcs),
+                Step::Rerun(flag) => vec![format!("rerun with {flag}")],
+            })
+            .collect()
+    }
+}
+
+/// A fact about a judged repo. Facts are reported; they never select a
+/// choice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum FactKind {
+    /// A superseded tip was recorded for the branch.
+    Rewritten,
+    /// The branch is an ancestor of where it lands.
+    Landed,
+    /// Another project's live lock pins the commits.
+    PinnedBy,
+    /// Other live weave branches declare the branch.
+    Shared,
+    /// The pin is on the branch it lands into.
+    PinLanded,
+    /// The member was left detached because its branch is checked out
+    /// elsewhere.
+    Checkout,
+    /// The unlanded commits carry changes equivalent to commits where they
+    /// land.
+    PatchEquivalent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fact {
+    pub kind: FactKind,
+    pub about: Option<String>,
+}
+
+/// A repo being judged: its state and what the state names, and the values
+/// its choices' placeholders take.
+#[must_use]
+pub struct Judging {
+    repo: String,
+    state: State,
+    subject: Option<String>,
+    listed: Vec<String>,
+    facts: Vec<Fact>,
+    bindings: BTreeMap<&'static str, String>,
+}
+
+impl Judging {
+    /// What the state names: the operation in progress, the name taken.
+    pub fn subject(mut self, subject: impl fmt::Display) -> Self {
+        self.subject = Some(subject.to_string());
+        self
+    }
+
+    /// The files, paths or commits the state lists beneath its line.
+    pub fn listing<I>(mut self, items: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: fmt::Display,
+    {
+        self.listed.extend(items.into_iter().map(|i| i.to_string()));
+        self
+    }
+
+    pub fn fact(mut self, fact: Fact) -> Self {
+        self.facts.push(fact);
+        self
+    }
+
+    /// The value `placeholder` takes in this repo's choices.
+    pub fn bind(mut self, placeholder: &'static str, value: impl fmt::Display) -> Self {
+        self.bindings.insert(placeholder, value.to_string());
+        self
+    }
+
+    pub fn checkout(self, dir: &Path) -> Self {
+        self.bind("<checkout>", dir.display())
+    }
+
+    /// Name `primary` as where its choices run, unless that is `here`, where
+    /// the verb runs.
+    pub fn in_primary(self, primary: &Path, here: &Path) -> Self {
+        if crate::path_spelling::CanonicalPath::of(primary)
+            == crate::path_spelling::CanonicalPath::of(here)
+        {
+            self
+        } else {
+            self.bind("<primary>", primary.display())
+        }
+    }
+
+    /// The judged line, its choices spelled by `vcs`.
+    pub fn judge(self, vcs: &dyn Vcs) -> Judged {
+        let choices = self
+            .state
+            .row()
+            .offers
+            .iter()
+            .filter(|form| form.printable())
+            .map(|form| Offered {
+                choice: form.row().choice,
+                at: form.row().at.at(&self.bindings),
+                run: form
+                    .lines(vcs)
+                    .iter()
+                    .map(|line| fill(line, &self.bindings))
+                    .collect(),
+            })
+            .collect();
+        Judged {
+            repo: self.repo,
+            state: self.state,
+            subject: self.subject,
+            listed: self.listed,
+            facts: self.facts,
+            choices,
+        }
+    }
+}
+
+/// `template` with every bound `<placeholder>` replaced by its value, quoted
+/// where it holds whitespace. An unbound one stays for the operator to fill.
+fn fill(template: &str, bindings: &BTreeMap<&'static str, String>) -> String {
+    bindings
+        .iter()
+        .fold(template.to_owned(), |text, (placeholder, value)| {
+            let value = if value.contains(char::is_whitespace) {
+                format!("\"{value}\"")
+            } else {
+                value.clone()
+            };
+            text.replace(placeholder, &value)
+        })
+}
+
+/// One repo judged in one state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Judged {
+    repo: String,
+    state: State,
+    subject: Option<String>,
+    listed: Vec<String>,
+    facts: Vec<Fact>,
+    choices: Vec<Offered>,
+}
+
+/// A choice as one judged repo prints it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Offered {
+    choice: ChoiceId,
+    at: Option<String>,
+    run: Vec<String>,
+}
+
+impl Judged {
+    /// The refusal of this one line.
+    pub fn refused(self) -> anyhow::Error {
+        let mut report = Report::default();
+        report.add(self);
+        anyhow::Error::new(Refused(report))
+    }
+
+    pub fn repo(&self) -> &str {
+        &self.repo
+    }
+
+    pub fn state(&self) -> State {
+        self.state
+    }
+
+    fn headline(&self) -> String {
+        let mut line = format!(
+            "{}: {} {}",
+            self.repo,
+            self.state.axis().token(),
+            self.state.name()
+        );
+        if let Some(subject) = &self.subject {
+            line.push_str(&format!(" ({subject})"));
+        }
+        line
+    }
+
+    fn details(&self) -> Vec<String> {
+        let facts = self.facts.iter().map(|fact| {
+            let token = crate::wire_token::wire_token(&fact.kind);
+            match &fact.about {
+                Some(about) => format!("{token}: {about}"),
+                None => token,
+            }
+        });
+        facts.chain(self.listed.iter().cloned()).collect()
+    }
+
+    pub fn output(&self) -> JudgedOutput {
+        JudgedOutput {
+            repo: self.repo.clone(),
+            axis: self.state.axis(),
+            state: self.state.name().to_owned(),
+            subject: self.subject.clone(),
+            listed: self.listed.clone(),
+            facts: self
+                .facts
+                .iter()
+                .map(|fact| FactOutput {
+                    fact: fact.kind,
+                    about: fact.about.clone(),
+                })
+                .collect(),
+            choices: self
+                .choices
+                .iter()
+                .map(|offered| {
+                    let row = offered.choice.row();
+                    ChoiceOutput {
+                        id: row.id.map(str::to_owned),
+                        phrase: row.phrase.to_owned(),
+                        at: offered.at.clone(),
+                        run: offered.run.clone(),
+                    }
+                })
+                .collect(),
+        }
+    }
+}
+
+/// Every repo a verb judged before refusing, with any notes the refusal adds.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Report {
+    lines: Vec<Judged>,
+    notes: Vec<String>,
+}
+
+impl Report {
+    pub fn add(&mut self, judged: Judged) {
+        self.lines.push(judged);
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.lines.is_empty()
+    }
+
+    pub fn lines(&self) -> &[Judged] {
+        &self.lines
+    }
+
+    /// Print `note` after the judged lines.
+    pub fn note(&mut self, note: impl fmt::Display) {
+        self.notes.push(note.to_string());
+    }
+
+    /// `Ok` when nothing was judged, else the refusal carrying every line.
+    pub fn into_result(self) -> anyhow::Result<()> {
+        if self.is_empty() {
+            Ok(())
+        } else {
+            Err(anyhow::Error::new(Refused(self)))
+        }
+    }
+
+    /// The distinct axes judged, in the order their first line prints.
+    pub fn kinds(&self) -> Vec<Axis> {
+        let mut kinds: Vec<Axis> = Vec::new();
+        for judged in self.ordered() {
+            let axis = judged.state.axis();
+            if !kinds.contains(&axis) {
+                kinds.push(axis);
+            }
+        }
+        kinds
+    }
+
+    /// Lines grouped by repo in the order repos were judged, each repo's
+    /// lines in axis order.
+    fn ordered(&self) -> Vec<&Judged> {
+        let mut repos: Vec<&str> = Vec::new();
+        for judged in &self.lines {
+            if !repos.contains(&judged.repo.as_str()) {
+                repos.push(&judged.repo);
+            }
+        }
+        let mut out: Vec<&Judged> = Vec::new();
+        for repo in repos {
+            let mut of_repo: Vec<&Judged> = self.lines.iter().filter(|j| j.repo == repo).collect();
+            of_repo.sort_by_key(|j| j.state.axis());
+            out.extend(of_repo);
+        }
+        out
+    }
+
+    /// The choices of every line, phrase and place once each, their lines in
+    /// the order the judged lines offered them.
+    fn choices(&self) -> Vec<(&'static str, Option<String>, Vec<String>)> {
+        let mut out: Vec<(&'static str, Option<String>, Vec<String>)> = Vec::new();
+        for judged in self.ordered() {
+            for offered in &judged.choices {
+                let phrase = offered.choice.row().phrase;
+                let at = offered.at.clone();
+                let slot = match out.iter().position(|(p, a, _)| *p == phrase && *a == at) {
+                    Some(i) => i,
+                    None => {
+                        out.push((phrase, at, Vec::new()));
+                        out.len() - 1
+                    }
+                };
+                for line in &offered.run {
+                    if !out[slot].2.contains(line) {
+                        out[slot].2.push(line.clone());
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    fn body(&self, prefix: &str) -> String {
+        let mut out = String::new();
+        for judged in self.ordered() {
+            out.push_str(&format!("{prefix}{}\n", judged.headline()));
+            for detail in judged.details() {
+                out.push_str(&format!("    {detail}\n"));
+            }
+        }
+        for note in &self.notes {
+            out.push_str(&format!("{note}\n"));
+        }
+        let choices = self.choices();
+        if !choices.is_empty() {
+            out.push_str("choices:\n");
+            for (phrase, at, lines) in choices {
+                match at {
+                    Some(at) => out.push_str(&format!("  {phrase}, in {at}\n")),
+                    None => out.push_str(&format!("  {phrase}\n")),
+                }
+                for line in lines {
+                    out.push_str(&format!("    {line}\n"));
+                }
+            }
+        }
+        out
+    }
+
+    /// What a refused `rwv <verb>` prints: each judged line, its facts and
+    /// listing, the choices, then one route line per distinct axis.
+    pub fn render(&self, verb: &str) -> String {
+        let prefix = if verb.is_empty() {
+            "rwv: ".to_owned()
+        } else {
+            format!("rwv {verb}: ")
+        };
+        let mut out = self.body(&prefix);
+        out.push('\n');
+        for kind in self.kinds() {
+            out.push_str(&format!("rwv explain {}\n", kind.token()));
+        }
+        out
+    }
+
+    pub fn output(&self) -> Vec<JudgedOutput> {
+        self.ordered().into_iter().map(Judged::output).collect()
+    }
+}
+
+/// `dir`'s edits, judged: an operation in progress is the state whether or
+/// not it left files dirty, since only its own continue or abort ends it;
+/// otherwise `dirty`'s files, when there are any.
+pub fn judge_edits(
+    vcs: &dyn Vcs,
+    repo: impl fmt::Display,
+    dir: &Path,
+    dirty: Vec<String>,
+) -> Option<Judged> {
+    let judging = match vcs.mid_operation(dir) {
+        Some(op) => State::EditsMidOperation.of(repo).subject(op.operation()),
+        None if dirty.is_empty() => return None,
+        None => State::EditsDirty.of(repo).listing(dirty),
+    };
+    Some(judging.checkout(dir).judge(vcs))
+}
+
+/// The error a [`Report`] refuses with.
+#[derive(Debug)]
+struct Refused(Report);
+
+impl fmt::Display for Refused {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.0.body("").trim_end_matches('\n'))
+    }
+}
+
+impl std::error::Error for Refused {}
+
+/// The report `err` refuses with, wherever in its chain it sits.
+pub fn report_of(err: &anyhow::Error) -> Option<&Report> {
+    err.chain()
+        .find_map(|link| link.downcast_ref::<Refused>())
+        .map(|refused| &refused.0)
+}
+
+/// The judged lines `err` refuses with, for a `--json` record; empty when it
+/// judged none.
+pub fn refused_output(err: &anyhow::Error) -> Vec<JudgedOutput> {
+    report_of(err).map(Report::output).unwrap_or_default()
+}
+
+/// The context lines wrapped above `err`'s report, outermost first.
+pub fn contexts_above_report(err: &anyhow::Error) -> Vec<String> {
+    err.chain()
+        .take_while(|link| link.downcast_ref::<Refused>().is_none())
+        .map(ToString::to_string)
+        .collect()
+}
+
+/// Schema URL of the envelope a refused verb prints under `--json` when it
+/// printed no envelope of its own.
+pub const REFUSAL_SCHEMA_URL: &str = crate::schema_url::schema_url!("refusal");
+
+/// What a refused `rwv <verb> --json` prints when the verb printed nothing
+/// before refusing: every repo it judged.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RefusalJsonOutput {
+    #[serde(rename = "$schema")]
+    pub schema: String,
+    /// Each repo the verb judged, with that state's choices.
+    pub refused: Vec<JudgedOutput>,
+}
+
+/// One judged repo, as `--json` carries it.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct JudgedOutput {
+    /// The repo's path, `projects/<name>` for the project repo.
+    pub repo: String,
+    /// What it was judged on; `rwv explain <axis>` serves the axis's page.
+    pub axis: Axis,
+    /// The state it was judged in, as that page names it.
+    pub state: String,
+    /// What the state names, when it names something.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+    /// The files, paths or commits the state lists.
+    pub listed: Vec<String>,
+    pub facts: Vec<FactOutput>,
+    /// What this state can run, in the order the page lists it.
+    pub choices: Vec<ChoiceOutput>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct FactOutput {
+    pub fact: FactKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub about: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ChoiceOutput {
+    /// The choice's id on the axis's page; null for one it does not number.
+    pub id: Option<String>,
+    pub phrase: String,
+    /// The directory it must run in; null where it runs here or names its
+    /// own directory.
+    #[serde(rename = "where")]
+    pub at: Option<String>,
+    /// The commands, one per line, as the terminal prints them.
+    pub run: Vec<String>,
+}
+
+/// Every axis's entry for the refusals page: what it judges, its states, and
+/// each state's printable choices, VCS actions spelled by `vcs_type`'s backend.
+pub fn kind_entries_markdown(vcs_type: crate::manifest::VcsType) -> String {
+    let vcs = crate::vcs::vcs_for(vcs_type);
+    let vcs = vcs.as_ref();
+    let vcs_name = crate::wire_token::wire_token(&vcs_type);
+    let vcs_name = vcs_name.as_str();
+    let mut entries: Vec<String> = Vec::new();
+    for axis in Axis::ALL {
+        let mut out = String::new();
+        let kind = axis.row();
+        let states: Vec<State> = State::ALL
+            .into_iter()
+            .filter(|s| s.axis() == axis)
+            .collect();
+        out.push_str(&format!("### `{}`\n\n", axis.token()));
+        out.push_str(&format!("**Condition.** {}\n\n", kind.condition));
+        out.push_str(&format!("**Why.** {}\n\n", kind.why));
+        out.push_str(&format!(
+            "**States.** A refused verb prints `rwv <verb>: <repo>: {} <state>` for each repo it \
+             judged in one of these, with what the state lists beneath it.\n\n",
+            axis.token()
+        ));
+        out.push_str("| State | Means | Refused by |\n|---|---|---|\n");
+        for state in &states {
+            let row = state.row();
+            out.push_str(&format!(
+                "| `{}` | {} | {} |\n",
+                row.name, row.means, row.refused_by
+            ));
+        }
+        out.push_str(
+            "\n**Choices.** Each state's choices print under `choices:` in this order, with a \
+             directory named where a choice does not run where the verb did. A state with no \
+             row here prints none.\n\n",
+        );
+        out.push_str(
+            "| State | Choice | Spelled | Where | Keeps work because |\n|---|---|---|---|---|\n",
+        );
+        for state in &states {
+            for form in state.row().offers.iter().filter(|f| f.printable()) {
+                let row = form.row();
+                let choice = row.choice.row();
+                let label = match choice.id {
+                    Some(id) => format!("{id}: {}", choice.phrase),
+                    None => choice.phrase.to_owned(),
+                };
+                out.push_str(&format!(
+                    "| `{}` | {} | {} | {} | {} |\n",
+                    state.name(),
+                    label,
+                    spelled(*form, vcs, vcs_name),
+                    row.at.describe(),
+                    choice.keeps_work
+                ));
+            }
+        }
+        if !kind.sits.is_empty() {
+            out.push_str(&format!("\n**Where this sits.** {}\n", kind.sits));
+        }
+        entries.push(out);
+    }
+    entries.join("\n")
+}
+
+fn spelled(form: Form, vcs: &dyn Vcs, vcs_name: &str) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let mut actions: Vec<String> = Vec::new();
+    let flush = |actions: &mut Vec<String>, parts: &mut Vec<String>| {
+        if !actions.is_empty() {
+            parts.push(format!("VCS action ({vcs_name}: {})", actions.join(", ")));
+            actions.clear();
+        }
+    };
+    for step in form.row().steps {
+        match step {
+            Step::Vcs(action) => actions.push(format!("`{}`", vcs.hint(*action))),
+            Step::Rwv(command) => {
+                flush(&mut actions, &mut parts);
+                parts.push(format!("`{command}`"));
+            }
+            Step::Then(next) => {
+                flush(&mut actions, &mut parts);
+                parts.push(format!("then {}", spelled(*next, vcs, vcs_name)));
+            }
+            Step::Rerun(flag) => {
+                flush(&mut actions, &mut parts);
+                parts.push(format!("rerun with `{flag}`"));
+            }
+        }
+    }
+    flush(&mut actions, &mut parts);
+    if parts.is_empty() {
+        "—".to_owned()
+    } else {
+        parts.join("; ")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn git() -> Box<dyn Vcs> {
+        crate::vcs::vcs_for(crate::manifest::VcsType::Git)
+    }
+
+    #[test]
+    fn every_state_row_names_its_own_axis_and_a_unique_name() {
+        let mut seen = std::collections::BTreeSet::new();
+        for state in State::ALL {
+            assert!(
+                seen.insert((state.axis(), state.name())),
+                "{state:?} repeats a name on its axis"
+            );
+            assert!(!state.row().offers.is_empty(), "{state:?} offers nothing");
+        }
+        for axis in Axis::ALL {
+            assert!(
+                State::ALL.iter().any(|s| s.axis() == axis),
+                "{axis:?} has no state"
+            );
+        }
+    }
+
+    #[test]
+    fn a_form_runs_after_another_only_once_that_one_prints() {
+        assert!(Form::C14Keep.row().shipped);
+        assert!(!Form::C6.printable());
+        assert!(!Form::C14Keep.printable());
+        assert!(Form::C15.printable());
+    }
+
+    #[test]
+    fn a_report_prints_lines_then_choices_then_one_route_line_per_axis() {
+        let vcs = git();
+        let mut report = Report::default();
+        report.add(
+            State::EditsDirty
+                .of("github/o/lib")
+                .listing(["a.txt"])
+                .checkout(Path::new("/w/github/o/lib"))
+                .judge(vcs.as_ref()),
+        );
+        report.add(
+            State::CheckoutInRawWorktree
+                .of("github/o/lib")
+                .listing(["/x/wt"])
+                .checkout(Path::new("/w/github/o/lib"))
+                .bind("<worktree>", "/x/wt")
+                .judge(vcs.as_ref()),
+        );
+        report.add(
+            State::EditsDirty
+                .of("github/o/app")
+                .listing(["b.txt"])
+                .checkout(Path::new("/w/github/o/app"))
+                .judge(vcs.as_ref()),
+        );
+        assert_eq!(
+            report.render("remove"),
+            "rwv remove: github/o/lib: edits dirty\n\
+             \x20   a.txt\n\
+             rwv remove: github/o/lib: checkout in a raw worktree\n\
+             \x20   /x/wt\n\
+             rwv remove: github/o/app: edits dirty\n\
+             \x20   b.txt\n\
+             choices:\n\
+             \x20 commit your edits, or set them aside\n\
+             \x20   git -C /w/github/o/lib commit\n\
+             \x20   git -C /w/github/o/lib stash push\n\
+             \x20   git -C /w/github/o/app commit\n\
+             \x20   git -C /w/github/o/app stash push\n\
+             \x20 free the other checkout\n\
+             \x20   git -C /w/github/o/lib worktree remove /x/wt\n\
+             \n\
+             rwv explain edits\n\
+             rwv explain checkout\n"
+        );
+    }
+
+    #[test]
+    fn a_place_elsewhere_is_named_and_a_value_with_a_space_is_quoted() {
+        let vcs = git();
+        let judged = State::NameTaken
+            .of("projects/proj")
+            .subject("seat")
+            .bind("<project>", "proj")
+            .bind("<ww>", "seat")
+            .bind("<primary>", "/my weave")
+            .judge(vcs.as_ref());
+        let out = judged.output();
+        assert_eq!(out.axis, Axis::Name);
+        assert_eq!(out.state, "taken");
+        let ids: Vec<Option<&str>> = out.choices.iter().map(|c| c.id.as_deref()).collect();
+        assert_eq!(ids, [None, Some("C9")]);
+        assert_eq!(out.choices[1].at.as_deref(), Some("/my weave"));
+        assert_eq!(out.choices[1].run, ["rwv workweave proj delete seat"]);
+        assert_eq!(
+            fill("cd <dir>", &BTreeMap::from([("<dir>", "a b".into())])),
+            "cd \"a b\""
+        );
+    }
+
+    #[test]
+    fn a_state_with_nothing_shipped_prints_no_choices_block() {
+        let mut report = Report::default();
+        report.add(
+            State::NameARevision
+                .of("github/o/lib")
+                .subject("v2.0")
+                .judge(git().as_ref()),
+        );
+        let text = report.render("add");
+        assert!(!text.contains("choices:"), "{text}");
+        assert!(text.ends_with("\nrwv explain name\n"), "{text}");
+    }
+
+    #[test]
+    fn a_fact_prints_before_the_listing() {
+        let mut report = Report::default();
+        report.add(
+            State::PublishWithheld
+                .of("github/o/lib")
+                .listing(["rejected"])
+                .fact(Fact {
+                    kind: FactKind::PinnedBy,
+                    about: Some("other".into()),
+                })
+                .judge(git().as_ref()),
+        );
+        assert!(report.render("push").starts_with(
+            "rwv push: github/o/lib: publish withheld\n    pinned-by: other\n    rejected\n"
+        ));
+    }
+
+    #[test]
+    fn the_report_survives_a_context_wrap() {
+        use anyhow::Context;
+        let mut report = Report::default();
+        report.add(
+            State::EditsMidOperation
+                .of("projects/p")
+                .subject("rebase")
+                .judge(git().as_ref()),
+        );
+        let err = report.into_result().context("while landing").unwrap_err();
+        assert_eq!(report_of(&err).map(|r| r.kinds()), Some(vec![Axis::Edits]));
+        assert_eq!(contexts_above_report(&err), ["while landing"]);
+    }
+}

@@ -93,6 +93,7 @@ pub mod activate;
 pub mod add_remove;
 pub mod check;
 pub mod cli;
+pub mod diagnosis;
 pub mod durable_file;
 pub mod explain;
 pub mod fetch;

@@ -583,7 +583,7 @@ fn lock_ignores_untracked_files_and_records_head() {
 }
 
 #[test]
-fn lock_refuses_a_tracked_change_as_dirty_checkout() {
+fn lock_refuses_a_tracked_change_as_edits_dirty() {
     let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
@@ -603,10 +603,50 @@ fn lock_refuses_a_tracked_change_as_dirty_checkout() {
         .current_dir(&project_dir)
         .assert()
         .failure()
-        .stderr(predicate::str::contains(
-            "uncommitted changes to tracked files",
-        ))
-        .stderr(predicate::str::contains("rwv explain dirty-checkout"));
+        .stderr(predicate::str::contains(format!(
+            "rwv lock: {repo_path}: edits dirty\n    README.md\n"
+        )))
+        .stderr(predicate::str::ends_with("\nrwv explain edits\n"));
+}
+
+/// Every dirty member is judged before the first refusal, so one run names
+/// them all.
+#[test]
+fn lock_judges_every_dirty_member_in_one_refusal() {
+    let tmp = common::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+    let repos = ["github/acme/server", "github/acme/web"];
+    for repo in repos {
+        init_git_repo(&root.join(repo));
+        std::fs::write(root.join(repo).join("README.md"), "edited\n").unwrap();
+    }
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[
+            (repos[0], "https://github.com/acme/server.git"),
+            (repos[1], "https://github.com/acme/web.git"),
+        ],
+    );
+
+    let out = rwv_cmd()
+        .arg("lock")
+        .current_dir(&project_dir)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "{stderr}");
+    for repo in repos {
+        assert!(
+            stderr.contains(&format!("rwv lock: {repo}: edits dirty\n")),
+            "{stderr}"
+        );
+    }
+    assert_eq!(stderr.matches("rwv explain ").count(), 1, "{stderr}");
+    assert!(
+        !project_dir.join("rwv.lock").exists(),
+        "a refused lock writes nothing"
+    );
 }
 
 // ---------------------------------------------------------------------------

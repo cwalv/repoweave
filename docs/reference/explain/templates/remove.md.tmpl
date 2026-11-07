@@ -40,15 +40,18 @@ listed one. A path with no such checkout refuses (`repo-not-in-manifest`).
 Every guard runs before the manifest is written, so a refused delete leaves
 `rwv.toml` and the checkout as they were:
 
-- *uncommitted changes* in the checkout refuse (`dirty-checkout`);
+- in the primary, a clone **another project's `rwv.toml` lists** refuses
+  (`shared-clone-referenced`) unless `--delete-shared-clone` is given;
+- the checkout's *uncommitted changes*, and in the primary every **live
+  checkout derived from the clone** — a workweave's, or a worktree added by
+  hand — are judged together and refuse as one: one line per state, on the
+  `edits` and `checkout` kinds, with the choices each state prints;
 - *commits no other clone reaches* refuse
   (`dropped-repo-has-unique-commits`): in the primary, any branch with no
   remote counterpart or with commits ahead of it; in a workweave, a worktree
   tip the canonical clone does not contain;
-- in the primary, a clone **another project's `rwv.toml` lists** refuses
-  (`shared-clone-referenced`) unless `--delete-shared-clone` is given, and a
-  clone that **live workweave worktrees or standing receipts** still claim
-  refuses (`store-still-claimed`).
+- in the primary, a clone rwv still holds **ownership receipts** for refuses
+  (`store-still-claimed`).
 
 (See `rwv explain workweave` for the workweave topology model.)
 

@@ -30,8 +30,10 @@ rwv explain <kind>/<sub-kind>
 
 - With no argument, prints the index of explainable verbs.
 - With a verb, prints that verb's markdown bundle.
-- With a refusal token, a `rwv doctor` finding kind or sub-kind, or a VCS
-  error kind, prints that token's entry.
+- With a refusal kind or token, a `rwv doctor` finding kind or sub-kind, or a
+  VCS error kind, prints that token's entry. A kind's entry lists its states
+  and the choices each prints, generated from the table refusals are printed
+  from.
 - With a finding's `<kind>/<sub-kind>`, prints the sub-kind's entry, or the
   kind's entry where one entry covers all its sub-kinds.
 - Unknown verbs return non-zero with a friendly pointer to the index.

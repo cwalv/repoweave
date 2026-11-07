@@ -69,6 +69,9 @@ use repoweave::check::{
     BranchDisciplineKind, CheckViolation, DetachedAncestry, PlacementConvergence, ProvenanceKind,
     DOCTOR_SCHEMA_URL,
 };
+use repoweave::diagnosis::{
+    Axis, ChoiceOutput, FactKind, FactOutput, JudgedOutput, RefusalJsonOutput, REFUSAL_SCHEMA_URL,
+};
 use repoweave::fetch::{FetchJsonOutput, FetchOutcomeOutput, FetchOutcomeStatus, FETCH_SCHEMA_URL};
 use repoweave::integration::{Issue, IssueKind, IssueSource, Severity};
 use repoweave::integration::{MemberIncompatibility, MissingTool, Observed};
@@ -152,6 +155,11 @@ fn cases() -> Vec<VerbCase> {
             verb: "update",
             schema_url: UPDATE_SCHEMA_URL,
             corpus: update_corpus,
+        },
+        VerbCase {
+            verb: "refusal",
+            schema_url: REFUSAL_SCHEMA_URL,
+            corpus: refusal_corpus,
         },
         VerbCase {
             verb: "each",
@@ -464,6 +472,7 @@ fn push_corpus() -> Vec<(&'static str, Value)> {
             value(PushJsonOutput {
                 schema_url: PUSH_SCHEMA_URL.to_owned(),
                 outcomes: push_outcomes(),
+                refused: judged_on_every_axis(),
                 resolution: Some(unregistered_resolution()),
             }),
         ),
@@ -472,6 +481,7 @@ fn push_corpus() -> Vec<(&'static str, Value)> {
             value(PushJsonOutput {
                 schema_url: PUSH_SCHEMA_URL.to_owned(),
                 outcomes: Vec::new(),
+                refused: Vec::new(),
                 resolution: None,
             }),
         ),
@@ -782,6 +792,77 @@ fn sync_outcomes(with_step3: bool) -> Vec<SyncOutcomeOutput> {
 }
 
 /// Every member kind, and a refused prune both with and without a token.
+/// One judged repo with a choice and a fact, so every optional part of the
+/// record is on the wire.
+fn judged(axis: Axis, state: &str, run: &str) -> JudgedOutput {
+    JudgedOutput {
+        repo: REPO.to_owned(),
+        axis,
+        state: state.to_owned(),
+        subject: Some("subject".to_owned()),
+        listed: vec!["listed".to_owned()],
+        facts: vec![FactOutput {
+            fact: FactKind::PinnedBy,
+            about: Some("other".to_owned()),
+        }],
+        choices: vec![ChoiceOutput {
+            id: Some("C7".to_owned()),
+            phrase: "publish it (again)".to_owned(),
+            at: Some(ABS.to_owned()),
+            run: vec![run.to_owned()],
+        }],
+    }
+}
+
+/// A judged repo on every axis, between them carrying every fact, the
+/// optional parts absent on one: what any envelope's `refused` can hold.
+fn judged_on_every_axis() -> Vec<JudgedOutput> {
+    let facts = [
+        FactKind::Rewritten,
+        FactKind::Landed,
+        FactKind::PinnedBy,
+        FactKind::Shared,
+        FactKind::PinLanded,
+        FactKind::Checkout,
+        FactKind::PatchEquivalent,
+    ];
+    let mut out: Vec<JudgedOutput> = Axis::ALL
+        .into_iter()
+        .map(|axis| judged(axis, "a state", "rwv push"))
+        .collect();
+    out[0].facts = facts
+        .into_iter()
+        .map(|fact| FactOutput { fact, about: None })
+        .collect();
+    out[0].subject = None;
+    out[0].choices[0].id = None;
+    out[0].choices[0].at = None;
+    out
+}
+
+fn refusal_corpus() -> Vec<(&'static str, Value)> {
+    let mut bare = judged(Axis::Edits, "mid-operation", "git -C /ws/x status");
+    bare.facts.clear();
+    bare.listed.clear();
+    bare.choices.clear();
+    vec![
+        (
+            "every-axis-and-fact",
+            value(RefusalJsonOutput {
+                schema: REFUSAL_SCHEMA_URL.to_owned(),
+                refused: judged_on_every_axis(),
+            }),
+        ),
+        (
+            "one-line-printing-no-choice",
+            value(RefusalJsonOutput {
+                schema: REFUSAL_SCHEMA_URL.to_owned(),
+                refused: vec![bare],
+            }),
+        ),
+    ]
+}
+
 fn members() -> Vec<MemberOutput> {
     vec![
         MemberOutput::Kept {
@@ -795,13 +876,22 @@ fn members() -> Vec<MemberOutput> {
         MemberOutput::PruneRefused {
             path: REPO.to_owned(),
             absolute_path: wire(ABS),
-            refusal: Some("dirty-checkout".to_owned()),
+            refusal: None,
+            refused: vec![judged(Axis::Edits, "dirty", "git -C /ws/x commit")],
             message: "worktree has uncommitted changes".to_owned(),
         },
         MemberOutput::PruneRefused {
             path: REPO.to_owned(),
             absolute_path: wire(ABS),
+            refusal: Some("store-claims-unreadable".to_owned()),
+            refused: Vec::new(),
+            message: "cannot enumerate the worktrees".to_owned(),
+        },
+        MemberOutput::PruneRefused {
+            path: REPO.to_owned(),
+            absolute_path: wire(ABS),
             refusal: None,
+            refused: Vec::new(),
             message: "worktree remove failed".to_owned(),
         },
         MemberOutput::MaterializeFailed {
@@ -823,6 +913,7 @@ fn sync_corpus() -> Vec<(&'static str, Value)> {
                 placements: placements(),
                 members: members(),
                 complete: true,
+                refused: Vec::new(),
                 advisories: advisories(),
                 resolution: Some(resolution()),
             }),
@@ -835,6 +926,7 @@ fn sync_corpus() -> Vec<(&'static str, Value)> {
                 placements: Vec::new(),
                 members: Vec::new(),
                 complete: false,
+                refused: judged_on_every_axis(),
                 advisories: Vec::new(),
                 resolution: None,
             }),
@@ -857,6 +949,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
                 placements: placements(),
                 members: members(),
                 complete: true,
+                refused: Vec::new(),
                 project_repo_advance: Some(advance()),
                 resolution: Some(resolution()),
             }),
@@ -875,6 +968,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
                 placements: Vec::new(),
                 members: Vec::new(),
                 complete: false,
+                refused: judged_on_every_axis(),
                 project_repo_advance: None,
                 resolution: None,
             }),
@@ -895,6 +989,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
                 placements: Vec::new(),
                 members: Vec::new(),
                 complete: false,
+                refused: Vec::new(),
                 project_repo_advance: Some(advance()),
                 resolution: Some(resolution()),
             }),
@@ -911,6 +1006,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
                 placements: placements(),
                 members: members(),
                 complete: false,
+                refused: Vec::new(),
                 project_repo_advance: None,
                 resolution: Some(resolution()),
             }),
@@ -927,6 +1023,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
                 placements: Vec::new(),
                 members: Vec::new(),
                 complete: true,
+                refused: Vec::new(),
                 project_repo_advance: None,
                 resolution: Some(resolution()),
             }),
@@ -1250,6 +1347,7 @@ fn records_key(verb: &str) -> &'static str {
     match verb {
         "doctor" => "violations",
         "status" | "update" => "repos",
+        "refusal" => "refused",
         _ => "outcomes",
     }
 }

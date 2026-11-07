@@ -51,13 +51,15 @@ pub fn run_role(
             .tracked_dirty_file_names(&member)
             .with_context(|| format!("failed to read the status of '{repo_path}'"))?;
         if !dirty.is_empty() {
-            crate::refuse!(
-                RefusalKind::DirtyCheckout,
-                "refusing to make '{repo_path}' a reference member: it has uncommitted \
-                 changes to tracked files, which would become read-only:\n  {}\n\n\
-                 Commit them, stash them, or discard them, then re-run.",
-                dirty.join("\n  ")
+            let mut report = crate::diagnosis::Report::default();
+            report.add(
+                crate::diagnosis::State::EditsDirty
+                    .of(&repo_path)
+                    .listing(dirty)
+                    .checkout(&member)
+                    .judge(vcs.as_ref()),
             );
+            report.into_result()?;
         }
     }
 

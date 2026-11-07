@@ -1,8 +1,9 @@
 //! One token string, one condition, across every register that publishes one.
 //!
-//! Five vocabularies name a condition to an operator as a stable kebab-case
-//! token: `RefusalKind`, `CheckViolation`'s doctor kinds, `IssueKind`'s tags,
-//! `VcsErrorOutput`'s wire kinds, and `SyncFailureOutput`'s. A token appearing
+//! Six vocabularies name a condition to an operator as a stable kebab-case
+//! token: `RefusalKind`, the `Axis` kinds a judged refusal routes to,
+//! `CheckViolation`'s doctor kinds, `IssueKind`'s tags, `VcsErrorOutput`'s
+//! wire kinds, and `SyncFailureOutput`'s. A token appearing
 //! in two of them is either a deliberate reuse — one condition named the same
 //! way wherever it surfaces — or an accident, and the two are
 //! indistinguishable by reading either register alone.
@@ -20,8 +21,8 @@
 //! never listed here; the one thing this file states is *intent*, which is the
 //! one thing source cannot tell you (see [`INTENDED_REUSE`]).
 //!
-//! **Scope.** The five registers above. `RefusalKind`'s tokens are read from
-//! the schema schemars derives for it; `IssueKind`'s tags are what
+//! **Scope.** The six registers above. `RefusalKind`'s and `Axis`'s tokens are
+//! read from the schemas schemars derives for them; `IssueKind`'s tags are what
 //! `IssueKindOutput` serializes, read from its committed schema; the doctor,
 //! VCS and sync kinds are `ViolationKind::ALL`, `VcsErrorKind::ALL` and
 //! `SyncFailureKind::ALL`, the types whose serialization is the tag.
@@ -69,6 +70,7 @@ mod common;
 
 use common::json_schema;
 use repoweave::check::ViolationKind;
+use repoweave::diagnosis::Axis;
 use repoweave::refusal::RefusalKind;
 use repoweave::sync::SyncFailureKind;
 use repoweave::vcs::VcsErrorKind;
@@ -131,11 +133,6 @@ const INTENDED_REUSE: &[(&str, &[&str], &str)] = &[
         "legacy-workweave-marker",
         &["doctor", "refusal"],
         "the workweave marker is in the retired format",
-    ),
-    (
-        "mid-operation",
-        &["refusal", "vcs"],
-        "the repository is mid-rebase, mid-merge or similar",
     ),
     (
         "missing-canonical-clone",
@@ -231,6 +228,12 @@ fn refusal_tokens() -> BTreeSet<String> {
     json_schema::derived_enum_tokens::<RefusalKind>()
 }
 
+/// The kinds a judged refusal routes to: the axes of the state-to-choices
+/// table, read from the schema derived for `Axis`.
+fn kind_tokens() -> BTreeSet<String> {
+    json_schema::derived_enum_tokens::<Axis>()
+}
+
 /// The tags an integration finding's kind carries, read from the committed
 /// schema of the type that serializes them. `IssueKind::tag` is that
 /// serialization, so there is no second spelling to read.
@@ -288,6 +291,7 @@ fn sync_failure_tokens() -> BTreeSet<String> {
 fn registers() -> BTreeMap<&'static str, BTreeSet<String>> {
     BTreeMap::from([
         ("refusal", refusal_tokens()),
+        ("kind", kind_tokens()),
         ("issue", issue_tokens()),
         ("vcs", vcs_tokens()),
         ("sync", sync_failure_tokens()),
@@ -310,6 +314,7 @@ fn the_register_walk_is_not_vacuous() {
     let regs = registers();
     let floors = [
         ("refusal", 90usize),
+        ("kind", 4),
         ("doctor", 30),
         ("issue", 8),
         // Lowered from 10 when three variants nothing constructed were retired
@@ -742,8 +747,8 @@ fn kebab_vocabularies() -> BTreeMap<String, BTreeSet<String>> {
 }
 
 /// The schema `definitions` names this file already holds to the
-/// disjointness property by another route: the four condition registers'
-/// wire mirrors, plus `ConflictOp`, which
+/// disjointness property by another route: the condition registers' wire
+/// mirrors, plus `ConflictOp`, which
 /// [`an_op_name_is_not_also_a_condition_name`] already checks, reading its
 /// source declaration against the schema — a stronger shape than the generic
 /// walk below has any way to give it. `RefusalKind` earns no entry here
@@ -754,6 +759,7 @@ const ALREADY_WALKED: &[&str] = &[
     "IssueKindOutput",
     "VcsErrorOutput",
     "SyncFailureOutput",
+    "Axis",
     "ConflictOp",
 ];
 
@@ -764,7 +770,7 @@ const ALREADY_WALKED: &[&str] = &[
 /// sub-kinds and missed four vocabularies outright; this file's own walk is
 /// the source of truth for the number below, and a mismatch here means the
 /// walk moved, not that the constant needs editing to match.
-const UNWALKED_KEBAB_CENSUS: (usize, usize) = (35, 138);
+const UNWALKED_KEBAB_CENSUS: (usize, usize) = (36, 145);
 
 /// A residue sub-kind token deliberately mirrored from `RefusalKind`, and the
 /// vocabulary that mirrors it — the D1 sentence again, one level deeper than
@@ -790,7 +796,13 @@ const UNWALKED_KEBAB_CENSUS: (usize, usize) = (35, 138);
 /// or `rwv fetch --json` as off `rwv doctor --json`. `AdvisoryKindOutput`'s
 /// `derived-state-stale` is the advisory `rwv sync --json` emits for the
 /// condition `rwv doctor` reports as the `derived-state-stale` finding.
+///
+/// One pair mirrors a kind. `FactKind`'s `checkout` is the fact a verb that
+/// aligns members reports where the `checkout` kind's verbs refuse: a member's
+/// branch checked out elsewhere, met by a verb that detaches the member rather
+/// than refusing it.
 const INTENDED_SUBKIND_REUSE: &[(&str, &str)] = &[
+    ("checkout", "FactKind"),
     ("tool-missing", "SkipReason"),
     ("derived-state-stale", "AdvisoryKindOutput"),
     ("unmigrated-ephemeral-branch", "BranchDisciplineKind"),

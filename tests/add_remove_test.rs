@@ -1097,8 +1097,9 @@ fn assert_refused_as_tag_shaped(out: &std::process::Output, workspace: &Path, re
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         !out.status.success()
-            && stderr.contains("'v2.0' is tag shaped")
-            && stderr.contains("rwv explain version-is-a-pin"),
+            && stderr.contains(&format!("rwv add: {repo_path}: name a revision (v2.0)\n"))
+            && stderr.contains("reads as a release tag")
+            && stderr.ends_with("\nrwv explain name\n"),
         "the add refuses the branch it would track:\n{stderr}"
     );
     let manifest = Manifest::from_path(&workspace.join("projects/test-project/rwv.toml"))

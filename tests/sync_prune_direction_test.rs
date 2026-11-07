@@ -658,8 +658,8 @@ fn a_refused_prune_fails_the_sync_once_it_completes() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains(&format!(
-            "{EXTRA}: prune skipped: {EXTRA}: dropped from lock but worktree has uncommitted \
-             changes; commit/discard, then remove the checkout by hand"
+            "{EXTRA}: prune skipped: {EXTRA}: edits dirty\n    scratch.txt\n{EXTRA}: dropped \
+             from lock; once nothing above refuses it, remove the checkout by hand\n"
         )) && !stderr.contains("re-run sync"),
         "a re-run cannot prune what the relock no longer names, so the remedy must not \
          offer one:\n{stderr}"
@@ -850,7 +850,7 @@ fn a_continued_retire_refuses_until_the_checkout_is_gone_then_retires() {
 }
 
 #[test]
-fn json_records_a_refused_prune_with_its_token() {
+fn json_records_a_refused_prune_with_its_judged_state() {
     let weave = weave();
     let s1 = seat_with_an_unprunable_drop(&weave);
 
@@ -867,11 +867,21 @@ fn json_records_a_refused_prune_with_its_token() {
     assert_eq!(envelope["complete"], true, "{envelope:#}");
     let members = envelope["members"].as_array().unwrap().clone();
     assert_one_member(&members, "prune-refused", &s1);
-    assert_eq!(members[0]["refusal"], "dirty-checkout", "{members:#?}");
+    assert_eq!(
+        members[0]["refusal"],
+        serde_json::Value::Null,
+        "{members:#?}"
+    );
+    assert_eq!(members[0]["refused"][0]["axis"], "edits", "{members:#?}");
+    assert_eq!(members[0]["refused"][0]["state"], "dirty", "{members:#?}");
+    assert_eq!(
+        members[0]["refused"][0]["listed"][0], "scratch.txt",
+        "{members:#?}"
+    );
     assert!(
-        members[0]["message"].as_str().is_some_and(
-            |m| m.contains("uncommitted changes") && m.contains("remove the checkout by hand")
-        ),
+        members[0]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("edits dirty") && m.contains("remove the checkout by hand")),
         "{members:#?}"
     );
     assert!(

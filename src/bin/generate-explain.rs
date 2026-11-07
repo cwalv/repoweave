@@ -95,6 +95,7 @@ use schemars::schema_for;
 
 use repoweave::check::DoctorJsonOutput;
 use repoweave::cli::Cli;
+use repoweave::diagnosis::{RefusalJsonOutput, REFUSAL_SCHEMA_URL};
 use repoweave::explain;
 use repoweave::fetch::FetchJsonOutput;
 use repoweave::path_spelling::{weave_relative, CanonicalPath};
@@ -312,6 +313,28 @@ fn schema_fetch() -> String {
 fn schema_update() -> String {
     let schema = schema_for!(UpdateJsonOutput);
     serde_json::to_string_pretty(&schema).expect("update schema serializes")
+}
+
+fn schema_refusal() -> String {
+    let schema = schema_for!(RefusalJsonOutput);
+    serde_json::to_string_pretty(&schema).expect("refusal schema serializes")
+}
+
+/// The refusals page: `template` with `{{KINDS}}` replaced by one entry per
+/// axis the state-to-choices table defines, VCS actions spelled for git.
+fn render_refusals_page(template: &str) -> anyhow::Result<String> {
+    const PLACEHOLDER: &str = "{{KINDS}}";
+    if template.matches(PLACEHOLDER).count() != 1 {
+        anyhow::bail!("the refusals template must hold `{PLACEHOLDER}` exactly once");
+    }
+    let mut page = template.replace(
+        PLACEHOLDER,
+        &repoweave::diagnosis::kind_entries_markdown(repoweave::manifest::VcsType::Git),
+    );
+    if !page.ends_with('\n') {
+        page.push('\n');
+    }
+    Ok(page)
 }
 
 fn schema_push() -> String {
@@ -3593,7 +3616,10 @@ fn token_vocabulary(root: &Path, cli: &clap::Command) -> TokenVocabulary {
         sub_kinds,
         refusals: fs::read_to_string(root.join("src/refusal.rs"))
             .map(|source| refusal_tokens(&source))
-            .unwrap_or_default(),
+            .unwrap_or_default()
+            .into_iter()
+            .chain(repoweave::diagnosis::Axis::ALL.map(|axis| axis.token()))
+            .collect(),
         failure_kinds,
         explain_verbs: explain::known_verbs().map(str::to_owned).collect(),
         code_words,
@@ -4545,6 +4571,27 @@ fn main() -> anyhow::Result<()> {
     fs::create_dir_all(&explain_dir)?;
     fs::create_dir_all(&schemas_dir)?;
 
+    // --- refusals page -------------------------------------------------------
+    // Renders docs/reference/templates/refusals.md.tmpl →
+    //         docs/reference/refusals.md, its {{KINDS}} the entries the
+    // state-to-choices table generates, and the schema of the envelope a
+    // refused verb prints under --json when it printed nothing of its own.
+    {
+        let template_path = root.join("docs/reference/templates/refusals.md.tmpl");
+        let template = fs::read_to_string(&template_path).map_err(|e| {
+            anyhow::anyhow!(
+                "missing refusals template at {}: {e:#}",
+                template_path.display()
+            )
+        })?;
+        let page = render_refusals_page(&template)?;
+        write_if_changed(&root.join("docs/reference/refusals.md"), &page)?;
+
+        let mut schema = schema_refusal();
+        schema.push('\n');
+        write_if_changed(&schemas_dir.join("refusal.json"), &schema)?;
+    }
+
     let verbs = verbs();
     let msg_registry = build_msg_registry();
 
@@ -4627,6 +4674,10 @@ fn main() -> anyhow::Result<()> {
     assert!(
         PUSH_SCHEMA_URL.ends_with("/docs/reference/schemas/push.json"),
         "PUSH_SCHEMA_URL no longer points at the committed artifact"
+    );
+    assert!(
+        REFUSAL_SCHEMA_URL.ends_with("/docs/reference/schemas/refusal.json"),
+        "REFUSAL_SCHEMA_URL no longer points at the committed artifact"
     );
     let schema_base = repoweave::fetch::FETCH_SCHEMA_URL
         .strip_suffix("fetch.json")
@@ -8560,7 +8611,7 @@ mod tests {
         );
         let real = refusal_tokens(&fs::read_to_string(repo_root().join("src/refusal.rs")).unwrap());
         assert!(real.len() > 90, "read {} refusal tokens", real.len());
-        assert!(real.contains(&repoweave::refusal::RefusalKind::VersionIsAPin.token()));
+        assert!(real.contains(&repoweave::refusal::RefusalKind::InvalidRefName.token()));
     }
 
     #[test]

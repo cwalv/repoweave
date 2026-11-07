@@ -147,7 +147,11 @@ decides rather than a per-repo strategy: `kept` (the source's lock lacks the
 member and the replayed manifest names it), `pruned` (the replayed manifest
 no longer names it and its checkout was removed), and `prune-refused` (the
 same, but removing the checkout was refused). A `prune-refused` record
-carries the refusal's `refusal` token and the full `message`; its checkout is
+carries `refused`, each state the checkout was judged in that refused the
+removal — `edits` for uncommitted changes, `checkout` for a live checkout
+derived from the clone — with that state's choices, or the `refusal` token
+when the removal was refused on a condition instead, and the full `message`;
+its checkout is
 left on disk with no manifest naming it. The op still runs to completion and
 clears its op-state, then exits 1, so `rwv abort` does not apply and
 re-running the sync does not prune the checkout: remove it by hand. A
@@ -178,7 +182,8 @@ Schema:
     "complete",
     "members",
     "outcomes",
-    "placements"
+    "placements",
+    "refused"
   ],
   "properties": {
     "$schema": {
@@ -214,6 +219,13 @@ Schema:
       "type": "array",
       "items": {
         "$ref": "#/definitions/PlacementOutput"
+      }
+    },
+    "refused": {
+      "description": "Each repo the op judged when it refused, with that state's choices. Empty, not absent, when it refused on none.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/JudgedOutput"
       }
     },
     "resolution": {
@@ -263,6 +275,72 @@ Schema:
         "remedy": {
           "description": "The verb that resolves the advisory (e.g. `\"rwv materialize\"`).",
           "type": "string"
+        }
+      }
+    },
+    "Axis": {
+      "description": "What a refusal judged a repo on. Its token is the kind `rwv explain` serves; the order here is the order a repo's lines print in.",
+      "oneOf": [
+        {
+          "description": "Uncommitted work, or a VCS operation in progress, in a checkout.",
+          "type": "string",
+          "enum": [
+            "edits"
+          ]
+        },
+        {
+          "description": "Another checkout derives from what the verb would remove.",
+          "type": "string",
+          "enum": [
+            "checkout"
+          ]
+        },
+        {
+          "description": "A name the verb would record is unusable.",
+          "type": "string",
+          "enum": [
+            "name"
+          ]
+        },
+        {
+          "description": "What `rwv push` withheld.",
+          "type": "string",
+          "enum": [
+            "publish"
+          ]
+        }
+      ]
+    },
+    "ChoiceOutput": {
+      "type": "object",
+      "required": [
+        "phrase",
+        "run"
+      ],
+      "properties": {
+        "id": {
+          "description": "The choice's id on the axis's page; null for one it does not number.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "phrase": {
+          "type": "string"
+        },
+        "run": {
+          "description": "The commands, one per line, as the terminal prints them.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "where": {
+          "description": "The directory it must run in; null where it runs here or names its own directory.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       }
     },
@@ -403,6 +481,77 @@ Schema:
         }
       ]
     },
+    "FactKind": {
+      "description": "A fact about a judged repo. Facts are reported; they never select a choice.",
+      "oneOf": [
+        {
+          "description": "A superseded tip was recorded for the branch.",
+          "type": "string",
+          "enum": [
+            "rewritten"
+          ]
+        },
+        {
+          "description": "The branch is an ancestor of where it lands.",
+          "type": "string",
+          "enum": [
+            "landed"
+          ]
+        },
+        {
+          "description": "Another project's live lock pins the commits.",
+          "type": "string",
+          "enum": [
+            "pinned-by"
+          ]
+        },
+        {
+          "description": "Other live weave branches declare the branch.",
+          "type": "string",
+          "enum": [
+            "shared"
+          ]
+        },
+        {
+          "description": "The pin is on the branch it lands into.",
+          "type": "string",
+          "enum": [
+            "pin-landed"
+          ]
+        },
+        {
+          "description": "The member was left detached because its branch is checked out elsewhere.",
+          "type": "string",
+          "enum": [
+            "checkout"
+          ]
+        },
+        {
+          "description": "The unlanded commits carry changes equivalent to commits where they land.",
+          "type": "string",
+          "enum": [
+            "patch-equivalent"
+          ]
+        }
+      ]
+    },
+    "FactOutput": {
+      "type": "object",
+      "required": [
+        "fact"
+      ],
+      "properties": {
+        "about": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fact": {
+          "$ref": "#/definitions/FactKind"
+        }
+      }
+    },
     "FilePlacement": {
       "description": "How a member's tracked files reached a workspace.",
       "type": "object",
@@ -429,6 +578,63 @@ Schema:
           "type": "integer",
           "format": "uint",
           "minimum": 0.0
+        }
+      }
+    },
+    "JudgedOutput": {
+      "description": "One judged repo, as `--json` carries it.",
+      "type": "object",
+      "required": [
+        "axis",
+        "choices",
+        "facts",
+        "listed",
+        "repo",
+        "state"
+      ],
+      "properties": {
+        "axis": {
+          "description": "What it was judged on; `rwv explain <axis>` serves the axis's page.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Axis"
+            }
+          ]
+        },
+        "choices": {
+          "description": "What this state can run, in the order the page lists it.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ChoiceOutput"
+          }
+        },
+        "facts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/FactOutput"
+          }
+        },
+        "listed": {
+          "description": "The files, paths or commits the state lists.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "repo": {
+          "description": "The repo's path, `projects/<name>` for the project repo.",
+          "type": "string"
+        },
+        "state": {
+          "description": "The state it was judged in, as that page names it.",
+          "type": "string"
+        },
+        "subject": {
+          "description": "What the state names, when it names something.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       }
     },
@@ -488,7 +694,8 @@ Schema:
             "absolute_path",
             "kind",
             "message",
-            "path"
+            "path",
+            "refused"
           ],
           "properties": {
             "absolute_path": {
@@ -508,11 +715,18 @@ Schema:
               "type": "string"
             },
             "refusal": {
-              "description": "The refusal token, resolvable with `rwv explain <token>`. Absent when the removal failed without a classified refusal.",
+              "description": "The refusal token, resolvable with `rwv explain <token>`, when the removal was refused on a condition. Absent when it was refused on the checkout's state, which `refused` then carries, or failed without a classified refusal.",
               "type": [
                 "string",
                 "null"
               ]
+            },
+            "refused": {
+              "description": "Each state the checkout was judged in that refused the removal, with that state's choices; `rwv explain <axis>` serves each axis. Empty, not absent, when none was.",
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/JudgedOutput"
+              }
             }
           }
         },

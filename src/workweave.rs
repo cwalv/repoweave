@@ -1884,19 +1884,24 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
     // is a stale leftover.
     if let Some(recorded) = workweave_index::lookup_raw(primary_root, project, name)? {
         if recorded != CanonicalPath::of(&workweave_dir) {
-            crate::refuse!(
-                RefusalKind::WorkweaveNameTaken,
-                "project `{project}` already records a workweave named `{name}` at {recorded}; \
-                 refusing to create a second one at {requested}.\n\n\
-                 Both would mint the ephemeral branch `{branch}` in the same store. Pick \
-                 another name, delete the recorded workweave first, or — if that path is \
-                 gone — run `rwv doctor --fix` to prune the stale entry.",
-                project = project.as_str(),
-                name = name.as_str(),
-                recorded = recorded.as_path().display(),
-                requested = workweave_dir.display(),
-                branch = EphemeralRefName::mint(&flat),
-            );
+            let mut listed = vec![format!("recorded at {}", recorded.as_path().display())];
+            if !recorded.as_path().exists() {
+                listed.push(
+                    "that path no longer exists; `rwv doctor --fix` prunes the stale entry"
+                        .to_owned(),
+                );
+            }
+            listed.push(format!(
+                "a second one at {} would mint the same branch `{}` in each store",
+                workweave_dir.display(),
+                EphemeralRefName::mint(&flat),
+            ));
+            return Err(name_taken(project, name, listed)
+                .bind("<project>", project)
+                .bind("<ww>", name)
+                .in_primary(primary_root, source_root)
+                .judge(project_vcs.as_ref())
+                .refused());
         }
     }
 
@@ -1906,15 +1911,18 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
         // way, and both arms below would then act on someone else's seat —
         // reuse would adopt it, replace would destroy it.
         if crate::workspace::diverged_occupant(&workweave_dir).is_some() {
-            crate::refuse!(
-                RefusalKind::ForeignWorkweaveInTargetDir,
-                "cannot create workweave `{name}` for project `{project}`: {}. That is \
-                 a different workweave, not this one. Address it by its own name, or \
-                 choose a name whose directory does not collide.",
-                crate::workspace::describe_existing(&workweave_dir),
-                name = name.as_str(),
-                project = project.as_str(),
-            );
+            return Err(name_taken(
+                project,
+                name,
+                [format!(
+                    "{}, a different workweave's directory",
+                    crate::workspace::describe_existing(&workweave_dir)
+                )],
+            )
+            .bind("<project>", project)
+            .in_primary(primary_root, source_root)
+            .judge(project_vcs.as_ref())
+            .refused());
         }
         refuse_symlinked_members(&workweave_dir, project)?;
         if replace_existing.is_some() {
@@ -2635,7 +2643,7 @@ fn reuse_existing_workweave(
     primary_root: &Path,
     source_root: &Path,
     project: &ProjectName,
-    _name: &WorkweaveName,
+    name: &WorkweaveName,
     workweave_dir: &Path,
     manifest: &Manifest,
 ) -> anyhow::Result<PathBuf> {
@@ -2652,25 +2660,35 @@ fn reuse_existing_workweave(
     })?;
 
     if marker.project() != project {
-        crate::refuse!(
-            RefusalKind::ForeignWorkweaveInTargetDir,
-            "workweave at {} is for project '{}', refusing to recreate for project '{}'; \
-             rerun with --replace-existing to overwrite",
-            workweave_dir.display(),
-            marker.project().as_str(),
-            project
-        );
+        return Err(name_taken(
+            project,
+            name,
+            [format!(
+                "{} is project `{}`'s workweave",
+                workweave_dir.display(),
+                marker.project()
+            )],
+        )
+        .bind("<project>", marker.project())
+        .in_primary(primary_root, source_root)
+        .judge(project_vcs().as_ref())
+        .refused());
     }
 
     if !marker.names_primary(&CanonicalPath::of(primary_root)) {
-        crate::refuse!(
-            RefusalKind::ForeignWorkweaveInTargetDir,
-            "workweave at {} is for primary workspace {}, refusing to recreate for {}; \
-             rerun with --replace-existing to overwrite",
-            workweave_dir.display(),
-            marker.primary().as_path().display(),
-            primary_root.display()
-        );
+        return Err(name_taken(
+            project,
+            name,
+            [format!(
+                "{} is a workweave of the primary at {}",
+                workweave_dir.display(),
+                marker.primary().as_path().display()
+            )],
+        )
+        .bind("<project>", project)
+        .in_primary(marker.primary().as_path(), source_root)
+        .judge(project_vcs().as_ref())
+        .refused());
     }
 
     // Detect local modifications (uncommitted changes or HEAD divergence
@@ -2714,6 +2732,18 @@ fn reuse_existing_workweave(
     Ok(workweave_dir.to_path_buf())
 }
 
+/// `name` judged taken for a new workweave of `project`, with what holds it.
+fn name_taken(
+    project: &ProjectName,
+    name: &WorkweaveName,
+    held_by: impl IntoIterator<Item = String>,
+) -> crate::diagnosis::Judging {
+    crate::diagnosis::State::NameTaken
+        .of(project_rel_path(project))
+        .subject(name)
+        .listing(held_by)
+}
+
 /// Return the relative paths within `workweave_dir` whose worktrees have
 /// uncommitted changes (staged, unstaged, or untracked).
 ///
@@ -2727,28 +2757,99 @@ pub fn collect_dirty_paths(
     project: &ProjectName,
     manifest: &Manifest,
 ) -> Vec<String> {
-    let mut dirty = Vec::new();
+    dirty_checkouts(project_vcs, workweave_dir, project, manifest)
+        .into_iter()
+        .map(|dirty| {
+            let label = if dirty.in_manifest {
+                dirty.repo
+            } else {
+                format!("{} (not a manifest member)", dirty.repo)
+            };
+            match dirty.files {
+                Ok(_) => label,
+                Err(e) => format!("{label}: status check failed: {e}"),
+            }
+        })
+        .collect()
+}
 
-    // Project worktree.
+/// [`collect_dirty_paths`]'s checkouts, judged: one `edits` line each, its
+/// files listed, a status that could not be read listed as that.
+pub fn judge_dirty_checkouts(
+    project_vcs: &dyn Vcs,
+    workweave_dir: &Path,
+    project: &ProjectName,
+    manifest: &Manifest,
+) -> crate::diagnosis::Report {
+    let mut report = crate::diagnosis::Report::default();
+    for dirty in dirty_checkouts(project_vcs, workweave_dir, project, manifest) {
+        let vcs = dirty.vcs.as_deref().unwrap_or(project_vcs);
+        let listed = match dirty.files {
+            Ok(files) => files,
+            Err(e) => vec![format!("(status check failed: {e})")],
+        };
+        let mut judging = crate::diagnosis::State::EditsDirty
+            .of(&dirty.repo)
+            .listing(listed)
+            .checkout(&dirty.dir);
+        if !dirty.in_manifest {
+            judging = judging.subject("not a manifest member");
+        }
+        report.add(judging.judge(vcs));
+    }
+    report
+}
+
+/// A checkout in a workweave holding uncommitted changes: its path, whether
+/// the manifest names it, where it is, its backend (none for the project
+/// repo, whose backend the caller holds), and its dirty files or why they
+/// could not be read.
+struct DirtyCheckout {
+    repo: String,
+    in_manifest: bool,
+    dir: PathBuf,
+    vcs: Option<Box<dyn Vcs>>,
+    files: Result<Vec<String>, String>,
+}
+
+fn dirty_checkouts(
+    project_vcs: &dyn Vcs,
+    workweave_dir: &Path,
+    project: &ProjectName,
+    manifest: &Manifest,
+) -> Vec<DirtyCheckout> {
+    let mut dirty = Vec::new();
+    let mut judge = |repo: String, in_manifest: bool, dir: PathBuf, vcs: Option<Box<dyn Vcs>>| {
+        let files = vcs
+            .as_deref()
+            .unwrap_or(project_vcs)
+            .dirty_file_names(&dir)
+            .map_err(|e| format!("{e:#}"));
+        if !matches!(&files, Ok(names) if names.is_empty()) {
+            dirty.push(DirtyCheckout {
+                repo,
+                in_manifest,
+                dir,
+                vcs,
+                files,
+            });
+        }
+    };
+
     let project_wt = project_dir(workweave_dir, project);
     if project_vcs.is_repo(&project_wt) {
-        let rel = project_rel_path(project);
-        match project_vcs.has_uncommitted_changes(&project_wt) {
-            Ok(true) => dirty.push(rel),
-            Ok(false) => {}
-            Err(e) => dirty.push(format!("{rel}: status check failed: {e:#}")),
-        }
+        judge(project_rel_path(project), true, project_wt, None);
     }
 
     for checkout in member_depth_checkouts(workweave_dir, manifest) {
         let wt = workweave_dir.join(checkout.repo_path.as_path());
-        if !wt.exists() {
-            continue;
-        }
-        match checkout.vcs.has_uncommitted_changes(&wt) {
-            Ok(true) => dirty.push(checkout.label()),
-            Ok(false) => {}
-            Err(e) => dirty.push(format!("{}: status check failed: {e:#}", checkout.label())),
+        if wt.exists() {
+            judge(
+                checkout.repo_path.to_string(),
+                checkout.in_manifest,
+                wt,
+                Some(checkout.vcs),
+            );
         }
     }
 
@@ -3629,16 +3730,8 @@ fn delete_workweave_inner_at(
     // Safety checks: each refusal has its own waiver. Skipped when the
     // workweave directory doesn't exist (nothing to lose).
     if discard_uncommitted.is_none() && workweave_dir.exists() {
-        let dirty = collect_dirty_paths(project_vcs.as_ref(), &workweave_dir, project, &manifest);
-        if !dirty.is_empty() {
-            crate::refuse!(
-                RefusalKind::UncommittedWork,
-                "workweave {} has uncommitted changes; refusing to delete without \
-                 --discard-uncommitted:\n  {}",
-                name.as_str(),
-                dirty.join("\n  ")
-            );
-        }
+        judge_dirty_checkouts(project_vcs.as_ref(), &workweave_dir, project, &manifest)
+            .into_result()?;
     }
     // The baselines the per-ref `Merged` warrants are measured against, read
     // while the workweave's marker still exists (it names the parent). Work

@@ -813,8 +813,8 @@ fn fetch_project_repos(
                 let refusal = crate::refusal::kind_of(error).map(RefusalKind::token);
                 if output == OutputMode::Text {
                     eprintln!("rwv fetch: error: {msg}");
-                    if let Some(token) = &refusal {
-                        eprintln!("rwv explain {token}");
+                    for route in crate::refusal::routes(error) {
+                        eprintln!("rwv explain {route}");
                     }
                 }
                 if output.is_json() {

@@ -44,6 +44,7 @@ impl SyncToOutcome {
     /// running its last phase, where the error is the whole story.
     pub(super) fn envelope(
         self,
+        refused: Vec<crate::diagnosis::JudgedOutput>,
         failed: bool,
         resolution: Option<Resolution>,
     ) -> Option<SyncToJsonOutput> {
@@ -73,6 +74,7 @@ impl SyncToOutcome {
             placements: self.placements,
             members: self.members,
             complete: self.complete,
+            refused,
             project_repo_advance: self.project_repo_advance,
             resolution,
         })

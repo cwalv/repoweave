@@ -1,28 +1,42 @@
 # Refusals
 
-When `rwv` declines to act on purpose, it prints the reason and then one more
-line:
+When `rwv` declines to act on purpose, the last lines it prints are route lines,
+one per condition it refused on:
 
 ```
 rwv explain <token>
 ```
 
-That token is a stable kebab-case name for the *condition* — not for the
-message, which may be reworded, and not for the site, which may move. This
-page has one entry per token, under that exact name, so a refusal you met in
-the terminal can be looked up without translation.
+A refusal comes in one of two shapes, and both end that way.
 
-Every refusal's message is written to stand on its own: it names what stopped
-and what unblocks. You should not need this page to act on one. What an entry
-adds is the part a message cannot carry — why the rule exists, which exit
-applies under which circumstances, and where the rule sits in the machine.
+A refusal that judged repos prints one line for each repo and the axis it was
+judged on, `rwv <verb>: <repo>: <kind> <state>`, with what the state lists
+beneath it: files, paths, what a remote answered. Then `choices:` lists what
+each state can run, the commands spelled out, and names the directory to run a
+choice in where that is not the one the verb ran in. Then one route line per
+distinct kind. The kinds are the first entries below; each lists its states and
+every choice a state prints. Under `--json`, the verb's envelope carries the
+same repos in its `refused` array, each with its `repo`, `axis`, `state`,
+`subject`, `listed`, `facts` and `choices`; a verb that refused before printing
+anything prints `{"$schema": "<url>", "refused": [...]}` instead.
+
+A refusal that names a condition prints `Error:` and its reason, then one route
+line naming the condition's token: a stable kebab-case name for the
+*condition* — not for the message, which may be reworded, and not for the site,
+which may move. Every such message is written to stand on its own: it names
+what stopped and what unblocks. What an entry adds is the part a message cannot
+carry — why the rule exists, which exit applies under which circumstances, and
+where the rule sits in the machine.
+
+This page has one entry per kind and per token, under that exact name, so a
+refusal you met in the terminal can be looked up without translation.
 
 ## Reading an entry
 
 Run the command the refusal printed:
 
 ```bash
-rwv explain push-from-workweave
+rwv explain edits
 ```
 
 `rwv explain` serves the entry below verbatim. A token whose condition `rwv
@@ -32,13 +46,102 @@ wherever that entry lives, and `rwv explain` finds it either way.
 
 ## What does and does not carry a token
 
-A token means **rwv could have acted and declined**: a precondition it will
+A route line means **rwv could have acted and declined**: a precondition it will
 not cross, or an input it will not accept. Absence is informative. An error
-with no token is a passthrough (a VCS or filesystem failure), an internal
+with no route line is a passthrough (a VCS or filesystem failure), an internal
 invariant, or an argument the parser rejected before any verb ran — those
-print `error:` and exit 2, where a refusal prints `Error:` and exits 1.
+print `error:` and exit 2, where a refusal exits 1.
 
----
+## Kinds
+
+### `edits`
+
+**Condition.** A checkout the verb must move, rewrite, record or remove holds uncommitted changes, or is stopped in the middle of a VCS operation.
+
+**Why.** Moving or removing a checkout over uncommitted changes would lose them or tangle them into a half-applied result, and recording its tip would describe something other than what is on disk. An operation in progress holds a partial result that only the tool which started it can finish.
+
+**States.** A refused verb prints `rwv <verb>: <repo>: edits <state>` for each repo it judged in one of these, with what the state lists beneath it.
+
+| State | Means | Refused by |
+|---|---|---|
+| `dirty` | the checkout has uncommitted changes, listed by file | `rwv sync` and `rwv sync-to`, for a repo they would rebase or fast-forward (tracked changes only); `rwv lock` without `--dirty`, for a member (tracked changes only); `rwv lock --commit` and `rwv update --commit`, for project-repo changes outside `rwv.lock` and `rwv.toml`; `rwv push`, for the project repo; `rwv role <repo> reference`; `rwv remove --delete` and replay's prune of a dropped member; `rwv workweave <project> delete` and `rwv sync-to --retire`, for every checkout in the workweave |
+| `mid-operation` | a rebase, merge, cherry-pick or bisect is in progress, named | `rwv sync` and `rwv sync-to`, for a repo they would rebase or fast-forward |
+| `rwv.toml or rwv.lock uncommitted` | the project repo's only uncommitted changes are to `rwv.toml` or `rwv.lock`, or either is not yet tracked | `rwv push` |
+
+**Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
+
+| State | Choice | Spelled | Where | Keeps work because |
+|---|---|---|---|---|
+| `dirty` | C13: commit your edits, or set them aside | VCS action (git: `git -C <checkout> commit`, `git -C <checkout> stash push`) | the checkout | both keep edits |
+| `mid-operation` | C32: finish or abandon the operation in progress first | VCS action (git: `git -C <checkout> status`) | the checkout | rwv moves nothing until it ends |
+| `rwv.toml or rwv.lock uncommitted` | C5: record it: the lock, and `rwv.toml` as it stands | `rwv lock --commit` | a workspace with the branch checked out | records only |
+
+**Where this sits.** [Destructive operations](../explanation/destructive-operations.md); [Sync semantics](../explanation/joints/sync-semantics.md).
+
+### `checkout`
+
+**Condition.** Another checkout derives from the clone a verb would delete: a workweave's, or a worktree added with the VCS directly.
+
+**Why.** Deleting a clone's store takes every ref and object with it at once, for every checkout derived from it, so a live one would be left pointing at nothing.
+
+**States.** A refused verb prints `rwv <verb>: <repo>: checkout <state>` for each repo it judged in one of these, with what the state lists beneath it.
+
+| State | Means | Refused by |
+|---|---|---|
+| `in another workspace` | a workweave's checkout derives from the clone, named | `rwv remove --delete` in the primary, and replay's prune of a dropped member there |
+| `in a raw worktree` | a worktree no workweave records derives from the clone, named by path | `rwv remove --delete` in the primary, and replay's prune of a dropped member there |
+
+**Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
+
+| State | Choice | Spelled | Where | Keeps work because |
+|---|---|---|---|---|
+| `in another workspace` | C16: free the other checkout | `rwv workweave <project> delete <ww>` | the primary | removal refuses over edits |
+| `in a raw worktree` | C16: free the other checkout | VCS action (git: `git -C <checkout> worktree remove <worktree>`) | the checkout | removal refuses over edits |
+
+**Where this sits.** [Clone topology](../explanation/joints/clone-topology.md).
+
+### `name`
+
+**Condition.** A name the verb would record cannot be used: another workweave already holds it, or it reads as a revision where a branch belongs.
+
+**Why.** A workweave name maps to one workweave; recording a second would make every later address ambiguous, and a delete would remove whichever was found first. A member entry's `version` declares a branch to track while the lock records where you are, so a commit id or release tag there leaves nothing to track.
+
+**States.** A refused verb prints `rwv <verb>: <repo>: name <state>` for each repo it judged in one of these, with what the state lists beneath it.
+
+| State | Means | Refused by |
+|---|---|---|
+| `taken` | the project already records a workweave by this name at another path, or the directory the workweave would take is another workweave's | `rwv workweave <project> create` |
+| `a revision` | the branch `rwv add` would declare reads as a commit id (seven or more hex digits) or a release tag (`v2.0`, `v0.3.4-rc1`) | `rwv add`, for the remote's default branch or, with `--new`, the branch the new repo is on |
+
+**Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
+
+| State | Choice | Spelled | Where | Keeps work because |
+|---|---|---|---|---|
+| `taken` | use another name | — | here | nothing changes |
+| `taken` | C9: delete what is landed | `rwv workweave <project> delete <ww>` | the primary | deletes only what is landed elsewhere; local only |
+
+**Where this sits.** [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md); [Lock as derived](../explanation/joints/lock-as-derived.md).
+
+### `publish`
+
+**Condition.** `rwv push` published member repos but withheld the project repo.
+
+**Why.** The project repo carries the lock that pins each member's commit. Publishing it while a member's push failed would advertise a commit collaborators cannot fetch, so the lock is withheld until every member it pins is published.
+
+**States.** A refused verb prints `rwv <verb>: <repo>: publish <state>` for each repo it judged in one of these, with what the state lists beneath it.
+
+| State | Means | Refused by |
+|---|---|---|
+| `withheld` | the remote rejected this member's push, so the project repo was not pushed; what the remote answered is listed | `rwv push` |
+
+**Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
+
+| State | Choice | Spelled | Where | Keeps work because |
+|---|---|---|---|---|
+| `withheld` | C7: publish it (again) | `rwv push` | here | adds only |
+| `withheld` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
+
+## Tokens
 
 ### `adopt-path-outside-weave`
 
@@ -178,44 +281,6 @@ so the previous state is intact.
 
 **Where this sits.** [File ownership](../explanation/joints/file-ownership.md).
 
-### `dirty-checkout`
-
-**Condition.** A checkout the verb must move, record, publish or delete
-carries uncommitted changes. The sites:
-
-- `rwv sync` and `rwv sync-to` find tracked changes in a repo they would
-  rebase or fast-forward: in CWD, and for `sync-to` in the target too.
-- `rwv lock` (without `--dirty`) finds tracked changes in a member repo.
-  Untracked files do not refuse it: a lock records HEAD, which they cannot
-  change.
-- `rwv lock --commit` and `rwv update --commit` find changes in the project
-  repo outside `rwv.lock` and `rwv.toml`, which they commit.
-- `rwv push` finds a staged or unstaged change to a tracked file in the
-  project repo, or an `rwv.toml` or `rwv.lock` that is not tracked.
-- `rwv role <repo> reference` finds tracked changes that would become
-  read-only.
-- `rwv remove --delete` would delete a checkout holding changes, untracked
-  files included, and replay would prune one; a refused prune does not stop
-  the sync, which reports the checkout and exits 1 when it completes.
-- `rwv sync-to --retire` finds changes in any checkout under the workweave,
-  listing one the manifest does not name with the suffix
-  `(not a manifest member)`.
-
-**Why.** Sync rebases or fast-forwards these repos; a lock records their tips;
-push publishes the project repo's last commit; a delete removes the checkout.
-Running over the changes would leave a half-rebased tree needing `rwv abort`,
-record a tip that does not describe what is on disk, publish a commit without
-the edits the operator sees, or destroy work that exists nowhere else.
-
-**Exits.** Commit or stash the named changes, then re-run — the refusal lists
-the exact files. For push, commit with `rwv lock --commit` or `rwv update
---commit` when the change is a relock. Where a site reads tracked changes
-only, an untracked file does not refuse it: it survives rebase and
-fast-forward untouched.
-
-**Where this sits.** [Sync semantics](../explanation/joints/sync-semantics.md);
-the lock's derived status is [Lock as derived](../explanation/joints/lock-as-derived.md).
-
 ### `dirty-project-dir`
 
 **Condition.** `rwv workweave create` found uncommitted changes in the source
@@ -310,18 +375,6 @@ names (`refs/rwv/pre-abort/<op-id>`, with a `-target` suffix for a repo on a
 
 **Where this sits.** [Shared refs and drift](../explanation/joints/shared-refs-drift.md).
 
-### `foreign-workweave-in-target-dir`
-
-**Condition.** The target directory is already another workweave's root.
-
-**Why.** Two workweaves at one path would share a marker and an index entry
-while disagreeing about which is which, and every later address would resolve
-to whichever was recorded last.
-
-**Exits.** Choose a different directory, or retire the workweave that is there
-first. Reusing the directory is not offered here — see
-`target-dir-occupied` for the occupant rwv can adopt.
-
 ### `head-not-on-branch`
 
 **Condition.** HEAD is detached, unborn, or unreadable in a repo the verb must
@@ -396,7 +449,7 @@ describing a tree that does not exist anywhere.
 
 **Exits.** `rwv lock --commit` to record each listed repo's HEAD in the lock
 and commit it (a bare `rwv lock` leaves `rwv.lock` uncommitted, which push
-refuses as `dirty-checkout`), or move the repo's branch back to its lock
+refuses as `edits`), or move the repo's branch back to its lock
 commit without detaching it: `git branch <name>` to keep the commits it moves
 off, then `git reset --keep <lock commit>`. A checkout of the lock commit
 detaches HEAD, which push refuses as `unpushable-repo-branch`. Which exit is
@@ -447,17 +500,6 @@ another's checkout.
 **Exits.** Run the verb from the workspace whose marker matches, or pass the
 project the marker records. Do not edit the marker to agree — that hides the
 disagreement rather than resolving it.
-
-### `mid-operation`
-
-**Condition.** A repo is mid-rebase, mid-merge, or otherwise mid-operation.
-
-**Why.** These states hold a partially-applied result that only the tool that
-started them can finish. Running over one would compound two incomplete
-operations.
-
-**Exits.** Finish or abort the in-flight VCS operation in the named repo, then
-re-run.
 
 ### `missing-creation-param`
 
@@ -776,19 +818,6 @@ you meant, `rwv fetch --project <name>` fetches its members in place; to fetch
 the other one too, run `rwv fetch <source>` in an empty directory, which
 becomes a weave of its own. For `rwv init`, choose another name.
 
-### `project-push-withheld`
-
-**Condition.** Member repos failed to push, so the project repo was
-not pushed.
-
-**Why.** The project repo carries the lock pinning member SHAs. Publishing
-it after a partial member push would advertise revisions collaborators
-cannot fetch. Withholding it is the decision, not an accident of ordering.
-
-**Exits.** Fix the member-repo failures the run listed and re-run `rwv push`.
-Member-side state may already be published; the lock carrier is not, so no
-collaborator has seen an inconsistent pair.
-
 ### `project-repo-off-canonical-branch`
 
 **Condition.** The project repo is attached to a branch other than its
@@ -1020,15 +1049,16 @@ get past this: the claims it could not read may be real.
 
 ### `store-still-claimed`
 
-**Condition.** Live worktrees or standing receipts claim the store a delete
-would destroy.
+**Condition.** Ownership receipts still stand for refs in the store a delete
+would destroy, while no live checkout derives from it. A store a live checkout
+derives from refuses on its `checkout` state instead, before receipts are read.
 
-**Why.** Deleting a store takes every ref and object with it at once, for every
-checkout derived from it. A claim means at least one such checkout is live.
+**Why.** Deleting a store takes every ref and object with it at once. A
+standing receipt says rwv created a ref in there and has not yet destroyed it,
+so the store would take a ref rwv still accounts for.
 
-**Exits.** Delete the workweaves that hold the claims first — that removes
-their worktrees and retracts their receipts — then re-run. The refusal lists
-the claimants.
+**Exits.** Delete the workweaves that own the listed refs first — that retracts
+their receipts — then re-run. The refusal lists the receipts.
 
 **Where this sits.** [Clone topology](../explanation/joints/clone-topology.md).
 
@@ -1054,9 +1084,9 @@ surfaces it.
 
 **Condition.** The directory slot is taken by an occupant rwv cannot address.
 
-**Why.** Distinct from `foreign-workweave-in-target-dir`: that occupant is a
-workweave rwv could name and retire, this one is not addressable, so there is
-no verb that can clear it.
+**Why.** Distinct from the `name` kind's `taken`: that occupant is a workweave
+rwv could name and retire, this one is not addressable, so there is no verb
+that can clear it.
 
 **Exits.** Clear the directory yourself, or choose another with `--dir`.
 
@@ -1104,24 +1134,6 @@ does not own, or accept the regeneration with the consent flag the message
 names.
 
 **Where this sits.** [File ownership](../explanation/joints/file-ownership.md).
-
-### `uncommitted-work`
-
-**Condition.** A workweave being deleted carries uncommitted changes, untracked
-files included, and `--discard-uncommitted` was not given. Every checkout
-under the workweave counts, not only the members the manifest names: a member
-replay could not prune, one the workweave added that has not landed, or a
-clone put there by hand, each listed with the suffix `(not a manifest
-member)`.
-
-**Why.** Deleting takes the working tree with it. Uncommitted work exists
-nowhere else, so the flag is named for exactly the loss it accepts.
-
-**Exits.** Commit or land the work, or pass `--discard-uncommitted` to accept
-losing it. Unlanded *commits* are a separate consent — see `unmerged-commits`
-— because one flag cannot name two different losses.
-
-**Where this sits.** [Destructive operations](../explanation/destructive-operations.md).
 
 ### `uncompilable-selector`
 
@@ -1191,7 +1203,7 @@ refuses names that *do* dispatch.
 recorded parent nor the primary weave, and `--discard-unmerged-commits` was
 not given. When `rwv sync-to <target> --retire` deletes it, the target that op
 has just synced it into counts too, whether or not it is the recorded parent.
-As for `uncommitted-work`, every checkout under the workweave
+As for its uncommitted changes (`edits`), every checkout under the workweave
 counts; one the manifest does not name is listed with the suffix `(not a
 manifest member)`, and is reported even when no baseline holds that repo at
 all.
@@ -1326,40 +1338,6 @@ refused: it resolves against the directory rwv runs in (the `-C` or `-w`
 directory when one is given), and the messages name the absolute path it
 resolved to. For a `root` that does not exist, create it first; for one inside the weave, choose a directory outside
 it; for a name given twice, supply it in only one spelling.
-
-### `version-is-a-pin`
-
-**Condition.** `version` names a revision where it must name a branch: a name
-that reads as a commit id (seven or more hex digits) or a release tag (`v2.0`,
-`v0.3.4-rc1`). `rwv add` refuses when the branch it would record is so named —
-the remote's default branch, or with `--new` the branch the new repo is on.
-
-**Why.** `version` declares what to *track*; the lock records where you *are*.
-A SHA or tag there collapses the two, leaving nothing to track and a lock that
-can never move.
-
-**Exits.** For `rwv add`, rename that branch on the remote, or make another
-of its branches the default, then re-run. `rwv add <url>` and `rwv add
---adopt` read the default from the clone the message names, so record the new
-one there as well (`git fetch origin && git remote set-head origin -a`, for
-git). To hold a repo at a fixed revision, commit the lock rather than
-overloading the tracking field. A `version` written this way in `rwv.toml` does
-not get this far: the manifest fails to parse at that line, naming the value;
-put a branch name there.
-
-**Where this sits.** [Lock as derived](../explanation/joints/lock-as-derived.md).
-
-### `workweave-name-taken`
-
-**Condition.** The index already records this name at another path.
-
-**Why.** A name maps to one workweave. Recording a second would make every
-later address ambiguous, and the delete that followed would remove whichever
-was found first.
-
-**Exits.** Choose another name, or retire the recorded workweave first. If the
-recorded path no longer exists, `rwv doctor` reports the stale entry and
-`--fix` clears it.
 
 ### `wrong-address-flag`
 

@@ -464,8 +464,15 @@ fn commit_in(checkout: &Path) {
 fn remove_delete_refuses_a_dirty_clone_in_the_primary() {
     let weave = Weave::new();
     std::fs::write(weave.ws.join(placed("alpha")).join("src/lib.rs"), "dirty\n").unwrap();
-    let stderr = assert_delete_refused(&weave.ws, "dirty-checkout");
+    let stderr = assert_delete_refused(&weave.ws, "edits");
     assert!(stderr.contains("re-run `rwv remove --delete`"), "{stderr}");
+    assert!(
+        stderr.contains(&format!(
+            "rwv remove: {}: edits dirty\n    src/lib.rs\n",
+            placed("alpha")
+        )),
+        "{stderr}"
+    );
 }
 
 #[test]
@@ -477,7 +484,7 @@ fn remove_delete_refuses_a_dirty_worktree_in_a_workweave() {
         "dirty\n",
     )
     .unwrap();
-    let stderr = assert_delete_refused(&workweave, "dirty-checkout");
+    let stderr = assert_delete_refused(&workweave, "edits");
     assert!(stderr.contains("re-run `rwv remove --delete`"), "{stderr}");
 }
 

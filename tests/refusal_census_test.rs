@@ -20,8 +20,12 @@
 //!
 //! **Scope.** Production lines of `src/` (comment lines and `#[cfg(test)]`
 //! items dropped), matched on: a `RefusalKind` mentioned within three lines of
-//! a `refuse!` / `refusal(` / `refusing(`; and `bail!` / `anyhow!` macro
-//! invocations. `src/bin/generate-explain.rs` is excluded — its errors are
+//! a `refuse!` / `refusal(` / `refusing(`; a judged state named as
+//! `State::<variant>` of the state-to-choices table — the table's own rows
+//! spell `Self::`, so a shared judging helper there is counted at its one
+//! site, as a typed error is — recorded as `<kind> <state>` and read by an
+//! instrument routing to the kind; and `bail!` / `anyhow!` macro invocations.
+//! `src/bin/generate-explain.rs` is excluded — its errors are
 //! developer-facing, not operator-facing.
 //!
 //! **Residue, stated.** A refusal minted through a mechanism outside those
@@ -32,6 +36,7 @@
 //! `assert_routes_to`, so a test that drives a site and checks its token some
 //! other way reads as `-` and understates coverage.
 
+use repoweave::diagnosis::State;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -151,6 +156,13 @@ fn derive() -> BTreeMap<(String, String, String), usize> {
                 .map(|(_, t)| *t)
                 .collect::<Vec<_>>()
                 .join(" ");
+            if let Some(state) = judged_state_on(text) {
+                let kind = state.axis().token();
+                let instrument = reads.get(&kind).cloned().unwrap_or_else(|| "-".into());
+                let token = format!("{kind} {}", state.name());
+                *out.entry((rel.clone(), token, instrument)).or_default() += 1;
+                continue;
+            }
             if let Some(variant) = refusal_kind_on(text) {
                 if window.contains("refuse!")
                     || window.contains("refusal(")
@@ -169,6 +181,35 @@ fn derive() -> BTreeMap<(String, String, String), usize> {
         }
     }
     out
+}
+
+/// The judged state a production line names as `State::<variant>`, the name
+/// standing alone rather than ending a longer type name.
+fn judged_state_on(text: &str) -> Option<State> {
+    text.match_indices("State::").find_map(|(at, _)| {
+        let standalone = text[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_'));
+        let rest = &text[at + "State::".len()..];
+        let end = rest
+            .find(|c: char| !c.is_ascii_alphanumeric())
+            .unwrap_or(rest.len());
+        let variant = &rest[..end];
+        standalone
+            .then(|| State::ALL.into_iter().find(|s| format!("{s:?}") == variant))
+            .flatten()
+    })
+}
+
+#[test]
+fn a_judged_state_is_read_by_its_own_name_only() {
+    assert_eq!(
+        judged_state_on("    crate::diagnosis::State::EditsDirty"),
+        Some(State::EditsDirty)
+    );
+    assert_eq!(judged_state_on("let s = OpState::EditsDirty;"), None);
+    assert_eq!(judged_state_on("State::EditsDirtyish"), None);
 }
 
 fn refusal_kind_on(text: &str) -> Option<String> {
@@ -280,7 +321,7 @@ fn the_unread_population_is_the_recorded_one() {
     );
     assert_eq!(
         (read, unread),
-        (70, 137),
+        (74, 128),
         "the read/unread split of tokened refusal sites has moved. Up is good and \
          down is a regression, but either way the number is a decision: record it."
     );

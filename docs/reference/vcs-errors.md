@@ -27,8 +27,8 @@ exit is something to do to rwv; most exits below are something to do to the
 repository, after which the rwv command re-runs unchanged.
 
 A condition that two registers name keeps its single entry wherever that entry
-already lives — `mid-operation` and `untracked-collision` are shared with the
-refusal register and are documented on [Refusals](./refusals.md);
+already lives — `untracked-collision` is shared with the refusal register and
+is documented on [Refusals](./refusals.md);
 `head-unreadable` is shared with `rwv doctor` and is documented on [Doctor
 findings](./doctor-findings.md). `rwv explain` serves an entry without regard
 to which page holds it, so the split costs a reader nothing.
@@ -122,6 +122,22 @@ git missing from `PATH`, a permission denied on the repo or its parent, a full
 or read-only filesystem, or a path that another process removed while the
 operation was running. Fix the underlying condition and re-run — rwv wrote
 nothing on this path, so there is nothing to undo.
+
+### `mid-operation`
+
+**Condition.** rwv was about to reposition a detached HEAD and found the
+repository stopped in the middle of a VCS operation: a rebase, merge or
+cherry-pick waiting on its conflict, or a bisect. `operation` names which, as
+`mid-rebase`, `mid-merge`, `mid-cherry-pick` or `mid-bisect`.
+
+**What it means.** The repository holds operator state — a partly applied
+result, or a bisect's marks — that moving HEAD would lose. rwv stopped before
+moving anything.
+
+**Exits.** Finish or abandon that operation with the VCS (`git -C <repo>
+status` names its own continue and abort), then re-run. A verb that judges a
+repo before acting refuses this state up front, as the `edits` kind's
+`mid-operation`; this kind is the same state met by a VCS call partway through.
 
 ### `not-a-repo`
 

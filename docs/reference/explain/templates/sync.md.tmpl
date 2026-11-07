@@ -147,7 +147,11 @@ decides rather than a per-repo strategy: `kept` (the source's lock lacks the
 member and the replayed manifest names it), `pruned` (the replayed manifest
 no longer names it and its checkout was removed), and `prune-refused` (the
 same, but removing the checkout was refused). A `prune-refused` record
-carries the refusal's `refusal` token and the full `message`; its checkout is
+carries `refused`, each state the checkout was judged in that refused the
+removal — `edits` for uncommitted changes, `checkout` for a live checkout
+derived from the clone — with that state's choices, or the `refusal` token
+when the removal was refused on a condition instead, and the full `message`;
+its checkout is
 left on disk with no manifest naming it. The op still runs to completion and
 clears its op-state, then exits 1, so `rwv abort` does not apply and
 re-running the sync does not prune the checkout: remove it by hand. A
