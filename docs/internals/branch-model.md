@@ -2505,7 +2505,7 @@ third component, there is no nesting left for a name to record.
 
 ### 8.6 A pre-push hook, or any enforcement that workweave branches are never published
 
-**Rejected**, already. `rwv push` refuses from a workweave; plain `git push` is
+**Rejected**, already. `rwv push` refuses a workweave's minted branch name; plain `git push` is
 operator discipline. The correct response is to qualify the documentation, not
 to add enforcement. Note the live consequence for §9: "workweave branches are
 unpublished by construction" **is** operator discipline rather than an

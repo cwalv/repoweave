@@ -42,7 +42,7 @@ Because `target/`, `node_modules/`, and `.venv/` are isolated per workweave, dep
 
 ## Push review fixes to the PR
 
-Commit fixes on the detached `HEAD` and push them to the PR's branch with git (`rwv push` refuses inside a workweave):
+Commit fixes on the detached `HEAD` and push them to the PR's branch with git (`rwv push` refuses a detached workspace):
 
 ```bash
 git -C github/chatly/server commit -am "review: fix"

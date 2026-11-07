@@ -2,53 +2,99 @@
 
 ## Purpose
 
-Publish a cross-repo feature to shared remotes. Pushes member repos first,
-then the project repo last — the project repo carries the committed lock that
-pins manifest SHAs, so collaborators' `rwv clone` and `rwv update` must never
-see a committed lock referencing unpushed manifest commits.
+Publish a weave branch: its members' branches first, then the branch's record
+and the drops this machine has made, then the project branch last. The project
+branch carries the committed lock that pins each member's commit, so
+collaborators' `rwv clone` and `rwv update` must never see a lock that names a
+commit no remote holds; the record travels with the branch it describes, so
+every machine reads one record for a published branch.
 
-Refuses if invoked from a workweave (workweave branches shouldn't leak to
-shared remotes). Refuses if the project repo has uncommitted changes to any
-tracked file, or holds a `rwv.toml` or `rwv.lock` it has never committed: push
-publishes the project repo's last commit, so the lock it checks has to be the
-lock it publishes. The refusal judges the project repo on the `edits` kind:
-`rwv.toml or rwv.lock uncommitted` when those are all that is, offering `rwv
-lock --commit`, else `dirty`, offering the VCS's commit or stash. Untracked
-files other than those two do not refuse. Judges every member repo's HEAD
-against its lock entry on the `pin` axis (the pin check), and refuses a member
-with no pin (`none`), a pin no ref reaches (`unreachable`), a HEAD behind the
-pin (`behind`) or diverged from it (`diverged`), or commits beyond the pin that
-no remote-tracking branch and no live lock reaches (`unpinned`, listed). Each
-refusal prints the choice that clears it: `rwv lock --commit` records unpinned
-commits, `rwv member pin` gives a member a pin, `rwv update` moves a checkout
-that is behind its pin. Commits beyond the pin that are pushed, or pinned by
-another project's live lock, are reported as `ahead` with the fact `pinned-by`
-naming the lock, and the push goes on.
+`push` runs from any workspace, the primary or a workweave, on the weave
+branch the project repo has checked out, which must have a record
+(`target` `unrecorded` otherwise: `rwv branch set-mode`) and a name rwv
+publishes. A project branch named `<project>--<workweave>`, the name a
+workweave made without a branch of its own carries, is never published
+(`name` `minted`). A project repo on a detached HEAD is a detached workspace,
+which runs no push (`alignment` `project detached`). `--branch <W>` pushes
+`W` from a workspace that has another branch checked out, judging each member
+by `W`'s record, lock and branches as the refs hold them. `push` never writes
+`rwv.lock`: a member holding a commit no lock pins refuses (`pin` `unpinned`,
+naming `rwv lock --commit`), and so does a member whose lock has no entry (`pin`
+`none`).
 
-**Default scope:** bare `rwv push` (no `--role` / `--repo` selectors) pushes
-only `owned` and `fork` repos — the roles the operator controls. `dependency`
-and `reference` repos are skipped with a one-line notice each. To include
-non-writable roles, use `--role` or `--repo` selectors (which override the
-default):
+It refuses if the project repo has uncommitted changes to any tracked file, or
+holds a `rwv.toml` or `rwv.lock` it has never committed: push publishes the
+project repo's last commit, so the lock it checks has to be the lock it
+publishes. The refusal judges the project repo on the `edits` kind: `rwv.toml
+or rwv.lock uncommitted` when those are all that is, offering `rwv lock
+--commit`, else `dirty`, offering the VCS's commit or stash. Untracked files
+other than those two do not refuse.
+
+**Which repos.** Bare `rwv push` acts on the `owned` and `fork` members, the
+branch's record and the project branch. A `dependency` or `reference` member
+is pushed only when `--role` or `--repo` names it. A selector narrows the push
+to the repos it names: the project branch and the record are pushed only when
+`--repo projects/<name>` names the project repo.
 
 ```
-rwv push --role dependency          # push all dependencies
-rwv push --repo github/acme/dep     # push one specific dep
-rwv push --role owned --role fork   # explicit; same as the bare default
+rwv push --role dependency                        # push all dependencies, and nothing else
+rwv push --repo github/acme/dep                   # push one specific dep
+rwv push --repo github/acme/app --repo projects/web  # a member and the project branch
 ```
+
+**The pin gate.** Before anything is pushed, each member the push acts on is
+judged against the lock: it must be on the branch the checked-out branch's
+record expects (`alignment`), have a pin (`pin` `none`, `unreachable`), reach
+it (`behind`, `diverged`), and hold no commit beyond it that no remote-tracking
+branch and no live lock reaches (`unpinned`). Commits beyond the pin that are
+pushed, or pinned by another project's live lock, are reported as `ahead`
+with the fact `pinned-by` naming the lock, and the push goes on. Every merge in
+the range the project branch publishes is judged too: where both its parents
+changed a member's pin to different commits under one declared branch, the
+lock at the pushed tip must pin a commit containing both, unless the tip
+declares the member elsewhere or a later lock in the range re-pins it backward,
+to a commit that does not reach the pin the merge left behind. A merge that
+does neither refuses as `pin` `unmerged`, listing the merge and the pins and
+offering the VCS's merge; one a later lock waived is reported as `pin`
+`waived`, listing the merge and the re-pin. After the members are pushed, the
+project branch is withheld (`publish` `withheld`) while any pin its lock holds
+is not reached as the gate requires: a feature's `owned` and `fork` pins by a
+remote-tracking branch of the url remote or of the push target, a declared
+branch's by the push branch of the branch each member declares, and a
+`dependency` or `reference` member's by a remote-tracking branch of its url
+remote. The refusal lists the branches that do reach each pin.
 
 **Where each branch goes.** A branch publishes to its push target, found in
 git's order: its `pushRemote`, `remote.pushDefault`, the remote it takes in
 from, and last the repo's url remote (a member's: the remote that has its
 `url`; the project repo's: the one it was created with, else its only remote).
-Before anything is pushed, `push` judges each branch on the `push-branch` kind
-and refuses the ones that cannot publish: `no push target`, `foreign upstream`
-(it takes in from a branch of another name), and `diverged` while it holds
-commits of its own. Two states complete instead: a branch `behind` its push
-branch is left unpushed with the choice to take it in, and a branch whose
-upstream the remote deleted (`gone`) is left unpushed unless `--repo` or
-`--role` names its repo. `--force` waives the divergence refusal and the
-`behind` skip.
+`push` fetches every remote first, pruning, and a remote the fetch could not
+complete that the push publishes to or judges a pin by refuses it (`push-branch`
+`unconfirmed`, the cause listed). Then it judges each branch on the
+`push-branch` kind and refuses the ones that cannot publish: `no push target`,
+`foreign upstream` (it takes in from a branch of another name), and `diverged`
+while it holds commits of its own. Two states complete instead: a branch
+`behind` its push branch is left unpushed with the choice to take it in, and a
+branch whose upstream the remote deleted (`gone`) is left unpushed unless
+`--repo` names its repo. A branch that took in from nothing takes in from its
+push branch once pushed. A feature's member branch is pushed only when it holds
+commits no remote-tracking branch reaches.
+
+**The record.** The branch's record, and every drop this machine has made of a
+record whose branch is gone everywhere, is published to the project branch's
+push target before the project branch, as one commit on that remote's records
+branch: no other record on this machine is sent, and a conflicted or unreadable
+one never is. A remote that moved meanwhile is fetched and the commit rebuilt.
+A remote that refuses its records branch withholds the project branch
+(`publish` `records rejected`); for the remote's default branch, whose record
+is `declared`, the branch is published and the rejection reported as a fact.
+
+**Replacing a push branch.** `--overwrite <repo>`, naming each repo, replaces a
+diverged push branch of a branch no weave branch declares and that is not a
+declared-mode project branch. The remote tip is kept as a backup first, the
+replacement is leased to that tip, so a remote that moved since the fetch
+refuses it, and it is refused (`pin` `would be unreachable`) while another
+live lock pins a commit only that tip reaches. `push` offers it nowhere.
 
 Agents call `rwv push --json` to get machine-readable per-repo outcomes so
 they can react to partial failures without parsing human-readable text.
@@ -56,24 +102,23 @@ they can react to partial failures without parsing human-readable text.
 ## Invocation
 
 ```
-rwv push [--json] [-j <N>] [--dry-run] [--force] [--role <role>] [--repo <selector>] [--project <name>]
+rwv push [--json] [-j <N>] [--dry-run] [--branch <W>] [--overwrite <repo>]... [--role <role>] [--repo <selector>] [--project <name>]
 ```
 
 - `--json` emits machine-readable output (see Output below).
-- `-j <N>` runs up to `N` member-repo pushes in parallel. Default is `1`
-  (serial): every push authenticates and runs the repo's `pre-push` hook, so
-  concurrent pushes would share one terminal's credential prompts and run
-  those hooks side by side, and the default push set is already narrowed to
-  the writable roles. The project-repo push always runs serially as the last
-  step regardless of `-j`.
-- `--dry-run` prints the push plan without executing any pushes.
-- `--force` force-pushes every repo in the operation.
-- `--role` / `--repo` narrow the member-repo push loop (union semantics)
-  and override the default `[owned, fork]` scope. When either flag is
-  present, the caller's selectors are used verbatim — pass `--role owned
-  --role fork` to reproduce the bare default explicitly. The
-  pin check always runs against the full manifest regardless of these
-  filters.
+- `-j <N>` runs up to `N` member-repo fetches and pushes in parallel. Default
+  is `1` (serial): every push authenticates and runs the repo's `pre-push`
+  hook, so concurrent pushes would share one terminal's credential prompts and
+  run those hooks side by side, and the default push set is already narrowed
+  to the writable roles. The project-repo push always runs serially as the
+  last step regardless of `-j`.
+- `--dry-run` prints the push plan without fetching or pushing.
+- `--branch <W>` pushes weave branch `W` instead of the checked-out one.
+- `--overwrite <repo>` replaces that repo's diverged push branch, leased and
+  backed up, as above; repeat it per repo. The project repo is
+  `projects/<name>`.
+- `--role` / `--repo` narrow what the push acts on (union semantics). A
+  `dependency` or `reference` member is pushed only when one names it.
 - `--project <name>` operates on the named project without changing
   `.rwv-active`.
 
@@ -94,7 +139,10 @@ Under `--json`, output is the pretty-printed envelope, whatever `-j` is:
 ```
 
 Outcome `kind` tags for member repos: `pushed`, `skipped` (e.g. filtered
-by selector), `failed`. The project-repo record is always the last entry in `outcomes` and
+by selector), `failed`. The branch's record follows as `records-published`
+(listing the entries it dropped from the remote) or `records-rejected` (with
+the remote's answer, and whether the project branch was withheld because of
+it). The project-repo record is always the last entry in `outcomes` and
 uses kind `project-repo-pushed` or `project-repo-failed` — its kind tag is the
 only way to distinguish it from member-repo records in the flat array. Failed
 records carry a `message` field with the free-form error from the git push.
@@ -104,8 +152,8 @@ choices as `rwv explain <axis>` lists them: the project repo's `edits` when it
 has uncommitted changes, before anything is pushed; and each member whose
 push the remote rejected, as `publish` `withheld`, when the project repo was
 not pushed because of it. It is empty, not absent, otherwise. `reported`
-lists the repos judged `behind` or `gone` and left unpushed, with their
-choices; it is empty when none was.
+lists the repos judged `behind` or `gone`, and the merges a later lock waived
+(`pin` `waived`), and went past; it is empty when none was.
 
 Schema:
 
@@ -113,10 +161,12 @@ Schema:
 
 ## Exit codes
 
-- `0` — all in-scope member repos pushed (non-writable roles skipped by
-  default or by selector); project repo pushed.
-- non-zero — at least one manifest push failed (project repo not pushed), or
-  the project-repo push failed after manifest pushes succeeded.
+- `0` — every in-scope member repo pushed or left as it was, the record
+  published, and the project repo pushed.
+- non-zero — a refusal before anything was pushed; a member push failed
+  (project repo not pushed); the project branch was withheld because a pin it
+  holds is not reached or the remote refused the record; or the project-repo
+  push failed after the member pushes succeeded.
 
 ## Examples
 
@@ -136,6 +186,12 @@ Identify the project-repo record:
 
 ```
 rwv push --json | jq '.outcomes[] | select(.kind | startswith("project-repo-"))'
+```
+
+Replace a rewritten feature branch of one member, keeping the remote tip as a backup:
+
+```
+rwv push --overwrite github/acme/app
 ```
 
 Push four member repos at a time:
@@ -165,14 +221,25 @@ rwv push -j 4
 - *`<member>: pin behind`* or *`pin diverged`* — the checkout is behind its pin,
   or has gone its own way. `rwv update` moves a checkout behind its pin;
   `rwv lock --repo <member> --commit` records the checkout, by name.
-- *refusing to push from workweave* — run `rwv sync-to primary` (or
-  `rwv sync-to`) to land changes on primary, then push from there.
-- *project repo not on canonical branch* — check out the canonical branch
-  before pushing.
-- *`<member>: publish withheld`* — that member's push was rejected, listed
-  beneath it, so the project repo was not pushed; members that pushed are
-  published. Resolve the rejection, or choose where the member pushes, then
-  re-run `rwv push`.
+- *`projects/<name>: name minted`* — the project branch is the name a
+  workweave made without a branch of its own carries, which is never
+  published. Give the work a branch of its own to publish it.
+- *`<repo>: push-branch unconfirmed`* — the last fetch of a remote the push
+  needs could not complete, the cause listed. Nothing was pushed; run `rwv
+  fetch` once the remote answers, then re-run.
+- *`<member>: pin unmerged`* — a merge in the range joined two pins of the
+  member without joining the member. Merge the other pin into the member's
+  checkout (the printed choice), then `rwv lock --commit`.
+- *`<member>: publish withheld`* — either that member's push was rejected, or a
+  pin the project branch's lock holds is reached by no remote-tracking branch
+  that must reach it; what the remote answered, or the branches that do reach
+  the pin, are listed beneath it, so the project repo was not pushed and the
+  members that pushed are published. Publish the member (`rwv push --repo
+  <member>`, naming a `dependency` or `reference` one), or choose where it
+  pushes, then re-run `rwv push`.
+- *`projects/<name>: publish records rejected`* — the remote refused the branch
+  that holds the records, so the project branch was withheld. Choose another
+  remote for the branch, or have the remote accept the records branch.
 - *target unrecorded* — the checked-out branch of the project repo has no record
   of how it is used, so this verb, which publishes, refuses before changing
   anything. The record may be published but not yet fetched (`rwv fetch`);

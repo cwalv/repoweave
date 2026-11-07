@@ -488,8 +488,7 @@ ahead, since switching alone would leave HEAD's commits on no branch; and where
 the two have diverged, `git switch -c <new-branch>`, then a rebase onto the
 workweave's branch and a fast-forward of that branch to `<new-branch>`, which
 leaves the workweave on its own branch rather than on a shared one. For an
-unborn branch, make an initial commit first. For push specifically, the canonical branch is the one
-publishing requires — see `project-repo-off-canonical-branch`.
+unborn branch, make an initial commit first.
 
 **Where this sits.** [Workweave lifecycle](../explanation/joints/workweave-lifecycle.md).
 
@@ -871,18 +870,6 @@ you meant, `rwv update --project <name>` brings up its members in place; to
 clone the other one too, run `rwv clone <source>` in an empty directory, which
 becomes a weave of its own. For `rwv init`, choose another name.
 
-### `project-repo-off-canonical-branch`
-
-**Condition.** The project repo is attached to a branch other than its
-canonical one at push time. The canonical branch is the one the project
-repo's remote declares as default (`origin/HEAD`), whatever it is called.
-
-**Why.** Publishing is defined from the canonical branch. Pushing from a topic
-branch would publish a lock nobody's canonical history reaches.
-
-**Exits.** Check out the canonical branch the message names and re-run. If the
-work belongs on it, land it there first.
-
 ### `provider-cannot-mint-url`
 
 **Condition.** `rwv init --provider <registry>/<owner>` names a registry that
@@ -895,21 +882,6 @@ being the case that exists, has nothing to mint from.
 
 **Exits.** Create the project without `--provider` (`rwv init <name>`), then
 set the remote once the repository exists elsewhere.
-
-### `push-from-workweave`
-
-**Condition.** `rwv push` was invoked from a workweave.
-
-**Why.** Workweave branches are ephemeral and named for a workweave, not for
-publication. Pushing them would leak per-workweave branch names to a shared
-remote where nothing retracts them. Unlike `wrong-checkout-kind`, push *is*
-defined at a workweave — it is refused on branch-hygiene policy, which is why it
-has its own entry.
-
-**Exits.** `rwv sync-to` from the workweave to land the work on the parent,
-then push from there.
-
-**Where this sits.** [Workweave lifecycle](../explanation/joints/workweave-lifecycle.md).
 
 ### `registry-path-disagreement`
 
@@ -1195,17 +1167,6 @@ refuses names that *do* dispatch.
 
 **Where this sits.** [Plugin boundary](../explanation/joints/plugin-boundary.md).
 
-### `unpushable-repo-branch`
-
-**Condition.** Repos in the push plan are not on a pushable branch.
-
-**Why.** Push publishes each repo from its checked-out branch. A detached or
-otherwise unpushable checkout has nothing to publish, and the run stops before
-the network rather than half-publishing.
-
-**Exits.** Check out a branch in each repo the run listed, then re-run. Nothing
-was pushed, so there is no partial publication to reconcile.
-
 ### `unreadable-status`
 
 **Condition.** A dirty-state read failed, so the operation failed closed.
@@ -1341,7 +1302,6 @@ the state they change lives at one and not the other. Running one in the wrong
 place would write state that its own reader never looks for.
 
 **Exits.** `cd` to the checkout the verb is defined at — the message names
-which and where it is. `push` is not this condition: it *is* defined at a
-workweave and refused on policy, under `push-from-workweave`.
+which and where it is. `push` is defined at both.
 
 **Where this sits.** [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md).

@@ -22,7 +22,7 @@ CWD is not inside a weave or workweave. Below is a compact overview of how `rwv`
 
 - **Weave-root ecosystem files are symlinks into `projects/<active>/`**: In hybrid files (`Cargo.toml`, `package.json`, `pyproject.toml`, `go.work`), hand-authored keys outside the rwv-owned marker region are preserved across regeneration. Edits inside the rwv-owned region are overwritten when `rwv member add`, `rwv member remove`, `rwv member set-role`, `rwv update --remote`, or `rwv doctor --fix` regenerates the file (`rwv activate` only moves symlinks and never clobbers file content).
 - **Don't run `git worktree add` directly**: Always use `rwv workweave create <name>` so all member repos, workweave branches, and `.rwv-workweave` markers stay consistent.
-- **Don't run `rwv push` from inside a workweave**: `rwv push` refuses from a workweave (`push-from-workweave`) so ephemeral `<project>--<name>` branches do not leak to shared remotes. Land into the primary weave first with `rwv sync-to` (or `rwv sync-to --retire`), then run `rwv push` from primary.
+- **A workweave's minted branch is not published**: `rwv push` refuses a project branch named `<project>--<name>` (`name` minted), the name `rwv workweave create` gives a workweave made without a branch of its own. Give the work a branch to publish it.
 - **Don't `chmod` or edit `reference` repos in place**: Tracked regular files in `reference` repos carry no write bit. To promote a repo for editing, run `rwv member set-role <path> owned` (or `fork`), which updates `rwv.toml`, regenerates ecosystem files, and restores write bits.
 
 ## Typical flow

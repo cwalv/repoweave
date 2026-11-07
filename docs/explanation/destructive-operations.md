@@ -89,11 +89,12 @@ naming: the flag says *abandon*, not *discard*, because the tip is kept
 as an `abandoned` backup before the branch moves off it. An override
 buys a waiver of the precondition it names, never of rule 3.
 
-`push --force` is the one exception to the naming rule: it is
-not a precondition waiver but a **mode switch** — git's own vocabulary
-for which of two operations `rwv push` is performing. Renaming it would
-break the analogy to `git push --force` rather than sharpen it, so it
-keeps git's name.
+`push --overwrite <repo>` follows the rule: it names the repo whose push
+branch it replaces, not a mode. It replaces only a diverged push branch of
+a branch nothing declares, keeps the remote tip as a backup first, and is
+leased to that tip, so a remote that moved since the fetch refuses it.
+rwv has no blanket force: `--force` on any verb is refused, and each
+refusal names the flag for the one loss it would cause.
 
 ### 3. Discards stay recoverable
 
@@ -156,7 +157,7 @@ destructive patterns:
 - `remove_dir_all` / `remove_file` (filesystem)
 - `"-D"` (git branch force-delete)
 - `"worktree", "remove"` (git worktree)
-- `push("--force")` (git push)
+- `--force-with-lease=` (git push, leased to a tip)
 - `"checkout"` (git checkout — may overwrite when forced)
 - `"update-ref"` (ref surgery)
 

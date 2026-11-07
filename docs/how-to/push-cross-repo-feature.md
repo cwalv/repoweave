@@ -1,6 +1,6 @@
 # Push a cross-repo feature
 
-Publish locked cross-repo changes from the primary weave to remotes in dependency-safe order (member repositories first, project repository last):
+Publish a weave branch from any workspace in dependency-safe order: member repositories first, then the branch's record, then the project repository:
 
 ```bash
 rwv push
@@ -8,16 +8,15 @@ rwv push
 
 ## Preconditions and default scope
 
-Before pushing any remote, and under `--dry-run` too, `rwv push` refuses unless all of these hold:
+Before pushing any remote, `rwv push` refuses unless all of these hold:
 
-- **Primary weave only:** `rwv push` refuses when invoked inside a workweave (`push-from-workweave`) so ephemeral workweave branches are never pushed to shared remotes. Land workweave changes into the primary weave with `rwv sync-to` first.
-- **Canonical branch in the project repo:** `projects/<project>/` must be on its tracked branch; a detached or unborn `HEAD` refuses with `head-not-on-branch`, and any other branch with `project-repo-off-canonical-branch`.
-- **The remote's default branch recorded:** the project repo must know the default branch of the remote it publishes to (`no-remote-default-branch`). A clone made by `rwv clone` has it; after creating the remote yourself, run the `git remote set-head <remote> -a` the refusal names, to record the branch the remote reports as its default.
+- **A recorded, named branch:** the project repo's checked-out branch must have a record (`target` `unrecorded` otherwise: say how the branch is used with `rwv branch set-mode`) and a name rwv publishes. The name `rwv workweave create` gives a workweave made without a branch of its own, `<project>--<name>`, is never published (`name` `minted`). A project repo on a detached `HEAD` is a detached workspace, which runs no push (`alignment` `project detached`). To publish a branch the workspace has not checked out, name it: `rwv push --branch <branch>`.
 - **Committed project repo:** `projects/<project>/` must have no uncommitted changes to tracked files and no untracked `rwv.toml` or `rwv.lock` (`edits`), because push publishes the project repo's last commit. When only `rwv.toml` or `rwv.lock` is uncommitted, the refusal offers `rwv lock --commit`; otherwise commit or stash with the commands it prints.
-- **Pins:** Every member repository is judged against the revision pinned in `rwv.lock`. A member with no pin (`pin` `none`), a pin no ref reaches (`unreachable`), a `HEAD` behind the pin (`behind`) or diverged from it (`diverged`), or commits beyond the pin that nothing else holds (`unpinned`) refuses, and the refusal prints the choice that clears it.
-- **Attached member branches:** every member repository in scope must be on a branch, not a detached `HEAD` (`unpushable-repo-branch`).
+- **Reachable remotes:** `push` fetches the remotes first. One it could not reach that the push publishes to, or judges a pin by, refuses it (`push-branch` `unconfirmed`); run `rwv fetch` once the remote answers.
+- **Aligned members with pins:** each member the push acts on must sit on the branch the checked-out branch's record expects (`rwv update` moves it), and is judged against the revision pinned in `rwv.lock`. A member with no pin (`pin` `none`), a pin no ref reaches (`unreachable`), a `HEAD` behind the pin (`behind`) or diverged from it (`diverged`), or commits beyond the pin that nothing else holds (`unpinned`) refuses, and the refusal prints the choice that clears it. `rwv push` never writes the lock.
+- **Merges that join the members:** a merge commit in the range being published whose parents changed one member's pin to different commits must leave the lock pinning a commit that contains both (`pin` `unmerged`). The refusal names the merge and offers the VCS's merge for that member; `rwv lock --commit` then records it. A merge the operator abandons instead, by re-pinning the member backward by name to a commit that does not reach the pin the merge left, is waived and listed (`pin` `waived`).
 
-By default, `rwv push` pushes member repositories with `role = "owned"` and `role = "fork"` (`fork` URLs must point to your writable fork; see [Roles reference](../reference/roles.md#fork)) and skips `dependency` and `reference` repositories. The project repository (`projects/<project>/`) is pushed last, only after every in-scope member push succeeds, so collaborators never fetch a `rwv.lock` that references unpushed member commits.
+By default, `rwv push` pushes member repositories with `role = "owned"` and `role = "fork"` (`fork` URLs must point to your writable fork; see [Roles reference](../reference/roles.md#fork)), then the branch's record and the drops this machine has made, then the project repository. It pushes a `dependency` or `reference` repository only when `--role` or `--repo` names it. A feature's member branch is pushed only when it holds commits no remote-tracking branch reaches. The project repository is pushed last, only after every in-scope member push succeeded and every pin its lock holds is reached by what the remotes now hold, so collaborators never fetch a `rwv.lock` that references unpushed member commits. When a pin is not reached (a `dependency` member's commit no remote holds, say), the project branch is withheld (`publish` `withheld`) and the refusal lists the branches that do reach the pin; `rwv push --repo <member>` publishes the member, and the next `rwv push` publishes the project.
 
 Preview the plan without contacting remotes:
 
@@ -27,16 +26,27 @@ rwv push --dry-run
 
 ## Selector filters and parallel push
 
-Override the default `[owned, fork]` scope with `--role` or `--repo` selectors (repeated flags combine as a union; regexes match against the full `github/org/repo` manifest path):
+Override the default `[owned, fork]` scope with `--role` or `--repo` selectors (repeated flags combine as a union; regexes match against the full `github/org/repo` manifest path). A selector narrows the push to the repos it names: the project branch and its record are pushed only when `--repo projects/<project>` names the project repo.
 
 ```bash
 rwv push --role owned                       # only owned repos
 rwv push --repo glob:'github/chatly/*'      # path glob
 rwv push --repo re:'proto'                  # regex matched against full manifest path
-rwv push -j 4                               # push up to 4 member repos in parallel
+rwv push --repo github/chatly/dep --repo projects/chatly   # a dependency and the project branch
+rwv push -j 4                               # fetch and push up to 4 member repos in parallel
 ```
 
 Even with `-j <N>`, the project repository is pushed serially at the end after all member pushes succeed.
+
+## Replace a rewritten branch
+
+A branch that was amended or rebased after it was published has diverged from its push branch, and `rwv push` refuses it (`push-branch` `diverged`). To publish the rewrite, name the repo:
+
+```bash
+rwv push --overwrite github/chatly/server
+```
+
+The remote tip is kept as a backup first, and the replacement lands only if the push branch still holds the tip the push read, so a colleague's push in between refuses it. It is refused for a branch some weave branch declares, for a declared-mode project branch, and while another live lock pins a commit only the replaced tip reaches. `rwv.lock` is not written; relock the amended member first with `rwv lock --repo <member> --commit`.
 
 ## Recover from an unpinned commit
 
@@ -63,14 +73,14 @@ rwv explain pin
   git -C github/chatly/server reset --keep <lock-sha>
   rwv push
   ```
-  `rwv update` does not do this: it moves a branch forward to the lock, never backward. A detached checkout at the locked revision (`git checkout <lock-sha>`) does not either: `rwv push` refuses a detached member (`unpushable-repo-branch`).
+  `rwv update` does not do this: it moves a branch forward to the lock, never backward. A detached checkout at the locked revision (`git checkout <lock-sha>`) does not either: `rwv push` refuses a detached member (`alignment` `detached`).
 
 A member the lock has no pin for refuses as `pin` `none`, naming `rwv member pin <member> <rev> --commit`; `rwv lock` gives it none, since it records a pin forward only.
 
 ## Related
 
 - [CLI reference — `rwv push`](../reference/cli.md#rwv-push-) — flags and the `--json` envelope
-- [Bring workweave work home](./bring-workweave-work-home.md) — landing workweave commits into the primary weave before pushing
+- [Bring workweave work home](./bring-workweave-work-home.md) — landing workweave commits into the primary weave
 - [Run a command across repos](./run-a-command-across-repos.md) — ad-hoc cross-repo commands with `rwv each`
 - [Verb vs. composition](../explanation/joints/verb-vs-composition.md) — why coordinated publishing is a core verb
 - [VCS as seam](../explanation/joints/vcs-as-seam.md) — remote-push contract

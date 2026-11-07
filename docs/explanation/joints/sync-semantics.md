@@ -139,10 +139,11 @@ covers member repos that declare it. `--strategy=ff` needs no precondition.
 only when rebase would rewrite commits that are already published, and in
 repoweave it does not:
 
-- **Workweave branches are unpublished by policy.** `rwv push` refuses from a
-  workweave. That is policy, not physics: no hook or doctor check stops a
-  plain `git push`, but while nobody bypasses rwv that way, rebasing a
-  workweave branch rewrites nothing anyone else can have seen.
+- **A workweave's minted branch is unpublished by policy.** `rwv push` refuses
+  the name `rwv workweave create` gives a workweave made without a branch of
+  its own (`name` `minted`). That is policy, not physics: no hook or doctor
+  check stops a plain `git push`, but while nobody bypasses rwv that way,
+  rebasing that branch rewrites nothing anyone else can have seen.
 - **Landing rebases only the unpublished side.** `sync-to` rebases CWD (the
   workweave) against the target, then fast-forwards the target.
 - **Divergence that arrives through a remote** is `update --remote`'s and git's to
@@ -170,7 +171,7 @@ own override:
   `rwv backup drop` drops.
 
 `--continue` resumes with the overrides the op started with. The naming rule
-behind these flags, and why `push --force` is exempt from it, is stated once
+behind these flags, and why `push --overwrite` is named for the repo it replaces, is stated once
 in [destructive-operations](../destructive-operations.md#2-named-overrides-are-narrow-and-informed).
 
 ## The Phase 1' ancestor precondition
