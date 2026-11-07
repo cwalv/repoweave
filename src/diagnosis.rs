@@ -232,7 +232,7 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 9] = [
+    pub const ALL: [State; 10] = [
         Self::EditsDirty,
         Self::EditsMidOperation,
         Self::EditsLockFilesUncommitted,

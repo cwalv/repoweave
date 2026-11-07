@@ -364,6 +364,13 @@ Schema:
           "enum": [
             "publish"
           ]
+        },
+        {
+          "description": "A project whose `rwv.toml` does not load.",
+          "type": "string",
+          "enum": [
+            "unparseable-project"
+          ]
         }
       ]
     },
