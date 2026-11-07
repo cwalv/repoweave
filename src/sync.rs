@@ -1720,24 +1720,34 @@ fn pre_op_manifest(ctx: &OpContext<'_>) -> anyhow::Result<Manifest> {
                 ctx.cwd_project_dir.display(),
             )
         })?;
+    manifest_at_revision(vcs, &ctx.cwd_project_dir, &savepoint)
+        .context("failed to read CWD's manifest as the op found it")
+}
+
+/// `rwv.toml` as the project repo at `project_dir` holds it at `revision`, a
+/// commit other than the checked-out one. A file naming keys an earlier
+/// release wrote declares nothing.
+fn manifest_at_revision(
+    vcs: &dyn Vcs,
+    project_dir: &Path,
+    revision: &ResolvedRevisionId,
+) -> anyhow::Result<Manifest> {
     let content = vcs
-        .read_file_at_revision(
-            &ctx.cwd_project_dir,
-            &savepoint,
-            Path::new(Manifest::FILE_NAME),
-        )
+        .read_file_at_revision(project_dir, revision, Path::new(Manifest::FILE_NAME))
         .with_context(|| {
             format!(
-                "failed to read {} at the op's savepoint {}",
+                "failed to read {} at revision {} in {}",
                 Manifest::FILE_NAME,
-                savepoint.id().short()
+                revision.id().short(),
+                project_dir.display()
             )
         })?;
     Manifest::from_other_commit(&content).with_context(|| {
         format!(
-            "the {} at the op's savepoint {} does not parse",
+            "failed to parse {} at revision {} in {}",
             Manifest::FILE_NAME,
-            savepoint.id().short()
+            revision.id().short(),
+            project_dir.display()
         )
     })
 }
@@ -5600,28 +5610,8 @@ fn pin_source_snapshot(
         })?
     };
 
-    let source_manifest = {
-        let content = source_vcs
-            .read_file_at_revision(
-                source_project_dir,
-                &source_project_tip,
-                Path::new(Manifest::FILE_NAME),
-            )
-            .with_context(|| {
-                format!(
-                    "failed to read source manifest at revision {} in {}",
-                    source_project_tip,
-                    source_project_dir.display()
-                )
-            })?;
-        Manifest::from_other_commit(&content).with_context(|| {
-            format!(
-                "failed to parse source manifest at revision {} in {}",
-                source_project_tip,
-                source_project_dir.display()
-            )
-        })?
-    };
+    let source_manifest = manifest_at_revision(source_vcs, source_project_dir, &source_project_tip)
+        .context("failed to read the source's manifest")?;
 
     let (mut source_lock, source_lock_unresolvable) = raw_source_lock
         .clone()
@@ -7754,6 +7744,47 @@ mod tests {
         git(dir, &["add", "."]);
         git(dir, &["commit", "-m", name]);
         git_vcs().head_revision(dir).unwrap()
+    }
+
+    // -----------------------------------------------------------------------
+    // Reading a manifest at a commit other than the checked-out one
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn a_manifest_naming_the_old_keys_declares_nothing_at_another_revision() {
+        let tmp = crate::tempdir().unwrap();
+        let repo = tmp.path().join("r");
+        init_repo(&repo);
+        let entry = |key: &str| {
+            format!(
+                "[repositories.\"github/acme/server\"]\ntype = \"git\"\n\
+                 url = \"https://github.com/acme/server.git\"\n{key} = \"main\"\n\
+                 role = \"owned\"\n"
+            )
+        };
+        let at = |manifest: &str| {
+            std::fs::write(repo.join(Manifest::FILE_NAME), manifest).unwrap();
+            git(&repo, &["add", "."]);
+            git(&repo, &["commit", "-m", "manifest"]);
+            git_vcs().head_revision(&repo).unwrap()
+        };
+        let old = at(&entry("version"));
+        let current = at(&entry("branch"));
+        let broken = at("[repositories.\"github/acme/server\"\n");
+
+        let vcs = git_vcs();
+        let declared = manifest_at_revision(vcs.as_ref(), &repo, &old).unwrap();
+        assert!(declared.is_empty(), "the old keys declare no member");
+        assert_eq!(
+            manifest_at_revision(vcs.as_ref(), &repo, &current)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(
+            manifest_at_revision(vcs.as_ref(), &repo, &broken).is_err(),
+            "a file broken for any other reason is still refused"
+        );
     }
 
     // -----------------------------------------------------------------------
