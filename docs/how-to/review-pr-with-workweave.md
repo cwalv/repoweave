@@ -20,11 +20,11 @@ A review workweave is never landed: do not run `rwv sync-to` from it. With the P
 
 ## Preview what the PR introduces
 
-From anywhere inside the workweave, inspect the commits and diff relative to the recorded parent's common ancestor:
+From anywhere inside the workweave, list the commits and the diff beyond the pins of the weave branch the PR targets (here `main`):
 
 ```bash
-rwv workweave log            # commit listing per repo vs. recorded parent
-rwv workweave log --diff     # unique diff vs. recorded parent
+rwv log --against main            # commit listing per repo beyond main's pins
+rwv log --against main --diff     # diff per repo from the merge-base of that pin and HEAD
 ```
 
 Add `--json` for machine-readable output.

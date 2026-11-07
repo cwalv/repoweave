@@ -261,6 +261,42 @@ pub enum Commands {
         #[command(flatten)]
         selector: RepoSelectorArgs,
     },
+    /// Show the VCS's log in every repo of the workspace, or with `--against` the commits beyond what a weave branch pins
+    ///
+    /// A bare `rwv log` is the VCS's log of HEAD in each repo. A RANGE is read
+    /// in the VCS's own syntax in every repo, each endpoint resolving there as
+    /// the VCS would resolve it: a repo where an endpoint names nothing prints
+    /// `name no-such-branch` in its section, the others are still listed, and
+    /// the exit is non-zero.
+    ///
+    /// `--against W` reads a weave branch's pins instead: per member, the
+    /// commits HEAD reaches that W's pin for it does not, and in the project
+    /// repo those W lacks. Run it from a feature to list what it has not
+    /// landed, or address the workweave with `-w`.
+    Log {
+        /// A range in the VCS's own syntax (`feat-x..`, `main..feat-x`, `v1.2...`); with none, HEAD
+        #[arg(
+            value_parser = clap::builder::NonEmptyStringValueParser::new(),
+            conflicts_with = "against"
+        )]
+        range: Option<String>,
+        /// List the commits HEAD reaches that this weave branch's pins do not, per member, and in the project repo those the branch lacks
+        #[arg(
+            long,
+            value_name = "W",
+            value_parser = clap::builder::NonEmptyStringValueParser::new()
+        )]
+        against: Option<String>,
+        /// Show each repo's diff from the common ancestor of its pin and HEAD instead of the commit listing, so a pin that moved on after HEAD forked is not shown as reversals
+        #[arg(long, requires = "against")]
+        diff: bool,
+        /// Emit one `{ "$schema": ..., "repos": [...] }` JSON envelope. See `rwv explain log`.
+        #[arg(long)]
+        json: bool,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
+    },
 
     // ── Multi-workspace ops ───────────────────────────────────────────────────
     /// Roll an in-flight sync or sync-to back to its savepoints in every workspace it touched, run from any of them
@@ -661,23 +697,6 @@ pub enum WorkweaveAction {
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
-    },
-    /// Show this workweave's UNIQUE commits vs its recorded parent, per repo.
-    ///
-    /// Parent identity comes from the `.rwv-workweave` marker (not the branch
-    /// name). Unique commits are those in the workweave's history but not the
-    /// parent's — correct even when the parent advanced since the fork. Must
-    /// be run from inside a workweave.
-    Log {
-        /// Show the workweave's unique diff vs its parent instead of the
-        /// commit listing. Anchored at the common ancestor of the workweave
-        /// tip and the parent tip, so commits the parent gained after the
-        /// fork are not shown as reversals.
-        #[arg(long)]
-        diff: bool,
-        /// Emit machine-readable JSON.
-        #[arg(long)]
-        json: bool,
     },
 }
 

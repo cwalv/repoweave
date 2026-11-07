@@ -32,7 +32,7 @@ pub enum Axis {
     Edits,
     /// Another checkout derives from what the verb would remove.
     Checkout,
-    /// A name the verb would record is unusable.
+    /// A name the verb was given is unusable.
     Name,
     /// What `rwv push` withheld.
     Publish,
@@ -73,13 +73,15 @@ impl Axis {
                 sits: "[Clone topology](../explanation/joints/clone-topology.md).",
             },
             Self::Name => &KindRow {
-                condition: "A name the verb would record cannot be used: another workweave \
-                            already holds it, or it reads as a revision where a branch belongs.",
+                condition: "A name the verb was given cannot be used: another workweave \
+                            already holds it, it reads as a revision where a branch belongs, or \
+                            it names nothing in a repo the verb read.",
                 why: "A workweave name maps to one workweave; recording a second would make \
                       every later address ambiguous, and a delete would remove whichever was \
                       found first. A member entry's `branch` declares the branch to track while \
                       the lock records where you are, so a commit id or release tag there leaves \
-                      nothing to track.",
+                      nothing to track. A name that resolves to nothing has no tip to read, and \
+                      reading another branch in its place would answer a question nobody asked.",
                 sits: "[Workweave hierarchy](../explanation/joints/workweave-hierarchy.md); \
                        [Lock as derived](../explanation/joints/lock-as-derived.md).",
             },
@@ -105,6 +107,7 @@ pub enum State {
     CheckoutInRawWorktree,
     NameTaken,
     NameARevision,
+    NameNoSuchBranch,
     PublishWithheld,
 }
 
@@ -123,7 +126,7 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 8] = [
+    pub const ALL: [State; 9] = [
         Self::EditsDirty,
         Self::EditsMidOperation,
         Self::EditsLockFilesUncommitted,
@@ -131,6 +134,7 @@ impl State {
         Self::CheckoutInRawWorktree,
         Self::NameTaken,
         Self::NameARevision,
+        Self::NameNoSuchBranch,
         Self::PublishWithheld,
     ];
 
@@ -204,6 +208,17 @@ impl State {
                 refused_by: "`rwv member add`, for the remote's default branch or, with \
                              `--new`, the branch the new repo is on",
                 offers: &[Form::C11SetBranch],
+                verb_offers: &[],
+            },
+            Self::NameNoSuchBranch => &StateRow {
+                axis: Axis::Name,
+                name: "no-such-branch",
+                means: "a branch or revision the verb was asked to read names nothing in this \
+                        repo, spelled as the repo's VCS resolves it; the name is listed with the \
+                        repo it is missing from, and the repos that have it are still read",
+                refused_by: "`rwv log`, for a range endpoint a member lacks, and for the weave \
+                             branch `--against` names",
+                offers: &[Form::C33],
                 verb_offers: &[],
             },
             Self::PublishWithheld => &StateRow {
@@ -1293,11 +1308,14 @@ impl Judged {
         if let Some(workspace) = &self.workspace {
             line.push_str(&format!(" in {}", workspace.display()));
         }
-        line.push_str(&format!(
-            ": {} {}",
-            self.state.axis().token(),
-            self.state.name()
-        ));
+        line.push_str(&format!(": {}", self.state_line()));
+        line
+    }
+
+    /// The axis, the state and what it names, as the line prints them after
+    /// the repo: `name no-such-branch (feat-x)`.
+    pub fn state_line(&self) -> String {
+        let mut line = format!("{} {}", self.state.axis().token(), self.state.name());
         if let Some(subject) = &self.subject {
             line.push_str(&format!(" ({subject})"));
         }

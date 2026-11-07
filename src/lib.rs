@@ -104,6 +104,7 @@ pub mod integration;
 pub mod integration_runner;
 pub mod integrations;
 pub mod lock;
+pub mod log;
 pub mod manifest;
 pub mod member_settings;
 pub mod naming;

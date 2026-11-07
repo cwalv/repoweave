@@ -5,12 +5,12 @@ use crate::path_spelling::CanonicalPath;
 use crate::registry::CloneUrl;
 use crate::vcs::{
     CommitId, CommitSummary, ConflictOp, ContentIdentity, DerivedContentPolicy,
-    DerivedContentResolution, DiscardOutcome, Force, ForeignTipPolicy, HeadAttachment,
-    HeadObservation, LocalRefName, MidOperation, PreAbortRef, PublishRef, RawRefName,
+    DerivedContentResolution, DiffBeyond, DiscardOutcome, Force, ForeignTipPolicy, HeadAttachment,
+    HeadObservation, LocalRefName, MidOperation, PreAbortRef, PublishRef, RangeListing, RawRefName,
     RawRevisionId, RecordedSubmodule, RefOrigin, RegistrationPrune, RemoteBranchCopies,
-    RemoteDefaultBranch, RemoteRef, ReplayExclusionState, ResolvedRevisionId, SavepointListing,
-    SubmoduleBirth, SubmoduleCheckout, TrackedFile, TrackedFileKind, UniqueDiff, Vcs, VcsAction,
-    VcsError, VerifiedRestoreOutcome, WorkspacePopulation,
+    RemoteDefaultBranch, RemoteRef, ReplayExclusionState, ResolvedEndpoint, ResolvedRevisionId,
+    SavepointListing, SubmoduleBirth, SubmoduleCheckout, TrackedFile, TrackedFileKind, Vcs,
+    VcsAction, VcsError, VerifiedRestoreOutcome, WorkspacePopulation,
 };
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
@@ -1127,10 +1127,10 @@ impl GitVcs {
 
     /// Compute the merge-base (common ancestor) of `a` and `b` in `repo`.
     ///
-    /// Private helper for [`Vcs::unique_diff`], which anchors the diff range
-    /// at `git merge-base <parent-tip> HEAD` rather than the parent tip
-    /// directly — diffing against a parent tip that advanced after the fork
-    /// shows phantom reversals of the work the parent gained in the meantime.
+    /// Private helper for [`Vcs::diff_beyond`], which anchors the diff range
+    /// at `git merge-base <base> HEAD` rather than the base directly —
+    /// diffing against a base that moved on after HEAD forked from it shows
+    /// phantom reversals of the work the base gained in the meantime.
     fn merge_base(repo: &Path, a: &CommitId, b: &CommitId) -> Result<CommitId, VcsError> {
         let args = ["merge-base", a.as_str(), b.as_str()];
         commit_id_printed(&Self::run_trimmed(args, repo)?, &args, repo)
@@ -1139,24 +1139,33 @@ impl GitVcs {
     /// List the commits reachable from `to` but not from `from` in `repo`,
     /// newest first, as [`CommitSummary`] records.
     ///
-    /// This is `git log <from>..<to>` semantics: with `from` = the parent tip
-    /// and `to` = HEAD, the result is exactly the workweave's UNIQUE commits,
-    /// and it stays correct when the parent advanced since the fork (the
-    /// range excludes commits the parent already has). An empty vec means no
-    /// unique commits. Private helper for [`Vcs::unique_commits`].
+    /// This is `git log <from>..<to>` semantics, so it stays correct when
+    /// `from` moved on since `to` forked: the range excludes commits `from`
+    /// already has. An empty vec means nothing lies beyond `from`. Private
+    /// helper for [`Vcs::commits_beyond`].
     fn log_range(
         repo: &Path,
         from: &CommitId,
         to: &CommitId,
         limit: Option<usize>,
     ) -> Result<Vec<CommitSummary>, VcsError> {
+        Self::log_spelled(repo, &format!("{from}..{to}"), limit)
+    }
+
+    /// `git log` of `range` as spelled, newest first.
+    fn log_spelled(
+        repo: &Path,
+        range: &str,
+        limit: Option<usize>,
+    ) -> Result<Vec<CommitSummary>, VcsError> {
         // `%H` full id, `%s` subject — NUL-delimited fields, newline-delimited
-        // records, so subjects with spaces/tabs survive.
-        let range = format!("{from}..{to}");
+        // records, so subjects with spaces/tabs survive. The trailing `--`
+        // keeps a range from being read as a path.
         let limit = limit.map(|n| format!("-{n}"));
         let mut args = vec!["log", "--pretty=format:%H%x00%s"];
         args.extend(limit.as_deref());
-        args.push(&range);
+        args.push(range);
+        args.push("--");
         let out = Self::run_trimmed(&args, repo)?;
         out.lines()
             .filter(|l| !l.is_empty())
@@ -1170,11 +1179,35 @@ impl GitVcs {
             .collect()
     }
 
+    /// The commit `spelled` names in `repo`, as git resolves a revision.
+    ///
+    /// `--quiet` makes an unknown revision an exit with no stderr, so the
+    /// absence is recognized by its shape rather than by git's wording, which
+    /// is translated. A spelling git would read as an option names nothing.
+    fn endpoint_commit(repo: &Path, spelled: &str) -> Result<CommitId, VcsError> {
+        let not_found = || VcsError::RevisionNotFound {
+            repo: repo.to_path_buf(),
+            rev: spelled.to_owned(),
+        };
+        if spelled.starts_with('-') {
+            return Err(not_found());
+        }
+        let deref = format!("{spelled}^{{commit}}");
+        let args = ["rev-parse", "--verify", "--quiet", &deref];
+        match Self::run_trimmed(args, repo) {
+            Ok(printed) => commit_id_printed(&printed, &args, repo),
+            Err(VcsError::CommandFailed { stderr, .. }) if stderr.trim().is_empty() => {
+                Err(not_found())
+            }
+            Err(e) => Err(e),
+        }
+    }
+
     /// Produce the unified diff of `from..to` in `repo`.
     ///
-    /// Private helper for [`Vcs::unique_diff`], which passes `from` = `git
-    /// merge-base <parent-tip> HEAD` and `to` = HEAD so the output is the
-    /// workweave's unique work with no phantom reversals.
+    /// Private helper for [`Vcs::diff_beyond`], which passes `from` = `git
+    /// merge-base <base> HEAD` and `to` = HEAD so the output is what HEAD adds
+    /// with no phantom reversals.
     fn diff_range(repo: &Path, from: &CommitId, to: &CommitId) -> Result<String, VcsError> {
         let range = format!("{from}..{to}");
         Self::run_trimmed(["diff", &range], repo)
@@ -1400,6 +1433,17 @@ fn git_conflict_resolution_hint(op: ConflictOp) -> String {
             "  # edit conflicted files\n  git add <files>\n  git cherry-pick --continue".to_string()
         }
     }
+}
+
+/// The revisions a git range expression names, as spelled: both sides of
+/// `A..B` or `A...B` (an empty side is HEAD and names none), or the whole
+/// expression less a leading `^`.
+fn range_endpoints(range: &str) -> Vec<&str> {
+    let sides = match range.split_once("...").or_else(|| range.split_once("..")) {
+        Some((left, right)) => vec![left, right],
+        None => vec![range.strip_prefix('^').unwrap_or(range)],
+    };
+    sides.into_iter().filter(|side| !side.is_empty()).collect()
 }
 
 /// True when stderr signals "revision unknown / no such object".
@@ -2798,33 +2842,44 @@ impl Vcs for GitVcs {
         GitVcs::ahead_behind_impl(repo, savepoint, tip)
     }
 
-    fn unique_commits(
+    fn commits_beyond(
         &self,
         repo: &Path,
         tip: &ResolvedRevisionId,
-        parent_tip: &ResolvedRevisionId,
+        base: &ResolvedRevisionId,
     ) -> Result<Vec<CommitSummary>, VcsError> {
-        // `parent..tip` excludes anything the parent already has, so a parent
-        // that advanced after the fork does not pollute the result.
-        Self::log_range(repo, parent_tip.id(), tip.id(), None)
+        Self::log_range(repo, base.id(), tip.id(), None)
     }
 
-    fn unique_diff(
-        &self,
-        repo: &Path,
-        parent_tip: &ResolvedRevisionId,
-    ) -> Result<UniqueDiff, VcsError> {
-        // Anchor the diff at the common ancestor of the tip and the parent
-        // tip — NOT the parent tip directly. If the parent advanced after the
-        // fork, diffing against its tip would show the parent's later work as
-        // phantom deletions; the merge-base is the fork point, so the diff is
-        // exactly this workweave's unique changes.
+    fn diff_beyond(&self, repo: &Path, base: &ResolvedRevisionId) -> Result<DiffBeyond, VcsError> {
         let tip = Self::rev_parse(repo, "HEAD")?;
-        let base = Self::merge_base(repo, parent_tip.id(), &tip)?;
-        let text = Self::diff_range(repo, &base, &tip)?;
-        Ok(UniqueDiff {
-            base: Some(base),
+        let anchor = Self::merge_base(repo, base.id(), &tip)?;
+        let text = Self::diff_range(repo, &anchor, &tip)?;
+        Ok(DiffBeyond {
+            base: Some(anchor),
             text,
+        })
+    }
+
+    fn log(&self, repo: &Path, range: Option<&str>) -> Result<RangeListing, VcsError> {
+        let Some(range) = range else {
+            return Ok(RangeListing {
+                endpoints: Vec::new(),
+                commits: Self::log_spelled(repo, "HEAD", None)?,
+            });
+        };
+        let endpoints = range_endpoints(range)
+            .into_iter()
+            .map(|spelled| {
+                Ok(ResolvedEndpoint {
+                    id: Self::endpoint_commit(repo, spelled)?,
+                    spelled: spelled.to_owned(),
+                })
+            })
+            .collect::<Result<Vec<_>, VcsError>>()?;
+        Ok(RangeListing {
+            endpoints,
+            commits: Self::log_spelled(repo, range, None)?,
         })
     }
 
@@ -6520,5 +6575,151 @@ mod peer_registration_tests {
 
         assert_eq!(origin.unwrap(), RefOrigin::Adopted);
         assert_eq!(git(&dest, &["symbolic-ref", "--short", "HEAD"]), "p--w");
+    }
+}
+
+#[cfg(test)]
+mod log_tests {
+    use super::*;
+
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let out = git_command_in_test()
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("run git");
+        assert!(
+            out.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap().trim().to_owned()
+    }
+
+    fn commit(repo: &Path, name: &str) -> CommitId {
+        std::fs::write(repo.join(name), name).unwrap();
+        git(repo, &["add", "."]);
+        git(repo, &["commit", "-m", name]);
+        GitVcs.head_revision(repo).unwrap().id().clone()
+    }
+
+    /// `main` at `base`, then `feat` one commit past it and `main` one commit
+    /// past it, with HEAD on `feat`.
+    fn diverged() -> (tempfile::TempDir, CommitId, CommitId, CommitId) {
+        let tmp = crate::tempdir().unwrap();
+        let p = tmp.path();
+        git(p, &["init", "-b", "main"]);
+        git(p, &["config", "user.email", "t@t"]);
+        git(p, &["config", "user.name", "T"]);
+        let base = commit(p, "base");
+        git(p, &["branch", "feat"]);
+        let main_tip = commit(p, "main-work");
+        git(p, &["switch", "feat"]);
+        let feat_tip = commit(p, "feat-work");
+        (tmp, base, main_tip, feat_tip)
+    }
+
+    fn subjects(commits: &[CommitSummary]) -> Vec<&str> {
+        commits.iter().map(|c| c.subject.as_str()).collect()
+    }
+
+    #[test]
+    fn the_endpoints_of_a_range_are_its_spelled_sides_less_an_empty_one() {
+        assert_eq!(range_endpoints("a..b"), ["a", "b"]);
+        assert_eq!(range_endpoints("a...b"), ["a", "b"]);
+        assert_eq!(range_endpoints("a.."), ["a"]);
+        assert_eq!(range_endpoints("..b"), ["b"]);
+        assert_eq!(range_endpoints("^a"), ["a"]);
+        assert_eq!(range_endpoints("a"), ["a"]);
+        assert_eq!(range_endpoints("v1.2"), ["v1.2"]);
+    }
+
+    #[test]
+    fn log_lists_a_range_newest_first_with_the_commit_each_endpoint_names() {
+        let (tmp, _base, main_tip, feat_tip) = diverged();
+
+        let listing = GitVcs.log(tmp.path(), Some("main..feat")).unwrap();
+
+        assert_eq!(subjects(&listing.commits), ["feat-work"]);
+        let endpoints: Vec<(&str, &CommitId)> = listing
+            .endpoints
+            .iter()
+            .map(|e| (e.spelled.as_str(), &e.id))
+            .collect();
+        assert_eq!(endpoints, [("main", &main_tip), ("feat", &feat_tip)]);
+    }
+
+    #[test]
+    fn log_with_no_range_is_the_log_of_head() {
+        let (tmp, _base, _main_tip, _feat_tip) = diverged();
+
+        let listing = GitVcs.log(tmp.path(), None).unwrap();
+
+        assert_eq!(subjects(&listing.commits), ["feat-work", "base"]);
+        assert!(listing.endpoints.is_empty());
+    }
+
+    #[test]
+    fn log_names_the_endpoint_that_resolves_to_nothing_as_spelled() {
+        let (tmp, ..) = diverged();
+
+        match GitVcs.log(tmp.path(), Some("main..nosuch")) {
+            Err(VcsError::RevisionNotFound { rev, .. }) => assert_eq!(rev, "nosuch"),
+            other => panic!("expected RevisionNotFound, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn log_does_not_read_a_spelling_git_would_take_for_an_option() {
+        let (tmp, ..) = diverged();
+
+        for spelled in ["--all", "main..--all", "-1"] {
+            match GitVcs.log(tmp.path(), Some(spelled)) {
+                Err(VcsError::RevisionNotFound { rev, .. }) => {
+                    assert!(spelled.contains(&rev), "{spelled}: {rev}");
+                }
+                other => panic!("{spelled}: expected RevisionNotFound, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn log_does_not_read_a_file_named_like_the_endpoint_as_a_revision() {
+        let (tmp, ..) = diverged();
+        std::fs::write(tmp.path().join("nosuch"), "a file").unwrap();
+
+        assert!(matches!(
+            GitVcs.log(tmp.path(), Some("nosuch")),
+            Err(VcsError::RevisionNotFound { .. })
+        ));
+    }
+
+    #[test]
+    fn commits_beyond_excludes_what_the_base_already_has() {
+        let (tmp, _base, main_tip, feat_tip) = diverged();
+        let main = GitVcs.resolve_revision(tmp.path(), "main").unwrap();
+        let feat = GitVcs.resolve_revision(tmp.path(), "feat").unwrap();
+
+        let beyond = GitVcs.commits_beyond(tmp.path(), &feat, &main).unwrap();
+
+        assert_eq!(subjects(&beyond), ["feat-work"]);
+        assert_eq!(beyond[0].id, feat_tip);
+        assert_ne!(beyond[0].id, main_tip);
+    }
+
+    #[test]
+    fn diff_beyond_starts_at_the_merge_base_not_at_the_base() {
+        let (tmp, base, _main_tip, _feat_tip) = diverged();
+        let main = GitVcs.resolve_revision(tmp.path(), "main").unwrap();
+
+        let beyond = GitVcs.diff_beyond(tmp.path(), &main).unwrap();
+
+        assert_eq!(beyond.base, Some(base));
+        assert!(beyond.text.contains("feat-work"), "{}", beyond.text);
+        assert!(
+            !beyond.text.contains("main-work"),
+            "work the base gained after the fork is not a reversal:\n{}",
+            beyond.text
+        );
     }
 }

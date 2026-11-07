@@ -1512,3 +1512,251 @@ fn dc27_envelope_routes_once_per_kind_last_and_changes_nothing() {
         );
     }
 }
+
+fn json_of(out: &std::process::Output) -> serde_json::Value {
+    serde_json::from_slice(&out.stdout).unwrap_or_else(|e| {
+        panic!(
+            "one JSON document ({e}):\n{}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        )
+    })
+}
+
+/// The pins `branch` of the project repo records, by member key.
+fn pins_on(sandbox: &Sandbox, branch: &str) -> std::collections::BTreeMap<String, String> {
+    let proj = sandbox.checkout(&a(), Repo::Proj);
+    let lock: serde_json::Value =
+        serde_json::from_str(&sandbox.git_ok(&proj, &["show", &format!("{branch}:rwv.lock")]))
+            .unwrap();
+    lock["repositories"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .map(|(key, entry)| (key.clone(), entry["version"].as_str().unwrap().to_owned()))
+        .collect()
+}
+
+fn record<'a>(doc: &'a serde_json::Value, path: &str) -> &'a serde_json::Value {
+    doc["repos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["path"] == path)
+        .unwrap_or_else(|| panic!("no record for {path}:\n{doc:#}"))
+}
+
+fn commit_ids(record: &serde_json::Value) -> Vec<String> {
+    record["commits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["sha"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+fn revisions(sandbox: &Sandbox, repo: Repo, range: &str) -> Vec<String> {
+    sandbox
+        .git_ok(&sandbox.checkout(&a(), repo), &["rev-list", range])
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// dc28-log-against-target: a feature whose target moved. `rwv log --against
+/// main` lists exactly each repo's commits beyond what main's lock pins, read
+/// from the pins and not from main's branch tips; `--diff` starts at the merge
+/// base of each pin and HEAD; and `--json` carries path, HEAD, pin and
+/// commits per repo.
+#[test]
+fn dc28_log_against_target_lists_the_unlanded_commits_and_anchors_the_diff() {
+    let sandbox = Sandbox::new(Seed::default());
+    runner::run_in(&sandbox, scenarios::feature_whose_target_moved()).assert_green();
+    let primary = sandbox.place_root(&a());
+    let before = refs_and_locks(&sandbox);
+
+    let out = sandbox.rwv(&primary, &["log", "--against", "main", "--json"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let doc = json_of(&out);
+    let pins = pins_on(&sandbox, "main");
+    let mut listed = 0;
+    for member in Repo::MEMBERS {
+        let key = member.rel_path();
+        let rec = record(&doc, &key);
+        let pin = &pins[&key];
+        let dir = sandbox.checkout(&a(), member);
+        assert_eq!(rec["pin"], pin.as_str(), "{key}");
+        assert_eq!(
+            rec["head"],
+            sandbox.git_ok(&dir, &["rev-parse", "HEAD"]).as_str(),
+            "{key}"
+        );
+        let expected = revisions(&sandbox, member, &format!("{pin}..HEAD"));
+        assert_eq!(
+            commit_ids(rec),
+            expected,
+            "{key}: exactly the unlanded commits"
+        );
+        listed += expected.len();
+    }
+    assert_eq!(
+        listed, 4,
+        "app's two, lib's one and docs' unlocked commit: {doc:#}"
+    );
+    let docs = record(&doc, &Repo::Docs.rel_path());
+    assert_ne!(
+        docs["pin"],
+        sandbox
+            .git_ok(&sandbox.checkout(&a(), Repo::Docs), &["rev-parse", "main"])
+            .as_str(),
+        "docs' main holds a commit main's lock does not pin: the pin, not the tip, is read"
+    );
+    let project = record(&doc, "(project)");
+    assert_eq!(
+        commit_ids(project),
+        revisions(&sandbox, Repo::Proj, "main..HEAD")
+    );
+    assert_eq!(
+        project["pin"],
+        sandbox
+            .git_ok(&sandbox.checkout(&a(), Repo::Proj), &["rev-parse", "main"])
+            .as_str()
+    );
+
+    let out = sandbox.rwv(&primary, &["log", "--against", "main", "--diff", "--json"]);
+    assert!(out.status.success());
+    let doc = json_of(&out);
+    assert_eq!(doc["diff"], true);
+    let app_dir = sandbox.checkout(&a(), Repo::App);
+    let app = record(&doc, &Repo::App.rel_path());
+    let anchor = sandbox.git_ok(
+        &app_dir,
+        &["merge-base", pins[&Repo::App.rel_path()].as_str(), "HEAD"],
+    );
+    assert_eq!(app["diff_base"], anchor.as_str());
+    let diff = app["diff"].as_str().unwrap();
+    assert!(
+        diff.contains("feat-app-1.txt") && diff.contains("feat-app-2.txt"),
+        "{diff}"
+    );
+    assert!(
+        !diff.contains("main-app.txt"),
+        "main's own commit after the fork is no reversal in the feature's diff:\n{diff}"
+    );
+    assert!(record(&doc, &Repo::Lib.rel_path())["diff"]
+        .as_str()
+        .unwrap()
+        .contains("feat-lib.txt"));
+
+    assert_eq!(refs_and_locks(&sandbox), before, "a log moves no ref");
+}
+
+/// log-against: `rwv log feat-x..` resolves the range in each repo as git
+/// would, a member without the branch is reported in its own section with a
+/// non-zero exit while the others are still listed, `--against` reads main's
+/// pins, and `--against nosuch` refuses before listing.
+#[test]
+fn log_against_resolves_a_range_per_repo_and_reads_the_pins_of_a_weave_branch() {
+    let sandbox = Sandbox::new(Seed::default());
+    runner::run_in(&sandbox, scenarios::feature_branches_in_some_members()).assert_green();
+    let primary = sandbox.place_root(&a());
+    let before = refs_and_locks(&sandbox);
+    let docs_key = Repo::Docs.rel_path();
+
+    let out = sandbox.rwv(&primary, &["log", "feat-x.."]);
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    let app_section = stdout
+        .split("=== ")
+        .find(|s| s.starts_with(&Repo::App.rel_path()))
+        .expect("app has a section");
+    let as_git = sandbox.git_ok(
+        &sandbox.checkout(&a(), Repo::App),
+        &["log", "--format=%s", "feat-x..HEAD"],
+    );
+    assert_eq!(as_git, "main-after");
+    assert!(app_section.contains("main-after"), "{stdout}");
+    assert!(
+        stdout.contains(&format!(
+            "=== {docs_key} ===\n  name no-such-branch (feat-x)\n"
+        )),
+        "docs has no feat-x:\n{stdout}"
+    );
+    assert!(stdout.contains("=== (project) ==="), "{stdout}");
+    assert!(
+        stderr.contains(&format!(
+            "rwv log: {docs_key}: name no-such-branch (feat-x)\n"
+        )),
+        "{stderr}"
+    );
+    assert!(stderr.ends_with("\nrwv explain name\n"), "{stderr}");
+
+    let out = sandbox.rwv(&primary, &["log", "main..feat-x", "--json"]);
+    assert_eq!(out.status.code(), Some(1));
+    let doc = json_of(&out);
+    for repo in [Repo::App, Repo::Lib] {
+        let expected = revisions(&sandbox, repo, "main..feat-x");
+        assert_eq!(expected.len(), 1, "{}: one commit on feat-x", repo.name());
+        assert_eq!(
+            commit_ids(record(&doc, &repo.rel_path())),
+            expected,
+            "{}",
+            repo.name()
+        );
+    }
+    let docs = record(&doc, &docs_key);
+    assert!(
+        !sandbox
+            .git(
+                &sandbox.checkout(&a(), Repo::Docs),
+                &["rev-list", "main..feat-x"]
+            )
+            .status
+            .success(),
+        "git itself finds no feat-x in docs"
+    );
+    assert_eq!(docs["refused"][0]["state"], "no-such-branch");
+    assert_eq!(docs["refused"][0]["subject"], "feat-x");
+    assert!(commit_ids(docs).is_empty());
+    assert_eq!(
+        commit_ids(record(&doc, "(project)")),
+        revisions(&sandbox, Repo::Proj, "main..feat-x")
+    );
+
+    let out = sandbox.rwv(&primary, &["log", "--against", "main", "--json"]);
+    assert!(out.status.success());
+    let doc = json_of(&out);
+    let pins = pins_on(&sandbox, "main");
+    for member in Repo::MEMBERS {
+        let key = member.rel_path();
+        assert_eq!(record(&doc, &key)["pin"], pins[&key].as_str(), "{key}");
+    }
+    assert_eq!(
+        commit_ids(record(&doc, &Repo::App.rel_path())),
+        revisions(
+            &sandbox,
+            Repo::App,
+            &format!("{}..HEAD", pins[&Repo::App.rel_path()])
+        )
+    );
+
+    let out = sandbox.rwv(&primary, &["log", "--against", "nosuch"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        out.stdout.is_empty(),
+        "nothing is listed before the refusal"
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr)
+            .contains("rwv log: projects/proj: name no-such-branch (nosuch)\n"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    assert_eq!(refs_and_locks(&sandbox), before, "a log moves no ref");
+}

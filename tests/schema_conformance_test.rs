@@ -77,6 +77,7 @@ use repoweave::integration::{Issue, IssueKind, IssueSource, Severity};
 use repoweave::integration::{MemberIncompatibility, MissingTool, Observed};
 use repoweave::integrations::GoWork;
 use repoweave::integrations::NpmWorkspaces;
+use repoweave::log::{LogCommit, LogEndpoint, LogJsonOutput, LogRepo, LOG_SCHEMA_URL};
 use repoweave::op_state::{OpPhase, OpVerb, Override};
 use repoweave::path_spelling::WirePath;
 use repoweave::placement::PlacementOutput;
@@ -130,6 +131,11 @@ fn cases() -> Vec<VerbCase> {
             verb: "fetch",
             schema_url: FETCH_SCHEMA_URL,
             corpus: fetch_corpus,
+        },
+        VerbCase {
+            verb: "log",
+            schema_url: LOG_SCHEMA_URL,
+            corpus: log_corpus,
         },
         VerbCase {
             verb: "push",
@@ -483,6 +489,117 @@ fn push_corpus() -> Vec<(&'static str, Value)> {
                 outcomes: Vec::new(),
                 refused: Vec::new(),
                 resolution: None,
+            }),
+        ),
+    ]
+}
+
+// ---------------------------------------------------------------------------
+// log
+// ---------------------------------------------------------------------------
+
+fn log_commit(byte: char, subject: &str) -> LogCommit {
+    let sha = repoweave::vcs::CommitId::parse(&sha(byte)).unwrap();
+    LogCommit {
+        short: sha.short().to_owned(),
+        sha,
+        subject: subject.to_owned(),
+    }
+}
+
+fn log_repo(path: &str) -> LogRepo {
+    LogRepo {
+        path: path.parse().unwrap(),
+        head: Some(repoweave::vcs::CommitId::parse(&sha('a')).unwrap()),
+        pin: None,
+        endpoints: Vec::new(),
+        commits: Vec::new(),
+        diff_base: None,
+        diff: None,
+        note: None,
+        refused: Vec::new(),
+    }
+}
+
+fn log_corpus() -> Vec<(&'static str, Value)> {
+    let pin = repoweave::vcs::CommitId::parse(&sha('b')).unwrap();
+    let ranged = LogRepo {
+        endpoints: vec![
+            LogEndpoint {
+                spelled: "main".to_owned(),
+                id: repoweave::vcs::CommitId::parse(&sha('b')).unwrap(),
+            },
+            LogEndpoint {
+                spelled: "feat-x".to_owned(),
+                id: repoweave::vcs::CommitId::parse(&sha('a')).unwrap(),
+            },
+        ],
+        commits: vec![log_commit('a', "lib: feat work")],
+        ..log_repo(REPO)
+    };
+    let missing_an_endpoint = LogRepo {
+        head: None,
+        refused: judged_on_every_axis(),
+        ..log_repo("github/acme/other")
+    };
+    let pinned = LogRepo {
+        pin: Some(pin.clone()),
+        commits: vec![log_commit('a', "lib: feat work"), log_commit('c', "second")],
+        ..log_repo(REPO)
+    };
+    let not_pinned = LogRepo {
+        note: Some("not in main".to_owned()),
+        ..log_repo("github/acme/added")
+    };
+    let diffed = LogRepo {
+        pin: Some(pin.clone()),
+        diff_base: Some(pin),
+        diff: Some("diff --git a/f b/f\n".to_owned()),
+        ..log_repo(REPO)
+    };
+    let project = || log_repo("(project)");
+    vec![
+        (
+            "a-range-one-repo-lacks-an-endpoint-of",
+            value(LogJsonOutput {
+                schema_url: LOG_SCHEMA_URL.to_owned(),
+                range: Some("main..feat-x".to_owned()),
+                against: None,
+                diff: false,
+                repos: vec![ranged, missing_an_endpoint, project()],
+            }),
+        ),
+        (
+            "against-with-a-member-the-branch-does-not-pin",
+            value(LogJsonOutput {
+                schema_url: LOG_SCHEMA_URL.to_owned(),
+                range: None,
+                against: Some("main".to_owned()),
+                diff: false,
+                repos: vec![pinned, not_pinned, project()],
+            }),
+        ),
+        (
+            "against-with-a-diff",
+            value(LogJsonOutput {
+                schema_url: LOG_SCHEMA_URL.to_owned(),
+                range: None,
+                against: Some("main".to_owned()),
+                diff: true,
+                repos: vec![diffed, project()],
+            }),
+        ),
+        (
+            "bare",
+            value(LogJsonOutput {
+                schema_url: LOG_SCHEMA_URL.to_owned(),
+                range: None,
+                against: None,
+                diff: false,
+                repos: vec![LogRepo {
+                    commits: vec![log_commit('a', "initial")],
+                    ..log_repo(REPO)
+                }],
             }),
         ),
     ]
@@ -1348,7 +1465,7 @@ fn first_doc(case: &VerbCase) -> Value {
 fn records_key(verb: &str) -> &'static str {
     match verb {
         "doctor" => "violations",
-        "status" | "update" => "repos",
+        "status" | "update" | "log" => "repos",
         "refusal" => "refused",
         _ => "outcomes",
     }

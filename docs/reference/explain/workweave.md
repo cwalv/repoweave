@@ -192,48 +192,12 @@ another way (crash, hand-deletion) leaves a `dangling-parent` that
 
 List existing workweave names for the project. One name per line.
 
-### `rwv workweave log [--diff] [--json]`
-
-Show this workweave's **unique commits vs its recorded parent**, per member
-repo and the project repo (`projects/<project>`). Must be run from inside a
-workweave.
-
-Parent identity comes from the `.rwv-workweave` marker's `parent:` field, never
-from the branch name: a workweave's branch is the flat `{project}--{name}`,
-which names no parent, and adoption can re-point a child to primary. The verb
-reads the marker, so it is correct for nested and adopted parents alike.
-
-For each repo, "unique" commits are those in the workweave's history but not
-the parent's — reachable from the workweave's tip but not from the parent's tip
-of the same repo. This stays correct when the parent **advanced** after the
-fork: commits the parent already has are excluded.
-
-The project repo (`projects/<project>`) is included as a first-class
-participant. It carries real per-workweave work — doc commits, lock bumps — and
-appears as `=== (project) ===` in text output and as a top-level `project_repo`
-field in JSON output. This mirrors the representation sync-to uses for
-`project_repo_advance`.
-
-- `--diff` — instead of the commit listing, show the workweave's unique diff vs
-  its parent. The diff is anchored at the **common ancestor** of the workweave
-  tip and the parent tip, NOT the parent tip directly: anchoring at the common
-  ancestor keeps commits the parent gained after the fork from being shown as
-  reversals.
-- `--json` — machine-readable output (envelope: `workweave`, `parent`, `diff`,
-  `repos[]`, `project_repo`; each repo entry carries `head`, `parent_tip`,
-  `unique_commits[]`, and — in diff mode — `diff_base` + `diff`; `project_repo`
-  has the same shape with `path` set to `"(project)"`).
-
-This is the surface consumers use to read a workweave's parent-relative history
-instead of hand-rolling branch-name derivation.
-
 ## Invocation
 
 ```
 rwv workweave create <name> [--from <source>] [--replace-existing] [--capture-dirty] [--dir <path> | --basedir <path>] [--project <name>] [--no-materialize]
 rwv workweave delete <name> [--discard-uncommitted] [--discard-unmerged-commits] [--project <name>]
 rwv workweave list [--project <name>]
-rwv workweave log [--diff] [--json]
 rwv workweave set-default-create-basedir <path> [--project <name>]
 rwv workweave --hook-mode create <name> [...]
 rwv workweave --claude-hook

@@ -51,6 +51,7 @@ rwv push
 |---------|-------------|
 | `rwv` | Show workspace context (active project, repos, workweaves) |
 | `rwv status` | Per-repo branch, working-tree, and lock alignment status |
+| `rwv log [RANGE]` | The VCS's log per repo; `--against W` lists the commits beyond weave branch W's pins (`--diff` for the diff) |
 | `rwv doctor` | Check workspace conventions (`--fix` repairs auto-fixable findings) |
 | `rwv activate PROJECT` | Switch `.rwv-active`, surface weave-root symlinks, run install hooks |
 | `rwv materialize` | Settle drift, clean up disabled integrations, repair symlinks, run hooks |
@@ -63,7 +64,6 @@ rwv push
 | `rwv push` | Push member repos then the project repo from the primary weave |
 | `rwv workweave create NAME` | Create an isolated workweave on branch `PROJECT--NAME` and run its install hooks |
 | `rwv workweave list` | List active workweaves for a project |
-| `rwv workweave log` | Show unique commits or `--diff` in a workweave vs its parent |
 | `rwv workweave delete NAME` | Delete a workweave (refuses on uncommitted or unmerged work) |
 | `rwv sync <SOURCE>` | Pull another workspace's committed state into CWD (`--continue` to resume) |
 | `rwv sync-to [TARGET]` | Land CWD's work into target workspace (`--retire` deletes workweave after) |
@@ -87,7 +87,7 @@ Run `rwv --help` or `rwv <command> --help` for full flag details.
 
 ## Agent integration surfaces
 
-Machine-readable `--json` output is supported on `rwv status --json`, `rwv doctor --json`, `rwv sync --json`, `rwv sync-to --json`, `rwv fetch --json`, `rwv update --json`, `rwv push --json`, and `rwv workweave log` (with `--json`). Each emits one JSON envelope; on the multi-worker verbs (`fetch`, `update`, `push`, `sync`, `sync-to`) `-j` changes only how many repos run at once:
+Machine-readable `--json` output is supported on `rwv status --json`, `rwv doctor --json`, `rwv sync --json`, `rwv sync-to --json`, `rwv fetch --json`, `rwv update --json`, `rwv push --json`, and `rwv log --json`. Each emits one JSON envelope; on the multi-worker verbs (`fetch`, `update`, `push`, `sync`, `sync-to`) `-j` changes only how many repos run at once:
 - `rwv status --json` — per-repo records carry `path` (manifest-relative) and `absolute_path` (fully resolved on disk), plus `lock_pinned_by_name` when an older lock entry holds a ref name instead of a commit SHA; status records are flat and have no `kind` field.
 - `rwv sync --json` / `rwv sync-to --json` — per-repo outcome records carry `kind` (kebab-case discriminant), `path`, and `absolute_path`; the envelope's `complete` is `true` when the op finished and cleared op-state. Both exit 1 when a checkout replay could not prune is left on disk, even though the op completed.
 - `rwv doctor --json` — violations carry a kebab-case `kind` discriminant (and optional `sub_kind`); path fields are per-variant: per-repo variants carry `path` + `absolute_path`, `weave-root-identity-conflict` carries `root`, and `workweave-tree-integrity` carries `workweave_dir`. Integration findings appear on the `issues` array.

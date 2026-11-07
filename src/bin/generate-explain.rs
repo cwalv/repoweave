@@ -98,6 +98,7 @@ use repoweave::cli::Cli;
 use repoweave::diagnosis::{RefusalJsonOutput, REFUSAL_SCHEMA_URL};
 use repoweave::explain;
 use repoweave::fetch::FetchJsonOutput;
+use repoweave::log::LogJsonOutput;
 use repoweave::path_spelling::{weave_relative, CanonicalPath};
 use repoweave::plugins::envelope_vars;
 use repoweave::push::{PushJsonOutput, PUSH_SCHEMA_URL};
@@ -315,6 +316,11 @@ fn schema_update() -> String {
     serde_json::to_string_pretty(&schema).expect("update schema serializes")
 }
 
+fn schema_log() -> String {
+    let schema = schema_for!(LogJsonOutput);
+    serde_json::to_string_pretty(&schema).expect("log schema serializes")
+}
+
 fn schema_refusal() -> String {
     let schema = schema_for!(RefusalJsonOutput);
     serde_json::to_string_pretty(&schema).expect("refusal schema serializes")
@@ -348,6 +354,11 @@ fn verbs() -> Vec<Verb> {
             name: "status",
             summary: "per-repo workspace state (branch, tip, lock, relation)",
             schema: Some(schema_status),
+        },
+        Verb {
+            name: "log",
+            summary: "the VCS's log per repo, or the commits beyond a weave branch's pins",
+            schema: Some(schema_log),
         },
         Verb {
             name: "doctor",
@@ -4608,6 +4619,10 @@ fn main() -> anyhow::Result<()> {
     assert!(
         repoweave::fetch::FETCH_SCHEMA_URL.ends_with("/docs/reference/schemas/fetch.json"),
         "FETCH_SCHEMA_URL no longer points at the committed artifact"
+    );
+    assert!(
+        repoweave::log::LOG_SCHEMA_URL.ends_with("/docs/reference/schemas/log.json"),
+        "LOG_SCHEMA_URL no longer points at the committed artifact"
     );
     assert!(
         UPDATE_SCHEMA_URL.ends_with("/docs/reference/schemas/update.json"),

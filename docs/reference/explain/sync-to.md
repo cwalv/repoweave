@@ -352,7 +352,7 @@ Schema:
           ]
         },
         {
-          "description": "A name the verb would record is unusable.",
+          "description": "A name the verb was given is unusable.",
           "type": "string",
           "enum": [
             "name"

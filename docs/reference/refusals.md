@@ -103,9 +103,9 @@ print `error:` and exit 2, where a refusal exits 1.
 
 ### `name`
 
-**Condition.** A name the verb would record cannot be used: another workweave already holds it, or it reads as a revision where a branch belongs.
+**Condition.** A name the verb was given cannot be used: another workweave already holds it, it reads as a revision where a branch belongs, or it names nothing in a repo the verb read.
 
-**Why.** A workweave name maps to one workweave; recording a second would make every later address ambiguous, and a delete would remove whichever was found first. A member entry's `branch` declares the branch to track while the lock records where you are, so a commit id or release tag there leaves nothing to track.
+**Why.** A workweave name maps to one workweave; recording a second would make every later address ambiguous, and a delete would remove whichever was found first. A member entry's `branch` declares the branch to track while the lock records where you are, so a commit id or release tag there leaves nothing to track. A name that resolves to nothing has no tip to read, and reading another branch in its place would answer a question nobody asked.
 
 **States.** A refused verb prints `rwv <verb>: <repo>: name <state>` for each repo it judged in one of these, with what the state lists beneath it.
 
@@ -113,6 +113,7 @@ print `error:` and exit 2, where a refusal exits 1.
 |---|---|---|
 | `taken` | the project already records a workweave by this name at another path, or the directory the workweave would take is another workweave's | `rwv workweave create` |
 | `a revision` | the branch `rwv member add` would declare reads as a commit id (seven or more hex digits) or a release tag (`v2.0`, `v0.3.4-rc1`) | `rwv member add`, for the remote's default branch or, with `--new`, the branch the new repo is on |
+| `no-such-branch` | a branch or revision the verb was asked to read names nothing in this repo, spelled as the repo's VCS resolves it; the name is listed with the repo it is missing from, and the repos that have it are still read | `rwv log`, for a range endpoint a member lacks, and for the weave branch `--against` names |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
 

@@ -395,6 +395,24 @@ Show per-repo state for the CWD workspace.
 
 A `missing` relation names a clone directory that has vanished; the repair is `rwv fetch` with no source — the in-place re-materialize mode — run from the weave root (see [`rwv fetch`](#rwv-fetch-source-) above and `rwv doctor` for the paired detection: `missing-canonical-clone`, `dangling-reference`). An `unreachable` relation names a clone that is present but whose object store lacks the locked SHA; in-place `rwv fetch` does not repair it (with the directory present it performs a local checkout without a network fetch). If the remote still has the revision, `git fetch` in the affected repo re-pulls it; if the remote's history was rewritten, re-lock to a reachable state — see [reconcile repos](../how-to/reconcile-repos.md).
 
+### `rwv log [<range>] [--against <W>] [--diff] [--json] [--project <name>]`
+
+Show the VCS's log in each repo of the project the invocation resolves to: every member, then the project repo (`projects/<project>`). It runs in a primary weave or a workweave alike; `rwv -w <project>--<name> log ...` addresses a workweave from elsewhere. Nothing is written.
+
+| Flag | Effect |
+|---|---|
+| `<range>` | A range in the VCS's own syntax (for git, `main..feat-x`, `feat-x..`, `v1.2...main`), read in every repo. Each endpoint resolves in each repo as the VCS would resolve it. Refused together with `--against` |
+| `--against <W>` | A weave branch's pins have their own spelling. Per member, list the commits HEAD reaches that `<W>`'s pin for that member does not; in the project repo, those `<W>` lacks. `<W>` is a branch of the project repo, local or remote-tracking as last fetched, whose tip carries `rwv.toml`. A member `<W>` does not pin is listed as `not in <W>`. Run it in a feature to list what the feature has not landed on its target |
+| `--diff` | With `--against` only: show each repo's diff from the common ancestor of its pin and HEAD to HEAD, in place of the commit listing. Anchored at the common ancestor, so commits the pin gained after HEAD forked are not shown as reversals |
+| `--json` | Emit the envelope below |
+| `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
+
+With neither `<range>` nor `--against`, each repo lists the VCS's log of its HEAD; there is no default weave branch, so a bare `rwv log` never reads pins.
+
+A repo where a `<range>` endpoint names nothing prints `name no-such-branch` naming the endpoint in its own section, the other repos are still listed, and the exit is non-zero; the refusal that follows on stderr prints the choices and the `rwv explain name` route. An `--against` whose `<W>` is no weave branch refuses `name no-such-branch` before listing anything. A repo that could not be read in full for another reason (a missing checkout, a pin the checkout does not hold) is listed with a `note` and leaves the exit at `0`.
+
+Text output is one `=== <path> ===` section per member followed by `=== (project) ===`, each listing `<12-character sha> <subject>`. `--json` emits `{"$schema": "...", "range"?, "against"?, "diff", "repos": [...]}`. Each element of `repos` carries `path`, `head`, and `commits[]` (each `{ "sha", "short", "subject" }`); with `--against`, `pin` (the commit `<W>` pins for the repo, `<W>`'s own tip for the project repo, absent for a member it does not pin); with a range, `endpoints[]` (each `{ "spelled", "id" }`, the commit each endpoint names in that repo); under `--diff`, `diff_base` and `diff`; `note` when the repo could not be fully read; and `refused[]` (the records [below](#refused-repos-under---json)) in a repo where an endpoint named nothing. See [JSON envelope convention](#--json-envelope-convention).
+
 ### `rwv doctor [...]`
 
 Convention and health audit across clones, `rwv.toml`, `rwv.lock`, workweaves, op-state leases, git attributes/merge drivers, and enabled integrations.
@@ -450,17 +468,6 @@ Both checks cover every checkout under the workweave, not only the members the p
 ### `rwv workweave list`
 
 List workweaves for a project. `--project <name>` names the project.
-
-### `rwv workweave log [--diff] [--json]`
-
-Show this workweave's unique commits versus its recorded parent, per repo, including the project repo (`projects/<project>`). Must be run from inside a workweave.
-
-| Flag | Effect |
-|---|---|
-| `--diff` | Show the unique diff versus the parent instead of the commit listing. Anchored at the common ancestor, so commits the parent gained after the fork are not shown as reversals |
-| `--json` | Emit machine-readable JSON |
-
-Text output includes one `=== <path> ===` section per member repo followed by `=== (project) ===` for the project repo. `--json` emits an object with `workweave`, `parent`, `diff` (boolean), `repos[]`, and `project_repo` (same shape as each element of `repos[]`, with `path` set to `"(project)"`). Each `repos[]` element carries `path`, `head`, `parent_tip` and `unique_commits[]` (each `{ "sha", "short", "subject" }`); under `--diff` also `diff_base` and `diff`; and `note` when the repo could not be fully read, such as a checkout that is missing.
 
 ### `rwv workweave [--hook-mode] [--claude-hook]`
 
@@ -551,7 +558,7 @@ The rendered bundles are checked in at `docs/reference/explain/` for offline bro
 
 ## Project resolution
 
-Project-scoped verbs (`member add`, `member remove`, `member set-role`, `member set-recurse-submodules`, `workweave create`, `workweave delete`, `workweave list`, `workweave set-default-create-basedir`, `lock`, `update`, `push`, `sync`, `sync-to`, `status`, `doctor`, `fetch` in-place) pick their target project via a fixed chain, highest priority first:
+Project-scoped verbs (`member add`, `member remove`, `member set-role`, `member set-recurse-submodules`, `workweave create`, `workweave delete`, `workweave list`, `workweave set-default-create-basedir`, `lock`, `update`, `push`, `sync`, `sync-to`, `status`, `log`, `doctor`, `fetch` in-place) pick their target project via a fixed chain, highest priority first:
 
 1. `--project <name>` — the explicit override on the invocation.
 2. `-w/--workweave <project>--<name>` — the `<project>--` prefix of the global workweave-selector flag names the project.
@@ -583,7 +590,7 @@ Changing into `projects/<name>/` does not select that project. When `.rwv-active
 Error: CWD is inside projects/mobile/, but `.rwv-active` selects web, so this would act on web. Pass `--project mobile` to act on mobile, or `--project web` to act on web from here; `rwv activate mobile` switches the active project.
 ```
 
-Reporting verbs do not refuse: `rwv status` warns, naming `--project <name>` and `rwv activate <name>`, and reports on the active project, and `rwv doctor` without `--fix` reports on the active project.
+Reporting verbs do not refuse: `rwv status` and `rwv log` warn, naming `--project <name>` and `rwv activate <name>`, and report on the active project, and `rwv doctor` without `--fix` reports on the active project.
 
 ### Corrective errors
 
@@ -623,7 +630,7 @@ states and the choices each prints.
 
 | Category | Verbs | Resolution behavior |
 |---|---|---|
-| Project-scoped | `member add`, `member remove`, `member set-role`, `member set-recurse-submodules`, `workweave create`, `workweave delete`, `workweave list`, `workweave set-default-create-basedir`, `lock`, `update`, `push`, `sync`, `sync-to`, `status`, `doctor` (project-scoped checks), `fetch` (in-place) | Full chain; target line when the pointer decides |
+| Project-scoped | `member add`, `member remove`, `member set-role`, `member set-recurse-submodules`, `workweave create`, `workweave delete`, `workweave list`, `workweave set-default-create-basedir`, `lock`, `update`, `push`, `sync`, `sync-to`, `status`, `log`, `doctor` (project-scoped checks), `fetch` (in-place) | Full chain; target line when the pointer decides |
 | Project named positionally | `activate <project>` | Explicit already; no chain consulted |
 | Workspace-scoped, no project | `init`, `abort`, `resolve`, `prime`, `explain`, `doctor` (cross-project scan) | No project selection involved |
 
@@ -679,6 +686,7 @@ Every JSON-capable verb emits a self-describing envelope:
 | Verb | Envelope key |
 |---|---|
 | `rwv status --json` | `repos` |
+| `rwv log --json` | `repos` |
 | `rwv doctor --json` | `violations` (and `issues` for integration findings) |
 | `rwv fetch --json` | `outcomes` |
 | `rwv update --json` | `repos` |

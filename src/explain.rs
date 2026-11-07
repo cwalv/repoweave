@@ -13,6 +13,7 @@
 // templates + Rust types; CI fails if they drift.
 const INDEX_EXPLAIN: &str = include_str!("../docs/reference/explain/index.md");
 const STATUS_EXPLAIN: &str = include_str!("../docs/reference/explain/status.md");
+const LOG_EXPLAIN: &str = include_str!("../docs/reference/explain/log.md");
 const DOCTOR_EXPLAIN: &str = include_str!("../docs/reference/explain/doctor.md");
 const SYNC_EXPLAIN: &str = include_str!("../docs/reference/explain/sync.md");
 const SYNC_TO_EXPLAIN: &str = include_str!("../docs/reference/explain/sync-to.md");
@@ -220,6 +221,7 @@ pub fn documented_tokens() -> Vec<&'static str> {
 /// so a verb added or removed here changes both at once.
 const VERB_BUNDLES: &[(&str, &str)] = &[
     ("status", STATUS_EXPLAIN),
+    ("log", LOG_EXPLAIN),
     ("doctor", DOCTOR_EXPLAIN),
     ("sync", SYNC_EXPLAIN),
     ("sync-to", SYNC_TO_EXPLAIN),

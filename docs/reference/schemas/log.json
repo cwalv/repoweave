@@ -1,0 +1,384 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "LogJsonOutput",
+  "description": "Top-level envelope for `rwv log --json`.",
+  "type": "object",
+  "required": [
+    "$schema",
+    "diff",
+    "repos"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "against": {
+      "description": "The weave branch `--against` read the pins of.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "diff": {
+      "description": "Whether each repo carries a diff in place of its commits (`--diff`).",
+      "type": "boolean"
+    },
+    "range": {
+      "description": "The range as spelled; absent for a bare log and with `--against`.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "repos": {
+      "description": "Every member of the workspace's project, then the project repo.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/LogRepo"
+      }
+    }
+  },
+  "definitions": {
+    "Axis": {
+      "description": "What a refusal judged a repo on. Its token is the kind `rwv explain` serves; the order here is the order a repo's lines print in.",
+      "oneOf": [
+        {
+          "description": "Uncommitted work, or a VCS operation in progress, in a checkout.",
+          "type": "string",
+          "enum": [
+            "edits"
+          ]
+        },
+        {
+          "description": "Another checkout derives from what the verb would remove.",
+          "type": "string",
+          "enum": [
+            "checkout"
+          ]
+        },
+        {
+          "description": "A name the verb was given is unusable.",
+          "type": "string",
+          "enum": [
+            "name"
+          ]
+        },
+        {
+          "description": "What `rwv push` withheld.",
+          "type": "string",
+          "enum": [
+            "publish"
+          ]
+        }
+      ]
+    },
+    "ChoiceOutput": {
+      "type": "object",
+      "required": [
+        "phrase",
+        "run"
+      ],
+      "properties": {
+        "id": {
+          "description": "The choice's id on the axis's page; null for one it does not number.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "phrase": {
+          "type": "string"
+        },
+        "run": {
+          "description": "The commands, one per line, as the terminal prints them.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "where": {
+          "description": "The directory it must run in; null where it runs here or names its own directory.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/WirePath"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "CommitId": {
+      "description": "A full commit id: 40 lowercase hex digits, or 64 in a SHA-256 repository.",
+      "type": "string",
+      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "FactKind": {
+      "description": "A fact about a judged repo. Facts are reported; they never select a choice.",
+      "oneOf": [
+        {
+          "description": "A superseded tip was recorded for the branch.",
+          "type": "string",
+          "enum": [
+            "rewritten"
+          ]
+        },
+        {
+          "description": "The branch is an ancestor of where it lands.",
+          "type": "string",
+          "enum": [
+            "landed"
+          ]
+        },
+        {
+          "description": "Another project's live lock pins the commits.",
+          "type": "string",
+          "enum": [
+            "pinned-by"
+          ]
+        },
+        {
+          "description": "Other live weave branches declare the branch.",
+          "type": "string",
+          "enum": [
+            "shared"
+          ]
+        },
+        {
+          "description": "The pin is on the branch it lands into.",
+          "type": "string",
+          "enum": [
+            "pin-landed"
+          ]
+        },
+        {
+          "description": "The member was left detached because its branch is checked out elsewhere.",
+          "type": "string",
+          "enum": [
+            "checkout"
+          ]
+        },
+        {
+          "description": "The unlanded commits carry changes equivalent to commits where they land.",
+          "type": "string",
+          "enum": [
+            "patch-equivalent"
+          ]
+        }
+      ]
+    },
+    "FactOutput": {
+      "type": "object",
+      "required": [
+        "fact"
+      ],
+      "properties": {
+        "about": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fact": {
+          "$ref": "#/definitions/FactKind"
+        }
+      }
+    },
+    "JudgedOutput": {
+      "description": "One judged repo, as `--json` carries it.",
+      "type": "object",
+      "required": [
+        "axis",
+        "choices",
+        "facts",
+        "listed",
+        "path",
+        "state"
+      ],
+      "properties": {
+        "axis": {
+          "description": "What it was judged on; `rwv explain <axis>` serves the axis's page.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Axis"
+            }
+          ]
+        },
+        "choices": {
+          "description": "What this state can run, in the order the page lists it.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ChoiceOutput"
+          }
+        },
+        "facts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/FactOutput"
+          }
+        },
+        "listed": {
+          "description": "The files, paths or commits the state lists.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "path": {
+          "description": "The repo's path, `projects/<name>` for the project repo.",
+          "type": "string"
+        },
+        "state": {
+          "description": "The state it was judged in, as that page names it.",
+          "type": "string"
+        },
+        "subject": {
+          "description": "What the state names, when it names something.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspace": {
+          "description": "The workspace the repo was judged in, when that is not the one the verb ran in.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/WirePath"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "LogCommit": {
+      "type": "object",
+      "required": [
+        "sha",
+        "short",
+        "subject"
+      ],
+      "properties": {
+        "sha": {
+          "$ref": "#/definitions/CommitId"
+        },
+        "short": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        }
+      }
+    },
+    "LogEndpoint": {
+      "type": "object",
+      "required": [
+        "id",
+        "spelled"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/CommitId"
+        },
+        "spelled": {
+          "description": "The endpoint as spelled in the range.",
+          "type": "string"
+        }
+      }
+    },
+    "LogRepo": {
+      "type": "object",
+      "required": [
+        "commits",
+        "path"
+      ],
+      "properties": {
+        "commits": {
+          "description": "The commits, newest first; empty with `--diff`.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/LogCommit"
+          }
+        },
+        "diff": {
+          "description": "With `--diff`, the unified diff from `diff_base` to HEAD.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "diff_base": {
+          "description": "With `--diff`, the common ancestor of the pin and HEAD that the diff starts from.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CommitId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "endpoints": {
+          "description": "With a range, the commit each endpoint of the range names in this repo.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/LogEndpoint"
+          }
+        },
+        "head": {
+          "description": "The checkout's HEAD, if readable.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CommitId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "note": {
+          "description": "Why this repo could not be listed in full. The repo is still listed, so the gap is seen rather than silently omitted.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "The repo's manifest-relative path, or `(project)` for the project repo.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/String"
+            }
+          ]
+        },
+        "pin": {
+          "description": "With `--against`, the commit the weave branch pins for this repo: the branch's own tip for the project repo. Absent for a member the branch does not pin.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CommitId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "refused": {
+          "description": "The state that made the verb exit non-zero in this repo.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/JudgedOutput"
+          }
+        }
+      }
+    },
+    "String": {
+      "type": "string"
+    },
+    "WirePath": {
+      "description": "Absolute path, `/`-separated on every platform.",
+      "type": "string"
+    }
+  }
+}

@@ -20,6 +20,7 @@ use common::compile_probe::{assert_fails_with, compile};
 fn the_harness_can_compile_a_verb_handed_its_mode() {
     let (compiled, stderr) = compile(
         r#"
+        use repoweave::log::{run, LogQuery};
         use repoweave::parallel::OutputMode;
         use repoweave::selector::RepoFilter;
         use repoweave::status::run_status;
@@ -29,6 +30,7 @@ fn the_harness_can_compile_a_verb_handed_its_mode() {
         pub fn modes(ctx: &WorkspaceContext, filter: &RepoFilter, request: SyncRequest) {
             let _ = run_status(ctx, OutputMode::from_flag(true), filter);
             let _ = sync_to_json_run(ctx, request);
+            let _ = run(ctx, &LogQuery::Range(None), OutputMode::Text);
         }
         pub fn sync(ctx: &WorkspaceContext, request: SyncRequest) {
             let _ = run_sync(ctx, request, OutputMode::Text);
@@ -73,15 +75,16 @@ fn push_is_not_handed_the_json_flag() {
 }
 
 #[test]
-fn the_workweave_log_is_not_handed_the_json_flag() {
+fn the_log_is_not_handed_the_json_flag() {
     assert_fails_with(
         "E0308",
-        "the workweave log takes the resolved mode, never the flag",
+        "the log takes the resolved mode, never the flag",
         r#"
+        use repoweave::log::{run, LogQuery};
         use repoweave::workspace::WorkspaceContext;
 
         pub fn flag(ctx: &WorkspaceContext) {
-            let _ = repoweave::workweave::workweave_log(ctx, false, true);
+            let _ = run(ctx, &LogQuery::Range(None), true);
         }
         "#,
     );

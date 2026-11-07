@@ -131,11 +131,11 @@ Everything structural is still SHA-and-DAG:
   (`retire_workweave_after_sync_to`, `sync.rs:4366-4453`, the `!=` at
   `:4404`) `[V]`; delete's unmerged gate walks `is_ancestor` in the resolved
   canonical store (`collect_diverged_paths`, `workweave.rs:1989-2092`,
-  `is_ancestor` at `:2055`) `[V]`; `rwv workweave log` computes
-  `unique_commits`/`unique_diff` from `head_revision` with no `is_ancestor`
-  call at all (`workweave_log`, `workweave.rs:3120-3322` →
-  `git.rs:1805-1834`) `[V]`. Three different DAG queries — all three read
-  only SHAs, never a branch name.
+  `is_ancestor` at `:2055`) `[V]`; `rwv log --against` computes
+  `commits_beyond`/`diff_beyond` from `head_revision` and a pin with no
+  `is_ancestor` call at all (`log::run`, `src/log.rs` → `src/git.rs`) `[V]`.
+  Three different DAG queries — all three read only SHAs, never a branch
+  name.
 - `rwv.lock` records a resolved revision, never a branch
   (`lock.rs:128-156`, `manifest.rs:1193-1199`) `[V]`; the lock entry type is
   `ResolvedRevisionId` (`manifest.rs:1236`) `[V]`.
@@ -276,7 +276,7 @@ name" — both directing consumers to read parentage from the marker `[V]`.
 | L3 workweave checkout | a **commit target**, disjoint per workspace | git's one-worktree-per-branch rule; I3's merged-check soundness |
 
 Nothing else in rwv needs a branch. Sync, lock, retire, delete's merged-check,
-`workweave log`, and status's relation column are all pure SHA/DAG.
+`log --against`, and status's relation column are all pure SHA/DAG.
 
 ---
 
@@ -647,7 +647,7 @@ This was justified by evidence, not taste:
 - **No consumer read the segment.** Doctor validated the prefix only and said
   so deliberately in its own doc comment; delete globbed the prefix; doctor's
   staleness check keyed on the first path segment. `sync`, `sync-to`, `push`,
-  the merged-check, `workweave log` and status's relation column all refused
+  the merged-check, `log --against` and status's relation column all refused
   to read it `[V]`.
 
 None of those three consumer citations resolves any more, and that is the
@@ -2363,7 +2363,7 @@ reconciling the three incompatible derivations in `workweave.rs`,
 `add_remove.rs`, and `sync.rs` `[V]` rather than deleting the question. The
 decisive evidence was that **no consumer read the segment** — doctor validated
 the prefix only and its doc comment said this was deliberate; delete globbed
-the prefix; sync-to, push, the merged-check, `workweave log` and status all
+the prefix; sync-to, push, the merged-check, `log --against` and status all
 explicitly refused to read it. A component that nothing reads and three
 writers disagree about is not carrying information; it is carrying risk.
 Keeping it would also have kept unbounded nesting

@@ -11,6 +11,7 @@ rwv explain <verb>
 ## Verbs
 
 - **status** — per-repo workspace state (branch, tip, lock, relation) (`--json` available)
+- **log** — the VCS's log per repo, or the commits beyond a weave branch's pins (`--json` available)
 - **doctor** — convention-violation checks (orphans, drift, stale locks) (`--json` available)
 - **sync** — bring another workspace's committed state into this one (`--json` available)
 - **sync-to** — advance target workspace to CWD's tip (3-step orchestration: rebase, relock, FF-advance) (`--json` available)

@@ -24,14 +24,14 @@ rwv sync-to other-workweave-name
 
 ## Preview what will land
 
-From inside the workweave, inspect the commits or diff that will land relative to the recorded parent's common ancestor:
+From inside the workweave, list the commits that will land relative to the weave branch they land onto (here `main`), or the diff from where each repo's pin meets your HEAD:
 
 ```bash
-rwv workweave log            # commit listing per repo vs. recorded parent
-rwv workweave log --diff     # unique diff vs. recorded parent
+rwv log --against main            # commit listing per repo beyond main's pins
+rwv log --against main --diff     # diff per repo from the merge-base of that pin and HEAD
 ```
 
-Add `--json` for a machine-readable envelope.
+Add `--json` for a machine-readable envelope. To read a workweave from outside it, address it with `-w`: `rwv -w web-app--payments log --against main`.
 
 ## Preconditions
 

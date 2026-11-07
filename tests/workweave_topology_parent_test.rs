@@ -8,9 +8,9 @@
 //!      doctor-remediation text (no raw `failed to canonicalize … (os error 2)`).
 //!   4. `rwv status --json` `.parent` carries the recorded path + parent tip,
 //!      correct for a STACKED parent.
-//!   5. `rwv workweave log`/`diff` compute unique commits vs the parent, correct
-//!      when the parent ADVANCED after the fork (no phantom reversals), across a
-//!      stacked parent, with a `--json` shape.
+//!   5. `rwv log --against` computes the commits beyond a weave branch's pins,
+//!      correct when that branch ADVANCED after the fork (no phantom
+//!      reversals), across a stacked parent, with a `--json` shape.
 
 use assert_cmd::Command as AssertCommand;
 use std::path::{Path, PathBuf};
@@ -666,20 +666,22 @@ fn status_json_parent_correct_for_stacked_parent() {
 }
 
 // ===========================================================================
-// 5. workweave log / diff — parent advanced after fork (no phantom reversals)
+// 5. log --against — target advanced after fork (no phantom reversals)
 // ===========================================================================
 
-/// `rwv workweave log` lists only the workweave's UNIQUE commits vs the parent,
-/// and stays correct when the parent ADVANCED after the fork. `diff` uses
-/// merge-base so an advanced-parent's other changes never appear as reversals.
+/// `rwv log --against <W>` lists only what the workweave holds beyond `<W>`'s
+/// pins, and stays correct when `<W>` ADVANCED after the fork. `--diff` is
+/// anchored at the merge-base of the pin and HEAD, so an advanced pin's other
+/// changes never appear as reversals.
 #[test]
-fn workweave_log_and_diff_correct_when_parent_advanced() {
+fn log_against_and_diff_correct_when_the_target_advanced() {
     let tmp = common::tempdir().unwrap();
     let main = make_main_workspace(tmp.path());
 
     // Fork wwb from a first-level workweave wwa (STACKED parent).
     let wwa = create_workweave(&main, "wwa", None);
     let wwb = create_workweave(&main, "wwb", Some(&wwa.root));
+    let target = format!("{PROJECT}--wwa");
 
     // wwb makes a unique commit.
     commit_file(
@@ -689,62 +691,61 @@ fn workweave_log_and_diff_correct_when_parent_advanced() {
         "wwb: unique commit",
     );
 
-    // The PARENT (wwa) ADVANCES after the fork with an unrelated commit.
+    // The TARGET (wwa) ADVANCES after the fork with an unrelated commit, and
+    // its lock records it.
     commit_file(
         &wwa.manifest_repo,
         "wwa_advance.txt",
         "wwa later\n",
         "wwa: advance after fork",
     );
+    rwv_lock_commit(&wwa.root);
 
-    // `rwv workweave log` from wwb: unique commits are wwb's only. wwa's
-    // post-fork advance must NOT appear (it's not reachable from wwb's HEAD),
-    // and neither should it cause wwb's commit to be hidden.
+    // From wwb: the listing is wwb's commits only. wwa's post-fork advance is
+    // the pin, not something wwb holds, and it does not hide wwb's commit.
     let out = rwv()
-        .args(["workweave", "log", "--json"])
+        .args(["log", "--against", &target, "--json"])
         .current_dir(&wwb.root)
         .output()
         .unwrap();
     assert!(
         out.status.success(),
-        "workweave log failed:\n{}",
+        "log --against failed:\n{}",
         String::from_utf8_lossy(&out.stderr)
     );
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(v["diff"], false);
+    assert_eq!(v["against"], target.as_str());
     let repos = v["repos"].as_array().unwrap();
     let lib = repos
         .iter()
         .find(|r| r["path"] == MANIFEST_REPO_PATH)
         .expect("lib repo");
-    let commits = lib["unique_commits"].as_array().unwrap();
-    let subjects: Vec<&str> = commits
+    let wwa_tip = common::git_in(&wwa.manifest_repo, &["rev-parse", "HEAD"]);
+    assert_eq!(
+        lib["pin"].as_str().unwrap(),
+        wwa_tip,
+        "the pin is the commit wwa's lock records for lib"
+    );
+    let subjects: Vec<&str> = lib["commits"]
+        .as_array()
+        .unwrap()
         .iter()
         .map(|c| c["subject"].as_str().unwrap())
         .collect();
-    assert!(
-        subjects.iter().any(|s| s.contains("wwb: unique commit")),
-        "wwb's unique commit should be listed; got: {subjects:?}"
-    );
-    assert!(
-        !subjects
-            .iter()
-            .any(|s| s.contains("wwa: advance after fork")),
-        "parent's post-fork advance must NOT appear as a unique commit; got: {subjects:?}"
-    );
+    assert_eq!(subjects, ["wwb: unique commit"]);
 
-    // `rwv workweave log --diff --json`: the diff base is the common ancestor
-    // of the parent tip and HEAD, NOT the parent tip. So the diff shows ONLY
-    // wwb's change and never a phantom reversal of wwa_advance.txt (which wwb's
-    // HEAD doesn't have).
+    // `--diff`: the base is the common ancestor of the pin and HEAD, NOT the
+    // pin. So the diff shows ONLY wwb's change and never a phantom reversal of
+    // wwa_advance.txt (which wwb's HEAD doesn't have).
     let dout = rwv()
-        .args(["workweave", "log", "--diff", "--json"])
+        .args(["log", "--against", &target, "--diff", "--json"])
         .current_dir(&wwb.root)
         .output()
         .unwrap();
     assert!(
         dout.status.success(),
-        "workweave log --diff failed:\n{}",
+        "log --against --diff failed:\n{}",
         String::from_utf8_lossy(&dout.stderr)
     );
     let dv: serde_json::Value = serde_json::from_slice(&dout.stdout).unwrap();
@@ -760,27 +761,23 @@ fn workweave_log_and_diff_correct_when_parent_advanced() {
         diff_text.contains("wwb.txt"),
         "diff should include wwb's change; got:\n{diff_text}"
     );
-    // Phantom-reversal guard: the diff must NOT show wwa_advance.txt being
-    // removed (which is exactly what diffing against the advanced parent tip
-    // instead of the merge-base would produce).
     assert!(
         !diff_text.contains("wwa_advance.txt"),
-        "diff must not show a phantom reversal of the parent's post-fork commit; got:\n{diff_text}"
+        "diff must not show a phantom reversal of the target's post-fork commit; got:\n{diff_text}"
     );
 
-    // diff_base must be the merge-base, i.e. wwa's lib tip AT FORK TIME (before
-    // the advance), which equals the primary lib HEAD wwa forked from.
+    // diff_base must be the merge-base, i.e. the lib commit both forked from.
     let diff_base = dlib["diff_base"].as_str().unwrap();
     let fork_point = common::git_in(&main.manifest_repo, &["rev-parse", "HEAD"]);
     assert_eq!(
         diff_base, fork_point,
-        "diff base should be the merge-base (fork point), not the advanced parent tip"
+        "diff base should be the merge-base (fork point), not the advanced pin"
     );
 }
 
-/// `rwv workweave log` text output lists unique commits and names the parent.
+/// `rwv log --against` text output lists the commits and names the branch.
 #[test]
-fn workweave_log_text_output() {
+fn log_against_text_output() {
     let tmp = common::tempdir().unwrap();
     let main = make_main_workspace(tmp.path());
 
@@ -788,53 +785,34 @@ fn workweave_log_text_output() {
     commit_file(&ww.manifest_repo, "f.txt", "x\n", "feat: my change");
 
     let out = rwv()
-        .args(["workweave", "log"])
+        .args(["log", "--against", "main"])
         .current_dir(&ww.root)
         .output()
         .unwrap();
     assert!(
         out.status.success(),
-        "workweave log failed:\n{}",
+        "log --against failed:\n{}",
         String::from_utf8_lossy(&out.stderr)
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
         stdout.contains("feat: my change"),
-        "log text should list the unique commit; got:\n{stdout}"
+        "log text should list the commit; got:\n{stdout}"
     );
     assert!(
-        stdout.contains("vs parent"),
-        "log text should name the parent relation; got:\n{stdout}"
-    );
-}
-
-/// `rwv workweave log` from the primary weave refuses (it's not a workweave).
-#[test]
-fn workweave_log_refuses_in_primary_weave() {
-    let tmp = common::tempdir().unwrap();
-    let main = make_main_workspace(tmp.path());
-
-    let out = rwv()
-        .args(["workweave", "log"])
-        .current_dir(&main.root)
-        .output()
-        .unwrap();
-    assert!(!out.status.success(), "should refuse from primary weave");
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("not a workweave") || stderr.contains("primary weave"),
-        "should explain CWD is not a workweave; got:\n{stderr}"
+        stdout.starts_with("log against main\n"),
+        "log text should name the branch it reads; got:\n{stdout}"
     );
 }
 
 // ===========================================================================
-// 6. workweave log — project repo included
+// 6. log --against — project repo included
 // ===========================================================================
 
-/// `rwv workweave log --json` includes a `project_repo` field whose commits
+/// `rwv log --against --json` includes a `(project)` record whose commits
 /// reflect real per-workweave project-repo work (e.g. a doc or lock commit).
 #[test]
-fn workweave_log_json_includes_project_repo_unique_commits() {
+fn log_against_json_includes_project_repo_commits() {
     let tmp = common::tempdir().unwrap();
     let main = make_main_workspace(tmp.path());
 
@@ -844,56 +822,51 @@ fn workweave_log_json_includes_project_repo_unique_commits() {
     commit_file(&ww_project, "notes.md", "work notes\n", "docs: add notes");
 
     let out = rwv()
-        .args(["workweave", "log", "--json"])
+        .args(["log", "--against", "main", "--json"])
         .current_dir(&ww.root)
         .output()
         .unwrap();
     assert!(
         out.status.success(),
-        "workweave log failed:\n{}",
+        "log --against failed:\n{}",
         String::from_utf8_lossy(&out.stderr)
     );
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
 
-    // project_repo field must be present and carry the unique commit.
-    let pr = &v["project_repo"];
-    assert!(
-        !pr.is_null(),
-        "project_repo field must be present in JSON output"
-    );
-    assert_eq!(
-        pr["path"].as_str().unwrap(),
-        "(project)",
-        "project_repo.path must be the '(project)' sentinel"
-    );
-    let commits = pr["unique_commits"].as_array().unwrap();
+    let pr = v["repos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["path"] == "(project)")
+        .expect("the project repo is a record of `repos`");
+    let commits = pr["commits"].as_array().unwrap();
     let subjects: Vec<&str> = commits
         .iter()
         .map(|c| c["subject"].as_str().unwrap())
         .collect();
     assert!(
         subjects.iter().any(|s| s.contains("docs: add notes")),
-        "project repo unique commit must be listed; got: {subjects:?}"
+        "project repo commit must be listed; got: {subjects:?}"
     );
 }
 
 /// A member whose checkout is gone from the workweave is reported as missing,
-/// with the verb that restores it, not as a failure to spawn git.
+/// with where its repair is named, not as a failure to spawn git.
 #[test]
-fn workweave_log_names_a_missing_checkout() {
+fn log_names_a_missing_checkout() {
     let tmp = common::tempdir().unwrap();
     let main = make_main_workspace(tmp.path());
     let ww = create_workweave(&main, "feat", None);
     std::fs::remove_dir_all(&ww.manifest_repo).unwrap();
 
     let out = rwv()
-        .args(["workweave", "log", "--json"])
+        .args(["log", "--against", "main", "--json"])
         .current_dir(&ww.root)
         .output()
         .unwrap();
     assert!(
         out.status.success(),
-        "workweave log failed:\n{}",
+        "log --against failed:\n{}",
         String::from_utf8_lossy(&out.stderr)
     );
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
@@ -907,13 +880,13 @@ fn workweave_log_names_a_missing_checkout() {
         .expect("a missing checkout carries a note")
         .to_owned();
     assert!(note.contains("checkout missing"), "got: {note}");
-    assert!(note.contains("rwv fetch"), "got: {note}");
+    assert!(note.contains("rwv doctor"), "got: {note}");
     assert!(!note.contains("spawn"), "got: {note}");
 }
 
-/// `rwv workweave log` text output includes an `=== (project) ===` section.
+/// `rwv log --against` text output includes an `=== (project) ===` section.
 #[test]
-fn workweave_log_text_includes_project_repo_section() {
+fn log_against_text_includes_project_repo_section() {
     let tmp = common::tempdir().unwrap();
     let main = make_main_workspace(tmp.path());
 
@@ -928,13 +901,13 @@ fn workweave_log_text_includes_project_repo_section() {
     );
 
     let out = rwv()
-        .args(["workweave", "log"])
+        .args(["log", "--against", "main"])
         .current_dir(&ww.root)
         .output()
         .unwrap();
     assert!(
         out.status.success(),
-        "workweave log failed:\n{}",
+        "log --against failed:\n{}",
         String::from_utf8_lossy(&out.stderr)
     );
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -948,73 +921,57 @@ fn workweave_log_text_includes_project_repo_section() {
     );
 }
 
-/// `rwv workweave log --json` has `project_repo` with empty `unique_commits`
-/// when the project repo has NO commits unique vs the parent.
+/// The `(project)` record has empty `commits` when the project repo holds
+/// nothing beyond the branch, and the text section says so.
 #[test]
-fn workweave_log_json_project_repo_no_unique_commits_when_clean() {
+fn log_against_project_repo_with_nothing_beyond() {
     let tmp = common::tempdir().unwrap();
     let main = make_main_workspace(tmp.path());
 
     let ww = create_workweave(&main, "clean", None);
-    // No project-repo commits in the workweave.
 
     let out = rwv()
-        .args(["workweave", "log", "--json"])
+        .args(["log", "--against", "main", "--json"])
         .current_dir(&ww.root)
         .output()
         .unwrap();
     assert!(
         out.status.success(),
-        "workweave log failed:\n{}",
+        "log --against failed:\n{}",
         String::from_utf8_lossy(&out.stderr)
     );
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-
-    let pr = &v["project_repo"];
-    assert!(!pr.is_null(), "project_repo must always be present");
-    let commits = pr["unique_commits"].as_array().unwrap();
+    let pr = v["repos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["path"] == "(project)")
+        .expect("the project repo is always a record");
+    let commits = pr["commits"].as_array().unwrap();
     assert!(
         commits.is_empty(),
-        "project_repo unique_commits must be empty when there are no unique commits; got: {commits:?}"
+        "project repo commits must be empty when nothing lies beyond the branch; got: {commits:?}"
     );
-}
 
-/// `rwv workweave log` text output shows `(no unique commits vs parent)` for
-/// the `(project)` section when the project repo has no unique commits.
-#[test]
-fn workweave_log_text_project_repo_no_unique_commits_label() {
-    let tmp = common::tempdir().unwrap();
-    let main = make_main_workspace(tmp.path());
-
-    let ww = create_workweave(&main, "clean2", None);
-    // No project-repo commits in the workweave.
-
-    let out = rwv()
-        .args(["workweave", "log"])
+    let text = rwv()
+        .args(["log", "--against", "main"])
         .current_dir(&ww.root)
         .output()
         .unwrap();
-    assert!(
-        out.status.success(),
-        "workweave log failed:\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    // The (project) section must appear and report "no unique commits".
+    let stdout = String::from_utf8_lossy(&text.stdout);
     let project_section_pos = stdout
         .find("=== (project) ===")
         .expect("(project) section must appear in text output");
-    let after = &stdout[project_section_pos..];
     assert!(
-        after.contains("no unique commits vs parent"),
-        "project section must say '(no unique commits vs parent)' when clean; got:\n{after}"
+        stdout[project_section_pos..].contains("(nothing beyond main)"),
+        "project section must say nothing lies beyond main when clean; got:\n{stdout}"
     );
 }
 
-/// `rwv workweave log --diff --json` includes a `project_repo` with diff
-/// content when the project repo has unique work.
+/// `rwv log --against --diff --json` includes a `(project)` record with diff
+/// content when the project repo has work beyond the branch.
 #[test]
-fn workweave_log_diff_json_includes_project_repo() {
+fn log_against_diff_json_includes_project_repo() {
     let tmp = common::tempdir().unwrap();
     let main = make_main_workspace(tmp.path());
 
@@ -1028,22 +985,26 @@ fn workweave_log_diff_json_includes_project_repo() {
     );
 
     let out = rwv()
-        .args(["workweave", "log", "--diff", "--json"])
+        .args(["log", "--against", "main", "--diff", "--json"])
         .current_dir(&ww.root)
         .output()
         .unwrap();
     assert!(
         out.status.success(),
-        "workweave log --diff failed:\n{}",
+        "log --against --diff failed:\n{}",
         String::from_utf8_lossy(&out.stderr)
     );
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    let pr = &v["project_repo"];
-    assert!(!pr.is_null(), "project_repo must be present in diff output");
+    let pr = v["repos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["path"] == "(project)")
+        .expect("the project repo must be present in diff output");
     let diff_text = pr["diff"].as_str().unwrap_or("");
     assert!(
         diff_text.contains("feature.md") || diff_text.contains("feature description"),
-        "project_repo diff must include the unique change; got:\n{diff_text}"
+        "project_repo diff must include the change; got:\n{diff_text}"
     );
 }
 

@@ -9,7 +9,7 @@
 #   registry  — top-level subcommand absent from verbs() in generate-explain.rs
 #
 # <surface-path> is the full subcommand path as it appears in the rwv CLI
-# (e.g. "workweave log", "setup claude").
+# (e.g. "workweave list", "setup claude").
 #
 # Every entry here is a recorded decision; a release review should
 # re-examine any entry whose named surface appears in the release delta.

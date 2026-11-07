@@ -315,33 +315,48 @@ impl<'de> serde::Deserialize<'de> for RawRevisionId {
     }
 }
 
-/// One commit in a [`Vcs::unique_commits`] listing — a VCS-agnostic
-/// one-line summary.
+/// One commit in a [`Vcs::commits_beyond`] or [`Vcs::log`] listing — a
+/// VCS-agnostic one-line summary.
 ///
 /// `subject` is the first line of the commit message. The type carries no
-/// git-specific spelling so callers (e.g. `rwv workweave log`) render the
-/// same shape regardless of the underlying VCS.
+/// git-specific spelling, so callers render the same shape regardless of the
+/// underlying VCS.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitSummary {
     pub id: CommitId,
     pub subject: String,
 }
 
-/// The result of [`Vcs::unique_diff`] — the unified diff of a workweave's
-/// unique work vs its parent, anchored at their common ancestor.
+/// The result of [`Vcs::diff_beyond`] — the unified diff of what a checkout's
+/// HEAD adds to a base revision, anchored at their common ancestor.
 ///
-/// `base` is the common-ancestor revision the diff is anchored at (the
-/// point the workweave forked from), returned so callers can display the
-/// anchor; it is `None` when no anchor could be computed. `text` is the
-/// unified-diff body. Anchoring at the common ancestor — not the parent tip
-/// directly — is what keeps a parent that advanced after the fork from
-/// showing phantom reversals of work the parent gained.
+/// `base` is the common-ancestor revision the diff is anchored at, returned so
+/// callers can display it; it is `None` when no anchor could be computed.
+/// `text` is the unified-diff body. Anchoring at the common ancestor — not the
+/// base revision directly — is what keeps a base that has moved on since HEAD
+/// forked from showing phantom reversals of work HEAD never had.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UniqueDiff {
+pub struct DiffBeyond {
     /// The common-ancestor revision the diff is anchored at, if computable.
     pub base: Option<CommitId>,
-    /// The unified-diff text of the workweave's unique work vs `base`.
+    /// The unified-diff text of what HEAD adds beyond `base`.
     pub text: String,
+}
+
+/// A range endpoint as the operator spelled it, and the commit it names in one
+/// repo.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedEndpoint {
+    pub spelled: String,
+    pub id: CommitId,
+}
+
+/// What [`Vcs::log`] read in one repo: the commits of the range, newest first,
+/// and the commit each of its endpoints names there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RangeListing {
+    pub endpoints: Vec<ResolvedEndpoint>,
+    pub commits: Vec<CommitSummary>,
 }
 
 /// One action in one repo that a refusal can print as a choice: the backend
@@ -3278,42 +3293,50 @@ pub trait Vcs: Send + Sync {
     /// Returns `(0, 0)` on any VCS error.
     fn ahead_behind(&self, repo: &Path, savepoint: &CommitId, tip: &CommitId) -> (usize, usize);
 
-    /// List the commits reachable from `tip` but NOT from `parent_tip`,
-    /// newest first, read from `repo`'s store.
+    /// List the commits reachable from `tip` but NOT from `base`, newest first,
+    /// read from `repo`'s store.
     ///
-    /// These are the workweave's UNIQUE commits: the work that landed on top
-    /// of the parent. Returns an empty vec when nothing landed on top of the
-    /// parent (the tip is an ancestor of, or equal to, `parent_tip`). The
-    /// result stays correct when the parent ADVANCED after the fork —
-    /// commits the parent already has are excluded because they are
-    /// reachable from `parent_tip`.
+    /// Returns an empty vec when `tip` is an ancestor of, or equal to, `base`.
+    /// The result stays correct when `base` has moved on since `tip` forked:
+    /// commits `base` already has are excluded because they are reachable
+    /// from it.
     ///
-    /// For git: computes `git log
-    /// <parent-tip>..<tip>` and maps each entry into a [`CommitSummary`].
-    fn unique_commits(
+    /// For git: computes `git log <base>..<tip>` and maps each entry into a
+    /// [`CommitSummary`].
+    fn commits_beyond(
         &self,
         repo: &Path,
         tip: &ResolvedRevisionId,
-        parent_tip: &ResolvedRevisionId,
+        base: &ResolvedRevisionId,
     ) -> Result<Vec<CommitSummary>, VcsError>;
 
-    /// Produce the unified diff of `repo`'s unique work vs `parent_tip`,
-    /// anchored at the COMMON ANCESTOR of the current tip and `parent_tip`.
+    /// Produce the unified diff of what `repo`'s HEAD adds beyond `base`,
+    /// anchored at the COMMON ANCESTOR of HEAD and `base`.
     ///
-    /// Anchoring at the common ancestor — not `parent_tip` directly — is
-    /// what keeps a parent that advanced after the fork from producing
-    /// phantom reversals: work the parent gained after the fork is not part
-    /// of the workweave's unique history, so it must not appear (as a
-    /// deletion) in the workweave's diff. The returned [`UniqueDiff::base`]
-    /// carries the anchor revision so callers can display it.
+    /// Anchoring at the common ancestor — not `base` directly — is what keeps
+    /// a `base` that moved on after HEAD forked from producing phantom
+    /// reversals: work `base` gained after the fork is not part of HEAD's
+    /// history, so it must not appear (as a deletion) in the diff. The
+    /// returned [`DiffBeyond::base`] carries the anchor revision so callers
+    /// can display it.
     ///
-    /// For git: anchors at `git merge-base
-    /// <parent-tip> <tip>` and diffs `<anchor>..<tip>`.
-    fn unique_diff(
-        &self,
-        repo: &Path,
-        parent_tip: &ResolvedRevisionId,
-    ) -> Result<UniqueDiff, VcsError>;
+    /// For git: anchors at `git merge-base <base> HEAD` and diffs
+    /// `<anchor>..HEAD`.
+    fn diff_beyond(&self, repo: &Path, base: &ResolvedRevisionId) -> Result<DiffBeyond, VcsError>;
+
+    /// The commits of `range` in `repo`, newest first, with the commit each
+    /// endpoint of the range names there. `range` is in the VCS's own range
+    /// syntax and each endpoint resolves as the VCS would resolve it; `None`
+    /// is the VCS's log of HEAD.
+    ///
+    /// An endpoint that names nothing in `repo` is
+    /// [`VcsError::RevisionNotFound`], its `rev` the endpoint as spelled.
+    ///
+    /// For git: `A..B` and `A...B` have endpoints `A` and `B` (an empty side
+    /// is HEAD, which names no endpoint), a leading `^` marks one endpoint,
+    /// and any other spelling is one endpoint; the listing is `git log` of the
+    /// range.
+    fn log(&self, repo: &Path, range: Option<&str>) -> Result<RangeListing, VcsError>;
 
     // =======================================================================
     // The branch model

@@ -542,3 +542,50 @@ pub fn pr_closed_unmerged() -> Scenario {
         ],
     )
 }
+
+/// A feature on its own branch in the project repo, `app` and `lib`, whose
+/// target `main` moved `app` and relocked after the fork. `docs` stays on
+/// `main` and gains a commit nothing locks.
+pub fn feature_whose_target_moved() -> Scenario {
+    let mut steps = Vec::new();
+    for repo in [Repo::App, Repo::Lib, Repo::Proj] {
+        steps.push(Step::git(&a(), repo, &["branch", "feat-x"]));
+    }
+    steps.extend([
+        Step::commit(&a(), Repo::App, "main-app"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+    ]);
+    for repo in [Repo::App, Repo::Lib, Repo::Proj] {
+        steps.push(Step::git(&a(), repo, &["switch", "feat-x"]));
+    }
+    steps.extend([
+        Step::commit(&a(), Repo::App, "feat-app-1"),
+        Step::commit(&a(), Repo::App, "feat-app-2"),
+        Step::commit(&a(), Repo::Lib, "feat-lib"),
+        Step::commit(&a(), Repo::Proj, "feat-notes"),
+        Step::commit(&a(), Repo::Docs, "docs-unlocked"),
+        Step::rwv(&a(), &["log", "--against", "main"]).expect(Exit::Succeeds),
+        Step::rwv(&a(), &["log", "--against", "main", "--diff"]).expect(Exit::Succeeds),
+    ]);
+    scenario("a feature whose target moved", steps)
+}
+
+/// `feat-x` in `app`, `lib` and the project repo, each holding a commit
+/// there; `docs` has no such branch. The weave is on `main`, which `app`
+/// moved past the fork.
+pub fn feature_branches_in_some_members() -> Scenario {
+    let mut steps = Vec::new();
+    for (repo, mark) in [
+        (Repo::App, "fx-app"),
+        (Repo::Lib, "fx-lib"),
+        (Repo::Proj, "fx-proj"),
+    ] {
+        steps.extend([
+            Step::git(&a(), repo, &["switch", "-c", "feat-x"]),
+            Step::commit(&a(), repo, mark),
+            Step::git(&a(), repo, &["switch", "main"]),
+        ]);
+    }
+    steps.push(Step::commit(&a(), Repo::App, "main-after"));
+    scenario("a feature branch in some members", steps)
+}

@@ -696,21 +696,25 @@ impl Vcs for FakeVcs {
         unsupported("ahead_behind")
     }
 
-    fn unique_commits(
+    fn commits_beyond(
         &self,
         _repo: &Path,
         _tip: &ResolvedRevisionId,
-        _parent_tip: &ResolvedRevisionId,
+        _base: &ResolvedRevisionId,
     ) -> Result<Vec<CommitSummary>, VcsError> {
-        unsupported("unique_commits")
+        unsupported("commits_beyond")
     }
 
-    fn unique_diff(
+    fn diff_beyond(
         &self,
         _repo: &Path,
-        _parent_tip: &ResolvedRevisionId,
-    ) -> Result<UniqueDiff, VcsError> {
-        unsupported("unique_diff")
+        _base: &ResolvedRevisionId,
+    ) -> Result<DiffBeyond, VcsError> {
+        unsupported("diff_beyond")
+    }
+
+    fn log(&self, _repo: &Path, _range: Option<&str>) -> Result<RangeListing, VcsError> {
+        unsupported("log")
     }
 
     fn observe_head(&self, _repo: &Path) -> Result<HeadObservation, VcsError> {

@@ -126,6 +126,7 @@ rwv sync-to --retire                     # rebase onto parent, auto-relock, fast
 | `rwv lock` | Snapshot repo HEADs into `rwv.lock`. Errors on uncommitted changes (`--dirty` to bypass). `--commit` commits the lock, with `rwv.toml` when it has uncommitted changes (`-m` sets the message) |
 | `rwv doctor` | Convention enforcement: orphans, dangling refs, stale locks, integration checks. `--locked` for scriptable lock-freshness check |
 | `rwv status` | Show per-repo state: branch, tip, lock entry, relation, mid-op state. `--json` for machine-readable output |
+| `rwv log [<range>] [--against <W>]` | Run the VCS's log in every repo for a range in its own syntax. `--against <W>` lists the commits HEAD holds beyond weave branch `<W>`'s pins, per repo, with `--diff` for the diff; `--json` for machine-readable output |
 | `rwv sync <source>` | Pull: align CWD to another workspace's committed `rwv.lock`. `--strategy ff\|rebase` (default `ff`); `--allow-stale-lock` to skip lock-freshness check; `--discard-local-commits` to hard-reset project repo to source tip |
 | `rwv sync-to [<target>]` | Push: land CWD's commits into target (3-step: rebase CWD against target → auto-relock → FF-advance target). `--strategy rebase\|ff` (default `rebase`); `--retire` deletes the workweave on success. Bare `rwv sync-to` auto-targets the parent recorded in `.rwv-workweave` |
 | `rwv abort` | Roll an in-flight `sync` or `sync-to` back to its savepoints in every workspace it touched; run it from any of them |
@@ -135,7 +136,6 @@ rwv sync-to --retire                     # rebase onto parent, auto-relock, fast
 | `rwv workweave set-default-create-basedir <path>` | Set the directory new workweaves of the project are created under by default |
 | `rwv workweave delete <name>` | Delete a workweave (remove worktrees, clean up ephemeral branches) |
 | `rwv workweave list` | List the project's workweaves |
-| `rwv workweave log` | Show this workweave's unique commits (or `--diff` for the diff) versus its recorded parent, per repo. `--json` for machine-readable output |
 | `rwv resolve` | Print the weave root path (useful for scripting: `cd $(rwv resolve)`) |
 | `rwv prime` | Print structured workspace context for agent system prompts |
 | `rwv explain [<verb>]` | Print a markdown reflection bundle for `<verb>` (purpose, invocation, output, JSON Schema, exit codes, examples). Omit `<verb>` to list explainable verbs |
@@ -179,8 +179,8 @@ rwv workweave create fix-auth
 #    It can commit and run tests across repos — primary is undisturbed.
 
 # 3. Review the commits and diff in the workweave before landing
-rwv -w web-app--fix-auth workweave log
-rwv -w web-app--fix-auth workweave log --diff
+rwv -w web-app--fix-auth log --against main
+rwv -w web-app--fix-auth log --against main --diff
 
 # 4. Land the work and retire the workweave
 cd ../.workweaves/web-app--fix-auth

@@ -1,0 +1,114 @@
+# rwv log
+
+## Purpose
+
+Read history across the repos of a project in one call: the VCS's own log in
+every member and in the project repo, or, with `--against`, the commits a
+checkout holds that a weave branch's pins do not. It is read-only and runs in a
+primary weave or a workweave. Agents call it to see what a feature has not
+landed on its target, or to resolve a revision range across every repo at once.
+
+## Invocation
+
+```
+rwv log [<range>] [--against <W>] [--diff] [--json] [--project <name>]
+```
+
+- `<range>` is a range in the VCS's own syntax (for git, `main..feat-x`,
+  `feat-x..`, `v1.2...main`). Each endpoint resolves in each repo as the VCS
+  would resolve it. With neither `<range>` nor `--against`, each repo lists
+  the VCS's log of its HEAD. There is no default weave branch.
+- `--against <W>` lists, per member, the commits HEAD reaches that `<W>`'s pin
+  for it does not, and in the project repo those `<W>` lacks. `<W>` is a branch
+  of the project repo, local or remote-tracking as last fetched, whose tip
+  carries `rwv.toml`; its pins are the ones in its `rwv.lock`. A member `<W>`
+  does not pin is listed as `not in <W>`. A `<range>` and `--against` together
+  are refused: a weave branch's pins have their own spelling.
+- `--diff`, with `--against` only, shows each repo's diff from the common
+  ancestor of its pin and HEAD to HEAD in place of the commit listing. Anchoring
+  at the common ancestor keeps a pin that moved on after HEAD forked from
+  showing as reversals of work HEAD never had.
+- `--json` emits the envelope below.
+- `--project <name>` reads the named project instead of the active one.
+
+To read a workweave from elsewhere, address it with `-w`: `rwv -w
+<project>--<name> log --against <T>`.
+
+## Output
+
+Text output is a header line, then one `=== <path> ===` section per member and
+a last `=== (project) ===` for the project repo. A section lists one
+`<12-character sha> <subject>` line per commit, newest first, or the diff under
+`--diff`, or says nothing was found.
+
+A `<range>` endpoint that names nothing in a repo prints `name no-such-branch`
+and the endpoint in that repo's section. The other repos are still listed, and
+the verb exits non-zero, printing the refusal on stderr with its choices and a
+route line, `rwv explain name`.
+
+Under `--json`, output is the envelope:
+
+```
+{
+  "$schema": "<url>",
+  "range": "feat-x..",
+  "diff": false,
+  "repos": [ { "path": "github/org/lib", "head": "...", "commits": [...] }, ... ]
+}
+```
+
+`range` is present only for a range, and `against` (the weave branch) only for
+`--against`. Each element of `repos` is one repo: `path` (manifest-relative,
+or `(project)`), `head`, and `commits` (each `{ sha, short, subject }`). With
+`--against`, `pin` is the commit `<W>` pins for the repo, or `<W>`'s own tip for
+the project repo, and is absent for a member `<W>` does not pin. With a range,
+`endpoints` lists the commit each endpoint names in that repo. Under `--diff`,
+`diff_base` and `diff` carry the anchor and the unified diff. `note` explains a
+repo that could not be read in full, such as a missing checkout. `refused` holds
+the refusal records of a repo where an endpoint named nothing (`rwv explain
+name`).
+
+Schema:
+
+{{SCHEMA}}
+
+## Exit codes
+
+- `0` — every repo was listed. A repo carrying a `note` was still listed.
+- non-zero — a `<range>` endpoint names nothing in at least one repo (the
+  others are still listed), `--against` names no weave branch, or the workspace
+  could not be resolved.
+
+## Examples
+
+What the feature in this workspace has not landed on `main`, per repo:
+
+```
+rwv log --against main
+```
+
+The same as a diff, anchored where each pin meets HEAD:
+
+```
+rwv log --against main --diff
+```
+
+A feature's commits in every repo that has a branch of that name:
+
+```
+rwv log main..feat-x
+```
+
+Read a workweave's unlanded commits as JSON from the primary:
+
+```
+rwv -w web-app--fix-auth log --against main --json | jq -r '.repos[] | "\(.path) \(.commits | length)"'
+```
+
+## Common errors
+
+- *`name no-such-branch`* — a range endpoint resolves to nothing in that repo,
+  or `--against` names no weave branch. Check the spelling; the branch may be
+  published but not yet fetched.
+- *`--diff` without `--against`* — a diff is read against a weave branch's
+  pins, so `--diff` needs `--against`.

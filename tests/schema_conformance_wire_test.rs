@@ -280,6 +280,39 @@ fn status_json_wire_output_conforms() {
 }
 
 #[test]
+fn log_json_wire_output_conforms() {
+    let weave = weave();
+    let doc = emit(&weave.primary, &["log", "--json"]);
+    assert_conforms("log", &doc, "repos");
+}
+
+#[test]
+fn log_against_json_wire_output_conforms() {
+    let weave = weave();
+    let doc = emit(
+        &weave.primary,
+        &["log", "--against", "main", "--diff", "--json"],
+    );
+    assert_conforms("log", &doc, "repos");
+    assert_eq!(doc["against"], "main");
+}
+
+#[test]
+fn log_json_wire_output_conforms_when_an_endpoint_names_nothing() {
+    let weave = weave();
+    let doc = emit_after_failure(&weave.primary, &["log", "main..nosuch", "--json"]);
+    assert_conforms("log", &doc, "repos");
+    assert!(
+        doc["repos"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r["refused"][0]["state"] == "no-such-branch"),
+        "{doc:#}"
+    );
+}
+
+#[test]
 fn doctor_json_wire_output_conforms() {
     let weave = weave();
     let doc = emit(&weave.primary, &["doctor", "--json"]);

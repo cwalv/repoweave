@@ -928,10 +928,6 @@ pub fn run() -> anyhow::Result<()> {
                             outln!("{}", workweave_path.display());
                         }
                     }
-                    WorkweaveAction::Log { diff, json } => {
-                        let ctx = WorkspaceContext::resolve_invocation(origin_dir, None)?;
-                        crate::workweave::workweave_log(&ctx, diff, OutputMode::from_flag(json))?;
-                    }
                     WorkweaveAction::SetDefaultCreateBasedir { path, project } => {
                         let ctx = workweave_context(origin_dir, project, use_workweave_flag)?;
                         let project = ctx.require_active_project_on_disk()?;
@@ -1042,6 +1038,25 @@ pub fn run() -> anyhow::Result<()> {
             }
             let filter = selector.parse_filter()?;
             status::run_status(&ctx, OutputMode::from_flag(json), &filter)?;
+        }
+        Some(Commands::Log {
+            range,
+            against,
+            diff,
+            json,
+            project,
+        }) => {
+            let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
+            let ctx = resolve_project_scoped_tolerating_disputed_root(
+                origin_dir,
+                project_override,
+                use_workweave_flag,
+            )?;
+            let query = match against {
+                Some(weave_branch) => crate::log::LogQuery::Against { weave_branch, diff },
+                None => crate::log::LogQuery::Range(range),
+            };
+            crate::log::run(&ctx, &query, OutputMode::from_flag(json))?;
         }
         Some(Commands::Abort {
             abandon_foreign_tip,

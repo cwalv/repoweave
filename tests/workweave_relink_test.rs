@@ -364,44 +364,35 @@ fn assert_restored(w: &Weave, tip: &str, before: &[String], unlanded: Option<&st
     assert_eq!(findings(&w.workweave, false), before);
 }
 
-/// `rwv workweave log` names the missing checkout and still lists the
-/// branch's unique commits; its advice, `rwv fetch` in the workweave,
+/// `rwv log` names the missing checkout and the verb that names its repair,
+/// and lists every other repo; that verb's advice, `rwv doctor --fix`,
 /// restores the checkout.
-fn follow_workweave_log(branch: Branch) {
+fn follow_log(branch: Branch) {
     let (w, tip, before, unlanded) = removed_checkout(branch);
-    let log = text(&rwv(&w.workweave, &["workweave", "log"]));
+    let log = text(&rwv(&w.workweave, &["log", "--against", "main"]));
     assert_names(
         &log,
         &[
-            "workweave checkout missing at",
-            "run `rwv fetch` in that weave",
+            "note: checkout missing at",
+            "`rwv doctor` names the repair",
+            "=== (project) ===",
         ],
     );
-    match &unlanded {
-        Some(commit) => assert!(
-            log.contains(&commit[..12]) && log.contains("unlanded"),
-            "the branch's unique commit is listed: {log}"
-        ),
-        None => assert!(log.contains("(no unique commits vs parent)"), "{log}"),
-    }
 
-    let fetched = text(&rwv(&w.workweave, &["fetch"]));
-    assert!(
-        fetched.contains(&format!("attached to its branch `{BRANCH}` at its own tip")),
-        "{fetched}"
-    );
+    let printed = advice(&w.workweave, &["doctor"], "missing worktree");
+    assert_names(&printed, &["`rwv doctor --fix`"]);
     doctor_fix(&w.workweave);
     assert_restored(&w, &tip, &before, unlanded.as_deref());
 }
 
 #[test]
-fn workweave_log_advice_restores_a_removed_checkout_whose_branch_moved() {
-    follow_workweave_log(Branch::Moved);
+fn log_names_a_removed_checkout_whose_branch_moved_and_doctor_restores_it() {
+    follow_log(Branch::Moved);
 }
 
 #[test]
-fn workweave_log_advice_restores_a_removed_checkout_whose_branch_did_not_move() {
-    follow_workweave_log(Branch::Unmoved);
+fn log_names_a_removed_checkout_whose_branch_did_not_move_and_doctor_restores_it() {
+    follow_log(Branch::Unmoved);
 }
 
 fn follow_doctor_fix(branch: Branch) {
