@@ -121,6 +121,8 @@ module), `fetch`, `init`, `push`, `status`, `sync`, `update`, `prime`, `setup`,
 | `parallel` (`src/parallel.rs`, 676) | Bounded per-repo fan-out for the network-bound verbs. |
 | `share` (`src/share.rs`) | Placing a member's tracked files from the repository's other workspaces by reflink or hardlink, with byte-exact verification and repair. [`docs/internals/member-population.md`](docs/internals/member-population.md). |
 | `settle` (`src/settle.rs`) | The permissions a member's tracked files hold for its role, and re-sharing after a member moves. Same document. |
+| `diagnosis` (`src/diagnosis.rs`) | The state-to-choices table — axes, their states, every choice and each spelling of it with its Where and whether its verb has shipped — and `Report`, the refusal of the repos a verb judged, rendered from that table to the terminal, to `--json` and to the refusals page. [`docs/internals/refusal-kinds.md`](docs/internals/refusal-kinds.md). |
+| `refusal` (`src/refusal.rs`) | `RefusalKind`, the token a refusal naming a condition carries, and the funnel that prints every refusal. Same document. |
 
 ## 3. Process model
 
@@ -640,9 +642,11 @@ Stdout belongs to the JSON-capable verbs; operator prose goes to stderr
 It **assembles**: each of the 16 `docs/reference/explain/templates/<verb>.md.tmpl`
 becomes `docs/reference/explain/<verb>.md`, and for the seven verbs with a JSON
 envelope the schemars-derived schema is spliced in and also written out to
-`docs/reference/schemas/<verb>.json`. `src/explain.rs` then `include_str!`s
-the assembled markdown into the binary, which is how `rwv explain` works with no
-filesystem access at runtime.
+`docs/reference/schemas/<verb>.json`. It renders `docs/reference/refusals.md`
+from its template, the kinds' entries from `src/diagnosis.rs`'s table, so the
+page a refusal routes to cannot say what the refusal does not print.
+`src/explain.rs` then `include_str!`s the assembled markdown into the binary,
+which is how `rwv explain` works with no filesystem access at runtime.
 
 It also **enforces** generation-time invariants that no compiler can: relative
 markdown links across `docs/` resolve on disk; `docs/reference/cli.md` covers
