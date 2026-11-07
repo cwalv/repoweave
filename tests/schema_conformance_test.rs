@@ -866,6 +866,23 @@ fn push_outcomes() -> Vec<PushOutcomeOutput> {
             absolute_path: wire(ABS),
             message: "non-fast-forward".to_owned(),
         },
+        PushOutcomeOutput::RecordsPublished {
+            path: "projects/proj".to_owned(),
+            absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new(
+                "/ws/projects/proj",
+            )),
+            project: repoweave::manifest::ProjectName::new("proj").unwrap(),
+            dropped: vec!["feat-y".to_owned()],
+        },
+        PushOutcomeOutput::RecordsRejected {
+            path: "projects/proj".to_owned(),
+            absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new(
+                "/ws/projects/proj",
+            )),
+            project: repoweave::manifest::ProjectName::new("proj").unwrap(),
+            message: "this remote refuses refs/heads/rwv-records".to_owned(),
+            withheld: true,
+        },
         PushOutcomeOutput::ProjectRepoPushed {
             path: "projects/proj".to_owned(),
             absolute_path: repoweave::path_spelling::WirePath::of(std::path::Path::new(

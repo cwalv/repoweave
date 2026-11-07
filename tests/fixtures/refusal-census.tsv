@@ -60,7 +60,7 @@ src/check.rs	repair-target-changed	-	1
 src/check.rs	unknown-finding-kind	-	1
 src/cli/dispatch.rs	(untokened:argv-shim)	-	1
 src/cli/dispatch.rs	ambiguous-workweave-address	-	1
-src/cli/dispatch.rs	inapplicable-flag	-	1
+src/cli/dispatch.rs	inapplicable-flag	tests/refusal_arrival_test.rs	1
 src/cli/dispatch.rs	malformed-workweave-address	-	2
 src/cli/dispatch.rs	no-such-workweave	-	2
 src/cli/dispatch.rs	stale-registry-entry	-	1
@@ -70,6 +70,9 @@ src/clone.rs	pin none	tests/backup_verb_test.rs	1
 src/clone.rs	pin unreachable	tests/backup_verb_test.rs	1
 src/clone.rs	project-dir-occupied	-	1
 src/clone.rs	unresolvable-repo-source	tests/project_and_source_spelling_test.rs	1
+src/deletion.rs	inapplicable-flag	tests/refusal_arrival_test.rs	3
+src/deletion.rs	name no-such-branch	tests/refusal_arrival_test.rs	1
+src/deletion.rs	target dependents	tests/branch_gate_test.rs	1
 src/diagnosis.rs	edits dirty	tests/refusal_arrival_test.rs	1
 src/diagnosis.rs	edits mid-operation	tests/refusal_arrival_test.rs	1
 src/diagnosis.rs	unparseable-project here	tests/e2e_sync_abort_test.rs	1
@@ -123,19 +126,24 @@ src/plugins.rs	(untokened:environment-passthrough)	-	1
 src/plugins.rs	unknown-verb	-	1
 src/pull.rs	partial-run-aborted	tests/refusal_arrival_test.rs	1
 src/pull.rs	push-branch diverged	-	1
-src/push.rs	(untokened:environment-passthrough)	-	1
+src/push.rs	(untokened:environment-passthrough)	-	3
 src/push.rs	(untokened:tally)	-	1
 src/push.rs	edits dirty	tests/refusal_arrival_test.rs	1
 src/push.rs	edits rwv.toml or rwv.lock uncommitted	tests/refusal_arrival_test.rs	1
 src/push.rs	head-not-on-branch	-	2
-src/push.rs	no-remote-default-branch	-	1
+src/push.rs	inapplicable-flag	tests/refusal_arrival_test.rs	4
+src/push.rs	name minted	tests/refusal_arrival_test.rs	1
+src/push.rs	name no-such-branch	tests/refusal_arrival_test.rs	1
 src/push.rs	pin ahead	tests/backup_verb_test.rs	1
 src/push.rs	pin none	tests/backup_verb_test.rs	1
-src/push.rs	pin unreachable	tests/backup_verb_test.rs	1
-src/push.rs	project-repo-off-canonical-branch	-	1
-src/push.rs	publish withheld	tests/refusal_arrival_test.rs	1
-src/push.rs	push-from-workweave	tests/refusal_arrival_test.rs	1
-src/push.rs	unpushable-repo-branch	-	1
+src/push.rs	pin unmerged	tests/backup_verb_test.rs	2
+src/push.rs	pin unreachable	tests/backup_verb_test.rs	2
+src/push.rs	pin waived	tests/backup_verb_test.rs	1
+src/push.rs	pin would be unreachable	tests/backup_verb_test.rs	1
+src/push.rs	publish no pin	tests/refusal_arrival_test.rs	1
+src/push.rs	publish records rejected	tests/refusal_arrival_test.rs	1
+src/push.rs	publish withheld	tests/refusal_arrival_test.rs	2
+src/push.rs	push-branch unconfirmed	-	1
 src/push_branch.rs	push-branch ahead	-	1
 src/push_branch.rs	push-branch behind	-	1
 src/push_branch.rs	push-branch diverged	-	1
@@ -161,7 +169,7 @@ src/sync.rs	dropped-repo-has-unique-commits	tests/backup_verb_test.rs	5
 src/sync.rs	edits dirty	tests/refusal_arrival_test.rs	1
 src/sync.rs	foreign-tip	-	1
 src/sync.rs	head-not-on-branch	-	5
-src/sync.rs	inapplicable-flag	-	1
+src/sync.rs	inapplicable-flag	tests/refusal_arrival_test.rs	1
 src/sync.rs	missing-replay-exclusion	-	4
 src/sync.rs	no-op-recorded	tests/refusal_arrival_test.rs	1
 src/sync.rs	no-such-workweave	-	1
@@ -215,6 +223,3 @@ src/workweave.rs	workweave-drift	tests/symlinked_member_migration_test.rs	2
 src/workweave_index.rs	legacy-workweave-index	-	1
 src/workweave_index.rs	project-dir-missing	-	2
 src/workweave_index.rs	state-claim-held	-	1
-src/deletion.rs	inapplicable-flag	-	3
-src/deletion.rs	name no-such-branch	tests/refusal_arrival_test.rs	1
-src/deletion.rs	target dependents	tests/branch_gate_test.rs	1

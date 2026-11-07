@@ -49,7 +49,7 @@ Commands:
   fetch        Bring every remote's branches and tags into each repo's object store, dropping remote branches that are gone. Moves no branch, checkout or lock, and reports what moved
   pull         Fetch, fast-forward the project branch to its upstream, then update the members to the lock it holds
   update       Clone the members missing on disk and align the rest to rwv.lock, without writing it. With --remote, advance each repo to its branch HEAD on the remote and record the advanced tips in the lock (network bump; analogous to `cargo update` / `npm update`)
-  push         Push member repos and then the project repo, in that order. Refuses from a workweave. Member pushes are attempt-all-and-collect; project repo is gated on every member repo succeeding
+  push         Publish a weave branch: its members' branches, then its record and the drops made here, then the project branch. Runs from any workspace on a recorded, named branch; never writes the lock. Pushes `owned` and `fork` members by default and a `dependency` or `reference` member only when named
   completions  Generate shell completions
   explain      Agent-oriented reflection: per-verb markdown bundle (purpose, invocation, output, JSON Schema)
   setup        Register Claude Code integration (hooks and settings) for this user
