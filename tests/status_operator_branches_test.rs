@@ -119,17 +119,26 @@ fn a_branch_checked_out_somewhere_is_not_listed() {
 fn a_branch_a_weave_branch_declares_for_the_member_is_not_listed() {
     let w = weave();
     let m = member(&w);
+    let project = w.workspace.join("projects").join(PROJECT);
+    let manifest = project.join("rwv.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    assert!(text.contains("branch = \"main\""), "{text}");
+    std::fs::write(
+        &manifest,
+        text.replace("branch = \"main\"", "branch = \"dev\""),
+    )
+    .unwrap();
+    common::git_in(&project, &["add", "rwv.toml"]);
+    common::git_in(&project, &["commit", "-m", "declare dev"]);
+    common::git_in(&m, &["switch", "-c", "dev"]);
     commit(&m, "one.txt");
-    common::git_in(&m, &["switch", "-c", "elsewhere"]);
+    common::git_in(&m, &["switch", "main"]);
 
-    assert_eq!(
-        common::git_in(&m, &["rev-parse", "--abbrev-ref", "HEAD"]),
-        "elsewhere"
-    );
     assert_eq!(
         listed(&w.workspace),
         Vec::<String>::new(),
-        "main holds an unpushed commit, is checked out nowhere, and is declared"
+        "dev holds an unpushed commit, is checked out nowhere, and no weave branch is named for it, \
+         but the checked-out weave branch declares it"
     );
 }
 
