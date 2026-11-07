@@ -213,7 +213,7 @@ fn clone_dash_j_places_every_member_at_its_pin_and_writes_no_lock() {
     }
 
     let project_dir = ws.join("projects/proj");
-    let on_disk = std::fs::read_to_string(project_dir.join("rwv.lock")).unwrap();
+    let on_disk = common::read_normalized(project_dir.join("rwv.lock"));
     let committed = common::git_in(&project_dir, &["show", "HEAD:rwv.lock"]);
     assert_eq!(
         on_disk.trim(),

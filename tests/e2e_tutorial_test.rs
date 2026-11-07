@@ -263,8 +263,7 @@ fn build_fixture() -> Fixture {
 }
 
 fn read_lock(workspace: &Path) -> String {
-    std::fs::read_to_string(workspace.join("projects/tutorial-project/rwv.lock"))
-        .expect("rwv.lock should exist after clone")
+    common::read_normalized(workspace.join("projects/tutorial-project/rwv.lock"))
 }
 
 fn head_sha(clone: &Path) -> String {
