@@ -24,14 +24,14 @@ pub(crate) struct Planned {
 
 impl Found {
     /// The plan this finding leaves, or the line judging the name taken.
-    pub(crate) fn plan(self) -> Result<Planned, Judged> {
+    pub(crate) fn plan(self) -> Result<Planned, Box<Judged>> {
         match self {
             Found::Present(remote) => Ok(Planned { remote, add: None }),
             Found::Missing(absent) => Ok(Planned {
                 remote: absent.remote().clone(),
                 add: Some(absent),
             }),
-            Found::Taken(judged) => Err(judged),
+            Found::Taken(judged) => Err(Box::new(judged)),
         }
     }
 }

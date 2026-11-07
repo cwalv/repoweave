@@ -2884,7 +2884,7 @@ impl Vcs for GitVcs {
             superseded.as_str(),
             "--",
         ];
-        Self::run_trimmed(&args, repo)?
+        Self::run_trimmed(args, repo)?
             .lines()
             .filter(|l| !l.is_empty())
             .map(|line| {

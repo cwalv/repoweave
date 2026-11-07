@@ -240,7 +240,7 @@ fn url_remotes_to_add(targets: &[Target]) -> anyhow::Result<Vec<Option<AbsentRem
         match planned {
             Ok(planned) => adds.push(planned.add),
             Err(judged) => {
-                report.add(judged);
+                report.add(*judged);
                 adds.push(None);
             }
         }

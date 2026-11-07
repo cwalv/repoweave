@@ -1051,7 +1051,6 @@ fn make_pin_local(
         repo_path.as_str()
     ));
     let url_remote = match registry::resolve_to_clone_info(&entry.url)
-        .map_err(anyhow::Error::from)
         .and_then(|info| crate::url_remote::ensure(vcs, repo_path, verb, store, &info.url))
     {
         Ok(remote) => remote,

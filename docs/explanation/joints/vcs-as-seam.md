@@ -356,9 +356,8 @@ carries git's vocabulary across the seam:
 
   A hand-written census of these mentions undercounts in one shape: it
   records the sites someone went looking for, and misses the ones in
-  messages whose subject is something else — `rwv update --remote`'s
-  non-fast-forward refusal ("diverged from the tip origin is on") among
-  them. That one names the member's url remote.
+  messages whose subject is something else, which mention a remote in
+  passing.
 
   The hints telling the operator that a remote's `HEAD` is unset belong to
   the third item in this list rather than this one: they spell git

@@ -491,7 +491,7 @@ fn plan_url_remotes(mut items: Vec<WorkItem>) -> anyhow::Result<Vec<WorkItem>> {
         .plan()
         {
             Ok(planned) => item.planned = Some(planned),
-            Err(judged) => report.add(judged),
+            Err(judged) => report.add(*judged),
         }
     }
     report.into_result()?;
@@ -612,7 +612,6 @@ fn advance_one(
         repo_dir,
         in_workweave,
         &resolved,
-        &planned.remote,
         detach_checkouts,
     )?;
 
@@ -661,7 +660,6 @@ fn advance_checkout(
     repo_dir: &Path,
     in_workweave: bool,
     target: &ResolvedRevisionId,
-    remote: &crate::vcs::RemoteHandle,
     detach_checkouts: Option<DetachConsent>,
 ) -> Result<(), String> {
     let describe = |e: VcsError| format!("{}: {e:#}", repo_path.as_str());
@@ -700,12 +698,11 @@ fn advance_checkout(
         }
         return Err(format!(
             "{}: advancing '{attached}' to {} is not a fast-forward — this \
-             workweave's checkout has diverged from the tip {} is on.\n  \
+             workweave's checkout has diverged from that tip.\n  \
              Run `rwv sync` to reconcile the workweave with its parent, then \
              re-run `rwv update --remote`.",
             repo_path.as_str(),
             target.display_str(),
-            remote,
         ));
     }
 

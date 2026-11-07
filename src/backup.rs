@@ -411,7 +411,7 @@ pub fn run_prune(ctx: &WorkspaceContext) -> anyhow::Result<()> {
         {
             Ok(plan) => planned.push(plan.add),
             Err(judged) => {
-                taken.add(judged);
+                taken.add(*judged);
                 planned.push(None);
             }
         }

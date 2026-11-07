@@ -135,8 +135,8 @@ fn bare_main(bare: &Path) -> String {
 /// Replace the member's `origin` by `name` at `url`, so the clone has a
 /// remote and no remote with the url its manifest declares.
 fn lose_the_url_remote(weave: &Weave, name: &str, url: &str) {
-    common::git_in(&weave.member(), &["remote", "remove", "origin"]);
-    common::git_in(&weave.member(), &["remote", "add", name, url]);
+    common::git_in(weave.member(), &["remote", "remove", "origin"]);
+    common::git_in(weave.member(), &["remote", "add", name, url]);
 }
 
 #[test]
@@ -181,7 +181,7 @@ fn update_remote_adds_the_url_remote_a_clone_lacks_before_it_advances_from_it() 
 
     assert!(out.status.success(), "{}", text(&out.stderr));
     assert_eq!(
-        common::git_in(&weave.member(), &["rev-parse", "HEAD"]),
+        common::git_in(weave.member(), &["rev-parse", "HEAD"]),
         tip,
         "the member advanced from the remote that has its url"
     );
@@ -207,7 +207,7 @@ fn a_name_another_url_holds_refuses_the_fetch_before_it_adds_or_fetches_anything
     )
     .unwrap();
     common::git_in(
-        &weave.member(),
+        weave.member(),
         &[
             "remote",
             "add",
@@ -260,7 +260,7 @@ fn a_refused_name_reaches_json_as_the_name_axis_taken_with_its_choice() {
     )
     .unwrap();
     common::git_in(
-        &weave.member(),
+        weave.member(),
         &[
             "remote",
             "add",
@@ -289,11 +289,11 @@ fn push_publishes_a_branch_to_its_push_remote_not_to_the_url_remote() {
     let fork = weave.scratch("fork.git");
     init_bare(&fork);
     common::git_in(
-        &weave.member(),
+        weave.member(),
         &["remote", "add", "fork", &common::file_url(&fork)],
     );
     common::git_in(
-        &weave.member(),
+        weave.member(),
         &["config", "branch.main.pushRemote", "fork"],
     );
     let origin_before = bare_main(weave.bare());
@@ -318,13 +318,13 @@ fn the_project_repo_publishes_to_the_remote_it_was_created_with() {
     let other = weave.scratch("other.git");
     init_bare(&other);
     common::git_in(
-        &weave.project(),
+        weave.project(),
         &["remote", "add", "other", &common::file_url(&other)],
     );
-    common::git_in(&weave.project(), &["config", "rwv.url-remote", "origin"]);
+    common::git_in(weave.project(), &["config", "rwv.url-remote", "origin"]);
     let tip = commit(&weave.member(), "work");
     assert!(weave.rwv(&["lock", "--commit"]).status.success());
-    let project_tip = common::git_in(&weave.project(), &["rev-parse", "HEAD"]);
+    let project_tip = common::git_in(weave.project(), &["rev-parse", "HEAD"]);
 
     let out = weave.rwv(&["push"]);
 
@@ -343,10 +343,10 @@ fn a_project_branch_with_no_upstream_and_several_remotes_none_recorded_has_no_pu
     let other = weave.scratch("other.git");
     init_bare(&other);
     common::git_in(
-        &weave.project(),
+        weave.project(),
         &["remote", "add", "other", &common::file_url(&other)],
     );
-    common::git_in(&weave.project(), &["branch", "--unset-upstream"]);
+    common::git_in(weave.project(), &["branch", "--unset-upstream"]);
     commit(&weave.member(), "work");
     assert!(weave.rwv(&["lock", "--commit"]).status.success());
     let member_before = bare_main(weave.bare());
@@ -395,7 +395,7 @@ fn a_branch_taking_in_from_a_branch_of_another_name_is_a_foreign_upstream_push_r
 /// moved and been fetched.
 fn behind(weave: &Weave) -> String {
     let tip = advance(weave.bare(), "main", "theirs");
-    common::git_in(&weave.member(), &["fetch", "origin"]);
+    common::git_in(weave.member(), &["fetch", "origin"]);
     tip
 }
 
