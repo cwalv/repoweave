@@ -1,4 +1,4 @@
-//! `rwv workweave <project> delete` and `create --replace-existing` weigh
+//! `rwv workweave delete` and `create --replace-existing` weigh
 //! every checkout they destroy, not only the members the primary weave's
 //! manifest names.
 //!
@@ -33,7 +33,10 @@ impl Weave {
     }
 
     fn seat(&self, name: &str) -> PathBuf {
-        succeed(&self.root, &["workweave", PROJECT, "create", name]);
+        succeed(
+            &self.root,
+            &["workweave", "create", "--project", PROJECT, name],
+        );
         self.root
             .parent()
             .unwrap()
@@ -117,7 +120,7 @@ fn weave() -> Weave {
     };
     succeed(
         &weave.root,
-        &["add", &weave.url("extra"), "--role", "owned"],
+        &["member", "add", &weave.url("extra"), "--role", "owned"],
     );
     succeed(&weave.root, &["lock"]);
     commit_all(&weave.root, "add extra");
@@ -129,7 +132,7 @@ fn weave() -> Weave {
 /// checkout, so it sits in the seat with no manifest naming it.
 fn seat_with_a_stranded_dirty_checkout(weave: &Weave) -> PathBuf {
     let s1 = weave.seat("s1");
-    succeed(&weave.root, &["remove", EXTRA]);
+    succeed(&weave.root, &["member", "remove", EXTRA]);
     succeed(&weave.root, &["lock"]);
     commit_all(&weave.root, "drop extra");
     std::fs::write(common::under(&s1, EXTRA).join("scratch.txt"), "untracked\n").unwrap();
@@ -144,7 +147,7 @@ fn seat_with_a_stranded_dirty_checkout(weave: &Weave) -> PathBuf {
 }
 
 fn delete(weave: &Weave, flags: &[&str]) -> Output {
-    let mut args = vec!["workweave", PROJECT, "delete", "s1"];
+    let mut args = vec!["workweave", "delete", "--project", PROJECT, "s1"];
     args.extend_from_slice(flags);
     run(&weave.root, &args)
 }
@@ -185,8 +188,12 @@ fn delete_refuses_over_untracked_work_in_a_checkout_no_member_covers() {
         "the refusal must print the state's choice"
     );
     assert!(
-        stderr.contains("--discard-uncommitted"),
-        "the refusal must name the flag that waives the loss"
+        stderr.contains("    rwv workweave delete s1 --discard-uncommitted\n"),
+        "the refusal must offer the delete that waives the loss as a form of the state's choice:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("deletes the workweave with these uncommitted changes in it"),
+        "the waiver is a choice in the table, not a note line beside it:\n{stderr}"
     );
 }
 
@@ -211,7 +218,14 @@ fn replace_existing_refuses_over_untracked_work_in_a_checkout_no_member_covers()
 
     let out = run(
         &weave.root,
-        &["workweave", PROJECT, "create", "s1", "--replace-existing"],
+        &[
+            "workweave",
+            "create",
+            "--project",
+            PROJECT,
+            "s1",
+            "--replace-existing",
+        ],
     );
     assert_refused_with_the_work_intact(
         &out,
@@ -227,7 +241,10 @@ fn replace_existing_refuses_over_untracked_work_in_a_checkout_no_member_covers()
 fn delete_refuses_over_commits_in_a_member_only_the_workweave_names() {
     let weave = weave();
     let s1 = weave.seat("s1");
-    succeed(&s1, &["add", &weave.url("added"), "--role", "owned"]);
+    succeed(
+        &s1,
+        &["member", "add", &weave.url("added"), "--role", "owned"],
+    );
     succeed(&s1, &["lock"]);
     commit_all(&s1, "add added");
     let added = common::under(&s1, ADDED);
@@ -291,12 +308,15 @@ fn delete_refuses_over_a_commit_in_a_clone_no_baseline_holds() {
 fn a_clean_unlisted_checkout_does_not_block_delete() {
     let weave = weave();
     let s1 = weave.seat("s1");
-    succeed(&weave.root, &["remove", EXTRA]);
+    succeed(&weave.root, &["member", "remove", EXTRA]);
     succeed(&weave.root, &["lock"]);
     commit_all(&weave.root, "drop extra");
     assert!(common::under(&s1, EXTRA).is_dir());
 
-    succeed(&weave.root, &["workweave", PROJECT, "delete", "s1"]);
+    succeed(
+        &weave.root,
+        &["workweave", "delete", "--project", PROJECT, "s1"],
+    );
     assert!(!s1.exists());
 }
 
@@ -319,7 +339,10 @@ fn a_delete_with_only_members_is_unchanged() {
     );
 
     std::fs::remove_file(common::under(&s1, LIB).join("scratch.txt")).unwrap();
-    succeed(&weave.root, &["workweave", PROJECT, "delete", "s1"]);
+    succeed(
+        &weave.root,
+        &["workweave", "delete", "--project", PROJECT, "s1"],
+    );
     assert!(!s1.exists());
 }
 
@@ -392,12 +415,15 @@ fn delete_unregisters_a_dropped_members_checkout_and_retires_its_branch() {
     let s1 = weave.seat("s1");
     let checkout = common::under(&s1, EXTRA);
     let clone = common::under(&weave.root, EXTRA);
-    succeed(&weave.root, &["remove", EXTRA]);
+    succeed(&weave.root, &["member", "remove", EXTRA]);
     succeed(&weave.root, &["lock"]);
     commit_all(&weave.root, "drop extra");
     assert!(registers(&clone, &checkout) && branch_exists(&clone, "app--s1"));
 
-    succeed(&weave.root, &["workweave", PROJECT, "delete", "s1"]);
+    succeed(
+        &weave.root,
+        &["workweave", "delete", "--project", PROJECT, "s1"],
+    );
 
     assert!(!s1.exists());
     assert!(
@@ -415,7 +441,10 @@ fn delete_unregisters_a_dropped_members_checkout_and_retires_its_branch() {
 fn delete_releases_the_primary_clone_of_a_member_only_the_workweave_added() {
     let weave = weave();
     let s1 = weave.seat("s1");
-    succeed(&s1, &["add", &weave.url("added"), "--role", "owned"]);
+    succeed(
+        &s1,
+        &["member", "add", &weave.url("added"), "--role", "owned"],
+    );
     let clone = common::under(&weave.root, ADDED);
     assert!(registers(&clone, &common::under(&s1, ADDED)));
 
@@ -423,8 +452,9 @@ fn delete_releases_the_primary_clone_of_a_member_only_the_workweave_added() {
         &weave.root,
         &[
             "workweave",
-            PROJECT,
             "delete",
+            "--project",
+            PROJECT,
             "s1",
             "--discard-uncommitted",
         ],
@@ -437,7 +467,7 @@ fn delete_releases_the_primary_clone_of_a_member_only_the_workweave_added() {
         worktree_list(&clone)
     );
     assert!(!branch_exists(&clone, "app--s1"));
-    succeed(&weave.root, &["remove", ADDED, "--delete"]);
+    succeed(&weave.root, &["member", "remove", ADDED, "--delete"]);
     assert!(!clone.exists());
 }
 

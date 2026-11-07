@@ -218,10 +218,10 @@ down, and only a filesystem that actually folds them will report them.
 
 **What to do:** to register it, move it to the path its origin URL places it
 at under the primary weave root (the canonical path
-[`rwv add`](./cli.md#rwv-add-url-) describes), unless it already sits there,
-and run `rwv add --adopt <path>` with that path. Adopted at any other path, it
+[`rwv member add`](./cli.md#rwv-member-add-url-) describes), unless it already sits there,
+and run `rwv member add --adopt <path>` with that path. Adopted at any other path, it
 is registered there, and an `owned` or `dependency` entry then reports
-[`placement-disagreement`](#placement-disagreement). `rwv add <url>` registers
+[`placement-disagreement`](#placement-disagreement). `rwv member add <url>` registers
 it only once it sits at that path; anywhere else it makes a second clone and
 leaves this one standing. Or remove the directory yourself. Note that without
 `--all`, orphan detection is skipped entirely — a repo missing from the active
@@ -238,10 +238,10 @@ every project's manifest, not about which ones this invocation loaded.
 
 **What to do:** to register it, move it to the path its origin URL places it
 at under the primary weave root (the canonical path
-[`rwv add`](./cli.md#rwv-add-url-) describes), unless it already sits there,
-and run `rwv add --adopt <path>` with that path. Adopted at any other path, it
+[`rwv member add`](./cli.md#rwv-member-add-url-) describes), unless it already sits there,
+and run `rwv member add --adopt <path>` with that path. Adopted at any other path, it
 is registered there, and an `owned` or `dependency` entry then reports
-[`placement-disagreement`](#placement-disagreement). `rwv add <url>` registers
+[`placement-disagreement`](#placement-disagreement). `rwv member add <url>` registers
 it only once it sits at that path; anywhere else it makes a second clone and
 leaves this one standing. Or remove the directory yourself.
 
@@ -393,7 +393,7 @@ listed — a permissions problem, most plausibly. Every project under it is
 invisible to this scan, and without this finding that reads exactly like a
 workspace that genuinely has none: a broken registry and an empty one would
 otherwise print the same "clean" result. A `projects/` that does not exist
-yet (before the first `rwv add`) is a different, unremarkable state and does
+yet (before the first `rwv member add`) is a different, unremarkable state and does
 not raise this.
 
 **What to do:** the `error` field carries what the filesystem said. Fix the
@@ -704,7 +704,7 @@ decision, so it happens where you asked for it.
 
 **Scope.** The scan enumerates the containers each project records, so this
 finding covers a directory sitting in one of them. A workweave placed outside
-them all — `rwv workweave <project> create <name> --dir <path>` — is not among
+them all — `rwv workweave create <name> --dir <path>` — is not among
 the candidates: an unrecorded one there produces no finding and `--fix` has
 nothing to adopt. Retire the directory and create the workweave again instead,
 which does not depend on where it sits.
@@ -920,9 +920,9 @@ manifest still lists is not a leftover, and a path neither file names raises
 nothing here; `--all` reports such a clone as
 [`orphaned-clone`](#orphaned-clone). `--fix` never deletes it.
 
-**What to do:** `rwv remove <path> --delete` deletes the checkout, keeping the
+**What to do:** `rwv member remove <path> --delete` deletes the checkout, keeping the
 guards that refuse a dirty tree, unpushed commits or a clone another project
-uses. `rwv add <url>` keeps it as a member again.
+uses. `rwv member add <url>` keeps it as a member again.
 
 ### `member-permissions`
 
@@ -972,7 +972,7 @@ Workweaves are unaffected: each has its own checkout, settled for its own
 project's role.
 
 **What to do:** decide which role the clone should have and give it that role
-in every project listing it, with `rwv role --project <name> <repo> <role>`.
+in every project listing it, with `rwv member set-role --project <name> <repo> <role>`.
 `--fix` does not choose between the projects.
 
 ### `stale-worktree-registration`
@@ -1096,7 +1096,7 @@ answer "no" silently.
 
 **What to do:** fetch any unique commits from that worktree into
 `<weave>/<repo_path>`, remove the mislinked worktree directory, and run
-`rwv doctor --fix` (or `rwv workweave <project> create <name>`) to re-link it
+`rwv doctor --fix` (or `rwv workweave create <name>`) to re-link it
 against the weave canonical store.
 
 #### `weave-clone-is-worktree`
@@ -1189,7 +1189,7 @@ path is not compared with the manifest's `url`.
 
 **What to do:** give the remote an absolute URL. The message names the command,
 with the URL the manifest's `url` resolves to:
-`git -C <repo> remote set-url origin <url>`. `rwv add --adopt` refuses such a
+`git -C <repo> remote set-url origin <url>`. `rwv member add --adopt` refuses such a
 clone with `no-remote-url`.
 
 #### `unresolvable-url`
@@ -1465,7 +1465,7 @@ longer on disk. Three classes, and only one is removable.
 
 "No longer on disk" is asked of three sources: the container walk, the
 workweave index, and git's own worktree table. The third is what keeps a
-workweave placed outside every container (`rwv workweave <project> create
+workweave placed outside every container (`rwv workweave create
 <name> --dir <path>`) whose index entry has been lost out of all three
 classes — a branch a live checkout is sitting on is never reported here.
 
@@ -1737,7 +1737,7 @@ file, so its absence is a state a fresh generation reaches rather than a
 decision you made.
 
 **What to do:** `rwv doctor --fix`, which re-runs the generation that writes
-it. The authoring verbs (`rwv add`, `rwv remove`, `rwv update`, `rwv role`) run
+it. The authoring verbs (`rwv member add`, `rwv member remove`, `rwv update`, `rwv member set-role`) run
 the same generation; `rwv activate`, `rwv materialize` and `rwv workweave
 create` author nothing and report the file missing.
 
@@ -1832,7 +1832,7 @@ on, and the only repair `--fix` has for this project regenerates from the very
 settings that did not read — so it is withheld rather than attempted and
 reported as failed. The other verbs stop on the same block, each naming it and
 the field: `rwv materialize` refuses before its first step, changing nothing;
-`rwv add`, `rwv remove`, `rwv role` and `rwv update` refuse and leave
+`rwv member add`, `rwv member remove`, `rwv member set-role` and `rwv update` refuse and leave
 `rwv.toml` unchanged; and `rwv activate` withholds its install hooks.
 
 Everything that integration would otherwise have reported for this project is

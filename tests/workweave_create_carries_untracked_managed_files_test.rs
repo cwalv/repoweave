@@ -147,8 +147,9 @@ fn workweave_create_carries_an_activated_wrapper_config() {
     let create = rwv_with_path(
         &[
             "workweave",
-            "web-app",
             "create",
+            "--project",
+            "web-app",
             "agent-1",
             "--no-materialize",
         ],
@@ -194,8 +195,9 @@ fn workweave_create_leaves_an_unactivated_wrapper_config_missing_in_both() {
     rwv_with_path(
         &[
             "workweave",
-            "web-app",
             "create",
+            "--project",
+            "web-app",
             "agent-1",
             "--no-materialize",
         ],
@@ -271,8 +273,9 @@ fn workweave_create_does_not_overwrite_a_tracked_wrapper_config() {
     let create = rwv_with_path(
         &[
             "workweave",
-            "web-app",
             "create",
+            "--project",
+            "web-app",
             "agent-1",
             "--capture-dirty",
         ],
@@ -330,8 +333,9 @@ fn create_over_committed_symlink(link_parent: bool) -> (tempfile::TempDir, PathB
     rwv_with_path(
         &[
             "workweave",
-            "web-app",
             "create",
+            "--project",
+            "web-app",
             "agent-1",
             "--capture-dirty",
         ],

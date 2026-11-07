@@ -13,13 +13,13 @@ the observable lifecycle: what exists, when, and how to move it forward.
 
 Feature work happens in workweaves. Canonical clones in the primary weave
 stay on the branch `rwv.toml` declares for each member (`branch`, which
-`rwv add` records from the remote's default branch); a workweave puts every
+`rwv member add` records from the remote's default branch); a workweave puts every
 member on a branch of its own and lands back with `rwv sync-to --retire`.
 
 ## Creation
 
 ```bash
-rwv workweave <project> create <name>
+rwv workweave create <name>
 ```
 
 Create forks from CWD's active workspace by default. Inside a workweave,
@@ -27,9 +27,9 @@ the fork source is the surrounding workweave; from a primary weave, it is
 primary. To specify a different source:
 
 ```bash
-rwv workweave <project> create <name> --from primary
-rwv workweave <project> create <name> --from other
-rwv workweave <project> create <name> --from ../.workweaves/<project>--other
+rwv workweave create <name> --from primary
+rwv workweave create <name> --from other
+rwv workweave create <name> --from ../.workweaves/<project>--other
 ```
 
 `--from` reads its source as `rwv sync` does: `primary`, a bare workweave name
@@ -86,7 +86,7 @@ Error: rwv workweave create: refusing to create workweave — projects/web-app h
 To proceed, do one of:
   1. commit the changes: git -C projects/web-app commit
   2. stash the changes: git -C projects/web-app stash
-  3. capture them into the workweave: rwv workweave web-app create payments --capture-dirty
+  3. capture them into the workweave: rwv workweave create payments --capture-dirty
 
 rwv explain dirty-project-dir
 ```
@@ -114,7 +114,7 @@ project) and returns immediately. Non-git state written between invocations
 Use `--replace-existing` to tear down and recreate from scratch. It refuses if
 any checkout under the existing workweave, a manifest member or not, holds
 uncommitted changes or unmerged commits — the operator must discard those
-explicitly with `rwv workweave <project> delete <name> --discard-uncommitted
+explicitly with `rwv workweave delete <name> --discard-uncommitted
 --discard-unmerged-commits`.
 
 ## Working state
@@ -202,7 +202,7 @@ by hand. Committing or discarding alone does not unblock it.
 
 ### What retire deletes
 
-On success, retire deletes the workweave as `rwv workweave <project> delete`
+On success, retire deletes the workweave as `rwv workweave delete`
 does without its `--discard-*` overrides:
 
 - Every member-repo worktree is removed (`git worktree remove`), whatever
@@ -258,7 +258,7 @@ See the abort contract in [sync-semantics](./sync-semantics.md#abort-verified-re
 To delete without landing:
 
 ```bash
-rwv workweave <project> delete <name>
+rwv workweave delete <name>
 ```
 
 Refuses if:
@@ -277,7 +277,7 @@ the manifest `(not a manifest member)`. Options:
 
 - Commit the work and land it: `rwv sync-to --retire`
 - Stash or discard the uncommitted changes, then delete
-- Consent to losing everything: `rwv workweave <project> delete <name>
+- Consent to losing everything: `rwv workweave delete <name>
   --discard-uncommitted --discard-unmerged-commits`
 
 **`--discard-uncommitted`** waives the first refusal, **`--discard-unmerged-commits`**

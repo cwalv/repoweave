@@ -109,13 +109,17 @@ pub enum State {
 }
 
 /// A state's row: its axis and name, the page prose, and the forms it offers,
-/// in the order they print.
+/// in the order they print: every refusal's, then the refusing verb's own.
 pub struct StateRow {
     pub axis: Axis,
     pub name: &'static str,
     pub means: &'static str,
     pub refused_by: &'static str,
     pub offers: &'static [Form],
+    /// Forms only the named verb's refusal offers, because the flag that
+    /// spells them belongs to that verb. The name is the verb's subcommand
+    /// path, as `rwv explain` and a refusal's `rwv <verb>:` prefix print it.
+    pub verb_offers: &'static [(&'static str, Form)],
 }
 
 impl State {
@@ -140,11 +144,12 @@ impl State {
                              fast-forward (tracked changes only); `rwv lock` without `--dirty`, \
                              for a member (tracked changes only); `rwv lock --commit` and `rwv \
                              update --commit`, for project-repo changes outside `rwv.lock` and \
-                             `rwv.toml`; `rwv push`, for the project repo; `rwv role <repo> \
-                             reference`; `rwv remove --delete` and replay's prune of a dropped \
-                             member; `rwv workweave <project> delete` and `rwv sync-to --retire`, \
-                             for every checkout in the workweave",
+                             `rwv.toml`; `rwv push`, for the project repo; `rwv member \
+                             set-role <repo> reference`; `rwv member remove --delete` and \
+                             replay's prune of a dropped member; `rwv workweave delete` and \
+                             `rwv sync-to --retire`, for every checkout in the workweave",
                 offers: &[Form::C13],
+                verb_offers: &[("workweave delete", Form::C13WorkweaveDelete)],
             },
             Self::EditsMidOperation => &StateRow {
                 axis: Axis::Edits,
@@ -153,6 +158,7 @@ impl State {
                 refused_by: "`rwv sync` and `rwv sync-to`, for a repo they would rebase or \
                              fast-forward",
                 offers: &[Form::C32],
+                verb_offers: &[],
             },
             Self::EditsLockFilesUncommitted => &StateRow {
                 axis: Axis::Edits,
@@ -161,39 +167,44 @@ impl State {
                         `rwv.lock`, or either is not yet tracked",
                 refused_by: "`rwv push`",
                 offers: &[Form::C5Lock],
+                verb_offers: &[],
             },
             Self::CheckoutInAnotherWorkspace => &StateRow {
                 axis: Axis::Checkout,
                 name: "in another workspace",
                 means: "a workweave's checkout derives from the clone, named",
-                refused_by: "`rwv remove --delete` in the primary, and replay's prune of a \
-                             dropped member there",
+                refused_by: "`rwv member remove --delete` in the primary, and replay's prune \
+                             of a dropped member there",
                 offers: &[Form::C16Switch, Form::C16WorkweaveDelete],
+                verb_offers: &[],
             },
             Self::CheckoutInRawWorktree => &StateRow {
                 axis: Axis::Checkout,
                 name: "in a raw worktree",
                 means: "a worktree no workweave records derives from the clone, named by path",
-                refused_by: "`rwv remove --delete` in the primary, and replay's prune of a \
-                             dropped member there",
+                refused_by: "`rwv member remove --delete` in the primary, and replay's prune \
+                             of a dropped member there",
                 offers: &[Form::C16Raw],
+                verb_offers: &[],
             },
             Self::NameTaken => &StateRow {
                 axis: Axis::Name,
                 name: "taken",
                 means: "the project already records a workweave by this name at another path, \
                         or the directory the workweave would take is another workweave's",
-                refused_by: "`rwv workweave <project> create`",
+                refused_by: "`rwv workweave create`",
                 offers: &[Form::AnotherName, Form::C9WorkweaveDelete],
+                verb_offers: &[],
             },
             Self::NameARevision => &StateRow {
                 axis: Axis::Name,
                 name: "a revision",
-                means: "the branch `rwv add` would declare reads as a commit id (seven or more \
-                        hex digits) or a release tag (`v2.0`, `v0.3.4-rc1`)",
-                refused_by: "`rwv add`, for the remote's default branch or, with `--new`, the \
-                             branch the new repo is on",
+                means: "the branch `rwv member add` would declare reads as a commit id (seven \
+                        or more hex digits) or a release tag (`v2.0`, `v0.3.4-rc1`)",
+                refused_by: "`rwv member add`, for the remote's default branch or, with \
+                             `--new`, the branch the new repo is on",
                 offers: &[Form::C11SetBranch],
+                verb_offers: &[],
             },
             Self::PublishWithheld => &StateRow {
                 axis: Axis::Publish,
@@ -202,6 +213,7 @@ impl State {
                         pushed; what the remote answered is listed",
                 refused_by: "`rwv push`",
                 offers: &[Form::C7Push, Form::C17],
+                verb_offers: &[],
             },
         }
     }
@@ -215,6 +227,7 @@ impl State {
             listed: Vec::new(),
             facts: Vec::new(),
             workspace: None,
+            verb: None,
             bindings: BTreeMap::new(),
             places: BTreeMap::new(),
         }
@@ -553,6 +566,7 @@ pub enum Form {
     C12Feature,
     C12Declared,
     C13,
+    C13WorkweaveDelete,
     C14Keep,
     C14Return,
     C15,
@@ -596,7 +610,7 @@ pub struct FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 60] = [
+    pub const ALL: [Form; 61] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C2Pull,
@@ -625,6 +639,7 @@ impl Form {
         Self::C12Feature,
         Self::C12Declared,
         Self::C13,
+        Self::C13WorkweaveDelete,
         Self::C14Keep,
         Self::C14Return,
         Self::C15,
@@ -745,7 +760,7 @@ impl Form {
             },
             Self::C9WorkweaveDelete => &FormRow {
                 choice: C::C9,
-                steps: &[Rwv("rwv workweave <project> delete <ww>")],
+                steps: &[Rwv("rwv workweave delete <ww> --project <project>")],
                 at: W::Primary,
                 shipped: true,
             },
@@ -781,7 +796,7 @@ impl Form {
             },
             Self::C11SetRole => &FormRow {
                 choice: C::C11,
-                steps: &[Rwv("rwv role <m> <role>")],
+                steps: &[Rwv("rwv member set-role <m> <role>")],
                 at: W::WithBranch,
                 shipped: true,
             },
@@ -789,7 +804,7 @@ impl Form {
                 choice: C::C11,
                 steps: &[Rwv("rwv member set-recurse-submodules <m> <bool>")],
                 at: W::WithBranch,
-                shipped: false,
+                shipped: true,
             },
             Self::C11SetHistory => &FormRow {
                 choice: C::C11,
@@ -805,13 +820,13 @@ impl Form {
             },
             Self::C11MemberAdd => &FormRow {
                 choice: C::C11,
-                steps: &[Rwv("rwv add <url>")],
+                steps: &[Rwv("rwv member add <url>")],
                 at: W::WithBranch,
                 shipped: true,
             },
             Self::C11MemberRemove => &FormRow {
                 choice: C::C11,
-                steps: &[Rwv("rwv remove <m>")],
+                steps: &[Rwv("rwv member remove <m>")],
                 at: W::WithBranch,
                 shipped: true,
             },
@@ -831,6 +846,12 @@ impl Form {
                 choice: C::C13,
                 steps: &[Vcs(A::Commit), Vcs(A::Stash)],
                 at: W::Checkout,
+                shipped: true,
+            },
+            Self::C13WorkweaveDelete => &FormRow {
+                choice: C::C13,
+                steps: &[Rwv("rwv workweave delete <ww> --discard-uncommitted")],
+                at: W::Primary,
                 shipped: true,
             },
             Self::C14Keep => &FormRow {
@@ -865,7 +886,7 @@ impl Form {
             },
             Self::C16WorkweaveDelete => &FormRow {
                 choice: C::C16,
-                steps: &[Rwv("rwv workweave <project> delete <ww>")],
+                steps: &[Rwv("rwv workweave delete <ww> --project <project>")],
                 at: W::Primary,
                 shipped: true,
             },
@@ -1112,6 +1133,7 @@ pub struct Judging {
     listed: Vec<String>,
     facts: Vec<Fact>,
     workspace: Option<PathBuf>,
+    verb: Option<&'static str>,
     bindings: BTreeMap<&'static str, String>,
     places: BTreeMap<&'static str, PathBuf>,
 }
@@ -1120,6 +1142,13 @@ impl Judging {
     /// What the state names: the operation in progress, the name taken.
     pub fn subject(mut self, subject: impl fmt::Display) -> Self {
         self.subject = Some(subject.to_string());
+        self
+    }
+
+    /// The verb refusing, so the state's forms that belong to that verb alone
+    /// are offered too.
+    pub fn by_verb(mut self, verb: &'static str) -> Self {
+        self.verb = Some(verb);
         self
     }
 
@@ -1175,11 +1204,16 @@ impl Judging {
 
     /// The judged line, its choices spelled by `vcs`.
     pub fn judge(self, vcs: &dyn Vcs) -> Judged {
-        let choices = self
-            .state
-            .row()
+        let row = self.state.row();
+        let verb_offers = row
+            .verb_offers
+            .iter()
+            .filter(|(verb, _)| Some(*verb) == self.verb)
+            .map(|(_, form)| form);
+        let choices = row
             .offers
             .iter()
+            .chain(verb_offers)
             .filter(|form| form.printable())
             .map(|form| Offered {
                 choice: form.row().choice,
@@ -1610,16 +1644,26 @@ pub fn kind_entries_markdown(vcs_type: crate::manifest::VcsType) -> String {
             "| State | Choice | Spelled | Where | Keeps work because |\n|---|---|---|---|---|\n",
         );
         for state in &states {
-            for form in state.row().offers.iter().filter(|f| f.printable()) {
+            let state_row = state.row();
+            let every = state_row.offers.iter().map(|form| (None, form));
+            let by_verb = state_row
+                .verb_offers
+                .iter()
+                .map(|(verb, form)| (Some(*verb), form));
+            for (verb, form) in every.chain(by_verb).filter(|(_, f)| f.printable()) {
                 let row = form.row();
                 let choice = row.choice.row();
                 let label = match choice.id {
                     Some(id) => format!("{id}: {}", choice.phrase),
                     None => choice.phrase.to_owned(),
                 };
+                let state_cell = match verb {
+                    None => format!("`{}`", state.name()),
+                    Some(verb) => format!("`{}`, for `rwv {verb}`", state.name()),
+                };
                 out.push_str(&format!(
-                    "| `{}` | {} | {} | {} | {} |\n",
-                    state.name(),
+                    "| {} | {} | {} | {} | {} |\n",
+                    state_cell,
                     label,
                     spelled(*form, vcs, vcs_name),
                     row.at.describe(),
@@ -1770,7 +1814,10 @@ mod tests {
             out.choices[1].at,
             Some(crate::path_spelling::WirePath::of(Path::new("/my weave")))
         );
-        assert_eq!(out.choices[1].run, ["rwv workweave proj delete seat"]);
+        assert_eq!(
+            out.choices[1].run,
+            ["rwv workweave delete seat --project proj"]
+        );
         assert_eq!(
             fill("cd <dir>", &BTreeMap::from([("<dir>", "a b".into())])),
             "cd \"a b\""

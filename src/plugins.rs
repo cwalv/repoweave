@@ -379,12 +379,19 @@ pub(crate) fn build_command(
 ///
 /// Message is deliberately short: name the verb, name the two things we
 /// checked, point at `rwv --help`. Agents parse the shape; humans read the
-/// prose.
+/// prose. A verb that is a subcommand of a core noun names that spelling.
 fn unknown_verb_error(verb: &str) -> anyhow::Error {
+    let spellings = crate::cli::noun_spellings_of(verb);
+    let did_you_mean = if spellings.is_empty() {
+        String::new()
+    } else {
+        let spelled: Vec<String> = spellings.iter().map(|s| format!("`rwv {s}`")).collect();
+        format!(" Did you mean {}?", spelled.join(" or "))
+    };
     crate::refusal::refusal(
         crate::refusal::RefusalKind::UnknownVerb,
         format!(
-            "unknown verb `{verb}`: no core verb and no `rwv-{verb}` on `$PATH`. \
+            "unknown verb `{verb}`: no core verb and no `rwv-{verb}` on `$PATH`.{did_you_mean} \
              Try `rwv --help` for the list of core verbs."
         ),
     )

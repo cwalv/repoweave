@@ -61,7 +61,10 @@ fn fixture() -> (tempfile::TempDir, PathBuf) {
 
     let weaveroot = root.join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
-    let create_out = rwv_output(&ws, &["workweave", "alpha", "create", "agent-1"]);
+    let create_out = rwv_output(
+        &ws,
+        &["workweave", "create", "--project", "alpha", "agent-1"],
+    );
     let ww_dir = weaveroot.join("alpha--agent-1");
     assert!(
         ww_dir.join(".claude").symlink_metadata().is_ok(),

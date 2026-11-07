@@ -267,7 +267,13 @@ fn make_nested_project_weave(tmp: &Path) -> (PathBuf, PathBuf) {
     common::git_in(&project_dir, &["commit", "-m", "initial"]);
 
     rwv()
-        .args(["workweave", "chatly/web-app", "create", "wtest"])
+        .args([
+            "workweave",
+            "create",
+            "--project",
+            "chatly/web-app",
+            "wtest",
+        ])
         .current_dir(&ws)
         .assert()
         .success();

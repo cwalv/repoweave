@@ -31,7 +31,10 @@ impl Weave {
     }
 
     fn seat(&self, name: &str) -> PathBuf {
-        succeed(&self.primary, &["workweave", PROJECT, "create", name]);
+        succeed(
+            &self.primary,
+            &["workweave", "create", "--project", PROJECT, name],
+        );
         self.root
             .join(".workweaves")
             .join(format!("{PROJECT}--{name}"))

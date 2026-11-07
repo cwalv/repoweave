@@ -72,7 +72,7 @@ fn create_records_workweave_in_the_index() {
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
-        .args(["workweave", "web-app", "create", "feat"])
+        .args(["workweave", "create", "--project", "web-app", "feat"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -113,8 +113,9 @@ fn a_symlinked_container_is_recorded_canonicalized() {
     rwv()
         .args([
             "workweave",
+            "set-default-create-basedir",
+            "--project",
             "web-app",
-            "set-container",
             &link.to_string_lossy(),
         ])
         .current_dir(&ws)
@@ -122,7 +123,7 @@ fn a_symlinked_container_is_recorded_canonicalized() {
         .success();
 
     rwv()
-        .args(["workweave", "web-app", "create", "feat"])
+        .args(["workweave", "create", "--project", "web-app", "feat"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -156,7 +157,12 @@ fn set_container_records_a_symlinked_path_canonicalized() {
     repoweave::symlink::create(&real, &link, repoweave::symlink::LinkTarget::Directory).unwrap();
 
     rwv()
-        .args(["workweave", "web-app", "set-container"])
+        .args([
+            "workweave",
+            "set-default-create-basedir",
+            "--project",
+            "web-app",
+        ])
         .arg(&link)
         .current_dir(&ws)
         .assert()
@@ -180,12 +186,12 @@ fn delete_removes_registry_entry() {
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
-        .args(["workweave", "web-app", "create", "feat"])
+        .args(["workweave", "create", "--project", "web-app", "feat"])
         .current_dir(&ws)
         .assert()
         .success();
     rwv()
-        .args(["workweave", "web-app", "delete", "feat"])
+        .args(["workweave", "delete", "--project", "web-app", "feat"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -206,7 +212,7 @@ fn delete_refuses_when_marker_round_trip_fails() {
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
-        .args(["workweave", "web-app", "create", "feat"])
+        .args(["workweave", "create", "--project", "web-app", "feat"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -226,7 +232,7 @@ fn delete_refuses_when_marker_round_trip_fails() {
 
     // Delete must refuse: the marker no longer round-trips.
     rwv()
-        .args(["workweave", "web-app", "delete", "feat"])
+        .args(["workweave", "delete", "--project", "web-app", "feat"])
         .current_dir(&ws)
         .assert()
         .failure()
@@ -249,7 +255,7 @@ fn list_returns_empty_when_no_registry() {
     assert!(!index_path(&ws, "web-app").exists());
 
     rwv()
-        .args(["workweave", "web-app", "list"])
+        .args(["workweave", "list", "--project", "web-app"])
         .current_dir(&ws)
         .assert()
         .success()
@@ -269,7 +275,7 @@ fn doctor_fix_prunes_stale_registry_entry() {
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
-        .args(["workweave", "web-app", "create", "feat"])
+        .args(["workweave", "create", "--project", "web-app", "feat"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -309,7 +315,7 @@ fn doctor_fix_adopts_unregistered_workweave() {
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
-        .args(["workweave", "web-app", "create", "feat"])
+        .args(["workweave", "create", "--project", "web-app", "feat"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -389,7 +395,7 @@ fn an_unparseable_index_reports_itself_rather_than_an_adoption_that_cannot_run()
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
-        .args(["workweave", "web-app", "create", "feat"])
+        .args(["workweave", "create", "--project", "web-app", "feat"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -458,7 +464,7 @@ fn doctor_flags_tracked_index_until_the_named_untrack_is_committed() {
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
-        .args(["workweave", "web-app", "create", "feat"])
+        .args(["workweave", "create", "--project", "web-app", "feat"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -532,7 +538,7 @@ fn env_var_no_longer_steers_placement_or_output() {
     std::fs::create_dir_all(&decoy).unwrap();
 
     let assert = rwv()
-        .args(["workweave", "web-app", "create", "feat"])
+        .args(["workweave", "create", "--project", "web-app", "feat"])
         .env("RWV_WORKWEAVE_DIR", &decoy)
         .current_dir(&ws)
         .assert()
@@ -576,8 +582,9 @@ fn per_workweave_dir_override_lands_and_records_absolute_path() {
     rwv()
         .args([
             "workweave",
-            "web-app",
             "create",
+            "--project",
+            "web-app",
             "feat",
             "--dir",
             &custom.to_string_lossy(),
@@ -600,14 +607,14 @@ fn per_workweave_dir_override_lands_and_records_absolute_path() {
     // Even though the workweave lives outside the container, list / delete
     // work via the registry.
     rwv()
-        .args(["workweave", "web-app", "list"])
+        .args(["workweave", "list", "--project", "web-app"])
         .current_dir(&ws)
         .assert()
         .success()
         .stdout(predicate::str::contains("feat"));
 
     rwv()
-        .args(["workweave", "web-app", "delete", "feat"])
+        .args(["workweave", "delete", "--project", "web-app", "feat"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -615,11 +622,103 @@ fn per_workweave_dir_override_lands_and_records_absolute_path() {
 }
 
 // ---------------------------------------------------------------------------
-// set-container verb
+// per-workweave basedir (--basedir)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn set_container_verb_records_the_container() {
+fn basedir_places_one_workweave_under_it_and_records_the_path() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+
+    let alt = tmp.path().join("alt-basedir");
+    std::fs::create_dir_all(&alt).unwrap();
+
+    rwv()
+        .args([
+            "workweave",
+            "create",
+            "--project",
+            "web-app",
+            "feat",
+            "--basedir",
+            &alt.to_string_lossy(),
+        ])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let placed = alt.join("web-app--feat");
+    assert!(
+        placed.join(".rwv-workweave").exists(),
+        "workweave must land at <basedir>/<project>--<name>"
+    );
+    let idx = read_index(&ws, "web-app");
+    let expected = repoweave::path_spelling::resolve(&placed)
+        .unwrap_or_else(|_| placed.clone())
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(idx["workweaves"]["feat"].as_str().unwrap(), expected);
+
+    // The override is for one run: the recorded default is untouched.
+    rwv()
+        .args(["workweave", "create", "--project", "web-app", "next"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+    assert!(
+        !alt.join("web-app--next").exists(),
+        "a later create without --basedir must not reuse the override"
+    );
+}
+
+/// `--dir` names the workweave's own path and `--basedir` the directory above
+/// it; asking for both is refused and nothing is placed.
+#[test]
+fn basedir_together_with_dir_is_refused() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+
+    let dir = tmp.path().join("exact");
+    let basedir = tmp.path().join("above");
+    std::fs::create_dir_all(&basedir).unwrap();
+
+    let out = rwv()
+        .args([
+            "workweave",
+            "create",
+            "--project",
+            "web-app",
+            "feat",
+            "--dir",
+            &dir.to_string_lossy(),
+            "--basedir",
+            &basedir.to_string_lossy(),
+        ])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "stderr:\n{stderr}");
+    assert!(
+        stderr.contains("--dir")
+            && stderr.contains("--basedir")
+            && stderr.contains("cannot be used with"),
+        "the refusal must name both flags:\n{stderr}"
+    );
+    assert!(!dir.exists(), "nothing may be placed at --dir");
+    assert!(
+        basedir.read_dir().unwrap().next().is_none(),
+        "nothing may be placed under --basedir"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// set-default-create-basedir verb
+// ---------------------------------------------------------------------------
+
+#[test]
+fn set_default_create_basedir_verb_records_the_basedir() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
@@ -629,8 +728,9 @@ fn set_container_verb_records_the_container() {
     rwv()
         .args([
             "workweave",
+            "set-default-create-basedir",
+            "--project",
             "web-app",
-            "set-container",
             &alt.to_string_lossy(),
         ])
         .current_dir(&ws)
@@ -647,7 +747,7 @@ fn set_container_verb_records_the_container() {
 
     // Subsequent workweave create lands in the recorded container.
     rwv()
-        .args(["workweave", "web-app", "create", "feat"])
+        .args(["workweave", "create", "--project", "web-app", "feat"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -666,7 +766,7 @@ fn an_index_recording_an_illegal_workweave_name_is_refused_at_load() {
     let ws = make_workspace(tmp.path(), "web-app");
     std::fs::create_dir_all(tmp.path().join(".workweaves")).unwrap();
     rwv()
-        .args(["workweave", "web-app", "create", "feat"])
+        .args(["workweave", "create", "--project", "web-app", "feat"])
         .current_dir(&ws)
         .assert()
         .success();

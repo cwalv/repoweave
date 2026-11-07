@@ -76,19 +76,19 @@ fn assert_advises_adopt_at_the_placement(advice: &str) {
     assert!(
         advice.contains(
             "move it to the path its remote's URL places it at under the primary weave root"
-        ) && advice.contains("run `rwv add --adopt` with that path"),
-        "the advice must name the move to the clone's placement and `rwv add --adopt` there: \
+        ) && advice.contains("run `rwv member add --adopt` with that path"),
+        "the advice must name the move to the clone's placement and `rwv member add --adopt` there: \
          {advice}"
     );
     assert!(
-        !advice.contains("rwv add <url>"),
-        "`rwv add <url>` makes a second clone of an orphan off its placement: {advice}"
+        !advice.contains("rwv member add <url>"),
+        "`rwv member add <url>` makes a second clone of an orphan off its placement: {advice}"
     );
 }
 
 fn adopt(dir: &Path, path: &str) {
     common::rwv()
-        .args(["add", "--adopt", path])
+        .args(["member", "add", "--adopt", path])
         .current_dir(dir)
         .assert()
         .success();
@@ -154,7 +154,7 @@ fn adding_its_url_while_it_sits_off_its_placement_makes_a_second_clone() {
     common::git_in(&ws, &["clone", "--quiet", &url, "local/acme/stray"]);
 
     common::rwv()
-        .args(["add", &url])
+        .args(["member", "add", &url])
         .current_dir(&ws)
         .assert()
         .success();
@@ -192,7 +192,7 @@ fn a_workweave_orphan_moved_to_its_placement_in_the_primary_and_adopted_clears_t
         &["commit", "--quiet", "-m", "init"],
     );
     common::rwv()
-        .args(["workweave", "demo", "create", "feat"])
+        .args(["workweave", "create", "--project", "demo", "feat"])
         .current_dir(&ws)
         .assert()
         .success();

@@ -218,7 +218,7 @@ fn add_with_project_override_regenerates_without_selecting() {
     // A second on-disk repo, adopted so no clone is needed. `--adopt`
     // reads the repo's `origin` to record a URL — the
     // origin is unreachable on purpose, so origin/HEAD is planted by hand
-    // rather than fetched, the same local-only state `rwv add` reads.
+    // rather than fetched, the same local-only state `rwv member add` reads.
     let client = ws.join("github/acme/client");
     init_repo(&client);
     common::git_in(
@@ -236,6 +236,7 @@ fn add_with_project_override_regenerates_without_selecting() {
 
     rwv()
         .args([
+            "member",
             "add",
             "--adopt",
             "github/acme/client",
@@ -262,7 +263,13 @@ fn remove_with_project_override_regenerates_without_selecting() {
     select_proj_a(&ws);
 
     rwv()
-        .args(["remove", "github/acme/server", "--project", "proj-b"])
+        .args([
+            "member",
+            "remove",
+            "github/acme/server",
+            "--project",
+            "proj-b",
+        ])
         .current_dir(&ws)
         .assert()
         .success();

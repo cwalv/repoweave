@@ -3,7 +3,7 @@
 Test a pull request in an isolated workweave without disturbing your primary weave's branches or build state:
 
 ```bash
-rwv workweave web-app create pr-42
+rwv workweave create pr-42
 cd ../.workweaves/web-app--pr-42
 git -C github/chatly/server fetch origin pull/42/head
 git -C github/chatly/server checkout --detach FETCH_HEAD
@@ -23,8 +23,8 @@ A review workweave is never landed: do not run `rwv sync-to` from it. With the P
 From anywhere inside the workweave, inspect the commits and diff relative to the recorded parent's common ancestor:
 
 ```bash
-rwv workweave web-app log            # commit listing per repo vs. recorded parent
-rwv workweave web-app log --diff     # unique diff vs. recorded parent
+rwv workweave log            # commit listing per repo vs. recorded parent
+rwv workweave log --diff     # unique diff vs. recorded parent
 ```
 
 Add `--json` for machine-readable output.
@@ -55,10 +55,10 @@ Return to the primary weave root (`cd ../../<weave>` from `../.workweaves/web-ap
 
 ```bash
 cd ../../<weave>
-rwv workweave web-app delete pr-42 --discard-unmerged-commits
+rwv workweave delete pr-42 --discard-unmerged-commits
 ```
 
-`--discard-unmerged-commits` discards only the PR commits checked out in the workweave, which the PR's remote still holds. Add `--discard-uncommitted` when the review left uncommitted changes, for example a project lockfile that `rwv materialize` rewrote for the PR's dependencies; check `rwv status` and `git status` first for anything you meant to keep. `rwv workweave web-app delete` also works from inside the workweave.
+`--discard-unmerged-commits` discards only the PR commits checked out in the workweave, which the PR's remote still holds. Add `--discard-uncommitted` when the review left uncommitted changes, for example a project lockfile that `rwv materialize` rewrote for the PR's dependencies; check `rwv status` and `git status` first for anything you meant to keep. `rwv workweave delete` also works from inside the workweave.
 
 ## Related
 

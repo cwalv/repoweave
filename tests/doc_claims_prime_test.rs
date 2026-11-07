@@ -372,7 +372,7 @@ fn class3_workweave_path_shape_matches_prime_claim() {
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
-        .args(["workweave", "my-proj", "create", "feat"])
+        .args(["workweave", "create", "--project", "my-proj", "feat"])
         .current_dir(&ws)
         .assert()
         .success();

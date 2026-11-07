@@ -29,13 +29,14 @@ target for bare `rwv sync-to` from inside the workweave.
 
 ## Subcommands
 
-### `rwv workweave <project> create <name>`
+### `rwv workweave create <name>`
 
-Create a new workweave. Forks from CWD's active workspace by default; use
-`--from` to specify a different source.
+Create a new workweave for the active project, or the project `--project`
+names. Forks from CWD's active workspace by default; use `--from` to specify a
+different source.
 
 ```
-rwv workweave <project> create <name> [--from <source>] [--replace-existing] [--capture-dirty] [--dir <path>] [--no-materialize]
+rwv workweave create <name> [--from <source>] [--replace-existing] [--capture-dirty] [--dir <path> | --basedir <path>] [--project <name>] [--no-materialize]
 ```
 
 - `--from <source>` — workspace to fork from: `primary`, a bare workweave name
@@ -51,7 +52,7 @@ rwv workweave <project> create <name> [--from <source>] [--replace-existing] [--
   holds uncommitted changes or unmerged commits in any checkout under it, a
   member or not (work visible only in the workweave and not yet reachable from
   the parent or primary). Use `rwv workweave
-  <project> delete <name> --discard-uncommitted --discard-unmerged-commits` to
+  delete <name> --discard-uncommitted --discard-unmerged-commits` to
   discard dirty workweaves explicitly.
 - `--capture-dirty` — allow creation even when the source project directory
   has uncommitted changes, and move the uncommitted edits to `rwv.toml` and
@@ -64,22 +65,30 @@ rwv workweave <project> create <name> [--from <source>] [--replace-existing] [--
   behind is named. Without this flag, `create` refuses and names the dirty
   files. Default behavior is recommended; use `--capture-dirty` only when you
   intentionally want to continue in-flight edits inside the workweave.
-- `--dir <path>` — per-invocation placement override. Places the workweave at
-  exactly `<path>` (relative paths resolve against the directory rwv runs
-  in, or the `-C`/`-w` directory). The absolute path is recorded in `.rwv-workweave-index`, so every
+- `--dir <path>` — the exact path to place the workweave at; there is no
+  default. Relative paths resolve against the directory rwv runs in, or the
+  `-C`/`-w` directory. The absolute path is recorded in `.rwv-workweave-index`, so every
   `find`-direction verb (list, delete, sync targets by bare name) resolves
   it via the registry — the workweave does not have to live under the
-  default container to be addressable. Useful for big-disk workweaves and
+  default basedir to be addressable. Useful for big-disk workweaves and
   tmpfs experiments.
+- `--basedir <path>` — the directory to place the workweave under for this
+  invocation, in place of the recorded default: the workweave lands at
+  `<path>/<project>--<name>`. Relative paths resolve as for `--dir`. Refused
+  together with `--dir`, which names the workweave's own path rather than the
+  directory above it.
+- `--project <name>` — create the workweave for this project rather than the
+  active project. Does not change `.rwv-active`.
 - `--no-materialize` — skip the integration install hooks (`npm install`,
   `uv sync`, `cargo fetch`, …) in the new workweave. `rwv materialize` inside
   it runs them later.
 
-**Placement.** Workweaves live at `<container>/<project>--<name>/` by default,
-where `<container>` is recorded per-project in `projects/<project>/.rwv-workweave-index`.
-The default container is `<parent-of-primary>/.workweaves`; set it explicitly
-with `rwv workweave <project> set-container <path>`. `--dir <path>` overrides
-the container for one invocation.
+**Placement.** Workweaves live at `<basedir>/<project>--<name>/` by default,
+where `<basedir>` is recorded per-project in `projects/<project>/.rwv-workweave-index`.
+The default basedir is `<parent-of-primary>/.workweaves`; set it explicitly
+with `rwv workweave set-default-create-basedir <path>`. `--basedir <path>`
+replaces it for one invocation, and `--dir <path>` places the workweave at
+exactly that path.
 
 **Re-invocation without `--replace-existing`** (idempotent path): if the
 workweave already
@@ -121,21 +130,21 @@ is the standard "ensure workweave exists" path.
    workweave's absolute path. Best-effort adds `.rwv-workweave-index` to the
    project repo's `.gitignore` so the machine-local index stays untracked.
 
-### `rwv workweave <project> set-container <path>`
+### `rwv workweave set-default-create-basedir <path>`
 
-Record the workweave container for `project` — the directory `create` places
-new workweaves under by default. Writes the `container` field of
+Record the default basedir for the project — the directory `create` places
+new workweaves under. Writes the `container` field of
 `projects/<project>/.rwv-workweave-index`. Absolute paths are used as-is;
 relative paths resolve against the directory rwv runs in (or the `-C`/`-w`
 directory). Existing entries in the
-registry are preserved. Per-workweave `--dir` overrides on `create` are
-unaffected.
+registry are preserved. Per-workweave `--dir` and `--basedir` on `create` are
+unaffected. Takes `--project <name>` to record it for another project.
 
-The recorded container is an explicit, audit-visible act, not ambient
+The recorded basedir is an explicit, audit-visible act, not ambient
 process state: it lives in a file the operator can read, not in a shell
 environment.
 
-### `rwv workweave <project> delete <name> [--discard-uncommitted] [--discard-unmerged-commits]`
+### `rwv workweave delete <name> [--discard-uncommitted] [--discard-unmerged-commits] [--project <name>]`
 
 Delete a workweave. Refuses if:
 
@@ -154,7 +163,9 @@ weave holds that repo and contains it.
 
 The refusal message lists the dirty or diverged paths, marking a checkout
 outside the manifest `(not a manifest member)`, so the operator can decide
-whether to commit, land with `rwv sync-to`, or discard explicitly.
+whether to commit, land with `rwv sync-to`, or discard explicitly. For
+uncommitted changes the choices it prints include `rwv workweave delete <name>
+--discard-uncommitted`.
 
 **`--discard-uncommitted`** waives the first refusal; **`--discard-unmerged-commits`**
 waives the second. Each names exactly what it destroys; passing both is the
@@ -177,11 +188,11 @@ same adoption step runs on `rwv sync-to --retire`. A parent that goes away
 another way (crash, hand-deletion) leaves a `dangling-parent` that
 `rwv doctor --fix` re-points to primary.
 
-### `rwv workweave <project> list`
+### `rwv workweave list [--project <name>]`
 
 List existing workweave names for the project. One name per line.
 
-### `rwv workweave <project> log [--diff] [--json]`
+### `rwv workweave log [--diff] [--json]`
 
 Show this workweave's **unique commits vs its recorded parent**, per member
 repo and the project repo (`projects/<project>`). Must be run from inside a
@@ -219,12 +230,21 @@ instead of hand-rolling branch-name derivation.
 ## Invocation
 
 ```
-rwv workweave <project> create <name> [--from <source>] [--replace-existing] [--capture-dirty] [--dir <path>] [--no-materialize]
-rwv workweave <project> delete <name> [--discard-uncommitted] [--discard-unmerged-commits]
-rwv workweave <project> list
-rwv workweave <project> log [--diff] [--json]
-rwv workweave <project> set-container <path>
+rwv workweave create <name> [--from <source>] [--replace-existing] [--capture-dirty] [--dir <path> | --basedir <path>] [--project <name>] [--no-materialize]
+rwv workweave delete <name> [--discard-uncommitted] [--discard-unmerged-commits] [--project <name>]
+rwv workweave list [--project <name>]
+rwv workweave log [--diff] [--json]
+rwv workweave set-default-create-basedir <path> [--project <name>]
+rwv workweave --hook-mode create <name> [...]
+rwv workweave --claude-hook
 ```
+
+The project is chosen as for any verb: `--project`, else the project the
+workweave you are in belongs to, else the active project (`.rwv-active`).
+`--hook-mode` makes `create` print only the new workweave's path to stdout.
+`--claude-hook` reads a Claude Code hook payload from stdin and runs the
+`WorktreeCreate` or `WorktreeRemove` request it names: a bare `create` or
+`delete` for the project the payload's directory resolves to.
 
 Run `rwv workweave --help` for the full clap surface.
 
@@ -251,17 +271,23 @@ them`.
 
 ## Examples
 
-Create a workweave for the `foundations` project:
+Create a workweave for the active project:
 
 ```
-rwv workweave foundations create my-feature
+rwv workweave create my-feature
+```
+
+Create one for the `foundations` project while another is active:
+
+```
+rwv workweave create my-feature --project foundations
 ```
 
 Create a workweave forked from a peer workweave (useful for stacked work),
-run from the primary weave root with the default container beside it:
+run from the primary weave root with the default basedir beside it:
 
 ```
-rwv workweave foundations create child-feature --from ../.workweaves/foundations--my-feature
+rwv workweave create child-feature --from ../.workweaves/foundations--my-feature --project foundations
 ```
 
 Land work and clean up in one step (from inside the workweave):
@@ -273,19 +299,19 @@ rwv sync-to --retire
 Delete a workweave whose work has already landed:
 
 ```
-rwv workweave foundations delete my-feature
+rwv workweave delete my-feature --project foundations
 ```
 
 Delete a workweave regardless of state:
 
 ```
-rwv workweave foundations delete my-feature --discard-uncommitted --discard-unmerged-commits
+rwv workweave delete my-feature --project foundations --discard-uncommitted --discard-unmerged-commits
 ```
 
 List all workweaves for a project:
 
 ```
-rwv workweave foundations list
+rwv workweave list --project foundations
 ```
 
 ## Common errors

@@ -686,7 +686,7 @@ const MISPLACED: &str = "vendor/acme/x";
 const PLACED: &str = "local/acme/x";
 
 /// A weave whose `demo` project registered a clone of `acme/x` with
-/// `rwv add --adopt` at `vendor/acme/x`, where its `file://` URL does not
+/// `rwv member add --adopt` at `vendor/acme/x`, where its `file://` URL does not
 /// place it, and locked it there.
 fn weave_with_misplaced_member(tmp: &Path) -> PathBuf {
     let ws = tmp.join("ws");
@@ -704,7 +704,7 @@ fn weave_with_misplaced_member(tmp: &Path) -> PathBuf {
         &["clone", "--quiet", &common::file_url(&origin), MISPLACED],
     );
     rwv()
-        .args(["add", "--adopt", MISPLACED])
+        .args(["member", "add", "--adopt", MISPLACED])
         .current_dir(&ws)
         .assert()
         .success();
@@ -846,7 +846,7 @@ fn commit_project(ws: &Path, message: &str) {
 
 fn create_workweave(ws: &Path, name: &str) -> PathBuf {
     rwv()
-        .args(["workweave", "demo", "create", name])
+        .args(["workweave", "create", "--project", "demo", name])
         .current_dir(ws)
         .assert()
         .success();

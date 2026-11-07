@@ -175,7 +175,7 @@ fn a_typed_name_error_routes_to_its_token() {
     let tmp = common::tempdir().unwrap();
     let ws = plain_weave(tmp.path());
 
-    let stderr = refusal_stderr(&["workweave", "web-app", "create", "a/b"], &ws);
+    let stderr = refusal_stderr(&["workweave", "create", "--project", "web-app", "a/b"], &ws);
     assert!(
         stderr.contains("not a valid workweave name"),
         "precondition: this is the typed name error:\n{stderr}"
@@ -208,7 +208,7 @@ fn a_typed_repo_path_error_routes_to_its_token() {
     let tmp = common::tempdir().unwrap();
     let ws = plain_weave(tmp.path());
 
-    let stderr = refusal_stderr(&["add", "github/owner/re\\po"], &ws);
+    let stderr = refusal_stderr(&["member", "add", "github/owner/re\\po"], &ws);
     assert!(
         stderr.contains("backslash not allowed"),
         "precondition: this is the typed path error:\n{stderr}"
@@ -227,7 +227,7 @@ fn a_repo_path_of_project_routes_to_reserved_repo_path() {
     std::fs::write(ws.join("(project)/README"), "x\n").unwrap();
     git_init_with_commit(&ws.join("(project)"));
 
-    let stderr = refusal_stderr(&["add", "--adopt", "(project)"], &ws);
+    let stderr = refusal_stderr(&["member", "add", "--adopt", "(project)"], &ws);
     assert_routes_to(&stderr, "reserved-repo-path");
 
     std::fs::write(
@@ -246,10 +246,10 @@ fn a_repo_path_of_project_routes_to_reserved_repo_path() {
 }
 
 // ---------------------------------------------------------------------------
-// The rwv add --new creation surface
+// The rwv member add --new creation surface
 // ---------------------------------------------------------------------------
 
-/// `rwv add local --new` with `owner` and `repo` but no `root` — the driving
+/// `rwv member add local --new` with `owner` and `repo` but no `root` — the driving
 /// input fork 7's ruling turns into a one-flag repair.
 #[test]
 fn a_missing_creation_param_routes_to_its_token() {
@@ -258,6 +258,7 @@ fn a_missing_creation_param_routes_to_its_token() {
 
     let stderr = refusal_stderr(
         &[
+            "member",
             "add",
             "local",
             "--new",
@@ -287,6 +288,7 @@ fn an_unusable_creation_param_routes_to_its_token() {
 
     let stderr = refusal_stderr(
         &[
+            "member",
             "add",
             "local",
             "--new",
@@ -315,6 +317,7 @@ fn an_empty_creation_root_refuses_naming_what_it_got() {
 
     let stderr = refusal_stderr(
         &[
+            "member",
             "add",
             "local",
             "--new",
@@ -349,6 +352,7 @@ fn a_relative_creation_root_is_named_by_the_absolute_path_under_c() {
         &[
             "-C",
             ws.to_str().unwrap(),
+            "member",
             "add",
             "local",
             "--new",
@@ -385,6 +389,7 @@ fn a_windows_looking_creation_root_is_relative_on_unix() {
         &[
             "-C",
             ws.to_str().unwrap(),
+            "member",
             "add",
             "local",
             "--new",
@@ -418,6 +423,7 @@ fn a_root_inside_the_weave_routes_to_unusable_creation_param() {
 
     let stderr = refusal_stderr(
         &[
+            "member",
             "add",
             "local",
             "--new",
@@ -437,7 +443,7 @@ fn a_root_inside_the_weave_routes_to_unusable_creation_param() {
     assert_routes_to(&stderr, "unusable-creation-param");
 }
 
-/// Two `rwv add local --new` invocations naming the same owner/repo under
+/// Two `rwv member add local --new` invocations naming the same owner/repo under
 /// different roots: the second placement collision refuses rather than
 /// silently discarding the operator's new root.
 #[test]
@@ -451,6 +457,7 @@ fn an_occupied_placement_routes_to_its_token() {
 
     let first = common::rwv()
         .args([
+            "member",
             "add",
             "local",
             "--new",
@@ -472,6 +479,7 @@ fn an_occupied_placement_routes_to_its_token() {
 
     let stderr = refusal_stderr(
         &[
+            "member",
             "add",
             "local",
             "--new",
@@ -506,7 +514,7 @@ fn a_provider_cannot_mint_url_routes_to_its_token() {
     assert_routes_to(&stderr, "provider-cannot-mint-url");
 }
 
-/// B5: `rwv add --adopt <path>` on a clone with no `origin` remote — nothing
+/// B5: `rwv member add --adopt <path>` on a clone with no `origin` remote — nothing
 /// to read a URL from, so there is nothing to register it under
 /// (refusals.md:520-529).
 #[test]
@@ -518,7 +526,7 @@ fn an_adopt_with_no_origin_remote_routes_to_no_remote_url() {
     std::fs::write(clone_dir.join("README.md"), "init\n").unwrap();
     git_init_with_commit(&clone_dir);
 
-    let stderr = refusal_stderr(&["add", "--adopt", SERVER_PATH], &ws);
+    let stderr = refusal_stderr(&["member", "add", "--adopt", SERVER_PATH], &ws);
     assert!(
         stderr.contains("has no origin remote to read a URL from"),
         "precondition: this is the no-remote-url refusal:\n{stderr}"
@@ -526,7 +534,7 @@ fn an_adopt_with_no_origin_remote_routes_to_no_remote_url() {
     assert_routes_to(&stderr, "no-remote-url");
 }
 
-/// `rwv add --adopt <path>` on a clone whose `origin` is a relative path:
+/// `rwv member add --adopt <path>` on a clone whose `origin` is a relative path:
 /// git reads it from each checkout's own directory, so it names no one URL
 /// the manifest could record.
 #[test]
@@ -542,7 +550,7 @@ fn an_adopt_of_a_relative_remote_routes_to_no_remote_url() {
     );
     common::git_in(&clone_dir, &["remote", "set-url", "origin", "../../up.git"]);
 
-    let stderr = refusal_stderr(&["add", "--adopt", SERVER_PATH], &ws);
+    let stderr = refusal_stderr(&["member", "add", "--adopt", SERVER_PATH], &ws);
     assert!(
         stderr.contains("relative path '../../up.git'"),
         "the refusal names the recorded path:\n{stderr}"
@@ -551,7 +559,7 @@ fn an_adopt_of_a_relative_remote_routes_to_no_remote_url() {
 
     let set_url =
         common::advised_command(&stderr, "git -C").replace("<url>", &common::file_url(&up));
-    let rerun = common::advised_command(&stderr, "rwv add --adopt");
+    let rerun = common::advised_command(&stderr, "rwv member add --adopt");
     let findings_before = common::doctor_findings(&ws);
     let set = common::run_advised(&set_url, &ws);
     assert!(set.status.success(), "`{set_url}`");
@@ -828,7 +836,7 @@ fn a_dirty_repo_outranks_an_unreadable_one_in_the_same_refusal() {
     assert_routes_to(&stderr, "edits");
 }
 
-/// `rwv remove --delete` of a clone a workweave's worktree derives from: the
+/// `rwv member remove --delete` of a clone a workweave's worktree derives from: the
 /// clone is judged on the `checkout` kind, the workweave named and its delete
 /// offered, and nothing else is refused first.
 #[test]
@@ -836,11 +844,12 @@ fn a_clone_a_workweave_derives_from_routes_to_checkout() {
     let tmp = common::tempdir().unwrap();
     let (primary, _workweave) = primary_and_workweave(tmp.path());
 
-    let stderr = refusal_stderr(&["remove", SERVER_PATH, "--delete"], &primary);
+    let stderr = refusal_stderr(&["member", "remove", SERVER_PATH, "--delete"], &primary);
     assert!(
         stderr.contains(&format!(
-            "rwv remove: {SERVER_PATH}: checkout in another workspace (web-app--ww)\n"
-        )) && stderr.contains("  free the other checkout\n    rwv workweave web-app delete ww\n"),
+            "rwv member remove: {SERVER_PATH}: checkout in another workspace (web-app--ww)\n"
+        )) && stderr
+            .contains("  free the other checkout\n    rwv workweave delete ww --project web-app\n"),
         "precondition: the store's checkouts were judged:\n{stderr}"
     );
     assert_routes_to(&stderr, "checkout");
@@ -858,8 +867,9 @@ fn a_workweave_name_recorded_elsewhere_routes_to_name() {
     let stderr = refusal_stderr(
         &[
             "workweave",
-            "web-app",
             "create",
+            "--project",
+            "web-app",
             "ww",
             "--dir",
             &elsewhere.to_string_lossy(),
@@ -1014,13 +1024,19 @@ fn each_argument_refusal_routes_to_its_own_token() {
     let tmp = common::tempdir().unwrap();
 
     let cases: [(&[&str], &str); 16] = [
-        (&["add", "https://example.com"], "no-matching-registry"),
-        (&["add", "foo"], "unresolvable-repo-source"),
+        (
+            &["member", "add", "https://example.com"],
+            "no-matching-registry",
+        ),
+        (&["member", "add", "foo"], "unresolvable-repo-source"),
         (
             &["fetch", "/srv/repos/web-app.git"],
             "unresolvable-repo-source",
         ),
-        (&["add", "--new", "github/owner"], "malformed-repo-path"),
+        (
+            &["member", "add", "--new", "github/owner"],
+            "malformed-repo-path",
+        ),
         (
             &["init", "elsewhere", "--provider", "nosuch/owner"],
             "unknown-registry",
@@ -1029,7 +1045,10 @@ fn each_argument_refusal_routes_to_its_own_token() {
             &["init", "elsewhere", "--provider", "noslash"],
             "malformed-provider",
         ),
-        (&["remove", "nonexistent/path/repo"], "repo-not-in-manifest"),
+        (
+            &["member", "remove", "nonexistent/path/repo"],
+            "repo-not-in-manifest",
+        ),
         (&["init", "web-app"], "project-dir-occupied"),
         (&["init", "web-app/sub"], "nested-project-name"),
         (&["-w", "a/b", "status"], "wrong-address-flag"),
@@ -1093,7 +1112,7 @@ fn the_legacy_manifest_refusal_routes_from_under_its_wrap() {
     std::fs::remove_file(project.join("rwv.toml")).unwrap();
     std::fs::write(project.join("rwv.yaml"), "repositories: {}\n").unwrap();
 
-    let stderr = refusal_stderr(&["remove", "nonexistent/path/repo"], &ws);
+    let stderr = refusal_stderr(&["member", "remove", "nonexistent/path/repo"], &ws);
     assert!(
         stderr.contains("failed to load manifest"),
         "precondition: the wrapping context is the headline:\n{stderr}"
@@ -1131,7 +1150,7 @@ fn an_error_with_no_kind_prints_no_route_line() {
     let ws = plain_weave(tmp.path());
     std::fs::write(ws.join("projects/web-app/rwv.toml"), "not = = toml\n").unwrap();
 
-    let stderr = refusal_stderr(&["remove", "nonexistent/path/repo"], &ws);
+    let stderr = refusal_stderr(&["member", "remove", "nonexistent/path/repo"], &ws);
     assert!(
         stderr.contains("TOML parse error"),
         "precondition: the failure is the parser's, not a refusal:\n{stderr}"
@@ -1183,7 +1202,7 @@ fn an_error_with_no_kind_keeps_its_backtrace_under_rust_backtrace() {
     let ws = plain_weave(tmp.path());
     std::fs::write(ws.join("projects/web-app/rwv.toml"), "not = = toml\n").unwrap();
 
-    let stderr = stderr_under_rust_backtrace(&["remove", "nonexistent/path/repo"], &ws);
+    let stderr = stderr_under_rust_backtrace(&["member", "remove", "nonexistent/path/repo"], &ws);
     assert!(
         stderr.contains("TOML parse error") && routed_tokens(&stderr).is_empty(),
         "precondition: the failure is the parser's, not a refusal:\n{stderr}"
@@ -1207,7 +1226,7 @@ fn the_refusal_class_and_the_argv_class_stay_distinct() {
     let ws = plain_weave(tmp.path());
 
     let refusal = common::rwv()
-        .args(["remove", "nonexistent/path/repo"])
+        .args(["member", "remove", "nonexistent/path/repo"])
         .current_dir(&ws)
         .output()
         .expect("rwv should run");

@@ -21,7 +21,7 @@
 //! ```text
 //! mkdir my-ws && cd my-ws
 //! rwv init my-project        # bootstraps projects/ and initializes the project
-//! rwv add <url>              # works — workspace context resolves
+//! rwv member add <url>              # works — workspace context resolves
 //! ```
 //!
 //! Running `rwv init` in a non-empty, non-workspace directory is refused with

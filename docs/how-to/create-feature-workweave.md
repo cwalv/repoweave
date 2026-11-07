@@ -3,7 +3,7 @@
 Spin up an isolated cross-repo workspace for a feature that spans multiple repositories without disturbing the primary weave:
 
 ```bash
-rwv workweave web-app create payments
+rwv workweave create payments
 cd ../.workweaves/web-app--payments
 ```
 
@@ -22,7 +22,7 @@ Error: rwv workweave create: refusing to create workweave — projects/web-app h
 To proceed, do one of:
   1. commit the changes: git -C projects/web-app commit
   2. stash the changes: git -C projects/web-app stash
-  3. capture them into the workweave: rwv workweave web-app create payments --capture-dirty
+  3. capture them into the workweave: rwv workweave create payments --capture-dirty
 
 rwv explain dirty-project-dir
 ```
@@ -30,7 +30,7 @@ rwv explain dirty-project-dir
 Pass `--capture-dirty` when the uncommitted `rwv.toml` edit is meant for the new workweave:
 
 ```bash
-rwv workweave web-app create payments --capture-dirty
+rwv workweave create payments --capture-dirty
 ```
 
 `--capture-dirty` moves uncommitted edits to `rwv.toml` and `rwv.lock` into the workweave: once the workweave exists, `projects/web-app/` in the source holds their committed versions again, so a later `rwv sync-to` is not refused over the source's copy. Other uncommitted files in `projects/web-app/` stay in the source, and `create` lists them. Commit or stash the captured edits in the workweave before running `rwv sync-to`.
@@ -69,7 +69,7 @@ If you want to checkpoint the workweave's `rwv.lock` without landing yet, run `r
 To throw away a workweave without landing its changes:
 
 ```bash
-rwv workweave web-app delete payments
+rwv workweave delete payments
 ```
 
 Deletion refuses if any checkout in the workweave, a manifest member or not, has uncommitted changes or commits not reachable from the recorded parent or primary weave; pass `--discard-uncommitted` and/or `--discard-unmerged-commits` to confirm discarding that work.

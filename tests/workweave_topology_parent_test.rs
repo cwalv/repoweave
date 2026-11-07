@@ -116,7 +116,7 @@ struct Workweave {
 /// primary when `from` is None.
 fn create_workweave(main: &MainWorkspace, name: &str, from: Option<&Path>) -> Workweave {
     let mut cmd = rwv();
-    cmd.args(["workweave", PROJECT, "create", name]);
+    cmd.args(["workweave", "create", "--project", PROJECT, name]);
     if let Some(f) = from {
         cmd.args(["--from", &f.to_string_lossy()]);
     }
@@ -169,7 +169,7 @@ fn delete_with_zero_children_adopts_nothing() {
     let ww = create_workweave(&main, "solo", None);
     // Ensure clean (no unmerged commits) so delete without a waiver works.
     let out = rwv()
-        .args(["workweave", PROJECT, "delete", &ww.name])
+        .args(["workweave", "delete", "--project", PROJECT, &ww.name])
         .current_dir(&main.root)
         .output()
         .unwrap();
@@ -208,7 +208,7 @@ fn delete_refuses_while_workweave_is_mid_op() {
     std::fs::write(ww.root.join(".rwv-op"), &op_json).unwrap();
 
     let out = rwv()
-        .args(["workweave", PROJECT, "delete", &ww.name])
+        .args(["workweave", "delete", "--project", PROJECT, &ww.name])
         .current_dir(&main.root)
         .output()
         .unwrap();
@@ -253,8 +253,9 @@ fn delete_waivers_do_not_bypass_op_mutex() {
     let out = rwv()
         .args([
             "workweave",
-            PROJECT,
             "delete",
+            "--project",
+            PROJECT,
             &ww.name,
             "--discard-uncommitted",
             "--discard-unmerged-commits",
@@ -294,7 +295,7 @@ fn delete_with_one_child_adopts_to_grandparent_primary() {
 
     // Delete wwa. wwb should be adopted by wwa's parent = primary.
     let out = rwv()
-        .args(["workweave", PROJECT, "delete", &wwa.name])
+        .args(["workweave", "delete", "--project", PROJECT, &wwa.name])
         .current_dir(&main.root)
         .output()
         .unwrap();
@@ -337,7 +338,7 @@ fn delete_middle_adopts_to_grandparent_workweave() {
     // Delete wwb (middle). wwc should be adopted by wwb's parent = wwa (a
     // workweave, NOT primary — the grandparent path, not the primary fallback).
     let out = rwv()
-        .args(["workweave", PROJECT, "delete", &wwb.name])
+        .args(["workweave", "delete", "--project", PROJECT, &wwb.name])
         .current_dir(&main.root)
         .output()
         .unwrap();
@@ -374,7 +375,7 @@ fn delete_with_n_children_adopts_all() {
     let c3 = create_workweave(&main, "child3", Some(&wwa.root));
 
     let out = rwv()
-        .args(["workweave", PROJECT, "delete", &wwa.name])
+        .args(["workweave", "delete", "--project", PROJECT, &wwa.name])
         .current_dir(&main.root)
         .output()
         .unwrap();
@@ -700,7 +701,7 @@ fn workweave_log_and_diff_correct_when_parent_advanced() {
     // post-fork advance must NOT appear (it's not reachable from wwb's HEAD),
     // and neither should it cause wwb's commit to be hidden.
     let out = rwv()
-        .args(["workweave", PROJECT, "log", "--json"])
+        .args(["workweave", "log", "--json"])
         .current_dir(&wwb.root)
         .output()
         .unwrap();
@@ -737,7 +738,7 @@ fn workweave_log_and_diff_correct_when_parent_advanced() {
     // wwb's change and never a phantom reversal of wwa_advance.txt (which wwb's
     // HEAD doesn't have).
     let dout = rwv()
-        .args(["workweave", PROJECT, "log", "--diff", "--json"])
+        .args(["workweave", "log", "--diff", "--json"])
         .current_dir(&wwb.root)
         .output()
         .unwrap();
@@ -787,7 +788,7 @@ fn workweave_log_text_output() {
     commit_file(&ww.manifest_repo, "f.txt", "x\n", "feat: my change");
 
     let out = rwv()
-        .args(["workweave", PROJECT, "log"])
+        .args(["workweave", "log"])
         .current_dir(&ww.root)
         .output()
         .unwrap();
@@ -814,7 +815,7 @@ fn workweave_log_refuses_in_primary_weave() {
     let main = make_main_workspace(tmp.path());
 
     let out = rwv()
-        .args(["workweave", PROJECT, "log"])
+        .args(["workweave", "log"])
         .current_dir(&main.root)
         .output()
         .unwrap();
@@ -843,7 +844,7 @@ fn workweave_log_json_includes_project_repo_unique_commits() {
     commit_file(&ww_project, "notes.md", "work notes\n", "docs: add notes");
 
     let out = rwv()
-        .args(["workweave", PROJECT, "log", "--json"])
+        .args(["workweave", "log", "--json"])
         .current_dir(&ww.root)
         .output()
         .unwrap();
@@ -886,7 +887,7 @@ fn workweave_log_names_a_missing_checkout() {
     std::fs::remove_dir_all(&ww.manifest_repo).unwrap();
 
     let out = rwv()
-        .args(["workweave", PROJECT, "log", "--json"])
+        .args(["workweave", "log", "--json"])
         .current_dir(&ww.root)
         .output()
         .unwrap();
@@ -927,7 +928,7 @@ fn workweave_log_text_includes_project_repo_section() {
     );
 
     let out = rwv()
-        .args(["workweave", PROJECT, "log"])
+        .args(["workweave", "log"])
         .current_dir(&ww.root)
         .output()
         .unwrap();
@@ -958,7 +959,7 @@ fn workweave_log_json_project_repo_no_unique_commits_when_clean() {
     // No project-repo commits in the workweave.
 
     let out = rwv()
-        .args(["workweave", PROJECT, "log", "--json"])
+        .args(["workweave", "log", "--json"])
         .current_dir(&ww.root)
         .output()
         .unwrap();
@@ -989,7 +990,7 @@ fn workweave_log_text_project_repo_no_unique_commits_label() {
     // No project-repo commits in the workweave.
 
     let out = rwv()
-        .args(["workweave", PROJECT, "log"])
+        .args(["workweave", "log"])
         .current_dir(&ww.root)
         .output()
         .unwrap();
@@ -1027,7 +1028,7 @@ fn workweave_log_diff_json_includes_project_repo() {
     );
 
     let out = rwv()
-        .args(["workweave", PROJECT, "log", "--diff", "--json"])
+        .args(["workweave", "log", "--diff", "--json"])
         .current_dir(&ww.root)
         .output()
         .unwrap();

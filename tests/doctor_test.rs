@@ -2631,7 +2631,7 @@ fn doctor_unborn_head_member_includes_action_hint() {
 // House pattern: name the state → name the verb → name the escape hatch.
 // ===========================================================================
 
-/// `orphaned clone` message names `rwv add` and/or `remove` as repair actions.
+/// `orphaned clone` message names `rwv member add` and/or `remove` as repair actions.
 #[test]
 fn orphaned_clone_names_repair_verb() {
     let tmp = common::tempdir().unwrap();
@@ -2662,8 +2662,8 @@ fn orphaned_clone_names_repair_verb() {
         "must report orphaned clone; got:\n{combined}"
     );
     assert!(
-        combined.contains("rwv add") || combined.contains("remove"),
-        "orphaned-clone message must name the repair verb (`rwv add` or remove); \
+        combined.contains("rwv member add") || combined.contains("remove"),
+        "orphaned-clone message must name the repair verb (`rwv member add` or remove); \
          got:\n{combined}"
     );
 }

@@ -3,7 +3,7 @@
 //!
 //! The sweep's descent-refusal set used to be the same hand-enumerated list
 //! that decided weave-root containment: the three builtins plus `projects`.
-//! `local/` — where `rwv add` places a `file://` clone — was never in it, so
+//! `local/` — where `rwv member add` places a `file://` clone — was never in it, so
 //! the sweep walked straight into a member's own working tree. Its unguarded
 //! effect at the bottom of the recursion is `std::fs::remove_dir` on every
 //! directory it finishes visiting, which succeeds silently on anything
@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 mod common;
 
 /// A weave holding one project and one member cloned under `local/`, the way
-/// `rwv add <file:// source>` places it — the segment no builtin registry
+/// `rwv member add <file:// source>` places it — the segment no builtin registry
 /// names.
 fn weave_with_a_local_member() -> (tempfile::TempDir, PathBuf) {
     let tmp = common::tempdir().unwrap();
@@ -33,14 +33,14 @@ fn weave_with_a_local_member() -> (tempfile::TempDir, PathBuf) {
         .assert()
         .success();
     common::rwv()
-        .args(["add", &common::file_url(&origin)])
+        .args(["member", "add", &common::file_url(&origin)])
         .current_dir(&ws)
         .assert()
         .success();
 
     assert!(
         ws.join("local/acme/widgets").is_dir(),
-        "fixture: `rwv add` from a file:// source should place the clone \
+        "fixture: `rwv member add` from a file:// source should place the clone \
          under local/"
     );
     (tmp, ws)

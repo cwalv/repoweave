@@ -64,7 +64,7 @@ print `error:` and exit 2, where a refusal exits 1.
 
 | State | Means | Refused by |
 |---|---|---|
-| `dirty` | the checkout has uncommitted changes, listed by file | `rwv sync` and `rwv sync-to`, for a repo they would rebase or fast-forward (tracked changes only); `rwv lock` without `--dirty`, for a member (tracked changes only); `rwv lock --commit` and `rwv update --commit`, for project-repo changes outside `rwv.lock` and `rwv.toml`; `rwv push`, for the project repo; `rwv role <repo> reference`; `rwv remove --delete` and replay's prune of a dropped member; `rwv workweave <project> delete` and `rwv sync-to --retire`, for every checkout in the workweave |
+| `dirty` | the checkout has uncommitted changes, listed by file | `rwv sync` and `rwv sync-to`, for a repo they would rebase or fast-forward (tracked changes only); `rwv lock` without `--dirty`, for a member (tracked changes only); `rwv lock --commit` and `rwv update --commit`, for project-repo changes outside `rwv.lock` and `rwv.toml`; `rwv push`, for the project repo; `rwv member set-role <repo> reference`; `rwv member remove --delete` and replay's prune of a dropped member; `rwv workweave delete` and `rwv sync-to --retire`, for every checkout in the workweave |
 | `mid-operation` | a rebase, merge, cherry-pick or bisect is in progress, named | `rwv sync` and `rwv sync-to`, for a repo they would rebase or fast-forward |
 | `rwv.toml or rwv.lock uncommitted` | the project repo's only uncommitted changes are to `rwv.toml` or `rwv.lock`, or either is not yet tracked | `rwv push` |
 
@@ -73,6 +73,7 @@ print `error:` and exit 2, where a refusal exits 1.
 | State | Choice | Spelled | Where | Keeps work because |
 |---|---|---|---|---|
 | `dirty` | C13: commit your edits, or set them aside | VCS action (git: `git -C <checkout> commit`, `git -C <checkout> stash push`) | the checkout | both keep edits |
+| `dirty`, for `rwv workweave delete` | C13: commit your edits, or set them aside | `rwv workweave delete <ww> --discard-uncommitted` | the primary | both keep edits |
 | `mid-operation` | C32: finish or abandon the operation in progress first | VCS action (git: `git -C <checkout> status`) | the checkout | rwv moves nothing until it ends |
 | `rwv.toml or rwv.lock uncommitted` | C5: record it: the lock, and `rwv.toml` as it stands | `rwv lock --commit` | a workspace with the branch checked out | records only |
 
@@ -88,14 +89,14 @@ print `error:` and exit 2, where a refusal exits 1.
 
 | State | Means | Refused by |
 |---|---|---|
-| `in another workspace` | a workweave's checkout derives from the clone, named | `rwv remove --delete` in the primary, and replay's prune of a dropped member there |
-| `in a raw worktree` | a worktree no workweave records derives from the clone, named by path | `rwv remove --delete` in the primary, and replay's prune of a dropped member there |
+| `in another workspace` | a workweave's checkout derives from the clone, named | `rwv member remove --delete` in the primary, and replay's prune of a dropped member there |
+| `in a raw worktree` | a worktree no workweave records derives from the clone, named by path | `rwv member remove --delete` in the primary, and replay's prune of a dropped member there |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
 
 | State | Choice | Spelled | Where | Keeps work because |
 |---|---|---|---|---|
-| `in another workspace` | C16: free the other checkout | `rwv workweave <project> delete <ww>` | the primary | removal refuses over edits |
+| `in another workspace` | C16: free the other checkout | `rwv workweave delete <ww> --project <project>` | the primary | removal refuses over edits |
 | `in a raw worktree` | C16: free the other checkout | VCS action (git: `git -C <checkout> worktree remove <worktree>`) | the checkout | removal refuses over edits |
 
 **Where this sits.** [Clone topology](../explanation/joints/clone-topology.md).
@@ -110,15 +111,15 @@ print `error:` and exit 2, where a refusal exits 1.
 
 | State | Means | Refused by |
 |---|---|---|
-| `taken` | the project already records a workweave by this name at another path, or the directory the workweave would take is another workweave's | `rwv workweave <project> create` |
-| `a revision` | the branch `rwv add` would declare reads as a commit id (seven or more hex digits) or a release tag (`v2.0`, `v0.3.4-rc1`) | `rwv add`, for the remote's default branch or, with `--new`, the branch the new repo is on |
+| `taken` | the project already records a workweave by this name at another path, or the directory the workweave would take is another workweave's | `rwv workweave create` |
+| `a revision` | the branch `rwv member add` would declare reads as a commit id (seven or more hex digits) or a release tag (`v2.0`, `v0.3.4-rc1`) | `rwv member add`, for the remote's default branch or, with `--new`, the branch the new repo is on |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
 
 | State | Choice | Spelled | Where | Keeps work because |
 |---|---|---|---|---|
 | `taken` | use another name | — | here | nothing changes |
-| `taken` | C9: delete what is landed | `rwv workweave <project> delete <ww>` | the primary | deletes only what is landed elsewhere; local only |
+| `taken` | C9: delete what is landed | `rwv workweave delete <ww> --project <project>` | the primary | deletes only what is landed elsewhere; local only |
 
 **Where this sits.** [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md); [Lock as derived](../explanation/joints/lock-as-derived.md).
 
@@ -145,7 +146,7 @@ print `error:` and exit 2, where a refusal exits 1.
 
 ### `adopt-path-outside-weave`
 
-**Condition.** `rwv add --adopt <path>` names a location under neither the
+**Condition.** `rwv member add --adopt <path>` names a location under neither the
 primary weave root nor, when run from a workweave, that workweave. A relative
 `<path>` resolves against the directory `rwv` runs in, or the `-C`/`-w`
 directory, and the location is where the path leads with every symlink in it
@@ -299,14 +300,14 @@ and `create` lists them.
 ### `dropped-repo-has-unique-commits`
 
 **Condition.** A checkout being dropped from the lock, or deleted by `rwv
-remove --delete`, carries commits no other clone reaches.
+member remove --delete`, carries commits no other clone reaches.
 
 **Why.** Dropping a repo removes its checkout. If it holds the only copy of
 some commits, removal destroys them, and no `rwv abort` recovers work that was
 never anywhere else.
 
 **Exits.** Push the commits to their remote, or merge them somewhere that
-survives, then re-run `rwv remove --delete`. If the commits are genuinely
+survives, then re-run `rwv member remove --delete`. If the commits are genuinely
 unwanted, remove the checkout by hand so the loss is a deliberate act. A sync
 whose replay refuses this prune still completes, reports the checkout and
 exits 1; re-running it will not prune the checkout, so remove it by hand once
@@ -328,7 +329,7 @@ explicitly.
 
 ### `foreign-clone-at-placement`
 
-**Condition.** `rwv add <url>` (or shorthand) for a repo the manifest does not
+**Condition.** `rwv member add <url>` (or shorthand) for a repo the manifest does not
 list yet places at a path that already holds a clone whose configured
 `origin` URL is not equivalent to the one given, or that has no `origin` at
 all.
@@ -339,12 +340,12 @@ the URL given would record a remote the checkout does not track. The
 comparison reads the configured URL, not one a `url.<base>.insteadOf` rule
 rewrites, and treats a `file://` URL as equal to the path it encodes.
 
-**Exits.** Register the existing clone under the URL it records with `rwv add
+**Exits.** Register the existing clone under the URL it records with `rwv member add
 --adopt <path>`, or move it aside and re-run the add. Nothing was written.
 
 ### `foreign-clone-in-workweave`
 
-**Condition.** `rwv add --adopt <path>`, run from a workweave, names a
+**Condition.** `rwv member add --adopt <path>`, run from a workweave, names a
 location inside the workweave that holds a clone of its own rather than a
 worktree of the primary's clone at the same member path.
 
@@ -423,7 +424,9 @@ token would name the remedy's argument rather than a state.
 
 **Exits.** Drop the flag, or switch to the mode that reads it — the message
 names which. For example, `rwv fetch --project` with a source refuses, because
-the source names the project it clones.
+the source names the project it clones. `--force` on a verb that does not
+declare it refuses the same way: rwv has no blanket force, and each refusal
+names the flag that consents to the one loss it would cause.
 
 ### `invalid-ref-name`
 
@@ -474,7 +477,7 @@ Guessing would silently create a project under the wrong owner.
 without a lookup table. A shorter path names no registry, so no URL can be
 inferred.
 
-**Exits.** Supply all three segments, or pass a full URL and let `rwv add`
+**Exits.** Supply all three segments, or pass a full URL and let `rwv member add`
 derive the path.
 
 **Where this sits.** [Formats](./formats.md).
@@ -503,7 +506,7 @@ disagreement rather than resolving it.
 
 ### `missing-creation-param`
 
-**Condition.** An `rwv add --new` creation address's registry declares a
+**Condition.** An `rwv member add --new` creation address's registry declares a
 required parameter the supplied map has no entry for.
 
 **Why.** `plan_creation` cannot mint a URL or an upstream from an incomplete
@@ -511,7 +514,7 @@ parameter set, and guessing a value would place or create something the
 operator did not ask for.
 
 **Exits.** Add `--param <name>=<value>` for each parameter the refusal names
-— the same declared surface `rwv explain add`'s creation-parameter table
+— the same declared surface `rwv explain member`'s creation-parameter table
 renders, so the two cannot disagree.
 
 ### `missing-lock`
@@ -549,7 +552,7 @@ a single invocation.
 
 ### `no-clone-to-adopt`
 
-**Condition.** `rwv add --adopt <path>` names a path that holds no clone. A
+**Condition.** `rwv member add --adopt <path>` names a path that holds no clone. A
 bare repository is not a clone here: it has no checkout to register.
 
 **Why.** `--adopt` registers a clone already on disk and reads its URL from
@@ -575,7 +578,7 @@ plugin, its own `--help` is the documentation.
 
 ### `no-matching-registry`
 
-**Condition.** `rwv add` was given a URL from which no placement can be
+**Condition.** `rwv member add` was given a URL from which no placement can be
 derived, such as one with no owner and repo path (`https://example.com`).
 
 **Why.** Every member lands at `<registry>/<owner>/<repo>/`, derived from its
@@ -600,7 +603,7 @@ be in flight, it completed or was already aborted.
 ### `no-remote-default-branch`
 
 **Condition.** A repo records no default branch for its remote (`origin/HEAD`
-is unset, for git). `rwv add` reads it to fill `branch`, and `rwv push` reads
+is unset, for git). `rwv member add` reads it to fill `branch`, and `rwv push` reads
 it for the project repo, whose canonical branch it is.
 
 **Why.** rwv records what to track and what to publish rather than guessing
@@ -609,19 +612,19 @@ fabricated guess would be wrong silently.
 
 **Exits.** The message names the repair for the VCS in question — for git,
 `git fetch origin && git remote set-head origin -a` in the named repo — then
-re-run. `rwv add <url>` names its own, in the clone it keeps: a fresh clone
+re-run. `rwv member add <url>` names its own, in the clone it keeps: a fresh clone
 records any default the remote names, so the remote has either no branch yet
 or a default that names none of its branches. For the first, commit in the
 clone and push the branch; for the second, check out one of the branches the
 message lists. Either way, record the branch with
-`git remote set-head origin <branch>`. `rwv add --adopt` reads the same two
+`git remote set-head origin <branch>`. `rwv member add --adopt` reads the same two
 cases from what the clone has fetched; where it has fetched no branch, the
 message leads with `git fetch origin`, then names `set-head -a` if the remote
 has a branch and the first push if it has none.
 
 ### `no-remote-url`
 
-**Condition.** `rwv add --adopt` names a clone with no conventional remote
+**Condition.** `rwv member add --adopt` names a clone with no conventional remote
 (`origin`, for git) to read a URL from, or one that records it as a relative
 path.
 
@@ -641,7 +644,7 @@ aside and add the repo by its URL.
 **Why.** Addressing is by record, not by directory scan: a directory that
 looks like a workweave but is not recorded in `.rwv-workweave-index` is not addressable.
 
-**Exits.** `rwv workweave <project> list` shows what is recorded. If the
+**Exits.** `rwv workweave list` shows what is recorded. If the
 directory exists but is unrecorded, `rwv doctor --fix` adopts it when it sits
 in the recorded container under the expected name. A source for `rwv sync`,
 `rwv sync-to` or `rwv workweave create --from` that is a bare word names a
@@ -663,9 +666,9 @@ there is no frame to interpret the command in.
 
 ### `non-clone-at-placement`
 
-**Condition.** `rwv add <url>` finds something at the member's placement that
+**Condition.** `rwv member add <url>` finds something at the member's placement that
 is not a clone: a directory, empty or not, or a file. From a workweave the
-workweave's own placement is checked too, and so is it for `rwv add --adopt
+workweave's own placement is checked too, and so is it for `rwv member add --adopt
 <path>` when `<path>` lands inside the workweave.
 
 **Why.** A clone at the placement can stand in for the one `add` would make,
@@ -705,7 +708,7 @@ accept bootstrapping over what is there.
 
 ### `occupied-placement`
 
-**Condition.** An `rwv add <url>`, or an `rwv add --new` creation address,
+**Condition.** An `rwv member add <url>`, or an `rwv member add --new` creation address,
 places at a path the manifest already maps to a different URL.
 
 **Why.** Placement is a function of the identity a registry mints, not of a
@@ -717,7 +720,7 @@ manifest without saying so.
 **Exits.** To finish an entry already in the manifest, re-run with the URL it
 records. Otherwise use a different owner or repo so the two do not collide, or,
 if replacing it is what's intended, remove the existing entry and its clone
-first with `rwv remove <path> --delete`. A plain `rwv remove` keeps the clone,
+first with `rwv member remove <path> --delete`. A plain `rwv member remove` keeps the clone,
 which the re-run then refuses as `foreign-clone-at-placement`. In a workweave,
 whose clones the primary weave holds, run the delete in the workweave and then
 in the primary weave.
@@ -911,7 +914,7 @@ the losses, and create it again. The refusal lists what it found.
 
 ### `repo-not-in-manifest`
 
-**Condition.** `rwv remove` names a path the manifest does not carry, and
+**Condition.** `rwv member remove` names a path the manifest does not carry, and
 this workspace holds no checkout there that is this project's to finish
 removing: one this project's lock still names, or one no other project lists.
 
@@ -920,7 +923,7 @@ succeeding would let both go unnoticed. A checkout another project lists is
 that project's, not this one's leftover.
 
 **Exits.** Check the spelling against `rwv status`. An entry removed from
-`rwv.toml` by hand is finished by `rwv remove <path>` while its checkout is
+`rwv.toml` by hand is finished by `rwv member remove <path>` while its checkout is
 still on disk; this refusal means there is no such checkout here.
 
 ### `repo-without-commits`
@@ -1269,26 +1272,26 @@ characters and the rule each one protects.
 ### `unresolvable-repo-source`
 
 **Condition.** The source parses as neither a URL nor a known shorthand. For
-`rwv add` and `rwv fetch` this includes a plain path, relative or absolute, and
+`rwv member add` and `rwv fetch` this includes a plain path, relative or absolute, and
 so does a member's `url` in `rwv.toml` when `rwv fetch` or `rwv sync` clones
 it. For a member, `rwv fetch` names this token after that member's error line
 and in its `--json` record's `refusal`, and the run as a whole ends with
 `partial-run-aborted`. `rwv doctor` reports every such member as
 `provenance` / `unresolvable-url` before any clone is attempted.
 
-**Why.** A plain path could name a remote to clone from or, for `rwv add`, a
+**Why.** A plain path could name a remote to clone from or, for `rwv member add`, a
 clone already on disk to register. Guessing between them clones from somewhere
 unintended or records the wrong URL, so each meaning has its own spelling.
 
 **Exits.** The message names them. To clone from a local remote, spell it as a
 URL: `file:///abs/path`, in `rwv.toml` as well. To register the clone already at that path under the
-weave root: `rwv add --adopt <path>`. To fetch the members of a project already
+weave root: `rwv member add --adopt <path>`. To fetch the members of a project already
 in this weave, drop the source: `rwv fetch --project <name>`. Otherwise give a
 full URL, or `owner/repo` shorthand for a supported registry.
 
 ### `unspellable-directory-name`
 
-**Condition.** `rwv add --adopt <path>` names a clone whose position under the
+**Condition.** `rwv member add --adopt <path>` names a clone whose position under the
 weave root passes through a directory name no member path can spell: one
 holding a `\`, which on Unix is an ordinary filename character, or one that is
 not valid Unicode. The refusal names the directory and which of the two it is.
@@ -1300,7 +1303,7 @@ Unicode has no spelling in it. rwv does not rename the directory itself: any
 new name would be a guess.
 
 **Exits.** Rename the directory to a name without `\` that is valid Unicode,
-then run `rwv add --adopt` with the clone's new path. Nothing was written, so
+then run `rwv member add --adopt` with the clone's new path. Nothing was written, so
 there is nothing to undo.
 
 **Where this sits.** [Formats](./formats.md) states the path grammar.
@@ -1318,7 +1321,7 @@ they are not in any commit to recover from.
 
 ### `unusable-creation-param`
 
-**Condition.** An `rwv add --new` creation parameter's value cannot be used
+**Condition.** An `rwv member add --new` creation parameter's value cannot be used
 as given: a name the registry does not declare, a `--params-json` entry that
 is not a JSON string, an empty `root`, a `root` directory that does not
 exist, a `root` inside the weave it would create a member of, or a name

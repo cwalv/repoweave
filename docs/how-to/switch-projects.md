@@ -27,7 +27,7 @@ It says what it left out:
 
 Run `rwv materialize` later when you want the install hooks to run.
 
-`.rwv-active` is the single source of truth for which project is active at the weave root. Changing directories into `projects/<name>/` does not switch the active project; action verbs (`rwv lock`, `rwv add`, `rwv sync`) read `.rwv-active`. When CWD is under `projects/<name>/` and that name differs from `.rwv-active`, verbs that write (`add`, `remove`, `role`, `lock`, `update`, `push`, `sync`, `sync-to`, `fetch` with no source, `doctor --fix`) refuse with `cwd-in-inactive-project`, naming `--project <name>`, `--project <active>`, and `rwv activate <name>`. `rwv status` warns and reports on the active project; `rwv doctor` reports on the active project without a warning.
+`.rwv-active` is the single source of truth for which project is active at the weave root. Changing directories into `projects/<name>/` does not switch the active project; action verbs (`rwv lock`, `rwv member add`, `rwv sync`) read `.rwv-active`. When CWD is under `projects/<name>/` and that name differs from `.rwv-active`, verbs that write (`add`, `remove`, `role`, `lock`, `update`, `push`, `sync`, `sync-to`, `fetch` with no source, `doctor --fix`) refuse with `cwd-in-inactive-project`, naming `--project <name>`, `--project <active>`, and `rwv activate <name>`. `rwv status` warns and reports on the active project; `rwv doctor` reports on the active project without a warning.
 
 ## One-shot project override
 
@@ -37,7 +37,7 @@ To run a single command against another project without changing `.rwv-active`:
 rwv lock --project mobile-app
 ```
 
-An authoring verb (`add`, `remove`, `role`, `update`) given `--project` for a project the weave root does not present regenerates that project's files and stops there, saying so:
+An authoring verb (`member add`, `member remove`, `member set-role`, `member set-recurse-submodules`, `update`) given `--project` for a project the weave root does not present regenerates that project's files and stops there, saying so:
 
 ```text
 [skipped] core: the weave-root links were not refreshed (`mobile-app` is not the project this weave root presents); `rwv activate mobile-app` refreshes them
@@ -49,7 +49,7 @@ An authoring verb (`add`, `remove`, `role`, `update`) given `--project` for a pr
 If the dependency diff between projects is large, or you need both projects open simultaneously, create a workweave instead. Each workweave has its own `node_modules/`, `.venv/`, `target/`, and surfaced ecosystem files:
 
 ```bash
-rwv workweave mobile-app create dev
+rwv workweave create dev --project mobile-app
 cd ../.workweaves/mobile-app--dev
 ```
 

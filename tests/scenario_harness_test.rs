@@ -131,7 +131,7 @@ fn giving_up_before_publishing_strands_the_discarded_commit() {
     assert_eq!(
         report.violations,
         vec![(
-            "rwv workweave proj delete anon --discard-unmerged-commits".to_owned(),
+            "rwv workweave delete --project proj anon --discard-unmerged-commits".to_owned(),
             Violation::Stranded {
                 repo: Repo::App,
                 commit: report.marks["anon-app"].clone(),
@@ -195,7 +195,10 @@ fn snapshot_reads_every_lock_site_and_ref_store() {
         Scenario {
             name: "one workweave",
             seed: Seed::default(),
-            steps: vec![Step::rwv(&a(), &["workweave", "proj", "create", "x"])],
+            steps: vec![Step::rwv(
+                &a(),
+                &["workweave", "create", "--project", "proj", "x"],
+            )],
         },
     );
     report.assert_green();
@@ -301,7 +304,7 @@ fn stranded_check_catches_a_deleted_branch_in_a_workweave() {
     let report = bad_steps(
         "branch -D strands a commit",
         vec![
-            Step::rwv(&a(), &["workweave", "proj", "create", "x"]),
+            Step::rwv(&a(), &["workweave", "create", "--project", "proj", "x"]),
             Step::git(&ww("x"), Repo::Lib, &["switch", "-c", "side"]),
             Step::commit(&ww("x"), Repo::Lib, "side-work"),
             Step::git(&ww("x"), Repo::Lib, &["switch", "proj--x"]),
@@ -462,7 +465,10 @@ fn rewind_check_catches_a_relock_after_reset_in_the_primary() {
 
 #[test]
 fn rewind_check_catches_a_relock_after_reset_in_a_workweave() {
-    let mut steps = vec![Step::rwv(&a(), &["workweave", "proj", "create", "x"])];
+    let mut steps = vec![Step::rwv(
+        &a(),
+        &["workweave", "create", "--project", "proj", "x"],
+    )];
     steps.extend(rewind_steps(&ww("x"), &[]));
     let report = bad_steps("relock after reset in a workweave", steps);
     let relock = ("rwv lock --commit", Invariant::NoPinRewound);
@@ -1236,7 +1242,7 @@ const ADVANCE_TARGET: &str = "advance-target";
 
 fn landing_from(name: &'static str) -> Vec<Step> {
     vec![
-        Step::rwv(&a(), &["workweave", "proj", "create", name]).expect(Exit::Succeeds),
+        Step::rwv(&a(), &["workweave", "create", "--project", "proj", name]).expect(Exit::Succeeds),
         Step::commit(&ww(name), Repo::App, "landing-app"),
     ]
 }
@@ -1370,7 +1376,7 @@ fn explained_choice_ids(sandbox: &Sandbox, kind: &str, state: &str) -> Vec<Strin
 /// after; it changes nothing on disk or in any ref; and `--json` carries the
 /// same axes and states with the choices `rwv explain` lists for each.
 ///
-/// `rwv remove --delete` judges the clone's edits and every checkout derived
+/// `rwv member remove --delete` judges the clone's edits and every checkout derived
 /// from it before refusing. It has no `--json`, so the JSON half drives the
 /// same judgment where a verb that has one reaches it: a sync whose replay
 /// drops the member prunes its clone through those same guards, and records
@@ -1384,7 +1390,8 @@ fn dc27_envelope_routes_once_per_kind_last_and_changes_nothing() {
             name: "a workweave sharing the primary's clones",
             seed: Seed::default(),
             steps: vec![
-                Step::rwv(&a(), &["workweave", "proj", "create", "other"]).expect(Exit::Succeeds)
+                Step::rwv(&a(), &["workweave", "create", "--project", "proj", "other"])
+                    .expect(Exit::Succeeds),
             ],
         },
     )
@@ -1402,18 +1409,18 @@ fn dc27_envelope_routes_once_per_kind_last_and_changes_nothing() {
     let manifest_before = std::fs::read_to_string(&manifest).unwrap();
     let before = refs_and_locks(&sandbox);
 
-    let out = sandbox.rwv(&primary, &["remove", &lib_path, "--delete"]);
+    let out = sandbox.rwv(&primary, &["member", "remove", &lib_path, "--delete"]);
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
     assert_eq!(out.status.code(), Some(1), "{stderr}");
     for line in [
-        format!("rwv remove: {lib_path}: edits dirty\n    scratch.txt\n"),
-        format!("rwv remove: {lib_path}: checkout in another workspace (proj--other)\n"),
+        format!("rwv member remove: {lib_path}: edits dirty\n    scratch.txt\n"),
+        format!("rwv member remove: {lib_path}: checkout in another workspace (proj--other)\n"),
         format!(
-            "rwv remove: {lib_path}: checkout in a raw worktree\n    {}\n",
+            "rwv member remove: {lib_path}: checkout in a raw worktree\n    {}\n",
             raw.display()
         ),
         "choices:\n".to_owned(),
-        "  free the other checkout\n    rwv workweave proj delete other\n".to_owned(),
+        "  free the other checkout\n    rwv workweave delete other --project proj\n".to_owned(),
         format!(
             "    git -C {} worktree remove {}\n",
             lib.display(),
@@ -1441,11 +1448,14 @@ fn dc27_envelope_routes_once_per_kind_last_and_changes_nothing() {
 
     let seat = sandbox.place_root(&ww("drops"));
     assert!(sandbox
-        .rwv(&primary, &["workweave", "proj", "create", "drops"])
+        .rwv(
+            &primary,
+            &["workweave", "create", "--project", "proj", "drops"]
+        )
         .status
         .success());
     for args in [
-        &["remove", lib_path.as_str(), "--delete"][..],
+        &["member", "remove", lib_path.as_str(), "--delete"][..],
         &["lock", "--commit"][..],
     ] {
         let out = sandbox.rwv(&seat, args);

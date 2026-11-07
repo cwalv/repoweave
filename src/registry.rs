@@ -1224,7 +1224,7 @@ mod tests {
 
     /// git records a clone's source path as `origin` verbatim, so a Windows
     /// clone made from a temp-dir root with a `/`-joined tail carries both
-    /// separators, while `rwv add` is handed the `file://` URL.
+    /// separators, while `rwv member add` is handed the `file://` URL.
     #[test]
     fn same_remote_a_drive_letter_path_in_either_separator_and_its_file_url() {
         let url = "file:///C:/Users/runneradmin/AppData/Local/Temp/.tmpYVOHxo/ours/remotes/lib.git";
@@ -1566,7 +1566,7 @@ mod tests {
         }
     }
 
-    /// `rwv add --new` against a Windows-shaped `root` must mint a clonable
+    /// `rwv member add --new` against a Windows-shaped `root` must mint a clonable
     /// URL, not `file://C:\...\owner\repo` (backslashes, and `C:` read as
     /// authority for want of a third slash).
     #[test]

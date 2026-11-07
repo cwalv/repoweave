@@ -148,15 +148,17 @@ cherry-picks are pure git operations on branches the operator can name.
 
 Workweaves live under `.workweaves/` in the *parent* of the primary weave
 root — i.e. a sibling of the weave root, not a child. That is the
-default. The container is recorded per-project in
+default. The basedir is recorded per-project in
 `projects/<project>/.rwv-workweave-index` (machine-local JSON); relocate
-it explicitly with `rwv workweave <project> set-container <path>` or
-override it per-workweave with `rwv workweave create --dir <path>`.
+it explicitly with `rwv workweave set-default-create-basedir <path>`,
+replace it for one workweave with `rwv workweave create --basedir <path>`,
+or place one workweave at exactly a path with `rwv workweave create --dir
+<path>`.
 Every `find`-direction verb consults the recorded `name → absolute path`
 entries rather than reconstructing from convention, so a per-workweave
-override is as first-class as a default-container placement.
+placement is as first-class as a default-basedir one.
 All workweaves for a project — whether forked from primary or from
-another workweave — live as flat siblings inside the project's container,
+another workweave — live as flat siblings inside the project's basedir,
 named `<project>--<workweave-name>`:
 
 ```

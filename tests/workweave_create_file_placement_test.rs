@@ -91,7 +91,7 @@ fn create_reports_how_each_members_files_were_placed(endings: LineEndings) {
     let ws = weave(tmp.path(), endings);
 
     let output = common::rwv()
-        .args(["workweave", "web-app", "create", "agent-1"])
+        .args(["workweave", "create", "--project", "web-app", "agent-1"])
         .current_dir(&ws)
         .output()
         .unwrap();

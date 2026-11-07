@@ -70,7 +70,7 @@ Branches and tags in the project repo each carry their own committed `rwv.lock`.
 
 Traditional isolation means cloning a repo into a temp folder — but then you lose the rest of the project context. The `git worktree` primitive solves this for one repo; repoweave extends the pattern across the project.
 
-A **workweave** is a worktree-derived copy of an entire workspace, made and unmade with `rwv workweave <project> create` and `rwv workweave <project> delete`. Every member repo gets a git worktree on a flat ephemeral branch (`<project>--<workweave>`); a `role = "reference"` repo's tracked files are read-only on disk, and file storage is shared automatically via copy-on-write reflinks (or hardlinks for read-only `reference` files on Linux) where the filesystem supports them. Ecosystem workspace files authored in `projects/<name>/` are surfaced to the workweave root via symlinks; `node_modules/`, `.venv/`, and `target/` are per-workweave. The primary weave stays undisturbed.
+A **workweave** is a worktree-derived copy of an entire workspace, made and unmade with `rwv workweave create` and `rwv workweave delete`. Every member repo gets a git worktree on a flat ephemeral branch (`<project>--<workweave>`); a `role = "reference"` repo's tracked files are read-only on disk, and file storage is shared automatically via copy-on-write reflinks (or hardlinks for read-only `reference` files on Linux) where the filesystem supports them. Ecosystem workspace files authored in `projects/<name>/` are surfaced to the workweave root via symlinks; `node_modules/`, `.venv/`, and `target/` are per-workweave. The primary weave stays undisturbed.
 
 Where this pays off day-to-day:
 
@@ -79,7 +79,7 @@ Where this pays off day-to-day:
 - **Agent sandbox.** Give an agent a workweave so its experimental refactors are quarantined from the human's in-progress edits. See the [agent lens](./agent.md).
 - **Parallel projects.** Work on two projects without `rwv activate` churn. A workweave on `mobile-app` lives alongside the primary weave on `web-app`.
 
-Workweaves can be nested — `rwv workweave <project> create` run from inside a workweave forks from it, and `create --from <source>` names any other workspace to fork from, which is also how an existing workweave is duplicated. The result is a tree: primary → workweave → child workweave. Workweaves are not required to be ephemeral. A long-lived workweave (e.g., one that tracks the latest released lock, or an "agent gravity well" workweave) is a fine pattern. The model is a tree of workspaces with a flow direction, not a strict ephemeral-only discipline. See [workweave hierarchy](../joints/workweave-hierarchy.md) for the tree model.
+Workweaves can be nested — `rwv workweave create` run from inside a workweave forks from it, and `create --from <source>` names any other workspace to fork from, which is also how an existing workweave is duplicated. The result is a tree: primary → workweave → child workweave. Workweaves are not required to be ephemeral. A long-lived workweave (e.g., one that tracks the latest released lock, or an "agent gravity well" workweave) is a fine pattern. The model is a tree of workspaces with a flow direction, not a strict ephemeral-only discipline. See [workweave hierarchy](../joints/workweave-hierarchy.md) for the tree model.
 
 ## `rwv sync` and `rwv sync-to`: bringing the work home
 

@@ -109,7 +109,10 @@ fn primary_weave() -> (tempfile::TempDir, PathBuf) {
 /// doctor reads a link over a missing source as stale.
 fn workweave() -> (tempfile::TempDir, PathBuf) {
     let (tmp, ws) = primary_weave();
-    let out = rwv_output(&ws, &["workweave", "alpha", "create", "agent-1"]);
+    let out = rwv_output(
+        &ws,
+        &["workweave", "create", "--project", "alpha", "agent-1"],
+    );
     let ww_dir = tmp.path().join(".workweaves").join("alpha--agent-1");
     assert!(
         ww_dir.join(SURFACED_CONTROL).symlink_metadata().is_ok(),

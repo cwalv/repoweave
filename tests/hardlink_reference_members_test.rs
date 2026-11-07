@@ -72,7 +72,7 @@ fn primary(parent: &Path) -> PathBuf {
 /// Create seat `name` from the primary; returns its root and create's stderr.
 fn seat(primary: &Path, name: &str) -> (PathBuf, String) {
     let output = common::rwv()
-        .args(["workweave", PROJECT, "create", name])
+        .args(["workweave", "create", "--project", PROJECT, name])
         .current_dir(primary)
         .output()
         .unwrap();
@@ -194,7 +194,10 @@ fn deleting_a_seat_leaves_the_files_another_seat_shared_with_it() {
         .map(|f| file_of(&two.join(REFERENCE).join(f)))
         .collect();
 
-    run(&["workweave", PROJECT, "delete", "one"], &primary);
+    run(
+        &["workweave", "delete", "--project", PROJECT, "one"],
+        &primary,
+    );
 
     assert!(!one.exists());
     for (file, file_before) in FILES.iter().zip(before) {
@@ -256,7 +259,7 @@ fn leaving_reference_gives_a_seat_private_writable_copies_and_leaves_the_other_r
         .map(|f| file_of(&one.join(REFERENCE).join(f)))
         .collect();
 
-    run(&["role", REFERENCE, "owned"], &two);
+    run(&["member", "set-role", REFERENCE, "owned"], &two);
 
     for (file, theirs_before) in FILES.iter().zip(theirs_before) {
         let ours = two.join(REFERENCE).join(file);

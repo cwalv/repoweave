@@ -25,7 +25,7 @@ fn weave_with_misplaced_member(tmp: &tempfile::TempDir) -> (PathBuf, String) {
     let url = common::file_url(&origin);
     common::git_in(&ws, &["clone", "--quiet", &url, "local/acme/old"]);
     common::rwv()
-        .args(["add", "--adopt", "local/acme/old"])
+        .args(["member", "add", "--adopt", "local/acme/old"])
         .current_dir(&ws)
         .assert()
         .success();

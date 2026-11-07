@@ -189,8 +189,9 @@ fn fixture() -> Fixture {
         let output = common::rwv()
             .args([
                 "workweave",
-                "web-app",
                 "create",
+                "--project",
+                "web-app",
                 "agent-1",
                 "--no-materialize",
             ])

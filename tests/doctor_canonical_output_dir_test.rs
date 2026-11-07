@@ -349,8 +349,9 @@ fn doctor_in_a_workweave_names_the_canonical_path_for_an_absent_file() {
     let create = rwv_in(
         &[
             "workweave",
-            "web-app",
             "create",
+            "--project",
+            "web-app",
             "agent-1",
             "--no-materialize",
         ],

@@ -65,7 +65,7 @@ fn create(ws: &Path, project: &str, name: &str) -> PathBuf {
         name: &WorkweaveName::new(name).unwrap(),
         replace_existing: None,
         dirty_source: DirtySource::Refuse,
-        dir_override: None,
+        placement: &repoweave::workweave::Placement::DefaultBasedir,
         activation: repoweave::activate::ActivateOptions::default(),
     })
     .expect("create should succeed")

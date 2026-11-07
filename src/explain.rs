@@ -23,9 +23,7 @@ const PRIME_EXPLAIN: &str = include_str!("../docs/reference/explain/prime.md");
 const EXPLAIN_EXPLAIN: &str = include_str!("../docs/reference/explain/explain.md");
 const WORKWEAVE_EXPLAIN: &str = include_str!("../docs/reference/explain/workweave.md");
 const ABORT_EXPLAIN: &str = include_str!("../docs/reference/explain/abort.md");
-const ADD_EXPLAIN: &str = include_str!("../docs/reference/explain/add.md");
-const REMOVE_EXPLAIN: &str = include_str!("../docs/reference/explain/remove.md");
-const ROLE_EXPLAIN: &str = include_str!("../docs/reference/explain/role.md");
+const MEMBER_EXPLAIN: &str = include_str!("../docs/reference/explain/member.md");
 const LOCK_EXPLAIN: &str = include_str!("../docs/reference/explain/lock.md");
 const ACTIVATE_EXPLAIN: &str = include_str!("../docs/reference/explain/activate.md");
 const MATERIALIZE_EXPLAIN: &str = include_str!("../docs/reference/explain/materialize.md");
@@ -232,9 +230,7 @@ const VERB_BUNDLES: &[(&str, &str)] = &[
     ("explain", EXPLAIN_EXPLAIN),
     ("workweave", WORKWEAVE_EXPLAIN),
     ("abort", ABORT_EXPLAIN),
-    ("add", ADD_EXPLAIN),
-    ("remove", REMOVE_EXPLAIN),
-    ("role", ROLE_EXPLAIN),
+    ("member", MEMBER_EXPLAIN),
     ("lock", LOCK_EXPLAIN),
     ("activate", ACTIVATE_EXPLAIN),
     ("materialize", MATERIALIZE_EXPLAIN),

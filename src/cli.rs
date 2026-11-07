@@ -78,6 +78,17 @@ impl RepoSelectorArgs {
     }
 }
 
+/// Every `<noun> <verb>` spelling a top-level command offers for `verb`: the
+/// places a bare `rwv <verb>` was probably meant.
+pub fn noun_spellings_of(verb: &str) -> Vec<String> {
+    use clap::CommandFactory;
+    Cli::command()
+        .get_subcommands()
+        .filter(|noun| noun.get_subcommands().any(|sub| sub.get_name() == verb))
+        .map(|noun| format!("{} {verb}", noun.get_name()))
+        .collect()
+}
+
 // Commands are listed in declaration order; that order is the grouping — no
 // labeled help sections. (clap 4 `next_help_heading` applies to args/options,
 // not to flattened Subcommand variants, so heading strings would be dead config.)
@@ -114,42 +125,6 @@ pub enum Commands {
     Resolve,
 
     // ── Setup & lifecycle ─────────────────────────────────────────────────────
-    /// Add a repo to the active project
-    Add {
-        /// Repository URL (`file://` for a local remote) or registry
-        /// shorthand such as `github/owner/repo`; with --adopt, the path of an
-        /// existing clone; with --new, a creation address: a bare registry
-        /// name, or `registry/owner/repo`
-        url: String,
-        /// Role for the repo
-        #[arg(long, default_value_t = manifest::Role::Owned, value_enum)]
-        role: manifest::Role,
-        /// Create a new repo instead of cloning: the argument is a creation
-        /// address, not a URL or path
-        #[arg(long, conflicts_with = "adopt")]
-        new: bool,
-        /// Register an existing clone instead of cloning: the argument is its
-        /// path, relative paths resolving against the invocation directory, and
-        /// its position under the weave root is the path recorded. The URL is
-        /// read from its origin remote
-        #[arg(long)]
-        adopt: bool,
-        /// A creation parameter as NAME=VALUE (repeatable). See `rwv explain add`
-        /// for what each registry declares. Only meaningful with --new.
-        #[arg(long = "param", value_name = "NAME=VALUE", requires = "new")]
-        params: Vec<String>,
-        /// Creation parameters as one JSON object of string values, e.g.
-        /// '{"root": "/srv/repos"}'. A name given both here and via --param refuses.
-        /// Only meaningful with --new.
-        #[arg(long = "params-json", value_name = "JSON", requires = "new")]
-        params_json: Option<String>,
-        /// Operate on this project instead of the active project (does not change `.rwv-active`)
-        #[arg(long)]
-        project: Option<String>,
-        /// Skip integration install hooks (e.g., `npm install`, `uv sync`); `rwv materialize` runs them later
-        #[arg(long)]
-        no_materialize: bool,
-    },
     /// Clone a project and align repos to rwv.lock (no network bump). Use `rwv update` to advance to branch HEAD. With no SOURCE, re-materialize missing manifest members of the active project (repair verb for dangling references).
     Fetch {
         /// Source to fetch from: a URL (`file://` for a local remote) or `owner/repo` shorthand. Omit to re-materialize missing manifest members of the active project in the current workspace.
@@ -196,44 +171,16 @@ pub enum Commands {
         #[arg(long, requires = "adopt")]
         no_materialize: bool,
     },
-    /// Change a repo's role in the active project, and settle its files for it
-    Role {
-        /// Path of the repo, as `rwv.toml` lists it
-        repo: String,
-        /// The role to give it
-        #[arg(value_enum)]
-        role: manifest::Role,
-        /// Operate on this project instead of the active project (does not change `.rwv-active`)
-        #[arg(long)]
-        project: Option<String>,
-        /// Skip integration install hooks (e.g., `npm install`, `uv sync`); `rwv materialize` runs them later
-        #[arg(long)]
-        no_materialize: bool,
-    },
-    /// Remove a repo from the active project
-    Remove {
-        /// Path of the repo to remove, as `rwv.toml` lists it
-        path: String,
-        /// Delete the clone directory
-        #[arg(long)]
-        delete: bool,
-        /// With `--delete`, remove the clone even if other projects still reference it
-        #[arg(long, requires = "delete")]
-        delete_shared_clone: bool,
-        /// Operate on this project instead of the active project (does not change `.rwv-active`)
-        #[arg(long)]
-        project: Option<String>,
-        /// Skip integration install hooks (e.g., `npm install`, `uv sync`); `rwv materialize` runs them later
-        #[arg(long)]
-        no_materialize: bool,
+    /// Add a repo to the active project, remove one, or change a member's role or submodule setting
+    Member {
+        #[command(subcommand)]
+        action: MemberAction,
     },
 
     // ── Workweaves ────────────────────────────────────────────────────────────
     /// Create, delete, or list workweaves
+    #[command(arg_required_else_help = true)]
     Workweave {
-        /// Project name (not required when --claude-hook is set)
-        #[arg(required_unless_present = "claude_hook")]
-        project: Option<String>,
         /// Hook mode: print only the workweave path to stdout (for Claude Code WorktreeCreate hook). An install hook that fails in the created workweave is a warning here, not a failure
         #[arg(long)]
         hook_mode: bool,
@@ -526,6 +473,96 @@ pub enum Commands {
 }
 
 #[derive(Subcommand)]
+pub enum MemberAction {
+    /// Add a repo to the active project
+    Add {
+        /// Repository URL (`file://` for a local remote) or registry
+        /// shorthand such as `github/owner/repo`; with --adopt, the path of an
+        /// existing clone; with --new, a creation address: a bare registry
+        /// name, or `registry/owner/repo`
+        url: String,
+        /// Role for the repo
+        #[arg(long, default_value_t = manifest::Role::Owned, value_enum)]
+        role: manifest::Role,
+        /// Create a new repo instead of cloning: the argument is a creation
+        /// address, not a URL or path
+        #[arg(long, conflicts_with = "adopt")]
+        new: bool,
+        /// Register an existing clone instead of cloning: the argument is its
+        /// path, relative paths resolving against the invocation directory, and
+        /// its position under the weave root is the path recorded. The URL is
+        /// read from its origin remote
+        #[arg(long)]
+        adopt: bool,
+        /// Record `recurse-submodules = false` for the member: new checkouts of
+        /// it leave its submodules uninitialized
+        #[arg(long)]
+        no_recurse_submodules: bool,
+        /// A creation parameter as NAME=VALUE (repeatable). See `rwv explain member`
+        /// for what each registry declares. Only meaningful with --new.
+        #[arg(long = "param", value_name = "NAME=VALUE", requires = "new")]
+        params: Vec<String>,
+        /// Creation parameters as one JSON object of string values, e.g.
+        /// '{"root": "/srv/repos"}'. A name given both here and via --param refuses.
+        /// Only meaningful with --new.
+        #[arg(long = "params-json", value_name = "JSON", requires = "new")]
+        params_json: Option<String>,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
+        /// Skip integration install hooks (e.g., `npm install`, `uv sync`); `rwv materialize` runs them later
+        #[arg(long)]
+        no_materialize: bool,
+    },
+    /// Remove a repo from the active project
+    Remove {
+        /// Path of the repo to remove, as `rwv.toml` lists it
+        path: String,
+        /// Delete the clone directory
+        #[arg(long)]
+        delete: bool,
+        /// With `--delete`, remove the clone even if other projects still reference it
+        #[arg(long, requires = "delete")]
+        delete_shared_clone: bool,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
+        /// Skip integration install hooks (e.g., `npm install`, `uv sync`); `rwv materialize` runs them later
+        #[arg(long)]
+        no_materialize: bool,
+    },
+    /// Change a repo's role in the active project, and settle its files for it
+    SetRole {
+        /// Path of the repo, as `rwv.toml` lists it
+        repo: String,
+        /// The role to give it
+        #[arg(value_enum)]
+        role: manifest::Role,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
+        /// Skip integration install hooks (e.g., `npm install`, `uv sync`); `rwv materialize` runs them later
+        #[arg(long)]
+        no_materialize: bool,
+    },
+    /// Say whether new checkouts of a repo populate its submodules
+    SetRecurseSubmodules {
+        /// Path of the repo, as `rwv.toml` lists it
+        repo: String,
+        /// `true` populates the submodules a checkout records; `false` leaves
+        /// them uninitialized
+        #[arg(action = clap::ArgAction::Set)]
+        recurse: bool,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
+        /// Skip integration install hooks (e.g., `npm install`, `uv sync`); `rwv materialize` runs them later
+        #[arg(long)]
+        no_materialize: bool,
+    },
+}
+
+#[derive(Subcommand)]
 pub enum WorkweaveAction {
     /// Create a new workweave
     Create {
@@ -563,15 +600,24 @@ pub enum WorkweaveAction {
         /// in explicitly.
         #[arg(long)]
         capture_dirty: bool,
-        /// Explicit per-workweave placement override.
+        /// The exact path to place the workweave at.
         ///
-        /// Places the workweave at exactly this path (recorded in the
-        /// registry). Overrides the default container for this
-        /// invocation only. Useful for big-disk workweaves, tmpfs
-        /// experiments, or one-off placements. Absolute paths are used
-        /// as-is; relative paths resolve against the invocation directory.
-        #[arg(long)]
+        /// Recorded in the registry and used as given; there is no default.
+        /// Absolute paths are used as-is; relative paths resolve against the
+        /// invocation directory. Useful for big-disk workweaves, tmpfs
+        /// experiments, or one-off placements. Refused together with
+        /// `--basedir`.
+        #[arg(long, conflicts_with = "basedir")]
         dir: Option<Operand>,
+        /// The directory to place the workweave under for this invocation,
+        /// in place of the recorded default (`rwv workweave
+        /// set-default-create-basedir`). The workweave lands at
+        /// `<basedir>/<project>--<name>`. Refused together with `--dir`.
+        #[arg(long)]
+        basedir: Option<Operand>,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
         /// Skip integration install hooks (e.g., `npm install`, `uv sync`) in the new workweave; `rwv materialize` inside it runs them later
         #[arg(long)]
         no_materialize: bool,
@@ -590,20 +636,31 @@ pub enum WorkweaveAction {
         /// `git branch -D` contract, which discards both.
         #[arg(long)]
         discard_unmerged_commits: bool,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
     },
     /// List existing workweaves
-    List,
-    /// Record the workweave container for this project.
+    List {
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
+    },
+    /// Record where `workweave create` places new workweaves by default.
     ///
     /// Sets the `container` field in `projects/<project>/.rwv-workweave-index`
     /// — the directory `workweave create` places new workweaves under by
-    /// default. Per-workweave `--dir` overrides on `create` are unaffected.
-    /// The recorded container is an explicit act, audit-visible via the file
-    /// itself, which git excludes through the project repo's `.git/info/exclude`.
-    SetContainer {
+    /// default. Per-workweave `--dir` and `--basedir` on `create` are
+    /// unaffected. The recorded directory is an explicit act, audit-visible
+    /// via the file itself, which git excludes through the project repo's
+    /// `.git/info/exclude`.
+    SetDefaultCreateBasedir {
         /// Path to record. Relative paths resolve against the invocation
         /// directory.
         path: Operand,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
     },
     /// Show this workweave's UNIQUE commits vs its recorded parent, per repo.
     ///

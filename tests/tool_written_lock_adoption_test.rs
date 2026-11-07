@@ -98,7 +98,7 @@ impl Weave {
                 ("src/lib.rs", ""),
             ],
         );
-        let add = self.rwv(&["add", &server]);
+        let add = self.rwv(&["member", "add", &server]);
         assert!(add.status.success(), "fixture add: {}", stderr_of(&add));
         assert!(
             self.is_linked("Cargo.lock"),
@@ -172,7 +172,7 @@ fn a_lock_renamed_over_its_dangling_link_is_adopted_by_the_verb_that_ran_the_too
         )],
     );
 
-    let add = weave.rwv(&["add", &web]);
+    let add = weave.rwv(&["member", "add", &web]);
 
     assert!(add.status.success(), "{}", stderr_of(&add));
     assert_eq!(
@@ -197,7 +197,7 @@ fn a_lock_written_where_its_link_was_missing_is_adopted_by_the_next_intent_verb(
     weave.write_past_the_link("version = 4\n# regenerated\n");
     let plain = weave.origin("plain", &[]);
 
-    let add = weave.rwv(&["add", &plain]);
+    let add = weave.rwv(&["member", "add", &plain]);
 
     assert!(add.status.success(), "{}", stderr_of(&add));
     assert!(
@@ -230,7 +230,7 @@ fn a_lock_written_where_its_link_was_missing_over_a_committed_copy_is_adopted() 
             "{\"name\": \"web\", \"version\": \"1.0.0\"}\n",
         )],
     );
-    let add = weave.rwv(&["add", &web]);
+    let add = weave.rwv(&["member", "add", &web]);
     assert!(add.status.success(), "fixture add: {}", stderr_of(&add));
     assert_eq!(
         weave.project_file("package-lock.json").as_deref(),
@@ -243,7 +243,7 @@ fn a_lock_written_where_its_link_was_missing_over_a_committed_copy_is_adopted() 
     std::fs::write(&root_lock, "{\"lockfileVersion\": 3, \"newdep\": 1}\n").unwrap();
     let plain = weave.origin("plain", &[]);
 
-    let add = weave.rwv(&["add", &plain]);
+    let add = weave.rwv(&["member", "add", &plain]);
 
     assert!(add.status.success(), "{}", stderr_of(&add));
     assert!(weave.is_linked("package-lock.json"), "{}", stderr_of(&add));
@@ -279,7 +279,7 @@ fn a_lock_changed_at_the_root_and_in_the_project_is_named_and_both_are_left() {
     std::fs::write(weave.ws.join("projects/demo/Cargo.lock"), "# edited\n").unwrap();
     let plain = weave.origin("plain", &[]);
 
-    let add = weave.rwv(&["add", &plain]);
+    let add = weave.rwv(&["member", "add", &plain]);
     let stderr = stderr_of(&add);
 
     assert!(

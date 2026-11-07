@@ -142,7 +142,7 @@ impl Weave {
     fn seat(&self, name: &str) -> (PathBuf, String) {
         let output = common::rwv()
             .envs(common::git_config_env(self.config))
-            .args(["workweave", PROJECT, "create", name])
+            .args(["workweave", "create", "--project", PROJECT, name])
             .current_dir(&self.primary)
             .output()
             .unwrap();
@@ -545,7 +545,7 @@ fn a_member_that_skips_submodules_keeps_them_empty_and_unreported() {
 fn a_misspelled_opt_out_is_refused_rather_than_ignored() {
     let weave = weave("owned", "submodule = \"skip\"", Store::Complete);
     let output = common::rwv()
-        .args(["workweave", PROJECT, "create", "one"])
+        .args(["workweave", "create", "--project", PROJECT, "one"])
         .current_dir(&weave.primary)
         .output()
         .unwrap();
@@ -693,7 +693,10 @@ fn deleting_the_workweave_removes_the_submodule_repositories_it_made() {
         ));
         assert!(repository.is_dir());
 
-        rwv(&["workweave", PROJECT, "delete", "one"], &weave.primary);
+        rwv(
+            &["workweave", "delete", "--project", PROJECT, "one"],
+            &weave.primary,
+        );
 
         assert!(!seat.exists(), "the workweave should be gone");
         assert!(
@@ -749,7 +752,7 @@ fn create_leaves_a_repo_without_submodules_alone() {
     std::fs::write(primary.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
 
     let output = common::rwv()
-        .args(["workweave", PROJECT, "create", "one"])
+        .args(["workweave", "create", "--project", PROJECT, "one"])
         .current_dir(&primary)
         .output()
         .unwrap();

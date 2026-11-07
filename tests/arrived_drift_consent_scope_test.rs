@@ -24,7 +24,7 @@ mod common;
 
 /// A bare remote holding `files` on `main`.
 ///
-/// `rwv add` reads `origin/HEAD` off the clone it is given and refuses without
+/// `rwv member add` reads `origin/HEAD` off the clone it is given and refuses without
 /// it, so the member clones have to come from somewhere rather than be `git
 /// init`ed in place.
 fn init_bare_repo(bare: &Path, files: &[(&str, &str)]) {
@@ -124,7 +124,7 @@ impl Fixture {
 /// Selecting `app` is the load-bearing part. Intent mode returns before the
 /// hooks when the root presents some other project, and a fixture where it
 /// does cannot reach the step under test. The unnamed third clone is what
-/// `rwv add` names by path — the arm that needs no network.
+/// `rwv member add` names by path — the arm that needs no network.
 fn fixture() -> Fixture {
     fixture_impl(false)
 }
@@ -377,8 +377,8 @@ fn a_verb_with_no_drift_in_its_way_still_runs_the_generator() {
         "fixture: the unnamed clone is not in the resolve yet"
     );
 
-    let run = f.rwv(&["add", "--adopt", "github/acme/extra"]);
-    assert!(run.ok, "`rwv add` should succeed:\n{}", run.all);
+    let run = f.rwv(&["member", "add", "--adopt", "github/acme/extra"]);
+    assert!(run.ok, "`rwv member add` should succeed:\n{}", run.all);
     assert!(
         !run.all.contains("[withheld]"),
         "nothing is being withheld here:\n{}",
@@ -392,7 +392,7 @@ fn a_verb_with_no_drift_in_its_way_still_runs_the_generator() {
     );
 }
 
-/// `rwv add` said nothing about drift at all and settled it anyway.
+/// `rwv member add` said nothing about drift at all and settled it anyway.
 ///
 /// Also the shape of the window the withholding leaves behind, since that is
 /// what the operator has to act on: the manifest entry and the managed member
@@ -407,14 +407,14 @@ fn add_withholds_the_generator_over_unsettled_drift() {
     let f = fixture();
     materialized_then_pinned_back(&f);
 
-    let run = f.rwv(&["add", "--adopt", "github/acme/extra"]);
+    let run = f.rwv(&["member", "add", "--adopt", "github/acme/extra"]);
     assert!(run.ok, "the manifest change still lands:\n{}", run.all);
     assert!(
         f.drift_is_unaccepted(),
         "the drift must still be UNACCEPTED afterwards:\n{}",
         run.all
     );
-    assert_the_operator_was_told(&run, "add");
+    assert_the_operator_was_told(&run, "member add");
     assert!(
         !f.lock_text().contains(r#"name = "acmeextra""#),
         "and the generator must not have run — the control shows this same \
@@ -437,7 +437,7 @@ fn add_withholds_the_generator_over_unsettled_drift() {
     );
 }
 
-/// `rwv remove` reaches the same regeneration from the other direction: the
+/// `rwv member remove` reaches the same regeneration from the other direction: the
 /// member leaves the resolve rather than entering it.
 #[test]
 fn remove_withholds_the_generator_over_unsettled_drift() {
@@ -451,14 +451,14 @@ fn remove_withholds_the_generator_over_unsettled_drift() {
         "fixture: the member being removed is in the resolve to start with"
     );
 
-    let run = f.rwv(&["remove", "github/acme/lib"]);
+    let run = f.rwv(&["member", "remove", "github/acme/lib"]);
     assert!(run.ok, "the manifest change still lands:\n{}", run.all);
     assert!(
         f.drift_is_unaccepted(),
         "the drift must still be UNACCEPTED afterwards:\n{}",
         run.all
     );
-    assert_the_operator_was_told(&run, "remove");
+    assert_the_operator_was_told(&run, "member remove");
     assert!(
         f.lock_text().contains(r#"name = "acmelib""#),
         "and the generator must not have run:\n{}",

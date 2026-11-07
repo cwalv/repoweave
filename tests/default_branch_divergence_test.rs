@@ -81,7 +81,7 @@ fn a_workweave_forks_from_the_declared_branch_not_from_main() {
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     common::rwv()
-        .args(["workweave", "web-app", "create", "hotfix"])
+        .args(["workweave", "create", "--project", "web-app", "hotfix"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -113,7 +113,7 @@ fn the_primary_checkout_stays_on_the_declared_branch() {
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     common::rwv()
-        .args(["workweave", "web-app", "create", "hotfix"])
+        .args(["workweave", "create", "--project", "web-app", "hotfix"])
         .current_dir(&ws)
         .assert()
         .success();

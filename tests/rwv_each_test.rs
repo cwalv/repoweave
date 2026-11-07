@@ -211,7 +211,7 @@ fn a_default_scope_holding_only_reference_repos_fails_saying_how_to_include_them
 fn an_unregistered_workweave_runs_once_doctor_fix_registers_it() {
     let pw = common::build_workspace("demo", &[(APP, "owned")]);
     let created = common::rwv()
-        .args(["workweave", "demo", "create", "seat"])
+        .args(["workweave", "create", "--project", "demo", "seat"])
         .current_dir(&pw.workspace)
         .output()
         .unwrap();
@@ -769,7 +769,7 @@ fn one_job_prints_a_header_before_each_repo_and_leaves_its_output_unprefixed() {
 fn a_workweave_runs_in_its_own_checkouts_never_the_primarys() {
     let pw = common::build_workspace("demo", &[(APP, "owned")]);
     let created = common::rwv()
-        .args(["workweave", "demo", "create", "seat"])
+        .args(["workweave", "create", "--project", "demo", "seat"])
         .current_dir(&pw.workspace)
         .output()
         .unwrap();

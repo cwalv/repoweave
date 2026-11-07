@@ -1728,7 +1728,7 @@ impl Manifest {
 
     /// The manifest text a project starts life with.
     pub const SKELETON: &'static str =
-        "# Repoweave manifest — run `rwv add <url> --role <role>` to add repos.\n[repositories]\n";
+        "# Repoweave manifest — run `rwv member add <url> --role <role>` to add repos.\n[repositories]\n";
 
     /// Iterate over every [`RepoPath`] in the manifest, in sorted order.
     ///

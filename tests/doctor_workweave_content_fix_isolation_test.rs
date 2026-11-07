@@ -345,7 +345,7 @@ fn doctor_fix_from_workweave_leaves_primary_project_dir_byte_identical() {
         name: &ww_name,
         replace_existing: None,
         dirty_source: repoweave::workweave::DirtySource::Refuse,
-        dir_override: None,
+        placement: &repoweave::workweave::Placement::DefaultBasedir,
         activation: repoweave::activate::ActivateOptions::default(),
     })
     .expect("create_workweave should succeed");

@@ -73,7 +73,14 @@ fn capture_dirty_moves_the_edits_so_the_workweave_lands_back() {
 
     let (ok, report) = rwv(
         &ws,
-        &["workweave", "app", "create", "seat", "--capture-dirty"],
+        &[
+            "workweave",
+            "create",
+            "--project",
+            "app",
+            "seat",
+            "--capture-dirty",
+        ],
     );
     assert!(ok, "create failed:\n{report}");
     let seat = tmp.path().join(".workweaves/app--seat");
@@ -118,7 +125,14 @@ fn capture_dirty_never_discards_what_it_did_not_capture() {
 
     let (ok, report) = rwv(
         &ws,
-        &["workweave", "app", "create", "seat", "--capture-dirty"],
+        &[
+            "workweave",
+            "create",
+            "--project",
+            "app",
+            "seat",
+            "--capture-dirty",
+        ],
     );
     assert!(ok, "create failed:\n{report}");
 
@@ -171,7 +185,14 @@ fn a_capture_that_fails_partway_leaves_the_source_untouched() {
 
     let (ok, report) = rwv(
         &ws,
-        &["workweave", "app", "create", "seat", "--capture-dirty"],
+        &[
+            "workweave",
+            "create",
+            "--project",
+            "app",
+            "seat",
+            "--capture-dirty",
+        ],
     );
     let seat_lock = tmp
         .path()

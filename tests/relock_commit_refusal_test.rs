@@ -92,7 +92,10 @@ fn weave() -> Weave {
 
 impl Weave {
     fn seat(&self, name: &str) -> PathBuf {
-        succeed(&self.root, &["workweave", PROJECT, "create", name]);
+        succeed(
+            &self.root,
+            &["workweave", "create", "--project", PROJECT, name],
+        );
         self.root
             .parent()
             .unwrap()

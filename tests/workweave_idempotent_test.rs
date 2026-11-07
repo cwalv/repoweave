@@ -1,4 +1,4 @@
-//! Idempotency regression test for `rwv workweave <project> create <name>`.
+//! Idempotency regression test for `rwv workweave create <name>`.
 //!
 //! Gas City's pool-worker resume contract (`gc runtime request-restart`)
 //! relies on re-invoking `rwv workweave` leaving non-git state in the
@@ -86,7 +86,7 @@ fn workweave_recreate_preserves_non_git_state() {
 
     // ---- First invocation: create the workweave fresh. ----
     rwv()
-        .args(["workweave", "web-app", "create", "resume"])
+        .args(["workweave", "create", "--project", "web-app", "resume"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -133,7 +133,7 @@ fn workweave_recreate_preserves_non_git_state() {
     // workweave create is not idempotent on re-invocation and needs a
     // fix to support the pool-worker resume contract.
     rwv()
-        .args(["workweave", "web-app", "create", "resume"])
+        .args(["workweave", "create", "--project", "web-app", "resume"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -209,7 +209,7 @@ fn workweave_recreate_refuses_on_local_modifications() {
 
     // ---- Case A: uncommitted changes in the worktree. ----
     rwv()
-        .args(["workweave", "web-app", "create", "dirty"])
+        .args(["workweave", "create", "--project", "web-app", "dirty"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -222,7 +222,7 @@ fn workweave_recreate_refuses_on_local_modifications() {
     std::fs::write(weave_repo.join("scratch.txt"), "untracked edit\n").unwrap();
 
     rwv()
-        .args(["workweave", "web-app", "create", "dirty"])
+        .args(["workweave", "create", "--project", "web-app", "dirty"])
         .current_dir(&ws)
         .assert()
         .failure()
@@ -241,7 +241,7 @@ fn workweave_recreate_refuses_on_local_modifications() {
 
     // ---- Case B: a new commit on the ephemeral branch. ----
     rwv()
-        .args(["workweave", "web-app", "create", "advanced"])
+        .args(["workweave", "create", "--project", "web-app", "advanced"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -255,7 +255,7 @@ fn workweave_recreate_refuses_on_local_modifications() {
     let advanced_head = head_sha(&weave2_repo);
 
     rwv()
-        .args(["workweave", "web-app", "create", "advanced"])
+        .args(["workweave", "create", "--project", "web-app", "advanced"])
         .current_dir(&ws)
         .assert()
         .failure()
@@ -301,7 +301,7 @@ role = "owned"
 
     // Create workweave "shared" for project-a.
     rwv()
-        .args(["workweave", "project-a", "create", "shared"])
+        .args(["workweave", "create", "--project", "project-a", "shared"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -313,7 +313,7 @@ role = "owned"
     // Create the same-named workweave for project-b — must succeed in its
     // own directory, leaving project-a's untouched.
     rwv()
-        .args(["workweave", "project-b", "create", "shared"])
+        .args(["workweave", "create", "--project", "project-b", "shared"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -342,7 +342,7 @@ fn workweave_recreate_with_replace_existing_destroys_and_recreates() {
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
-        .args(["workweave", "web-app", "create", "reset"])
+        .args(["workweave", "create", "--project", "web-app", "reset"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -362,8 +362,9 @@ fn workweave_recreate_with_replace_existing_destroys_and_recreates() {
     let err_output = rwv()
         .args([
             "workweave",
-            "web-app",
             "create",
+            "--project",
+            "web-app",
             "reset",
             "--replace-existing",
         ])
@@ -393,8 +394,9 @@ fn workweave_recreate_with_replace_existing_destroys_and_recreates() {
     rwv()
         .args([
             "workweave",
-            "web-app",
             "create",
+            "--project",
+            "web-app",
             "reset",
             "--replace-existing",
         ])
@@ -449,7 +451,7 @@ fn workweave_recreate_replace_existing_refuses_dirty_when_marker_missing() {
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
-        .args(["workweave", "web-app", "create", "reset"])
+        .args(["workweave", "create", "--project", "web-app", "reset"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -464,8 +466,9 @@ fn workweave_recreate_replace_existing_refuses_dirty_when_marker_missing() {
     let err_output = rwv()
         .args([
             "workweave",
-            "web-app",
             "create",
+            "--project",
+            "web-app",
             "reset",
             "--replace-existing",
         ])
@@ -492,8 +495,9 @@ fn workweave_recreate_replace_existing_refuses_dirty_when_marker_missing() {
     rwv()
         .args([
             "workweave",
-            "web-app",
             "create",
+            "--project",
+            "web-app",
             "reset",
             "--replace-existing",
         ])
@@ -523,13 +527,13 @@ fn workweave_create_succeeds_after_rm_rf_leaves_stale_git_registration() {
 
     // ---- Create the target workweave and a peer (live) workweave. ----
     rwv()
-        .args(["workweave", "web-app", "create", "target"])
+        .args(["workweave", "create", "--project", "web-app", "target"])
         .current_dir(&ws)
         .assert()
         .success();
 
     rwv()
-        .args(["workweave", "web-app", "create", "live-peer"])
+        .args(["workweave", "create", "--project", "web-app", "live-peer"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -585,7 +589,7 @@ fn workweave_create_succeeds_after_rm_rf_leaves_stale_git_registration() {
 
     // ---- Re-create: must succeed WITHOUT any manual git worktree prune. ----
     rwv()
-        .args(["workweave", "web-app", "create", "target"])
+        .args(["workweave", "create", "--project", "web-app", "target"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -648,7 +652,7 @@ fn workweave_delete_refuses_on_unmerged_commits() {
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
-        .args(["workweave", "web-app", "create", "committed"])
+        .args(["workweave", "create", "--project", "web-app", "committed"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -664,7 +668,7 @@ fn workweave_delete_refuses_on_unmerged_commits() {
     let feature_sha = head_sha(&weave_repo);
 
     let err_output = rwv()
-        .args(["workweave", "web-app", "delete", "committed"])
+        .args(["workweave", "delete", "--project", "web-app", "committed"])
         .current_dir(&ws)
         .assert()
         .failure()
@@ -685,8 +689,9 @@ fn workweave_delete_refuses_on_unmerged_commits() {
     rwv()
         .args([
             "workweave",
-            "web-app",
             "delete",
+            "--project",
+            "web-app",
             "committed",
             "--discard-unmerged-commits",
         ])

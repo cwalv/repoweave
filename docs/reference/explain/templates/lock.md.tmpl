@@ -44,7 +44,7 @@ single repo) to record the new cross-repo state. Common patterns:
 
 - Manual cross-repo feature: commit in each affected repo, then `rwv lock`
   to capture the joint state.
-- After `rwv add`/`rwv remove`: those verbs regenerate integration files
+- After `rwv member add`/`rwv member remove`: those verbs regenerate integration files
   but do not auto-lock; run `rwv lock --commit` to checkpoint the new
   membership.
 

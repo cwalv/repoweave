@@ -23,7 +23,7 @@ Role label for a fork relationship. Changes ideally flow back upstream via PR, b
 
 **URL is your writable fork.** The manifest `url` field must point at your personal or team fork — the repo you have push access to. `rwv` clones that URL to `origin` and treats `fork` identically to `owned` for clone, push, and fetch.
 
-**The path may name either.** The manifest key is a placement, not a claim about ownership. `rwv add https://github.com/me/my-fork.git --role fork` places at `github/me/my-fork`; an entry keyed on the upstream's coordinates against a fork URL — the arrangement the [formats](./formats.md) example shows — is equally valid. `rwv doctor` does not report the difference for a `fork`-role entry.
+**The path may name either.** The manifest key is a placement, not a claim about ownership. `rwv member add https://github.com/me/my-fork.git --role fork` places at `github/me/my-fork`; an entry keyed on the upstream's coordinates against a fork URL — the arrangement the [formats](./formats.md) example shows — is equally valid. `rwv doctor` does not report the difference for a `fork`-role entry.
 
 If you also want to track the upstream-of-record, add it yourself:
 
@@ -65,7 +65,7 @@ can instead be hard links to another workspace's read-only copy of the same
 file. Neither changes what the repo holds: its files have the same bytes and
 the same permissions however they were placed.
 
-Changing a repo's role — with `rwv role` (`rwv explain role`) or by editing
+Changing a repo's role — with `rwv member set-role` (`rwv explain member`) or by editing
 `rwv.toml` — changes only its files' permissions; the checkout stays as it is.
 
 ## Per-project, not per-repo
@@ -96,12 +96,12 @@ The active project's `rwv.toml` determines the current role.
 
 ## Default for new entries
 
-`rwv add` defaults to `role = "owned"` when `--role` is not specified. Override:
+`rwv member add` defaults to `role = "owned"` when `--role` is not specified. Override:
 
 ```bash
-rwv add https://github.com/example/lib.git --role dependency
-rwv add https://github.com/me/my-fork.git --role fork
-rwv add https://github.com/other/code.git --role reference
+rwv member add https://github.com/example/lib.git --role dependency
+rwv member add https://github.com/me/my-fork.git --role fork
+rwv member add https://github.com/other/code.git --role reference
 ```
 
 ## Roles in `rwv push`
@@ -138,7 +138,7 @@ the `primary` role spelling is no longer accepted; the role is spelled `owned`
 
 Change the value to `owned`. Editing the manifest is yours because the manifest is yours — see [formats](./formats.md).
 
-The `--role` CLI flag (`rwv add --role`, `rwv push --role`, etc.) reads its value through the same parser, so it refuses `primary` with the same sentence (`unknown-role`).
+The `--role` CLI flag (`rwv member add --role`, `rwv push --role`, etc.) reads its value through the same parser, so it refuses `primary` with the same sentence (`unknown-role`).
 
 `rwv status --json` and other machine-readable outputs emit the role as `"owned"`.
 

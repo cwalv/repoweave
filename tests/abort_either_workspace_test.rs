@@ -131,7 +131,10 @@ fn park(seat_project_commit: bool) -> Parked {
     common::git_in(&primary.project, &["add", "-A"]);
     common::git_in(&primary.project, &["commit", "-m", "initial"]);
 
-    succeed(&primary.root, &["workweave", PROJECT, "create", "s1"]);
+    succeed(
+        &primary.root,
+        &["workweave", "create", "--project", PROJECT, "s1"],
+    );
     let seat = side(
         tmp.path()
             .join(".workweaves")

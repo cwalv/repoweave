@@ -64,7 +64,7 @@ fn weave_with_standalone_member(tmp: &Path) -> Weave {
     std::fs::write(primary.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
 
     common::rwv()
-        .args(["workweave", PROJECT, "create", SEAT])
+        .args(["workweave", "create", "--project", PROJECT, SEAT])
         .current_dir(&primary)
         .assert()
         .success();

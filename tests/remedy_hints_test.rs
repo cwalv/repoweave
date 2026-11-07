@@ -324,7 +324,7 @@ fn doctor_locked_names_fetch_for_a_missing_checkout() {
     weave.ok(&["doctor", "--locked"]);
 }
 
-/// `rwv remove --delete` regenerates the workspace file as it will stand once
+/// `rwv member remove --delete` regenerates the workspace file as it will stand once
 /// the checkout is gone, so no exclude names the deleted path and doctor has
 /// no drift to report.
 #[test]
@@ -336,7 +336,7 @@ fn remove_delete_leaves_no_stale_exclude_and_no_vscode_drift() {
         "fixture: the vscode integration wrote the workspace file"
     );
 
-    let report = weave.ok(&["remove", "github/acme/api", "--delete"]);
+    let report = weave.ok(&["member", "remove", "github/acme/api", "--delete"]);
     assert!(
         !weave.ws.join("github/acme/api").exists(),
         "fixture: the checkout is deleted:\n{report}"
@@ -370,7 +370,7 @@ fn remove_delete_leaves_no_stale_exclude_and_no_vscode_drift() {
 #[test]
 fn remove_delete_in_a_workweave_leaves_no_stale_exclude() {
     let weave = Weave::new(&["web", "api"]);
-    weave.ok(&["workweave", "app", "create", "w"]);
+    weave.ok(&["workweave", "create", "--project", "app", "w"]);
     let seat = weave.tmp.path().join(".workweaves/app--w");
     let workspace_file = seat.join("projects/app/app.code-workspace");
     assert!(
@@ -378,10 +378,10 @@ fn remove_delete_in_a_workweave_leaves_no_stale_exclude() {
         "fixture: the workweave carries the workspace file"
     );
 
-    let (ok, report) = rwv(&seat, &["remove", "github/acme/api", "--delete"]);
+    let (ok, report) = rwv(&seat, &["member", "remove", "github/acme/api", "--delete"]);
     assert!(
         ok,
-        "`rwv remove --delete` in the workweave failed:\n{report}"
+        "`rwv member remove --delete` in the workweave failed:\n{report}"
     );
     assert!(
         !seat.join("github/acme/api").exists(),
@@ -439,7 +439,7 @@ fn weave_with_two_projects(tmp: &Path) -> PathBuf {
     std::fs::create_dir_all(ws.join("projects")).unwrap();
     let a = origin_with_commit(tmp, "a");
     rwv_ok(&ws, &["init", "pa"]);
-    rwv_ok(&ws, &["add", &a]);
+    rwv_ok(&ws, &["member", "add", &a]);
     rwv_ok(&ws, &["lock", "--commit"]);
     rwv_ok(&ws, &["init", "pb"]);
     ws
@@ -460,10 +460,10 @@ fn missing_canonical_clone_names_the_fetch_of_the_workweaves_own_project() {
     let tmp = common::tempdir().unwrap();
     let ws = weave_with_two_projects(tmp.path());
     commit_project(&ws, "pb");
-    rwv_ok(&ws, &["workweave", "pb", "create", "w"]);
+    rwv_ok(&ws, &["workweave", "create", "--project", "pb", "w"]);
     let seat = tmp.path().join(".workweaves").join("pb--w");
     let x = origin_with_commit(tmp.path(), "x");
-    rwv_ok(&ws, &["add", &x]);
+    rwv_ok(&ws, &["member", "add", &x]);
     rwv_ok(&ws, &["lock"]);
     commit_project(&ws, "pb");
     rwv_ok(&ws, &["activate", "pa"]);
@@ -501,10 +501,10 @@ fn standalone_repair_names_the_fetch_of_the_workweaves_own_project() {
     let tmp = common::tempdir().unwrap();
     let ws = weave_with_two_projects(tmp.path());
     let x = origin_with_commit(tmp.path(), "x");
-    rwv_ok(&ws, &["add", &x]);
+    rwv_ok(&ws, &["member", "add", &x]);
     rwv_ok(&ws, &["lock"]);
     commit_project(&ws, "pb");
-    rwv_ok(&ws, &["workweave", "pb", "create", "w"]);
+    rwv_ok(&ws, &["workweave", "create", "--project", "pb", "w"]);
     let seat = tmp.path().join(".workweaves").join("pb--w");
     let canonical = common::under(&ws, "local/origins/x");
     let slot = common::under(&seat, "local/origins/x");

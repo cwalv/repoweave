@@ -7,7 +7,7 @@ Give an AI coding agent workspace context via `rwv prime`, verb reflection via `
 rwv setup claude
 
 # 2. Or create a dedicated agent workweave manually and land when done
-rwv workweave web-app create agent-task-99
+rwv workweave create agent-task-99
 cd ../.workweaves/web-app--agent-task-99
 # ... agent edits, tests, and commits across repos ...
 rwv sync-to --retire
@@ -52,7 +52,7 @@ Per-repo records are sorted by repo path whatever order the workers finished in.
 
 ## Isolate agent work in a workweave
 
-When creating a workweave for an agent (`rwv workweave web-app create agent-task-99`), the agent's directory at `../.workweaves/web-app--agent-task-99/` gets:
+When creating a workweave for an agent (`rwv workweave create agent-task-99`), the agent's directory at `../.workweaves/web-app--agent-task-99/` gets:
 
 - a git worktree on an ephemeral branch for every member repo (`reference` repos have read-only tracked files), populated via copy-on-write reflinks or read-only hardlinks where supported
 - isolated tool state (`node_modules/`, `.venv/`, `target/`), installed by the integration install hooks `create` runs, and its own `rwv.lock`

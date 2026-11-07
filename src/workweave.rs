@@ -1797,6 +1797,19 @@ pub enum DirtySource {
     Capture,
 }
 
+/// Where `rwv workweave create` puts the workweave. Every path is already
+/// absolute.
+pub enum Placement {
+    /// At `<basedir>/<project>--<name>`, the basedir the project records
+    /// ([`workweave_container`]).
+    DefaultBasedir,
+    /// At `<basedir>/<project>--<name>` for this run, in place of the
+    /// recorded one.
+    Basedir(PathBuf),
+    /// At exactly this path.
+    Dir(PathBuf),
+}
+
 /// What `rwv workweave create` is asked to make. The two roots play different
 /// roles, so each is named where it is given.
 pub struct CreateWorkweave<'a> {
@@ -1823,12 +1836,10 @@ pub struct CreateWorkweave<'a> {
     ///   refusing while it holds uncommitted or unmerged work.
     pub replace_existing: Option<ReplaceExistingConsent>,
     pub dirty_source: DirtySource,
-    /// The per-invocation placement override, already absolute. `None` lands
-    /// the workweave at `<container>/<project>--<name>`, the container from
-    /// [`workweave_container`]. Either way the resulting absolute path is
-    /// recorded in the registry, so a per-workweave override is as visible to
-    /// a later `list` / `delete` / doctor as a default-container placement.
-    pub dir_override: Option<&'a Path>,
+    /// Where the workweave lands. Whichever way it is chosen, the resulting
+    /// absolute path is recorded in the registry, so a per-workweave placement
+    /// is as visible to a later `list` / `delete` / doctor as a default one.
+    pub placement: &'a Placement,
     /// What the workweave's activation runs with; its `no_materialize` skips
     /// the install hooks.
     pub activation: crate::activate::ActivateOptions,
@@ -1849,7 +1860,7 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
         name,
         replace_existing,
         dirty_source,
-        dir_override,
+        placement,
         activation,
     } = request;
     let project_vcs = project_vcs();
@@ -1861,15 +1872,13 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
     }
     .flat();
     // Placement is authoritative here (create direction): either the caller
-    // named an explicit path (recorded verbatim) or the recorded container
-    // provides the default. The registry entry is written after the marker
+    // named an explicit path (recorded verbatim) or a basedir, the recorded
+    // one by default. The registry entry is written after the marker
     // lands — see the bottom of this function.
-    let workweave_dir = match dir_override {
-        Some(p) => p.to_path_buf(),
-        None => {
-            let container = workweave_container(primary_root, project)?;
-            container.join(&flat)
-        }
+    let workweave_dir = match placement {
+        Placement::Dir(dir) => dir.clone(),
+        Placement::Basedir(basedir) => basedir.join(&flat),
+        Placement::DefaultBasedir => workweave_container(primary_root, project)?.join(&flat),
     };
 
     // Name uniqueness is checked against the workweave INDEX, not just the
@@ -1969,12 +1978,12 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
                     "workweave {} already exists and holds unsaved or unmerged work; \
                      refusing to replace it:\n  {}\n\
                      Commit/merge that work, or delete it explicitly with \
-                     `rwv workweave {} delete {} --discard-uncommitted \
+                     `rwv workweave delete {} --project {} --discard-uncommitted \
                      --discard-unmerged-commits`.",
                     name.as_str(),
                     at_risk.join("\n  "),
-                    project.as_str(),
                     name.as_str(),
+                    project.as_str(),
                 );
             }
             if can_use_structured_delete {
@@ -2033,7 +2042,7 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
                          To proceed, do one of:\n  \
                          1. commit the changes: git -C projects/{project} commit\n  \
                          2. stash the changes: git -C projects/{project} stash\n  \
-                         3. capture them into the workweave: rwv workweave {project} create {name} --capture-dirty",
+                         3. capture them into the workweave: rwv workweave create {name} --project {project} --capture-dirty",
                         project = project.as_str(),
                         name = name.as_str(),
                         files = dirty.join("\n  "),
@@ -2774,12 +2783,15 @@ pub fn collect_dirty_paths(
 }
 
 /// [`collect_dirty_paths`]'s checkouts, judged: one `edits` line each, its
-/// files listed, a status that could not be read listed as that.
+/// files listed, a status that could not be read listed as that. `deleting`
+/// is the workweave `rwv workweave delete` refuses to delete, whose refusal
+/// also offers deleting it past the edits.
 pub fn judge_dirty_checkouts(
     project_vcs: &dyn Vcs,
     workweave_dir: &Path,
     project: &ProjectName,
     manifest: &Manifest,
+    deleting: Option<&WorkweaveName>,
 ) -> crate::diagnosis::Report {
     let mut report = crate::diagnosis::Report::default();
     for dirty in dirty_checkouts(project_vcs, workweave_dir, project, manifest) {
@@ -2794,6 +2806,9 @@ pub fn judge_dirty_checkouts(
             .checkout(&dirty.dir);
         if !dirty.in_manifest {
             judging = judging.subject("not a manifest member");
+        }
+        if let Some(name) = deleting {
+            judging = judging.by_verb("workweave delete").bind("<ww>", name);
         }
         report.add(judging.judge(vcs));
     }
@@ -3730,12 +3745,14 @@ fn delete_workweave_inner_at(
     // Safety checks: each refusal has its own waiver. Skipped when the
     // workweave directory doesn't exist (nothing to lose).
     if discard_uncommitted.is_none() && workweave_dir.exists() {
-        let mut dirty =
-            judge_dirty_checkouts(project_vcs.as_ref(), &workweave_dir, project, &manifest);
-        dirty.note(
-            "`--discard-uncommitted` deletes the workweave with these uncommitted changes in it",
-        );
-        dirty.into_result()?;
+        judge_dirty_checkouts(
+            project_vcs.as_ref(),
+            &workweave_dir,
+            project,
+            &manifest,
+            matches!(deleter, Deleter::Operator).then_some(name),
+        )
+        .into_result()?;
     }
     // The baselines the per-ref `Merged` warrants are measured against, read
     // while the workweave's marker still exists (it names the parent). Work
@@ -4559,7 +4576,7 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
                 name: &WorkweaveName::new(&name)?,
                 replace_existing: None,
                 dirty_source: DirtySource::Refuse,
-                dir_override: None,
+                placement: &Placement::DefaultBasedir,
                 activation: crate::activate::ActivateOptions::default(),
             }))?;
             outln!("{}", path.display());

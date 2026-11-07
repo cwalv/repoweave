@@ -166,7 +166,7 @@ impl Weave {
     /// asserting the cargo hook ran in the seat and the source stayed clean.
     fn create(&self) -> (String, String) {
         let _ = std::fs::remove_file(&self.witness);
-        let report = self.rwv(&["workweave", "app", "create", "seat"]);
+        let report = self.rwv(&["workweave", "create", "--project", "app", "seat"]);
         let seat = self.tmp.path().join(".workweaves/app--seat");
         let ran_in_seat = std::fs::read_to_string(&self.witness)
             .unwrap_or_default()

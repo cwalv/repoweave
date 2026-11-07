@@ -19,7 +19,7 @@ Every member of a workweave, whatever its `role`, is a worktree of the
 canonical clone, on the workweave's ephemeral branch. In the primary, a member
 is the canonical clone itself. There is no second shape. A symlink at a member
 slot is not a member checkout of any kind, and is refused or repaired (§8).
-`rwv workweave <project> create --worktree-references`, which once asked for
+`rwv workweave create --worktree-references`, which once asked for
 a worktree where the default was a symlink, exits 2 saying every member is now
 a worktree.
 
@@ -239,7 +239,7 @@ Every verb that writes or moves a member's files ends by settling it, in the
 primary and in workweaves alike: `fetch` and `update` (through `settle_moved`),
 `add`, `workweave create` and every `materialize_member`, `sync` and `sync-to`
 (materialized members, then `settle_members` over every member after replay
-and after advancing the target), `abort` after its restore, `rwv role`, and
+and after advancing the target), `abort` after its restore, `rwv member set-role`, and
 `doctor --fix`. In `sync`, `sync-to` and `abort`, a member that cannot be
 settled is named as a warning rather than failing the op, whose own work
 stands. Doctor backstops it with the `member-permissions` finding — a
@@ -295,7 +295,7 @@ once on its next status (on 20,002 files, 195 MiB: 667 ms instead of 9 ms),
 after which git's refreshed index carries it. This is Unix only: Git for
 Windows reads a file's creation time as its ctime. rwv accepts that cost and
 sets no `core.trustctime`: the alternative is per-worktree git configuration
-that would have to follow the role through settle, `rwv role`, doctor and a
+that would have to follow the role through settle, `rwv member set-role`, doctor and a
 migration, plus a repository extension in every store that has a reference
 member. If workweaves ever report status latency after workweave creation, it is added
 as one change — a `Vcs` question settle sets on entering `reference` and
@@ -316,7 +316,7 @@ its role:
   always unshares first, so no path that changes a role can make another
   workspace's copy writable.
 
-`rwv role <repo> <role>` (`src/role.rs`) edits the role in this workspace's
+`rwv member set-role <repo> <role>` (`src/member_settings.rs`) edits the role in this workspace's
 `rwv.toml`, regenerates the integrations' generated files as `add` and `remove`
 do — a role can move a member in or out of an ecosystem's build graph, since
 `reference` members are excluded from it — and the edit and the regeneration
@@ -391,7 +391,7 @@ recorded commit is not there stays empty, and doctor reports it
 (`uninitialized-submodule` / `unfetched`), from the primary for every
 workweave and from a workweave for itself. Nothing in this path fetches.
 
-**The network verbs fill the store.** `rwv add` and `rwv fetch` call
+**The network verbs fill the store.** `rwv member add` and `rwv fetch` call
 `fetch_submodules` in `src/share.rs` on the canonical clone of every member
 they clone or find present, unless its entry says `recurse-submodules = false`. At
 each level, an empty submodule directory of the canonical clone's own is

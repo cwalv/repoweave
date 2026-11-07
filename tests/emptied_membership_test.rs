@@ -155,7 +155,7 @@ fn remove_of_the_last_member_strips_the_region_it_authored() {
 
     for member in [CARGO_MEMBER, GO_MEMBER] {
         common::rwv()
-            .args(["remove", member])
+            .args(["member", "remove", member])
             .current_dir(root)
             .assert()
             .success();
@@ -265,7 +265,7 @@ fn a_hand_owned_region_survives_an_emptied_membership() {
 
     for member in [CARGO_MEMBER, GO_MEMBER] {
         common::rwv()
-            .args(["remove", member])
+            .args(["member", "remove", member])
             .current_dir(root)
             .assert()
             .success();

@@ -1,6 +1,6 @@
 //! `rwv init <name>` performs the first surfacing pass for a project,
 //! materializing the weave-root `<name>.code-workspace` symlink. Any later
-//! surfacing pass — `rwv add`, `rwv doctor --fix` — used to fail whenever
+//! surfacing pass — `rwv member add`, `rwv doctor --fix` — used to fail whenever
 //! `<name>` carried more than one path segment: the removal step that should
 //! recognize the symlink as rwv's own prior surfacing never did, so the
 //! unconditional recreate that follows collided with it (EEXIST).
@@ -73,7 +73,7 @@ fn add_succeeds_after_init_for_a_multi_segment_project_name() {
     // the one that used to exit 1 on an EEXIST it raised against its own
     // prior link.
     rwv()
-        .args(["add", &url])
+        .args(["member", "add", &url])
         .current_dir(&ws)
         .assert()
         .success();
@@ -107,7 +107,7 @@ fn add_succeeds_after_init_for_a_multi_segment_project_name() {
     );
 
     rwv()
-        .args(["add", "--adopt", "vendor/second"])
+        .args(["member", "add", "--adopt", "vendor/second"])
         .current_dir(&ws)
         .assert()
         .success();

@@ -198,14 +198,14 @@ fn the_authoring_verbs_take_no_materialize() {
         &[("package.json", &package("web2"))],
     );
 
-    weave.assert_flag_suppresses_hooks(&["add", &url]);
+    weave.assert_flag_suppresses_hooks(&["member", "add", &url]);
     let added = std::fs::read_to_string(weave.ws.join("projects/app/rwv.toml")).unwrap();
     let member = added
         .lines()
         .filter_map(|l| l.strip_prefix("[repositories.\""))
         .filter_map(|l| l.strip_suffix("\"]"))
         .find(|path| *path != "github/acme/web")
-        .expect("fixture: `rwv add` should have recorded the new member")
+        .expect("fixture: `rwv member add` should have recorded the new member")
         .to_string();
 
     let adopted = remote(
@@ -221,11 +221,11 @@ fn the_authoring_verbs_take_no_materialize() {
             &weave.ws.join("github/acme/web3").to_string_lossy(),
         ],
     );
-    weave.assert_flag_suppresses_hooks(&["add", "--adopt", "github/acme/web3"]);
+    weave.assert_flag_suppresses_hooks(&["member", "add", "--adopt", "github/acme/web3"]);
 
-    weave.assert_flag_suppresses_hooks(&["role", &member, "owned"]);
+    weave.assert_flag_suppresses_hooks(&["member", "set-role", &member, "owned"]);
     weave.assert_flag_suppresses_hooks(&["update"]);
-    weave.assert_flag_suppresses_hooks(&["remove", &member]);
+    weave.assert_flag_suppresses_hooks(&["member", "remove", &member]);
 }
 
 #[test]
@@ -233,7 +233,7 @@ fn workweave_create_runs_the_install_hooks_in_the_new_seat() {
     let weave = Weave::new();
     let _ = weave.npm_runs();
 
-    weave.ok(&["workweave", "app", "create", "seat"]);
+    weave.ok(&["workweave", "create", "--project", "app", "seat"]);
     let seat = weave.tmp.path().join(".workweaves/app--seat");
     let runs = weave.npm_runs();
     assert!(
@@ -243,7 +243,14 @@ fn workweave_create_runs_the_install_hooks_in_the_new_seat() {
         "create must run the install hook from the new seat's root; npm ran in {runs:?}"
     );
 
-    weave.ok(&["workweave", "app", "create", "bare", "--no-materialize"]);
+    weave.ok(&[
+        "workweave",
+        "create",
+        "--project",
+        "app",
+        "bare",
+        "--no-materialize",
+    ]);
     assert_eq!(
         weave.npm_runs(),
         Vec::<PathBuf>::new(),
@@ -258,7 +265,14 @@ fn hook_mode_create_prints_only_the_path_while_the_hooks_write_to_stdout() {
 
     let (ok, stdout, stderr) = weave.run_in(
         &weave.ws,
-        &["workweave", "app", "--hook-mode", "create", "seat"],
+        &[
+            "workweave",
+            "--hook-mode",
+            "create",
+            "--project",
+            "app",
+            "seat",
+        ],
     );
     assert!(ok, "hook-mode create failed:\n{stdout}\n{stderr}");
     assert!(
@@ -282,7 +296,10 @@ fn a_hook_that_fails_at_create_keeps_the_seat_and_names_materialize() {
     let weave = Weave::new();
     weave.npm(1);
 
-    let (ok, stdout, stderr) = weave.run_in(&weave.ws, &["workweave", "app", "create", "seat"]);
+    let (ok, stdout, stderr) = weave.run_in(
+        &weave.ws,
+        &["workweave", "create", "--project", "app", "seat"],
+    );
     assert!(
         !ok,
         "a failed install hook still fails the verb:\n{stdout}\n{stderr}"
@@ -298,7 +315,9 @@ fn a_hook_that_fails_at_create_keeps_the_seat_and_names_materialize() {
         "the seat must survive a failure at its hooks"
     );
     assert!(
-        weave.ok(&["workweave", "app", "list"]).contains("seat"),
+        weave
+            .ok(&["workweave", "list", "--project", "app"])
+            .contains("seat"),
         "and stay registered, so it can be addressed and finished"
     );
 }
@@ -313,7 +332,14 @@ fn hook_mode_create_hands_over_a_seat_whose_hooks_failed() {
 
     let (ok, stdout, stderr) = weave.run_in(
         &weave.ws,
-        &["workweave", "app", "--hook-mode", "create", "seat"],
+        &[
+            "workweave",
+            "--hook-mode",
+            "create",
+            "--project",
+            "app",
+            "seat",
+        ],
     );
     assert!(
         !weave.npm_runs().is_empty(),
@@ -364,7 +390,9 @@ fn assert_hook_failure_handed_over(weave: &Weave, name: &str, stdout: &str, stde
         "the failure must be warned about, naming the verb that finishes it:\n{stderr}"
     );
     assert!(
-        weave.ok(&["workweave", "app", "list"]).contains(name),
+        weave
+            .ok(&["workweave", "list", "--project", "app"])
+            .contains(name),
         "the seat is registered"
     );
 }

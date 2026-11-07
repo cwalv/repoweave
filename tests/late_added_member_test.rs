@@ -1,6 +1,6 @@
 //! A member a workweave's lock pins, that the workweave has no worktree for —
 //! added to its manifest after the workweave was made, created with
-//! `rwv add --new` before it had a commit, or arriving by sync.
+//! `rwv member add --new` before it had a commit, or arriving by sync.
 //!
 //!   - doctor reports it as `workweave-drift`, and only as that;
 //!   - `rwv doctor --fix` creates it when the canonical clone holds the pinned
@@ -92,7 +92,7 @@ impl Weave {
 
     fn create(&self, name: &str, from: Option<&Path>) -> PathBuf {
         let mut cmd = rwv();
-        cmd.args(["workweave", PROJECT, "create", name]);
+        cmd.args(["workweave", "create", "--project", PROJECT, name]);
         if let Some(from) = from {
             cmd.args(["--from", &from.to_string_lossy()]);
         }
@@ -416,6 +416,7 @@ fn a_member_added_with_new_from_a_workweave_is_created_after_its_first_commit() 
 
     let added = run(
         &[
+            "member",
             "add",
             "local",
             "--new",

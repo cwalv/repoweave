@@ -1,7 +1,7 @@
 //! A project whose `rwv.toml` does not parse: every verb that reads the
 //! manifest refuses, naming the key, the table and the line, except
 //! `rwv status` and `rwv prime`, which report on the whole workspace and skip
-//! the project with a warning instead. `rwv workweave <project> list` reads
+//! the project with a warning instead. `rwv workweave list` reads
 //! only the workweave registry, so a broken manifest does not reach it.
 
 use std::path::{Path, PathBuf};
@@ -57,14 +57,14 @@ impl Weave {
         let ws = tmp.path().join("ws");
         std::fs::create_dir_all(ws.join("projects")).unwrap();
         succeed(&["init", "app"], &ws);
-        succeed(&["add", &origin(tmp.path(), "alpha")], &ws);
+        succeed(&["member", "add", &origin(tmp.path(), "alpha")], &ws);
         let project = ws.join("projects/app");
         common::git_in(&project, &["config", "user.email", "test@test.com"]);
         common::git_in(&project, &["config", "user.name", "Test"]);
         succeed(&["lock"], &ws);
         common::git_in(&project, &["add", "-A"]);
         common::git_in(&project, &["commit", "-qm", "alpha"]);
-        succeed(&["workweave", "app", "create", "one"], &ws);
+        succeed(&["workweave", "create", "--project", "app", "one"], &ws);
         let workweave = common::under(tmp.path(), ".workweaves/app--one");
         for root in [&ws, &workweave] {
             let manifest = root.join("projects/app/rwv.toml");
@@ -93,12 +93,12 @@ fn every_verb_that_reads_the_manifest_refuses_naming_the_key_and_line() {
         (vec!["update"], ws),
         (vec!["materialize"], ws),
         (vec!["activate", "app"], ws),
-        (vec!["add", &beta], ws),
+        (vec!["member", "add", &beta], ws),
         (vec!["push", "--dry-run"], ws),
-        (vec!["role", MEMBER, "reference"], ws),
-        (vec!["remove", MEMBER], ws),
-        (vec!["workweave", "app", "create", "two"], ws),
-        (vec!["workweave", "app", "delete", "one"], ws),
+        (vec!["member", "set-role", MEMBER, "reference"], ws),
+        (vec!["member", "remove", MEMBER], ws),
+        (vec!["workweave", "create", "--project", "app", "two"], ws),
+        (vec!["workweave", "delete", "--project", "app", "one"], ws),
         (vec!["sync", &workweave_dir], ws),
         (vec!["sync", &primary_dir], &weave.workweave),
         (vec!["sync-to"], &weave.workweave),
@@ -187,7 +187,7 @@ fn prime_reads_the_manifest_of_the_checkout_it_runs_in() {
 #[test]
 fn workweave_list_reads_no_manifest_and_lists_what_the_registry_holds() {
     let weave = Weave::broken();
-    let out = run(&["workweave", "app", "list"], &weave.ws);
+    let out = run(&["workweave", "list", "--project", "app"], &weave.ws);
     assert!(
         out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "one",
         "{}",

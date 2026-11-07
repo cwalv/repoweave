@@ -83,7 +83,7 @@ const ALLOWLIST: &[Allowed] = &[
         count: 1,
         callers: &[],
         justification: "AddLeftovers::refused, taking back a repository \
-            `rwv add --new` created before it was refused: the bare upstream \
+            `rwv member add --new` created before it was refused: the bare upstream \
             or the new member. Only a path recorded as Made::Repo, and \
             recorded only after the add saw nothing there, so it holds \
             nothing but what this add put in it: an empty bare repository, \
@@ -101,7 +101,7 @@ const ALLOWLIST: &[Allowed] = &[
             that delete a directory. A CheckoutRemoval is a sealed type: its \
             variants are private to sync.rs and plan_checkout_removal is \
             its only constructor, so every caller of perform (sync's \
-            prune_dropped_repo, and rwv remove --delete, which in the \
+            prune_dropped_repo, and rwv member remove --delete, which in the \
             primary also runs the shared-clone check before it) holds a \
             removal that passed these guards. plan_checkout_removal: both \
             arms behind the uncommitted-changes judgment at the top of the \
@@ -309,7 +309,7 @@ const ALLOWLIST: &[Allowed] = &[
             checkout is itself a canonical store with dependents outside the \
             workweave — the tier-0 topology precondition, not bypassable by \
             any waiver. From CheckoutRemoval::perform's RegisteredWorktree \
-            arm, for prune_dropped_repo and for rwv remove --delete in a \
+            arm, for prune_dropped_repo and for rwv member remove --delete in a \
             workweave: plan_checkout_removal is that arm's only constructor, \
             and builds it only behind the uncommitted-changes refusal and \
             the divergence refusal of its `canonical.exists()` branch. \

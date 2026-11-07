@@ -132,7 +132,7 @@ fn default_doctor_reports_a_hand_removed_members_checkout_and_names_both_remedie
         .unwrap();
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(
-        text.contains("rwv remove <path> --delete") && text.contains("rwv add <url>"),
+        text.contains("rwv member remove <path> --delete") && text.contains("rwv member add <url>"),
         "{text}"
     );
 }
@@ -186,7 +186,7 @@ fn a_workweave_reports_its_own_leftover_worktree() {
     write_manifest(&w.project_dir, &[KEPT, GONE]);
     common::git_in(&w.project_dir, &["commit", "-qam", "list gone"]);
     let out = common::rwv()
-        .args(["workweave", PROJECT, "create", "s1"])
+        .args(["workweave", "create", "--project", PROJECT, "s1"])
         .current_dir(&w.root)
         .output()
         .unwrap();

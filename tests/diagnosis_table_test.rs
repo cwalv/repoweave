@@ -75,7 +75,9 @@ fn parse_failure(command: &str) -> Option<String> {
         .map(|e| format!("`{command}` → {argv:?}: {e}"))
 }
 
-fn judged_with_every_binding(state: State) -> Report {
+/// `state` judged as refused by `verb`, which adds the forms only that verb
+/// offers.
+fn judged_with_every_binding(state: State, verb: Option<&'static str>) -> Report {
     let vcs = repoweave::git::git_vcs();
     let mut judging = state
         .of("github/o/lib")
@@ -85,14 +87,17 @@ fn judged_with_every_binding(state: State) -> Report {
     for (placeholder, value) in samples() {
         judging = judging.bind(placeholder, value);
     }
+    if let Some(verb) = verb {
+        judging = judging.by_verb(verb);
+    }
     let mut report = Report::default();
     report.add(judging.judge(vcs.as_ref()));
     report
 }
 
-/// The `rwv` lines `state` prints, in `--json` and in the terminal.
-fn printed_rwv_lines(state: State) -> Vec<String> {
-    let report = judged_with_every_binding(state);
+/// The `rwv` lines `state` prints for `verb`, in `--json` and in the terminal.
+fn printed_rwv_lines(state: State, verb: Option<&'static str>) -> Vec<String> {
+    let report = judged_with_every_binding(state, verb);
     let mut lines: Vec<String> = report
         .output()
         .into_iter()
@@ -117,10 +122,14 @@ fn every_rwv_line_a_state_prints_parses() {
     let mut checked = 0usize;
     let mut failures: Vec<String> = Vec::new();
     for state in State::ALL {
-        for line in printed_rwv_lines(state) {
-            checked += 1;
-            if let Some(failure) = parse_failure(&line) {
-                failures.push(format!("{state:?}: {failure}"));
+        let verbs = std::iter::once(None)
+            .chain(state.row().verb_offers.iter().map(|(verb, _)| Some(*verb)));
+        for verb in verbs {
+            for line in printed_rwv_lines(state, verb) {
+                checked += 1;
+                if let Some(failure) = parse_failure(&line) {
+                    failures.push(format!("{state:?} as {verb:?}: {failure}"));
+                }
             }
         }
     }
@@ -162,9 +171,9 @@ fn every_shipped_form_spells_only_commands_that_parse() {
 fn an_unshipped_spelling_is_reported() {
     assert!(parse_failure("rwv member set-branch <m> <b>").is_some());
     assert!(parse_failure("rwv push --branch <W>").is_some());
-    assert!(parse_failure("rwv workweave <project> delete <ww> --discard-unlanded").is_some());
+    assert!(parse_failure("rwv workweave delete <ww> --discard-unlanded").is_some());
     assert!(parse_failure("rwv push --repo <m>").is_none());
-    assert!(parse_failure("rwv workweave <project> delete <ww>").is_none());
+    assert!(parse_failure("rwv workweave delete <ww>").is_none());
     assert!(!Form::C16Switch.printable());
     assert!(
         Form::C16Switch
@@ -187,7 +196,7 @@ fn a_printed_choice_carries_the_id_of_the_form_it_came_from() {
             .filter(|f| f.printable())
             .map(|f| f.row().choice.row().id)
             .collect();
-        let report = judged_with_every_binding(state);
+        let report = judged_with_every_binding(state, None);
         let printed: Vec<Option<String>> = report.output()[0]
             .choices
             .iter()
@@ -202,4 +211,45 @@ fn a_printed_choice_carries_the_id_of_the_form_it_came_from() {
             "{state:?}"
         );
     }
+}
+
+/// A form only one verb's flag spells is offered to that verb's refusal and to
+/// no other: a dirty `sync` is not offered a `workweave delete`.
+#[test]
+fn a_verbs_own_form_prints_only_for_that_verb() {
+    let delete_form = "rwv workweave delete seat --discard-uncommitted";
+    let own = printed_rwv_lines(State::EditsDirty, Some("workweave delete"));
+    assert!(
+        own.iter().any(|line| line == delete_form),
+        "the verb's own form must print for it: {own:?}"
+    );
+    for verb in [None, Some("sync"), Some("sync-to")] {
+        let others = printed_rwv_lines(State::EditsDirty, verb);
+        assert!(
+            !others.iter().any(|line| line.contains("workweave delete")),
+            "{verb:?} must not be offered another verb's form: {others:?}"
+        );
+    }
+}
+
+/// Every verb that a state names for its own forms is a verb the CLI has.
+#[test]
+fn a_verb_named_for_its_own_forms_is_in_the_cli() {
+    let cli = Cli::command();
+    let mut named = 0;
+    for state in State::ALL {
+        for (verb, _) in state.row().verb_offers {
+            named += 1;
+            let mut at = &cli;
+            for word in verb.split(' ') {
+                at = at
+                    .find_subcommand(word)
+                    .unwrap_or_else(|| panic!("`{verb}` is no verb of the CLI (at `{word}`)"));
+            }
+        }
+    }
+    assert!(
+        named > 0,
+        "no state names a verb; the walk holds over nothing"
+    );
 }

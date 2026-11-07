@@ -14,7 +14,7 @@
 //! requirement across the modules it adds, whatever the file said, and `go work
 //! init` stamps a fresh file with the version of whichever `go` ran it. So the
 //! directive is snapshotted before the `use` loop and restored after it by
-//! `restore_go_directive` — otherwise the same `rwv add` would rewrite an
+//! `restore_go_directive` — otherwise the same `rwv member add` would rewrite an
 //! operator's pin on a machine with `go` installed and preserve it on one
 //! without.
 //!

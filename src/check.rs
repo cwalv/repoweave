@@ -8363,14 +8363,14 @@ impl CheckViolation {
                 "orphaned clone: {path} — not listed in any project's rwv.toml; to \
                      register it, move it to the path its remote's URL places it at under \
                      the primary weave root, unless it already sits there, and run \
-                     `rwv add --adopt` with that path; or remove the directory manually"
+                     `rwv member add --adopt` with that path; or remove the directory manually"
             ),
             CheckViolation::UnknownSegmentClone { path } => format!(
                 "unknown-segment clone: {path} — sits under a top-level directory no \
                      built-in registry and no project's rwv.toml names, so no scan compares \
                      it against anything; to register it, move it to the path its remote's \
                      URL places it at under the primary weave root, unless it already sits \
-                     there, and run `rwv add --adopt` with that path; or remove the directory \
+                     there, and run `rwv member add --adopt` with that path; or remove the directory \
                      manually"
             ),
             // `doctor --fix` intentionally does NOT auto-clone: network
@@ -8425,7 +8425,7 @@ impl CheckViolation {
                      different roles ({}); a clone several projects share is read-only \
                      only when every one of them declares `reference`, so its files stay \
                      writable; give every project the same role with \
-                     `rwv role --project <name> {repo} <role>`",
+                     `rwv member set-role --project <name> {repo} <role>`",
                 roles
                     .iter()
                     .map(|(project, role)| format!("{project}: {role}"))
@@ -8509,8 +8509,8 @@ impl CheckViolation {
                     DriftKind::Extra => (
                         "leftover checkout of",
                         " — rwv.lock still names it and rwv.toml no longer does; \
-                             `rwv remove <path> --delete` deletes the checkout, and \
-                             `rwv add <url>` keeps it as a member",
+                             `rwv member remove <path> --delete` deletes the checkout, and \
+                             `rwv member add <url>` keeps it as a member",
                     ),
                 };
                 format!(

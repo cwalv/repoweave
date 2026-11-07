@@ -322,7 +322,7 @@ fn make_deep_project_weave(tmp: &Path) -> PathBuf {
     common::git_in(&project_dir, &["commit", "-m", "initial"]);
 
     let created = common::rwv()
-        .args(["workweave", "a/b/c", "create", "wtest"])
+        .args(["workweave", "create", "--project", "a/b/c", "wtest"])
         .current_dir(&ws)
         .output()
         .unwrap();

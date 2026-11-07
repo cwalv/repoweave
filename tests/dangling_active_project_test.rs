@@ -83,7 +83,7 @@ fn lock_fails_on_dangling_active() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. `rwv add` fails fast on a dangling .rwv-active
+// 2. `rwv member add` fails fast on a dangling .rwv-active
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -92,12 +92,15 @@ fn add_fails_on_dangling_active() {
     let ws = make_workspace(tmp.path());
     set_dangling_active(&ws, "ghost");
 
-    let stderr = fail(&ws, &["add", "https://example.com/owner/repo.git"]);
+    let stderr = fail(
+        &ws,
+        &["member", "add", "https://example.com/owner/repo.git"],
+    );
     assert_dangling_error(&stderr, "ghost");
 }
 
 // ---------------------------------------------------------------------------
-// 3. `rwv remove` fails fast on a dangling .rwv-active
+// 3. `rwv member remove` fails fast on a dangling .rwv-active
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -106,7 +109,7 @@ fn remove_fails_on_dangling_active() {
     let ws = make_workspace(tmp.path());
     set_dangling_active(&ws, "phantom");
 
-    let stderr = fail(&ws, &["remove", "github/owner/repo"]);
+    let stderr = fail(&ws, &["member", "remove", "github/owner/repo"]);
     assert_dangling_error(&stderr, "phantom");
 }
 

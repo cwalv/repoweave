@@ -632,7 +632,7 @@ fn home_ceiling_blocks(
 /// divergence.
 ///
 /// The previous behavior — silently substituting this for the active
-/// project on `rwv lock`, `rwv add`, etc. — let symlinks and manifests
+/// project on `rwv lock`, `rwv member add`, etc. — let symlinks and manifests
 /// disagree without any signal. Removing the override collapses the two
 /// notions of "active" into one (`.rwv-active`).
 pub fn detect_project(cwd: &Path, root: &Path) -> Option<ProjectName> {
@@ -701,7 +701,7 @@ fn active_project_path(root: &Path) -> StatePath {
 /// The first path segments a member checkout can occupy under `root`: every
 /// registry a project manifest names, plus the built-ins.
 ///
-/// Derived rather than listed because `rwv add` mints the segment from the
+/// Derived rather than listed because `rwv member add` mints the segment from the
 /// source URL — `local` for `file://`, the URL's own host otherwise — so a
 /// manifest can name a segment no list anticipates. A member sitting in a
 /// segment left out of this set is indistinguishable on disk from one that
@@ -1693,7 +1693,7 @@ impl WorkspaceContext {
     /// - Active project named **but** directory is missing on disk (dangling
     ///   pointer): returns a clear, actionable error.
     ///
-    /// All action verbs (`lock`, `add`, `remove`, `sync`, `sync-to`, `push`,
+    /// All action verbs (`lock`, `member add`, `member remove`, `sync`, `sync-to`, `push`,
     /// `fetch`, `update`, `status`) must call this instead of
     /// [`Self::require_active_project`] so that a stale `.rwv-active` file does not
     /// silently proceed into confusing downstream errors.

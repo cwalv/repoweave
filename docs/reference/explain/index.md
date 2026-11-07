@@ -21,9 +21,7 @@ rwv explain <verb>
 - **explain** — per-verb JIT reflection (this verb)
 - **workweave** — create, delete, or list workweaves for a project
 - **abort** — roll an in-flight sync or sync-to back to its savepoints, from either workspace it touched
-- **add** — clone a repo and register it in the active project manifest
-- **remove** — remove a repo from the active project manifest
-- **role** — change a repo's role in the active project manifest and settle its files
+- **member** — add a repo to the active project manifest, remove one, or change a member's role or submodule setting
 - **lock** — snapshot current repo HEADs into rwv.lock (pure local; no network)
 - **activate** — set the active project, create symlinks, run integration install hooks
 - **materialize** — settle drift, clean up disabled integrations, repair weave-root symlinks, and run integration install hooks for the presented project, without selecting anything

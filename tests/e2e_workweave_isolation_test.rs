@@ -160,7 +160,7 @@ func Message() string {
         name: &ww_name,
         replace_existing: None,
         dirty_source: repoweave::workweave::DirtySource::Refuse,
-        dir_override: None,
+        placement: &repoweave::workweave::Placement::DefaultBasedir,
         activation: repoweave::activate::ActivateOptions::default(),
     })
     .expect("create_workweave should succeed");
@@ -274,8 +274,9 @@ func Greeting() string {
     common::rwv()
         .args([
             "workweave",
-            "web-app",
             "delete",
+            "--project",
+            "web-app",
             "agent-1",
             "--discard-uncommitted",
             "--discard-unmerged-commits",

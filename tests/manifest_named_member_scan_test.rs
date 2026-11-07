@@ -29,7 +29,7 @@ fn clone_into(tmp: &tempfile::TempDir, dest: &Path) {
 
 fn adopt(ws: &Path, member: &str) {
     common::rwv()
-        .args(["add", "--adopt", member])
+        .args(["member", "add", "--adopt", member])
         .current_dir(ws)
         .assert()
         .success();

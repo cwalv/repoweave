@@ -23,7 +23,7 @@ const BOTH_WAIVERS: &[&str] = &["--discard-uncommitted", "--discard-unmerged-com
 
 fn delete(ws: &Path, name: &str, flags: &[&str]) -> Output {
     common::rwv()
-        .args(["workweave", "web-app", "delete", name])
+        .args(["workweave", "delete", "--project", "web-app", name])
         .args(flags)
         .current_dir(ws)
         .output()

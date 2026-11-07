@@ -55,7 +55,7 @@ Keyed by canonical local path (`<registry>/<owner>/<repo>`). Each entry:
 | Field | Required | Description |
 |---|---|---|
 | `type` | yes | VCS type. Currently `git`. |
-| `url` | yes | Clone source: a URL (`https://…`, `git@…`, `file://` for a local remote) or registry shorthand (`github/owner/repo`), as `rwv add` was given it. Every clone resolves shorthand through the built-in registries, so `rwv fetch` on another machine clones the same remote. |
+| `url` | yes | Clone source: a URL (`https://…`, `git@…`, `file://` for a local remote) or registry shorthand (`github/owner/repo`), as `rwv member add` was given it. Every clone resolves shorthand through the built-in registries, so `rwv fetch` on another machine clones the same remote. |
 | `branch` | yes | The branch the member tracks. |
 | `role` | yes | One of `owned`, `fork`, `dependency`, `reference`. |
 | `recurse-submodules` | no | `true` (the default, and not written when rwv writes the file) or `false`. See [Submodules](#submodules). |
@@ -64,8 +64,8 @@ Any other key in an entry is rejected, naming it. `version` and `submodules`, th
 
 `branch` is branch-only by design: the manifest declares which branch to *track*, while `rwv.lock` records the exact commit SHA you *are* on. Specifically:
 
-- **`rwv add <url>`** populates `branch` from the remote's default branch (`origin/HEAD`), and `rwv add --new` from the branch the new repo is on.
-- A `branch` that reads as a commit id (seven or more hex digits) or a release tag (`v2.0`, `v0.3.4-rc1`) fails to parse, naming the value and its line, and `rwv add` refuses with [`name`](./refusals.md#name) `a revision` rather than record such a branch.
+- **`rwv member add <url>`** populates `branch` from the remote's default branch (`origin/HEAD`), and `rwv member add --new` from the branch the new repo is on.
+- A `branch` that reads as a commit id (seven or more hex digits) or a release tag (`v2.0`, `v0.3.4-rc1`) fails to parse, naming the value and its line, and `rwv member add` refuses with [`name`](./refusals.md#name) `a revision` rather than record such a branch.
 - **`rwv update`** reads `branch` to know which remote branch tip to advance each repo to before re-snapshotting `rwv.lock`.
 - **`rwv fetch`** checks a new clone out on the local counterpart of the branch `branch` names, and refuses to move a present checkout attached to any other branch. **`rwv doctor --fix --reattach-checkouts`** reattaches a detached canonical clone to that same branch.
 - **`rwv fetch`** and **`rwv sync`** align checkouts to the 40-character commit SHA in `rwv.lock` (falling back to `branch` only on `rwv fetch` without `--frozen` when a newly added repo has no lock entry yet).
@@ -74,9 +74,9 @@ The role for your own code is spelled `role = "owned"`; a manifest spelling it `
 
 #### Submodules
 
-When rwv creates a checkout of a member — `rwv workweave create`, or a member a workweave lacks created by `rwv fetch`, `rwv add`, `rwv sync`, `rwv sync-to` or `rwv doctor --fix` — it checks out each submodule the member records from the copy of that submodule's repository the canonical clone already holds, nested submodules included. It never uses the network for this. The files are cloned or linked from the same submodule in the weave's other checkouts where the filesystem allows, as a member's own files are. A `reference` member's submodule files are read-only like the rest of its files.
+When rwv creates a checkout of a member — `rwv workweave create`, or a member a workweave lacks created by `rwv fetch`, `rwv member add`, `rwv sync`, `rwv sync-to` or `rwv doctor --fix` — it checks out each submodule the member records from the copy of that submodule's repository the canonical clone already holds, nested submodules included. It never uses the network for this. The files are cloned or linked from the same submodule in the weave's other checkouts where the filesystem allows, as a member's own files are. A `reference` member's submodule files are read-only like the rest of its files.
 
-The canonical clone gets that copy from the network verbs. When `rwv add` or `rwv fetch` clones a member or finds it present, it checks out every submodule whose directory in the canonical clone is empty, nested ones included, from its upstream remote, and fetches into a copy it already holds any commit a checkout of the member records that the copy lacks. A copy's own checkout in the canonical clone is not moved by that fetch.
+The canonical clone gets that copy from the network verbs. When `rwv member add` or `rwv fetch` clones a member or finds it present, it checks out every submodule whose directory in the canonical clone is empty, nested ones included, from its upstream remote, and fetches into a copy it already holds any commit a checkout of the member records that the copy lacks. A copy's own checkout in the canonical clone is not moved by that fetch.
 
 A submodule whose recorded commit the canonical clone does not hold stays empty, and `rwv doctor` reports it as [`uninitialized-submodule`](./doctor-findings.md#uninitialized-submodule) / `unfetched`. `rwv fetch --repo <path>` run in that workweave fetches it and checks it out.
 
@@ -118,7 +118,7 @@ Like any manifest parse error, it stops every verb that loads the manifest: `rwv
 
 ### `workweave` block
 
-Optional. Declares gitignored paths (relative to the weave root) that `rwv workweave <project> create` should carry from the source workspace into each new workweave:
+Optional. Declares gitignored paths (relative to the weave root) that `rwv workweave create` should carry from the source workspace into each new workweave:
 
 ```toml
 [workweave]
@@ -131,7 +131,7 @@ copy = [".cache/build-seed"]
 | `link` | no | Gitignored paths to symlink from the source workspace into the new workweave. |
 | `copy` | no | Gitignored paths to deep-copy from the source workspace into the new workweave. |
 
-Both lists default to empty and only apply to gitignored artifacts (secrets, local caches, local overrides). Tracked files inside member repositories do not need to be listed here: `rwv workweave <project> create` provisions every member as a git worktree and automatically shares file storage with the source checkout via copy-on-write reflinks (or hardlinks for read-only `reference` files on Linux) when the filesystem supports them.
+Both lists default to empty and only apply to gitignored artifacts (secrets, local caches, local overrides). Tracked files inside member repositories do not need to be listed here: `rwv workweave create` provisions every member as a git worktree and automatically shares file storage with the source checkout via copy-on-write reflinks (or hardlinks for read-only `reference` files on Linux) when the filesystem supports them.
 
 ## `rwv.lock` — pinned revisions
 
@@ -177,13 +177,13 @@ web-app
 
 `.rwv-active` is the **single source of truth** for the active project within a workspace. There is no CWD-based override; `cd projects/<name>/` does not switch projects.
 
-Updated by `rwv activate <project>`, by `rwv init`, and by the `rwv fetch` that activates a project when none is. A file that is empty or holds anything but a project name selects nothing: a verb that reads it refuses (`unreadable-active-project`) instead of acting as if no project were selected. Action verbs (`rwv lock`, `rwv add`, `rwv sync`) read it; pass `--project <name>` for a one-shot override without changing the file. A verb that writes into its project, run from inside `projects/<other>/` while the file names a different project, refuses (`cwd-in-inactive-project`) rather than act on the one the file names.
+Updated by `rwv activate <project>`, by `rwv init`, and by the `rwv fetch` that activates a project when none is. A file that is empty or holds anything but a project name selects nothing: a verb that reads it refuses (`unreadable-active-project`) instead of acting as if no project were selected. Action verbs (`rwv lock`, `rwv member add`, `rwv sync`) read it; pass `--project <name>` for a one-shot override without changing the file. A verb that writes into its project, run from inside `projects/<other>/` while the file names a different project, refuses (`cwd-in-inactive-project`) rather than act on the one the file names.
 
 ## `.rwv-workweave` — workweave marker
 
 Lives at every workweave directory root, and is a workweave root's *only* identity file — a workweave never carries `.rwv-active` beside it, and `rwv doctor` reports a root holding both. Records the workweave's identity and parent.
 
-Written by `rwv workweave <project> create <name>`, which is also the verb that duplicates an existing workweave (`--from <source>`); removed with the workweave by `rwv workweave <project> delete <name>` or `rwv sync-to --retire`.
+Written by `rwv workweave create <name>`, which is also the verb that duplicates an existing workweave (`--from <source>`); removed with the workweave by `rwv workweave delete <name>` or `rwv sync-to --retire`.
 
 ```json
 {
@@ -210,9 +210,9 @@ See [workweave hierarchy](../explanation/joints/workweave-hierarchy.md) for one-
 
 ## `.rwv-workweave-index` — workweave registry and ref receipts
 
-Lives at `<primary>/projects/<project>/.rwv-workweave-index`. Machine-local JSON state (excluded from git through the project repo's `.git/info/exclude`), written and updated by `rwv workweave <project> create`, `delete`, `set-container`, and `rwv doctor --fix`.
+Lives at `<primary>/projects/<project>/.rwv-workweave-index`. Machine-local JSON state (excluded from git through the project repo's `.git/info/exclude`), written and updated by `rwv workweave create`, `delete`, `set-default-create-basedir`, and `rwv doctor --fix`.
 
-It records the project's workweave container (`<parent-of-primary>/.workweaves` unless `set-container` recorded another), the absolute path of every workweave created for the project, which `-w <project>--<name>` and `rwv workweave <project> list` resolve through, and an ownership receipt for every ephemeral `<project>--<workweave>` branch `rwv` created, so `delete` and `doctor --fix` delete only branches `rwv` itself minted. Its field-level schema is an implementation detail; read it through `rwv workweave <project> list` and `rwv doctor`, and let `rwv doctor --fix` repair it.
+It records the project's default workweave basedir (`<parent-of-primary>/.workweaves` unless `set-default-create-basedir` recorded another), the absolute path of every workweave created for the project, which `-w <project>--<name>` and `rwv workweave list` resolve through, and an ownership receipt for every ephemeral `<project>--<workweave>` branch `rwv` created, so `delete` and `doctor --fix` delete only branches `rwv` itself minted. Its field-level schema is an implementation detail; read it through `rwv workweave list` and `rwv doctor`, and let `rwv doctor --fix` repair it.
 
 ## `.rwv-owned-digests` — attested generated-file ledger
 
@@ -277,11 +277,11 @@ repoweave uses a flat, provenance-based layout for repos: `{registry}/{owner}/{r
         └── .rwv-workweave                    # primary: ~/work, parent: ~/work
 ```
 
-The `.workweaves/` subtree is created and destroyed by `rwv workweave <project> create` and `rwv workweave <project> delete` (or `rwv sync-to --retire`, which lands the work and deletes in one step); `create --from <source>` is how an existing workweave is duplicated. The layout is shown so the paths in error messages and `rwv status` output are legible — not as a structure to assemble, relocate, or copy by hand.
+The `.workweaves/` subtree is created and destroyed by `rwv workweave create` and `rwv workweave delete` (or `rwv sync-to --retire`, which lands the work and deletes in one step); `create --from <source>` is how an existing workweave is duplicated. The layout is shown so the paths in error messages and `rwv status` output are legible — not as a structure to assemble, relocate, or copy by hand.
 
 The first path segment is a **registry** — a short name for where the repo lives. Built-in registries: `github` → `github.com`, `gitlab` → `gitlab.com`, `bitbucket` → `bitbucket.org`, plus `local`, which names no host at all. The set is not configurable. A URL on any other host still resolves: the segment becomes the URL's own host, or `local` for a `file://` URL — the same segment name the `local` registry uses, though reached by that host-derivation rule rather than by looking the registry up by name.
 
-`local` is reachable only as an `rwv add --new` creation address (`rwv add local --new --param root=<dir> --param owner=<owner> --param repo=<repo>`): it never matches an existing URL or shorthand, so it cannot be the registry an ordinary `rwv add <url>` resolves through. Creating through it is two-sided — rwv creates a bare repository under `<dir>` as well as the member checkout — because there is no forge behind `local` to have created one already. See [reference/cli](./cli.md) for the full `--new` invocation and [roles](./roles.md) for how a created member's role is recorded.
+`local` is reachable only as an `rwv member add --new` creation address (`rwv member add local --new --param root=<dir> --param owner=<owner> --param repo=<repo>`): it never matches an existing URL or shorthand, so it cannot be the registry an ordinary `rwv member add <url>` resolves through. Creating through it is two-sided — rwv creates a bare repository under `<dir>` as well as the member checkout — because there is no forge behind `local` to have created one already. See [reference/cli](./cli.md) for the full `--new` invocation and [roles](./roles.md) for how a created member's role is recorded.
 
 - **Repos are regular clones** at the weave root. `cd github/chatly/server && git status` works; no bare repos. (A workweave's checkouts are git worktrees — see the `.workweaves/` tree above.)
 - **Ecosystem files are symlinked** at the weave root to the active project's directory. Real files live in `projects/<name>/`.

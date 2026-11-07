@@ -300,7 +300,7 @@ rwv doctor --fix
 - *orphaned-clone* — a directory under a registry path that isn't listed in
   any `rwv.toml`. Only surfaced under `--all`. Either move it to the path its
   remote's URL places it at under the primary weave root and run
-  `rwv add --adopt` with that path, or remove it.
+  `rwv member add --adopt` with that path, or remove it.
 - *surfacing: `<file>` is not surfaced* (or *symlink resolves to …*) — the
   framework Axis-1 surfacing check found a missing or mis-resolved symlink
   in the active project's surfacing set. Run `rwv doctor --fix` to

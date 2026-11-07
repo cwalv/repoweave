@@ -113,7 +113,7 @@ fn make_main_workspace(tmp: &Path) -> MainWorkspace {
 /// `.rwv-workweave` marker, so it resolves as a workweave-typed source).
 fn create_workweave(main: &MainWorkspace, weaveroot: &Path, name: &str) -> Workweave {
     rwv()
-        .args(["workweave", PROJECT, "create", name])
+        .args(["workweave", "create", "--project", PROJECT, name])
         .current_dir(&main.root)
         .assert()
         .success();

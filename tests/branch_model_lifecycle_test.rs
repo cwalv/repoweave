@@ -134,7 +134,7 @@ fn delete_destroys_only_the_ref_it_recorded() {
     // A real workweave, so there IS a recorded ref for the verbs to find and
     // destroy — otherwise "nothing was deleted" would prove nothing.
     rwv()
-        .args(["workweave", "web-app", "create", "real"])
+        .args(["workweave", "create", "--project", "web-app", "real"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -146,7 +146,7 @@ fn delete_destroys_only_the_ref_it_recorded() {
     let _ = rwv().args(["doctor", "--fix"]).current_dir(&ws).assert();
 
     rwv()
-        .args(["workweave", "web-app", "delete", "real"])
+        .args(["workweave", "delete", "--project", "web-app", "real"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -194,7 +194,7 @@ fn delete_reports_the_branches_it_will_not_touch() {
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
-        .args(["workweave", "web-app", "create", "reported"])
+        .args(["workweave", "create", "--project", "web-app", "reported"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -215,7 +215,7 @@ fn delete_reports_the_branches_it_will_not_touch() {
         hand_made_branch_with_unique_commit(&repo2, "web-app--reported/mine", "mine.txt");
 
     let assert = rwv()
-        .args(["workweave", "web-app", "delete", "reported"])
+        .args(["workweave", "delete", "--project", "web-app", "reported"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -264,7 +264,7 @@ fn delete_reports_a_flat_leftover_it_holds_no_receipt_for() {
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
-        .args(["workweave", "web-app", "create", "unowned"])
+        .args(["workweave", "create", "--project", "web-app", "unowned"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -285,7 +285,7 @@ fn delete_reports_a_flat_leftover_it_holds_no_receipt_for() {
     let leftover_sha = hand_made_branch_with_unique_commit(&repo2, "web-app--unowned", "mine.txt");
 
     let assert = rwv()
-        .args(["workweave", "web-app", "delete", "unowned"])
+        .args(["workweave", "delete", "--project", "web-app", "unowned"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -314,7 +314,7 @@ fn create_refuses_a_name_the_index_already_records() {
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
-        .args(["workweave", "web-app", "create", "dup"])
+        .args(["workweave", "create", "--project", "web-app", "dup"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -323,8 +323,9 @@ fn create_refuses_a_name_the_index_already_records() {
     let assert = rwv()
         .args([
             "workweave",
-            "web-app",
             "create",
+            "--project",
+            "web-app",
             "dup",
             "--dir",
             elsewhere.to_str().unwrap(),
@@ -356,7 +357,7 @@ fn create_refuses_a_name_the_index_already_records() {
 // R4 — a DESTROY-STORE requires the store to be unclaimed
 // ---------------------------------------------------------------------------
 
-/// `rwv remove --delete` used to `remove_dir_all` the canonical store while a
+/// `rwv member remove --delete` used to `remove_dir_all` the canonical store while a
 /// workweave's live worktree was still linked into it: the workweave's `.git`
 /// files point *inside* the directory being removed, so the whole workweave
 /// is gutted. R4 refuses while any worktree is registered or any receipt
@@ -372,7 +373,7 @@ fn remove_delete_refuses_a_claimed_store_and_succeeds_after_the_claim_is_gone() 
     let repo = ws.join("github/org/repo");
 
     rwv()
-        .args(["workweave", "web-app", "create", "live"])
+        .args(["workweave", "create", "--project", "web-app", "live"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -381,6 +382,7 @@ fn remove_delete_refuses_a_claimed_store_and_succeeds_after_the_claim_is_gone() 
 
     let assert = rwv()
         .args([
+            "member",
             "remove",
             "github/org/repo",
             "--delete",
@@ -393,13 +395,15 @@ fn remove_delete_refuses_a_claimed_store_and_succeeds_after_the_claim_is_gone() 
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
     assert!(
         stderr.contains(
-            "rwv remove: github/org/repo: checkout in another workspace (web-app--live)\n"
+            "rwv member remove: github/org/repo: checkout in another workspace (web-app--live)\n"
         ),
         "R4 refusal expected, naming the live workweave whose checkout claims the store; \
          got:\n{stderr}"
     );
     assert!(
-        stderr.contains("  free the other checkout\n    rwv workweave web-app delete live\n"),
+        stderr.contains(
+            "  free the other checkout\n    rwv workweave delete live --project web-app\n"
+        ),
         "the refusal must offer the delete that retracts the workweave's claims; got:\n{stderr}"
     );
     assert!(
@@ -409,7 +413,7 @@ fn remove_delete_refuses_a_claimed_store_and_succeeds_after_the_claim_is_gone() 
 
     // Retire the claims in the order R4 requires, then the store may go.
     rwv()
-        .args(["workweave", "web-app", "delete", "live"])
+        .args(["workweave", "delete", "--project", "web-app", "live"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -428,6 +432,7 @@ fn remove_delete_refuses_a_claimed_store_and_succeeds_after_the_claim_is_gone() 
 
     rwv()
         .args([
+            "member",
             "remove",
             "github/org/repo",
             "--delete",
@@ -460,7 +465,7 @@ fn claude_worktree_remove_hook_does_not_destroy_uncommitted_work() {
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
-        .args(["workweave", "web-app", "create", "hooked"])
+        .args(["workweave", "create", "--project", "web-app", "hooked"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -508,7 +513,7 @@ fn claude_worktree_remove_hook_refuses_a_basename_with_no_separator() {
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
-        .args(["workweave", "web-app", "create", "renamed"])
+        .args(["workweave", "create", "--project", "web-app", "renamed"])
         .current_dir(&ws)
         .assert()
         .success();

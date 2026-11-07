@@ -94,7 +94,7 @@ fn succeed(dir: &Path, args: &[&str]) -> String {
 
 /// `rwv workweave create` run from `from`, which forks the seat from it.
 fn seat(weave: &Weave, from: &Path, name: &str) -> PathBuf {
-    succeed(from, &["workweave", PROJECT, "create", name]);
+    succeed(from, &["workweave", "create", "--project", PROJECT, name]);
     weave
         .root
         .parent()
@@ -103,9 +103,9 @@ fn seat(weave: &Weave, from: &Path, name: &str) -> PathBuf {
         .join(format!("{PROJECT}--{name}"))
 }
 
-/// `rwv add`, `rwv lock`, then commit both files in the project repo.
+/// `rwv member add`, `rwv lock`, then commit both files in the project repo.
 fn add_and_commit(workspace: &Path, url: &str, role: &str) {
-    succeed(workspace, &["add", url, "--role", role]);
+    succeed(workspace, &["member", "add", url, "--role", role]);
     succeed(workspace, &["lock"]);
     let project = project_dir(workspace);
     common::git_in(&project, &["add", "rwv.toml", "rwv.lock"]);
@@ -219,7 +219,7 @@ fn a_member_the_source_dropped_is_pruned() {
         "the seat starts with the member"
     );
 
-    succeed(&weave.root, &["remove", EXTRA]);
+    succeed(&weave.root, &["member", "remove", EXTRA]);
     succeed(&weave.root, &["lock"]);
     let project = project_dir(&weave.root);
     common::git_in(&project, &["add", "rwv.toml", "rwv.lock"]);
@@ -276,9 +276,9 @@ fn a_seat_with_no_history_in_common_with_its_target_keeps_its_members() {
     assert!(names_extra(&weave.root), "the target must name the member");
 }
 
-/// `rwv remove` (checkout kept), `rwv lock`, then commit both files.
+/// `rwv member remove` (checkout kept), `rwv lock`, then commit both files.
 fn drop_and_commit(workspace: &Path, message: &str) {
-    succeed(workspace, &["remove", EXTRA]);
+    succeed(workspace, &["member", "remove", EXTRA]);
     succeed(workspace, &["lock"]);
     let project = project_dir(workspace);
     common::git_in(&project, &["add", "rwv.toml", "rwv.lock"]);
@@ -522,7 +522,7 @@ fn registered_worktrees(store: &Path) -> usize {
 }
 
 /// After the seat's prune the primary's clone holds nothing of the seat's —
-/// no worktree registration, no branch, no receipt — so `rwv remove --delete`
+/// no worktree registration, no branch, no receipt — so `rwv member remove --delete`
 /// in the primary deletes it.
 fn assert_the_clone_is_released(weave: &Weave) {
     let clone = common::under(&weave.root, EXTRA);
@@ -536,7 +536,7 @@ fn assert_the_clone_is_released(weave: &Weave) {
         !branch_exists(&clone, SEAT_BRANCH),
         "the prune must retire the branch the seat was given in the clone"
     );
-    succeed(&weave.root, &["remove", EXTRA, "--delete"]);
+    succeed(&weave.root, &["member", "remove", EXTRA, "--delete"]);
     assert!(!clone.exists());
 }
 
@@ -601,7 +601,7 @@ fn pruning_keeps_a_seat_branch_that_holds_commits_nothing_else_has() {
         )) && !stderr.contains("is not recorded as rwv's"),
         "{stderr}"
     );
-    let out = run(&weave.root, &["remove", EXTRA, "--delete"]);
+    let out = run(&weave.root, &["member", "remove", EXTRA, "--delete"]);
     assert!(
         !out.status.success()
             && String::from_utf8_lossy(&out.stderr)

@@ -77,7 +77,7 @@ struct Weave {
 impl Weave {
     fn create_seat(&self) -> PathBuf {
         common::rwv()
-            .args(["workweave", PROJECT, "create", "seat"])
+            .args(["workweave", "create", "--project", PROJECT, "seat"])
             .current_dir(&self.primary)
             .assert()
             .success();

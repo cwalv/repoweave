@@ -5,9 +5,9 @@
 //!
 //! Doc claims pinned here, checked behaviorally against a content-derived
 //! generated file rather than by grepping comments:
-//!   - `rwv add` / `rwv remove` author (intent mode), and so does
+//!   - `rwv member add` / `rwv member remove` author (intent mode), and so does
 //!     `rwv init <name>`, before it activates
-//!   - `rwv add` / `rwv remove` author only when every active repo the
+//!   - `rwv member add` / `rwv member remove` author only when every active repo the
 //!     manifest declares is on disk; over a partial member set they record
 //!     the membership change and leave the managed files alone
 //!   - `rwv fetch`, `rwv activate`, `rwv materialize`, workweave-create
@@ -177,14 +177,14 @@ fn add_authors_managed_content() {
     let url = common::file_url(&bare);
 
     rwv()
-        .args(["add", &url])
+        .args(["member", "add", &url])
         .current_dir(&ws)
         .assert()
         .success();
 
     assert!(
         code_workspace(&project_dir, "myapp").exists(),
-        "`rwv add` is an intent verb; it must author the vscode-workspace file"
+        "`rwv member add` is an intent verb; it must author the vscode-workspace file"
     );
 }
 
@@ -214,14 +214,14 @@ fn remove_authors_managed_content() {
     );
 
     rwv()
-        .args(["remove", "local/org/dep"])
+        .args(["member", "remove", "local/org/dep"])
         .current_dir(&ws)
         .assert()
         .success();
 
     assert!(
         code_workspace(&project_dir, "myapp").exists(),
-        "`rwv remove` is an intent verb; it must author the vscode-workspace file"
+        "`rwv member remove` is an intent verb; it must author the vscode-workspace file"
     );
 }
 
@@ -252,7 +252,7 @@ fn init_authors_the_integration_files_its_empty_manifest_implies() {
 // ===========================================================================
 
 /// A repo declared in `rwv.toml` but not cloned is not *pending* for the
-/// integrations, it is invisible — so `rwv add` over a partially-fetched
+/// integrations, it is invisible — so `rwv member add` over a partially-fetched
 /// workspace must record the membership change without authoring.
 #[test]
 fn add_does_not_author_from_a_partial_member_set() {
@@ -271,7 +271,7 @@ fn add_does_not_author_from_a_partial_member_set() {
     let new_url = common::file_url(&new_bare);
 
     rwv()
-        .args(["add", &new_url])
+        .args(["member", "add", &new_url])
         .current_dir(&ws)
         .assert()
         .success();
@@ -279,20 +279,20 @@ fn add_does_not_author_from_a_partial_member_set() {
     let manifest = std::fs::read_to_string(project_dir.join("rwv.toml")).unwrap();
     assert!(
         manifest.contains("org/newdep"),
-        "`rwv add` must still record the membership change, got:\n{manifest}"
+        "`rwv member add` must still record the membership change, got:\n{manifest}"
     );
     assert!(
         !code_workspace(&project_dir, "myapp").exists(),
-        "`rwv add` must not author while a declared repo is missing from disk"
+        "`rwv member add` must not author while a declared repo is missing from disk"
     );
     assert!(
         !go_work(&project_dir).exists(),
-        "`rwv add` must not author a member list that omits the missing repo"
+        "`rwv member add` must not author a member list that omits the missing repo"
     );
 }
 
 /// The sharp end: an already-committed managed file listing every member,
-/// and a `rwv remove` run after one of the others left the disk. Authoring
+/// and a `rwv member remove` run after one of the others left the disk. Authoring
 /// there would rewrite the file from what remains and drop the rest.
 #[test]
 fn remove_does_not_overwrite_managed_content_from_a_partial_member_set() {
@@ -318,13 +318,13 @@ fn remove_does_not_overwrite_managed_content_from_a_partial_member_set() {
     init_bare_go_module(&drop_bare, "example.com/drop");
     let drop_url = common::file_url(&drop_bare);
     rwv()
-        .args(["add", &drop_url])
+        .args(["member", "add", &drop_url])
         .current_dir(&ws)
         .assert()
         .success();
 
     let authored = std::fs::read_to_string(go_work(&project_dir))
-        .expect("`rwv add` over a whole member set authors go.work");
+        .expect("`rwv member add` over a whole member set authors go.work");
     // `file://` matches no built-in registry, so `drop_url` lands at
     // `local/org/drop`, not the bare `org/drop` its pre-seeded siblings use.
     for member in ["org/keep", "org/gone", "local/org/drop"] {
@@ -337,7 +337,7 @@ fn remove_does_not_overwrite_managed_content_from_a_partial_member_set() {
     std::fs::remove_dir_all(ws.join("org/gone")).unwrap();
 
     rwv()
-        .args(["remove", "local/org/drop"])
+        .args(["member", "remove", "local/org/drop"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -345,12 +345,12 @@ fn remove_does_not_overwrite_managed_content_from_a_partial_member_set() {
     let manifest = std::fs::read_to_string(project_dir.join("rwv.toml")).unwrap();
     assert!(
         !manifest.contains("local/org/drop"),
-        "`rwv remove` must still record the membership change, got:\n{manifest}"
+        "`rwv member remove` must still record the membership change, got:\n{manifest}"
     );
     assert_eq!(
         std::fs::read_to_string(go_work(&project_dir)).unwrap(),
         authored,
-        "`rwv remove` must leave go.work alone while a declared repo is missing from disk"
+        "`rwv member remove` must leave go.work alone while a declared repo is missing from disk"
     );
 }
 
@@ -445,7 +445,7 @@ fn workweave_create_does_not_author_managed_content() {
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
-        .args(["workweave", "myapp", "create", "feat"])
+        .args(["workweave", "create", "--project", "myapp", "feat"])
         .current_dir(&ws)
         .assert()
         .success();

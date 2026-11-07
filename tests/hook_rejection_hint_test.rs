@@ -81,7 +81,7 @@ fn a_silent_hook_refusing_a_manifest_repo_is_still_named_to_the_operator() {
     plant_silent_refusing_hook(&repo_path);
 
     let out = common::rwv()
-        .args(["workweave", "myproject", "create", "wt"])
+        .args(["workweave", "create", "--project", "myproject", "wt"])
         .current_dir(&ws)
         .output()
         .unwrap();
@@ -122,7 +122,7 @@ fn a_silent_hook_refusing_the_project_repo_is_still_named_to_the_operator() {
     plant_silent_refusing_hook(&project_dir);
 
     let out = common::rwv()
-        .args(["workweave", "myproject", "create", "wt"])
+        .args(["workweave", "create", "--project", "myproject", "wt"])
         .current_dir(&ws)
         .output()
         .unwrap();

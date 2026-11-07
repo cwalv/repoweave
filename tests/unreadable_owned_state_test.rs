@@ -375,7 +375,7 @@ fn materialize_clears_the_finding_where_no_generator_can_rebuild_the_record() {
 /// How a record arrives in the population above, so that arm is a shape
 /// production writes rather than one only a test can build.
 ///
-/// `rwv remove` is an intent verb: it rewrites the manifest and does not touch
+/// `rwv member remove` is an intent verb: it rewrites the manifest and does not touch
 /// the record, which is correct — dropping an attestation is materialize's job
 /// and it announces each one. So between the removal of the last cargo member
 /// and the next materialize, a live record naming `Cargo.lock` sits in a
@@ -387,7 +387,7 @@ fn the_record_outlives_the_member_whose_generation_it_attests() {
     let ws = weave(tmp.path());
     let project_dir = ws.join("projects/app");
 
-    let (ok, out) = rwv_here(&["remove", "github/acme/lib"], &ws);
+    let (ok, out) = rwv_here(&["member", "remove", "github/acme/lib"], &ws);
     assert!(ok, "{out}");
     assert_eq!(
         repoweave::owned_state::attested_owned_files(&project_dir),

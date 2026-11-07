@@ -54,7 +54,7 @@ impl Weaves {
     }
 
     fn create(&self, name: &str, from: Option<&Path>) -> PathBuf {
-        let mut args = vec!["workweave", "alpha", "create", name];
+        let mut args = vec!["workweave", "create", "--project", "alpha", name];
         let from = from.map(|p| p.to_string_lossy().into_owned());
         if let Some(from) = &from {
             args.extend(["--from", from.as_str()]);
@@ -433,8 +433,9 @@ fn deleting_a_workweave_leaves_the_primarys_copy_intact() {
         &weaves.primary,
         &[
             "workweave",
-            "alpha",
             "delete",
+            "--project",
+            "alpha",
             "one",
             "--discard-uncommitted",
         ],

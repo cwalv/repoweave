@@ -1,0 +1,567 @@
+# rwv member
+
+## Purpose
+
+Change which repos the active project's `rwv.toml` lists, or how it lists
+one: `member add` clones a repo and registers it, `member remove` takes it out,
+`member set-role` changes its `role`, and `member set-recurse-submodules`
+changes whether new checkouts of it populate its submodules.
+
+Each is an **authoring verb**: it mutates the manifest and regenerates
+integration-managed content (Cargo workspace, npm workspace, etc.) so the
+resulting files can be committed alongside the `rwv.toml` change.
+
+## Invocation
+
+```
+rwv member add <url> [--role <role>] [--no-recurse-submodules] [--project <name>] [--no-materialize]
+rwv member add <path> --adopt [--role <role>] [--no-recurse-submodules] [--project <name>] [--no-materialize]
+rwv member add <creation-address> --new [--param <name>=<value>]... [--params-json <json>] [--role <role>] [--no-recurse-submodules] [--project <name>] [--no-materialize]
+rwv member remove <path> [--delete] [--delete-shared-clone] [--project <name>] [--no-materialize]
+rwv member set-role <repo> <role> [--project <name>] [--no-materialize]
+rwv member set-recurse-submodules <repo> <true|false> [--project <name>] [--no-materialize]
+```
+
+Every form takes `--project <name>` to operate on that project rather than the
+active one (this does not change `.rwv-active`) and `--no-materialize` to skip
+the integration install hooks (`npm install`, `uv sync`, `cargo fetch`, …) of
+the regeneration it runs at primary; `rwv materialize` runs them later. Inside
+a workweave the hooks are skipped either way.
+
+Run `rwv member --help` for the full clap surface.
+
+## `rwv member add`
+
+### Purpose
+
+Clone a repo and register it in the active project's `rwv.toml`, then
+re-run integration activation so ecosystem files (Cargo workspace, npm
+workspace, etc.) are updated to include the new member.
+
+#### Clone placement
+
+Clones always land at the **canonical path** under the primary weave root,
+regardless of whether `rwv member add` is invoked from inside a workweave. This
+reflects the shared-clone topology: member repos are global infrastructure,
+with `git worktree` providing per-workweave isolation. (See
+`rwv explain workweave` for the workweave topology model.)
+
+If a clone already exists on disk at the canonical path and its origin names
+the same repository, `add` skips the network clone and registers it. A clone
+of anything else refuses (`foreign-clone-at-placement`), naming `rwv member add
+--adopt <path>` to register it under its own origin. A directory (empty or
+not) or file at the placement that is not a clone refuses
+(`non-clone-at-placement`); so does one at the workweave's own placement when
+`add` or `add --adopt` runs from a workweave.
+
+#### Submodules
+
+`add` gives the canonical clone the member's submodules from upstream, nested
+ones included, as `rwv fetch` does (see `rwv explain fetch`), so a checkout
+created later, which never reaches the network, can check them out from it. A
+submodule that cannot be fetched is a warning, not a failure. On re-running
+`add` for a member the manifest already names, its `recurse-submodules = false` is
+honored; `--adopt` and `--new` fetch nothing, and so does a new member added with
+`--no-recurse-submodules`.
+
+#### Workweave-aware worktree materialization
+
+When `rwv member add` is invoked from inside a workweave, it also creates a
+`git worktree` for the new repo inside the workweave directory. The
+ephemeral branch follows the standard `{project}--{workweave}` naming
+convention (matching `rwv workweave create`) — flat, with no third component
+derived from the source branch. `add` records an ownership receipt for it, so
+`rwv workweave delete` destroys it along with the rest of the workweave's
+refs. If the canonical clone has no commits yet (from `--new`), the worktree
+creation is skipped; after the first commit, run `rwv lock` then
+`rwv doctor --fix` here to materialize it.
+
+#### Adopting an existing clone (`--adopt`)
+
+With `--adopt`, the argument is the path of a clone already under the primary
+weave root; a relative path resolves against the directory rwv runs in (or the
+`-C`/`-w` directory). The member path recorded is the clone's position under
+the weave root containing it. From a workweave, a path inside the workweave
+names the member at that position, and the clone registered is the primary's
+clone there. `add` reads the URL from the clone's `origin` remote and
+registers it without a network clone. A path that holds no clone refuses
+(`no-clone-to-adopt`); a path under no weave root refuses
+(`adopt-path-outside-weave`); a workweave path holding a clone that is not a
+worktree of the primary's refuses (`foreign-clone-in-workweave`).
+
+#### Spelling the argument
+
+The argument's meaning comes from how it is spelled. A URL — `https://`,
+`git@`, or `file://` for a local remote — or registry shorthand such as
+`github/owner/repo` is cloned from. An existing clone is registered only under `--adopt`.
+Anything else reads as a path, which could mean either, so `add` refuses
+(`unresolvable-repo-source`) and names both spellings: `rwv member add
+file://<absolute path>` to clone from a local remote, and `rwv member add --adopt
+<path>` to register the clone at that path.
+
+#### Creation (`--new`)
+
+`--new` is expected to be rare. The common path is to create the repo with
+the registry's own tools (a forge's web UI, `gh`/`glab`, or `mkdir` + `git
+init` for a local one) and then run a plain `rwv member add <url>`, which already
+works for anything `placement` covers. `--new` is a secondary convenience for
+when that isn't done yet.
+
+With `--new`, the positional argument is a **creation address**, not a URL or
+a path — a bare registry name (`local`), or a three-segment shorthand
+(`github/acme/fresh`) that fills the `owner` and `repo` parameters for
+whichever registry the first segment names. Any parameter the registry still
+needs — every parameter, for a bare registry name — is supplied with
+`--param <name>=<value>` (repeatable) or as one JSON object via
+`--params-json '{"name": "value"}'`. A parameter named in more than one of
+these three places refuses rather than picking a winner.
+
+Creation is registry-dispatched: each registry declares its own parameters
+and plans what gets created from them.
+
+{{MSG:creation_params_table}}
+
+- **A domain registry** (`github`, `gitlab`, `bitbucket`) needs `owner` and
+  `repo`. Nothing is created remotely — rwv has no HTTP client — so the
+  member is `git init`'d locally and its remote is set to the minted URL as
+  an intent. `rwv member add github/acme/fresh --new` and `rwv member add github --new
+  --param owner=acme --param repo=fresh` are equivalent.
+- **`local`** needs `root`, `owner`, and `repo`. Creation is two-sided: rwv
+  creates a **bare** repository at `<root>/<owner>/<repo>` and clones the
+  member from it, so the member's remote is real from birth and `git push
+  -u` works immediately. `root` must already exist (rwv creates
+  `<root>/<owner>/<repo>`, not `<root>` itself) and must be outside the
+  weave. A relative `root` resolves against the directory rwv runs in — the
+  `-C` or `-w` directory when one is given — and the manifest records the
+  absolute path it names. `rwv member add local/acme/fresh --new` fills `owner` and `repo` from the
+  shorthand and still needs `--param root=<dir>`.
+
+The placement path is always derived from the minted URL, the same way a
+plain `rwv member add <url>` derives it — the creation address only selects a
+registry and supplies parameters, never a layout.
+
+### Arguments
+
+- `<url>` — repository URL or shorthand. Parsed through the registry
+  topology to derive the canonical local path. Accepts `https://`, `git@`,
+  `file://`, or registry shorthand such as `github/owner/repo`.
+- `--adopt` — the argument is the path of an existing clone under the primary
+  weave root, registered without cloning (see "Adopting an existing clone").
+- `--role <role>` — role for the repo in the manifest (`owned`, `fork`,
+  `dependency`, `reference`). Defaults to `owned`.
+- `--no-recurse-submodules` — record `recurse-submodules = false` for the new
+  member, so new checkouts of it leave its submodules uninitialized. A member
+  the manifest already lists keeps its entry as it is; `rwv member
+  set-recurse-submodules` changes it.
+- `--new` — create a new repo instead of cloning. The positional argument
+  becomes a creation address (see "Creation" above) rather than a URL or path.
+- `--param <name>=<value>` — a creation parameter (repeatable). Requires
+  `--new`. See the table above for what each registry declares.
+- `--params-json <json>` — the same parameters as one JSON object of string
+  values. Requires `--new`.
+
+### Output
+
+Progress messages to stderr:
+
+- `Added '<repo-path>' to manifest` — repo was registered.
+- `Repository already exists in manifest at '<repo-path>'; re-running its
+  activation` — the manifest is left as it is, and activation runs again, so a
+  weave an earlier run left short (a surfaced link gone missing, install hooks
+  that failed) is repaired by repeating the same command. An entry written into
+  `rwv.toml` by hand is finished the same way: when its canonical clone is not
+  on disk, `add` clones it from the URL the manifest records, creates the
+  workweave's worktree when run in one, then regenerates. The URL given must
+  name the same repo as the manifest's entry, or the add refuses
+  (`occupied-placement`).
+- `Directory already exists at '<path>', skipping clone` — clone present,
+  not re-cloned.
+
+Integration activation output (symlinks created/removed) goes to stderr.
+
+A side effect the verb skipped is said on stderr in one line naming the
+command that performs it; nothing is said when it skipped none:
+
+- with `--no-materialize`: `[skipped] core: the install hooks did not run
+  (--no-materialize); `rwv materialize` runs them`;
+- inside a workweave, where an authoring verb runs no hooks: `[skipped] core:
+  the install hooks did not run (an authoring verb runs none inside a
+  workweave); `rwv materialize` runs them`;
+- for a project the weave root does not present (`--project`), whose files it
+  regenerates and stops there: `[skipped] core: the weave-root links were not
+  refreshed (`<project>` is not the project this weave root presents); `rwv
+  activate <project>` refreshes them`, and the same line for the install hooks,
+  ending `runs them`;
+- for a hook whose tool is not on `PATH`: its `tool-missing` warning.
+
+### Exit codes
+
+- `0` — repo added (or already present), manifest updated, activation
+  succeeded.
+- non-zero — URL could not be resolved, clone failed, manifest could not be
+  written, or activation returned an error.
+
+The manifest edit and the regeneration it drives land together or not at all.
+When activation refuses before the install hooks run — an integration rejects
+the new member, or a surfacing path is occupied — `rwv.toml` and every
+regenerated file are put back as they were, and the error says so. The
+install hooks run after that point and have no undo, so when one fails the
+error says `rwv.toml` was updated; re-running the add re-runs them. A failed
+hook is not a refused add: the member stands.
+
+A refused add accounts for what it had created by then. A clone it fetched,
+and a workweave worktree it made, stay on disk: the error names each one and
+says that once the cause is fixed, re-running the same add reuses it, or
+`rwv member remove <path> --delete` removes it instead (in the workweave for its
+worktree, then in the primary weave for the clone). Fix the cause first either
+way: the remove regenerates the project's files too, so it refuses for the same
+reason while the cause stands. What
+`--new` created — the bare upstream under `--param root`, the new member, and
+any directory made to hold them — holds nothing but what the add put there,
+so the refused add removes it and says so.
+
+### Examples
+
+Add an owned repo (clone + register):
+
+```
+rwv member add https://github.com/myorg/myrepo
+```
+
+Add a dependency (read-only; won't be pushed or edited):
+
+```
+rwv member add https://github.com/third-party/lib --role dependency
+```
+
+Register a repo that's already cloned:
+
+```
+rwv member add --adopt github/myorg/existing-repo
+```
+
+Clone from a local bare repository:
+
+```
+rwv member add file:///srv/repos/myorg/lib.git
+```
+
+Create a repo at a registry that hosts it (member `git init`'d locally,
+remote set to the minted URL as an intent):
+
+```
+rwv member add github/myorg/new-project --new
+```
+
+Create a repo with no registry backing it, from scratch — rwv creates a bare
+upstream under `--param root` and clones the member from it:
+
+```
+rwv member add local --new --param root=/srv/repos --param owner=myorg --param repo=new-project
+```
+
+The same creation, scripted:
+
+```
+rwv member add local --new --params-json '{"root": "/srv/repos", "owner": "myorg", "repo": "new-project"}'
+```
+
+### Common errors
+
+- *unrecognized URL* — the URL does not parse through any built-in registry
+  and has no derivable local path. Check the URL format.
+- *not a URL and no registry reads it as shorthand*
+  (`unresolvable-repo-source`) — the argument reads as a path. Spell a local remote as `file://<absolute path>`, or pass
+  `--adopt` to register the clone at that path.
+- *no clone to adopt* (`no-clone-to-adopt`) — `--adopt` names a path with no
+  clone.
+- *adopt path outside weave* (`adopt-path-outside-weave`) — `--adopt` names a
+  location under neither the primary weave root nor the current workweave.
+  A relative path resolves against the directory rwv runs in, and a symlink in
+  it is followed.
+- *foreign clone in workweave* (`foreign-clone-in-workweave`) — `--adopt`
+  names a clone inside the workweave that is not a worktree of the primary's
+  clone at the same path.
+- *non-clone at placement* (`non-clone-at-placement`) — the placement, or
+  from a workweave the workweave's own placement, holds a directory or file
+  that is not a clone. Move it aside and re-run.
+- *foreign clone at placement* (`foreign-clone-at-placement`) — the URL's
+  placement already holds a clone of a different repository; register it with
+  `--adopt`, or move it aside.
+- *clone failed* — network error or authentication problem; inspect git output.
+- *manifest parse failure* — `rwv.toml` could not be loaded; verify the file
+  is valid TOML.
+- *missing creation parameter* — `--new` and a required parameter (see the
+  table above) was not supplied by the address, `--param`, or `--params-json`.
+- *duplicate creation parameter* — the same parameter name arrived through
+  more than one of the address shorthand, `--param`, and `--params-json`.
+- *occupied placement* — the URL's or creation address's placement already
+  maps to a different URL in the manifest.
+
+## `rwv member remove`
+
+### Purpose
+
+Remove a repo from the active project's `rwv.toml` and re-run integration
+activation so ecosystem files (Cargo workspace, npm workspace, etc.) are
+updated to no longer include the removed member.
+
+Removing from the manifest does **not** delete the checkout from disk by
+default. Use `--delete` to also remove it.
+
+#### Finishing a hand edit
+
+An entry already removed from `rwv.toml` by hand is finished by the same
+command. When the path is no longer in the manifest but this workspace still
+holds a checkout there that is this project's — this project's `rwv.lock`
+still names it, or no other project lists it — `remove` regenerates the
+integration files without it and says it was already out of the manifest.
+`--delete` then deletes that checkout exactly as it would have deleted a
+listed one. A path with no such checkout refuses (`repo-not-in-manifest`).
+
+#### What `--delete` deletes
+
+`--delete` removes the checkout in the workspace the command runs in:
+
+- **In the primary weave**, the canonical clone at its path under the weave
+  root.
+- **In a workweave**, that workweave's worktree of the repo, and the branch
+  the workweave was given in the canonical clone, so nothing of the
+  workweave's still claims that clone. A branch holding commits that neither
+  the workweave's parent nor the primary weave holds stays, and a warning
+  names it. The canonical clone in the primary is never touched from a
+  workweave; it is removed when the change lands and the primary drops the
+  repo, or by `rwv member remove <path> --delete` in the primary weave.
+
+Every guard runs before the manifest is written, so a refused delete leaves
+`rwv.toml` and the checkout as they were:
+
+- in the primary, a clone **another project's `rwv.toml` lists** refuses
+  (`shared-clone-referenced`) unless `--delete-shared-clone` is given;
+- the checkout's *uncommitted changes*, and in the primary every **live
+  checkout derived from the clone** — a workweave's, or a worktree added by
+  hand — are judged together and refuse as one: one line per state, on the
+  `edits` and `checkout` kinds, with the choices each state prints;
+- *commits no other clone reaches* refuse
+  (`dropped-repo-has-unique-commits`): in the primary, any branch with no
+  remote counterpart or with commits ahead of it; in a workweave, a worktree
+  tip the canonical clone does not contain;
+- in the primary, a clone rwv still holds **ownership receipts** for refuses
+  (`store-still-claimed`).
+
+(See `rwv explain workweave` for the workweave topology model.)
+
+### Arguments
+
+- `<path>` — manifest-relative path of the repo to remove (as listed in
+  `rwv.toml`, e.g. `github/myorg/myrepo`).
+- `--delete` — also remove this workspace's checkout from disk (see "What
+  `--delete` deletes" above).
+- `--delete-shared-clone` — delete the clone even when another project still
+  references it. Requires `--delete`.
+
+### Output
+
+Progress messages to stderr:
+
+- `Removed '<path>' from manifest`, or `'<path>' was already out of the
+  manifest; regenerated without it` for an entry removed by hand.
+- Integration activation output (symlinks created/removed).
+- `Deleted '<checkout>'` when `--delete` removed one.
+
+A side effect the verb skipped is said on stderr in one line naming the
+command that performs it; nothing is said when it skipped none:
+
+- with `--no-materialize`: `[skipped] core: the install hooks did not run
+  (--no-materialize); `rwv materialize` runs them`;
+- inside a workweave, where an authoring verb runs no hooks: `[skipped] core:
+  the install hooks did not run (an authoring verb runs none inside a
+  workweave); `rwv materialize` runs them`;
+- for a project the weave root does not present (`--project`), whose files it
+  regenerates and stops there: `[skipped] core: the weave-root links were not
+  refreshed (`<project>` is not the project this weave root presents); `rwv
+  activate <project>` refreshes them`, and the same line for the install hooks,
+  ending `runs them`;
+- for a hook whose tool is not on `PATH`: its `tool-missing` warning.
+
+### Exit codes
+
+- `0` — repo removed from manifest (or already out of it), activation
+  succeeded.
+- non-zero — no entry and no leftover checkout at the path, a `--delete`
+  guard refused, directory removal failed, or activation returned an error.
+
+The manifest edit and the regeneration it drives land together or not at all.
+When activation refuses before the install hooks run, `rwv.toml` and every
+regenerated file are put back as they were, the error says so, and `--delete`
+deletes nothing. The install hooks run after that point and have no undo, so
+when one fails the error says `rwv.toml` was updated.
+
+### Examples
+
+Remove from manifest (keep clone on disk):
+
+```
+rwv member remove github/myorg/old-repo
+```
+
+Remove from manifest and delete this workspace's checkout:
+
+```
+rwv member remove github/myorg/old-repo --delete
+```
+
+Remove and delete the clone even if another project references it:
+
+```
+rwv member remove github/myorg/old-repo --delete --delete-shared-clone
+```
+
+### Common errors
+
+- *path not in manifest* — the given path does not appear in `rwv.toml` and no
+  leftover checkout of this project's is there. Check the exact manifest path
+  with `rwv status`.
+- *uncommitted changes* or *unique commits* — `--delete` would lose work.
+  Commit and push it, or discard it, then re-run.
+- *another project references this path; refusing --delete without
+  --delete-shared-clone* — the clone is shared. Verify the other project and
+  use `--delete-shared-clone` only when safe.
+- *manifest parse failure* — `rwv.toml` could not be loaded; verify the file
+  is valid TOML.
+
+## `rwv member set-role`
+
+### Purpose
+
+Change a repo's `role` in this workspace's `rwv.toml`, regenerate the
+integration-managed files from the edited manifest, and settle the repo's
+files for its new role.
+
+The regeneration matters because a
+`reference` repo is excluded from every ecosystem's build graph, so making a
+repo a reference removes it from a generated Cargo workspace, npm workspace
+or `go.work`, and giving it back another role puts it back.
+
+Settling is what makes the role true on disk:
+
+- **To `reference`:** every tracked regular file of the repo loses its write
+  bits. Directories keep theirs, so untracked files can still be created and
+  the VCS can still replace files on an update. Tracked symlinks are never
+  chmod'ed.
+- **From `reference`:** the owner's write bit comes back. A file that shares
+  its storage with another workspace's copy is first replaced by a private
+  copy, because write bits belong to the file rather than to the name.
+
+The change is local to this workspace until it lands. `rwv sync-to` carries
+it to the target, which settles the repo on landing, and every other
+workspace settles it on its next `rwv sync`. A hand edit of `role` in
+`rwv.toml` converges the same way, and `rwv doctor --fix` settles it in
+place (`rwv explain member-permissions`).
+
+### Arguments
+
+- `<repo>` — the repo's manifest-relative path, as `rwv.toml` lists it (e.g.
+  `github/myorg/myrepo`).
+- `<role>` — `owned`, `fork`, `dependency` or `reference`. Any other value is
+  rejected before anything is read.
+
+### Output
+
+Progress messages go to stderr: the integration activation output, then the
+change made. When the repo already has the role, `role` leaves `rwv.toml`
+alone, regenerates from it, settles the member's files for that role (so it
+finishes a hand edit of the role), and reports how many files it settled.
+
+A side effect the verb skipped is said on stderr in one line naming the
+command that performs it; nothing is said when it skipped none:
+
+- with `--no-materialize`: `[skipped] core: the install hooks did not run
+  (--no-materialize); `rwv materialize` runs them`;
+- inside a workweave, where an authoring verb runs no hooks: `[skipped] core:
+  the install hooks did not run (an authoring verb runs none inside a
+  workweave); `rwv materialize` runs them`;
+- for a project the weave root does not present (`--project`), whose files it
+  regenerates and stops there: `[skipped] core: the weave-root links were not
+  refreshed (`<project>` is not the project this weave root presents); `rwv
+  activate <project>` refreshes them`, and the same line for the install hooks,
+  ending `runs them`;
+- for a hook whose tool is not on `PATH`: its `tool-missing` warning.
+
+### Exit codes
+
+- `0` — the role changed (or already was the one asked for).
+- non-zero — the path is not in the manifest; the change is to `reference`
+  while the repo has uncommitted changes to tracked files (commit, stash or
+  discard them first); or the regeneration failed.
+
+The manifest edit and the regeneration land together or not at all: when
+activation refuses before the install hooks run, `rwv.toml` and every
+regenerated file are put back as they were, and the repo's files keep the
+permissions of the role they had. The install hooks run after that point and
+have no undo, so when one fails the error says `rwv.toml` was updated, and the
+repo is settled for its new role regardless.
+
+### Examples
+
+Keep a repo around as read-only study material:
+
+```
+rwv member set-role github/myorg/vendored-lib reference
+```
+
+Start working on it again:
+
+```
+rwv member set-role github/myorg/vendored-lib owned
+```
+
+## `rwv member set-recurse-submodules`
+
+### Purpose
+
+Set a repo's `recurse-submodules` in this workspace's `rwv.toml`, and regenerate
+the integration-managed files from the edited manifest. The setting says whether
+a new checkout of the member populates the submodules it records, from the
+module data the canonical clone already holds and never from the network;
+`false` leaves them uninitialized. A checkout that already exists keeps the
+submodules it has. The key is written only when it is `false`: `true` is the
+default and is not written out.
+
+The change is local to this workspace until it lands, as `member set-role`'s
+is. A hand edit of `recurse-submodules` in `rwv.toml` converges the same way.
+
+### Arguments
+
+- `<repo>` — the repo's manifest-relative path, as `rwv.toml` lists it (e.g.
+  `github/myorg/myrepo`).
+- `<true|false>` — the setting to record. Any other value is rejected before
+  anything is read.
+
+### Output
+
+Progress messages go to stderr: the integration activation output, then the
+change made. When the repo already has the setting, the verb leaves `rwv.toml`
+alone, regenerates from it, and says nothing changed.
+
+### Exit codes
+
+- `0` — the setting changed (or already was the one asked for).
+- non-zero — the path is not in the manifest, or the regeneration failed.
+
+The manifest edit and the regeneration land together or not at all, as for
+`member set-role`.
+
+### Examples
+
+Leave a repo's submodules out of new checkouts:
+
+```
+rwv member set-recurse-submodules github/myorg/vendored-lib false
+```
+
+Populate them again:
+
+```
+rwv member set-recurse-submodules github/myorg/vendored-lib true
+```

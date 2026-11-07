@@ -55,7 +55,7 @@ one-time migration (§7) — and then **deleted the old surface outright**:
 `create_worktree`, `push_with_role`, `list_branches_with_prefix`,
 `parse_ephemeral_branch_name`, and — since, by a separate fix —
 `Vcs::default_branch` have zero definitions and zero call sites in the tree
-(three `rwv add` sites still bind a *local* named `default_branch`, from an
+(three `rwv member add` sites still bind a *local* named `default_branch`, from an
 observation rather than a guess — §6.2).
 Passages that diagnosed those constructs are therefore **historical**:
 they describe what the code did before this model landed, and why that was the
@@ -108,7 +108,7 @@ only whether one exists. The observation surface is `Vcs::head_attachment`
 `fetch.rs`, `update.rs`, `add_remove.rs`. `workweave.rs` — which used to
 *derive an ephemeral branch name* from an observed HEAD — is at **zero** and
 derives nothing from observation at all (§3.5). `add_remove.rs` reached zero
-too and has since come back to one, for a different purpose: `rwv add --new`
+too and has since come back to one, for a different purpose: `rwv member add --new`
 reads `head_attachment` to learn what branch `git init` actually chose, and
 writes that into `branch` (the read at `add_remove.rs:693-703`, the write
 at `:709`) `[V]`. That is an observation feeding a *tracking declaration*,
@@ -227,7 +227,7 @@ not because it means anything. Two facts:
    `birth_ephemeral_worktree` `[V]`. The three verbs that birth a ref all
    route through that chokepoint rather than calling the trait method
    themselves: `workweave create` (`workweave.rs:1503`, `:1628`), `sync`'s
-   materialize-missing-repo path (`sync.rs:1271`), and `rwv add`
+   materialize-missing-repo path (`sync.rs:1271`), and `rwv member add`
    (`add_remove.rs:95`) `[V]`. Sync reached the trait method directly at the
    previous citation base; it was routed through the chokepoint since, so the
    four-state `(receipt, ref)` classification runs for it too.
@@ -316,7 +316,7 @@ the tag `tag_at_head` reports, and the listed local branch the two prune
 predicates (`branch_has_remote_counterpart`, `count_commits_ahead_of_remote`)
 are asked about. The manifest's `branch` field is a `TrackingRef` parsed at
 load (§1.3), and
-`rwv add` writes it through `TrackingRef::try_from` an observed
+`rwv member add` writes it through `TrackingRef::try_from` an observed
 `RemoteDefaultBranch` or `AttachedRef` (or `TrackingRef::parse` of an
 `UnbornRef`'s name), so a default branch that reads as a tag or a SHA is
 refused at the add rather than written for a later verb to refuse.
@@ -536,7 +536,7 @@ DESTROY-STORE exists because a store-level destroy deletes every ref and
 every object at once, so no ref-level rule can gate it (Q11 first recorded
 this) — and therefore no §5 row may rely on ref-level reasoning to permit
 one. rwv performs store-level destroys in three places, and all three are now
-R4-gated: `prune_dropped_repo` and `rwv remove --delete`, which share
+R4-gated: `prune_dropped_repo` and `rwv member remove --delete`, which share
 `plan_checkout_removal` (`judge_store_checkouts` and
 `refuse_standing_receipts` in `sync.rs`, before the destroy) `[V]`, and
 `workweave delete`
@@ -552,7 +552,7 @@ refs — is not a branch-model operation and this rule does not govern it.
 
 Every verb may MOVE the ref a checkout is already on, subject to that verb's
 existing preconditions. Creating an attachment where there was none — at
-`rwv workweave create`, `rwv add`, `clone` — is **birth** and is fine. A
+`rwv workweave create`, `rwv member add`, `clone` — is **birth** and is fine. A
 birth attaches at the revision the verb is materializing — the lock revision
 for `fetch`, the resolved start point for `workweave create` and `add` — and
 **a birth is never followed by a MOVE to reach the intended revision.**
@@ -944,7 +944,7 @@ record. Two rows have since closed:
 |---|---|---|
 | `BranchAlreadyExists { branch }` (`vcs.rs:295`) | still `RefName` `[V]` | `RawRefName` — an error reports an observed name |
 | `tag_at_head` (`vcs.rs:1947`) | still `Option<RefName>` `[V]` | `Option<RawRefName>` — a tag is not a branch; it never enters the branch model |
-| `default_branch` | **deleted from `GitVcs` and from the trait** `[V]` | `Option<RemoteDefaultBranch>` — see below. Resolved not by retyping the method but by removing it, so the fabricating shape cannot be reintroduced by a future implementor. `Vcs::remote_default_branch` (`vcs.rs:3037`, impl `git.rs:2122-2137`) is now the only producer, and `rwv push`'s gate (`push.rs:179`), doctor's canonical pass (`check.rs:3736`), and two of `rwv add`'s three `branch` writes (`add_remove.rs:295-296`, `:394`) all read it. The third, `rwv add --new`, has no origin to read and resolves from `head_attachment` instead (`:693-703`) `[V]` — §6.2 |
+| `default_branch` | **deleted from `GitVcs` and from the trait** `[V]` | `Option<RemoteDefaultBranch>` — see below. Resolved not by retyping the method but by removing it, so the fabricating shape cannot be reintroduced by a future implementor. `Vcs::remote_default_branch` (`vcs.rs:3037`, impl `git.rs:2122-2137`) is now the only producer, and `rwv push`'s gate (`push.rs:179`), doctor's canonical pass (`check.rs:3736`), and two of `rwv member add`'s three `branch` writes (`add_remove.rs:295-296`, `:394`) all read it. The third, `rwv member add --new`, has no origin to read and resolves from `head_attachment` instead (`:693-703`) `[V]` — §6.2 |
 | `branch_has_remote_counterpart` (`vcs.rs:2298`) | still `&RefName` `[V]` | `&RawRefName` — the prune predicate inspects observed names |
 | `count_commits_ahead_of_remote` (`vcs.rs:2318`) | still `&RefName` `[V]` | `&RawRefName` — same predicate |
 | `list_local_branches` | **deleted from `GitVcs` and from the trait** `[V]` | `Vec<RawRefName>` — resolved the same way as `default_branch`: not by retyping the qualified listing but by removing it, so a caller cannot reach a qualified name to hand-strip. `list_local_branch_names` (`vcs.rs:3205`, impl `git.rs:2259-2275`) is now the only local-branch listing, and its production caller, `prune_dropped_repo` (`sync.rs:1425`), takes the `RawRefName`s it returns and wraps each bare into a `RefName` — no `refs/heads/` prefix left to strip. Pinned by `tests/refs_heads_hand_strip_test.rs`, which fails if any file outside `git.rs` hand-strips that prefix |
@@ -968,7 +968,7 @@ weave with no `origin/HEAD` refuses instead of being told its branch is
 value. **The rest of the wiring has since shipped too**, which is what this
 paragraph used to list as outstanding: `default_branch` — the method that
 fabricated `"main"` on any failure and on a malformed symref — no longer
-exists, and `rwv add`'s three `branch`-writing sites read
+exists, and `rwv member add`'s three `branch`-writing sites read
 `remote_default_branch` (refusing by name when it is `None`) or, on the
 `--new` path that has no origin, `head_attachment` `[V]`. §6.2.
 
@@ -2081,7 +2081,7 @@ not wait for this design:
 
 - **Fixed since the previous citation base.** `default_branch` fabricated
   `"main"` on any failure *and* on a malformed symref, and its return value
-  was written into `rwv.toml` verbatim as `branch` by three `rwv add` call
+  was written into `rwv.toml` verbatim as `branch` by three `rwv member add` call
   sites, where `update` then resolved `origin/main` and failed forever. The
   method has been **deleted from `GitVcs` and from the `Vcs` trait**, so the
   fabricating shape cannot be reintroduced by a future implementor `[V]`. The
@@ -2512,7 +2512,7 @@ invents it any more. `default_branch`, the method that fabricated, has been
 deleted from `GitVcs` and from the trait, so no reader and no *writer* can
 reach the fallback: the publish gate refuses when `origin/HEAD` is unset
 (`push.rs:181-187`), doctor's canonical pass reads the same honest `Option`
-(`check.rs:3736`), and `rwv add`'s three `branch`-writing sites either
+(`check.rs:3736`), and `rwv member add`'s three `branch`-writing sites either
 refuse by name or read the repo's own HEAD (`add_remove.rs:295-308`,
 `:397-410`, `:693-703`) `[V]`. A repo whose real default is `master` now
 gets `master` recorded. **What remains open is the other half, unchanged:
@@ -2554,7 +2554,7 @@ authoritative for "does this workweave exist" is still undecided, and
 registry-versus-scan remains a separate decision with its own blast radius.
 
 **Q11 — Who owns canonical-store lifetime? (narrowed) — STILL OPEN, and
-narrower than when written.** `rwv remove --delete` used to run
+narrower than when written.** `rwv member remove --delete` used to run
 `remove_dir_all` on the whole store with no live-worktree check, no dirty
 check, and no unpushed check, and `rwv doctor` reported nothing afterwards
 because the manifest entry was removed first `[S]`. It destroys the refdb
@@ -2735,7 +2735,7 @@ drift-producing path has not been traced by anyone.
 - **The `"main"` fabrication** (§4.2, §6.2, and Q6's project-repo
   sub-question) — `default_branch` is deleted from `GitVcs` and from the
   trait. Nothing in the tree invents a canonical branch any more; the gate
-  and all three `rwv add` writers read an observation or refuse by name.
+  and all three `rwv member add` writers read an observation or refuse by name.
 
 **Left open, with the question stated:** Q6 (the publish-ref choice itself,
 and where a non-default channel's identity is recorded — its

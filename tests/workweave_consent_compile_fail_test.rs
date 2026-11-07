@@ -33,7 +33,7 @@ fn the_harness_can_delete_and_create_without_consent() {
                 name: n,
                 replace_existing: None,
                 dirty_source: DirtySource::Refuse,
-                dir_override: None,
+                placement: &repoweave::workweave::Placement::DefaultBasedir,
                 activation: ActivateOptions::default(),
             });
         }
@@ -76,7 +76,7 @@ fn create_does_not_take_a_bool_for_replacing_an_existing_workweave() {
                 name: n,
                 replace_existing: true,
                 dirty_source: DirtySource::Refuse,
-                dir_override: None,
+                placement: &repoweave::workweave::Placement::DefaultBasedir,
                 activation: ActivateOptions::default(),
             });
         }
@@ -102,7 +102,7 @@ fn create_does_not_take_a_bool_for_the_dirty_source() {
                 name: n,
                 replace_existing: None,
                 dirty_source: true,
-                dir_override: None,
+                placement: &repoweave::workweave::Placement::DefaultBasedir,
                 activation: ActivateOptions::default(),
             });
         }

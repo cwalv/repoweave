@@ -31,12 +31,15 @@ impl Weave {
         std::fs::create_dir_all(origin.parent().unwrap()).unwrap();
         common::init_bare_repo_with_commit(&origin);
         rwv(&primary, &["init", "demo"]);
-        rwv(&primary, &["add", &common::file_url(&origin)]);
+        rwv(&primary, &["member", "add", &common::file_url(&origin)]);
         rwv(&primary, &["lock"]);
         let project = primary.join("projects").join("demo");
         common::git_in(&project, &["add", "-A"]);
         common::git_in(&project, &["commit", "--quiet", "-m", "init"]);
-        rwv(&primary, &["workweave", "demo", "create", "feat"]);
+        rwv(
+            &primary,
+            &["workweave", "create", "--project", "demo", "feat"],
+        );
         let workweave = tmp.path().join(".workweaves").join(BRANCH);
         assert!(common::under(&workweave, MEMBER).join(".git").is_file());
         Self {
@@ -366,7 +369,7 @@ fn assert_restored(w: &Weave, tip: &str, before: &[String], unlanded: Option<&st
 /// restores the checkout.
 fn follow_workweave_log(branch: Branch) {
     let (w, tip, before, unlanded) = removed_checkout(branch);
-    let log = text(&rwv(&w.workweave, &["workweave", "demo", "log"]));
+    let log = text(&rwv(&w.workweave, &["workweave", "log"]));
     assert_names(
         &log,
         &[
@@ -595,7 +598,7 @@ fn a_create_over_a_moved_branch_succeeds_after_its_branch_m_advice_and_keeps_the
     doctor_fix(&w.primary);
 
     let out = common::rwv()
-        .args(["workweave", "demo", "create", "feat"])
+        .args(["workweave", "create", "--project", "demo", "feat"])
         .current_dir(&w.primary)
         .output()
         .unwrap();
@@ -618,7 +621,10 @@ fn a_create_over_a_moved_branch_succeeds_after_its_branch_m_advice_and_keeps_the
         .unwrap();
     assert!(out.status.success(), "{}", text(&out));
 
-    rwv(&w.primary, &["workweave", "demo", "create", "feat"]);
+    rwv(
+        &w.primary,
+        &["workweave", "create", "--project", "demo", "feat"],
+    );
     common::git_in(
         w.canonical(),
         &[

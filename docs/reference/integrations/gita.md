@@ -22,7 +22,7 @@ The table takes only `enabled`:
 enabled = true
 ```
 
-After enabling it, `rwv doctor` reports both CSVs as `managed-file-missing`, and `rwv doctor --fix` writes them into `projects/<project>/gita/` and surfaces them at the weave or workweave root as `gita/repos.csv` and `gita/groups.csv`. From then on the authoring verbs (`rwv add`, `remove`, `update`, `role`) keep them current.
+After enabling it, `rwv doctor` reports both CSVs as `managed-file-missing`, and `rwv doctor --fix` writes them into `projects/<project>/gita/` and surfaces them at the weave or workweave root as `gita/repos.csv` and `gita/groups.csv`. From then on the authoring verbs (`rwv member add`, `remove`, `update`, `role`) keep them current.
 
 gita looks for its files in `$GITA_PROJECT_HOME/gita/`, so point `GITA_PROJECT_HOME` at the weave or workweave root itself, not at its `gita/` directory:
 

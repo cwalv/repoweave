@@ -91,15 +91,15 @@ rwv lock --commit -m "lock: update after payment feature"   # snapshot repo SHAs
 ```bash
 mkdir my-workspace && cd my-workspace
 rwv init web-app
-rwv add https://github.com/chatly/server.git
-rwv add https://github.com/chatly/shared-types.git --role dependency
+rwv member add https://github.com/chatly/server.git
+rwv member add https://github.com/chatly/shared-types.git --role dependency
 rwv lock --commit -m "lock: initial project snapshot"
 ```
 
 **Working in an isolated workweave (parallel features, PR review, or agent sandboxes):**
 
 ```bash
-rwv workweave web-app create payments    # creates isolated working copy with git worktrees
+rwv workweave create payments    # creates isolated working copy with git worktrees
 cd ../.workweaves/web-app--payments
 # independent branches, node_modules, .venv — primary weave is undisturbed
 # ... commit changes across member repos ...
@@ -119,9 +119,10 @@ rwv sync-to --retire                     # rebase onto parent, auto-relock, fast
 | `rwv init <project>` | Create a new project with empty `rwv.toml`. Optional `--provider registry/owner` sets up the remote |
 | `rwv activate <project>` | Set the active project — update `.rwv-active`, verify integration files, surface symlinks at the weave root, and run install hooks (`--no-materialize` to skip hooks) |
 | `rwv materialize` | Run integration install hooks, clean up disabled-integration artifacts, and settle drifted attested files (`--regenerate-drifted`, `--adopt-drifted`, `--remove-undeclared-links`) without switching projects |
-| `rwv add <url>` | Clone a repo, add to `rwv.toml`, re-run integrations. `<url>` is a URL (`file://` for a local remote) or registry shorthand; `--adopt <path>` registers a clone already under the weave root; `--role` sets the role, `--new` for `git init` |
-| `rwv remove <path>` | Remove from `rwv.toml`, re-run integrations. `--delete` removes this workspace's checkout |
-| `rwv role <repo> <role>` | Change a repo's role in `rwv.toml`, update ecosystem workspace files, and settle file permissions |
+| `rwv member add <url>` | Clone a repo, add to `rwv.toml`, re-run integrations. `<url>` is a URL (`file://` for a local remote) or registry shorthand; `--adopt <path>` registers a clone already under the weave root; `--role` sets the role, `--new` for `git init`, `--no-recurse-submodules` leaves the member's submodules uninitialized in new checkouts |
+| `rwv member remove <path>` | Remove from `rwv.toml`, re-run integrations. `--delete` removes this workspace's checkout |
+| `rwv member set-role <repo> <role>` | Change a repo's role in `rwv.toml`, update ecosystem workspace files, and settle file permissions |
+| `rwv member set-recurse-submodules <repo> <true\|false>` | Say whether new checkouts of a repo populate its submodules, and update ecosystem workspace files |
 | `rwv lock` | Snapshot repo HEADs into `rwv.lock`. Errors on uncommitted changes (`--dirty` to bypass). `--commit` commits the lock, with `rwv.toml` when it has uncommitted changes (`-m` sets the message) |
 | `rwv doctor` | Convention enforcement: orphans, dangling refs, stale locks, integration checks. `--locked` for scriptable lock-freshness check |
 | `rwv status` | Show per-repo state: branch, tip, lock entry, relation, mid-op state. `--json` for machine-readable output |
@@ -130,11 +131,11 @@ rwv sync-to --retire                     # rebase onto parent, auto-relock, fast
 | `rwv abort` | Roll an in-flight `sync` or `sync-to` back to its savepoints in every workspace it touched; run it from any of them |
 | `rwv push` | Coordinated cross-repo push: member repos first, then project repo. `--dry-run` to preview; `--force` for force-push consent; `--role`/`--repo` selectors to limit scope |
 | `rwv update` | Advance each repo to its branch HEAD and re-snapshot `rwv.lock` (network bump; analogous to `cargo update`). `--commit` commits the lock and the regenerated files, with `rwv.toml` when it has uncommitted changes |
-| `rwv workweave <project> create <name>` | Create an isolated working copy (worktrees on ephemeral branches) and run its install hooks (`--no-materialize` skips them) |
-| `rwv workweave <project> set-container <path>` | Set the directory new workweaves for `project` are created under by default |
-| `rwv workweave <project> delete <name>` | Delete a workweave (remove worktrees, clean up ephemeral branches) |
-| `rwv workweave <project> list` | List workweaves for a project |
-| `rwv workweave <project> log` | Show this workweave's unique commits (or `--diff` for the diff) versus its recorded parent, per repo. `--json` for machine-readable output |
+| `rwv workweave create <name>` | Create an isolated working copy (worktrees on ephemeral branches) and run its install hooks (`--no-materialize` skips them). `--dir <path>` places it at exactly that path; `--basedir <path>` places it under that directory for one run |
+| `rwv workweave set-default-create-basedir <path>` | Set the directory new workweaves of the project are created under by default |
+| `rwv workweave delete <name>` | Delete a workweave (remove worktrees, clean up ephemeral branches) |
+| `rwv workweave list` | List the project's workweaves |
+| `rwv workweave log` | Show this workweave's unique commits (or `--diff` for the diff) versus its recorded parent, per repo. `--json` for machine-readable output |
 | `rwv resolve` | Print the weave root path (useful for scripting: `cd $(rwv resolve)`) |
 | `rwv prime` | Print structured workspace context for agent system prompts |
 | `rwv explain [<verb>]` | Print a markdown reflection bundle for `<verb>` (purpose, invocation, output, JSON Schema, exit codes, examples). Omit `<verb>` to list explainable verbs |
@@ -171,15 +172,15 @@ A workweave is a full isolated copy of the workspace — its own branches, its o
 
 ```bash
 # 1. Create an isolated workspace for the agent
-rwv workweave web-app create fix-auth
+rwv workweave create fix-auth
 
 # 2. Hand the workweave path to the agent
 #    The agent CDs into ../.workweaves/web-app--fix-auth/ and works normally.
 #    It can commit and run tests across repos — primary is undisturbed.
 
 # 3. Review the commits and diff in the workweave before landing
-rwv -w web-app--fix-auth workweave web-app log
-rwv -w web-app--fix-auth workweave web-app log --diff
+rwv -w web-app--fix-auth workweave log
+rwv -w web-app--fix-auth workweave log --diff
 
 # 4. Land the work and retire the workweave
 cd ../.workweaves/web-app--fix-auth

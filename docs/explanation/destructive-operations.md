@@ -33,7 +33,7 @@ Examples in the current tree:
 - `rwv sync-to --retire` refuses to delete a workweave that still holds a
   checkout replay refused to prune (`retire-unpruned-checkout`), and its
   dirty check covers every checkout under the workweave the same way.
-- `rwv remove --delete` refuses to delete a checkout with uncommitted
+- `rwv member remove --delete` refuses to delete a checkout with uncommitted
   changes or commits no other clone reaches, and refuses to delete the
   canonical store while another project's manifest still references the
   repo.

@@ -68,7 +68,7 @@ fn weaves() -> Weaves {
     let project = source.join("projects").join(PROJECT);
     common::git_in(&project, &["config", "user.email", "test@test.com"]);
     common::git_in(&project, &["config", "user.name", "Test"]);
-    succeed(&source, &["add", &common::file_url(&alpha)]);
+    succeed(&source, &["member", "add", &common::file_url(&alpha)]);
     succeed(&source, &["lock"]);
     commit_project(&source, "alpha");
 
@@ -76,7 +76,7 @@ fn weaves() -> Weaves {
     std::fs::create_dir_all(&target).unwrap();
     succeed(&target, &["fetch", &common::file_url(&project)]);
 
-    succeed(&source, &["add", &common::file_url(&beta)]);
+    succeed(&source, &["member", "add", &common::file_url(&beta)]);
     succeed(&source, &["lock"]);
     commit_project(&source, "beta");
     let member = "local/remotes/beta".to_owned();

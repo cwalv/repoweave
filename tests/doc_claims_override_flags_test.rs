@@ -182,7 +182,7 @@ fn make_workweave_with_dirty_and_unmerged_commit(
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
-        .args(["workweave", project, "create", name])
+        .args(["workweave", "create", "--project", project, name])
         .current_dir(&ws)
         .assert()
         .success();
@@ -214,8 +214,9 @@ fn workweave_delete_discard_uncommitted_does_not_waive_unmerged_commits() {
     let output = rwv()
         .args([
             "workweave",
-            "web-app",
             "delete",
+            "--project",
+            "web-app",
             "both-a",
             "--discard-uncommitted",
         ])
@@ -259,8 +260,9 @@ fn workweave_delete_discard_unmerged_commits_does_not_waive_uncommitted() {
     let output = rwv()
         .args([
             "workweave",
-            "web-app",
             "delete",
+            "--project",
+            "web-app",
             "both-b",
             "--discard-unmerged-commits",
         ])
@@ -273,8 +275,13 @@ fn workweave_delete_discard_unmerged_commits_does_not_waive_uncommitted() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("uncommitted changes") && stderr.contains("--discard-uncommitted"),
-        "refusal must still name the uncommitted waiver; got: {stderr}"
+        stderr.contains("edits dirty")
+            && stderr.contains("    rwv workweave delete both-b --discard-uncommitted\n"),
+        "refusal must still offer the uncommitted waiver as a choice; got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("deletes the workweave with these uncommitted changes in it"),
+        "the waiver is a choice in the table, not a note line beside it; got: {stderr}"
     );
     assert!(
         ww_dir.exists(),
@@ -302,8 +309,9 @@ fn workweave_delete_both_discard_flags_clear_both_preconditions() {
     rwv()
         .args([
             "workweave",
-            "web-app",
             "delete",
+            "--project",
+            "web-app",
             "both-c",
             "--discard-uncommitted",
             "--discard-unmerged-commits",

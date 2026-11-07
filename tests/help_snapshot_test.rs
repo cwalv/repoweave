@@ -33,11 +33,9 @@ Commands:
   materialize  Settle drift, clean up disabled integrations, repair missing weave-root symlinks, and run integration install hooks for the project this checkout already presents, without selecting anything. Hooks materialize; they never move a pin
   prime        Print structured workspace context for agent system prompts
   resolve      Print weave root path
-  add          Add a repo to the active project
   fetch        Clone a project and align repos to rwv.lock (no network bump). Use `rwv update` to advance to branch HEAD. With no SOURCE, re-materialize missing manifest members of the active project (repair verb for dangling references)
   init         Initialize a new project
-  role         Change a repo's role in the active project, and settle its files for it
-  remove       Remove a repo from the active project
+  member       Add a repo to the active project, remove one, or change a member's role or submodule setting
   workweave    Create, delete, or list workweaves
   doctor       Convention enforcement and lock-freshness checking
   lock         Snapshot repo versions (pure git SHA snapshot — no integration hooks fire). Run `rwv materialize` after lock changes the workspace membership to refresh node_modules / .venv / etc

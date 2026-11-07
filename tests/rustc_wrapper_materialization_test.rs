@@ -200,7 +200,11 @@ fn workweave_create_fits_the_wrapper_key_in_the_new_seat() {
     common::git_in(&project, &["commit", "-m", "authored"]);
 
     install_sccache(&bin);
-    let report = rwv(&ws, &path, &["workweave", "app", "create", "seat"]);
+    let report = rwv(
+        &ws,
+        &path,
+        &["workweave", "create", "--project", "app", "seat"],
+    );
     let seat = tmp.path().join(".workweaves/app--seat");
     assert!(
         surfaced_config(&seat, "app").is_some_and(|c| c.contains(WRAPPER_KEY)),

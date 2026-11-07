@@ -23,7 +23,7 @@ for repo in protocol server web; do
   git clone "/tmp/chatly-remotes/${repo}.git" "/tmp/chatly-remotes/work-${repo}"
   git -C "/tmp/chatly-remotes/work-${repo}" commit --allow-empty -m "initial ${repo}"
   git -C "/tmp/chatly-remotes/work-${repo}" push -u origin main
-  rwv add "file:///tmp/chatly-remotes/${repo}.git"
+  rwv member add "file:///tmp/chatly-remotes/${repo}.git"
 done
 git -C projects/web-app add -A && git -C projects/web-app commit -m "initial project"
 rwv lock --commit
@@ -98,7 +98,7 @@ git add -A
 git commit -m "server: add welcome message"
 ```
 
-> **Tip — isolated feature branches:** Keep canonical clones in the primary weave on their tracked branch (`branch` in `rwv.toml`). When you want an isolated branch across one or more repos, create a workweave (`rwv workweave web-app create welcome-message`) and land it back with `rwv sync-to --retire` — see [create a feature workweave](./how-to/create-feature-workweave.md).
+> **Tip — isolated feature branches:** Keep canonical clones in the primary weave on their tracked branch (`branch` in `rwv.toml`). When you want an isolated branch across one or more repos, create a workweave (`rwv workweave create welcome-message`) and land it back with `rwv sync-to --retire` — see [create a feature workweave](./how-to/create-feature-workweave.md).
 
 Ecosystem workspace wiring means a change in `github/chatly/protocol` is immediately visible to `github/chatly/server` without a publish step:
 

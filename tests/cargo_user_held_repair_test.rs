@@ -189,7 +189,13 @@ fn an_authoring_verb_takes_over_a_resolver_only_cargo_toml_and_defers_to_unmarke
     rwv(
         &ws,
         None,
-        &["role", "github/acme/beta", "fork", "--no-materialize"],
+        &[
+            "member",
+            "set-role",
+            "github/acme/beta",
+            "fork",
+            "--no-materialize",
+        ],
     );
     let taken = assert_members_handed_over(&cargo_toml, "the authoring verb");
     assert!(taken.contains("resolver = \"2\""), "{taken}");
@@ -212,7 +218,13 @@ fn an_authoring_verb_takes_over_a_resolver_only_cargo_toml_and_defers_to_unmarke
     rwv(
         &ws,
         None,
-        &["role", "github/acme/beta", "owned", "--no-materialize"],
+        &[
+            "member",
+            "set-role",
+            "github/acme/beta",
+            "owned",
+            "--no-materialize",
+        ],
     );
     assert_eq!(
         read(&cargo_toml),
@@ -292,7 +304,13 @@ fn an_unmarked_wrapper_key_is_deferred_to_and_a_config_without_rwv_keys_is_taken
         "an unmarked key's finding must name the remedies that hand it over: {held}"
     );
     for verb in [
-        &["role", "github/acme/beta", "fork", "--no-materialize"][..],
+        &[
+            "member",
+            "set-role",
+            "github/acme/beta",
+            "fork",
+            "--no-materialize",
+        ][..],
         &["materialize"],
     ] {
         rwv(&ws, path, verb);
@@ -336,7 +354,13 @@ fn an_unmarked_wrapper_key_is_deferred_to_and_a_config_without_rwv_keys_is_taken
     rwv(
         &ws,
         path,
-        &["role", "github/acme/beta", "owned", "--no-materialize"],
+        &[
+            "member",
+            "set-role",
+            "github/acme/beta",
+            "owned",
+            "--no-materialize",
+        ],
     );
     let remedy = "deleting the key, then an authoring verb";
     let written = read(&config);

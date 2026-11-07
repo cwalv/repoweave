@@ -222,8 +222,8 @@ wrapper — `sccache` is the typical choice — **when the host has it**:
 rustc-wrapper = "sccache"
 ```
 
-At each authoring pass and each materialization — `rwv add`, `rwv remove`,
-`rwv update`, `rwv role`, a `rwv doctor --fix` that regenerates,
+At each authoring pass and each materialization — `rwv member add`, `rwv member remove`,
+`rwv update`, `rwv member set-role`, a `rwv doctor --fix` that regenerates,
 `rwv materialize`, and, unless `--no-materialize` is passed, `rwv activate`,
 `rwv workweave create`, and the activation a `rwv fetch` performs — the
 named binary is looked up on `PATH`:
@@ -325,7 +325,7 @@ A Cargo workspace weave produces three distinct lock/manifest artifacts with sep
 
 | Artifact | Produced by | Pins | Committable |
 |---|---|---|---|
-| `Cargo.toml` (managed) | Authoring verbs (`rwv add`, `remove`, `update`, `role`, `doctor --fix`) | Workspace shape — which repos are members | Yes |
+| `Cargo.toml` (managed) | Authoring verbs (`rwv member add`, `remove`, `update`, `role`, `doctor --fix`) | Workspace shape — which repos are members | Yes |
 | `Cargo.lock` | Install hook (`cargo generate-lockfile` for the first resolve, `cargo fetch` after) | External crate versions from crates.io | Operator's choice ([details](./index.md#committed-files-and-committability)) |
 | `rwv.lock` | `rwv lock` | Internal repo revisions (git SHAs) | Yes |
 

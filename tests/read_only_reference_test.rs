@@ -130,7 +130,10 @@ impl Weave {
     }
 
     fn create(&self, name: &str) -> PathBuf {
-        succeed(&["workweave", PROJECT, "create", name], &self.primary);
+        succeed(
+            &["workweave", "create", "--project", PROJECT, name],
+            &self.primary,
+        );
         self.workweave(name)
     }
 
@@ -360,13 +363,22 @@ fn add_settles_the_member_it_adds_in_the_primary_and_in_a_workweave() {
     let extra = upstream(tmp.path(), "extra", &[("EXTRA", "e\n")], None);
     let url = common::file_url(&extra);
 
-    succeed(&["add", &url, "--role", "reference"], &weave.primary);
+    succeed(
+        &["member", "add", &url, "--role", "reference"],
+        &weave.primary,
+    );
     let member = find_member(&weave.primary, &extra);
     assert_read_only(&member, "after add in the primary");
 
     let other = upstream(tmp.path(), "other", &[("OTHER", "x\n")], None);
     succeed(
-        &["add", &common::file_url(&other), "--role", "reference"],
+        &[
+            "member",
+            "add",
+            &common::file_url(&other),
+            "--role",
+            "reference",
+        ],
         &seat,
     );
     let rel = find_member(&weave.primary, &other)
@@ -376,7 +388,7 @@ fn add_settles_the_member_it_adds_in_the_primary_and_in_a_workweave() {
     assert_read_only(&seat.join(rel), "after add in a workweave");
 }
 
-/// Where `rwv add` placed the clone of `upstream` under `primary`: the
+/// Where `rwv member add` placed the clone of `upstream` under `primary`: the
 /// placement depends on the URL's registry, which this file does not restate.
 fn find_member(primary: &Path, upstream: &Path) -> PathBuf {
     let want = common::file_url(upstream);
@@ -799,7 +811,14 @@ fn a_role_made_reference_in_one_project_leaves_a_clone_another_declares_owned_wr
     activate(&weave, OTHER_PROJECT);
 
     succeed(
-        &["role", "--project", PROJECT, REF_PATH, "reference"],
+        &[
+            "member",
+            "set-role",
+            "--project",
+            PROJECT,
+            REF_PATH,
+            "reference",
+        ],
         &weave.primary,
     );
 

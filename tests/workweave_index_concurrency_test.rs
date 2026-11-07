@@ -327,7 +327,7 @@ fn two_concurrent_creates_leave_no_branch_without_a_receipt() {
         let out = rwv_at(
             &bin,
             &serial_ws.workspace,
-            &["workweave", PROJECT, "create", name],
+            &["workweave", "create", "--project", PROJECT, name],
         )
         .output()
         .expect("serial create spawns");
@@ -352,9 +352,13 @@ fn two_concurrent_creates_leave_no_branch_without_a_receipt() {
         .map(|name| {
             (
                 *name,
-                rwv_at(&bin, &ws.workspace, &["workweave", PROJECT, "create", name])
-                    .spawn()
-                    .expect("concurrent create spawns"),
+                rwv_at(
+                    &bin,
+                    &ws.workspace,
+                    &["workweave", "create", "--project", PROJECT, name],
+                )
+                .spawn()
+                .expect("concurrent create spawns"),
             )
         })
         .collect();

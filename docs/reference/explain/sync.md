@@ -50,7 +50,7 @@ as it would if the workweave were deleted: its worktree is unregistered there,
 and the branch the workweave was given in that clone is deleted, with its
 ownership receipt, once the workweave's parent or the primary weave holds its
 commits. A branch holding commits neither holds stays, receipt and all, and a
-warning names it. The clone itself stays; `rwv remove <path> --delete` in the
+warning names it. The clone itself stays; `rwv member remove <path> --delete` in the
 primary weave removes it.
 
 `role: reference` repos sync like every other member: each is a worktree on

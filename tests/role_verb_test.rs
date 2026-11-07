@@ -1,4 +1,4 @@
-//! `rwv role <repo> <role>` edits a member's role in this workspace's
+//! `rwv member set-role <repo> <role>` edits a member's role in this workspace's
 //! manifest, regenerates from it, and settles the member's files.
 //!
 //!   - both directions, in the primary and in a workweave, with the generated
@@ -106,7 +106,10 @@ impl Weave {
     }
 
     fn create(&self, name: &str) -> PathBuf {
-        succeed(&["workweave", "demo", "create", name], &self.ws);
+        succeed(
+            &["workweave", "create", "--project", "demo", name],
+            &self.ws,
+        );
         self.tmp.join(".workweaves").join(format!("demo--{name}"))
     }
 }
@@ -119,8 +122,8 @@ fn make_weave(tmp: &Path) -> Weave {
     succeed(&["init", "demo"], &ws);
     let alpha_url = crate_origin(tmp, "alpha", "");
     let beta_url = crate_origin(tmp, "beta", "");
-    succeed(&["add", &alpha_url], &ws);
-    succeed(&["add", &beta_url], &ws);
+    succeed(&["member", "add", &alpha_url], &ws);
+    succeed(&["member", "add", &beta_url], &ws);
     let project = ws.join("projects/demo");
     common::git_in(&project, &["config", "user.email", "test@test.com"]);
     common::git_in(&project, &["config", "user.name", "Test"]);
@@ -226,18 +229,18 @@ fn round_trip(weave: &Weave, workspace: &Path) {
     let beta = workspace.join(&weave.beta);
     assert_writable(&beta, "before");
 
-    succeed(&["role", &weave.beta, "reference"], workspace);
+    succeed(&["member", "set-role", &weave.beta, "reference"], workspace);
     assert_eq!(weave.role_of(workspace, &weave.beta), Role::Reference);
-    assert_read_only(&beta, "after `rwv role ... reference`");
+    assert_read_only(&beta, "after `rwv member set-role ... reference`");
     let generated = weave.generated_members(workspace);
     assert!(
         !generated.contains(&weave.beta) && generated.contains(&weave.alpha),
         "a reference member leaves the generated Cargo workspace:\n{generated}"
     );
 
-    succeed(&["role", &weave.beta, "owned"], workspace);
+    succeed(&["member", "set-role", &weave.beta, "owned"], workspace);
     assert_eq!(weave.role_of(workspace, &weave.beta), Role::Owned);
-    assert_writable(&beta, "after `rwv role ... owned`");
+    assert_writable(&beta, "after `rwv member set-role ... owned`");
     assert!(
         weave.generated_members(workspace).contains(&weave.beta),
         "an owned member rejoins the generated Cargo workspace"
@@ -257,14 +260,14 @@ fn role_changes_both_ways_in_a_workweave_and_stays_local() {
     let weave = make_weave(tmp.path());
     let seat = weave.create("seat");
 
-    succeed(&["role", &weave.beta, "reference"], &seat);
+    succeed(&["member", "set-role", &weave.beta, "reference"], &seat);
     assert_read_only(&seat.join(&weave.beta), "in the workweave");
     assert_writable(
         &weave.ws.join(&weave.beta),
         "the primary, which has not seen the change",
     );
     assert_eq!(weave.role_of(&weave.ws, &weave.beta), Role::Owned);
-    succeed(&["role", &weave.beta, "owned"], &seat);
+    succeed(&["member", "set-role", &weave.beta, "owned"], &seat);
 
     round_trip(&weave, &seat);
 }
@@ -277,12 +280,12 @@ fn a_change_to_reference_refuses_over_uncommitted_changes() {
     std::fs::write(beta.join("src/lib.rs"), "pub fn edited() {}\n").unwrap();
     let manifest = std::fs::read(weave.project_dir(&weave.ws).join("rwv.toml")).unwrap();
 
-    let out = run(&["role", &weave.beta, "reference"], &weave.ws);
+    let out = run(&["member", "set-role", &weave.beta, "reference"], &weave.ws);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(1), "{}", describe(&out));
     assert!(
         stderr.contains(&format!(
-            "rwv role: {}: edits dirty\n    src/lib.rs\n",
+            "rwv member set-role: {}: edits dirty\n    src/lib.rs\n",
             weave.beta
         )) && stderr.contains("commit your edits, or set them aside")
             && stderr.contains(&format!("git -C {} commit", beta.display())),
@@ -309,7 +312,7 @@ fn an_unchanged_role_changes_nothing() {
         .modified()
         .unwrap();
 
-    let out = succeed(&["role", &weave.alpha, "owned"], &weave.ws);
+    let out = succeed(&["member", "set-role", &weave.alpha, "owned"], &weave.ws);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(
         rwv_lines(&stderr),
@@ -355,7 +358,7 @@ fn an_unchanged_reference_role_makes_the_files_read_only() {
     let written_at = manifest_mtime(&weave);
     let manifest = std::fs::read(&toml).unwrap();
 
-    let out = succeed(&["role", &weave.beta, "reference"], &weave.ws);
+    let out = succeed(&["member", "set-role", &weave.beta, "reference"], &weave.ws);
     assert!(
         String::from_utf8_lossy(&out.stderr)
             .contains(&format!("'{}' is already reference; settled ", weave.beta)),
@@ -390,7 +393,7 @@ fn an_unchanged_owned_role_makes_a_shared_read_only_file_a_private_writable_copy
     assert_read_only(&beta, "fixture: a read-only owned member");
     let written_at = manifest_mtime(&weave);
 
-    let out = succeed(&["role", &weave.beta, "owned"], &weave.ws);
+    let out = succeed(&["member", "set-role", &weave.beta, "owned"], &weave.ws);
     assert!(
         String::from_utf8_lossy(&out.stderr)
             .contains(&format!("'{}' is already owned; settled ", weave.beta)),
@@ -416,13 +419,13 @@ fn a_change_the_regeneration_refuses_leaves_the_member_as_it_was() {
     let tmp = common::tempdir().unwrap();
     let weave = make_weave(tmp.path());
     let url = crate_origin(tmp.path(), "nested", "\n[workspace]\nmembers = []\n");
-    succeed(&["add", &url, "--role", "reference"], &weave.ws);
+    succeed(&["member", "add", &url, "--role", "reference"], &weave.ws);
     let nested = path_of(&weave.ws, &url);
     let member = weave.ws.join(&nested);
     assert_read_only(&member, "fixture: a reference member");
     let manifest = std::fs::read(weave.project_dir(&weave.ws).join("rwv.toml")).unwrap();
 
-    let out = run(&["role", &nested, "owned"], &weave.ws);
+    let out = run(&["member", "set-role", &nested, "owned"], &weave.ws);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(!out.status.success(), "{}", describe(&out));
     assert!(
@@ -442,7 +445,7 @@ fn an_unknown_role_or_repo_is_rejected() {
     let tmp = common::tempdir().unwrap();
     let weave = make_weave(tmp.path());
 
-    let out = run(&["role", &weave.alpha, "upstream"], &weave.ws);
+    let out = run(&["member", "set-role", &weave.alpha, "upstream"], &weave.ws);
     assert_eq!(out.status.code(), Some(2), "{}", describe(&out));
     assert!(
         String::from_utf8_lossy(&out.stderr).contains("reference"),
@@ -450,7 +453,10 @@ fn an_unknown_role_or_repo_is_rejected() {
         describe(&out)
     );
 
-    let out = run(&["role", "github/nobody/nothing", "reference"], &weave.ws);
+    let out = run(
+        &["member", "set-role", "github/nobody/nothing", "reference"],
+        &weave.ws,
+    );
     assert_eq!(out.status.code(), Some(1), "{}", describe(&out));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_routes_to(&stderr, "repo-not-in-manifest");
@@ -463,7 +469,7 @@ fn a_role_change_lands_through_sync_to_and_reaches_other_workweaves() {
     let seat = weave.create("seat");
     let other = weave.create("other");
 
-    succeed(&["role", &weave.beta, "reference"], &seat);
+    succeed(&["member", "set-role", &weave.beta, "reference"], &seat);
     let seat_project = weave.project_dir(&seat);
     common::git_in(&seat_project, &["add", "-A"]);
     common::git_in(

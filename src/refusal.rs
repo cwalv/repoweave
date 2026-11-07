@@ -200,7 +200,7 @@ pub enum RefusalKind {
     UnknownRegistry,
     /// `--provider` is not `registry/owner`.
     MalformedProvider,
-    /// `rwv remove` names a path the manifest does not carry.
+    /// `rwv member remove` names a path the manifest does not carry.
     RepoNotInManifest,
     /// `--frozen` and no lock file.
     MissingLock,

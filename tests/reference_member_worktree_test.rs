@@ -137,7 +137,7 @@ fn workweave_at(root: PathBuf) -> Workweave {
 
 fn create_workweave(primary: &Primary, name: &str) -> Workweave {
     rwv()
-        .args(["workweave", PROJECT, "create", name])
+        .args(["workweave", "create", "--project", PROJECT, name])
         .current_dir(&primary.root)
         .assert()
         .success();
@@ -212,8 +212,9 @@ fn a_nested_workweave_links_its_reference_worktree_into_the_canonical_store() {
     rwv()
         .args([
             "workweave",
-            PROJECT,
             "create",
+            "--project",
+            PROJECT,
             "child",
             "--from",
             &parent.root.to_string_lossy(),
@@ -243,7 +244,7 @@ fn deleting_a_workweave_leaves_a_dirty_canonical_clone_untouched() {
     let dirty = fingerprint(&primary.ref_canonical);
 
     rwv()
-        .args(["workweave", PROJECT, "delete", "feat"])
+        .args(["workweave", "delete", "--project", PROJECT, "feat"])
         .current_dir(&primary.root)
         .assert()
         .success();
@@ -274,7 +275,7 @@ fn two_workweaves_hold_separate_reference_worktrees() {
     commit_file(&wb.ref_checkout, "B", "b\n", "wb: reference commit");
 
     rwv()
-        .args(["workweave", PROJECT, "delete", "wa"])
+        .args(["workweave", "delete", "--project", PROJECT, "wa"])
         .current_dir(&primary.root)
         .assert()
         .success();

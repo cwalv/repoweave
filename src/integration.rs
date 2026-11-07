@@ -798,7 +798,7 @@ pub trait Integration {
     }
 
     /// Generate config files and run install commands.
-    /// Called during `rwv activate`, workweave creation, `rwv sync`, `rwv add`, and `rwv remove`.
+    /// Called during `rwv activate`, workweave creation, `rwv sync`, `rwv member add`, and `rwv member remove`.
     ///
     /// Returns findings the same way `check()` and `verify()` do — a
     /// condition with a published kind (a malformed `[integrations.<name>]`

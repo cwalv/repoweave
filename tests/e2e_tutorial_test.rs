@@ -95,7 +95,7 @@ fn init_bare_cargo_lib(path: &Path, crate_name: &str) {
 /// (so `cargo-workspace`'s detection cache fires), drives intent-mode
 /// activation against a copy, then commits the generated outputs (Cargo.toml,
 /// rwv.lock) into the project source. This mirrors the real-world flow:
-/// the project author ran `rwv add` locally, committed both the manifest and
+/// the project author ran `rwv member add` locally, committed both the manifest and
 /// the integration outputs, and pushed.
 fn make_project_source(tmp: &Path, name: &str, repos: &[(&str, &str)]) -> String {
     let project_bare = tmp.join(format!("{name}.git"));

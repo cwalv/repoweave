@@ -247,7 +247,7 @@ pub fn write(claim: &IndexClaim, index: &WorkweaveIndex) -> anyhow::Result<()> {
         );
     }
     // Hygiene at the chokepoint: every index write — create, delete,
-    // set-container, doctor adoption/prune — keeps the machine-local file
+    // set-default-create-basedir, doctor adoption/prune — keeps the machine-local file
     // out of VCS. Best effort: the design tolerates a committed copy
     // (doctor's tracked-index finding is the net), and a read-only ignore
     // surface must not block the write itself.
@@ -1355,7 +1355,7 @@ mod tests {
         IndexClaim::hold(&primary, &project, |claim| write(claim, &index)).unwrap();
 
         // The chokepoint owns hygiene: any write path (create, delete,
-        // set-container, doctor adoption/prune) must leave the index
+        // set-default-create-basedir, doctor adoption/prune) must leave the index
         // ignored without the caller doing anything.
         let content = std::fs::read_to_string(primary.join("projects/web-app/.gitignore")).unwrap();
         assert!(

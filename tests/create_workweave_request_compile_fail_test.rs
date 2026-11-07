@@ -27,7 +27,7 @@ fn the_harness_can_create_with_named_roots() {
                 name: n,
                 replace_existing: None,
                 dirty_source: DirtySource::Refuse,
-                dir_override: None,
+                placement: &repoweave::workweave::Placement::DefaultBasedir,
                 activation: ActivateOptions::default(),
             });
         }

@@ -362,7 +362,7 @@ carries git's vocabulary across the seam:
   the third item in this list rather than this one: they spell git
   commands such as `git remote set-head origin -a`, and respelling the
   remote name alone would leave the commands standing. They come from
-  `Vcs::remote_default_branch_repair_hint`, and for a clone `rwv add`
+  `Vcs::remote_default_branch_repair_hint`, and for a clone `rwv member add`
   just made from `Vcs::clone_default_branch_repair_hint`, each carrying
   the name and the command together because owning one without the other
   leaves a message half across the seam.
@@ -458,7 +458,7 @@ authors violated repeatedly is a preference until something refuses it.
 
 A registry (`src/registry.rs`) is a seam of its own, adjacent to `Vcs`
 rather than inside it: a registry decides a repo's identity, its
-canonical path, and — for `rwv add --new` — what parameters creating one
+canonical path, and — for `rwv member add --new` — what parameters creating one
 needs; `Vcs` decides how the backend that registry named actually creates,
 clones, or brands it. `CreationPlan.vcs` is the one field a registry
 writes and a verb reads across that line — the registry constrains which

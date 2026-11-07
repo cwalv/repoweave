@@ -43,7 +43,7 @@ A plain entry is branch content. Each workweave surfaces its own checkout of `pr
 
 The primary's copy is the one that has to exist. While it is absent, the link is not created.
 
-A name may not appear both in `files` (in either form) and in `[workweave] link`. `rwv doctor` reports the combination as a `config-rejected` error and exits 1; `rwv activate` prints the same message as a warning and continues; the authoring verbs (`rwv add`, `remove`, `update`, `role`) refuse and put `rwv.toml` back.
+A name may not appear both in `files` (in either form) and in `[workweave] link`. `rwv doctor` reports the combination as a `config-rejected` error and exits 1; `rwv activate` prints the same message as a warning and continues; the authoring verbs (`rwv member add`, `remove`, `update`, `role`) refuse and put `rwv.toml` back.
 
 ### Examples
 

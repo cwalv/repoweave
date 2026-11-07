@@ -321,7 +321,7 @@ fn the_unread_population_is_the_recorded_one() {
     );
     assert_eq!(
         (read, unread),
-        (74, 128),
+        (76, 128),
         "the read/unread split of tokened refusal sites has moved. Up is good and \
          down is a regression, but either way the number is a decision: record it."
     );

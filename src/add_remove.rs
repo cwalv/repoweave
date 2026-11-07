@@ -1,4 +1,4 @@
-//! `rwv add` and `rwv remove` — manage repos in a project manifest.
+//! `rwv member add` and `rwv member remove` — manage repos in a project manifest.
 
 use crate::activate::{activate_intent_for, ActivateOptions, ActivationFailure, RestorePoint};
 use crate::integration_runner::missing_active_members;
@@ -51,7 +51,7 @@ pub(crate) fn find_project(ctx: &WorkspaceContext) -> anyhow::Result<(ProjectNam
 /// and settled for `role` ([`crate::workweave::materialize_member`]). A
 /// symlink in the slot is replaced; a worktree already there is settled.
 ///
-/// If the canonical clone has no HEAD (e.g. `rwv add --new` produced an
+/// If the canonical clone has no HEAD (e.g. `rwv member add --new` produced an
 /// empty `git init`), the worktree creation is skipped — `git worktree add`
 /// against an unborn HEAD would fail. After the first commit, `rwv lock` pins
 /// it and `rwv doctor --fix` creates the worktree.
@@ -77,7 +77,7 @@ fn create_worktree_in_workweave(
         Ok(start) => start,
         Err(_) => {
             eprintln!(
-                "rwv add: canonical clone at {} has no commits yet; \
+                "rwv member add: canonical clone at {} has no commits yet; \
                  skipping worktree creation in workweave \
                  (after the first commit, `rwv lock` then `rwv doctor --fix` here create it)",
                 canonical_clone.display()
@@ -147,7 +147,7 @@ fn place_member(
 /// Write `edited` as `project`'s manifest and regenerate the integrations from
 /// it, as one change; `None` regenerates from the manifest as it stands.
 ///
-/// `rwv add`/`rwv remove` are **intent verbs**: they mutate `rwv.toml`, then
+/// `rwv member add`/`rwv member remove` are **intent verbs**: they mutate `rwv.toml`, then
 /// regenerate the integrations' managed/generated files so the new content can
 /// be committed alongside the manifest change.
 /// In a workweave we still regenerate (the workweave is a view onto the
@@ -242,16 +242,28 @@ pub(crate) fn settle_manifest(
     }
 }
 
-/// Execute `rwv add URL [--role=ROLE]`.
+/// What a member `rwv member add` registers is given beyond where it comes
+/// from.
+#[derive(Debug, Clone, Copy)]
+pub struct NewMemberSettings {
+    pub role: Role,
+    pub recurse_submodules: SubmoduleRecursion,
+}
+
+/// Execute `rwv member add URL [--role=ROLE]`.
 ///
 /// `ctx` is the already-resolved invocation context (with `--project`
 /// baked in when passed). Handlers must not re-resolve.
 pub fn run_add(
     url: &str,
-    role: Role,
+    settings: NewMemberSettings,
     ctx: &WorkspaceContext,
     opts: ActivateOptions,
 ) -> anyhow::Result<()> {
+    let NewMemberSettings {
+        role,
+        recurse_submodules,
+    } = settings;
     let parsed_url: RepoUrl = url.parse()?;
     let repo_path = match crate::registry::placement_result(&parsed_url) {
         Ok(repo_path) => repo_path,
@@ -259,11 +271,11 @@ pub fn run_add(
         Err(crate::registry::PlacementError::NoMatch) if !parsed_url.is_url() => {
             crate::refuse!(
                 RefusalKind::UnresolvableRepoSource,
-                "rwv add: '{url}' is not a URL and no registry reads it as shorthand, so it \
+                "rwv member add: '{url}' is not a URL and no registry reads it as shorthand, so it \
                  reads as a path, which could name a remote to clone from or a clone to \
                  register. To clone from a local remote, spell it as a URL: \
-                 `rwv add {file_url}`. To register the clone already at that path under the \
-                 weave root: `rwv add --adopt {url}`.",
+                 `rwv member add {file_url}`. To register the clone already at that path under the \
+                 weave root: `rwv member add --adopt {url}`.",
                 file_url = file_url_suggestion(url),
             );
         }
@@ -284,7 +296,7 @@ pub fn run_add(
         }
     };
     let clone_url = resolve_to_clone_info(&parsed_url)?.url;
-    // `rwv add` mints the manifest entry, so the backend is an input to the
+    // `rwv member add` mints the manifest entry, so the backend is an input to the
     // verb rather than a lookup: one value feeds both the handle this verb
     // operates through and the `vcs_type` it records.
     let vcs_type = VcsType::Git;
@@ -306,7 +318,7 @@ pub fn run_add(
     if let Some(existing) = manifest.get_entry(&repo_path) {
         let declared = resolve_to_clone_info(&existing.url)?.url;
         if !declared.names_same_remote(&clone_url) {
-            let remove = format!("`rwv remove {repo_path} --delete`");
+            let remove = format!("`rwv member remove {repo_path} --delete`");
             let replace = match ctx.checkout {
                 Checkout::Workweave { .. } if dest.exists() => {
                     format!("{remove} here and then in the primary weave, which holds the clone")
@@ -323,7 +335,12 @@ pub fn run_add(
                 url,
             );
         }
-        refuse_non_clone_at_placements(vcs.as_ref(), ctx, &repo_path, &format!("rwv add {url}"))?;
+        refuse_non_clone_at_placements(
+            vcs.as_ref(),
+            ctx,
+            &repo_path,
+            &format!("rwv member add {url}"),
+        )?;
         announce_already_registered(&repo_path);
         if !dest.exists() {
             warn_if_shared_clone(
@@ -341,7 +358,7 @@ pub fn run_add(
             &repo_path,
             existing.role,
             existing.recurse_submodules,
-            "rwv add: ",
+            "rwv member add: ",
         );
         place_member(
             vcs.as_ref(),
@@ -354,7 +371,12 @@ pub fn run_add(
         return settle_manifest(ctx, &project, None, &[], opts);
     }
 
-    refuse_non_clone_at_placements(vcs.as_ref(), ctx, &repo_path, &format!("rwv add {url}"))?;
+    refuse_non_clone_at_placements(
+        vcs.as_ref(),
+        ctx,
+        &repo_path,
+        &format!("rwv member add {url}"),
+    )?;
     if vcs.is_repo(&dest) {
         refuse_foreign_clone_at_placement(vcs.as_ref(), &clone_url, &dest, &repo_path)?;
     }
@@ -381,7 +403,7 @@ pub fn run_add(
         else {
             crate::refuse!(
                 RefusalKind::NoRemoteDefaultBranch,
-                "rwv add: '{}' at {}: {}, then re-run `rwv add {}`",
+                "rwv member add: '{}' at {}: {}, then re-run `rwv member add {}`",
                 repo_path.as_str(),
                 dest.display(),
                 vcs.clone_default_branch_repair_hint(&dest, RemoteBranchCopies::JustCloned)?,
@@ -405,7 +427,7 @@ pub fn run_add(
             url: parsed_url,
             branch,
             role,
-            recurse_submodules: crate::manifest::SubmoduleRecursion::Recurse,
+            recurse_submodules,
         };
         manifest.insert_repo(repo_path.clone(), entry);
         crate::workweave::fetch_member_submodules(
@@ -413,20 +435,35 @@ pub fn run_add(
             &dest,
             &repo_path,
             role,
-            SubmoduleRecursion::Recurse,
-            "rwv add: ",
+            recurse_submodules,
+            "rwv member add: ",
         );
 
         // In a workweave, also create a worktree at the workweave so the new
         // repo is materialized there. Before the manifest names it, because the
         // regeneration that follows authors only from members it finds on disk.
-        place_member_noting(vcs.as_ref(), ctx, &dest, &repo_path, role, &mut left)?;
+        place_member_noting(
+            vcs.as_ref(),
+            ctx,
+            &dest,
+            &repo_path,
+            role,
+            recurse_submodules,
+            &mut left,
+        )?;
 
         // Per-workspace state: the workweave's own copy when CWD is in one,
         // primary's otherwise.
         settle_manifest(ctx, &project, Some(&manifest), &[], opts)
     })();
-    added.map_err(|e| left.refused(e, &manifest_path, &repo_path, &format!("rwv add {url}")))?;
+    added.map_err(|e| {
+        left.refused(
+            e,
+            &manifest_path,
+            &repo_path,
+            &format!("rwv member add {url}"),
+        )
+    })?;
 
     eprintln!("Added '{}' to manifest", repo_path.as_str());
     Ok(())
@@ -465,7 +502,7 @@ fn refuse_non_clone_at(
     };
     crate::refuse!(
         RefusalKind::NonCloneAtPlacement,
-        "rwv add: the placement '{}' ({}) holds {found}, which can be neither registered \
+        "rwv member add: the placement '{}' ({}) holds {found}, which can be neither registered \
          nor have a checkout placed over it. Move it aside and re-run `{retry}`.",
         repo_path.as_str(),
         at.display(),
@@ -499,22 +536,26 @@ fn refuse_foreign_clone_at_placement(
     };
     crate::refuse!(
         RefusalKind::ForeignCloneAtPlacement,
-        "rwv add: '{path}' already holds {found}, not '{clone_url}'. To register that \
-         clone under the URL it records: `rwv add --adopt {path}`. To add '{clone_url}', \
+        "rwv member add: '{path}' already holds {found}, not '{clone_url}'. To register that \
+         clone under the URL it records: `rwv member add --adopt {path}`. To add '{clone_url}', \
          move the existing clone aside first.",
         path = repo_path.as_str(),
     )
 }
 
-/// `rwv add --adopt <path>`: register the clone the absolute `path` names. Its
+/// `rwv member add --adopt <path>`: register the clone the absolute `path` names. Its
 /// member path is its position inside whichever weave root contains it, and
 /// the clone itself is always the canonical one under the primary root.
 pub fn run_add_adopt(
     path: &Path,
-    role: Role,
+    settings: NewMemberSettings,
     ctx: &WorkspaceContext,
     opts: ActivateOptions,
 ) -> anyhow::Result<()> {
+    let NewMemberSettings {
+        role,
+        recurse_submodules,
+    } = settings;
     let vcs_type = VcsType::Git;
     let vcs = vcs_for(vcs_type);
     let (project, project_dir) = find_project(ctx)?;
@@ -523,7 +564,7 @@ pub fn run_add_adopt(
     if !vcs.is_repo(&candidate) {
         crate::refuse!(
             RefusalKind::NoCloneToAdopt,
-            "rwv add --adopt: no clone at '{}'. --adopt registers a clone already under \
+            "rwv member add --adopt: no clone at '{}'. --adopt registers a clone already under \
              the weave root; to clone from a remote instead, drop --adopt and give its URL \
              (`file://` for a local one).",
             candidate.display()
@@ -536,23 +577,33 @@ pub fn run_add_adopt(
         &repo_path,
         path,
         &candidate,
-        role,
+        settings,
         &manifest_path,
     )?;
     // Adopting doesn't clone, but the clone still has to hold the permissions
     // of the role the manifest gives it, and a workweave still needs its
     // worktree, as on the URL path.
     let canonical = ctx.primary_path().join(repo_path.as_path());
-    let role = match &registration {
-        Some((manifest, _)) => manifest.get_entry(&repo_path).map(|e| e.role),
+    let (role, recurse_submodules) = match &registration {
+        Some((manifest, _)) => manifest
+            .get_entry(&repo_path)
+            .map(|e| (e.role, e.recurse_submodules)),
         None => Manifest::from_path(&manifest_path)?
             .get_entry(&repo_path)
-            .map(|e| e.role),
+            .map(|e| (e.role, e.recurse_submodules)),
     }
-    .unwrap_or(role);
+    .unwrap_or((role, recurse_submodules));
     let mut left = AddLeftovers::default();
     let added = (|| -> anyhow::Result<()> {
-        place_member_noting(vcs.as_ref(), ctx, &canonical, &repo_path, role, &mut left)?;
+        place_member_noting(
+            vcs.as_ref(),
+            ctx,
+            &canonical,
+            &repo_path,
+            role,
+            recurse_submodules,
+            &mut left,
+        )?;
         settle_manifest(
             ctx,
             &project,
@@ -566,7 +617,7 @@ pub fn run_add_adopt(
             e,
             &manifest_path,
             &repo_path,
-            &format!("rwv add --adopt {}", path.display()),
+            &format!("rwv member add --adopt {}", path.display()),
         )
     })?;
     if let Some((_, origin_url)) = registration {
@@ -622,7 +673,7 @@ fn adopt_placement(
         };
         crate::refuse!(
             RefusalKind::AdoptPathOutsideWeave,
-            "rwv add --adopt: '{}' is not under {roots}. A relative path is read from the \
+            "rwv member add --adopt: '{}' is not under {roots}. A relative path is read from the \
              directory rwv runs in (or -C/-w), and a symlink in it is followed; name the clone \
              by a path inside the weave.",
             named.as_path().display()
@@ -634,7 +685,7 @@ fn adopt_placement(
         Err(why @ (UnspellableLocation::Backslash(_) | UnspellableLocation::NotUnicode(_))) => {
             crate::refuse!(
                 RefusalKind::UnspellableDirectoryName,
-                "rwv add --adopt: no member path can name '{}': {why}. Rename the directory, \
+                "rwv member add --adopt: no member path can name '{}': {why}. Rename the directory, \
                  then adopt the clone by its new path; rwv does not choose the name.",
                 named.as_path().display()
             )
@@ -646,7 +697,7 @@ fn adopt_placement(
         if vcs.is_repo(&checkout) && !shares_store(vcs, &checkout, &canonical) {
             crate::refuse!(
                 RefusalKind::ForeignCloneInWorkweave,
-                "rwv add --adopt: '{}' is a clone of its own, not a worktree of the primary's \
+                "rwv member add --adopt: '{}' is a clone of its own, not a worktree of the primary's \
                  clone at '{}'. --adopt registers the clone under the primary weave root; move \
                  '{}' there, or name '{}' directly.",
                 checkout.display(),
@@ -659,7 +710,7 @@ fn adopt_placement(
             vcs,
             &checkout,
             &repo_path,
-            &format!("rwv add --adopt {}", path.display()),
+            &format!("rwv member add --adopt {}", path.display()),
         )?;
     }
     Ok((repo_path, canonical))
@@ -680,18 +731,12 @@ fn place_member_noting(
     canonical: &Path,
     repo_path: &RepoPath,
     role: Role,
+    recurse_submodules: SubmoduleRecursion,
     left: &mut AddLeftovers,
 ) -> anyhow::Result<()> {
     let checkout = ctx.active_path().join(repo_path.as_path());
     let fresh = matches!(ctx.checkout, Checkout::Workweave { .. }) && !checkout.exists();
-    let placed = place_member(
-        vcs,
-        ctx,
-        canonical,
-        repo_path,
-        role,
-        SubmoduleRecursion::Recurse,
-    );
+    let placed = place_member(vcs, ctx, canonical, repo_path, role, recurse_submodules);
     if fresh && checkout.exists() {
         left.worktree = Some(checkout);
     }
@@ -764,7 +809,7 @@ impl AddLeftovers {
         if let Some(worktree) = &self.worktree {
             lines.push(format!(
                 "kept the worktree it made at {}: once the cause below is fixed, \
-                 `{rerun}` reuses it, or `rwv remove {repo_path} --delete` in this \
+                 `{rerun}` reuses it, or `rwv member remove {repo_path} --delete` in this \
                  workweave removes it",
                 worktree.display()
             ));
@@ -777,7 +822,7 @@ impl AddLeftovers {
             };
             lines.push(format!(
                 "kept the clone it made at {}: once the cause below is fixed, \
-                 `{rerun}` reuses it, or `rwv remove {repo_path} --delete` in the primary \
+                 `{rerun}` reuses it, or `rwv member remove {repo_path} --delete` in the primary \
                  weave removes it{after_worktree}",
                 clone.display()
             ));
@@ -792,7 +837,7 @@ impl AddLeftovers {
     }
 }
 
-/// The branch `rwv add` declares for `repo_path`, from `parsed`; one that
+/// The branch `rwv member add` declares for `repo_path`, from `parsed`; one that
 /// reads as a revision is refused as that repo's `name` state, `whose` saying
 /// where the name came from, and any other unusable name under `context`.
 fn declared_branch(
@@ -821,7 +866,7 @@ fn declared_branch(
 
 fn untrackable_remote_default(repo_path: &RepoPath, clone: &Path) -> String {
     format!(
-        "rwv add: '{}' at {}: the remote's default branch cannot be its declared `branch`",
+        "rwv member add: '{}' at {}: the remote's default branch cannot be its declared `branch`",
         repo_path.as_str(),
         clone.display(),
     )
@@ -858,9 +903,13 @@ fn run_add_from_local_path(
     repo_path: &RepoPath,
     adopted: &Path,
     clone_dir: &Path,
-    role: Role,
+    settings: NewMemberSettings,
     manifest_path: &Path,
 ) -> anyhow::Result<Option<(Manifest, CloneUrl)>> {
+    let NewMemberSettings {
+        role,
+        recurse_submodules,
+    } = settings;
     let recorded = recorded_remote(vcs, clone_dir)
         .with_context(|| {
             format!(
@@ -886,7 +935,7 @@ fn run_add_from_local_path(
             "'{dir}' records its {remote} remote as the relative path '{path}', which git \
              reads from each checkout's own directory, so it names no one URL to record; \
              give it an absolute URL (`git -C {dir} remote set-url {remote} <url>`) and \
-             re-run `rwv add --adopt {adopted}`",
+             re-run `rwv member add --adopt {adopted}`",
             dir = clone_dir.display(),
             remote = vcs.conventional_remote_name(),
             adopted = adopted.display(),
@@ -911,7 +960,7 @@ fn run_add_from_local_path(
     else {
         crate::refuse!(
             RefusalKind::NoRemoteDefaultBranch,
-            "rwv add: '{}' at {}: {}, then re-run `rwv add --adopt {}`",
+            "rwv member add: '{}' at {}: {}, then re-run `rwv member add --adopt {}`",
             repo_path.as_str(),
             clone_dir.display(),
             vcs.clone_default_branch_repair_hint(clone_dir, RemoteBranchCopies::AsLastFetched)?,
@@ -934,13 +983,13 @@ fn run_add_from_local_path(
         url: RepoUrl::from(&recorded),
         branch,
         role,
-        recurse_submodules: crate::manifest::SubmoduleRecursion::Recurse,
+        recurse_submodules,
     };
     manifest.insert_repo(repo_path.clone(), entry);
     Ok(Some((manifest, recorded)))
 }
 
-/// What `rwv remove` does beyond dropping the manifest entry.
+/// What `rwv member remove` does beyond dropping the manifest entry.
 ///
 /// `--delete-shared-clone` waives a guard on deleting the canonical clone, so
 /// it means nothing without `--delete`; the type has no value for that pair.
@@ -975,7 +1024,7 @@ impl Removal {
     }
 }
 
-/// Execute `rwv remove PATH [--delete] [--delete-shared-clone]`.
+/// Execute `rwv member remove PATH [--delete] [--delete-shared-clone]`.
 ///
 /// An entry already gone from the manifest is finished the same way, as long
 /// as its checkout is still on disk in this workspace and is this project's:
@@ -1129,7 +1178,7 @@ fn refuse_shared_clone_delete(
     Ok(())
 }
 
-/// Parse an `rwv add --new` creation address into the registry it names and
+/// Parse an `rwv member add --new` creation address into the registry it names and
 /// the `(owner, repo)` prefix a three-segment shorthand fills, if any.
 ///
 /// A bare registry name is one segment; the shorthand is exactly three
@@ -1261,7 +1310,7 @@ fn build_creation_params(
     Ok(map)
 }
 
-/// An `rwv add --new` creation as argv states it: the registry its address
+/// An `rwv member add --new` creation as argv states it: the registry its address
 /// names, and the parameter map the address, `--param` and `--params-json`
 /// assemble. Its path parameters stay argv text until
 /// [`Self::locate_path_params`] reads them from the directory rwv runs in, so
@@ -1289,7 +1338,7 @@ impl CreationRequest {
                     RefusalKind::UnknownRegistry,
                     format!(
                         "'{}' is not a registry rwv can create through. Known registries: {}. \
-                         To add a repo a registry already hosts, use `rwv add <url>` instead.",
+                         To add a repo a registry already hosts, use `rwv member add <url>` instead.",
                         registry_name.as_str(),
                         known.join(", ")
                     ),
@@ -1334,7 +1383,7 @@ impl CreationRequest {
     }
 }
 
-/// Execute `rwv add <creation-address> --new [--param NAME=VALUE]...
+/// Execute `rwv member add <creation-address> --new [--param NAME=VALUE]...
 /// [--params-json JSON] [--role ROLE]`, for a `request` whose path parameters
 /// are already located.
 ///
@@ -1349,11 +1398,15 @@ impl CreationRequest {
 /// re-resolve.
 pub fn run_add_new(
     request: CreationRequest,
-    role: Role,
+    settings: NewMemberSettings,
     ctx: &WorkspaceContext,
     opts: ActivateOptions,
 ) -> anyhow::Result<()> {
-    // `rwv add` mints the manifest entry, so the backend is an input to the
+    let NewMemberSettings {
+        role,
+        recurse_submodules,
+    } = settings;
+    // `rwv member add` mints the manifest entry, so the backend is an input to the
     // verb rather than a lookup: one value feeds both the handle this verb
     // operates through and the `vcs_type` it records.
     let vcs_type = VcsType::Git;
@@ -1519,16 +1572,16 @@ pub fn run_add_new(
             HeadAttachment::Attached(a) => TrackingRef::try_from(&a),
             HeadAttachment::Detached(_) => match cloned_from {
                 Some(upstream) => anyhow::bail!(
-                    "rwv add: the clone at {} has a detached HEAD right after creation, \
+                    "rwv member add: the clone at {} has a detached HEAD right after creation, \
                      taken from the upstream at {upstream}; point that upstream's HEAD at a \
                      branch (`git -C {upstream} symbolic-ref HEAD refs/heads/<branch>`) \
-                     before retrying `rwv add {address} --new`",
+                     before retrying `rwv member add {address} --new`",
                     dest.display(),
                     upstream = upstream.display(),
                 ),
                 None => anyhow::bail!(
-                    "rwv add: repo at {} has a detached HEAD right after creation; \
-                     inspect with `git -C {} status` before retrying `rwv add {} --new`",
+                    "rwv member add: repo at {} has a detached HEAD right after creation; \
+                     inspect with `git -C {} status` before retrying `rwv member add {} --new`",
                     dest.display(),
                     dest.display(),
                     address
@@ -1543,7 +1596,7 @@ pub fn run_add_new(
             &format!("the branch the repo at {} was created on", dest.display()),
             || {
                 format!(
-                    "rwv add: '{}' at {}: the branch the repo was created on cannot be its \
+                    "rwv member add: '{}' at {}: the branch the repo was created on cannot be its \
                      declared `branch`",
                     repo_path.as_str(),
                     dest.display(),
@@ -1556,7 +1609,7 @@ pub fn run_add_new(
             url,
             branch,
             role,
-            recurse_submodules: crate::manifest::SubmoduleRecursion::Recurse,
+            recurse_submodules,
         };
         manifest.insert_repo(repo_path.clone(), entry);
 
@@ -1564,7 +1617,15 @@ pub fn run_add_new(
         // new repo is materialized there. An unborn HEAD (both creation shapes
         // start unborn) means create_worktree_in_workweave skips until the first
         // commit lands.
-        place_member_noting(vcs.as_ref(), ctx, &dest, &repo_path, role, &mut left)?;
+        place_member_noting(
+            vcs.as_ref(),
+            ctx,
+            &dest,
+            &repo_path,
+            role,
+            recurse_submodules,
+            &mut left,
+        )?;
 
         settle_manifest(ctx, &project, Some(&manifest), &[], opts)
     })();
@@ -1573,7 +1634,7 @@ pub fn run_add_new(
             e,
             &manifest_path,
             &repo_path,
-            &format!("rwv add {address} --new"),
+            &format!("rwv member add {address} --new"),
         )
     })?;
 
@@ -1597,7 +1658,7 @@ fn find_other_projects_referencing(
 /// Walk every project in the weave except `active_project` and return the
 /// `(project, role)` pairs for those that register `repo_path`.
 ///
-/// Used by `rwv add` to emit shared-clone warnings and by `rwv remove
+/// Used by `rwv member add` to emit shared-clone warnings and by `rwv member remove
 /// --delete` to refuse a clone another project still declares.
 fn find_other_projects_with_roles(
     workspace_root: &Path,

@@ -1,5 +1,5 @@
 //! An intent verb's manifest edit and the regeneration it drives land
-//! together or not at all, and re-running `rwv add` for a member the manifest
+//! together or not at all, and re-running `rwv member add` for a member the manifest
 //! already names converges the weave instead of reporting success over it.
 
 use std::collections::BTreeMap;
@@ -106,7 +106,7 @@ fn assert_routes_to(stderr: &str, token: &str) {
 
 fn add(ws: &Path, url: &str) -> std::process::Output {
     common::rwv()
-        .args(["add", url])
+        .args(["member", "add", url])
         .current_dir(ws)
         .output()
         .unwrap()
@@ -262,7 +262,7 @@ fn a_remove_refused_by_activation_leaves_the_project_and_the_clone() {
     assert!(clone.is_dir(), "fixture: the add must have cloned");
 
     let out = common::rwv()
-        .args(["remove", "local/acme/plain", "--delete"])
+        .args(["member", "remove", "local/acme/plain", "--delete"])
         .current_dir(&ws)
         .output()
         .unwrap();

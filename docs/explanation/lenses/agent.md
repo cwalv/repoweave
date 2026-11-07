@@ -28,7 +28,7 @@ rwv prime --no-suppress            # always emit (default suppresses outside a w
 rwv setup claude                   # register Claude Code context and workweave hooks
 ```
 
-`rwv setup claude` registers four hooks in `~/.claude/settings.json`: `SessionStart` and `PreCompact` run `rwv prime` so workspace context stays in the prompt across compaction, and `WorktreeCreate` and `WorktreeRemove` delegate `claude --worktree <name>` to `rwv workweave <project> create` and `delete` so every isolated Claude session gets a full multi-repo workweave instead of a single-repo worktree.
+`rwv setup claude` registers four hooks in `~/.claude/settings.json`: `SessionStart` and `PreCompact` run `rwv prime` so workspace context stays in the prompt across compaction, and `WorktreeCreate` and `WorktreeRemove` delegate `claude --worktree <name>` to `rwv workweave create` and `delete` so every isolated Claude session gets a full multi-repo workweave instead of a single-repo worktree.
 
 ### JIT reflection — `rwv explain`
 
@@ -74,7 +74,7 @@ The shape:
 
 ```bash
 # Human, from the primary weave:
-rwv workweave web-app create agent-refactor
+rwv workweave create agent-refactor
 # Hand the path ../.workweaves/web-app--agent-refactor/ to the agent
 # (workweaves live at <parent>/.workweaves/<project>--<name>/ — by default a sibling
 # of the weave root, not a child).
@@ -93,7 +93,7 @@ Three properties make this pattern work:
 
 1. **Isolation from human state.** The agent's workweave has its own `node_modules/`, `.venv/`, `target/`. The human's in-progress edits in the primary weave can't disturb the agent's build, and vice versa. Repos with `role = "reference"` get a worktree like every other repo, with read-only tracked files. Where the filesystem allows, a workweave's files share storage with another workspace's copy — by copy-on-write clone, or for a `reference` repo's read-only files by hard link — so a large study-material tree (e.g. a 270 MB upstream codebase) is not duplicated into every workweave, and neither side's edits reach the other.
 2. **Project context preserved.** Unlike "clone a repo into a tempdir," the agent sees the *full* workspace — every repo at the project's lock, with `package.json` workspaces / `go.work` / `Cargo.toml [workspace]` wired up. Cross-repo imports work, integration tests work, the agent's refactors can span repos.
-3. **Verification, then landing.** The human inspects the workweave's state (`rwv -w web-app--agent-refactor workweave web-app log --diff`) before running `rwv sync-to --retire` from inside the workweave. `sync-to` lands CWD's commits into the parent — the workweave pushes its work to primary, linearly. Asymmetric in cost: the workweave absorbs the parent's latest state in step 1 (mostly a no-op on the happy path); then the parent fast-forwards to the workweave's tip in step 3.
+3. **Verification, then landing.** The human inspects the workweave's state (`rwv -w web-app--agent-refactor workweave log --diff`) before running `rwv sync-to --retire` from inside the workweave. `sync-to` lands CWD's commits into the parent — the workweave pushes its work to primary, linearly. Asymmetric in cost: the workweave absorbs the parent's latest state in step 1 (mostly a no-op on the happy path); then the parent fast-forwards to the workweave's tip in step 3.
 
 ### Dedicated long-lived agent workweaves
 

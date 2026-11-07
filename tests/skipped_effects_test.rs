@@ -181,7 +181,10 @@ impl Weave {
     }
 
     fn seat(&self) -> PathBuf {
-        self.ok_in(&self.ws, &["workweave", "app", "create", "seat"]);
+        self.ok_in(
+            &self.ws,
+            &["workweave", "create", "--project", "app", "seat"],
+        );
         self.tmp.path().join(".workweaves/app--seat")
     }
 }
@@ -225,10 +228,20 @@ fn no_materialize_names_materialize_and_a_hooked_run_says_nothing() {
 
     let run = weave.ok_in(
         &weave.ws,
-        &["workweave", "app", "create", "bare", "--no-materialize"],
+        &[
+            "workweave",
+            "create",
+            "--project",
+            "app",
+            "bare",
+            "--no-materialize",
+        ],
     );
     assert!(run.stderr.contains(NO_MATERIALIZE), "{}", run.report());
-    let run = weave.ok_in(&weave.ws, &["workweave", "app", "create", "hooked"]);
+    let run = weave.ok_in(
+        &weave.ws,
+        &["workweave", "create", "--project", "app", "hooked"],
+    );
     assert!(
         weave.npm_ran(),
         "control: create ran the hooks:\n{}",
@@ -241,9 +254,9 @@ fn no_materialize_names_materialize_and_a_hooked_run_says_nothing() {
         "web2",
         &[("package.json", &package("web2"))],
     );
-    let run = weave.ok_in(&weave.ws, &["add", &url, "--no-materialize"]);
+    let run = weave.ok_in(&weave.ws, &["member", "add", &url, "--no-materialize"]);
     assert!(run.stderr.contains(NO_MATERIALIZE), "{}", run.report());
-    let run = weave.ok_in(&weave.ws, &["add", &url]);
+    let run = weave.ok_in(&weave.ws, &["member", "add", &url]);
     assert!(weave.npm_ran(), "control: the hooks ran:\n{}", run.report());
     assert_says_nothing_skipped(&run);
 }
@@ -253,14 +266,17 @@ fn an_authoring_verb_inside_a_workweave_names_materialize() {
     let weave = Weave::new();
     let seat = weave.seat();
 
-    let run = weave.ok_in(&seat, &["role", "github/acme/web", "owned"]);
+    let run = weave.ok_in(&seat, &["member", "set-role", "github/acme/web", "owned"]);
     assert!(
         run.stderr.contains(INSIDE_WORKWEAVE) && !weave.npm_ran(),
         "the hooks an authoring verb skips in a workweave are named:\n{}",
         run.report()
     );
 
-    let run = weave.ok_in(&weave.ws, &["role", "github/acme/web", "owned"]);
+    let run = weave.ok_in(
+        &weave.ws,
+        &["member", "set-role", "github/acme/web", "owned"],
+    );
     assert!(
         weave.npm_ran(),
         "control: at primary the hooks ran:\n{}",
@@ -283,7 +299,14 @@ fn an_authoring_verb_on_a_project_the_root_does_not_present_names_activate() {
 
     let run = weave.ok_in(
         &weave.ws,
-        &["role", "github/acme/web", "owned", "--project", "other"],
+        &[
+            "member",
+            "set-role",
+            "github/acme/web",
+            "owned",
+            "--project",
+            "other",
+        ],
     );
     for line in [
         "[skipped] core: the weave-root links were not refreshed (`other` is not the project \
@@ -299,7 +322,10 @@ fn an_authoring_verb_on_a_project_the_root_does_not_present_names_activate() {
     }
     assert!(!weave.npm_ran(), "fixture: no hook ran for `other`");
 
-    let run = weave.ok_in(&weave.ws, &["role", "github/acme/web", "owned"]);
+    let run = weave.ok_in(
+        &weave.ws,
+        &["member", "set-role", "github/acme/web", "owned"],
+    );
     assert!(
         weave.npm_ran(),
         "control: the presented project's hooks ran"

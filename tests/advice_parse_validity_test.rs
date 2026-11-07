@@ -59,7 +59,7 @@
 //!
 //! - `InvalidValue` — the verb and flag exist, but a normalized placeholder
 //!   (`dummy`) was substituted for an enum-constrained value (e.g.
-//!   `` `rwv add <url> --role <role>` `` → `rwv add dummy --role dummy` where
+//!   `` `rwv member add <url> --role <role>` `` → `rwv member add dummy --role dummy` where
 //!   `dummy` is not a valid `Role` variant).  The flag itself is real.
 //!   These are also treated as valid (partial invocations).
 //!

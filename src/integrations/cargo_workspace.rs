@@ -843,7 +843,7 @@ impl Integration for CargoWorkspace {
         // Precheck: `activate` is a context verb — it surfaces + verifies but
         // NEVER authors managed content. If the hybrid `Cargo.toml` was never
         // generated (typically: a repo acquired its `Cargo.toml` AFTER the
-        // `rwv add` that would have triggered generation), running
+        // `rwv member add` that would have triggered generation), running
         // `cargo generate-lockfile` would fail with a confusing "no root
         // Cargo.toml" error and leave the caller with the generic "workspace
         // may be partially activated" wrap. Bail early with the same repair
@@ -1214,7 +1214,7 @@ impl CargoWorkspace {
              on its own line directly above `members`, or delete `members` and `resolver` \
              from `[workspace]`, then run `rwv doctor --fix`"
         } else {
-            "The next authoring verb, such as `rwv add` or `rwv role`, writes `members` under \
+            "The next authoring verb, such as `rwv member add` or `rwv member set-role`, writes `members` under \
              the `# managed by rwv` marker and keeps `resolver`; or delete `resolver` from \
              `[workspace]` and run `rwv doctor --fix`, which writes both"
         };
@@ -1416,7 +1416,7 @@ impl CargoWorkspace {
                                     `# managed by rwv` on its own line directly above the conflicting \
                                     `[patch.<registry>].<crate>` or `[build].rustc-wrapper` key and run \
                                     `rwv doctor --fix`, or delete the key and run an authoring verb, \
-                                    such as `rwv add` or `rwv role`, which writes it under the marker",
+                                    such as `rwv member add` or `rwv member set-role`, which writes it under the marker",
                         drift: "",
                     },
                 ));
@@ -1464,7 +1464,7 @@ impl CargoWorkspace {
             &expected_repr,
             Remedy {
                 user_held: "The file holds none of the keys rwv writes there; the next authoring \
-                            verb, such as `rwv add` or `rwv role`, writes them under the \
+                            verb, such as `rwv member add` or `rwv member set-role`, writes them under the \
                             `# managed by rwv` marker",
                 drift: "on-disk rwv-marked keys in .cargo/config.toml (`[patch.*]` \
                         entries, `[build].rustc-wrapper`) differ from the set derived \

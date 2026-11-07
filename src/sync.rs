@@ -1932,7 +1932,7 @@ fn refuse_standing_receipts(
              \n\
              Each receipt must be retracted through its own ref delete — with a receipt \
              and a warrant — before the store itself may be destroyed. Delete the \
-             workweaves that own these refs (`rwv workweave <project> delete <name>`), \
+             workweaves that own these refs (`rwv workweave delete <name>`), \
              then {rerun}.",
             store.display(),
             standing.join("\n  "),
@@ -1995,7 +1995,7 @@ impl RemovalCause {
     fn situation(self) -> &'static str {
         match self {
             Self::DroppedFromLock => "dropped from lock",
-            Self::RemoveDelete => "named for `rwv remove --delete`",
+            Self::RemoveDelete => "named for `rwv member remove --delete`",
         }
     }
 
@@ -2005,7 +2005,7 @@ impl RemovalCause {
     fn rerun(self) -> &'static str {
         match self {
             Self::DroppedFromLock => "remove the checkout by hand",
-            Self::RemoveDelete => "re-run `rwv remove --delete`",
+            Self::RemoveDelete => "re-run `rwv member remove --delete`",
         }
     }
 
@@ -6389,8 +6389,13 @@ fn retire_workweave_after_sync_to(
     }
 
     // Reuse the shared dirty-path check. Any dirty worktree blocks retire.
-    let mut dirty =
-        crate::workweave::judge_dirty_checkouts(project_vcs, workweave_dir, project, &manifest);
+    let mut dirty = crate::workweave::judge_dirty_checkouts(
+        project_vcs,
+        workweave_dir,
+        project,
+        &manifest,
+        None,
+    );
     dirty.note(format!(
         "--retire: the landing is done and the workweave was not deleted; once these \
          are clean, `{resume}` re-runs the retire check, or `rwv abort` rolls the whole op back"
@@ -8502,7 +8507,7 @@ mod tests {
             "the choice must spell the removal of this worktree from this store; got:\n{msg}"
         );
 
-        // `rwv workweave <project> delete <name>` retracts the registration;
+        // `rwv workweave delete <name>` retracts the registration;
         // mirror that at the git level R4 reads.
         git(
             &store,

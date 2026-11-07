@@ -1,10 +1,12 @@
-//! `--force` migration hints for the renamed precondition waivers.
+//! `--force` migration hints and the refusal for the verbs with none.
 //!
-//! Each waiver is now named for the precondition it destroys, so the operator
-//! consents to a consequence rather than to a category. The old spelling is
-//! gone (no hidden aliases); it must fail with an error that names the
-//! replacement. `push --force` is the deliberate exception — it is git's
-//! force-push, not a precondition waiver — and must keep parsing.
+//! Each waiver is named for the precondition it destroys, so the operator
+//! consents to a consequence rather than to a category. `fetch` still answers
+//! the old `--force` with the flag that replaced it. Every other verb answers
+//! it the way it answers a flag it lacks: rwv has no blanket force, and the
+//! message says so without naming a replacement. `push --force` is the
+//! deliberate exception — it is git's force-push, not a precondition waiver —
+//! and must keep parsing.
 
 use assert_cmd::Command;
 
@@ -40,39 +42,88 @@ fn fetch_force_names_allow_non_empty_dir() {
     );
 }
 
+const NO_BLANKET_FORCE: &str = "rwv has no blanket force";
+
+/// `--force` on a verb that never declared it, and on one whose old waiver was
+/// renamed in a release that no longer carries a hint: the same refusal, which
+/// names no replacement flag.
 #[test]
-fn remove_force_names_delete_shared_clone() {
-    let stderr = stderr_of(&["remove", "github/org/repo", "--delete", "--force"]);
-    assert!(
-        stderr.contains("--delete-shared-clone"),
-        "expected the replacement flag; got: {stderr}"
-    );
+fn force_on_a_verb_without_it_gets_the_generic_refusal() {
+    let cases: [&[&str]; 4] = [
+        &["member", "remove", "github/org/repo", "--delete", "--force"],
+        &[
+            "workweave",
+            "create",
+            "--project",
+            "web-app",
+            "ww",
+            "--force",
+        ],
+        &[
+            "workweave",
+            "delete",
+            "--project",
+            "web-app",
+            "ww",
+            "--force",
+        ],
+        &["member", "add", "https://example.com/x.git", "--force"],
+    ];
+    for args in cases {
+        let stderr = stderr_of(args);
+        assert!(
+            stderr.contains(NO_BLANKET_FORCE) && stderr.contains("rwv explain inapplicable-flag"),
+            "{args:?} must get the generic refusal; got: {stderr}"
+        );
+        for replacement in [
+            "--delete-shared-clone",
+            "--replace-existing",
+            "--discard-uncommitted",
+            "--discard-unmerged-commits",
+            "has been renamed",
+            "has been split",
+        ] {
+            assert!(
+                !stderr.contains(replacement),
+                "{args:?} must not map `--force` to `{replacement}`; got: {stderr}"
+            );
+        }
+    }
 }
 
+/// A spelling that exists only because an earlier release had it gets the
+/// answer any unknown verb gets, with no old-to-new mapping for its flag.
 #[test]
-fn workweave_create_force_names_replace_existing() {
-    let stderr = stderr_of(&["workweave", "web-app", "create", "ww", "--force"]);
+fn a_retired_top_level_remove_gets_no_force_mapping() {
+    let stderr = stderr_of(&["remove", "github/org/repo", "--force"]);
     assert!(
-        stderr.contains("--replace-existing"),
-        "expected the replacement flag; got: {stderr}"
+        stderr.contains("unknown verb `remove`"),
+        "expected the unknown-verb refusal; got: {stderr}"
     );
-}
-
-#[test]
-fn workweave_delete_force_names_both_discard_flags() {
-    let stderr = stderr_of(&["workweave", "web-app", "delete", "ww", "--force"]);
-    assert!(
-        stderr.contains("--discard-uncommitted") && stderr.contains("--discard-unmerged-commits"),
-        "expected both replacement flags; got: {stderr}"
-    );
+    for mapping in [
+        "--delete-shared-clone",
+        "has been renamed",
+        NO_BLANKET_FORCE,
+    ] {
+        assert!(
+            !stderr.contains(mapping),
+            "`rwv remove --force` must not carry `{mapping}`; got: {stderr}"
+        );
+    }
 }
 
 #[test]
 fn push_force_is_not_migrated() {
     let stderr = stderr_of(&["push", "--force", "--dry-run"]);
     assert!(
-        !stderr.contains("has been renamed") && !stderr.contains("has been split"),
+        !stderr.contains("has been renamed")
+            && !stderr.contains("has been split")
+            && !stderr.contains(NO_BLANKET_FORCE),
         "push --force must survive the rename pass; got: {stderr}"
+    );
+    assert!(
+        stderr.contains("no repoweave workspace") || stderr.contains("workspace"),
+        "push --force must reach workspace resolution, past argument parsing; got: {stderr}"
     );
 }
 

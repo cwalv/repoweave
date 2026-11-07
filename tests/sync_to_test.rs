@@ -1143,7 +1143,7 @@ fn make_nested_workweaves(parent_tmp: &Path) -> (Workspace, PathBuf, PathBuf, Pa
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
-        .args(["workweave", "web-app", "create", "parent"])
+        .args(["workweave", "create", "--project", "web-app", "parent"])
         .current_dir(&primary_root)
         .assert()
         .success();
@@ -1152,8 +1152,9 @@ fn make_nested_workweaves(parent_tmp: &Path) -> (Workspace, PathBuf, PathBuf, Pa
     rwv()
         .args([
             "workweave",
-            "web-app",
             "create",
+            "--project",
+            "web-app",
             "child",
             "--from",
             &parent_ww.to_string_lossy(),
@@ -1240,7 +1241,7 @@ fn nested_workweave_delete_refuses_only_on_truly_unmerged_work() {
     // Unsynced child work: plain delete must refuse and name what it
     // compared against.
     let err_output = rwv()
-        .args(["workweave", "web-app", "delete", "child"])
+        .args(["workweave", "delete", "--project", "web-app", "child"])
         .current_dir(&primary.root)
         .assert()
         .failure()
@@ -1265,7 +1266,7 @@ fn nested_workweave_delete_refuses_only_on_truly_unmerged_work() {
         .assert()
         .success();
     rwv()
-        .args(["workweave", "web-app", "delete", "child"])
+        .args(["workweave", "delete", "--project", "web-app", "child"])
         .current_dir(&primary.root)
         .assert()
         .success();

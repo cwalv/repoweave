@@ -1,18 +1,18 @@
 //! CLI-level e2e tests for DefaultOnly key behavior across npm, uv, cargo,
 //! and go-work integrations.
 //!
-//! Each port has three scenarios exercised via `rwv add --new` / `rwv doctor`:
+//! Each port has three scenarios exercised via `rwv member add --new` / `rwv doctor`:
 //!
-//! 1. **Greenfield**: empty project → `rwv add --new` seeds the repo and runs
+//! 1. **Greenfield**: empty project → `rwv member add --new` seeds the repo and runs
 //!    activation; assert the managed file contains the DefaultOnly key set to a
 //!    project-derived value (not a hardcoded literal).
 //!
 //! 2. **Customization survives**: greenfield as above, operator edits the
-//!    DefaultOnly key, then `rwv add --new` a second repo; assert the edit
+//!    DefaultOnly key, then `rwv member add --new` a second repo; assert the edit
 //!    survived byte-identical.
 //!
 //! 3. **Cutover**: hand-authored managed file with custom DefaultOnly value +
-//!    rwv marker already present; `rwv add --new` triggers activate; assert
+//!    rwv marker already present; `rwv member add --new` triggers activate; assert
 //!    (a) Author keys are updated, (b) DefaultOnly key with custom value is
 //!    unchanged, (c) untracked fields preserved.
 //!
@@ -24,7 +24,7 @@
 //!
 //! vscode is excluded: the inline `git.*` DefaultOnly settings live inside the
 //! vscode integration's static-files output, not in a separately-managed file
-//! that `rwv add` exercises. vscode integration drift is not surfaced by the
+//! that `rwv member add` exercises. vscode integration drift is not surfaced by the
 //! CLI doctor path in this version.
 
 mod common;
@@ -77,7 +77,7 @@ fn make_workspace_with_project(
     // Initialize project dir as a git repo so workspace resolution succeeds.
     // The project dir is a *nested* git repo (a git repo inside the ws git repo).
     // This mirrors the real-world layout where each project dir has its own
-    // rwv.lock history, and is needed for rwv add / lock operations.
+    // rwv.lock history, and is needed for rwv member add / lock operations.
     common::git_in(&project_dir, &["init", "--initial-branch=main"]);
     common::git_in(&project_dir, &["config", "user.email", "test@test.com"]);
     common::git_in(&project_dir, &["config", "user.name", "Test"]);
@@ -137,18 +137,18 @@ mod npm {
 
         // Seed the first repo with a package.json trigger.
         add_npm_trigger(&ws, "github/acme/api");
-        // git-init so rwv add --new finds a real git registry at github/.
+        // git-init so rwv member add --new finds a real git registry at github/.
         init_git_repo(&ws.join("github/acme/api"));
 
-        // rwv add --new adds github/acme/api and runs activate (intent path).
+        // rwv member add --new adds github/acme/api and runs activate (intent path).
         rwv()
-            .args(["add", "github/acme/api", "--new"])
+            .args(["member", "add", "github/acme/api", "--new"])
             .current_dir(&ws)
             .assert()
             .success();
 
         let pkg_json = std::fs::read_to_string(ws.join("package.json"))
-            .expect("package.json should be generated after rwv add");
+            .expect("package.json should be generated after rwv member add");
         let parsed: serde_json::Value =
             serde_json::from_str(&pkg_json).expect("package.json should be valid JSON");
 
@@ -183,7 +183,7 @@ mod npm {
 
         // First add: generates package.json with name = "original-project".
         rwv()
-            .args(["add", "github/acme/api", "--new"])
+            .args(["member", "add", "github/acme/api", "--new"])
             .current_dir(&ws)
             .assert()
             .success();
@@ -203,7 +203,7 @@ mod npm {
         add_npm_trigger(&ws, "github/acme/server");
         init_git_repo(&ws.join("github/acme/server"));
         rwv()
-            .args(["add", "github/acme/server", "--new"])
+            .args(["member", "add", "github/acme/server", "--new"])
             .current_dir(&ws)
             .assert()
             .success();
@@ -264,7 +264,7 @@ mod npm {
 
         // Add the repo — intent path runs merge_activate on proj_dir/package.json.
         rwv()
-            .args(["add", "github/org/lib", "--new"])
+            .args(["member", "add", "github/org/lib", "--new"])
             .current_dir(&ws)
             .assert()
             .success();
@@ -348,13 +348,13 @@ mod uv {
         init_git_repo(&ws.join("github/astral/protocol"));
 
         rwv()
-            .args(["add", "github/astral/protocol", "--new"])
+            .args(["member", "add", "github/astral/protocol", "--new"])
             .current_dir(&ws)
             .assert()
             .success();
 
         let content = std::fs::read_to_string(ws.join("pyproject.toml"))
-            .expect("pyproject.toml should be generated after rwv add");
+            .expect("pyproject.toml should be generated after rwv member add");
 
         // DefaultOnly: package = false must be set.
         assert!(
@@ -382,7 +382,7 @@ mod uv {
 
         // First add: greenfield generates package = false.
         rwv()
-            .args(["add", "github/astral/protocol", "--new"])
+            .args(["member", "add", "github/astral/protocol", "--new"])
             .current_dir(&ws)
             .assert()
             .success();
@@ -399,7 +399,7 @@ mod uv {
         add_uv_trigger(&ws, "github/astral/server");
         init_git_repo(&ws.join("github/astral/server"));
         rwv()
-            .args(["add", "github/astral/server", "--new"])
+            .args(["member", "add", "github/astral/server", "--new"])
             .current_dir(&ws)
             .assert()
             .success();
@@ -455,7 +455,7 @@ mod uv {
         std::fs::write(proj_dir.join("pyproject.toml"), hand_authored).unwrap();
 
         rwv()
-            .args(["add", "github/org/lib", "--new"])
+            .args(["member", "add", "github/org/lib", "--new"])
             .current_dir(&ws)
             .assert()
             .success();
@@ -529,7 +529,7 @@ mod cargo {
         init_git_repo(&ws.join("github/acme/lib"));
 
         rwv()
-            .args(["add", "github/acme/lib", "--new"])
+            .args(["member", "add", "github/acme/lib", "--new"])
             .current_dir(&ws)
             .assert()
             .success();
@@ -538,7 +538,7 @@ mod cargo {
         let cargo_path = ws.join("Cargo.toml");
         assert!(
             cargo_path.exists(),
-            "cargo greenfield: Cargo.toml should be generated (or symlinked) after rwv add"
+            "cargo greenfield: Cargo.toml should be generated (or symlinked) after rwv member add"
         );
         let content = std::fs::read_to_string(&cargo_path).unwrap();
 
@@ -568,7 +568,7 @@ mod cargo {
 
         // First add: greenfield generates resolver = "2".
         rwv()
-            .args(["add", "github/acme/lib", "--new"])
+            .args(["member", "add", "github/acme/lib", "--new"])
             .current_dir(&ws)
             .assert()
             .success();
@@ -591,7 +591,7 @@ mod cargo {
         add_cargo_trigger(&ws, "github/acme/server", "acme-server");
         init_git_repo(&ws.join("github/acme/server"));
         rwv()
-            .args(["add", "github/acme/server", "--new"])
+            .args(["member", "add", "github/acme/server", "--new"])
             .current_dir(&ws)
             .assert()
             .success();
@@ -660,7 +660,7 @@ mod cargo {
         }
 
         rwv()
-            .args(["add", "github/org/crate-a", "--new"])
+            .args(["member", "add", "github/org/crate-a", "--new"])
             .current_dir(&ws)
             .assert()
             .success();
@@ -837,7 +837,7 @@ mod go_work {
         init_git_repo(&ws.join("github/org/module-a"));
 
         rwv()
-            .args(["add", "github/org/module-a", "--new"])
+            .args(["member", "add", "github/org/module-a", "--new"])
             .current_dir(&ws)
             .assert()
             .success();
@@ -846,7 +846,7 @@ mod go_work {
         let go_work_path = ws.join("go.work");
         assert!(
             go_work_path.exists(),
-            "go.work greenfield: go.work should be generated after rwv add"
+            "go.work greenfield: go.work should be generated after rwv member add"
         );
         let content = std::fs::read_to_string(&go_work_path).unwrap();
 
@@ -890,7 +890,7 @@ mod go_work {
         std::fs::write(&int_file, seeded).unwrap();
 
         rwv()
-            .args(["add", "github/org/module-a", "--new"])
+            .args(["member", "add", "github/org/module-a", "--new"])
             .current_dir(&ws)
             .assert()
             .success();
@@ -915,7 +915,7 @@ mod go_work {
     // -----------------------------------------------------------------------
     //
     // CLI-level analog of §6.go.1: pre-seeded go.work with marker, a user
-    // `replace` directive, and go 1.20. After `rwv add` adds a new repo,
+    // `replace` directive, and go 1.20. After `rwv member add` adds a new repo,
     // the replace must survive and go version must not drop.
 
     #[test]
@@ -952,7 +952,7 @@ mod go_work {
 
         // Add second repo: triggers re-activation.
         rwv()
-            .args(["add", "github/org/module-b", "--new"])
+            .args(["member", "add", "github/org/module-b", "--new"])
             .current_dir(&ws)
             .assert()
             .success();
@@ -1003,7 +1003,7 @@ mod go_work {
     // sides resolve to the same inode through a symlink, truncating the file
     // before its own contents were read.
     //
-    // This test creates the symlink BEFORE running `rwv add` and asserts the
+    // This test creates the symlink BEFORE running `rwv member add` and asserts the
     // pre-existing content survives. The earlier go.work tests dodged the bug
     // by not pre-creating the symlink; this one re-triggers the scenario to
     // prove the canonicalize-and-skip fix in activate_via_go_tool holds.
@@ -1038,7 +1038,7 @@ mod go_work {
         );
 
         rwv()
-            .args(["add", "github/org/module-a", "--new"])
+            .args(["member", "add", "github/org/module-a", "--new"])
             .current_dir(&ws)
             .assert()
             .success();
@@ -1063,13 +1063,13 @@ mod go_work {
 // ===========================================================================
 // Regression test: tempdir sandbox must never pollute primary
 //
-// Regression: running `rwv add --new` from a tempdir workspace was observed to
+// Regression: running `rwv member add --new` from a tempdir workspace was observed to
 // write files into the real primary workspace (/home/.../foundations/) when the
 // sandbox's workspace resolution escaped the tempdir boundary.  This test
-// asserts that ALL writes from `rwv add` stay inside the tempdir.
+// asserts that ALL writes from `rwv member add` stay inside the tempdir.
 //
 // The test records the set of files in the tempdir BEFORE and AFTER, checks
-// that `rwv add` succeeded, and then verifies that the added repo directory
+// that `rwv member add` succeeded, and then verifies that the added repo directory
 // was created INSIDE the sandbox, not outside.
 //
 // We also explicitly assert that the repo directory does NOT exist at the
@@ -1088,20 +1088,20 @@ fn add_writes_only_inside_tempdir_sandbox() {
     let expected_dest = ws.join(repo_path);
     assert!(
         !expected_dest.exists(),
-        "precondition: sandbox repo dir should not exist before rwv add"
+        "precondition: sandbox repo dir should not exist before rwv member add"
     );
 
-    // Run rwv add --new from inside the sandbox workspace.
+    // Run rwv member add --new from inside the sandbox workspace.
     rwv()
-        .args(["add", repo_path, "--new"])
+        .args(["member", "add", repo_path, "--new"])
         .current_dir(&ws)
         .assert()
         .success();
 
-    // The repo dir MUST exist inside the sandbox after rwv add.
+    // The repo dir MUST exist inside the sandbox after rwv member add.
     assert!(
         expected_dest.exists(),
-        "regression: rwv add must create the repo inside the tempdir sandbox; \
+        "regression: rwv member add must create the repo inside the tempdir sandbox; \
          expected {}",
         expected_dest.display()
     );
@@ -1113,7 +1113,7 @@ fn add_writes_only_inside_tempdir_sandbox() {
     let leaked_path = process_cwd.join(repo_path);
     assert!(
         !leaked_path.exists(),
-        "regression: rwv add must NOT write outside the tempdir sandbox; \
+        "regression: rwv member add must NOT write outside the tempdir sandbox; \
          found {} which is outside the tempdir {}",
         leaked_path.display(),
         tmp.path().display()

@@ -316,7 +316,7 @@ fn an_unknown_segment_clone_is_reported_from_inside_a_workweave() {
     std::fs::create_dir_all(&container).unwrap();
 
     common::rwv()
-        .args(["workweave", "demo", "create", "feat"])
+        .args(["workweave", "create", "--project", "demo", "feat"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -426,16 +426,16 @@ fn assert_advises_adopt_at_the_placement(advice: &str) {
     assert!(
         advice.contains(
             "move it to the path its remote's URL places it at under the primary weave root"
-        ) && advice.contains("run `rwv add --adopt` with that path"),
-        "the advice must name the move to the clone's placement and `rwv add --adopt` there: \
+        ) && advice.contains("run `rwv member add --adopt` with that path"),
+        "the advice must name the move to the clone's placement and `rwv member add --adopt` there: \
          {advice}"
     );
 }
 
-/// `rwv add --adopt` with `path`, from `dir`.
+/// `rwv member add --adopt` with `path`, from `dir`.
 fn adopt(dir: &Path, path: &str) {
     common::rwv()
-        .args(["add", "--adopt", path])
+        .args(["member", "add", "--adopt", path])
         .current_dir(dir)
         .assert()
         .success();
@@ -468,7 +468,7 @@ fn adopting_a_clone_already_at_its_placement_clears_the_finding() {
 
 /// A clone anywhere else is moved to its placement first: adopted where it
 /// stands, it trades this finding for `placement-disagreement`, and
-/// `rwv add <url>` would make a second clone.
+/// `rwv member add <url>` would make a second clone.
 #[test]
 fn moving_a_clone_to_its_placement_and_adopting_it_there_clears_the_finding() {
     let tmp = common::tempdir().unwrap();
@@ -526,7 +526,7 @@ fn adopting_a_clone_where_its_url_does_not_place_it_reports_placement_disagreeme
     );
 }
 
-/// Nor is `rwv add <url>` the repair for a clone off its placement: it clones
+/// Nor is `rwv member add <url>` the repair for a clone off its placement: it clones
 /// the URL afresh at the placement and leaves this clone where it was.
 #[test]
 fn adding_its_url_while_it_sits_off_its_placement_makes_a_second_clone() {
@@ -539,7 +539,7 @@ fn adding_its_url_while_it_sits_off_its_placement_makes_a_second_clone() {
     common::git_in(&ws, &["clone", "--quiet", &url, "vendor/acme/x"]);
 
     common::rwv()
-        .args(["add", &url])
+        .args(["member", "add", &url])
         .current_dir(&ws)
         .assert()
         .success();
@@ -580,7 +580,7 @@ fn a_workweave_stray_moved_to_its_placement_in_the_primary_and_adopted_clears_th
         &["commit", "--quiet", "-m", "init"],
     );
     common::rwv()
-        .args(["workweave", "demo", "create", "feat"])
+        .args(["workweave", "create", "--project", "demo", "feat"])
         .current_dir(&ws)
         .assert()
         .success();

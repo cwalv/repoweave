@@ -94,7 +94,7 @@ fn a_clean_source_births_a_clean_workweave_under_the_eol_filter() {
 
     common::rwv()
         .env("HOME", &home)
-        .args(["workweave", "app", "create", "ww1"])
+        .args(["workweave", "create", "--project", "app", "ww1"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -131,7 +131,14 @@ fn a_genuinely_dirty_lock_is_still_captured_with_capture_dirty() {
 
     common::rwv()
         .env("HOME", &home)
-        .args(["workweave", "app", "create", "ww1", "--capture-dirty"])
+        .args([
+            "workweave",
+            "create",
+            "--project",
+            "app",
+            "ww1",
+            "--capture-dirty",
+        ])
         .current_dir(&ws)
         .assert()
         .success();
@@ -181,7 +188,7 @@ fn an_authoring_verb_leaves_a_smudged_unchanged_workspace_file_clean() {
     let project = ws.join("projects/app");
     git(&home, &project, &["add", "-A"]);
     git(&home, &project, &["commit", "-qm", "init"]);
-    rwv(&["workweave", "app", "create", "ww1"], &ws);
+    rwv(&["workweave", "create", "--project", "app", "ww1"], &ws);
     let ww = tmp.path().join(".workweaves/app--ww1");
     let file = ww.join("projects/app/app.code-workspace");
     let smudged = std::fs::read(&file).unwrap();
@@ -190,12 +197,12 @@ fn an_authoring_verb_leaves_a_smudged_unchanged_workspace_file_clean() {
         "the fixture should check the file out with CRLF"
     );
 
-    rwv(&["add", &common::file_url(&upstream)], &ww);
+    rwv(&["member", "add", &common::file_url(&upstream)], &ww);
 
     assert_eq!(
         std::fs::read(&file).unwrap(),
         smudged,
-        "`rwv add` changed nothing in the file and should not have rewritten it"
+        "`rwv member add` changed nothing in the file and should not have rewritten it"
     );
     let status = git_out(&home, &ww.join("projects/app"), &["status", "--porcelain"]);
     assert!(

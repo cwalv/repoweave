@@ -152,7 +152,7 @@ where the ambiguity is real.
 
 This is where the consent is given, and not the only verb it binds. The hooks
 are what settles drift, so every verb that runs them withholds them while drift
-stands, and says so on stderr: `rwv activate`, `rwv add`, `rwv remove`,
+stands, and says so on stderr: `rwv activate`, `rwv member add`, `rwv member remove`,
 `rwv update` and `rwv doctor --fix`. None of those carries a flag to answer
 with — the answer is given here, once, and then they go through.
 

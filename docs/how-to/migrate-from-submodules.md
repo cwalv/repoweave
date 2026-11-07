@@ -5,9 +5,9 @@ Replace a parent repository's `.gitmodules` (or a `git-repo` manifest repository
 ```bash
 mkdir -p ~/weave && cd ~/weave
 rwv init web-app
-rwv add https://github.com/chatly/server.git --role owned
-rwv add https://github.com/chatly/client.git --role owned
-rwv add https://github.com/vendor/codec.git --role dependency
+rwv member add https://github.com/chatly/server.git --role owned
+rwv member add https://github.com/chatly/client.git --role owned
+rwv member add https://github.com/vendor/codec.git --role dependency
 rwv lock --commit
 git -C projects/web-app add -A && git -C projects/web-app commit -m "Initialize web-app project"
 git -C projects/web-app remote add origin https://github.com/chatly/web-app.git
@@ -15,7 +15,7 @@ git -C projects/web-app push -u origin main
 git -C projects/web-app remote set-head origin main
 ```
 
-`rwv add` clones each member from its remote, so work that exists only in your old checkouts never reaches the weave. Push it first.
+`rwv member add` clones each member from its remote, so work that exists only in your old checkouts never reaches the weave. Push it first.
 
 ## Migrate from `git submodules`
 
@@ -44,12 +44,12 @@ Create a weave root, initialize the project, and add each submodule URL with the
 ```bash
 mkdir -p ~/weave && cd ~/weave
 rwv init web-app
-rwv add https://github.com/chatly/server.git --role owned
-rwv add https://github.com/chatly/client.git --role owned
-rwv add https://github.com/vendor/codec.git --role dependency
+rwv member add https://github.com/chatly/server.git --role owned
+rwv member add https://github.com/chatly/client.git --role owned
+rwv member add https://github.com/vendor/codec.git --role dependency
 ```
 
-`rwv add` records the remote's default branch as `branch`. For a submodule whose `submodule.<name>.branch` names another branch, follow [Track a non-default branch](./add-a-repo.md#track-a-non-default-branch) after this step.
+`rwv member add` records the remote's default branch as `branch`. For a submodule whose `submodule.<name>.branch` names another branch, follow [Track a non-default branch](./add-a-repo.md#track-a-non-default-branch) after this step.
 
 If the old superproject itself also contains application code (not just submodule gitlinks), add the superproject repository as an `owned` member too, then remove its submodule gitlinks in Step 6.
 
@@ -100,7 +100,7 @@ Run this only after the Step 1 check prints nothing. Without `-f`, `git submodul
 A `git-repo` manifest repository (`manifests/default.xml`) already separates the composition record from member repositories, so it maps directly to `projects/<name>/rwv.toml`:
 
 1. **Initialize the project:** Run `rwv init <project>` in a new weave root (or `rwv init <manifest-repository-url> --adopt` if you are converting the existing manifest repository in place).
-2. **Add each `<project>` element from `default.xml`:** Construct the full remote URL from `<remote fetch="..."/>` + `<project name="..."/>` and run `rwv add <url> --role <owned|fork|dependency>`. If `<project revision="..."/>` names a non-default branch, follow [Track a non-default branch](./add-a-repo.md#track-a-non-default-branch).
+2. **Add each `<project>` element from `default.xml`:** Construct the full remote URL from `<remote fetch="..."/>` + `<project name="..."/>` and run `rwv member add <url> --role <owned|fork|dependency>`. If `<project revision="..."/>` names a non-default branch, follow [Track a non-default branch](./add-a-repo.md#track-a-non-default-branch).
 3. **Replace `<copyfile>` / `<linkfile>` entries:** Configure the [`static-files` integration](../reference/integrations/static-files.md) in `projects/<project>/rwv.toml` to surface shared build files (`Makefile`, `justfile`, `.editorconfig`) at the weave root.
 4. **Lock, commit, and publish:** Run `rwv lock --commit`, commit the remaining project files, and publish the project repo as in Steps 4 and 5 above. `rwv status` shows the branch each member repo is on; compare it with `branch` in `rwv.toml`, because `rwv doctor` does not report a clone on a branch other than the one `rwv.toml` declares.
 

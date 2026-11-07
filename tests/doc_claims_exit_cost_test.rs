@@ -115,7 +115,7 @@ fn leaving_rwv_by_the_documented_steps_leaves_only_the_two_named_traces() {
     common::git_in(&project, &["add", "-A"]);
     common::git_in(&project, &["commit", "-m", "initial"]);
 
-    succeed(&ws, &["workweave", PROJECT, "create", "s1"]);
+    succeed(&ws, &["workweave", "create", "--project", PROJECT, "s1"]);
     let seat = tmp
         .path()
         .join(".workweaves")
@@ -136,7 +136,7 @@ fn leaving_rwv_by_the_documented_steps_leaves_only_the_two_named_traces() {
     common::git_in(&seat_lib, &["reset", "--hard", &primary_tip]);
     commit_file(&seat_lib, "d.txt", "seat\n", "seat: lib again");
     succeed(&seat, &["sync-to"]);
-    succeed(&ws, &["workweave", PROJECT, "delete", "s1"]);
+    succeed(&ws, &["workweave", "delete", "--project", PROJECT, "s1"]);
 
     std::fs::remove_dir_all(ws.join("projects")).unwrap();
     std::fs::remove_file(ws.join(".rwv-active")).unwrap();

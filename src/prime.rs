@@ -114,10 +114,10 @@ pub fn render_context(ctx: &WorkspaceContext) -> String {
     );
     out.push_str("| `rwv materialize` | Settle drift, repair symlinks, run install hooks |\n");
     out.push_str(
-        "| `rwv workweave PROJECT create NAME` | Create a workweave (worktree-based workspace) |\n",
+        "| `rwv workweave create NAME` | Create a workweave (worktree-based workspace) |\n",
     );
-    out.push_str("| `rwv add URL [--role ROLE]` | Add a repo to the active project |\n");
-    out.push_str("| `rwv remove PATH` | Remove a repo from the active project |\n");
+    out.push_str("| `rwv member add URL [--role ROLE]` | Add a repo to the active project |\n");
+    out.push_str("| `rwv member remove PATH` | Remove a repo from the active project |\n");
     out.push_str("| `rwv lock` | Snapshot repo versions to rwv.lock |\n");
     out.push_str("| `rwv doctor` | Run convention enforcement |\n");
     out.push_str("| `rwv fetch SOURCE` | Clone a project and its repos |\n");

@@ -65,7 +65,13 @@ fn set_container_reads_a_relative_path_from_the_invocation_subdirectory() {
     std::fs::create_dir_all(&wanted).unwrap();
 
     common::rwv()
-        .args(["workweave", "web-app", "set-container", "../../c"])
+        .args([
+            "workweave",
+            "set-default-create-basedir",
+            "--project",
+            "web-app",
+            "../../c",
+        ])
         .current_dir(ws.join("projects"))
         .assert()
         .success();
@@ -87,8 +93,9 @@ fn create_dir_reads_a_relative_path_from_the_c_directory() {
         .arg(ws.join("projects"))
         .args([
             "workweave",
-            "web-app",
             "create",
+            "--project",
+            "web-app",
             "feat",
             "--dir",
             "../../alt/feat",
@@ -109,7 +116,7 @@ fn create_from_reads_a_relative_path_from_the_invocation_subdirectory() {
     let tmp = common::tempdir().unwrap();
     let ws = weave_with_member(tmp.path());
     common::rwv()
-        .args(["workweave", "web-app", "create", "a"])
+        .args(["workweave", "create", "--project", "web-app", "a"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -119,8 +126,9 @@ fn create_from_reads_a_relative_path_from_the_invocation_subdirectory() {
     common::rwv()
         .args([
             "workweave",
-            "web-app",
             "create",
+            "--project",
+            "web-app",
             "b",
             "--from",
             "../../.workweaves/web-app--a",
@@ -234,7 +242,7 @@ fn adopt_from_a_primary_subdirectory_under_c_records_the_weave_relative_member_p
     common::rwv()
         .arg("-C")
         .arg(w.primary.join("bar"))
-        .args(["add", "--adopt", "lib"])
+        .args(["member", "add", "--adopt", "lib"])
         .current_dir(tmp.path())
         .assert()
         .success();
@@ -257,7 +265,7 @@ fn adopt_from_a_workweave_subdirectory_names_the_primarys_clone_at_that_member_p
     std::fs::create_dir_all(w.workweave.join("bar")).unwrap();
 
     common::rwv()
-        .args(["add", "--adopt", "x"])
+        .args(["member", "add", "--adopt", "x"])
         .current_dir(w.workweave.join("bar"))
         .assert()
         .success();
@@ -283,7 +291,7 @@ fn adopt_of_a_location_under_neither_weave_root_refuses_naming_both() {
     clone_at(tmp.path(), "stray", &tmp.path().join("outside/stray"));
 
     let out = common::rwv()
-        .args(["add", "--adopt", "../../../outside/stray"])
+        .args(["member", "add", "--adopt", "../../../outside/stray"])
         .current_dir(w.workweave.join("projects"))
         .output()
         .unwrap();
@@ -307,7 +315,7 @@ fn adopt_of_a_location_under_neither_weave_root_refuses_naming_both() {
     )
     .unwrap();
     let findings_before = common::doctor_findings(&w.workweave);
-    let followed = common::run_advised("rwv add --adopt github/o/stray", &w.workweave);
+    let followed = common::run_advised("rwv member add --adopt github/o/stray", &w.workweave);
     assert!(
         followed.status.success(),
         "naming the clone by a path inside the weave:\n{}",
@@ -335,7 +343,7 @@ fn adopt_of_a_workweave_clone_that_is_not_the_primarys_refuses_naming_both() {
     );
 
     let out = common::rwv()
-        .args(["add", "--adopt", "github/o/dup"])
+        .args(["member", "add", "--adopt", "github/o/dup"])
         .current_dir(&w.workweave)
         .output()
         .unwrap();
@@ -354,7 +362,7 @@ fn adopt_of_a_workweave_clone_that_is_not_the_primarys_refuses_naming_both() {
 
     let named = advised_primary_clone(&stderr);
     let findings_before = common::doctor_findings(&w.workweave);
-    let followed = common::run_advised(&format!("rwv add --adopt {named}"), &w.workweave);
+    let followed = common::run_advised(&format!("rwv member add --adopt {named}"), &w.workweave);
     assert!(
         followed.status.success(),
         "naming the primary's clone directly:\n{}",
@@ -398,7 +406,7 @@ fn adopt_of_a_workweave_clone_clears_once_moved_to_where_the_primary_has_none() 
     clone_at(tmp.path(), "own", &w.workweave.join("github/o/dup"));
 
     let out = common::rwv()
-        .args(["add", "--adopt", "github/o/dup"])
+        .args(["member", "add", "--adopt", "github/o/dup"])
         .current_dir(&w.workweave)
         .output()
         .unwrap();
@@ -411,7 +419,7 @@ fn adopt_of_a_workweave_clone_clears_once_moved_to_where_the_primary_has_none() 
     std::fs::create_dir_all(w.primary.join("github/o")).unwrap();
     std::fs::rename(w.workweave.join("github/o/dup"), &there).unwrap();
     let findings_before = common::doctor_findings(&w.workweave);
-    let followed = common::run_advised("rwv add --adopt github/o/dup", &w.workweave);
+    let followed = common::run_advised("rwv member add --adopt github/o/dup", &w.workweave);
     assert!(
         followed.status.success(),
         "re-running the adopt after moving the clone:\n{}",
@@ -435,7 +443,7 @@ fn adopt_into_a_workweave_whose_placement_holds_a_plain_directory_refuses_naming
     std::fs::write(occupied.join("notes.txt"), "not a clone\n").unwrap();
 
     let out = common::rwv()
-        .args(["add", "--adopt", "github/o/dup"])
+        .args(["member", "add", "--adopt", "github/o/dup"])
         .current_dir(&w.workweave)
         .output()
         .unwrap();
@@ -449,7 +457,7 @@ fn adopt_into_a_workweave_whose_placement_holds_a_plain_directory_refuses_naming
     assert!(manifest_keys(&w.workweave.join("projects/test-project")).is_empty());
     assert!(occupied.join("notes.txt").is_file());
 
-    let retry = common::advised_command(&stderr, "rwv add");
+    let retry = common::advised_command(&stderr, "rwv member add");
     std::fs::rename(&occupied, w.workweave.join("github/o/dup.aside")).unwrap();
     let findings_before = common::doctor_findings(&w.workweave);
     let followed = common::run_advised(&retry, &w.workweave);
@@ -481,7 +489,7 @@ fn add_from_a_workweave_whose_placement_holds_a_plain_directory_refuses_naming_i
     std::fs::write(occupied.join("notes.txt"), "not a clone\n").unwrap();
 
     let out = common::rwv()
-        .args(["add", &common::file_url(&bare)])
+        .args(["member", "add", &common::file_url(&bare)])
         .current_dir(&w.workweave)
         .output()
         .unwrap();
@@ -495,8 +503,8 @@ fn add_from_a_workweave_whose_placement_holds_a_plain_directory_refuses_naming_i
     assert!(manifest_keys(&w.workweave.join("projects/test-project")).is_empty());
     assert!(occupied.join("notes.txt").is_file());
 
-    let retry = common::advised_command(&stderr, "rwv add");
-    assert_eq!(retry, format!("rwv add {}", common::file_url(&bare)));
+    let retry = common::advised_command(&stderr, "rwv member add");
+    assert_eq!(retry, format!("rwv member add {}", common::file_url(&bare)));
     std::fs::rename(&occupied, w.workweave.join("local/remotes/lib.aside")).unwrap();
     let findings_before = common::doctor_findings(&w.workweave);
     let followed = common::run_advised(&retry, &w.workweave);
@@ -524,7 +532,7 @@ fn add_from_a_workweave_whose_primary_placement_holds_a_plain_directory_clears_o
     std::fs::create_dir_all(occupied.join("junk")).unwrap();
 
     let out = common::rwv()
-        .args(["add", &common::file_url(&bare)])
+        .args(["member", "add", &common::file_url(&bare)])
         .current_dir(&w.workweave)
         .output()
         .unwrap();
@@ -536,7 +544,7 @@ fn add_from_a_workweave_whose_primary_placement_holds_a_plain_directory_clears_o
         repoweave::path_spelling::resolve(&occupied).unwrap(),
     );
 
-    let retry = common::advised_command(&stderr, "rwv add");
+    let retry = common::advised_command(&stderr, "rwv member add");
     std::fs::rename(&occupied, w.primary.join("local/remotes/lib.aside")).unwrap();
     let findings_before = common::doctor_findings(&w.workweave);
     let followed = common::run_advised(&retry, &w.workweave);
@@ -582,7 +590,7 @@ fn adopt_through_a_symlink_and_dotdot_registers_the_clone_the_os_names() {
     link_dir(&w.primary.join("deep/x"), &w.primary.join("sym"));
 
     common::rwv()
-        .args(["add", "--adopt", "sym/../github/o/r"])
+        .args(["member", "add", "--adopt", "sym/../github/o/r"])
         .current_dir(&w.primary)
         .assert()
         .success();
@@ -609,7 +617,7 @@ fn adopt_through_a_symlink_and_dotdot_out_of_the_weave_refuses() {
     link_dir(&tmp.path().join("elsewhere/a/b"), &w.primary.join("sym"));
 
     let out = common::rwv()
-        .args(["add", "--adopt", "sym/../github/o/r"])
+        .args(["member", "add", "--adopt", "sym/../github/o/r"])
         .current_dir(&w.primary)
         .output()
         .unwrap();
@@ -623,7 +631,7 @@ fn adopt_through_a_symlink_and_dotdot_out_of_the_weave_refuses() {
     assert!(manifest_keys(&w.primary.join("projects/test-project")).is_empty());
 
     let findings_before = common::doctor_findings(&w.primary);
-    let followed = common::run_advised("rwv add --adopt github/o/r", &w.primary);
+    let followed = common::run_advised("rwv member add --adopt github/o/r", &w.primary);
     assert!(
         followed.status.success(),
         "naming the clone by a path inside the weave:\n{}",
@@ -645,7 +653,7 @@ fn adopt_through_a_symlinked_spelling_of_the_weave_records_the_member_path() {
     link_dir(&w.primary, &link);
 
     common::rwv()
-        .args(["add", "--adopt"])
+        .args(["member", "add", "--adopt"])
         .arg(link.join("github").join("o").join("r"))
         .current_dir(&w.primary)
         .assert()

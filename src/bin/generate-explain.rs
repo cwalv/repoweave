@@ -400,18 +400,8 @@ fn verbs() -> Vec<Verb> {
             schema: None,
         },
         Verb {
-            name: "add",
-            summary: "clone a repo and register it in the active project manifest",
-            schema: None,
-        },
-        Verb {
-            name: "remove",
-            summary: "remove a repo from the active project manifest",
-            schema: None,
-        },
-        Verb {
-            name: "role",
-            summary: "change a repo's role in the active project manifest and settle its files",
+            name: "member",
+            summary: "add a repo to the active project manifest, remove one, or change a member's role or submodule setting",
             schema: None,
         },
         Verb {
@@ -1085,19 +1075,16 @@ fn load_coverage_allowlist(
 }
 
 /// Does one backtick-quoted invocation span (e.g. the text between backticks
-/// in `` `rwv workweave <project> create <name>` ``) cover the subcommand path
-/// given as `components` (e.g. `["workweave", "create"]`)?
+/// in `` `rwv workweave create <name>` ``) cover the subcommand path given as
+/// `components` (e.g. `["workweave", "create"]`)?
 ///
 /// The span is tokenized on whitespace. The first token must be `rwv`. Then
-/// each path component must appear in order among the remaining tokens, where
-/// `<placeholder>` tokens interleaved between components are skipped: clap
-/// allows a parent command's positional arguments before the nested
-/// subcommand (`rwv workweave [PROJECT] [COMMAND]`), so the documented
-/// invocation legitimately writes `<project>` between `workweave` and
-/// `create`. Any other literal token where a component is expected fails the
-/// match (so `workweave log` does not match `` `rwv workweave list` `` or a
-/// hypothetical `` `rwv workweave log-extra` ``). Tokens after the last
-/// matched component (flags, further args) are ignored.
+/// each path component must be the next token, in order. Any other token where
+/// a component is expected fails the match (so `workweave log` does not match
+/// `` `rwv workweave list` `` or a hypothetical `` `rwv workweave log-extra` ``,
+/// and a positional written between components documents an invocation clap
+/// does not accept). Tokens after the last matched component (flags, further
+/// args) are ignored.
 fn span_covers_path(span: &str, components: &[&str]) -> bool {
     let mut tokens = span.split_whitespace();
     if tokens.next() != Some("rwv") {
@@ -1110,16 +1097,10 @@ fn span_covers_path(span: &str, components: &[&str]) -> bool {
             // All components matched; trailing args/flags are fine.
             return true;
         };
-        if token == comp {
-            expected = remaining.next();
-        } else if token.starts_with('<') && token.ends_with('>') {
-            // A positional placeholder between path components — skip it.
-            continue;
-        } else {
-            // A literal token that is not the expected component: this span
-            // documents a different invocation.
+        if token != comp {
             return false;
         }
+        expected = remaining.next();
     }
     expected.is_none()
 }
@@ -1155,10 +1136,8 @@ fn heading_covers_path(line: &str, components: &[&str]) -> bool {
 /// [`span_covers_path`] for the token-level rule. Examples:
 ///
 /// - `` `rwv fetch <source> [...]` `` covers `fetch`
-/// - `` `rwv workweave <project> log [--diff] [--json]` `` covers
-///   `workweave log` (the `<project>` positional belongs to the parent
-///   command and precedes the action subcommand in the real invocation)
-/// - `` `rwv workweave <project> list` `` does NOT cover `workweave log`
+/// - `` `rwv workweave log [--diff] [--json]` `` covers `workweave log`
+/// - `` `rwv workweave list` `` does NOT cover `workweave log`
 ///
 /// Restricting the match to headings avoids false positives from incidental
 /// body-text mentions (the word "log" alone would match dozens of lines).
@@ -1189,9 +1168,8 @@ fn check_cli_md_coverage(
         if !found {
             errors.push(format!(
                 "coverage-cli-md: `rwv {path}` is absent from docs/reference/cli.md \
-                 (add a heading whose invocation contains the components `rwv {path}` \
-                 in order — placeholder positionals like `<project>` may sit between \
-                 them — or add `cli-md:{path}` to docs/cli-coverage-allowlist.txt \
+                 (add a heading whose invocation spells the components `rwv {path}` \
+                 in order, or add `cli-md:{path}` to docs/cli-coverage-allowlist.txt \
                  with a reason)"
             ));
         }
@@ -1320,11 +1298,9 @@ fn registry_inventory(cli_top_level: &[String], plugin_dirs: &[&str]) -> Vec<Str
 /// `docs/reference/cli.md` contains a heading line (a line whose first
 /// non-whitespace character is `#`) with a backtick-quoted invocation span
 /// that starts with `rwv` and contains the path's literal components in
-/// order; `<placeholder>` positional tokens interleaved between components
-/// are skipped (clap allows a parent command's positionals before the nested
-/// subcommand, so `` `rwv workweave <project> log [--diff]` `` covers
-/// `workweave log`). Restricting to headings avoids false positives from
-/// incidental body text. See [`span_covers_path`] for the token-level rule.
+/// order, each the next token after the one before it (so `` `rwv workweave log
+/// [--diff]` `` covers `workweave log`). Restricting to headings avoids false
+/// positives from incidental body text. See [`span_covers_path`] for the token-level rule.
 ///
 /// **Registry check**: a top-level verb, or a bundled plugin's verb, is
 /// covered iff it appears as a `name` field in the `verbs()` list in this
@@ -4054,10 +4030,7 @@ fn names_plugin(page: &str, verb: &str) -> bool {
 
 /// Where an invocation's words land in clap's tree.
 enum Invocation<'c> {
-    Command {
-        path: Vec<&'c str>,
-        positional_before_subcommand: bool,
-    },
+    Command { path: Vec<&'c str> },
     PluginOrAbsentVerb,
     NoVerb,
 }
@@ -4065,11 +4038,10 @@ enum Invocation<'c> {
 /// Locate an invocation's words in clap's tree.
 ///
 /// A word in a command's subcommand position must name one of its
-/// subcommands — unless the command also takes a positional and a subcommand
-/// follows, as in `rwv workweave web-app create`. At the root, a word that
-/// names no subcommand may be a bundled plugin, a plugin the same page names
-/// as an `rwv-<verb>` executable, or a verb in `ABSENT_VERBS`. A placeholder stands for a value,
-/// and a leaf command's arguments are not read.
+/// subcommands. At the root, a word that names no subcommand may be a bundled
+/// plugin, a plugin the same page names as an `rwv-<verb>` executable, or a
+/// verb in `ABSENT_VERBS`. A placeholder stands for a value, and a leaf
+/// command's arguments are not read.
 fn locate_invocation<'c>(
     cli: &'c clap::Command,
     words: &[&str],
@@ -4077,8 +4049,6 @@ fn locate_invocation<'c>(
 ) -> Result<Invocation<'c>, String> {
     let mut chain = vec![cli];
     let mut path: Vec<&'c str> = Vec::new();
-    let mut unresolved: Option<&str> = None;
-    let mut positional_before_subcommand = false;
     let mut rest = words.iter();
     while let Some(&word) = rest.next() {
         let cmd = *chain.last().expect("the chain starts at the root");
@@ -4097,7 +4067,6 @@ fn locate_invocation<'c>(
         if let Some(sub) = cmd.find_subcommand(word) {
             path.push(sub.get_name());
             chain.push(sub);
-            positional_before_subcommand |= unresolved.take().is_some();
             continue;
         }
         if path.is_empty() {
@@ -4108,28 +4077,12 @@ fn locate_invocation<'c>(
                 "`rwv {word}` is not a verb, and this page names no `rwv-{word}` plugin"
             ));
         }
-        let parent = path.join(" ");
-        match unresolved {
-            None if cmd.get_positionals().next().is_some() => unresolved = Some(word),
-            None => return Err(not_a_subcommand(&path, word)),
-            Some(first) => {
-                return Err(format!(
-                    "`rwv {parent} {first} {word}` is not a command: neither `{first}` nor \
-                     `{word}` is a subcommand of `rwv {parent}`"
-                ))
-            }
-        }
-    }
-    if let Some(word) = unresolved {
         return Err(not_a_subcommand(&path, word));
     }
     Ok(if path.is_empty() {
         Invocation::NoVerb
     } else {
-        Invocation::Command {
-            path,
-            positional_before_subcommand,
-        }
+        Invocation::Command { path }
     })
 }
 
@@ -4203,7 +4156,6 @@ struct DocTokenPopulation {
     qualified_sub_kinds: usize,
     inline_invocations: usize,
     fenced_invocations: usize,
-    positional_before_subcommand: usize,
     plugin_or_absent_verbs: usize,
     token_arguments: usize,
 }
@@ -4213,7 +4165,7 @@ impl DocTokenPopulation {
     /// least it may yield over this repository's operator pages before the
     /// scan is taken to have gone blind rather than clean. A branch's floor is
     /// one: it may not go dark while the classes it feeds stay full.
-    fn floors(&self) -> [(&'static str, usize, usize); 11] {
+    fn floors(&self) -> [(&'static str, usize, usize); 10] {
         [
             ("finding kinds", self.finding_kinds, 150),
             ("sub-kinds", self.sub_kinds, 50),
@@ -4227,11 +4179,6 @@ impl DocTokenPopulation {
             ),
             ("invocations in prose", self.inline_invocations, 1),
             ("invocations in fenced blocks", self.fenced_invocations, 1),
-            (
-                "positionals before a subcommand",
-                self.positional_before_subcommand,
-                1,
-            ),
             ("plugins and absent verbs", self.plugin_or_absent_verbs, 1),
             ("token arguments", self.token_arguments, 1),
         ]
@@ -4355,13 +4302,8 @@ fn scan_doc_tokens(
                 match locate_invocation(cli, &words, &text) {
                     Ok(Invocation::NoVerb) => {}
                     Ok(Invocation::PluginOrAbsentVerb) => population.plugin_or_absent_verbs += 1,
-                    Ok(Invocation::Command {
-                        path,
-                        positional_before_subcommand,
-                    }) => {
+                    Ok(Invocation::Command { path }) => {
                         population.verbs += 1;
-                        population.positional_before_subcommand +=
-                            usize::from(positional_before_subcommand);
                         if let Some(checked) = invocation_argument(&path, &words, vocab) {
                             population.token_arguments += 1;
                             if let Err(message) = checked {
@@ -5329,43 +5271,42 @@ mod tests {
         );
     }
 
-    /// A `<placeholder>` positional interleaved between path components is
-    /// skipped: `` `rwv workweave <project> log [--diff] [--json]` `` covers
-    /// the path `workweave log` (clap allows the parent command's positionals
-    /// before the nested subcommand: `rwv workweave [OPTIONS] [PROJECT]
-    /// [COMMAND]`).
+    /// Headings that spell each path with trailing arguments cover it.
     #[test]
-    fn cli_md_coverage_matches_interleaved_placeholder() {
+    fn cli_md_coverage_matches_headings_with_trailing_arguments() {
         let paths = vec![
             "workweave log".to_owned(),
             "workweave create".to_owned(),
             "workweave list".to_owned(),
         ];
         let cli_md = "\
-### `rwv workweave <project> create <name>`\n\n\
-### `rwv workweave <project> list`\n\n\
-### `rwv workweave <project> log [--diff] [--json]`\n";
+### `rwv workweave create <name>`\n\n\
+### `rwv workweave list`\n\n\
+### `rwv workweave log [--diff] [--json]`\n";
         let allow: HashSet<String> = HashSet::new();
         let errors = check_cli_md_coverage(&paths, cli_md, &allow);
         assert!(
             errors.is_empty(),
-            "placeholder-interleaved headings should cover the paths, got:\n{}",
+            "headings spelling the paths should cover them, got:\n{}",
             errors.join("\n")
         );
     }
 
     /// A literal token where a path component is expected fails the span
-    /// match: `` `rwv workweave <project> list` `` must NOT cover
-    /// `workweave log`, and a hyphen-extended token is not a prefix match.
+    /// match: `` `rwv workweave list` `` must NOT cover `workweave log`, a
+    /// hyphen-extended token is not a prefix match, and a positional written
+    /// between the components covers nothing.
     #[test]
-    fn cli_md_coverage_placeholder_skip_does_not_overmatch() {
+    fn cli_md_coverage_does_not_overmatch() {
         let paths = vec!["workweave log".to_owned()];
         // Headings for OTHER workweave actions only — `log` is absent.
         let cli_md = concat!(
-            "### `rwv workweave <project> create <name>`\n\n",
-            "### `rwv workweave <project> list`\n\n",
+            "### `rwv workweave create <name>`\n\n",
+            "### `rwv workweave list`\n\n",
             // rwv-advice: not-an-invocation
-            "### `rwv workweave <project> log-extra`\n",
+            "### `rwv workweave log-extra`\n",
+            // rwv-advice: not-an-invocation
+            "### `rwv workweave <project> log`\n",
         );
         let allow: HashSet<String> = HashSet::new();
         let errors = check_cli_md_coverage(&paths, cli_md, &allow);
@@ -5382,8 +5323,12 @@ mod tests {
         assert!(span_covers_path("rwv abort", &["abort"]));
         // Trailing args/flags after the last component are ignored.
         assert!(span_covers_path("rwv fetch <source> [...]", &["fetch"]));
-        // Placeholder between components is skipped.
         assert!(span_covers_path(
+            "rwv workweave create <name>",
+            &["workweave", "create"]
+        ));
+        // A positional between components does not cover the path.
+        assert!(!span_covers_path(
             "rwv workweave <project> create <name>",
             &["workweave", "create"]
         ));
@@ -5391,14 +5336,11 @@ mod tests {
         assert!(!span_covers_path("cd $(rwv resolve)", &["resolve"]));
         // A different literal where a component is expected fails.
         assert!(!span_covers_path(
-            "rwv workweave <project> delete <name>",
+            "rwv workweave delete <name>",
             &["workweave", "create"]
         ));
         // Components must all be present.
-        assert!(!span_covers_path(
-            "rwv workweave <project>",
-            &["workweave", "log"]
-        ));
+        assert!(!span_covers_path("rwv workweave", &["workweave", "log"]));
     }
 
     /// All top-level verbs are registered — passes.
@@ -8455,7 +8397,8 @@ mod tests {
     /// sub-kind of the kind it was written under.
     #[test]
     fn the_shipped_inventions_are_each_reported() {
-        let page = "# page\n\
+        let page = concat!(
+            "# page\n\
             \n\
             - **`USER-HELD`** (`user-held-featured`, warning, not auto-fixable): `folders` is present without the `\"rwv.generated\"` marker.\n\
             - When disabled (`enabled = false`), leftover `gita/repos.csv` or `gita/groups.csv` files in `projects/<project>/gita/` are reported as `orphaned-owned-region` (`DRIFT` if their bytes match `rwv`'s output, or `USER-HELD` if modified by hand).\n\
@@ -8466,8 +8409,10 @@ mod tests {
             | 2. Drift settlement | Re-derives generated files whose inputs changed (`derived-state-stale`) and drops attestations for files no enabled integration generates. If an attested file's bytes differ from the accepted generation (`integration-file-drifted`), refuses unless `--regenerate-drifted` or `--adopt-drifted` is passed |\n\
             \n\
             1. `rwv doctor` reports [`branch-discipline`](../../reference/doctor-findings.md#branch-discipline) (`canonical-wrong-branch`).\n\
-            \n\
-            `rwv doctor` and context verbs (`rwv activate`, `rwv fetch`, `rwv workweave add`) verify `gita/repos.csv` and `gita/groups.csv`:\n";
+            \n",
+            // rwv-advice: not-an-invocation
+            "`rwv doctor` and context verbs (`rwv activate`, `rwv fetch`, `rwv workweave add`) verify `gita/repos.csv` and `gita/groups.csv`:\n",
+        );
         let (findings, _) = scan_page(page);
         assert_reported(
             &findings,
@@ -8480,13 +8425,14 @@ mod tests {
                 "docs/page.md:8: `fetch-realign-refused` is not a token",
                 "docs/page.md:9: `integration-file-drifted` is not a token",
                 "docs/page.md:11: `canonical-wrong-branch` is not a sub-kind of `branch-discipline`",
+                // rwv-advice: not-an-invocation
                 "docs/page.md:13: `rwv workweave add` is not a command",
             ],
         );
     }
 
     /// One seed per recognition branch the shipped inventions do not reach:
-    /// a failure kind, a verb at the root, a subcommand after a positional, a
+    /// a failure kind, a verb at the root, a subcommand under a noun, a
     /// subcommand in a fenced block, a real sub-kind under the wrong kind, and
     /// the token arguments of `rwv explain`, a shared sub-kind among them, and
     /// of `rwv doctor --kind`.
@@ -8499,7 +8445,7 @@ mod tests {
             // rwv-advice: not-an-invocation
             "Run `rwv deactivate` first.\n",
             // rwv-advice: not-an-invocation
-            "Then `rwv workweave web-app add pr-42`.\n",
+            "Then `rwv workweave add pr-42`.\n",
             "The row reads `weave-root-identity-conflict` / `detached`.\n",
             "Read `rwv explain integration-file-drifted` and `rwv explain safe-to-fix`, then\n",
             "`rwv doctor --kind fully-owned-digest-mismatch` and `rwv doctor --kind=stale-lok`.\n",
@@ -8516,7 +8462,7 @@ mod tests {
                 // rwv-advice: not-an-invocation
                 "docs/page.md:4: `rwv deactivate` is not a verb, and this page names no `rwv-deactivate` plugin",
                 // rwv-advice: not-an-invocation
-                "docs/page.md:5: `rwv workweave web-app add` is not a command",
+                "docs/page.md:5: `rwv workweave add` is not a command",
                 "docs/page.md:6: `detached` is not a sub-kind of `weave-root-identity-conflict`",
                 "docs/page.md:7: `rwv explain integration-file-drifted` serves nothing",
                 "docs/page.md:7: `rwv explain safe-to-fix` refuses: `safe-to-fix` is a sub-kind of \
@@ -8525,13 +8471,13 @@ mod tests {
                 "docs/page.md:8: `rwv doctor --kind fully-owned-digest-mismatch` refuses",
                 "docs/page.md:8: `rwv doctor --kind stale-lok` refuses",
                 // rwv-advice: not-an-invocation
-                "docs/page.md:11: `rwv workweave add pr-42` is not a command",
+                "docs/page.md:11: `rwv workweave add` is not a command",
             ],
         );
     }
 
     /// What a looser scan would report: real tokens of every class, a
-    /// positional before its subcommand, global options, a plugin the page
+    /// subcommand under a noun, global options, a plugin the page
     /// names, a bundled plugin, an absent verb, placeholders, output lines, a list that stops at
     /// a span not shaped like a token, words the code derives through clap and
     /// serde, and the exemptions.
@@ -8543,7 +8489,7 @@ mod tests {
             "`stale-lock`, `tool-missing`, `push-from-workweave`, `rebase-failed`,\n",
             "[`branch-discipline`](#x) (`detached`), `missing-replay-exclusion` (`absent`,\n",
             "`legacy-spelling`), `workweave-drift` (`.rwv-workweave` is gone).\n",
-            "`rwv workweave web-app create pr-42`, `rwv workweave <project> list`,\n",
+            "`rwv workweave create pr-42`, `rwv workweave list`,\n",
             "`rwv -w myproj--hotfix sync primary`, `rwv workweave\n",
             // rwv-advice: not-an-invocation
             "create`, `rwv tidy` from `rwv-tidy`, no `rwv commit`, `rwv <verb>`,\n",
@@ -8551,7 +8497,7 @@ mod tests {
             "`rwv explain working-tree-drift/safe-to-fix`, `rwv explain live-staged`,\n",
             // rwv-advice: not-an-invocation
             "`rwv explain <token>`, `rwv doctor --kind tool-missing`, `rwv check-mid-op && rwv sync-to`.\n",
-            "`sync-to`, `set-container`, `allow-stale-lock`, `cargo-config`, `up-to-date`, `web-app`,\n",
+            "`sync-to`, `set-default-create-basedir`, `allow-stale-lock`, `cargo-config`, `up-to-date`, `web-app`,\n",
             "`rwv-lint`, `owner/repo`, `--allow-stale-lock`, `project-rwv--agent-home`.\n",
             // rwv-advice: not-an-invocation
             "`rwv each --role fork -- git status` marks a repo `not-present`.\n",
@@ -8567,7 +8513,6 @@ mod tests {
         );
         let (findings, population) = scan_page(page);
         assert!(findings.is_empty(), "got:\n{}", findings.join("\n"));
-        assert_eq!(population.positional_before_subcommand, 1);
         assert_eq!(population.qualified_sub_kinds, 3);
         assert_eq!(population.plugin_or_absent_verbs, 5);
     }

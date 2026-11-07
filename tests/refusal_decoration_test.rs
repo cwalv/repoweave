@@ -66,7 +66,7 @@ fn add_unrecognized_url_is_decorated_once() {
     let tmp = common::tempdir().unwrap();
     let workspace = workspace_with_project(&tmp);
     assert_one_decoration(
-        &["add", "https://example.com"],
+        &["member", "add", "https://example.com"],
         &workspace,
         "unrecognized URL",
     );
@@ -77,7 +77,7 @@ fn remove_absent_path_is_decorated_once() {
     let tmp = common::tempdir().unwrap();
     let workspace = workspace_with_project(&tmp);
     assert_one_decoration(
-        &["remove", "nonexistent/path/repo"],
+        &["member", "remove", "nonexistent/path/repo"],
         &workspace,
         "not found in manifest",
     );
@@ -88,7 +88,7 @@ fn add_new_malformed_path_is_decorated_once() {
     let tmp = common::tempdir().unwrap();
     let workspace = workspace_with_project(&tmp);
     assert_one_decoration(
-        &["add", "owner/repo", "--new"],
+        &["member", "add", "owner/repo", "--new"],
         &workspace,
         "does not look like a valid creation address",
     );
@@ -99,7 +99,7 @@ fn add_new_unknown_registry_is_decorated_once() {
     let tmp = common::tempdir().unwrap();
     let workspace = workspace_with_project(&tmp);
     assert_one_decoration(
-        &["add", "unknownhost/owner/repo", "--new"],
+        &["member", "add", "unknownhost/owner/repo", "--new"],
         &workspace,
         "is not a registry rwv can create through",
     );

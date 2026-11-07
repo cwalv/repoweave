@@ -620,7 +620,7 @@ impl ActivateOptions {
 ///
 /// The witness lookup is the workweave guard. Activate has no meaning inside
 /// a workweave — the project is fixed at creation time (`rwv workweave
-/// <project> create <name>`), so there is no switch to make, and silently
+/// create <name>`), so there is no switch to make, and silently
 /// retargeting primary from inside one (the status quo before this fix)
 /// mutated primary's `.rwv-active` and weave-root symlinks as a side effect
 /// of a command run from an unrelated workweave. A workweave has no witness,
@@ -868,7 +868,7 @@ fn author_and_surface(
     // chain, answering from `.rwv-workweave` in a workweave root and from
     // `.rwv-active` at primary. Reading the pointer directly here would be
     // wrong in a workweave, whose root carries no pointer: every intent verb
-    // (`add`, `remove`, `update`) and `doctor --fix` run inside one would
+    // (`member add`, `member remove`, `update`) and `doctor --fix` run inside one would
     // take the early return below and silently skip surfacing.
     //
     // Intent mode regenerates a project's content without choosing it, so it
@@ -1454,7 +1454,7 @@ pub(crate) fn activate_workweave(
 /// Install hooks are suppressed: an intent verb inside a workweave leaves
 /// them to `rwv materialize`.
 ///
-/// Used by the intent verbs (`add`, `remove`, `update`) when they run inside
+/// Used by the intent verbs (`member add`, `member remove`, `update`) when they run inside
 /// a workweave. `rwv doctor --fix` deliberately does NOT come through here —
 /// it uses [`activate_intent_at`], which runs the hooks; see that function
 /// for why a repair verb cannot suppress them.

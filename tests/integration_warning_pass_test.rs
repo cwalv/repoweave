@@ -99,7 +99,7 @@ fn init_add_fetch_activate_prints_no_warning_and_refuses_nothing() {
     let url = common::file_url(&remote);
     for args in [
         &["init", "myapp"][..],
-        &["add", &url],
+        &["member", "add", &url],
         &["fetch"],
         &["activate", "myapp"],
     ] {
@@ -152,7 +152,7 @@ fn activate_materialize_and_workweave_create_report_a_missing_managed_file_alike
 
     let activate = run(&["activate", "myapp", "--no-materialize"], &ws);
     let materialize = run(&["materialize"], &ws);
-    let create = run(&["workweave", "myapp", "create", "feat"], &ws);
+    let create = run(&["workweave", "create", "--project", "myapp", "feat"], &ws);
 
     let seat = common::under(tmp.path(), ".workweaves/myapp--feat");
     let reports = [
@@ -246,9 +246,12 @@ fn activate_does_not_report_the_lock_its_install_hook_writes() {
     let ws = tmp.path().join("ws");
     std::fs::create_dir_all(&ws).unwrap();
     run(&["init", "myapp"], &ws);
-    run(&["add", &common::file_url(&source)], &ws);
+    run(&["member", "add", &common::file_url(&source)], &ws);
     let lock = ws.join("projects/myapp/Cargo.lock");
-    assert!(lock.exists(), "`rwv add` should leave a Cargo.lock behind");
+    assert!(
+        lock.exists(),
+        "`rwv member add` should leave a Cargo.lock behind"
+    );
     std::fs::remove_file(&lock).unwrap();
 
     let activate = run(&["activate", "myapp"], &ws);

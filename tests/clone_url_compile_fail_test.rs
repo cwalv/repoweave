@@ -1,6 +1,6 @@
 //! Git is handed a `CloneUrl`, never a manifest `url` as written.
 //!
-//! A member's `url` keeps the spelling `rwv add` was given, registry
+//! A member's `url` keeps the spelling `rwv member add` was given, registry
 //! shorthand included, and `git clone github/acme/x` fails. Every `Vcs`
 //! method that hands git a URL takes a `CloneUrl`, and nothing outside
 //! `registry.rs` can make one except by resolving, so a clone site that skips

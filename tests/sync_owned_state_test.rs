@@ -294,8 +294,9 @@ fn fixture() -> Fixture {
     f.rwv(
         &[
             "workweave",
-            "web-app",
             "create",
+            "--project",
+            "web-app",
             "agent-1",
             "--no-materialize",
         ],

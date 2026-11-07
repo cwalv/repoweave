@@ -1,4 +1,4 @@
-//! `rwv add --adopt` refuses a clone whose position under the weave root
+//! `rwv member add --adopt` refuses a clone whose position under the weave root
 //! passes through a directory name no member path can spell, names that
 //! directory and why, and leaves the renaming to the operator.
 
@@ -33,7 +33,7 @@ fn clone_into(tmp: &Path, dest: &Path) {
 
 fn adopt(ws: &Path, path: &Path) -> (bool, String) {
     let out = common::rwv()
-        .arg("add")
+        .args(["member", "add"])
         .arg("--adopt")
         .arg(path)
         .current_dir(ws)

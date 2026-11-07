@@ -67,7 +67,7 @@ backstop unnecessary.
   in workweave name resolution for real, and what each of the four affected
   call sites needs from it.
 - [path-url-mapping](./path-url-mapping.md) — `placement` as the sole
-  producer of a derived `RepoPath`, the `rwv add --new` creation surface
+  producer of a derived `RepoPath`, the `rwv member add --new` creation surface
   (`Registry::creation_params`/`plan_creation`, the creation-address
   grammar, two-sided `local` creation), and the `placement-disagreement`
   doctor finding's role-based exemptions.

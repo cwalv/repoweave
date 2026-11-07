@@ -59,7 +59,7 @@ A weave can hold multiple projects. Only one is active at a time. The active pro
 
 Selection is primary-only. A workweave's project is fixed when the workweave is created and cannot be switched, so a workweave root carries a `.rwv-workweave` marker naming its project *instead of* a pointer — the two files are mutually exclusive, and `rwv doctor` reports a root carrying both as a `weave-root-identity-conflict`.
 
-The authoring verbs (`rwv add`, `rwv remove`, `rwv update`, `rwv role`, and `rwv doctor --fix`) author and merge managed keys into ecosystem workspace files in the project directory (`package.json` workspaces, `go.work`, `Cargo.toml` with `[workspace]`, `pyproject.toml` with `[tool.uv.workspace]`), preserving user-authored content in each file. Then `rwv activate <project>` makes that project live at the primary weave root:
+The authoring verbs (`rwv member add`, `rwv member remove`, `rwv update`, `rwv member set-role`, and `rwv doctor --fix`) author and merge managed keys into ecosystem workspace files in the project directory (`package.json` workspaces, `go.work`, `Cargo.toml` with `[workspace]`, `pyproject.toml` with `[tool.uv.workspace]`), preserving user-authored content in each file. Then `rwv activate <project>` makes that project live at the primary weave root:
 
 1. Updates `.rwv-active`.
 2. Verifies integration files in `projects/<project>/` and surfaces symlinks at the weave root so ecosystem tools see them where they expect.

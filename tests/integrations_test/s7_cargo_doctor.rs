@@ -854,7 +854,7 @@ fn s7_6_hybrid_user_held_unchanged_by_fully_owned_split() {
 //      managed file is missing, naming `rwv doctor --fix`.
 //
 // Empirical evidence from the audit: a repo that acquired its
-// Cargo.toml AFTER `rwv add` never had its managed Cargo.toml generated,
+// Cargo.toml AFTER `rwv member add` never had its managed Cargo.toml generated,
 // so `activate` blew up in the activate_hook (cargo generate-lockfile
 // has no root manifest to lock against) with the confusing "workspace
 // may be partially activated" wrap. This battery pins the FALLBACK

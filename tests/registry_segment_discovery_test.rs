@@ -1,7 +1,7 @@
 //! The disk scan must reach a member in every registry segment a manifest can
 //! name, not only the built-in three.
 //!
-//! `rwv add` mints the first path segment from the source URL: `local` for a
+//! `rwv member add` mints the first path segment from the source URL: `local` for a
 //! `file://` source, the URL's own host for anything else no built-in matched.
 //! So the segments a manifest can hold are an open set, and a scan that walks
 //! a fixed list of them cannot see a member outside it. Everything `rwv
@@ -9,17 +9,17 @@
 //! manifest entry reads as a dangling reference, and its lock is never
 //! compared against its HEAD.
 //!
-//! The `local/` half of each pin is driven through `rwv add` from a `file://`
+//! The `local/` half of each pin is driven through `rwv member add` from a `file://`
 //! source, the production route. The host-derived half is written into the
-//! manifest directly, in the shape `rwv add https://codeberg.org/acme/lib`
-//! writes: minting that segment through `rwv add` needs the host to be
+//! manifest directly, in the shape `rwv member add https://codeberg.org/acme/lib`
+//! writes: minting that segment through `rwv member add` needs the host to be
 //! reachable, and the suite runs offline.
 
 use std::path::{Path, PathBuf};
 
 mod common;
 
-/// A weave holding one project, one `file://` member added through `rwv add`,
+/// A weave holding one project, one `file://` member added through `rwv member add`,
 /// and a lock covering it.
 ///
 /// Returns the weave root and the origin the member was cloned from.
@@ -37,7 +37,7 @@ fn weave_with_a_file_url_member(tmp: &tempfile::TempDir) -> (PathBuf, PathBuf) {
         .assert()
         .success();
     common::rwv()
-        .args(["add", &common::file_url(&origin)])
+        .args(["member", "add", &common::file_url(&origin)])
         .current_dir(&ws)
         .assert()
         .success();
@@ -79,11 +79,11 @@ fn doctor_findings(ws: &Path, args: &[&str]) -> Vec<(String, String)> {
         .collect()
 }
 
-/// A member `rwv add` placed under `local/` is on disk, so `rwv doctor`
+/// A member `rwv member add` placed under `local/` is on disk, so `rwv doctor`
 /// straight after the add reports nothing at all.
 ///
 /// The defect: the manifest entry reported as `dangling-reference` — "listed
-/// in rwv.toml but not cloned on disk" — for a clone `rwv add` had just
+/// in rwv.toml but not cloned on disk" — for a clone `rwv member add` had just
 /// written, with `rwv fetch` printed as the repair. That advice cannot clear
 /// it; fetch skips a member whose directory already exists.
 #[test]
@@ -93,7 +93,7 @@ fn a_file_url_member_is_clean_immediately_after_add() {
 
     assert!(
         ws.join("local/acme/widgets").is_dir(),
-        "`rwv add` from a file:// source places the clone under local/"
+        "`rwv member add` from a file:// source places the clone under local/"
     );
     assert_eq!(
         doctor_findings(&ws, &[]),

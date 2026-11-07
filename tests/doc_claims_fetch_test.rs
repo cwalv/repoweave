@@ -1,5 +1,5 @@
-//! Integration tests verifying documented behavior of `rwv fetch`, `rwv add`,
-//! and `rwv remove`.
+//! Integration tests verifying documented behavior of `rwv fetch`, `rwv member add`,
+//! and `rwv member remove`.
 //!
 //! Each test states the documented claim it pins in its own section banner.
 //! Where the implementation diverges from what the docs say, the test verifies
@@ -215,9 +215,9 @@ fn fetch_name_collision_names_the_in_place_fetch_and_an_empty_directory() {
 }
 
 // ============================================================================
-// Test 2 — `rwv remove --delete` against a clone another project shares
+// Test 2 — `rwv member remove --delete` against a clone another project shares
 //
-// `rwv remove --delete` checks whether other projects reference the same repo
+// `rwv member remove --delete` checks whether other projects reference the same repo
 // before deleting.  If a reference is found:
 //   - A warning is printed: "warning: repo also referenced by project 'X'"
 //   - The deletion is refused unless `--delete-shared-clone` is also passed.
@@ -262,15 +262,15 @@ fn remove_delete_does_not_check_other_projects() {
 
     // --- Without --delete-shared-clone: should fail and print a warning ---
     let output = rwv()
-        .args(["remove", repo_path, "--delete"])
+        .args(["member", "remove", repo_path, "--delete"])
         .current_dir(workspace.join("projects").join("project-a"))
         .output()
-        .expect("rwv remove should run");
+        .expect("rwv member remove should run");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         !output.status.success(),
-        "rwv remove --delete should fail when another project references the repo; stderr:\n{stderr}"
+        "rwv member remove --delete should fail when another project references the repo; stderr:\n{stderr}"
     );
     assert!(
         stderr.contains("warning: repo also referenced by project"),
@@ -284,22 +284,28 @@ fn remove_delete_does_not_check_other_projects() {
 
     // --- With --delete-shared-clone: should succeed and delete ---
     rwv()
-        .args(["remove", repo_path, "--delete", "--delete-shared-clone"])
+        .args([
+            "member",
+            "remove",
+            repo_path,
+            "--delete",
+            "--delete-shared-clone",
+        ])
         .current_dir(workspace.join("projects").join("project-a"))
         .assert()
         .success();
 
     assert!(
         !repo_dir.exists(),
-        "rwv remove --delete --delete-shared-clone should delete the directory even \
+        "rwv member remove --delete --delete-shared-clone should delete the directory even \
          when shared"
     );
 }
 
 // ============================================================================
-// Test 3 — `rwv add --adopt <path>` infers the URL from the origin remote
+// Test 3 — `rwv member add --adopt <path>` infers the URL from the origin remote
 //
-// `rwv add --adopt <path> --role reference` infers the URL from the clone's
+// `rwv member add --adopt <path> --role reference` infers the URL from the clone's
 // origin remote for a clone that exists under the weave root.
 // ============================================================================
 
@@ -330,10 +336,17 @@ fn add_from_local_path_infers_url() {
         .expect("git clone failed");
     assert!(clone_status.success());
 
-    // Run `rwv add --adopt github/org/repo --role reference` from the
+    // Run `rwv member add --adopt github/org/repo --role reference` from the
     // workspace root; rwv infers the URL from the clone's origin remote.
     rwv()
-        .args(["add", "--adopt", "github/org/repo", "--role", "reference"])
+        .args([
+            "member",
+            "add",
+            "--adopt",
+            "github/org/repo",
+            "--role",
+            "reference",
+        ])
         .current_dir(&workspace)
         .assert()
         .success();

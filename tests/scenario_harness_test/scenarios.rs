@@ -11,7 +11,7 @@ fn ww(name: &str) -> Place {
 }
 
 fn create(name: &str) -> Step {
-    Step::rwv(&a(), &["workweave", "proj", "create", name]).expect(Exit::Succeeds)
+    Step::rwv(&a(), &["workweave", "create", "--project", "proj", name]).expect(Exit::Succeeds)
 }
 
 fn scenario(name: &'static str, steps: Vec<Step>) -> Scenario {
@@ -126,8 +126,9 @@ pub fn workweave_without_b_given_up_before_publishing() -> Scenario {
                 &a(),
                 &[
                     "workweave",
-                    "proj",
                     "delete",
+                    "--project",
+                    "proj",
                     "anon",
                     "--discard-unmerged-commits",
                 ],
@@ -241,7 +242,8 @@ fn shared_member(name: &'static str, branch: &'static str) -> Scenario {
             Step::commit(&a(), Repo::Lib, "lib-pending"),
             Step::rwv(&a(), &["activate", "proj2"]),
             Step::rwv(&a(), &["activate", "proj"]),
-            Step::rwv(&a(), &["workweave", "proj2", "create", "side"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["workweave", "create", "--project", "proj2", "side"])
+                .expect(Exit::Succeeds),
             Step::commit(&side, Repo::Lib, "side-lib"),
             Step::rwv(&side, &["sync-to", "--retire"]),
         ],
@@ -274,7 +276,15 @@ pub fn nested_workweaves_without_naming() -> Scenario {
             create("w1"),
             Step::rwv(
                 &ww("w1"),
-                &["workweave", "proj", "create", "w2", "--from", "."],
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    "w2",
+                    "--from",
+                    ".",
+                ],
             )
             .expect(Exit::Succeeds),
             Step::commit(&ww("w2"), Repo::App, "w2-app"),

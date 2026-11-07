@@ -212,7 +212,7 @@ fn a_landing_warns_on_a_tag_pinned_entry_and_its_relock_records_the_commit() {
     common::git_in(&project, &["commit", "-m", "initial"]);
     std::fs::write(root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
 
-    succeed(&root, &["workweave", PROJECT, "create", "s1"]);
+    succeed(&root, &["workweave", "create", "--project", PROJECT, "s1"]);
     let seat = tmp
         .path()
         .join(".workweaves")
@@ -349,7 +349,7 @@ fn a_json_landing_still_warns_on_a_tag_pinned_entry() {
     common::git_in(&project, &["add", "-A"]);
     common::git_in(&project, &["commit", "-m", "initial"]);
     std::fs::write(root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
-    succeed(&root, &["workweave", PROJECT, "create", "s1"]);
+    succeed(&root, &["workweave", "create", "--project", PROJECT, "s1"]);
     let seat = tmp
         .path()
         .join(".workweaves")

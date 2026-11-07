@@ -138,7 +138,7 @@ fn make_workspace_with_remote_and_project_repo(tmp: &Path, project: &str) -> (Pa
 
 fn create_workweave(ws: &Path, project: &str, name: &str) -> PathBuf {
     rwv()
-        .args(["workweave", project, "create", name])
+        .args(["workweave", "create", "--project", project, name])
         .current_dir(ws)
         .assert()
         .success();
@@ -188,7 +188,7 @@ fn write_unreadable_marker(dir: &Path) {
 // 1. Production — nothing writes a pointer into a workweave root
 // ---------------------------------------------------------------------------
 
-/// `rwv workweave <project> create <name>` leaves the marker and no pointer.
+/// `rwv workweave create <name>` leaves the marker and no pointer.
 #[test]
 fn workweave_create_writes_the_marker_and_no_pointer() {
     let tmp = common::tempdir().unwrap();
@@ -213,7 +213,7 @@ fn workweave_create_writes_the_marker_and_no_pointer() {
 /// that path still live in a build that reintroduced it.
 ///
 /// Re-running the surfacing pass over an existing workweave root drives that
-/// path on its own. `rwv add` inside the workweave is a verb that reaches
+/// path on its own. `rwv member add` inside the workweave is a verb that reaches
 /// activation with the workweave dir as its root.
 #[test]
 fn activation_inside_a_workweave_does_not_write_a_pointer() {
@@ -224,7 +224,13 @@ fn activation_inside_a_workweave_does_not_write_a_pointer() {
     let second = ws.join("github/org/repo2");
     init_repo_with_commit(&second);
     rwv()
-        .args(["add", &common::file_url(&second), "--role", "owned"])
+        .args([
+            "member",
+            "add",
+            &common::file_url(&second),
+            "--role",
+            "owned",
+        ])
         .current_dir(&ww)
         .assert()
         .success();
@@ -345,21 +351,27 @@ fn intent_verbs_still_surface_inside_a_pointerless_workweave() {
     let second = ws.join("github/org/repo2");
     init_repo_with_commit(&second);
     rwv()
-        .args(["add", &common::file_url(&second), "--role", "owned"])
+        .args([
+            "member",
+            "add",
+            &common::file_url(&second),
+            "--role",
+            "owned",
+        ])
         .current_dir(&ww)
         .assert()
         .success();
 
     assert!(
         surfaced.symlink_metadata().is_ok(),
-        "`rwv add` inside a workweave must still surface \
+        "`rwv member add` inside a workweave must still surface \
          `demo.code-workspace` at the workweave root; a missing symlink here \
          means the intent-mode gate read `.rwv-active` (absent in a \
          workweave) instead of the file that governs this root"
     );
 }
 
-/// `rwv update` reaches the same gate by a different route than `rwv add` —
+/// `rwv update` reaches the same gate by a different route than `rwv member add` —
 /// through `update_for_project`, which also hands the surfacing set the
 /// container kind off its own resolved checkout. Both halves are observable
 /// here: a wrong gate answer removes the symlink, a wrong kind changes what
@@ -551,7 +563,7 @@ fn doctor_fix_ignores_a_conflicted_root_of_another_workspace() {
     )
     .unwrap();
     rwv()
-        .args(["workweave", "beta", "create", "b1"])
+        .args(["workweave", "create", "--project", "beta", "b1"])
         .current_dir(&ws_b)
         .assert()
         .success();

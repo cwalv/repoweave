@@ -76,7 +76,10 @@ fn two_projects_with_a_workweave_named_alike() -> Weave {
         let dir = primary.join("projects").join(project);
         common::git_in(&dir, &["add", "-A"]);
         common::git_in(&dir, &["commit", "-qm", "lock"]);
-        rwv_ok(&["workweave", project, "create", SEAT], &primary);
+        rwv_ok(
+            &["workweave", "create", "--project", project, SEAT],
+            &primary,
+        );
     }
 
     let container = tmp.path().join(".workweaves");

@@ -169,8 +169,9 @@ fn workweave(weave: &Weave) -> PathBuf {
     let out = common::rwv()
         .args([
             "workweave",
-            PROJECT,
             "create",
+            "--project",
+            PROJECT,
             "feat-a",
             "--dir",
             &dir.to_string_lossy(),

@@ -128,11 +128,11 @@ fn explain_push_lock_state_mismatch_remedy_has_no_dead_checkout_advice() {
 /// A `--new` member's worktree, skipped in a workweave because the canonical
 /// clone has no commits yet, is created by `rwv lock` then `rwv doctor
 /// --fix` (src/add_remove.rs), not `rwv sync` (there is no such verb).
-/// Revert this line to watch it go red: add.md.tmpl:33-35 said "run `rwv
-/// sync` after the first commit".
+/// Revert this line to watch it go red: the member page's add section once
+/// said "run `rwv sync` after the first commit".
 #[test]
-fn explain_add_worktree_skip_names_lock_then_doctor_fix() {
-    let out = rwv().args(["explain", "add"]).assert().success();
+fn explain_member_worktree_skip_names_lock_then_doctor_fix() {
+    let out = rwv().args(["explain", "member"]).assert().success();
     let text = String::from_utf8_lossy(&out.get_output().stdout).replace("\r\n", "\n");
     assert!(!text.contains("run `rwv sync`"), "{text}");
     assert!(

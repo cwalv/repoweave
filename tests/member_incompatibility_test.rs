@@ -531,14 +531,14 @@ fn update_silent_when_advance_keeps_members_compatible() {
 // add — the report at the moment add-order seeding bites
 // ===========================================================================
 //
-// `rwv add` seeds a `DefaultOnly` value (go.work's go-line) from whichever
-// member is on disk first. A later `rwv add` of a module requiring more is
+// `rwv member add` seeds a `DefaultOnly` value (go.work's go-line) from whichever
+// member is on disk first. A later `rwv member add` of a module requiring more is
 // exactly where that seed stops matching reality — the pin was compatible
 // when it was made, same as `update`'s motivating case, but the breach is
 // created by adding the new member rather than by advancing an existing one.
 
 /// A bare repo holding one module at `go_version`, under `tmp`, ready to be
-/// cloned by `rwv add`.
+/// cloned by `rwv member add`.
 fn new_module_remote(tmp: &Path, name: &str, go_version: &str) -> PathBuf {
     let bare = tmp.join(format!("{name}.git"));
     init_bare_with_go_mod(&bare, go_version);
@@ -553,10 +553,10 @@ fn add_reports_new_member_incompatible_with_existing_pin() {
     let remote_url = common::file_url(&remote);
 
     let output = rwv_without_go()
-        .args(["add", &remote_url])
+        .args(["member", "add", &remote_url])
         .current_dir(&ws)
         .output()
-        .expect("rwv add should run");
+        .expect("rwv member add should run");
 
     let combined = format!(
         "{}{}",
@@ -587,10 +587,10 @@ fn add_silent_when_new_member_is_compatible() {
     let remote_url = common::file_url(&remote);
 
     let output = rwv_without_go()
-        .args(["add", &remote_url])
+        .args(["member", "add", &remote_url])
         .current_dir(&ws)
         .output()
-        .expect("rwv add should run");
+        .expect("rwv member add should run");
 
     let combined = format!(
         "{}{}",

@@ -27,8 +27,8 @@ rwv sync-to other-workweave-name
 From inside the workweave, inspect the commits or diff that will land relative to the recorded parent's common ancestor:
 
 ```bash
-rwv workweave <project> log            # commit listing per repo vs. recorded parent
-rwv workweave <project> log --diff     # unique diff vs. recorded parent
+rwv workweave log            # commit listing per repo vs. recorded parent
+rwv workweave log --diff     # unique diff vs. recorded parent
 ```
 
 Add `--json` for a machine-readable envelope.
@@ -46,7 +46,7 @@ When you want to keep the workweave for follow-up work or inspect the parent bef
 ```bash
 cd ../.workweaves/web-app--payments
 rwv sync-to
-rwv workweave web-app delete payments   # when ready to clean up
+rwv workweave delete payments   # when ready to clean up
 ```
 
 ## Land multiple workweaves serially

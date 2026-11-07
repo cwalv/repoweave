@@ -241,7 +241,7 @@ fn an_intent_verb_refuses_over_a_setting_of_the_wrong_type_for_every_key_and_lea
             let upstream = tmp.path().join("up.git");
             common::init_bare_repo_with_commit(&upstream);
 
-            let (ok, stdout, stderr) = rwv(&["add", &common::file_url(&upstream)], &ws);
+            let (ok, stdout, stderr) = rwv(&["member", "add", &common::file_url(&upstream)], &ws);
             let out = format!("{stdout}\n{stderr}");
 
             let refused_naming_both = !ok

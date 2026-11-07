@@ -31,7 +31,7 @@ src/check.rs	repair-target-changed	-	5
 src/check.rs	unknown-finding-kind	-	1
 src/cli/dispatch.rs	(untokened:argv-shim)	-	1
 src/cli/dispatch.rs	ambiguous-workweave-address	-	1
-src/cli/dispatch.rs	inapplicable-flag	tests/project_and_source_spelling_test.rs	2
+src/cli/dispatch.rs	inapplicable-flag	tests/project_and_source_spelling_test.rs	3
 src/cli/dispatch.rs	malformed-workweave-address	-	2
 src/cli/dispatch.rs	no-such-workweave	-	2
 src/cli/dispatch.rs	stale-registry-entry	-	1
@@ -65,6 +65,8 @@ src/integrations/uv_workspace.rs	(untokened:integration-channel)	-	4
 src/lock.rs	(untokened:environment-passthrough)	-	2
 src/lock.rs	edits dirty	tests/refusal_arrival_test.rs	2
 src/manifest.rs	legacy-manifest-format	tests/refusal_arrival_test.rs	1
+src/member_settings.rs	edits dirty	tests/refusal_arrival_test.rs	1
+src/member_settings.rs	repo-not-in-manifest	tests/role_verb_test.rs	2
 src/op_state.rs	(untokened:UNCLASSIFIED)	-	1
 src/op_state.rs	(untokened:internal-invariant)	-	2
 src/op_state.rs	dead-op-lease	tests/unreadable_op_record_test.rs	2
@@ -86,8 +88,6 @@ src/push.rs	publish withheld	tests/refusal_arrival_test.rs	1
 src/push.rs	push-from-workweave	tests/refusal_arrival_test.rs	1
 src/push.rs	unpushable-repo-branch	-	1
 src/registry.rs	unresolvable-repo-source	tests/project_and_source_spelling_test.rs	1
-src/role.rs	edits dirty	tests/refusal_arrival_test.rs	1
-src/role.rs	repo-not-in-manifest	tests/role_verb_test.rs	1
 src/setup.rs	claude-settings-missing	-	1
 src/sync.rs	(untokened:environment-passthrough)	-	3
 src/sync.rs	(untokened:internal-invariant)	-	10

@@ -96,7 +96,7 @@ surfaced symlink).
 ### Workweave restriction
 
 `rwv activate` refuses when CWD is inside a workweave. The project is fixed at
-workweave-creation time (`rwv workweave <project> create <name>`); switching
+workweave-creation time (`rwv workweave create <name>`); switching
 projects inside a workweave would silently mutate primary's `.rwv-active` and
 weave-root symlinks. Switch projects only from the primary weave.
 

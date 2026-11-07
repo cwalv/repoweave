@@ -1330,7 +1330,7 @@ fn rm_rf_of_a_container_placed_seat_is_fixed_in_one_pass() {
     git_in(&project_dir, &["commit", "-q", "-m", "add manifest"]);
 
     rwv()
-        .args(["workweave", "myproj", "create", "seat"])
+        .args(["workweave", "create", "--project", "myproj", "seat"])
         .current_dir(&ws)
         .assert()
         .success();
@@ -3217,7 +3217,13 @@ fn workweave_create_with_a_slash_in_the_name_is_refused() {
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     let create = rwv()
-        .args(["workweave", "myproj", "create", "feat-a/nested"])
+        .args([
+            "workweave",
+            "create",
+            "--project",
+            "myproj",
+            "feat-a/nested",
+        ])
         .current_dir(&ws)
         .output()
         .unwrap();
@@ -4400,7 +4406,7 @@ fn a_sync_to_parked_mid_rebase_draws_no_switch_advice() {
     git_in(&primary_project, &["add", "-A"]);
     git_in(&primary_project, &["commit", "-q", "-m", "initial"]);
     rwv()
-        .args(["workweave", "app", "create", "s1"])
+        .args(["workweave", "create", "--project", "app", "s1"])
         .current_dir(&primary)
         .assert()
         .success();

@@ -100,11 +100,17 @@ fn an_authoring_verb_leaves_workspace_package_parseable_and_marked() {
     let ws = weave(tmp.path());
 
     let (ok, out) = rwv(
-        &["role", "github/acme/beta", "fork", "--no-materialize"],
+        &[
+            "member",
+            "set-role",
+            "github/acme/beta",
+            "fork",
+            "--no-materialize",
+        ],
         &ws,
     );
-    assert!(ok, "`rwv role` must succeed:\n{out}");
-    assert_parseable_and_marked(&ws, "`rwv role`");
+    assert!(ok, "`rwv member set-role` must succeed:\n{out}");
+    assert_parseable_and_marked(&ws, "`rwv member set-role`");
 }
 
 #[test]

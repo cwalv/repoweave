@@ -1,88 +1,42 @@
 //! CLI error/help UX regressions.
 //!
-//! Two problem classes, fixed uniformly in `src/cli/dispatch.rs` via pre-parse
-//! raw-arg interception:
-//!
-//!   1. `rwv workweave <PROJECT> <WORD>` — clap consumes <PROJECT> as the
-//!      `[PROJECT]` positional, then sees <WORD> as an "unexpected argument"
-//!      and never reaches the subcommand "did you mean" path. We intercept and
-//!      reframe it as a missing-subcommand error with a `create`-shaped hint.
-//!
-//!   2. The "For more information, try '--help'" footer is emitted on every
-//!      clap error even when `--help` was already on the command line. We
-//!      suppress that one footer line whenever `--help`/`-h` is present.
+//! The "For more information, try '--help'" footer is emitted on every clap
+//! error even when `--help` was already on the command line. We suppress that
+//! one footer line whenever `--help`/`-h` is present, and keep it otherwise.
+//! A mistyped workweave subcommand gets clap's own similar-subcommand tip.
 
 mod common;
 use common::rwv;
 use predicates::prelude::*;
 
-/// `rwv workweave foundations banana` must name the problem as a missing
-/// subcommand, list the available subcommands, and offer the `create`-shaped
-/// did-you-mean — NOT clap's opaque "unexpected argument 'banana'".
+/// A subcommand *typo* (`crete`, edit distance 1 from `create`) reaches clap,
+/// whose native "unrecognized subcommand / tip: a similar subcommand exists"
+/// message names the real subcommand.
 #[test]
-fn workweave_bare_name_is_reframed_as_missing_subcommand() {
+fn workweave_subcommand_typo_gets_clap_tip() {
     rwv()
-        .args(["workweave", "foundations", "banana"])
+        .args(["workweave", "crete", "myseat"])
         .assert()
         .failure()
         .stderr(
-            predicate::str::contains("is not a valid subcommand")
-                .and(predicate::str::contains("Available subcommands"))
-                .and(predicate::str::contains("create"))
-                .and(predicate::str::contains("delete"))
-                .and(predicate::str::contains("list"))
-                // "log" and "set-container" pin that the list is read from
-                // clap's WorkweaveAction subcommands rather than a hand-typed
-                // subset that could silently drop an action.
-                .and(predicate::str::contains("log"))
-                .and(predicate::str::contains("set-container"))
-                .and(predicate::str::contains("Did you mean"))
-                .and(predicate::str::contains("create banana"))
-                // The old clap message must be gone.
-                .and(predicate::str::contains("unexpected argument").not()),
+            predicate::str::contains("unrecognized subcommand 'crete'")
+                .and(predicate::str::contains("a similar subcommand exists"))
+                .and(predicate::str::contains("'create'")),
         );
 }
 
-/// A subcommand *typo* (`crete`, edit distance 1 from `create`) must NOT be
-/// reframed: it is far more likely a fumbled subcommand than a workweave name.
-/// The interceptor defers near-misses (edit distance <= 2 from
-/// `create`/`delete`/`list`) to clap, whose native "unrecognized subcommand /
-/// tip: a similar subcommand exists" message is strictly more helpful here than
-/// suggesting we create a workweave literally named `crete`.
+/// A bare `rwv workweave` names no action to run, so it shows the subcommands
+/// rather than listing or creating anything.
 #[test]
-fn workweave_subcommand_typo_defers_to_clap() {
-    rwv()
-        .args(["workweave", "foundations", "crete"])
-        .assert()
-        .failure()
-        .stderr(
-            // Not our reframe, and not the misleading "create crete" hint.
-            predicate::str::contains("is not a valid subcommand")
-                .not()
-                .and(predicate::str::contains("create crete").not())
-                // Clap's native subcommand handling fires: "unrecognized
-                // subcommand 'crete'" + "tip: a similar subcommand exists:
-                // 'create'". Assert the robust pair (clap mentions both
-                // "subcommand" and the real "create" name).
-                .and(predicate::str::contains("subcommand"))
-                .and(predicate::str::contains("create")),
-        );
-}
-
-/// Same invocation with a trailing `--help`: still the reframed error (the
-/// 3rd token is a bare name, not a flag, so interception still fires), and the
-/// "try '--help'" footer must NOT appear.
-#[test]
-fn workweave_bare_name_with_help_has_no_footer() {
-    rwv()
-        .args(["workweave", "foundations", "banana", "--help"])
-        .assert()
-        .failure()
-        .stderr(
-            predicate::str::contains("is not a valid subcommand")
-                .and(predicate::str::contains("create banana"))
-                .and(predicate::str::contains("try '--help'").not()),
-        );
+fn bare_workweave_shows_the_subcommands() {
+    rwv().args(["workweave"]).assert().failure().stderr(
+        predicate::str::contains("Usage: rwv workweave")
+            .and(predicate::str::contains("create"))
+            .and(predicate::str::contains("delete"))
+            .and(predicate::str::contains("list"))
+            .and(predicate::str::contains("log"))
+            .and(predicate::str::contains("set-default-create-basedir")),
+    );
 }
 
 /// `rwv setup invalid-sub --help` — InvalidSubcommand error kind. clap shows
@@ -152,105 +106,23 @@ fn footer_retained_without_help() {
         .stderr(predicate::str::contains("try '--help'"));
 }
 
-/// Regression guard: `rwv workweave foundations` (no 3rd token) must keep
-/// defaulting to `list` — interception must NOT fire here. Running outside a
-/// workspace just needs to not be the reframed subcommand error; whatever the
-/// list path does (succeed with names, or fail resolving the workspace) it
-/// must not produce the "is not a valid subcommand" message.
+/// `rwv workweave --help` shows help and exits 0.
 #[test]
-fn workweave_project_only_is_not_intercepted() {
+fn workweave_help_shows_help() {
     rwv()
-        .args(["workweave", "foundations"])
-        .assert()
-        .stderr(predicate::str::contains("is not a valid subcommand").not());
-}
-
-/// `rwv workweave foundations --help` (3rd token is a flag) must show help and
-/// exit 0 — the interceptor must skip flag tokens.
-#[test]
-fn workweave_project_help_shows_help() {
-    rwv()
-        .args(["workweave", "foundations", "--help"])
+        .args(["workweave", "--help"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Usage: rwv workweave"));
 }
 
-/// The real subcommand API must keep working: `rwv workweave <PROJECT> create`
-/// (a known subcommand) must reach clap, not the interceptor — so a missing
-/// `<NAME>` yields clap's standard required-argument error, not the reframed
-/// "is not a valid subcommand" message.
+/// The real subcommand API reaches clap: `rwv workweave create` with no name
+/// yields clap's standard required-argument error.
 #[test]
 fn workweave_create_reaches_clap() {
     rwv()
-        .args(["workweave", "foundations", "create"])
+        .args(["workweave", "create", "--project", "foundations"])
         .assert()
         .failure()
-        .stderr(
-            predicate::str::contains("is not a valid subcommand")
-                .not()
-                .and(predicate::str::contains("<NAME>")),
-        );
-}
-
-/// The trap this closes: `rwv workweave create <seat>` — the natural spelling
-/// a user reaches for — parses `create` into `[PROJECT]` (clap fills the
-/// positional before it looks for a subcommand), leaving `<seat>` unconsumed.
-/// Before this fix that fell into the generic reframe above, whose
-/// `create`-shaped suggestion re-inserted the same `create` PROJECT ahead of
-/// WORD and read back as `rwv workweave create create <seat>` — repeating the
-/// exact mistake rather than naming it. The message must instead name `create`
-/// as the value bound to PROJECT and quote an invocation that actually works.
-#[test]
-fn workweave_subcommand_name_as_project_names_the_mistake() {
-    rwv()
-        .args(["workweave", "create", "myseat"])
-        .assert()
-        .failure()
-        .stderr(
-            predicate::str::contains("reads 'create' as [PROJECT]")
-                .and(predicate::str::contains("PROJECT"))
-                .and(predicate::str::contains(
-                    "rwv workweave <PROJECT> create myseat",
-                ))
-                // The old double-create suggestion must be gone.
-                .and(predicate::str::contains("create create").not())
-                .and(predicate::str::contains("is not a valid subcommand").not()),
-        );
-}
-
-/// Every `WorkweaveAction` subcommand name triggers the same reframe when it
-/// binds to `[PROJECT]`, not just `create` — `delete` and `set-container` are
-/// exactly as reachable as project-shaped tokens and exactly as wrong.
-#[test]
-fn workweave_other_subcommand_names_as_project_are_also_named() {
-    rwv()
-        .args(["workweave", "delete", "myseat"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("reads 'delete' as [PROJECT]").and(
-            predicate::str::contains("rwv workweave <PROJECT> delete myseat"),
-        ));
-
-    rwv()
-        .args(["workweave", "set-container", "/some/path"])
-        .assert()
-        .failure()
-        .stderr(
-            predicate::str::contains("reads 'set-container' as [PROJECT]").and(
-                predicate::str::contains("rwv workweave <PROJECT> set-container /some/path"),
-            ),
-        );
-}
-
-/// Unrelated case, guarding against over-matching: a real project name that
-/// merely *contains* a subcommand word (`created-stuff`) must not trip the
-/// new reframe — only an exact subcommand name bound to PROJECT does.
-#[test]
-fn workweave_project_name_containing_a_subcommand_word_is_not_reframed() {
-    rwv()
-        .args(["workweave", "created-stuff", "myseat"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("reads").not());
+        .stderr(predicate::str::contains("<NAME>"));
 }

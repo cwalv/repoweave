@@ -111,7 +111,7 @@ fn unmigrated_weave(tmp: &Path) -> Weave {
     std::fs::write(primary.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
 
     rwv()
-        .args(["workweave", PROJECT, "create", SEAT])
+        .args(["workweave", "create", "--project", PROJECT, SEAT])
         .current_dir(&primary)
         .assert()
         .success();
@@ -409,10 +409,21 @@ fn verbs_refuse_an_unmigrated_workweave_and_name_doctor_fix() {
         (&weave.seat, vec!["sync", "primary"]),
         (&weave.seat, vec!["sync-to", primary_arg.as_str()]),
         (&weave.primary, vec!["sync", seat_arg.as_str()]),
-        (&weave.primary, vec!["workweave", PROJECT, "delete", SEAT]),
         (
             &weave.primary,
-            vec!["workweave", PROJECT, "create", "next", "--from", &seat_arg],
+            vec!["workweave", "delete", "--project", PROJECT, SEAT],
+        ),
+        (
+            &weave.primary,
+            vec![
+                "workweave",
+                "create",
+                "--project",
+                PROJECT,
+                "next",
+                "--from",
+                &seat_arg,
+            ],
         ),
     ];
     for (dir, args) in refusals {
@@ -520,7 +531,7 @@ fn doctor_fix_migrates_a_member_under_a_parked_op_and_abort_then_restores() {
     );
     std::fs::write(primary.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
     rwv()
-        .args(["workweave", PROJECT, "create", SEAT])
+        .args(["workweave", "create", "--project", PROJECT, SEAT])
         .current_dir(&primary)
         .assert()
         .success();
@@ -716,19 +727,31 @@ fn a_symlinked_member_whose_canonical_clone_is_gone_waits_for_fetch() {
     );
 }
 
+/// The flag `workweave create` once took for `reference` members is gone with
+/// no message of its own: clap refuses it as it refuses any flag the verb lacks.
 #[test]
-fn worktree_references_exits_2_saying_it_is_now_the_only_behavior() {
+fn worktree_references_is_refused_as_an_unknown_argument() {
     let tmp = common::tempdir().unwrap();
     let out = rwv()
-        .args(["workweave", PROJECT, "create", "x", "--worktree-references"])
+        .args([
+            "workweave",
+            "create",
+            "--project",
+            PROJECT,
+            "x",
+            "--worktree-references",
+        ])
         .current_dir(tmp.path())
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(2), "stderr:\n{stderr}");
     assert!(
-        stderr.contains("`--worktree-references` has been removed")
-            && stderr.contains("every member, `reference` included, is now a worktree"),
+        stderr.contains("unexpected argument '--worktree-references'"),
         "stderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("has been removed") && !stderr.contains("is now a worktree"),
+        "the retired flag must carry no history of its own:\n{stderr}"
     );
 }

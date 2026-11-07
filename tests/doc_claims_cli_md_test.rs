@@ -301,8 +301,7 @@ fn cli_md_doctor_flags_exist_in_help() {
 #[test]
 fn cli_md_workweave_create_flags_exist_in_help() {
     let cli_md = read_cli_md();
-    let cli_flags =
-        extract_cli_md_flags_for_section(&cli_md, "### `rwv workweave <project> create");
+    let cli_flags = extract_cli_md_flags_for_section(&cli_md, "### `rwv workweave create");
     let help = help_flags(&["workweave", "create"]);
     assert_all_cli_md_flags_in_help("workweave create", &cli_flags, &help);
 }
@@ -461,7 +460,7 @@ const VALUE_CHECKED_VERBS: &[&[&str]] = &[
     &["sync-to"],
     &["push"],
     &["doctor"],
-    &["add"],
+    &["member", "add"],
     &["status"],
 ];
 
@@ -634,11 +633,11 @@ fn possible_values_are_found_for_the_enum_valued_flag() {
 }
 
 #[test]
-fn set_container_help_names_info_exclude_not_gitignore() {
-    let help = help_text(&["workweave", "proj", "set-container"]);
+fn set_default_create_basedir_help_names_info_exclude_not_gitignore() {
+    let help = help_text(&["workweave", "set-default-create-basedir"]);
     assert!(
-        help.contains("set-container") && help.contains("`.git/info/exclude`"),
-        "set-container help must name the exclusion mechanism, got:\n{help}"
+        help.contains("set-default-create-basedir") && help.contains("`.git/info/exclude`"),
+        "set-default-create-basedir help must name the exclusion mechanism, got:\n{help}"
     );
     assert!(
         !help.contains(".gitignore"),

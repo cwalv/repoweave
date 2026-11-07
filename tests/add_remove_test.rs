@@ -1,4 +1,4 @@
-//! E2E tests for `rwv add` and `rwv remove`.
+//! E2E tests for `rwv member add` and `rwv member remove`.
 
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -126,9 +126,9 @@ fn write_manifest(dir: &Path, repos: &[(&str, &str)]) {
 
 #[test]
 fn add_subcommand_is_recognized() {
-    // `rwv add` without arguments should fail because URL is required.
+    // `rwv member add` without arguments should fail because URL is required.
     rwv()
-        .arg("add")
+        .args(["member", "add"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));
@@ -136,9 +136,9 @@ fn add_subcommand_is_recognized() {
 
 #[test]
 fn remove_subcommand_is_recognized() {
-    // `rwv remove` without arguments should fail because PATH is required.
+    // `rwv member remove` without arguments should fail because PATH is required.
     rwv()
-        .arg("remove")
+        .args(["member", "remove"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("required"));
@@ -150,7 +150,7 @@ fn add_accepts_url_argument() {
     // (not argument parsing) because we run from an empty temp dir.
     let tmp = common::tempdir().unwrap();
     rwv()
-        .args(["add", "https://example.com/org/repo.git"])
+        .args(["member", "add", "https://example.com/org/repo.git"])
         .current_dir(tmp.path())
         .assert()
         .failure()
@@ -163,7 +163,7 @@ fn remove_accepts_path_argument() {
     // (not argument parsing) because we run from an empty temp dir.
     let tmp = common::tempdir().unwrap();
     rwv()
-        .args(["remove", "github/example/repo"])
+        .args(["member", "remove", "github/example/repo"])
         .current_dir(tmp.path())
         .assert()
         .failure()
@@ -171,7 +171,7 @@ fn remove_accepts_path_argument() {
 }
 
 // ============================================================================
-// rwv add URL — clones repo and updates manifest
+// rwv member add URL — clones repo and updates manifest
 // ============================================================================
 
 #[test]
@@ -187,7 +187,7 @@ fn add_clones_repo_to_canonical_path() {
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
     rwv()
-        .args(["add", &remote_url])
+        .args(["member", "add", &remote_url])
         .current_dir(&workspace)
         .assert()
         .success();
@@ -221,14 +221,14 @@ fn add_unrecognized_registry_url_writes_three_segment_manifest_path() {
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
     rwv()
-        .args(["add", &remote_url])
+        .args(["member", "add", &remote_url])
         .current_dir(&workspace)
         .assert()
         .success();
 
     let manifest_path = workspace.join("projects/test-project/rwv.toml");
-    let manifest =
-        Manifest::from_path(&manifest_path).expect("rwv.toml written by `rwv add` must parse");
+    let manifest = Manifest::from_path(&manifest_path)
+        .expect("rwv.toml written by `rwv member add` must parse");
 
     assert!(
         manifest
@@ -271,7 +271,7 @@ fn add_uncloned_three_segment_shorthand_clones_the_registry_resolved_url() {
     );
 
     rwv()
-        .args(["add", "github/acme/x"])
+        .args(["member", "add", "github/acme/x"])
         .current_dir(&workspace)
         .env("GIT_CONFIG_COUNT", "2")
         .env("GIT_CONFIG_KEY_1", format!("url.{redirect_base}.insteadOf"))
@@ -292,8 +292,8 @@ fn add_uncloned_three_segment_shorthand_clones_the_registry_resolved_url() {
     assert_eq!(std::fs::read_to_string(&cloned_readme).unwrap(), "init");
 
     let manifest_path = workspace.join("projects/test-project/rwv.toml");
-    let manifest =
-        Manifest::from_path(&manifest_path).expect("rwv.toml written by `rwv add` must parse");
+    let manifest = Manifest::from_path(&manifest_path)
+        .expect("rwv.toml written by `rwv member add` must parse");
     assert!(
         manifest
             .get_entry(&RepoPath::new("github/acme/x").unwrap())
@@ -317,7 +317,7 @@ fn rwv_with_fake_github(tmp: &Path) -> Command {
     cmd
 }
 
-/// A weave whose manifest lists `github/acme/x` as `rwv add github/acme/x`
+/// A weave whose manifest lists `github/acme/x` as `rwv member add github/acme/x`
 /// wrote it, with the clone that add made.
 fn shorthand_member(tmp: &tempfile::TempDir) -> PathBuf {
     let bare = tmp.path().join("fakegithub").join("acme").join("x.git");
@@ -326,7 +326,7 @@ fn shorthand_member(tmp: &tempfile::TempDir) -> PathBuf {
     let (workspace, _project_dir) = setup_workspace_with_project(tmp, &[]);
 
     rwv_with_fake_github(tmp.path())
-        .args(["add", "github/acme/x"])
+        .args(["member", "add", "github/acme/x"])
         .current_dir(&workspace)
         .assert()
         .success();
@@ -392,7 +392,7 @@ fn add_by_url_finishes_a_member_added_by_shorthand() {
     let manifest_before = shorthand_manifest(&workspace);
 
     rwv_with_fake_github(tmp.path())
-        .args(["add", "https://github.com/acme/x"])
+        .args(["member", "add", "https://github.com/acme/x"])
         .current_dir(&workspace)
         .assert()
         .success()
@@ -407,7 +407,7 @@ fn add_new_finishes_a_member_added_by_shorthand() {
     let manifest_before = shorthand_manifest(&workspace);
 
     rwv_with_fake_github(tmp.path())
-        .args(["add", "github/acme/x", "--new"])
+        .args(["member", "add", "github/acme/x", "--new"])
         .current_dir(&workspace)
         .assert()
         .success()
@@ -472,6 +472,7 @@ fn assert_relative_root_lands_in_lab(
     rwv()
         .args(global_args)
         .args([
+            "member",
             "add",
             "local",
             "--new",
@@ -552,8 +553,9 @@ fn add_new_relative_root_resolves_against_the_addressed_workweave() {
     rwv()
         .args([
             "workweave",
-            "test-project",
             "create",
+            "--project",
+            "test-project",
             "ww",
             "--dir",
             seat.to_str().unwrap(),
@@ -572,7 +574,7 @@ fn add_new_relative_root_resolves_against_the_addressed_workweave() {
     );
 }
 
-/// `rwv add local --new --param root=<lab> --param owner=acme --param
+/// `rwv member add local --new --param root=<lab> --param owner=acme --param
 /// repo=fresh` creates two things: a bare upstream under `<lab>`, and the
 /// member cloned from it. All five assertions matter — the first four alone
 /// pass even if `--param root` were parsed and discarded, since the member
@@ -589,6 +591,7 @@ fn add_new_local_registry_creates_a_bare_upstream_and_clones_the_member() {
 
     rwv()
         .args([
+            "member",
             "add",
             "local",
             "--new",
@@ -697,7 +700,7 @@ fn add_with_role_flag_sets_annotation() {
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
     rwv()
-        .args(["add", &remote_url, "--role=fork"])
+        .args(["member", "add", &remote_url, "--role=fork"])
         .current_dir(&workspace)
         .assert()
         .success();
@@ -741,7 +744,7 @@ fn add_existing_repo_handles_gracefully() {
 
     // Adding the same URL again should handle gracefully.
     let result = rwv()
-        .args(["add", &remote_url])
+        .args(["member", "add", &remote_url])
         .current_dir(&workspace)
         .assert();
 
@@ -763,7 +766,7 @@ fn add_invalid_url_errors_clearly() {
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
     rwv()
-        .args(["add", "not-a-valid-url-at-all"])
+        .args(["member", "add", "not-a-valid-url-at-all"])
         .current_dir(&workspace)
         .assert()
         .failure()
@@ -825,14 +828,14 @@ fn add_url_resolves_a_non_main_remote_default_branch() {
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
     rwv()
-        .args(["add", &remote_url])
+        .args(["member", "add", &remote_url])
         .current_dir(&workspace)
         .assert()
         .success();
 
     let manifest_path = workspace.join("projects/test-project/rwv.toml");
-    let manifest =
-        Manifest::from_path(&manifest_path).expect("rwv.toml written by `rwv add` must parse");
+    let manifest = Manifest::from_path(&manifest_path)
+        .expect("rwv.toml written by `rwv member add` must parse");
     let entry = manifest
         .get_entry(&RepoPath::new("local/acme/masterrepo").unwrap())
         .expect("expected local/acme/masterrepo in the manifest");
@@ -879,7 +882,7 @@ fn add_local_path_refuses_rather_than_fabricate_main_when_origin_head_is_unset()
     run(&["remote", "add", "origin", &bare.to_string_lossy()]);
 
     let result = rwv()
-        .args(["add", "--adopt", repo_path])
+        .args(["member", "add", "--adopt", repo_path])
         .current_dir(&workspace)
         .assert()
         .failure();
@@ -894,7 +897,7 @@ fn add_local_path_refuses_rather_than_fabricate_main_when_origin_head_is_unset()
         .join(repo_path);
     assert!(
         stderr.contains(&format!(
-            "then re-run `rwv add --adopt {}`",
+            "then re-run `rwv member add --adopt {}`",
             adopted.display()
         )),
         "refusal must name the re-run that registers this clone, got: {stderr}"
@@ -919,7 +922,7 @@ fn add_local_path_refuses_rather_than_fabricate_main_when_origin_head_is_unset()
     run(&["fetch", "origin"]);
     run(&["remote", "set-head", "origin", "-a"]);
     rwv()
-        .args(["add", "--adopt", repo_path])
+        .args(["member", "add", "--adopt", repo_path])
         .current_dir(&workspace)
         .assert()
         .success();
@@ -950,7 +953,7 @@ fn add_adopt_of_a_clone_whose_remote_has_no_branch_names_the_first_push() {
     let branch = common::git_in(&clone, &["symbolic-ref", "--short", "HEAD"]);
 
     let out = rwv()
-        .args(["add", "--adopt", repo_path])
+        .args(["member", "add", "--adopt", repo_path])
         .current_dir(&workspace)
         .output()
         .unwrap();
@@ -972,7 +975,7 @@ fn add_adopt_of_a_clone_whose_remote_has_no_branch_names_the_first_push() {
     common::git_in(&clone, &["remote", "set-head", "origin", &branch]);
 
     rwv()
-        .args(["add", "--adopt", repo_path])
+        .args(["member", "add", "--adopt", repo_path])
         .current_dir(&workspace)
         .assert()
         .success();
@@ -983,11 +986,11 @@ fn add_adopt_of_a_clone_whose_remote_has_no_branch_names_the_first_push() {
     assert_eq!(entry.branch.to_string(), branch);
 }
 
-/// `rwv add <url>` refused for the default its fresh clone lacks, run in
+/// `rwv member add <url>` refused for the default its fresh clone lacks, run in
 /// `workspace`: the refusal text and the clone it keeps.
 fn refused_for_its_default(workspace: &Path, url: &str, repo_path: &str) -> (String, PathBuf) {
     let out = rwv()
-        .args(["add", url])
+        .args(["member", "add", url])
         .current_dir(workspace)
         .output()
         .unwrap();
@@ -1006,7 +1009,7 @@ fn refused_for_its_default(workspace: &Path, url: &str, repo_path: &str) -> (Str
 
 fn assert_added_tracking(workspace: &Path, url: &str, repo_path: &str, clone: &Path, branch: &str) {
     rwv()
-        .args(["add", url])
+        .args(["member", "add", url])
         .current_dir(workspace)
         .assert()
         .success();
@@ -1097,7 +1100,9 @@ fn assert_refused_as_tag_shaped(out: &std::process::Output, workspace: &Path, re
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         !out.status.success()
-            && stderr.contains(&format!("rwv add: {repo_path}: name a revision (v2.0)\n"))
+            && stderr.contains(&format!(
+                "rwv member add: {repo_path}: name a revision (v2.0)\n"
+            ))
             && stderr.contains("reads as a release tag")
             && stderr.ends_with("\nrwv explain name\n"),
         "the add refuses the branch it would track:\n{stderr}"
@@ -1119,7 +1124,7 @@ fn add_url_refuses_a_remote_whose_default_branch_reads_as_a_tag() {
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
     let out = rwv()
-        .args(["add", &url])
+        .args(["member", "add", &url])
         .current_dir(&workspace)
         .output()
         .unwrap();
@@ -1138,7 +1143,7 @@ fn add_adopt_refuses_a_clone_whose_remote_default_branch_reads_as_a_tag() {
     common::git_in(clone.parent().unwrap(), &["clone", "-q", &url, "vrepo"]);
 
     let out = rwv()
-        .args(["add", "--adopt", repo_path])
+        .args(["member", "add", "--adopt", repo_path])
         .current_dir(&workspace)
         .output()
         .unwrap();
@@ -1154,6 +1159,7 @@ fn add_new_from_an_existing_local_upstream(born: bool) {
 
     let out = rwv()
         .args([
+            "member",
             "add",
             "local",
             "--new",
@@ -1214,14 +1220,14 @@ fn add_local_path_percent_encodes_space_and_percent_in_the_origin_url() {
     run(&["remote", "set-head", "origin", "-a"]);
 
     rwv()
-        .args(["add", "--adopt", repo_path])
+        .args(["member", "add", "--adopt", repo_path])
         .current_dir(&workspace)
         .assert()
         .success();
 
     let manifest_path = workspace.join("projects/test-project/rwv.toml");
-    let manifest =
-        Manifest::from_path(&manifest_path).expect("rwv.toml written by `rwv add` must parse");
+    let manifest = Manifest::from_path(&manifest_path)
+        .expect("rwv.toml written by `rwv member add` must parse");
     let entry = manifest
         .get_entry(&RepoPath::new(repo_path).unwrap())
         .expect("manifest must record the added repo");
@@ -1304,14 +1310,14 @@ fn add_local_path_records_the_configured_url_not_the_instead_of_rewrite() {
 
     rwv()
         .env("HOME", &home)
-        .args(["add", "--adopt", repo_path])
+        .args(["member", "add", "--adopt", repo_path])
         .current_dir(&workspace)
         .assert()
         .success();
 
     let manifest_path = workspace.join("projects/test-project/rwv.toml");
-    let manifest =
-        Manifest::from_path(&manifest_path).expect("rwv.toml written by `rwv add` must parse");
+    let manifest = Manifest::from_path(&manifest_path)
+        .expect("rwv.toml written by `rwv member add` must parse");
     let entry = manifest
         .get_entry(&RepoPath::new(repo_path).unwrap())
         .expect("manifest must record the added repo");
@@ -1330,19 +1336,19 @@ fn add_new_records_the_branch_git_init_actually_created() {
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
     rwv()
-        .args(["add", "github/myorg/newrepo", "--new"])
+        .args(["member", "add", "github/myorg/newrepo", "--new"])
         .current_dir(&workspace)
         .assert()
         .success();
 
     let manifest_path = workspace.join("projects/test-project/rwv.toml");
     let manifest = Manifest::from_path(&manifest_path)
-        .expect("rwv.toml written by `rwv add --new` must parse");
+        .expect("rwv.toml written by `rwv member add --new` must parse");
     let entry = manifest
         .get_entry(&RepoPath::new("github/myorg/newrepo").unwrap())
         .expect("expected github/myorg/newrepo in the manifest");
 
-    // Read HEAD back from the repo `rwv add --new` just created instead of
+    // Read HEAD back from the repo `rwv member add --new` just created instead of
     // hardcoding an expectation, so this stays honest even if `init_repo`'s
     // own initial-branch choice ever changes.
     let repo_dir = workspace.join("github/myorg/newrepo");
@@ -1361,7 +1367,7 @@ fn add_new_records_the_branch_git_init_actually_created() {
 }
 
 // ============================================================================
-// rwv remove PATH — removes entry from manifest
+// rwv member remove PATH — removes entry from manifest
 // ============================================================================
 
 #[test]
@@ -1392,7 +1398,7 @@ fn remove_path_removes_manifest_entry() {
     assert!(status.success());
 
     rwv()
-        .args(["remove", repo_path])
+        .args(["member", "remove", repo_path])
         .current_dir(&workspace)
         .assert()
         .success();
@@ -1441,7 +1447,7 @@ fn remove_with_delete_flag_removes_clone() {
     assert!(status.success());
 
     rwv()
-        .args(["remove", repo_path, "--delete"])
+        .args(["member", "remove", repo_path, "--delete"])
         .current_dir(&workspace)
         .assert()
         .success();
@@ -1489,7 +1495,7 @@ fn remove_delete_shared_clone_without_delete_is_refused_and_changes_nothing() {
     assert!(status.success());
 
     rwv()
-        .args(["remove", repo_path, "--delete-shared-clone"])
+        .args(["member", "remove", repo_path, "--delete-shared-clone"])
         .current_dir(&workspace)
         .assert()
         .failure()
@@ -1511,7 +1517,7 @@ fn remove_nonexistent_path_errors_clearly() {
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
     rwv()
-        .args(["remove", "nonexistent/path/repo"])
+        .args(["member", "remove", "nonexistent/path/repo"])
         .current_dir(&workspace)
         .assert()
         .failure()
@@ -1525,7 +1531,7 @@ fn remove_nonexistent_path_errors_clearly() {
 }
 
 // ============================================================================
-// rwv add PATH --new — creates new repo via git init
+// rwv member add PATH --new — creates new repo via git init
 // ============================================================================
 
 #[test]
@@ -1534,7 +1540,7 @@ fn add_new_creates_git_repo_at_canonical_path() {
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
     rwv()
-        .args(["add", "github/myorg/newrepo", "--new"])
+        .args(["member", "add", "github/myorg/newrepo", "--new"])
         .current_dir(&workspace)
         .assert()
         .success();
@@ -1557,7 +1563,7 @@ fn add_new_updates_manifest_with_inferred_url() {
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
     rwv()
-        .args(["add", "github/myorg/newrepo", "--new"])
+        .args(["member", "add", "github/myorg/newrepo", "--new"])
         .current_dir(&workspace)
         .assert()
         .success();
@@ -1582,7 +1588,7 @@ fn add_new_without_role_flag_defaults_to_owned() {
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
     rwv()
-        .args(["add", "github/myorg/newrepo", "--new"])
+        .args(["member", "add", "github/myorg/newrepo", "--new"])
         .current_dir(&workspace)
         .assert()
         .success();
@@ -1604,6 +1610,7 @@ fn add_new_with_role_flag_records_that_role() {
 
     rwv()
         .args([
+            "member",
             "add",
             "github/myorg/newrepo",
             "--new",
@@ -1634,7 +1641,7 @@ fn add_new_infers_url_for_github_path() {
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
     rwv()
-        .args(["add", "github/cwalv/repoweave", "--new"])
+        .args(["member", "add", "github/cwalv/repoweave", "--new"])
         .current_dir(&workspace)
         .assert()
         .success();
@@ -1658,7 +1665,7 @@ fn add_new_bare_name_is_a_creation_address_not_a_malformed_path() {
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
     rwv()
-        .args(["add", "not-a-registry", "--new"])
+        .args(["member", "add", "not-a-registry", "--new"])
         .current_dir(&workspace)
         .assert()
         .failure()
@@ -1675,7 +1682,7 @@ fn add_new_with_two_segment_path_errors() {
     // Two segments (owner/repo) matches neither the bare-registry-name nor
     // the three-segment shorthand creation address shape.
     rwv()
-        .args(["add", "owner/repo", "--new"])
+        .args(["member", "add", "owner/repo", "--new"])
         .current_dir(&workspace)
         .assert()
         .failure()
@@ -1690,7 +1697,7 @@ fn add_new_with_four_segment_path_errors() {
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
     rwv()
-        .args(["add", "github/owner/repo/extra", "--new"])
+        .args(["member", "add", "github/owner/repo/extra", "--new"])
         .current_dir(&workspace)
         .assert()
         .failure()
@@ -1706,7 +1713,7 @@ fn add_new_with_unknown_registry_errors() {
 
     // A three-segment shorthand whose registry segment matches nothing.
     rwv()
-        .args(["add", "unknownhost/owner/repo", "--new"])
+        .args(["member", "add", "unknownhost/owner/repo", "--new"])
         .current_dir(&workspace)
         .assert()
         .failure()
@@ -1745,7 +1752,7 @@ fn add_fork_clones_with_origin_remote() {
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
     rwv()
-        .args(["add", &remote_url_str, "--role=fork"])
+        .args(["member", "add", &remote_url_str, "--role=fork"])
         .current_dir(&workspace)
         .assert()
         .success();
@@ -1776,7 +1783,7 @@ fn add_owned_clones_with_origin_remote() {
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
     rwv()
-        .args(["add", &remote_url_str, "--role=owned"])
+        .args(["member", "add", &remote_url_str, "--role=owned"])
         .current_dir(&workspace)
         .assert()
         .success();
@@ -1807,7 +1814,7 @@ fn add_primary_cli_alias_no_longer_accepted_with_doctor_hint() {
     let (workspace, _project_dir) = setup_workspace_with_project(&tmp, &[]);
 
     let assertion = rwv()
-        .args(["add", &remote_url_str, "--role=primary"])
+        .args(["member", "add", &remote_url_str, "--role=primary"])
         .current_dir(&workspace)
         .assert()
         .failure();
@@ -1862,9 +1869,9 @@ fn find_cloned_repo(workspace: &Path, bare: &Path) -> std::path::PathBuf {
 }
 
 // ============================================================================
-// `rwv add` must target CWD's workspace's rwv.toml
+// `rwv member add` must target CWD's workspace's rwv.toml
 //
-// The bug: `rwv add` always wrote to primary's manifest, even when
+// The bug: `rwv member add` always wrote to primary's manifest, even when
 // invoked from inside a workweave. Per-workspace ownership extends from
 // rwv.lock to rwv.toml — both are tracked files in the project repo and
 // follow the same `active_path()` resolution rule `rwv lock` already
@@ -1872,7 +1879,7 @@ fn find_cloned_repo(workspace: &Path, bare: &Path) -> std::path::PathBuf {
 // `docs/explanation/joints/lock-as-derived.md`.
 // ============================================================================
 
-/// Build a workspace plus a workweave directory ready for `rwv add` testing.
+/// Build a workspace plus a workweave directory ready for `rwv member add` testing.
 ///
 /// Layout produced (mirroring what `rwv workweave create` would build):
 ///   {tmp}/ws/                                  -- primary workspace root
@@ -1956,7 +1963,7 @@ fn setup_workweave_for_add_tests(
 
 #[test]
 fn add_from_primary_cwd_writes_to_primary_rwv_yaml() {
-    // Regression: `rwv add` from primary's CWD still writes to primary's
+    // Regression: `rwv member add` from primary's CWD still writes to primary's
     // manifest (the unchanged baseline behavior).
     let tmp = common::tempdir().unwrap();
 
@@ -1967,7 +1974,7 @@ fn add_from_primary_cwd_writes_to_primary_rwv_yaml() {
     let (primary, _workweave_dir) = setup_workweave_for_add_tests(&tmp);
 
     rwv()
-        .args(["add", &remote_url])
+        .args(["member", "add", &remote_url])
         .current_dir(&primary)
         .assert()
         .success();
@@ -1983,7 +1990,7 @@ fn add_from_primary_cwd_writes_to_primary_rwv_yaml() {
 
 #[test]
 fn add_from_workweave_cwd_writes_to_workweave_rwv_yaml_not_primary() {
-    // `rwv add` from a workweave's CWD must mutate the workweave's own
+    // `rwv member add` from a workweave's CWD must mutate the workweave's own
     // rwv.toml, leaving primary's unchanged. This mirrors `rwv lock`'s
     // existing per-workspace resolution; manifest and lock are siblings
     // in the project repo and follow the same `active_path()` rule.
@@ -2001,7 +2008,7 @@ fn add_from_workweave_cwd_writes_to_workweave_rwv_yaml_not_primary() {
     let primary_before = std::fs::read_to_string(&primary_manifest_path).unwrap();
 
     rwv()
-        .args(["add", &remote_url])
+        .args(["member", "add", &remote_url])
         .current_dir(&workweave_dir)
         .assert()
         .success();
@@ -2018,7 +2025,7 @@ fn add_from_workweave_cwd_writes_to_workweave_rwv_yaml_not_primary() {
     let primary_after = std::fs::read_to_string(&primary_manifest_path).unwrap();
     assert_eq!(
         primary_before, primary_after,
-        "primary's rwv.toml must be untouched by `rwv add` from a workweave; \
+        "primary's rwv.toml must be untouched by `rwv member add` from a workweave; \
          before:\n{primary_before}\nafter:\n{primary_after}"
     );
     assert!(
@@ -2042,7 +2049,7 @@ fn add_from_workweave_clones_to_primary_canonical_path() {
     let (primary, workweave_dir) = setup_workweave_for_add_tests(&tmp);
 
     rwv()
-        .args(["add", &remote_url])
+        .args(["member", "add", &remote_url])
         .current_dir(&workweave_dir)
         .assert()
         .success();
@@ -2059,7 +2066,7 @@ fn add_from_workweave_clones_to_primary_canonical_path() {
 
 #[test]
 fn add_from_workweave_creates_worktree_at_workweave() {
-    // Acceptance #4: from a workweave, `rwv add` must materialize the new
+    // Acceptance #4: from a workweave, `rwv member add` must materialize the new
     // repo as a worktree at the workweave so the operator's CWD sees the
     // repo immediately (no separate sync step required for the add-from-
     // workweave flow).
@@ -2072,7 +2079,7 @@ fn add_from_workweave_creates_worktree_at_workweave() {
     let (primary, workweave_dir) = setup_workweave_for_add_tests(&tmp);
 
     rwv()
-        .args(["add", &remote_url])
+        .args(["member", "add", &remote_url])
         .current_dir(&workweave_dir)
         .assert()
         .success();
@@ -2108,7 +2115,7 @@ fn add_from_workweave_creates_worktree_at_workweave() {
 
 #[test]
 fn add_from_workweave_does_not_modify_primary_rwv_active() {
-    // Side-effect regression: when running `rwv add` from a workweave, the
+    // Side-effect regression: when running `rwv member add` from a workweave, the
     // activation step must not clobber primary's .rwv-active (or its
     // ecosystem symlinks). The activation pass binds to the workweave dir,
     // whose project its `.rwv-workweave` marker names — primary's pointer is
@@ -2124,7 +2131,7 @@ fn add_from_workweave_does_not_modify_primary_rwv_active() {
     let primary_active_before = std::fs::read_to_string(primary.join(".rwv-active")).unwrap();
 
     rwv()
-        .args(["add", &remote_url])
+        .args(["member", "add", &remote_url])
         .current_dir(&workweave_dir)
         .assert()
         .success();
@@ -2133,14 +2140,14 @@ fn add_from_workweave_does_not_modify_primary_rwv_active() {
     let primary_active_after = std::fs::read_to_string(primary.join(".rwv-active")).unwrap();
     assert_eq!(
         primary_active_before, primary_active_after,
-        "primary's .rwv-active must be untouched by `rwv add` from a workweave"
+        "primary's .rwv-active must be untouched by `rwv member add` from a workweave"
     );
 
     // And the workweave gains no pointer of its own: selection is
     // primary-only, and the marker already names the project.
     assert!(
         !workweave_dir.join(".rwv-active").exists(),
-        "`rwv add` from a workweave must not write a `.rwv-active` there"
+        "`rwv member add` from a workweave must not write a `.rwv-active` there"
     );
 }
 
@@ -2153,8 +2160,8 @@ fn add_from_workweave_does_not_modify_primary_rwv_active() {
 // the worktree is on the expected ephemeral branch `{project}--{weave}/{branch}`.
 //
 // Covered arms:
-//   URL arm:        `rwv add <file://…>` from a workweave
-//   adopt arm:      `rwv add --adopt <path>` (an existing clone) from a
+//   URL arm:        `rwv member add <file://…>` from a workweave
+//   adopt arm:      `rwv member add --adopt <path>` (an existing clone) from a
 //                   workweave
 // ============================================================================
 
@@ -2207,7 +2214,7 @@ fn current_branch(repo: &std::path::Path) -> Option<String> {
 #[test]
 fn add_url_arm_from_workweave_git_common_dir_points_to_primary_clone() {
     // Acceptance criterion:
-    // After `rwv add <url>` from a workweave:
+    // After `rwv member add <url>` from a workweave:
     //   1. The canonical clone lives under primary (not .workweaves/).
     //   2. The workweave's copy has git-common-dir pointing into the
     //      canonical clone's .git directory — confirming it is a linked
@@ -2223,7 +2230,7 @@ fn add_url_arm_from_workweave_git_common_dir_points_to_primary_clone() {
     let (primary, workweave_dir) = setup_workweave_for_add_tests(&tmp);
 
     rwv()
-        .args(["add", &remote_url])
+        .args(["member", "add", &remote_url])
         .current_dir(&workweave_dir)
         .assert()
         .success();
@@ -2268,7 +2275,7 @@ fn add_url_arm_from_workweave_git_common_dir_points_to_primary_clone() {
     );
 
     // 3. Ephemeral branch must be the FLAT {project}--{weave} name.
-    // `rwv add` used to derive its own third
+    // `rwv member add` used to derive its own third
     // component from the canonical's current_ref with a private truncation;
     // both are gone, and the canonical here is on `main`, so a segmented
     // name would still be observable if the derivation had survived.
@@ -2311,7 +2318,7 @@ fn add_url_arm_from_workweave_git_common_dir_points_to_primary_clone() {
 #[test]
 fn add_local_path_arm_from_workweave_git_common_dir_points_to_primary_clone() {
     // Acceptance criterion, adopt arm:
-    // `rwv add --adopt <path>` (an existing clone under primary)
+    // `rwv member add --adopt <path>` (an existing clone under primary)
     // from a workweave must produce the same placement guarantee as the URL
     // arm — canonical clone stays in primary, workweave gets a linked
     // worktree with git-common-dir pointing to the canonical clone.
@@ -2339,9 +2346,9 @@ fn add_local_path_arm_from_workweave_git_common_dir_points_to_primary_clone() {
         .expect("git clone failed");
     assert!(status.success(), "pre-clone of bare repo failed");
 
-    // Run `rwv add --adopt <canonical_rel>` from the workweave.
+    // Run `rwv member add --adopt <canonical_rel>` from the workweave.
     rwv()
-        .args(["add", "--adopt", canonical_rel])
+        .args(["member", "add", "--adopt", canonical_rel])
         .current_dir(&workweave_dir)
         .assert()
         .success();
@@ -2420,7 +2427,7 @@ fn add_local_path_arm_from_workweave_git_common_dir_points_to_primary_clone() {
 ///
 /// Layout:
 ///   ws/projects/project-a/rwv.toml  — pre-populated
-///   ws/projects/project-b/rwv.toml  — empty (caller will `rwv add` into it)
+///   ws/projects/project-b/rwv.toml  — empty (caller will `rwv member add` into it)
 ///   ws/.rwv-active                  — "project-b" (so default CWD sees it)
 fn setup_two_project_workspace(
     tmp: &tempfile::TempDir,
@@ -2457,7 +2464,7 @@ fn setup_two_project_workspace(
     git_run(&["add", "rwv.toml"], &project_a_dir);
     git_run(&["commit", "-m", "init-a"], &project_a_dir);
 
-    // project-b — empty, active project so `rwv add` targets it.
+    // project-b — empty, active project so `rwv member add` targets it.
     let project_b_dir = workspace.join("projects").join("project-b");
     std::fs::create_dir_all(&project_b_dir).unwrap();
     git_run(&["init", "--initial-branch=main"], &project_b_dir);
@@ -2473,14 +2480,14 @@ fn setup_two_project_workspace(
     (workspace, project_a_dir, project_b_dir)
 }
 
-/// Scenario R29, URL arm: `rwv add` into project-b fires a shared-clone
+/// Scenario R29, URL arm: `rwv member add` into project-b fires a shared-clone
 /// warning when project-a already registers the same repo path, names the
 /// other project and role, and still succeeds.
 ///
-/// Strategy: drive `rwv add <url> --role=dependency --project=project-a` first
+/// Strategy: drive `rwv member add <url> --role=dependency --project=project-a` first
 /// so project-a's manifest gets the exact same repo_path key (derived by the
 /// same URL-parsing logic) that project-b will encounter. Then run
-/// `rwv add <url> --role=owned --project=project-b` explicitly to avoid
+/// `rwv member add <url> --role=owned --project=project-b` explicitly to avoid
 /// `.rwv-active` state contamination from the first add's activation pass.
 #[test]
 fn add_url_arm_warns_shared_clone_names_other_project_and_role() {
@@ -2498,6 +2505,7 @@ fn add_url_arm_warns_shared_clone_names_other_project_and_role() {
     // explicitly to avoid touching project-b's manifest.
     rwv()
         .args([
+            "member",
             "add",
             &remote_url,
             "--role=dependency",
@@ -2512,7 +2520,13 @@ fn add_url_arm_warns_shared_clone_names_other_project_and_role() {
     // the command is not affected by any .rwv-active change from step 1's
     // activation pass.
     let output = rwv()
-        .args(["add", &remote_url, "--role=owned", "--project=project-b"])
+        .args([
+            "member",
+            "add",
+            &remote_url,
+            "--role=owned",
+            "--project=project-b",
+        ])
         .current_dir(&workspace)
         .assert()
         .success()
@@ -2554,7 +2568,7 @@ fn add_url_arm_warns_shared_clone_names_other_project_and_role() {
     );
 }
 
-/// Scenario R29, no-warning arm: `rwv add` fires NO shared-clone warning when
+/// Scenario R29, no-warning arm: `rwv member add` fires NO shared-clone warning when
 /// the clone is not registered by any other project.
 #[test]
 fn add_url_arm_no_warning_when_clone_is_unshared() {
@@ -2568,7 +2582,13 @@ fn add_url_arm_no_warning_when_clone_is_unshared() {
     let (workspace, _project_a_dir, _project_b_dir) = setup_two_project_workspace(&tmp, &[]);
 
     let output = rwv()
-        .args(["add", &remote_url, "--role=owned", "--project=project-b"])
+        .args([
+            "member",
+            "add",
+            &remote_url,
+            "--role=owned",
+            "--project=project-b",
+        ])
         .current_dir(&workspace)
         .assert()
         .success()
@@ -2584,7 +2604,7 @@ fn add_url_arm_no_warning_when_clone_is_unshared() {
     );
 }
 
-/// Scenario R29, `rwv add --new` arm: warns when a sibling project already
+/// Scenario R29, `rwv member add --new` arm: warns when a sibling project already
 /// registers the same path, still succeeds, names project + role.
 ///
 /// Approach: seed project-a's manifest with the path directly (for --new the
@@ -2603,12 +2623,13 @@ fn add_new_warns_shared_clone_names_other_project_and_role() {
         )],
     );
 
-    // Run `rwv add github/testorg/newshared --new --project=project-b`.
+    // Run `rwv member add github/testorg/newshared --new --project=project-b`.
     // Using --project= avoids .rwv-active contamination (project-a is
     // already active from setup_two_project_workspace's init of that project
     // via activation during manifest commit).
     let output = rwv()
         .args([
+            "member",
             "add",
             "github/testorg/newshared",
             "--new",

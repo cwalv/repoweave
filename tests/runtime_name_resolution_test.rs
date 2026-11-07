@@ -7,7 +7,7 @@
 //!   1. **Drifted basename.** `workweave create --dir` places a registered
 //!      workweave at a directory whose basename spells a different name than
 //!      the registry records. Runtime works, on the recorded name — including
-//!      the ephemeral ref a later `rwv add` mints from inside it.
+//!      the ephemeral ref a later `rwv member add` mints from inside it.
 //!   2. **Unregistered directory.** A marker-bearing directory no entry names
 //!      has no name at all. Verbs that act on the identity refuse and route to
 //!      the condition; verbs that only report proceed and say what they found.
@@ -127,7 +127,7 @@ fn branch_names(repo: &Path) -> Vec<String> {
 /// second oddity of placement.
 fn make_registered_workweave(ws: &Path) -> PathBuf {
     rwv()
-        .args(["workweave", "web-app", "create", "feat"])
+        .args(["workweave", "create", "--project", "web-app", "feat"])
         .current_dir(ws)
         .assert()
         .success();
@@ -147,8 +147,9 @@ fn make_drifted_workweave(ws: &Path, container: &Path) -> PathBuf {
     rwv()
         .args([
             "workweave",
-            "web-app",
             "create",
+            "--project",
+            "web-app",
             "feat",
             "--dir",
             dir.to_str().unwrap(),
@@ -204,13 +205,13 @@ fn drifted_basename_mints_the_recorded_name() {
 
     let dir = make_drifted_workweave(&ws, &container);
 
-    // A second repo, added from inside the workweave: `rwv add` cuts a
+    // A second repo, added from inside the workweave: `rwv member add` cuts a
     // worktree there on a freshly minted ephemeral ref. The source sits at
     // `<owner>/<repo>` because that is what the local-path derivation reads.
     let second = tmp.path().join("org").join("second");
     init_repo_with_commit(&second);
     rwv()
-        .args(["add", &common::file_url(&second)])
+        .args(["member", "add", &common::file_url(&second)])
         .current_dir(&dir)
         .assert()
         .success();
@@ -278,8 +279,8 @@ fn unregistered_workweave_refuses_an_identity_consuming_verb() {
     let second = tmp.path().join("org").join("second");
     init_repo_with_commit(&second);
     let second_url = common::file_url(&second);
-    let add_second = vec!["add", second_url.as_str()];
-    for verb in [vec!["workweave", "web-app", "log"], add_second] {
+    let add_second = vec!["member", "add", second_url.as_str()];
+    for verb in [vec!["workweave", "log"], add_second] {
         let out = rwv()
             .args(&verb)
             .current_dir(&dir)
@@ -378,7 +379,7 @@ fn doctor_fix_restores_the_recorded_name_the_refusals_named() {
         .and_then(|v| v.as_str())
         .expect("the fix must restore a recorded identity");
     rwv()
-        .args(["workweave", "web-app", "log"])
+        .args(["workweave", "log"])
         .current_dir(&dir)
         .assert()
         .success();
@@ -416,7 +417,7 @@ fn a_dir_placed_workweave_still_refuses_and_routes_to_the_condition() {
     );
 
     let out = rwv()
-        .args(["workweave", "web-app", "log"])
+        .args(["workweave", "log"])
         .current_dir(&dir)
         .output()
         .expect("verb should run");

@@ -189,7 +189,7 @@ Reconcile integration-managed workspace files, weave-root symlinks, and install 
 
 `rwv materialize` does not rewrite integration workspace files to pick up `rwv.toml` changes: after the install hooks it reports a missing or drifted `package.json`, `go.work` or `Cargo.toml` region as a warning naming `rwv doctor --fix`, which regenerates it.
 
-Every step reads what the project's integrations declare, so an integration that cannot read its own `[integrations.<name>]` block can stop the verb before its first step. For example, an unknown key in a `cargo-workspace` `members` entry makes `rwv materialize` refuse, changing nothing (`materialize: nothing here was changed`), and list the block with the field to correct. Over the same block `rwv add`, `rwv remove`, `rwv role` and `rwv update` refuse and leave `rwv.toml` unchanged, and `rwv activate` withholds its install hooks.
+Every step reads what the project's integrations declare, so an integration that cannot read its own `[integrations.<name>]` block can stop the verb before its first step. For example, an unknown key in a `cargo-workspace` `members` entry makes `rwv materialize` refuse, changing nothing (`materialize: nothing here was changed`), and list the block with the field to correct. Over the same block `rwv member add`, `rwv member remove`, `rwv member set-role`, `rwv member set-recurse-submodules` and `rwv update` refuse and leave `rwv.toml` unchanged, and `rwv activate` withholds its install hooks.
 
 | Flag | Effect |
 |---|---|
@@ -197,7 +197,7 @@ Every step reads what the project's integrations declare, so an integration that
 | `--adopt-drifted` | Record the drifted content as the accepted generation |
 | `--remove-undeclared-links` | Unlink weave-root symlinks at names the active project no longer declares (the files they point at are untouched) |
 
-Passing both `--regenerate-drifted` and `--adopt-drifted` is refused. The bare run lists every path it would act on, and what `--regenerate-drifted` discards is not recoverable through `rwv`. `rwv activate`, `rwv add`, `rwv remove`, `rwv role`, `rwv update`, `rwv workweave create` and `rwv doctor --fix` run the same hooks and withhold them (naming both flags) while drift stands. `rwv activate --no-materialize` selects a project without running the hooks.
+Passing both `--regenerate-drifted` and `--adopt-drifted` is refused. The bare run lists every path it would act on, and what `--regenerate-drifted` discards is not recoverable through `rwv`. `rwv activate`, `rwv member add`, `rwv member remove`, `rwv member set-role`, `rwv member set-recurse-submodules`, `rwv update`, `rwv workweave create` and `rwv doctor --fix` run the same hooks and withhold them (naming both flags) while drift stands. `rwv activate --no-materialize` selects a project without running the hooks.
 
 ### `rwv init <name-or-source> [--provider <registry>/<owner>] [--adopt]`
 
@@ -207,9 +207,13 @@ When invoked in an **empty directory**, `init` bootstraps that directory as a we
 
 With `--adopt`, `<name-or-source>` is a URL or `owner/repo` shorthand: `init` clones the project repo from that source instead of `git init`-ing a new one (brownfield adoption of an existing project repo), and runs the adopted project's install hooks as it activates it. It authors no integration file: the adopted project's members are not on disk until `rwv fetch`, and `rwv doctor --fix` regenerates once they are. `--no-materialize` skips those hooks; without `--adopt` it is a usage error (exit 2), since a new project has no members for a hook to act on.
 
-### `rwv add <url> [...]`
+### `rwv member`
 
-Clone a repo (if not present), register it in the target project's `rwv.toml`, settle write permissions for the role, regenerate integration-managed workspace files, and run integration install hooks (at primary; inside a workweave `add` runs no hooks). If the repo entry was already added to `rwv.toml` by hand, `rwv add` converges the on-disk clone, permissions, and integration files to match.
+Add a repo to the active project, remove one, or change how the manifest lists one. Each subcommand below is an authoring verb: it edits `rwv.toml`, regenerates the integration-managed workspace files, and runs the integration install hooks (at primary; inside a workweave a `member` verb runs no hooks). Each takes `--project <name>` to operate on that project instead of the active one (does not change `.rwv-active`) and `--no-materialize` to skip the install hooks (regeneration still runs, and `rwv materialize` runs the hooks later).
+
+### `rwv member add <url> [...]`
+
+Clone a repo (if not present), register it in the target project's `rwv.toml`, settle write permissions for the role, regenerate integration-managed workspace files, and run integration install hooks. If the repo entry was already added to `rwv.toml` by hand, `rwv member add` converges the on-disk clone, permissions, and integration files to match.
 
 The positional argument has one spelling per meaning:
 
@@ -222,23 +226,24 @@ The positional argument has one spelling per meaning:
 |---|---|
 | `--role <role>` | Sets the role (`owned` / `fork` / `dependency` / `reference`). Defaults to `owned`. |
 | `--adopt` | Register an existing clone; the positional argument is its path (relative to the invocation directory) under the weave root. Conflicts with `--new` |
-| `--new` | Create a new repo instead of cloning; the positional argument becomes a creation address (a bare registry name, or `registry/owner/repo`) rather than a URL or path. See `rwv explain add`. |
+| `--new` | Create a new repo instead of cloning; the positional argument becomes a creation address (a bare registry name, or `registry/owner/repo`) rather than a URL or path. See `rwv explain member`. |
+| `--no-recurse-submodules` | Record `recurse-submodules = false` for the new member, so new checkouts of it leave its submodules uninitialized. A member the manifest already lists keeps its entry; `rwv member set-recurse-submodules` changes it |
 | `--param <name>=<value>` | A creation parameter for `--new` (repeatable). Requires `--new` |
 | `--params-json <json>` | The same parameters as one JSON object of string values. Requires `--new` |
 | `--no-materialize` | Skip the install hooks; regeneration still runs, and `rwv materialize` runs the hooks later |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
-`rwv add` writes to CWD's workspace's manifest (the active workspace's `rwv.toml`), not always primary's.
+`rwv member add` writes to CWD's workspace's manifest (the active workspace's `rwv.toml`), not always primary's.
 
-**A clone already at the placement.** When the URL's placement already holds a git clone, `add` registers it only if its `origin` URL is equivalent to the one given (`Directory already exists at '<path>', skipping clone`). A clone of any other remote, or one with no `origin`, refuses with `foreign-clone-at-placement`, naming `rwv add --adopt <path>`; nothing is written. Anything at the placement that is not a clone (a directory, empty or not, or a file) refuses with `non-clone-at-placement`, naming it; so does one at the workweave's own placement when `add` or `add --adopt` runs from a workweave.
+**A clone already at the placement.** When the URL's placement already holds a git clone, `member add` registers it only if its `origin` URL is equivalent to the one given (`Directory already exists at '<path>', skipping clone`). A clone of any other remote, or one with no `origin`, refuses with `foreign-clone-at-placement`, naming `rwv member add --adopt <path>`; nothing is written. Anything at the placement that is not a clone (a directory, empty or not, or a file) refuses with `non-clone-at-placement`, naming it; so does one at the workweave's own placement when `member add` or `member add --adopt` runs from a workweave.
 
 **Canonical path.** Every URL lands at `<registry>/<owner>/<repo>/`. `<registry>` is the matched built-in registry's name (`github`, `gitlab`, `bitbucket`) when the host is one of those; for a host none of them recognize, it's the URL's own host (e.g. `git.corp.example/team/repo/`); for `file://`, which has no host, it's `local`.
 
-**Shared-clone warning.** If the target clone directory is already registered by another project in the same weave, `rwv add` proceeds (the manifest entry is added to the active project as usual) and emits a warning to stderr naming the other project(s). Sharing a clone across projects is legal — the same repo can be a `dependency` in one project and `owned` in another — but is worth flagging so accidental double-registration is visible.
+**Shared-clone warning.** If the target clone directory is already registered by another project in the same weave, `rwv member add` proceeds (the manifest entry is added to the active project as usual) and emits a warning to stderr naming the other project(s). Sharing a clone across projects is legal — the same repo can be a `dependency` in one project and `owned` in another — but is worth flagging so accidental double-registration is visible.
 
-### `rwv remove <path> [...]`
+### `rwv member remove <path> [...]`
 
-Remove the repository from `rwv.toml`, regenerate integration-managed workspace files, and re-run integration install hooks (at primary; inside a workweave `remove` runs no hooks). If the entry was already removed from `rwv.toml` by hand, `rwv remove` converges the integration files and optional checkout deletion (`--delete`) to match.
+Remove the repository from `rwv.toml`, regenerate integration-managed workspace files, and re-run integration install hooks. If the entry was already removed from `rwv.toml` by hand, `rwv member remove` converges the integration files and optional checkout deletion (`--delete`) to match.
 
 | Flag | Effect |
 |---|---|
@@ -247,9 +252,18 @@ Remove the repository from `rwv.toml`, regenerate integration-managed workspace 
 | `--no-materialize` | Skip the install hooks; regeneration still runs, and `rwv materialize` runs the hooks later |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
-### `rwv role <path> <role>`
+### `rwv member set-role <path> <role>`
 
-Change the repo's `role` in `rwv.toml`, regenerate integration-managed workspace files (a `reference` repo leaves every ecosystem's build graph), run integration install hooks (at primary; inside a workweave `role` runs no hooks), and settle the repo's files: a `reference` repo's tracked regular files lose their write bits; any other role restores owner write permission. If `role` was already edited in `rwv.toml` by hand, `rwv role` converges the on-disk permissions and integration files to match. Refuses a change to `reference` while the repo has uncommitted changes to tracked files.
+Change the repo's `role` in `rwv.toml`, regenerate integration-managed workspace files (a `reference` repo leaves every ecosystem's build graph), run integration install hooks, and settle the repo's files: a `reference` repo's tracked regular files lose their write bits; any other role restores owner write permission. If `role` was already edited in `rwv.toml` by hand, `rwv member set-role` converges the on-disk permissions and integration files to match. Refuses a change to `reference` while the repo has uncommitted changes to tracked files.
+
+| Flag | Effect |
+|---|---|
+| `--no-materialize` | Skip the install hooks; regeneration still runs, and `rwv materialize` runs the hooks later |
+| `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
+
+### `rwv member set-recurse-submodules <path> <true|false>`
+
+Set the repo's `recurse-submodules` in `rwv.toml` and regenerate integration-managed workspace files. The setting says whether a new checkout of the member populates the submodules it records; a checkout that already exists keeps the submodules it has. `true` is the default and is not written out. If the key was already edited in `rwv.toml` by hand, `rwv member set-recurse-submodules` converges the integration files to match.
 
 | Flag | Effect |
 |---|---|
@@ -401,9 +415,9 @@ Without `--kind`, the exit code is non-zero when any finding is an error, and a 
 
 See [Doctor findings](./doctor-findings.md) for the complete catalog of wire `--kind` / `sub_kind` tokens, their severities (`error` vs `warning`), and their `--fix` dispositions.
 
-### `rwv workweave <project> create <name>`
+### `rwv workweave create <name>`
 
-Create an isolated workweave for `<project>`:
+Create an isolated workweave for the project the invocation resolves to (see [Project resolution](#project-resolution)); `--project <name>` names another:
 
 1. **Manifest worktrees** — creates a git worktree on an ephemeral `<project>--<name>` branch for every member repo (`owned`, `fork`, `dependency`, and `reference`), with `reference` repos' tracked regular files set read-only (`chmod -w`, preserving symlinks).
 2. **Project worktree & marker** — creates the project worktree at `projects/<project>/` on `<project>--<name>` and writes `.rwv-workweave` at the workweave root.
@@ -416,26 +430,28 @@ A failure before the install hooks rolls the workweave back. An install hook tha
 | `--from <source>` | Fork from a specific source (default: CWD's active workspace). `<source>` reads as `rwv sync <source>` reads it: `primary`, a bare workweave name of this project, or a path (absolute, or relative to the invocation directory). A directory with a bare name is written `./<dir>`; a bare word that names no workweave refuses with `no-such-workweave`. Forking from an existing workweave is how you **duplicate** one; copying a workweave with `cp` aliases the original's git state rather than duplicating it |
 | `--replace-existing` | Destroy an existing workweave at this path before recreating. Without this flag, re-invoking `create` against an existing workweave is the idempotent path. Refuses if the existing workweave has uncommitted or unmerged work |
 | `--capture-dirty` | Allow creation when the source project directory has uncommitted changes. Uncommitted edits to `rwv.toml` and `rwv.lock` are **moved**: copied into the new workweave's project worktree, then returned to their committed version in the source, so a later `rwv sync-to` from the workweave is not refused over the source's copy. Other uncommitted files stay in the source only, and `create` lists them. Without this flag, `create` refuses (`dirty-project-dir`) |
-| `--dir <path>` | Per-invocation placement override. Places the workweave at exactly this path (recorded in the index as the absolute path it resolves to). Absolute paths are used as-is; relative paths resolve against the invocation directory. Overrides the recorded container for this invocation only |
+| `--dir <path>` | The exact path to place the workweave at; there is no default (recorded in the index as the absolute path it resolves to). Absolute paths are used as-is; relative paths resolve against the invocation directory. Refused together with `--basedir` |
+| `--basedir <path>` | The directory to place the workweave under for this invocation, in place of the recorded default: the workweave lands at `<path>/<project>--<name>`. Relative paths resolve against the invocation directory. Refused together with `--dir` |
+| `--project <name>` | Create the workweave for this project instead of the active project (does not change `.rwv-active`) |
 | `--no-materialize` | Skip the install hooks in the new workweave; `rwv materialize` inside it runs them later |
 
-Workweaves live at `<container>/<project>--<name>/` where `<container>` is recorded per-project in `projects/<project>/.rwv-workweave-index` (machine-local JSON, excluded from git through the project repo's `.git/info/exclude`, never `.gitignore`). The default container is `<parent-of-primary>/.workweaves`. Set the container explicitly with `rwv workweave <project> set-container <path>`; `create` records new entries into the index; every `find`-direction verb (list, delete, sync targets by bare name) resolves via the recorded `name → absolute path` entries with `.rwv-workweave` marker round-trip validation. Doctor reconciles the index against on-disk state — stale entries are pruned, orphan workweaves are adopted, a tracked index is flagged as a hygiene finding.
+Workweaves live at `<basedir>/<project>--<name>/` where `<basedir>` is recorded per-project in `projects/<project>/.rwv-workweave-index` (machine-local JSON, excluded from git through the project repo's `.git/info/exclude`, never `.gitignore`). The default basedir is `<parent-of-primary>/.workweaves`. Set it explicitly with `rwv workweave set-default-create-basedir <path>`; `create` records new entries into the index; every `find`-direction verb (list, delete, sync targets by bare name) resolves via the recorded `name → absolute path` entries with `.rwv-workweave` marker round-trip validation. Doctor reconciles the index against on-disk state — stale entries are pruned, orphan workweaves are adopted, a tracked index is flagged as a hygiene finding.
 
-### `rwv workweave <project> set-container <path>`
+### `rwv workweave set-default-create-basedir <path>`
 
-Record the workweave container for `project`. Writes the `container` field of `projects/<project>/.rwv-workweave-index`. Absolute paths are used as-is; relative paths resolve against the invocation directory. Existing registry entries are preserved. An explicit, recorded, audit-visible act, not ambient process state.
+Record the default basedir for the project: the directory `rwv workweave create` places new workweaves under. Writes the `container` field of `projects/<project>/.rwv-workweave-index`. Absolute paths are used as-is; relative paths resolve against the invocation directory. Existing registry entries are preserved. `--dir` and `--basedir` on `create` are unaffected. An explicit, recorded, audit-visible act, not ambient process state. `--project <name>` records it for that project.
 
-### `rwv workweave <project> delete <name> [--discard-uncommitted] [--discard-unmerged-commits]`
+### `rwv workweave delete <name> [--discard-uncommitted] [--discard-unmerged-commits]`
 
-Delete a workweave. Default refuses if any checkout under it is dirty (`edits`), or holds commits contained in neither the workweave's recorded parent nor the primary weave (`unmerged-commits`; work in a nested workweave counts as merged once its parent has it). `--discard-uncommitted` waives the first refusal, `--discard-unmerged-commits` the second.
+Delete a workweave. Default refuses if any checkout under it is dirty (`edits`), or holds commits contained in neither the workweave's recorded parent nor the primary weave (`unmerged-commits`; work in a nested workweave counts as merged once its parent has it). `--discard-uncommitted` waives the first refusal, `--discard-unmerged-commits` the second. The `edits` refusal prints `rwv workweave delete <name> --discard-uncommitted` among its choices. `--project <name>` selects the project whose workweave it deletes.
 
 Both checks cover every checkout under the workweave, not only the members the project's manifest names: a member replay could not prune, one the workweave added that has not landed, or a clone put there by hand. Such a checkout is listed with the suffix `(not a manifest member)`, and one whose commits no baseline holds at all is reported rather than skipped. `create --replace-existing` weighs the same set.
 
-### `rwv workweave <project> list`
+### `rwv workweave list`
 
-List workweaves for a project.
+List workweaves for a project. `--project <name>` names the project.
 
-### `rwv workweave <project> log [--diff] [--json]`
+### `rwv workweave log [--diff] [--json]`
 
 Show this workweave's unique commits versus its recorded parent, per repo, including the project repo (`projects/<project>`). Must be run from inside a workweave.
 
@@ -446,14 +462,14 @@ Show this workweave's unique commits versus its recorded parent, per repo, inclu
 
 Text output includes one `=== <path> ===` section per member repo followed by `=== (project) ===` for the project repo. `--json` emits an object with `workweave`, `parent`, `diff` (boolean), `repos[]`, and `project_repo` (same shape as each element of `repos[]`, with `path` set to `"(project)"`). Each `repos[]` element carries `path`, `head`, `parent_tip` and `unique_commits[]` (each `{ "sha", "short", "subject" }`); under `--diff` also `diff_base` and `diff`; and `note` when the repo could not be fully read, such as a checkout that is missing.
 
-### `rwv workweave [--hook-mode] [--claude-hook] <project> <action>`
+### `rwv workweave [--hook-mode] [--claude-hook]`
 
-Two flags on `workweave` itself, preceding `<project>` — not part of any subaction — for driving workweave creation and teardown from Claude Code's own hook events instead of the shell.
+Two flags on `workweave` itself, preceding the subcommand, for driving workweave creation and teardown from Claude Code's own hook events instead of the shell.
 
 | Flag | Effect |
 |---|---|
 | `--hook-mode` | With `create`, print only the new workweave's path to stdout instead of the usual create output; everything else, install-tool output included, goes to stderr. An install hook that fails in the created workweave is a warning, and `create` exits 0 |
-| `--claude-hook` | Read a Claude Code hook payload as JSON from stdin and dispatch on it directly, bypassing `<project>` and `<action>` entirely. `hook_event_name: "WorktreeCreate"` creates a workweave — project inferred from the hook's `cwd` (the current workweave's project, or the primary weave's active project), name derived from `branch_name` (falling back to a timestamp) — and prints its path to stdout; an install hook that fails there is a warning, as under `--hook-mode`. `"WorktreeRemove"` deletes the workweave named by `worktree_path`; fire-and-forget, warnings go to stderr and it always exits `0`. `<project>` is not required when this flag is set. Conflicts with `--hook-mode` |
+| `--claude-hook` | Read a Claude Code hook payload as JSON from stdin and dispatch on it directly, bypassing the subcommands entirely. `hook_event_name: "WorktreeCreate"` runs a bare `create` — project inferred from the hook's `cwd` (the current workweave's project, or the primary weave's active project), name derived from `branch_name` (falling back to a timestamp) — and prints its path to stdout; an install hook that fails there is a warning, as under `--hook-mode`. `"WorktreeRemove"` deletes the workweave named by `worktree_path`; fire-and-forget, warnings go to stderr and it always exits `0`. Conflicts with `--hook-mode` |
 
 `rwv setup claude` registers `rwv workweave --claude-hook` for both the `WorktreeCreate` and `WorktreeRemove` Claude Code hook events; `--hook-mode` is for a hook command you write yourself.
 
@@ -535,7 +551,7 @@ The rendered bundles are checked in at `docs/reference/explain/` for offline bro
 
 ## Project resolution
 
-Project-scoped verbs (`add`, `remove`, `role`, `lock`, `update`, `push`, `sync`, `sync-to`, `status`, `doctor`, `fetch` in-place) pick their target project via a fixed chain, highest priority first:
+Project-scoped verbs (`member add`, `member remove`, `member set-role`, `member set-recurse-submodules`, `workweave create`, `workweave delete`, `workweave list`, `workweave set-default-create-basedir`, `lock`, `update`, `push`, `sync`, `sync-to`, `status`, `doctor`, `fetch` in-place) pick their target project via a fixed chain, highest priority first:
 
 1. `--project <name>` — the explicit override on the invocation.
 2. `-w/--workweave <project>--<name>` — the `<project>--` prefix of the global workweave-selector flag names the project.
@@ -545,7 +561,7 @@ Project-scoped verbs (`add`, `remove`, `role`, `lock`, `update`, `push`, `sync`,
 
 Step 3 is one tier rather than two ranked ones because the two files are **mutually exclusive**: a primary root carries the pointer, a workweave root carries the marker, never both. No invocation ever sees both answers, so there is no precedence between them to get wrong. `rwv doctor` enforces the exclusivity, reporting a root carrying both as a `weave-root-identity-conflict`.
 
-The pointer is total at primary by construction: every path that creates a project leaves one active. `rwv init` activates the project it creates, and `rwv fetch <source>` activates the project it clones when none is active. A missing pointer therefore arises from hand surgery, and is repaired without a guess only where nothing is left to guess: an in-place `rwv fetch` in a weave holding exactly one project activates it. Anywhere else a missing or stale pointer produces a corrective error, not silent structure inference. `rwv workweave <project> create <name>` writes only the marker: a workweave's project is fixed at creation and cannot be switched, so there is no selection for a pointer to record.
+The pointer is total at primary by construction: every path that creates a project leaves one active. `rwv init` activates the project it creates, and `rwv fetch <source>` activates the project it clones when none is active. A missing pointer therefore arises from hand surgery, and is repaired without a guess only where nothing is left to guess: an in-place `rwv fetch` in a weave holding exactly one project activates it. Anywhere else a missing or stale pointer produces a corrective error, not silent structure inference. `rwv workweave create <name>` writes only the marker: a workweave's project is fixed at creation and cannot be switched, so there is no selection for a pointer to record.
 
 ### Target line — visibility when the pointer decides
 
@@ -561,7 +577,7 @@ Stderr, not stdout, so the line never contaminates a `--json` verb's output. The
 
 ### CWD inside another project
 
-Changing into `projects/<name>/` does not select that project. When `.rwv-active` selects a different one and no `--project` is given, a verb that writes into its project — `add`, `remove`, `role`, `lock`, `update`, `push`, `sync`, `sync-to`, in-place `fetch`, `doctor --fix` — refuses (`cwd-in-inactive-project`) rather than write into the active project from the other's directory:
+Changing into `projects/<name>/` does not select that project. When `.rwv-active` selects a different one and no `--project` is given, a verb that writes into its project — `member add`, `member remove`, `member set-role`, `member set-recurse-submodules`, `workweave create`, `workweave delete`, `workweave list`, `workweave set-default-create-basedir`, `lock`, `update`, `push`, `sync`, `sync-to`, in-place `fetch`, `doctor --fix` — refuses (`cwd-in-inactive-project`) rather than write into the active project from the other's directory:
 
 ```
 Error: CWD is inside projects/mobile/, but `.rwv-active` selects web, so this would act on web. Pass `--project mobile` to act on mobile, or `--project web` to act on web from here; `rwv activate mobile` switches the active project.
@@ -607,8 +623,8 @@ states and the choices each prints.
 
 | Category | Verbs | Resolution behavior |
 |---|---|---|
-| Project-scoped | `add`, `remove`, `role`, `lock`, `update`, `push`, `sync`, `sync-to`, `status`, `doctor` (project-scoped checks), `fetch` (in-place) | Full chain; target line when the pointer decides |
-| Project named positionally | `activate <project>`, `workweave <project> …` | Explicit already; no chain consulted |
+| Project-scoped | `member add`, `member remove`, `member set-role`, `member set-recurse-submodules`, `workweave create`, `workweave delete`, `workweave list`, `workweave set-default-create-basedir`, `lock`, `update`, `push`, `sync`, `sync-to`, `status`, `doctor` (project-scoped checks), `fetch` (in-place) | Full chain; target line when the pointer decides |
+| Project named positionally | `activate <project>` | Explicit already; no chain consulted |
 | Workspace-scoped, no project | `init`, `abort`, `resolve`, `prime`, `explain`, `doctor` (cross-project scan) | No project selection involved |
 
 ## Selector grammar

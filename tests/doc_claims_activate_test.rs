@@ -289,7 +289,7 @@ fn activate_symlinks_cargo_toml_and_lock() {
     // Under the trigger-model split, `rwv activate` is a context
     // verb — it surfaces existing content but does not author. Drive the
     // intent path first so the project_dir/Cargo.toml exists for the
-    // context-mode activate to surface. (Mirrors what `rwv add` does in
+    // context-mode activate to surface. (Mirrors what `rwv member add` does in
     // a real workflow.) Use the no-materialize variant to skip
     // `cargo generate-lockfile` (the CLI step is gated by --no-materialize).
     let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(&ws_root, None).unwrap();

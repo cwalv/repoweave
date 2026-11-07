@@ -16,7 +16,7 @@
 use crate::activate;
 use crate::add_remove;
 use crate::check;
-use crate::cli::{consent, Cli, Commands, SetupAction, WorkweaveAction};
+use crate::cli::{consent, Cli, Commands, MemberAction, SetupAction, WorkweaveAction};
 use crate::explain;
 use crate::fetch;
 use crate::init;
@@ -247,7 +247,7 @@ fn no_such_workweave(raw: &str, recorded: &[crate::manifest::WorkweaveId]) -> an
             format!(
                 "no workweave is addressable as `{raw}` (this weave's registries \
                  record no workweaves at all; create one with \
-                 `rwv workweave <project> create <name>`)"
+                 `rwv workweave create <name>`)"
             ),
         );
     }
@@ -310,6 +310,17 @@ fn bind_project_scoped(
     Ok(with_target_surfaced(ctx, use_workweave_flag))
 }
 
+/// The context of a `workweave` verb: its project chosen as any verb's is,
+/// by `--project`, the workweave's marker, or `.rwv-active`.
+fn workweave_context(
+    origin_dir: &Path,
+    project: Option<String>,
+    use_workweave_flag: bool,
+) -> anyhow::Result<WorkspaceContext> {
+    let project_override = project.map(ProjectName::new).transpose()?;
+    resolve_project_scoped(origin_dir, project_override, use_workweave_flag)
+}
+
 /// [`resolve_project_scoped`] for `status`, which reports on a weave root
 /// carrying both identity files instead of refusing to act through it.
 /// `doctor` tolerates that and more, through
@@ -341,37 +352,6 @@ fn with_target_surfaced(ctx: WorkspaceContext, use_workweave_flag: bool) -> Work
     ctx
 }
 
-/// Levenshtein edit distance between two strings (two-row dynamic-programming
-/// variant). Kept self-contained here so the early-dispatch interceptor can
-/// distinguish a workweave-subcommand *typo* (small distance from
-/// `create`/`delete`/`list`) from a genuine bare workweave name (large
-/// distance). Intentionally a local copy rather than a dependency on
-/// `explain.rs`'s sibling helper, to keep `main()`'s pre-parse path free of
-/// cross-module coupling.
-fn levenshtein(a: &str, b: &str) -> usize {
-    let a: Vec<char> = a.chars().collect();
-    let b: Vec<char> = b.chars().collect();
-    let m = a.len();
-    let n = b.len();
-    if m == 0 {
-        return n;
-    }
-    if n == 0 {
-        return m;
-    }
-    let mut prev: Vec<usize> = (0..=n).collect();
-    let mut curr = vec![0usize; n + 1];
-    for i in 1..=m {
-        curr[0] = i;
-        for j in 1..=n {
-            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
-            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
-        }
-        std::mem::swap(&mut prev, &mut curr);
-    }
-    prev[n]
-}
-
 /// [`crate::workweave::refuse_symlinked_members`] for the workspace a verb was
 /// invoked in, under the project it acts for.
 fn refuse_symlinked_members_here(ctx: &WorkspaceContext) -> anyhow::Result<()> {
@@ -399,7 +379,7 @@ pub fn run_and_report() -> std::process::ExitCode {
 }
 
 /// The subcommand path this process was invoked with — `workweave delete` for
-/// `rwv workweave <project> delete <name>` — and the output mode it asked for,
+/// `rwv workweave delete <name>` — and the output mode it asked for,
 /// read again from argv: `run` takes none, and a parse it already passed
 /// passes here the same way.
 fn invocation() -> (String, OutputMode) {
@@ -414,6 +394,16 @@ fn invocation() -> (String, OutputMode) {
     }
     let json = matches!(at.try_get_one::<bool>("json"), Ok(Some(true)));
     (path.join(" "), OutputMode::from_flag(json))
+}
+
+/// Whether clap refused the parse over a `--force` that the verb does not
+/// declare.
+fn rejects_force(err: &clap::Error) -> bool {
+    err.kind() == clap::error::ErrorKind::UnknownArgument
+        && err
+            .get(clap::error::ContextKind::InvalidArg)
+            .map(ToString::to_string)
+            .is_some_and(|arg| arg == "--force" || arg.starts_with("--force="))
 }
 
 /// Parse `argv` and run the requested verb. The whole of `rwv`'s behavior
@@ -453,59 +443,19 @@ pub fn run() -> anyhow::Result<()> {
             );
             std::process::exit(2);
         }
-        // Detect: `--force` on a verb whose precondition waiver was renamed to
-        // name the consequence it consents to. `push --force` is untouched — it
-        // is git's force-push, not a precondition waiver.
-        if raw_args.iter().any(|a| a == "--force") {
-            let migration = match raw_args.get(1).map(|s| s.as_str()) {
-                Some("fetch") => Some(
-                    "`--force` has been renamed on `rwv fetch`.\n\
-                     \n\
-                     Use the specific override you need:\n\
-                       --allow-non-empty-dir  bootstrap into a non-empty directory \
-                     that is not a workspace\n\
-                       --detach-checkouts     realign a present clone even where that \
-                     changes what HEAD is attached to",
-                ),
-                Some("remove") => Some(
-                    "`--force` has been renamed on `rwv remove`.\n\
-                     \n\
-                     Use `--delete-shared-clone` to delete a clone that other projects \
-                     still reference.",
-                ),
-                Some("workweave") => match raw_args.get(3).map(|s| s.as_str()) {
-                    Some("create") => Some(
-                        "`--force` has been renamed on `rwv workweave <project> create`.\n\
-                         \n\
-                         Use `--replace-existing` to destroy an existing workweave and \
-                         recreate it from scratch.",
-                    ),
-                    Some("delete") => Some(
-                        "`--force` has been split on `rwv workweave <project> delete`.\n\
-                         \n\
-                         Replace it with the specific override(s) you need:\n\
-                           --discard-uncommitted       delete despite uncommitted changes\n\
-                           --discard-unmerged-commits  delete despite commits not merged \
-                         into the parent weave",
-                    ),
-                    _ => None,
-                },
-                _ => None,
-            };
-            if let Some(msg) = migration {
-                eprintln!("error: {msg}");
-                std::process::exit(2);
-            }
-        }
-        // Detect: `--worktree-references` on `rwv workweave` — it asked for
-        // what every member now is.
-        if raw_args.get(1).map(|s| s.as_str()) == Some("workweave")
-            && raw_args.iter().any(|a| a == "--worktree-references")
+        // Detect: `--force` on `rwv fetch`, whose precondition waiver was renamed
+        // to name the consequence it consents to.
+        if raw_args.get(1).map(|s| s.as_str()) == Some("fetch")
+            && raw_args.iter().any(|a| a == "--force")
         {
             eprintln!(
-                "error: `--worktree-references` has been removed from \
-                 `rwv workweave <project> create`: every member, `reference` included, is \
-                 now a worktree, which is what the flag asked for. Drop the flag."
+                "error: `--force` has been renamed on `rwv fetch`.\n\
+                 \n\
+                 Use the specific override you need:\n\
+                   --allow-non-empty-dir  bootstrap into a non-empty directory \
+                 that is not a workspace\n\
+                   --detach-checkouts     realign a present clone even where that \
+                 changes what HEAD is attached to"
             );
             std::process::exit(2);
         }
@@ -521,85 +471,6 @@ pub fn run() -> anyhow::Result<()> {
                  on `rwv fetch`."
             );
             std::process::exit(2);
-        }
-        // Detect: rwv workweave <PROJECT> <WORD> where WORD is a bare token that
-        // is neither a known subcommand nor a flag. clap consumes <PROJECT> as
-        // the `[PROJECT]` positional, then sees WORD as an *unexpected argument*
-        // for the outer `workweave` command (it never reaches the subcommand
-        // recognition path), so its generic message is "unexpected argument" and
-        // it can't offer a "did you mean". Reframe it as a missing-subcommand
-        // error with a create-shaped suggestion.
-        //
-        // Guards:
-        //   - Only fire when a 4th token (argv[3]) is present and non-flag, so
-        //     `rwv workweave foundations` (list default) and
-        //     `rwv workweave foundations --help` (help) are untouched.
-        //   - PROJECT (argv[2]) must itself be non-flag, so `rwv workweave
-        //     --claude-hook` (no [PROJECT]) is untouched.
-        //   - Skip when WORD is a known WorkweaveAction so the real subcommand
-        //     path (create/delete/list, plus clap's `help`) keeps working.
-        //   - Skip when WORD is a *near-miss* of a known WorkweaveAction (edit
-        //     distance <= SUBCOMMAND_TYPO_THRESHOLD). A bare WORD that is one or
-        //     two edits from `create`/`delete`/`list` (e.g. `crete`) is far more
-        //     likely a subcommand typo than a workweave name; deferring to clap
-        //     lets its native "tip: a similar subcommand exists" message fire,
-        //     which is strictly more helpful than suggesting we create a
-        //     workweave literally named `crete`. The genuine bare-name case
-        //     (`hotfix`, edit distance 6 from every action) is far from any
-        //     subcommand and still gets the create-shaped reframe.
-        //
-        // Within that, PROJECT itself being a known WorkweaveAction (e.g. the
-        // natural spelling `rwv workweave create <seat>`) gets its own message
-        // instead of the generic one: the generic "Did you mean" suggestion
-        // reinserts PROJECT ahead of WORD, so for this case it reads `rwv
-        // workweave create create <seat>` — repeating the exact mistake one
-        // level deeper instead of naming it.
-        if raw_args.get(1).map(|s| s.as_str()) == Some("workweave") {
-            let project = raw_args.get(2).map(|s| s.as_str());
-            let word = raw_args.get(3).map(|s| s.as_str());
-            let is_flag = |s: &str| s.starts_with('-');
-            if let (Some(project), Some(word)) = (project, word) {
-                let cli_cmd = Cli::command();
-                let workweave_cmd = cli_cmd
-                    .find_subcommand("workweave")
-                    .expect("`workweave` is a Commands variant");
-                // WorkweaveAction names a typo could be aiming at. `help` is a
-                // clap builtin, not a typo target worth fuzzy-matching, so it's
-                // excluded here (an exact `help` is already handled above).
-                let subcommand_actions: Vec<&str> = workweave_cmd
-                    .get_subcommands()
-                    .map(|c| c.get_name())
-                    .filter(|&name| name != "help")
-                    .collect();
-                // Edit-distance threshold below which WORD is treated as a
-                // subcommand typo and deferred to clap's native suggestion.
-                const SUBCOMMAND_TYPO_THRESHOLD: usize = 2;
-                let near_subcommand = subcommand_actions
-                    .iter()
-                    .any(|sub| levenshtein(word, sub) <= SUBCOMMAND_TYPO_THRESHOLD);
-                let is_known_subcommand = workweave_cmd
-                    .get_subcommands()
-                    .any(|c| c.get_name() == word);
-                if !is_flag(project) && !is_flag(word) && !is_known_subcommand && !near_subcommand {
-                    if subcommand_actions.contains(&project) {
-                        eprintln!(
-                            "error: 'rwv workweave {project} {word}' reads '{project}' as \
-                             [PROJECT], not a subcommand — a positional argument is filled \
-                             before rwv looks for a subcommand to run.\n\
-                             To run `{project}` against a project, name the project explicitly:\n\
-                             \n  rwv workweave <PROJECT> {project} {word}\n"
-                        );
-                        std::process::exit(2);
-                    }
-                    eprintln!(
-                        "error: '{word}' is not a valid subcommand for 'rwv workweave {project}'\n\
-                         Did you mean:  rwv workweave {project} create {word}\n\
-                         Available subcommands: {}",
-                        subcommand_actions.join(", ")
-                    );
-                    std::process::exit(2);
-                }
-            }
         }
     }
 
@@ -626,6 +497,14 @@ pub fn run() -> anyhow::Result<()> {
     let cli = match cmd.try_get_matches() {
         Ok(matches) => Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit()),
         Err(err) => {
+            if rejects_force(&err) {
+                crate::refuse!(
+                    RefusalKind::InapplicableFlag,
+                    "`--force` is not a flag of this verb, and rwv has no blanket force: each \
+                     refusal names the flag that consents to the one loss it would cause. Run \
+                     the verb without `--force` and read the refusal it prints."
+                );
+            }
             let help_requested = std::env::args().any(|a| a == "--help" || a == "-h");
             if help_requested && err.use_stderr() {
                 let rendered = err.render().to_string();
@@ -755,33 +634,6 @@ pub fn run() -> anyhow::Result<()> {
             let ctx = WorkspaceContext::resolve_unbound(origin_dir)?;
             outln!("{}", ctx.active_path().display());
         }
-        Some(Commands::Add {
-            url,
-            role,
-            new,
-            adopt,
-            params,
-            params_json,
-            project,
-            no_materialize,
-        }) => {
-            let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
-            let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
-            let activation = activate::ActivateOptions { no_materialize };
-            if new {
-                let mut request =
-                    add_remove::CreationRequest::parse(&url, &params, params_json.as_deref())?;
-                request.locate_path_params(|raw| {
-                    Operand::from(std::ffi::OsString::from(raw)).locate(&invocation)
-                })?;
-                add_remove::run_add_new(request, role, &ctx, activation)?;
-            } else if adopt {
-                let path = Operand::from(std::ffi::OsString::from(url)).locate(&invocation);
-                add_remove::run_add_adopt(&path, role, &ctx, activation)?;
-            } else {
-                add_remove::run_add(&url, role, &ctx, activation)?;
-            }
-        }
         Some(Commands::Fetch {
             source,
             frozen,
@@ -886,40 +738,95 @@ pub fn run() -> anyhow::Result<()> {
                 init::init(&ProjectName::new(project)?, provider.as_deref(), origin_dir)?;
             }
         }
-        Some(Commands::Role {
-            repo,
-            role,
-            project,
-            no_materialize,
-        }) => {
-            let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
-            let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
-            refuse_symlinked_members_here(&ctx)?;
-            crate::role::run_role(
-                &repo,
+        Some(Commands::Member { action }) => match action {
+            MemberAction::Add {
+                url,
                 role,
-                &ctx,
-                activate::ActivateOptions { no_materialize },
-            )?;
-        }
-        Some(Commands::Remove {
-            path,
-            delete,
-            delete_shared_clone,
-            project,
-            no_materialize,
-        }) => {
-            let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
-            let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
-            add_remove::run_remove(
-                &path,
-                add_remove::Removal::from_flags(delete, delete_shared_clone)?,
-                &ctx,
-                activate::ActivateOptions { no_materialize },
-            )?;
-        }
+                new,
+                adopt,
+                no_recurse_submodules,
+                params,
+                params_json,
+                project,
+                no_materialize,
+            } => {
+                let project_override =
+                    project.map(crate::manifest::ProjectName::new).transpose()?;
+                let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+                let activation = activate::ActivateOptions { no_materialize };
+                let settings = add_remove::NewMemberSettings {
+                    role,
+                    recurse_submodules: crate::manifest::SubmoduleRecursion::from(
+                        !no_recurse_submodules,
+                    ),
+                };
+                if new {
+                    let mut request =
+                        add_remove::CreationRequest::parse(&url, &params, params_json.as_deref())?;
+                    request.locate_path_params(|raw| {
+                        Operand::from(std::ffi::OsString::from(raw)).locate(&invocation)
+                    })?;
+                    add_remove::run_add_new(request, settings, &ctx, activation)?;
+                } else if adopt {
+                    let path = Operand::from(std::ffi::OsString::from(url)).locate(&invocation);
+                    add_remove::run_add_adopt(&path, settings, &ctx, activation)?;
+                } else {
+                    add_remove::run_add(&url, settings, &ctx, activation)?;
+                }
+            }
+            MemberAction::Remove {
+                path,
+                delete,
+                delete_shared_clone,
+                project,
+                no_materialize,
+            } => {
+                let project_override =
+                    project.map(crate::manifest::ProjectName::new).transpose()?;
+                let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+                add_remove::run_remove(
+                    &path,
+                    add_remove::Removal::from_flags(delete, delete_shared_clone)?,
+                    &ctx,
+                    activate::ActivateOptions { no_materialize },
+                )?;
+            }
+            MemberAction::SetRole {
+                repo,
+                role,
+                project,
+                no_materialize,
+            } => {
+                let project_override =
+                    project.map(crate::manifest::ProjectName::new).transpose()?;
+                let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+                refuse_symlinked_members_here(&ctx)?;
+                crate::member_settings::run_set_role(
+                    &repo,
+                    role,
+                    &ctx,
+                    activate::ActivateOptions { no_materialize },
+                )?;
+            }
+            MemberAction::SetRecurseSubmodules {
+                repo,
+                recurse,
+                project,
+                no_materialize,
+            } => {
+                let project_override =
+                    project.map(crate::manifest::ProjectName::new).transpose()?;
+                let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+                refuse_symlinked_members_here(&ctx)?;
+                crate::member_settings::run_set_recurse_submodules(
+                    &repo,
+                    crate::manifest::SubmoduleRecursion::from(recurse),
+                    &ctx,
+                    activate::ActivateOptions { no_materialize },
+                )?;
+            }
+        },
         Some(Commands::Workweave {
-            project,
             hook_mode,
             claude_hook,
             action,
@@ -930,52 +837,76 @@ pub fn run() -> anyhow::Result<()> {
                 // so it does not go through `acquire_origin_dir`.
                 crate::workweave::handle_claude_hook()?;
             } else {
-                let project = project.expect("project is required unless --claude-hook is set");
-                let project = crate::manifest::ProjectName::new(project)?;
-                let ctx = WorkspaceContext::resolve_invocation(origin_dir, None)?;
-                let primary_root = ctx.primary_path();
-
+                let Some(action) = action else {
+                    Cli::command()
+                        .find_subcommand_mut("workweave")
+                        .expect("`workweave` is a Commands variant")
+                        .error(
+                            clap::error::ErrorKind::MissingSubcommand,
+                            "`--hook-mode` modifies `create`; name the workweave subcommand to run",
+                        )
+                        .exit();
+                };
                 match action {
-                    Some(WorkweaveAction::List) | None => {
-                        let names = crate::workweave::list_workweaves(primary_root, &project)?;
+                    WorkweaveAction::List { project } => {
+                        let ctx = workweave_context(origin_dir, project, use_workweave_flag)?;
+                        let names = crate::workweave::list_workweaves(
+                            ctx.primary_path(),
+                            ctx.require_active_project_on_disk()?,
+                        )?;
                         for n in &names {
                             outln!("{}", n);
                         }
                     }
-                    Some(WorkweaveAction::Delete {
+                    WorkweaveAction::Delete {
                         name,
                         discard_uncommitted,
                         discard_unmerged_commits,
-                    }) => {
+                        project,
+                    } => {
+                        let ctx = workweave_context(origin_dir, project, use_workweave_flag)?;
                         crate::workweave::delete_workweave(
-                            primary_root,
-                            &project,
+                            ctx.primary_path(),
+                            ctx.require_active_project_on_disk()?,
                             &WorkweaveName::new(name)?,
                             None,
                             consent::DiscardUncommittedConsent::from_flag(discard_uncommitted),
                             consent::DiscardUnmergedConsent::from_flag(discard_unmerged_commits),
                         )?;
                     }
-                    Some(WorkweaveAction::Create {
+                    WorkweaveAction::Create {
                         name,
                         replace_existing,
                         from,
                         capture_dirty,
                         dir,
+                        basedir,
+                        project,
                         no_materialize,
-                    }) => {
+                    } => {
+                        let ctx = workweave_context(origin_dir, project, use_workweave_flag)?;
+                        let primary_root = ctx.primary_path();
+                        let project = ctx.require_active_project_on_disk()?;
                         let source_root = match from {
                             None => ctx.active_path().to_path_buf(),
                             Some(source) => source
                                 .locate(&invocation)
-                                .resolve_in_project(primary_root, &project)?,
+                                .resolve_in_project(primary_root, project)?,
                         };
-                        let dir_override = dir.map(|d| d.locate(&invocation));
+                        let placement = match (dir, basedir) {
+                            (Some(dir), _) => {
+                                crate::workweave::Placement::Dir(dir.locate(&invocation))
+                            }
+                            (None, Some(basedir)) => {
+                                crate::workweave::Placement::Basedir(basedir.locate(&invocation))
+                            }
+                            (None, None) => crate::workweave::Placement::DefaultBasedir,
+                        };
                         let created =
                             crate::workweave::create_workweave(crate::workweave::CreateWorkweave {
                                 primary_root,
                                 source_root: &source_root,
-                                project: &project,
+                                project,
                                 name: &WorkweaveName::new(name)?,
                                 replace_existing: consent::ReplaceExistingConsent::from_flag(
                                     replace_existing,
@@ -985,7 +916,7 @@ pub fn run() -> anyhow::Result<()> {
                                 } else {
                                     crate::workweave::DirtySource::Refuse
                                 },
-                                dir_override: dir_override.as_deref(),
+                                placement: &placement,
                                 activation: activate::ActivateOptions { no_materialize },
                             });
                         let workweave_path = if hook_mode {
@@ -997,17 +928,20 @@ pub fn run() -> anyhow::Result<()> {
                             outln!("{}", workweave_path.display());
                         }
                     }
-                    Some(WorkweaveAction::Log { diff, json }) => {
+                    WorkweaveAction::Log { diff, json } => {
+                        let ctx = WorkspaceContext::resolve_invocation(origin_dir, None)?;
                         crate::workweave::workweave_log(&ctx, diff, OutputMode::from_flag(json))?;
                     }
-                    Some(WorkweaveAction::SetContainer { path }) => {
+                    WorkweaveAction::SetDefaultCreateBasedir { path, project } => {
+                        let ctx = workweave_context(origin_dir, project, use_workweave_flag)?;
+                        let project = ctx.require_active_project_on_disk()?;
                         let recorded = crate::workweave_index::set_container(
-                            primary_root,
-                            &project,
+                            ctx.primary_path(),
+                            project,
                             CanonicalPath::of(&path.locate(&invocation)),
                         )?;
                         eprintln!(
-                            "recorded workweave container for project `{}`: {}",
+                            "recorded the default workweave directory for project `{}`: {}",
                             project.as_str(),
                             recorded.as_path().display()
                         );

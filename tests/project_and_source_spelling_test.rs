@@ -74,9 +74,9 @@ fn every_writing_verb_refuses_from_another_projects_directory() {
 
     let remote = common::file_url(tmp.path().join("nowhere.git"));
     let cases: &[&[&str]] = &[
-        &["add", &remote],
-        &["remove", "github/acme/server"],
-        &["role", "github/acme/server", "owned"],
+        &["member", "add", &remote],
+        &["member", "remove", "github/acme/server"],
+        &["member", "set-role", "github/acme/server", "owned"],
         &["lock"],
         &["update"],
         &["push"],
@@ -155,17 +155,17 @@ fn add_refuses_a_plain_path_to_a_bare_remote_and_names_both_spellings() {
     let before = project_files(&ws);
     let path = bare.to_str().unwrap();
 
-    let stderr = refusal_stderr(&["add", path], &ws);
+    let stderr = refusal_stderr(&["member", "add", path], &ws);
     assert_routes_to(&stderr, "unresolvable-repo-source");
     assert!(
-        stderr.contains(&format!("`rwv add {}`", common::file_url(&bare)))
-            && stderr.contains(&format!("`rwv add --adopt {path}`")),
+        stderr.contains(&format!("`rwv member add {}`", common::file_url(&bare)))
+            && stderr.contains(&format!("`rwv member add --adopt {path}`")),
         "the refusal must name the file:// spelling and --adopt:\n{stderr}"
     );
     assert_eq!(project_files(&ws), before);
     assert!(!ws.join("local").exists(), "nothing may have been cloned");
 
-    let advised = common::advised_command(&stderr, "rwv add file://");
+    let advised = common::advised_command(&stderr, "rwv member add file://");
     let findings_before = common::doctor_findings(&ws);
     let followed = common::run_advised(&advised, &ws);
     assert!(
@@ -191,10 +191,10 @@ fn add_no_longer_adopts_an_existing_clone_named_by_its_path() {
     );
     let before = project_files(&ws);
 
-    let stderr = refusal_stderr(&["add", "vendor/other"], &ws);
+    let stderr = refusal_stderr(&["member", "add", "vendor/other"], &ws);
     assert_routes_to(&stderr, "unresolvable-repo-source");
     assert!(
-        stderr.contains("`rwv add --adopt vendor/other`"),
+        stderr.contains("`rwv member add --adopt vendor/other`"),
         "{stderr}"
     );
     assert_eq!(
@@ -203,7 +203,7 @@ fn add_no_longer_adopts_an_existing_clone_named_by_its_path() {
         "a path is not registered without --adopt"
     );
 
-    let advised = common::advised_command(&stderr, "rwv add --adopt");
+    let advised = common::advised_command(&stderr, "rwv member add --adopt");
     let followed = common::run_advised(&advised, &ws);
     assert!(
         followed.status.success(),
@@ -237,7 +237,7 @@ fn adopt_refuses_a_path_with_no_clone_including_a_bare_remote() {
     std::fs::create_dir_all(ws.join("vendor/plain")).unwrap();
     std::fs::write(ws.join("vendor/plain/notes.txt"), "not a clone\n").unwrap();
     for path in ["vendor/missing", "remotes/lib.git", "vendor/plain"] {
-        let stderr = refusal_stderr(&["add", "--adopt", path], &ws);
+        let stderr = refusal_stderr(&["member", "add", "--adopt", path], &ws);
         assert_routes_to(&stderr, "no-clone-to-adopt");
         assert!(stderr.contains("file://"), "{stderr}");
         assert!(stderr.contains("drop --adopt"), "{stderr}");
@@ -245,7 +245,7 @@ fn adopt_refuses_a_path_with_no_clone_including_a_bare_remote() {
     assert_eq!(project_files(&ws), before);
 
     let findings_before = common::doctor_findings(&ws);
-    let followed = common::run_advised(&format!("rwv add {}", common::file_url(&bare)), &ws);
+    let followed = common::run_advised(&format!("rwv member add {}", common::file_url(&bare)), &ws);
     assert!(
         followed.status.success(),
         "the URL spelling the refusal names:\n{}",
@@ -260,7 +260,7 @@ fn adopt_and_new_are_exclusive() {
     let tmp = common::tempdir().unwrap();
     let ws = two_project_weave(tmp.path());
     common::rwv()
-        .args(["add", "--adopt", "--new", "github/acme/fresh"])
+        .args(["member", "add", "--adopt", "--new", "github/acme/fresh"])
         .current_dir(&ws)
         .assert()
         .code(2);
@@ -276,6 +276,7 @@ fn param_and_params_json_require_new() {
     let ws = two_project_weave(tmp.path());
     common::rwv()
         .args([
+            "member",
             "add",
             "https://github.com/acme/fresh.git",
             "--param",
@@ -287,6 +288,7 @@ fn param_and_params_json_require_new() {
         .stderr(predicates::str::contains("--new"));
     common::rwv()
         .args([
+            "member",
             "add",
             "https://github.com/acme/fresh.git",
             "--params-json",
@@ -433,10 +435,10 @@ fn add_refuses_a_clone_of_another_remote_already_at_the_placement() {
     );
     let before = project_files(&ws);
 
-    let stderr = refusal_stderr(&["add", &common::file_url(&ours)], &ws);
+    let stderr = refusal_stderr(&["member", "add", &common::file_url(&ours)], &ws);
     assert_routes_to(&stderr, "foreign-clone-at-placement");
     assert!(
-        stderr.contains("`rwv add --adopt local/remotes/lib`"),
+        stderr.contains("`rwv member add --adopt local/remotes/lib`"),
         "the refusal must name --adopt as the way to keep the clone:\n{stderr}"
     );
     assert_eq!(
@@ -464,7 +466,7 @@ fn add_registers_a_clone_of_the_same_remote_already_at_the_placement() {
     let url = common::file_url(&ours);
 
     let out = common::rwv()
-        .args(["add", &url])
+        .args(["member", "add", &url])
         .current_dir(&ws)
         .assert()
         .success();
@@ -500,7 +502,7 @@ fn add_refuses_anything_but_a_clone_at_the_placement() {
     ];
     for (shape, occupy) in occupants {
         occupy(&placed);
-        let stderr = refusal_stderr(&["add", &common::file_url(&ours)], &ws);
+        let stderr = refusal_stderr(&["member", "add", &common::file_url(&ours)], &ws);
         assert_routes_to(&stderr, "non-clone-at-placement");
         assert!(
             stderr.contains("local/remotes/lib") && stderr.contains(shape),
@@ -509,7 +511,7 @@ fn add_refuses_anything_but_a_clone_at_the_placement() {
         assert!(!stderr.contains("skipping clone"), "{stderr}");
         assert_eq!(project_files(&ws), before);
 
-        let retry = common::advised_command(&stderr, "rwv add");
+        let retry = common::advised_command(&stderr, "rwv member add");
         std::fs::rename(&placed, placed.with_extension("aside")).unwrap();
         let findings_before = common::doctor_findings(&ws);
         let followed = common::run_advised(&retry, &ws);
@@ -544,7 +546,7 @@ fn re_add_of_a_listed_member_refuses_a_non_clone_at_its_placement() {
     let (ours, _theirs) = two_remotes_one_placement(tmp.path());
     let url = common::file_url(&ours);
     common::rwv()
-        .args(["add", &url])
+        .args(["member", "add", &url])
         .current_dir(&ws)
         .assert()
         .success();
@@ -554,7 +556,7 @@ fn re_add_of_a_listed_member_refuses_a_non_clone_at_its_placement() {
     std::fs::write(placed.join("notes.txt"), "not a clone\n").unwrap();
     let before = project_files(&ws);
 
-    let stderr = refusal_stderr(&["add", &url], &ws);
+    let stderr = refusal_stderr(&["member", "add", &url], &ws);
     assert_routes_to(&stderr, "non-clone-at-placement");
     assert!(stderr.contains("local/remotes/lib"), "{stderr}");
     assert_eq!(project_files(&ws), before);

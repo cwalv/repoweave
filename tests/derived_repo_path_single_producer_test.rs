@@ -85,9 +85,9 @@ const ALLOWLIST: &[Allowed] = &[
              Nothing is derived from an identity.",
     },
     Allowed {
-        file: "role.rs",
-        count: 1,
-        justification: "The role verb's lookup key: the operator's typed path is \
+        file: "member_settings.rs",
+        count: 2,
+        justification: "The member setters' lookup key: the operator's typed path is \
              matched against the manifest, and a path it does not list is refused \
              rather than asserted into it.",
     },

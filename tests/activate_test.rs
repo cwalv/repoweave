@@ -39,7 +39,7 @@ fn make_workspace(tmp: &Path) -> std::path::PathBuf {
 /// helper now also drives the intent path
 /// (`repoweave::activate::activate_intent`) after writing the manifest, to
 /// pre-author the integration content into `projects/<project>/` exactly as
-/// a real `rwv add` workflow would have. The CLI-level `rwv activate` calls
+/// a real `rwv member add` workflow would have. The CLI-level `rwv activate` calls
 /// in each test then exercise only the surfacing-and-verify behavior we
 /// intend to characterize. This mirrors the real-world workflow (the
 /// committed integration files live in the project repo by construction;
@@ -90,7 +90,7 @@ fn make_project(
     // is a no-op other than setting .rwv-active, which the test will overwrite
     // anyway when it calls `rwv activate`. We do NOT propagate this side-effect
     // back through the CLI — the test scaffolding stands in for the human
-    // workflow's "rwv add wrote both the manifest entry and the ecosystem
+    // workflow's "rwv member add wrote both the manifest entry and the ecosystem
     // file."
     let ctx = repoweave::workspace::WorkspaceContext::resolve_invocation(ws, None).unwrap();
     let _ = repoweave::activate::activate_intent(

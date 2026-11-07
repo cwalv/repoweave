@@ -307,7 +307,7 @@ fn minting_a_workweave_over_a_foreign_directory_refuses() {
     std::fs::create_dir_all(squatter.join("some-work")).unwrap();
 
     let out = rwv()
-        .args(["workweave", "web-app", "create", "feat"])
+        .args(["workweave", "create", "--project", "web-app", "feat"])
         .current_dir(&ws)
         .output()
         .unwrap();
@@ -358,7 +358,7 @@ fn workweave_reuse_refuses_to_adopt_a_case_twin_directory() {
     std::fs::create_dir_all(squatter.join("some-work")).unwrap();
 
     let out = rwv()
-        .args(["workweave", "web-app", "create", "feat"])
+        .args(["workweave", "create", "--project", "web-app", "feat"])
         .current_dir(&ws)
         .output()
         .unwrap();
@@ -678,7 +678,7 @@ fn case_drift_between_the_record_and_the_disk_is_reported() {
     common::git_in(&project_dir, &["commit", "-m", "initial"]);
 
     rwv()
-        .args(["workweave", "web-app", "create", "feat"])
+        .args(["workweave", "create", "--project", "web-app", "feat"])
         .current_dir(&ws)
         .assert()
         .success();

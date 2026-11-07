@@ -84,7 +84,7 @@ fn deleting_a_workweave_reaches_the_deactivation_hook() {
     let ws = weave(tmp.path());
 
     let out = common::rwv()
-        .args(["workweave", "app", "create", "agent-1"])
+        .args(["workweave", "create", "--project", "app", "agent-1"])
         .current_dir(&ws)
         .output()
         .expect("rwv should run");
@@ -110,8 +110,9 @@ fn deleting_a_workweave_reaches_the_deactivation_hook() {
     let out = common::rwv()
         .args([
             "workweave",
-            "app",
             "delete",
+            "--project",
+            "app",
             "agent-1",
             "--discard-uncommitted",
         ])

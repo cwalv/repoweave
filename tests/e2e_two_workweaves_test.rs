@@ -129,7 +129,7 @@ struct Workweave {
 /// Create a workweave via `rwv workweave create`. Returns its paths.
 fn create_workweave(main: &MainWorkspace, weaveroot: &Path, name: &str) -> Workweave {
     rwv()
-        .args(["workweave", PROJECT, "create", name])
+        .args(["workweave", "create", "--project", PROJECT, name])
         .current_dir(&main.root)
         .assert()
         .success();
@@ -426,22 +426,22 @@ fn sync_phase3_materializes_newly_added_repo_in_workweave() {
     let main = make_main_workspace(tmp.path());
     let ww1 = create_workweave(&main, &weaveroot, "ww1");
 
-    // At primary: create a second manifest repo, then `rwv add` it.
+    // At primary: create a second manifest repo, then `rwv member add` it.
     let new_repo_path = "github/org/extras";
     let new_repo_abs = main.root.join(new_repo_path);
     let new_repo_sha = init_repo(&new_repo_abs);
-    // Add an origin so `rwv add --adopt <path>` can infer the URL.
+    // Add an origin so `rwv member add --adopt <path>` can infer the URL.
     common::git_in(
         &new_repo_abs,
         &["remote", "add", "origin", &common::file_url(&new_repo_abs)],
     );
-    // `rwv add` refuses rather than guess when origin/HEAD is unset, so
+    // `rwv member add` refuses rather than guess when origin/HEAD is unset, so
     // fetch and set it — the state a real pre-existing clone would have.
     common::git_in(&new_repo_abs, &["fetch", "origin"]);
     common::git_in(&new_repo_abs, &["remote", "set-head", "origin", "-a"]);
 
     rwv()
-        .args(["add", "--adopt", new_repo_path])
+        .args(["member", "add", "--adopt", new_repo_path])
         .current_dir(&main.root)
         .assert()
         .success();
@@ -546,12 +546,12 @@ fn sync_phase3_materialize_failure_is_fatal() {
         &new_repo_abs,
         &["remote", "add", "origin", &common::file_url(&new_repo_abs)],
     );
-    // `rwv add` refuses rather than guess when origin/HEAD is unset, so
+    // `rwv member add` refuses rather than guess when origin/HEAD is unset, so
     // fetch and set it — the state a real pre-existing clone would have.
     common::git_in(&new_repo_abs, &["fetch", "origin"]);
     common::git_in(&new_repo_abs, &["remote", "set-head", "origin", "-a"]);
     rwv()
-        .args(["add", "--adopt", new_repo_path])
+        .args(["member", "add", "--adopt", new_repo_path])
         .current_dir(&main.root)
         .assert()
         .success();
@@ -600,7 +600,7 @@ fn sync_with_explicit_primary_source_advances_workweave() {
     let main = make_main_workspace(tmp.path());
     // rwv lock/sync require an active project at primary. make_main_workspace
     // doesn't write .rwv-active; existing tests reach this state implicitly
-    // via `rwv add` (which calls activate). Set it explicitly here.
+    // via `rwv member add` (which calls activate). Set it explicitly here.
     std::fs::write(main.root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
     let ww1 = create_workweave(&main, &weaveroot, "ww1");
 

@@ -149,13 +149,8 @@ fn explain_abort_matches_committed_doc() {
 }
 
 #[test]
-fn explain_add_matches_committed_doc() {
-    assert_byte_identical("add");
-}
-
-#[test]
-fn explain_remove_matches_committed_doc() {
-    assert_byte_identical("remove");
+fn explain_member_matches_committed_doc() {
+    assert_byte_identical("member");
 }
 
 #[test]

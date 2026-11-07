@@ -8,7 +8,7 @@
 > that is a UX gap: file it rather than working around it at the file level.
 
 **Audience:** someone changing how rwv derives a canonical local path from a
-clone source's identity, adds a registry, or extends the `rwv add --new`
+clone source's identity, adds a registry, or extends the `rwv member add --new`
 creation surface. Every claim here is restated in full; nothing is cited by
 line number, because line numbers rot and this document does not carry a
 verification-base commit the way `branch-model.md` does. Symbol names are
@@ -24,7 +24,7 @@ back to a URL, because two different sources can name the same path (a
 registry's own shorthand and its fully-spelled URL both derive to the same
 place) and because a path an operator invents has no source to invert at all.
 
-This is why `rwv add --new` cannot work by inferring a URL from a typed path
+This is why `rwv member add --new` cannot work by inferring a URL from a typed path
 — the inverse it would need is partial in a way no error type can paper
 over — and why it instead asks a *registry* to mint an identity from
 declared parameters, then places what comes back. That reframing is the
@@ -41,7 +41,7 @@ in `src/registry.rs`. `None` when `source` names neither a URL a built-in
 registry resolves nor a registry-qualified shorthand with a registry named —
 a real absence, not a bug: a registry-less two-part shorthand
 (`cwalv/repoweave`) has no default registry to derive a path under (ruled:
-refuse, no default), and `rwv add`'s own refusal is what owns that case.
+refuse, no default), and `rwv member add`'s own refusal is what owns that case.
 
 The public signature is a thin wrapper. The actual seam is:
 
@@ -61,7 +61,7 @@ caller renders a generic "unrecognized" refusal), or **a path was derived
 but `RepoPath::new`'s own validation rejects it** (`Invalid`, carrying the
 concrete `RepoPathError` — a backslash in an owner or repo segment, say). A
 bare `Option` collapses those into one `None`, which is fine for most
-callers but wrong for one: `rwv add`'s URL arm needs the concrete
+callers but wrong for one: `rwv member add`'s URL arm needs the concrete
 `RepoPathError` to survive so `refusal.rs`'s anyhow-chain downcast can route
 it to its own token (`backslash-in-repo-path`) instead of a generic
 `no-matching-registry`. `run_add` matches on `placement_result` directly for
@@ -77,7 +77,7 @@ than a layout decision:
 
 | Role | What it means | Where it survives |
 |---|---|---|
-| **Lookup key** | A path compared against something that already exists (a manifest entry, a directory on disk); a miss refuses rather than creating. | `rwv add`'s local-path arm (the argument is only reached once already observed as a directory); `rwv remove` (matched against the manifest, a miss is `repo-not-in-manifest`). |
+| **Lookup key** | A path compared against something that already exists (a manifest entry, a directory on disk); a miss refuses rather than creating. | `rwv member add`'s local-path arm (the argument is only reached once already observed as a directory); `rwv member remove` (matched against the manifest, a miss is `repo-not-in-manifest`). |
 | **Observed location** | A report of where a checkout already sits, which rwv did not choose and cannot re-choose without moving files. | `run_add_from_local_path` (reads the URL from the clone's own `origin`, keeping the path the operator pointed at); `scan_repos_on_disk` (the containment walk, limited to registry segments a project manifest or a built-in names); `scan_unknown_segment_repos` (the same observed-location role for a top-level directory that walk does not cover, reported as `doctor`'s `unknown-segment-clone` finding rather than compared against a manifest). |
 | **Project path** | The project repo's own path, `projects/<name>/` — not a manifest member, carries no registry segment for `placement` to derive from. | `check.rs`'s project-repo-key builders (`scan_phantom_merge_drivers`, the project-repo arm inside `branch_discipline_in_scope`, `collect_doctor_violations`'s hygiene-target list). |
 
@@ -167,7 +167,7 @@ producer of creation parameters, and it produces strings by construction.
 
 ### The creation address: a bare registry name, or a three-segment prefix
 
-`rwv add <address> --new`. `<address>` is not a URL or a path — it selects a
+`rwv member add <address> --new`. `<address>` is not a URL or a path — it selects a
 registry and, optionally, fills a prefix of that registry's own parameter
 surface:
 
@@ -176,7 +176,7 @@ surface:
 - **A three-segment shorthand** (`github/acme/fresh`) — the first segment
   names the registry; the remaining two fill `owner` and `repo` **as a
   prefix of whatever that registry declares**, not as its whole surface.
-  `local` declares `root` as well, so `rwv add local/acme/fresh --new` fills
+  `local` declares `root` as well, so `rwv member add local/acme/fresh --new` fills
   `owner` and `repo` and still needs `--param root=<dir>` — the shorthand
   narrows what's missing rather than completing it. (This is the ruled
   answer to the question of whether the shorthand should be offered only by
@@ -253,7 +253,7 @@ special-casing a parameter named `root` — against two conditions, both
 `<root>/<owner>/<repo>`, never `<root>` itself — a typo'd root that
 silently materializes a tree is worse than a refusal), and it must resolve
 outside the weave (an upstream inside the weave would be walked by the
-containment scan, deletable by `rwv remove --delete` on the very member that
+containment scan, deletable by `rwv member remove --delete` on the very member that
 clones from it, and reported as an orphan by `rwv doctor` — the placement
 path and the upstream path would collide at the degenerate case `root =
 <weave>/local`).
@@ -319,14 +319,14 @@ turning a role-shaped exemption into a hard gate.
 ## What this leaves undrivable, honestly
 
 **The no-default-branch hint has no registry half left undriven.** When
-`rwv add` finds no remote default in a member, its hint
+`rwv member add` finds no remote default in a member, its hint
 (`Vcs::clone_default_branch_repair_hint`) does not ask which registry the
 member came from. It branches on one fact: whether the clone holds copies of
 any of the remote's branches. With copies, it names those branches and the
 `git remote set-head <remote> <branch>` that records one. With none, it
 names the first push (`git push -u <remote> <branch>`, then the same
-`set-head`). `rwv add <url>` reads that fact from the clone it has just
-made, so no copies means the remote has no branch. `rwv add --adopt <path>`
+`set-head`). `rwv member add <url>` reads that fact from the clone it has just
+made, so no copies means the remote has no branch. `rwv member add --adopt <path>`
 reads it from a clone that may never have fetched, so with no copies it
 leads with `git fetch <remote>` and names both exits. A domain-registry URL
 whose repository does not exist never reaches the hint: the clone fails

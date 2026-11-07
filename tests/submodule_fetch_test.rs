@@ -1,4 +1,4 @@
-//! `rwv add` and `rwv fetch` give the canonical clone the submodules its
+//! `rwv member add` and `rwv fetch` give the canonical clone the submodules its
 //! checkouts record, from upstream, so that creating a checkout, which never
 //! reaches the network, has them to check out.
 
@@ -58,11 +58,11 @@ impl Weave {
         self.primary.join("projects").join(PROJECT)
     }
 
-    /// `rwv add` the upstream app; returns its member path.
+    /// `rwv member add` the upstream app; returns its member path.
     fn add(&self) -> String {
         rwv(
             &self.primary,
-            &["add", &common::file_url(&self.upstream_app)],
+            &["member", "add", &common::file_url(&self.upstream_app)],
         );
         let manifest = Manifest::from_path(&self.project_dir().join("rwv.toml")).unwrap();
         let (member, _) = manifest.iter_entries().next().unwrap();
@@ -96,7 +96,10 @@ impl Weave {
     }
 
     fn seat(&self, name: &str) -> PathBuf {
-        rwv(&self.primary, &["workweave", PROJECT, "create", name]);
+        rwv(
+            &self.primary,
+            &["workweave", "create", "--project", PROJECT, name],
+        );
         self.primary
             .parent()
             .unwrap()
@@ -253,6 +256,7 @@ fn add_leaves_a_reference_members_submodule_files_read_only() {
     rwv(
         &weave.primary,
         &[
+            "member",
             "add",
             "--role",
             "reference",
@@ -350,7 +354,7 @@ fn a_member_that_skips_submodules_is_not_fetched_for() {
     rwv(&weave.primary, &["fetch"]);
     rwv(
         &weave.primary,
-        &["add", &common::file_url(&weave.upstream_app)],
+        &["member", "add", &common::file_url(&weave.upstream_app)],
     );
 
     let canonical = weave.canonical(&member);
@@ -475,7 +479,10 @@ fn one_adds_two_lacks(weave: &Weave) -> (PathBuf, PathBuf, String) {
     weave.lock_and_commit();
     let one = weave.seat("one");
     let two = weave.seat("two");
-    rwv(&one, &["add", &common::file_url(&weave.upstream_app)]);
+    rwv(
+        &one,
+        &["member", "add", &common::file_url(&weave.upstream_app)],
+    );
     rwv(&one, &["lock", "--commit"]);
     let manifest =
         Manifest::from_path(&one.join("projects").join(PROJECT).join("rwv.toml")).unwrap();
@@ -568,7 +575,10 @@ fn the_fetch_workweave_create_advises_for_unfetched_submodules_populates_the_che
     weave.forget_module_data(&member);
     weave.lock_and_commit();
 
-    let out = rwv(&weave.primary, &["workweave", PROJECT, "create", "one"]);
+    let out = rwv(
+        &weave.primary,
+        &["workweave", "create", "--project", PROJECT, "one"],
+    );
 
     let warning = out
         .lines()

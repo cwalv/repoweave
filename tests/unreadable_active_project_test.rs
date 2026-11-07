@@ -176,7 +176,10 @@ fn primary_and_workweave_with_unreadable_pointer(
     pointer: &str,
 ) -> (common::PushWorkspace, PathBuf) {
     let ws = common::build_workspace("web-app", &[("local/org/a", "owned")]);
-    let created = run(&ws.workspace, &["workweave", "web-app", "create", "ww"]);
+    let created = run(
+        &ws.workspace,
+        &["workweave", "create", "--project", "web-app", "ww"],
+    );
     assert!(
         created.status.success(),
         "{}",

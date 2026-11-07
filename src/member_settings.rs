@@ -1,15 +1,16 @@
-//! `rwv role` — change a member's role in this workspace's manifest, and
-//! settle its files for the new role.
+//! `rwv member set-role` and `rwv member set-recurse-submodules` — change one
+//! field of a member's entry in this workspace's manifest, and settle what the
+//! change reaches.
 
 use crate::activate::ActivateOptions;
 use crate::add_remove::{find_project, settle_manifest};
-use crate::manifest::{Manifest, RepoPath, Role};
+use crate::manifest::{Manifest, RepoPath, Role, SubmoduleRecursion};
 use crate::refusal::RefusalKind;
 use crate::vcs::vcs_for;
 use crate::workspace::WorkspaceContext;
 use anyhow::Context;
 
-/// Execute `rwv role <repo> <role>`.
+/// Execute `rwv member set-role <repo> <role>`.
 ///
 /// The manifest edit and the regeneration it drives land together or not at
 /// all, since a role can move a member into or out of an ecosystem's build
@@ -23,7 +24,7 @@ use anyhow::Context;
 ///
 /// `ctx` is the already-resolved invocation context (with `--project` baked
 /// in when passed). Handlers must not re-resolve.
-pub fn run_role(
+pub fn run_set_role(
     repo: &str,
     role: Role,
     ctx: &WorkspaceContext,
@@ -100,5 +101,52 @@ pub fn run_role(
     landed?;
     settled?;
     eprintln!("Changed the role of '{repo_path}' from {was} to {role}");
+    Ok(())
+}
+
+/// Execute `rwv member set-recurse-submodules <repo> <true|false>`.
+///
+/// The setting decides whether a new checkout of the member populates the
+/// submodules it records; a checkout that already exists keeps what it has.
+/// A value `rwv.toml` already holds is not rewritten, but the generated files
+/// are regenerated, so a hand edit of the setting is finished by re-running
+/// this.
+///
+/// `ctx` is the already-resolved invocation context (with `--project` baked
+/// in when passed). Handlers must not re-resolve.
+pub fn run_set_recurse_submodules(
+    repo: &str,
+    recursion: SubmoduleRecursion,
+    ctx: &WorkspaceContext,
+    opts: ActivateOptions,
+) -> anyhow::Result<()> {
+    let (project, project_dir) = find_project(ctx)?;
+    let manifest_path = project_dir.join(Manifest::FILE_NAME);
+    let repo_path = RepoPath::new(repo)?;
+    let mut manifest = Manifest::from_path(&manifest_path)
+        .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?;
+
+    let Some(mut entry) = manifest.get_entry(&repo_path).cloned() else {
+        crate::refuse!(
+            RefusalKind::RepoNotInManifest,
+            "path '{}' not found in manifest",
+            repo_path.as_str()
+        );
+    };
+    let was = entry.recurse_submodules;
+    let recurse = bool::from(recursion);
+    if was == recursion {
+        settle_manifest(ctx, &project, None, &[], opts)?;
+        eprintln!("'{repo_path}' already has recurse-submodules = {recurse}; nothing to change");
+        return Ok(());
+    }
+
+    entry.recurse_submodules = recursion;
+    manifest.insert_repo(repo_path.clone(), entry);
+    settle_manifest(ctx, &project, Some(&manifest), &[], opts)?;
+    eprintln!(
+        "Changed recurse-submodules of '{repo_path}' from {} to {recurse}",
+        bool::from(was)
+    );
     Ok(())
 }

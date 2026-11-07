@@ -932,7 +932,7 @@ fn an_unrecognized_ref_is_reported_once_per_clone_and_its_printed_deletion_clear
     let repo_rel = "github/acme/server";
     let pw = common::build_workspace("demo", &[(repo_rel, "owned")]);
     let created = rwv_cmd()
-        .args(["workweave", "demo", "create", "seat"])
+        .args(["workweave", "create", "--project", "demo", "seat"])
         .current_dir(&pw.workspace)
         .output()
         .unwrap();

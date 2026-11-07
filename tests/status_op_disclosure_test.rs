@@ -96,7 +96,7 @@ fn make_primary(tmp: &Path) -> PrimaryWorkspace {
 
 fn create_workweave(primary: &PrimaryWorkspace, weaveroot: &Path, name: &str) -> Workweave {
     rwv()
-        .args(["workweave", PROJECT, "create", name])
+        .args(["workweave", "create", "--project", PROJECT, name])
         .current_dir(&primary.root)
         .assert()
         .success();
