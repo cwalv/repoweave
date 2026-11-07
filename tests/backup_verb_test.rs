@@ -135,7 +135,14 @@ impl Weave {
     /// commit's id.
     fn workweave_with_a_commit(&self, name: &str) -> (PathBuf, String) {
         succeed(
-            &["workweave", "create", "--project", "demo", name],
+            &[
+                "workweave",
+                "create",
+                "--project",
+                "demo",
+                name,
+                "--no-materialize",
+            ],
             &self.ws,
         );
         let dir = self.workweave_dir(name);
@@ -241,7 +248,14 @@ fn a_discarded_workweave_branch_is_kept_as_a_backup_that_list_shows_and_drop_dro
 fn discard_uncommitted_keeps_the_edits_as_a_backup() {
     let weave = Weave::new();
     succeed(
-        &["workweave", "create", "--project", "demo", "wip"],
+        &[
+            "workweave",
+            "create",
+            "--project",
+            "demo",
+            "wip",
+            "--no-materialize",
+        ],
         &weave.ws,
     );
     let alpha = common::under(weave.workweave_dir("wip"), ALPHA);
@@ -298,7 +312,14 @@ fn discard_uncommitted_keeps_the_edits_as_a_backup() {
 fn a_detached_head_with_commits_no_branch_reaches_is_kept_as_a_backup() {
     let weave = Weave::new();
     succeed(
-        &["workweave", "create", "--project", "demo", "peek"],
+        &[
+            "workweave",
+            "create",
+            "--project",
+            "demo",
+            "peek",
+            "--no-materialize",
+        ],
         &weave.ws,
     );
     let alpha = common::under(weave.workweave_dir("peek"), ALPHA);
