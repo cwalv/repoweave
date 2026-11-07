@@ -1856,7 +1856,7 @@ fn fix_text(fix: crate::check::FixDisposition) -> &'static str {
 fn consent_note(fix: crate::check::FixDisposition, entry: &str) -> String {
     match fix {
         crate::check::FixDisposition::Consented(flag) => {
-            format!("`rwv doctor --fix {flag}` repairs it. {entry}")
+            format!("Bare `rwv doctor --fix` leaves it; `{flag}` repairs it. {entry}")
         }
         crate::check::FixDisposition::Auto | crate::check::FixDisposition::ReportOnly => {
             entry.to_owned()
