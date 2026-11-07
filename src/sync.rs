@@ -4948,22 +4948,24 @@ fn unresolvable_lock_refusal(
         return None;
     }
     let side_str = side.as_str();
-    // The two-step `rwv lock` + "commit before syncing" leaves a
-    // written-but-unstaged `rwv.lock` that kills the re-run mid-op; `rwv lock
-    // --commit` writes AND commits in one step.
-    let recovery = relock_recovery(side, project_name);
     let mut lines = String::new();
+    let mut remedies = String::new();
     for (repo_path, raw_version) in entries {
         lines.push_str(&format!(
             "\n  {repo_path}: unknown revision {}",
             raw_version.as_str()
+        ));
+        remedies.push_str(&format!(
+            "\n  {repo_path}: `rwv fetch` brings in history that may hold it; to record the \
+             checkout's commit instead, by name: `rwv lock --repo {repo_path} --commit \
+             --project {project_name}`"
         ));
     }
     Some(format!(
         "lock-freshness precondition failed: {side_str} workspace '{workspace_name}' lock \
          references unknown revisions:{lines}\n\
          \n\
-         Usual fix: {recovery}.\n\
+         Usual fix:{remedies}\n\
          To skip this check: pass `--allow-stale-lock` (use when you know the lock is \
          intentionally ahead of HEAD).",
     ))
@@ -9366,12 +9368,14 @@ mod tests {
         )
         .expect("non-empty offending set yields a refusal");
         assert!(
-            msg.contains("bless the current HEAD with `rwv lock --commit`"),
-            "diverged repo must earn the bless-HEAD `rwv lock --commit` hint: {msg}"
+            msg.contains(
+                "record the current HEAD by name with `rwv lock --repo github/org/lib --commit`"
+            ),
+            "diverged repo must earn the record-by-name `rwv lock --repo` hint: {msg}"
         );
     }
 
-    // The unresolvable-lock (corrupt lock) refusal also names `rwv lock --commit`.
+    // The unresolvable-lock (corrupt lock) refusal names `rwv lock --repo … --commit`.
     #[test]
     fn unresolvable_lock_refusal_hint_names_lock_commit() {
         let msg = unresolvable_lock_refusal(
@@ -9385,8 +9389,8 @@ mod tests {
         )
         .expect("non-empty entries yield a refusal");
         assert!(
-            msg.contains("rwv lock --commit"),
-            "unresolvable-lock hint must name `rwv lock --commit`: {msg}"
+            msg.contains("rwv lock --repo github/org/lib --commit"),
+            "unresolvable-lock hint must name `rwv lock --repo … --commit`: {msg}"
         );
     }
 

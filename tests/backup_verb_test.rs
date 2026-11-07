@@ -389,9 +389,7 @@ fn pin_in_another_project(weave: &Weave, commit: &str) {
     let other = ws.join("projects/other");
     common::git_in(&other, &["config", "user.email", "test@test.com"]);
     common::git_in(&other, &["config", "user.name", "Test"]);
-    common::git_in(weave.alpha(), &["checkout", "-q", "--detach", commit]);
-    succeed(&["lock", "--project", "other", "--dirty"], ws);
-    common::git_in(weave.alpha(), &["checkout", "-q", "main"]);
+    common::fixture_lock(&other, &[(ALPHA, &weave.alpha_url, commit)]);
     common::git_in(&other, &["add", "-A"]);
     common::git_in(&other, &["commit", "-qm", "pin alpha at the backup"]);
 }
@@ -428,7 +426,8 @@ fn the_pin_rule_counts_every_projects_live_locks() {
         &other,
         &["update-ref", "refs/remotes/origin/pinned", &lock_commit],
     );
-    succeed(&["lock", "--project", "other", "--dirty"], &weave.ws);
+    let main_tip = common::git_in(weave.alpha(), &["rev-parse", "main"]);
+    common::fixture_lock(&other, &[(ALPHA, &weave.alpha_url, &main_tip)]);
     common::git_in(&other, &["add", "-A"]);
     common::git_in(&other, &["commit", "-qm", "unpin alpha"]);
     let stderr = refused(

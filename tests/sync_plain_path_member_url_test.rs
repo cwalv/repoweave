@@ -45,7 +45,7 @@ fn bare(tmp: &Path, name: &str) -> PathBuf {
 fn commit_project(workspace: &Path, message: &str) {
     let project = workspace.join("projects").join(PROJECT);
     common::git_in(&project, &["add", "-A"]);
-    common::git_in(&project, &["commit", "-qm", message]);
+    common::commit_staged(&project, message);
 }
 
 struct Weaves {

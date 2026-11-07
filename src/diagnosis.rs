@@ -268,7 +268,9 @@ is.";
 
 const MALFORMED_ENTRY: &str = "Any other reason the project did not load. The message names which \
 file failed and carries that file's remedy — the manifest is yours to edit, at the line the \
-parser names; the lock is generated, so `rwv lock` rewrites it. A repository entry with no \
+parser names; the lock is restored from version control, or written afresh by `rwv lock`, which \
+then pins nothing until `rwv member pin` or `rwv update --remote` gives each member its pin. A \
+repository entry with no \
 `role`, an unknown top-level key, an unknown `[integrations.<name>]` table, an unknown key in \
 one, and an `enabled` that is not `true` or `false` are all parse failures of this kind, each \
 naming the line and what was expected. `rwv sync` and `rwv sync-to` refuse with it when the \
@@ -276,8 +278,7 @@ project does not load after the project repo is replayed, and `rwv abort` rolls 
 back.
 
 `--fix` has no arm for it. Rewriting a manifest rwv could not parse would be guesswork, and \
-regenerating a lock re-pins the workspace to whatever the working tips happen to be — a decision \
-about state, not a repair.";
+choosing the commits a lock pins is a decision about state, not a repair.";
 
 /// What `rwv doctor` reports under a kind's name: the sub-kinds the finding
 /// carries, each with the severity and `--fix` disposition the doctor

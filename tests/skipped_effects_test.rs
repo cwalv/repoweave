@@ -129,7 +129,7 @@ impl Weave {
         };
         weave.install_npm();
         weave.ok_in(&weave.ws, &["doctor", "--fix"]);
-        weave.ok_in(&weave.ws, &["lock"]);
+        common::pin_every_member(&weave.ws);
         weave.commit_project();
         weave
     }

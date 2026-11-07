@@ -526,14 +526,23 @@ fn rewind_steps(at: &Place, may_rewind: &[Repo]) -> Vec<Step> {
         Step::rwv(at, &["lock", "--commit"]),
         Step::git(at, Repo::App, &["branch", "keep"]),
         Step::git(at, Repo::App, &["reset", "--hard", "HEAD~1"]).may_rewrite(&[Repo::App]),
-        Step::rwv(at, &["lock", "--commit"]).may_rewind(may_rewind),
+        Step::rwv(
+            at,
+            &["member", "pin", &Repo::App.rel_path(), "HEAD", "--commit"],
+        )
+        .may_rewind(may_rewind),
     ]
+}
+
+fn rewind_label() -> String {
+    format!("rwv member pin {} HEAD --commit", Repo::App.rel_path())
 }
 
 #[test]
 fn rewind_check_catches_a_relock_after_reset_in_the_primary() {
     let report = bad_steps("relock after reset", rewind_steps(&a(), &[]));
-    let relock = ("rwv lock --commit", Invariant::NoPinRewound);
+    let label = rewind_label();
+    let relock = (label.as_str(), Invariant::NoPinRewound);
     assert_eq!(fired(&report), vec![relock, relock], "{report}");
     let rewound: Vec<(&LockSite, Repo, Vec<String>)> = report
         .violations
@@ -577,7 +586,8 @@ fn rewind_check_catches_a_relock_after_reset_in_a_workweave() {
     )];
     steps.extend(rewind_steps(&ww("x"), &[]));
     let report = bad_steps("relock after reset in a workweave", steps);
-    let relock = ("rwv lock --commit", Invariant::NoPinRewound);
+    let label = rewind_label();
+    let relock = (label.as_str(), Invariant::NoPinRewound);
     assert_eq!(fired(&report), vec![relock, relock], "{report}");
 }
 
@@ -592,9 +602,8 @@ fn pin_check_reads_a_commit_no_ref_reaches_as_unresolved() {
     let report = bad_steps(
         "remote branch deleted under a pin",
         vec![
-            Step::git(&a(), Repo::App, &["switch", "-c", "feat-x"]),
             Step::commit(&a(), Repo::App, "feat-app"),
-            Step::git(&a(), Repo::App, &["push", "origin", "feat-x"])
+            Step::git(&a(), Repo::App, &["push", "origin", "main:feat-x"])
                 .pushes(Remote::origin(Repo::App), "feat-x"),
             Step::rwv(&a(), &["lock", "--commit"]),
             Step::git(&a(), Repo::Proj, &["push", "origin", "main"])

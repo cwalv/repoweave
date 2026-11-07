@@ -2226,7 +2226,9 @@ impl LockFile {
     /// so an old YAML-era lock, truncation, and hand damage all have the same
     /// fix: regenerate it, rather than diagnose the specific cause.
     pub fn unparseable_hint() -> String {
-        "rwv.lock could not be parsed; it is a generated file — run `rwv lock` to regenerate it"
+        "rwv.lock could not be parsed; restore it from version control, or run `rwv lock` to write \
+         it afresh — a lock that does not parse pins nothing, so each member then needs its pin \
+         back from `rwv member pin` or `rwv update --remote`"
             .to_string()
     }
 

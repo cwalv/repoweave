@@ -56,6 +56,7 @@ pub fn run_pin(
     let checkout =
         crate::workspace::member_checkout_dir(&path, ctx.primary_path(), workweave_dir.as_deref());
     let dir = checkout.path();
+    let aligns = workweave_dir.is_none() || checkout.is_workweave_slot();
     anyhow::ensure!(
         dir.exists(),
         "{path}: clone missing on disk; run `rwv update` to re-materialize it, then re-run \
@@ -97,12 +98,14 @@ pub fn run_pin(
         );
     }
     let moving_detached_head = matches!(vcs.head_attachment(dir)?, HeadAttachment::Detached(_));
-    for line in aligner.blocked(&member, &plan, &path)? {
-        let held_for_backup = moving_detached_head
-            && line.state() == State::AlignmentDetachedUnpushed
-            && vcs.mid_operation(dir).is_none();
-        if !held_for_backup {
-            refusals.add(line);
+    if aligns {
+        for line in aligner.blocked(&member, &plan, &path)? {
+            let held_for_backup = moving_detached_head
+                && line.state() == State::AlignmentDetachedUnpushed
+                && vcs.mid_operation(dir).is_none();
+            if !held_for_backup {
+                refusals.add(line);
+            }
         }
     }
     if commit.is_some() {
@@ -115,7 +118,11 @@ pub fn run_pin(
     }
     refusals.into_result()?;
 
-    if let Some(witness) = vcs.backup_unpreserved_head(dir)? {
+    if let Some(witness) = aligns
+        .then(|| vcs.backup_unpreserved_head(dir))
+        .transpose()?
+        .flatten()
+    {
         eprintln!(
             "rwv member pin: {path}: the commits its detached HEAD holds are kept as {}",
             witness.backup().name
@@ -147,20 +154,27 @@ pub fn run_pin(
         }
     }
 
-    let plan = aligner.plan(&member, Some(&new))?;
-    match aligner.apply(&member, &plan, &path)? {
-        Applied::Aligned { facts, notes, .. } => {
-            for fact in &facts {
-                eprintln!(
-                    "rwv member pin: {path}: {}",
-                    crate::diagnosis::fact_text(fact)
-                );
+    if aligns {
+        let plan = aligner.plan(&member, Some(&new))?;
+        match aligner.apply(&member, &plan, &path)? {
+            Applied::Aligned { facts, notes, .. } => {
+                for fact in &facts {
+                    eprintln!(
+                        "rwv member pin: {path}: {}",
+                        crate::diagnosis::fact_text(fact)
+                    );
+                }
+                report_lines(notes);
             }
-            report_lines(notes);
+            Applied::Left { judged } => report_lines(judged),
         }
-        Applied::Left { judged } => report_lines(judged),
+        report_standing(ctx, &path, dir, vcs.as_ref(), &to)?;
+    } else {
+        eprintln!(
+            "rwv member pin: {path}: this workspace holds no checkout of it; `rwv update` \
+             creates one at the pin"
+        );
     }
-    report_standing(ctx, &path, dir, vcs.as_ref(), &to)?;
 
     if let Some(message) = commit {
         let pending = lock::PendingLockCommit::new(project_name, dir_of_project, new, old, message);

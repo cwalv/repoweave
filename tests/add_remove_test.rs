@@ -655,6 +655,13 @@ fn add_new_local_registry_creates_a_bare_upstream_and_clones_the_member() {
     common::git_in(&member, &["add", "-A"]);
     common::git_in(&member, &["commit", "-m", "init"]);
     common::git_in(&member, &["push", "origin", "main"]);
+    // The creation left the member without a pin; its first commit is what
+    // `rwv member pin` can now name.
+    rwv()
+        .args(["member", "pin", "local/acme/fresh", "HEAD", "--commit"])
+        .current_dir(&workspace)
+        .assert()
+        .success();
 
     // 4. `rwv doctor` reports clean immediately after.
     rwv()

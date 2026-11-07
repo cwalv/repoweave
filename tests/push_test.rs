@@ -272,14 +272,14 @@ fn push_refuses_when_lock_disagrees_with_local_state() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("lock") || stderr.contains("rwv lock") || stderr.contains("git checkout"),
-        "error should hint at `rwv lock` or `git checkout`; got: {stderr}"
+        stderr.contains("rwv lock --commit"),
+        "error should name `rwv lock --commit`; got: {stderr}"
     );
     // The per-repo line must attach each abbreviated SHA to its own label —
     // swap them and an operator resets the wrong side.
     assert!(
         stderr.contains(&format!(
-            "local/org/a: HEAD {short_head} differs from lock {short_lock}\n"
+            "local/org/a: pin unpinned (HEAD {short_head} is 1 commit beyond the pin {short_lock})\n"
         )),
         "expected each label attached to its own 12-character id; got: {stderr}"
     );

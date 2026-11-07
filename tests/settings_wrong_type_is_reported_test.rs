@@ -59,6 +59,8 @@ fn weave_with_setting(root: &Path, integration: &str, key: &str) -> PathBuf {
         format!("[repositories]\n\n[integrations.{integration}]\nenabled = true\n{key} = 7\n"),
     )
     .unwrap();
+    git_init_with_commit(&project_dir);
+    common::record_trunk(&project_dir);
     std::fs::write(ws.join(".rwv-active"), "app\n").unwrap();
     ws
 }

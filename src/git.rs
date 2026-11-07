@@ -2017,7 +2017,7 @@ impl Vcs for GitVcs {
                     repo: repo.to_path_buf(),
                     stderr: format!(
                         "unborn HEAD (no commits yet, on branch '{branch_hint}'): \
-                         make an initial commit, then re-run rwv lock"
+                         make an initial commit, then pin it with `rwv member pin`"
                     ),
                 })
             }

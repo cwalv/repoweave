@@ -54,6 +54,8 @@ fn make_workspace(tmp: &Path) -> PathBuf {
         ),
     )
     .unwrap();
+    init_repo_with_commit(&project_dir);
+    common::record_trunk(&project_dir);
     ws
 }
 

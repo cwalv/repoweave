@@ -467,7 +467,7 @@ fn a_member_added_with_new_from_a_workweave_is_created_after_its_first_commit() 
     assert!(added.status.success(), "{}", describe(&added));
     let stderr = String::from_utf8_lossy(&added.stderr);
     assert!(
-        stderr.contains("`rwv lock` then `rwv doctor --fix`"),
+        stderr.contains("`rwv member pin local/acme/fresh HEAD` then `rwv doctor --fix`"),
         "the skip names the repair that will work; {}",
         describe(&added)
     );
@@ -485,7 +485,7 @@ fn a_member_added_with_new_from_a_workweave_is_created_after_its_first_commit() 
     common::git_in(&canonical, &["commit", "-m", "first"]);
     let pin = common::git_in(&canonical, &["rev-parse", "HEAD"]);
 
-    let locked = run(&["lock"], &seat);
+    let locked = run(&["member", "pin", member, "HEAD"], &seat);
     assert!(locked.status.success(), "{}", describe(&locked));
     assert_eq!(
         findings_about(&seat, member),

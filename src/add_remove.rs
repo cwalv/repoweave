@@ -81,7 +81,8 @@ fn create_worktree_in_workweave(
             eprintln!(
                 "rwv member add: canonical clone at {} has no commits yet; \
                  skipping worktree creation in workweave \
-                 (after the first commit, `rwv lock` then `rwv doctor --fix` here create it)",
+                 (after the first commit, `rwv member pin {repo_path} HEAD` then \
+                 `rwv doctor --fix` here create it)",
                 canonical_clone.display()
             );
             return Ok(());
@@ -529,6 +530,12 @@ fn judge_commit_of_add(
     project_dir: &Path,
     manifest: &Manifest,
 ) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        crate::vcs::project_vcs().is_repo(project_dir),
+        "{} is not a repository, so `rwv member add` has nowhere to commit the member and its \
+         first pin; `rwv init` makes a project repo",
+        project_dir.display()
+    );
     crate::lock::judge_unrelated_dirt(
         crate::vcs::project_vcs().as_ref(),
         project,

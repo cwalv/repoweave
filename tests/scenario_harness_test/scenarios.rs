@@ -423,6 +423,7 @@ fn feature_branch_in_primary() -> Vec<Step> {
             ],
         )
         .expect(Exit::Succeeds),
+        Step::rwv(&a(), &["update"]).expect(Exit::Succeeds),
         Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
     ]
 }
@@ -438,6 +439,7 @@ fn raw_merge(name: &'static str, main_moves: bool) -> Scenario {
         push_feat_x(Repo::Proj),
         Step::git(&a(), Repo::App, &["switch", "main"]),
         Step::git(&a(), Repo::Proj, &["switch", "main"]),
+        Step::rwv(&a(), &["update"]).expect(Exit::Succeeds),
     ]);
     if main_moves {
         steps.extend([
@@ -949,6 +951,7 @@ pub fn records_unreadable_entry() -> Scenario {
                     branch: "proj--w",
                     record: Some(Record::Declared),
                 }),
+            Step::rwv(&ww("w"), &["update"]).expect(Exit::Succeeds),
             Step::rwv(&ww("w"), &["lock"]).expect(Exit::Succeeds),
         ],
     )

@@ -170,7 +170,11 @@ fn adopt_weave(tmp: &Path) -> AdoptWeave {
     )
     .unwrap();
     common::register_workweave(&primary_canonical, "test-project", "feat", &workweave);
-    init_project(&workweave.join("projects/test-project"));
+    let workweave_project = workweave.join("projects/test-project");
+    init_project(&workweave_project);
+    common::record_trunk(&workweave_project);
+    common::git_in(&workweave_project, &["switch", "-c", "test-project--feat"]);
+    common::record_feature(&workweave_project, "test-project--feat", "main");
 
     AdoptWeave { primary, workweave }
 }
