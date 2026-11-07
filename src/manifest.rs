@@ -722,6 +722,14 @@ impl PreSchemaManifest {
 
 impl fmt::Display for PreSchemaManifest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(path) = &self.path {
+            write!(
+                f,
+                "failed to parse {} at {}: ",
+                Manifest::FILE_NAME,
+                path.display()
+            )?;
+        }
         f.write_str(&format!(
             "{} names member-entry keys an earlier release wrote: ",
             Manifest::FILE_NAME

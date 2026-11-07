@@ -195,6 +195,12 @@ fn doctor_reports_the_old_keys_as_the_one_unparseable_project_it_repairs() {
         .find(|v| v["kind"] == "unparseable-project")
         .unwrap_or_else(|| panic!("no unparseable-project finding in {report}"));
     assert_eq!(finding["sub_kind"], "pre-schema");
+    let message = finding["message"].as_str().unwrap();
+    assert!(
+        message.starts_with("failed to parse rwv.toml at ")
+            && message.contains("rwv.toml names member-entry keys an earlier release wrote"),
+        "the finding names the file and what is wrong with it: {message}"
+    );
 
     let malformed = weave_committing(
         common::tempdir().unwrap().keep().as_path(),
