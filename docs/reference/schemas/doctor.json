@@ -598,6 +598,53 @@
         }
       ]
     },
+    "PinKind": {
+      "description": "How a member's pin stands against its checkout, or whether it has one.",
+      "oneOf": [
+        {
+          "description": "The lock has a file but no entry for the member.",
+          "type": "string",
+          "enum": [
+            "none"
+          ]
+        },
+        {
+          "description": "The lock pins a commit this clone cannot resolve.",
+          "type": "string",
+          "enum": [
+            "unreachable"
+          ]
+        },
+        {
+          "description": "The checkout is at an ancestor of the pin.",
+          "type": "string",
+          "enum": [
+            "behind"
+          ]
+        },
+        {
+          "description": "The checkout holds commits beyond the pin, each pushed or pinned by another project's live lock.",
+          "type": "string",
+          "enum": [
+            "ahead"
+          ]
+        },
+        {
+          "description": "The checkout holds commits beyond the pin that nothing else holds.",
+          "type": "string",
+          "enum": [
+            "unpinned"
+          ]
+        },
+        {
+          "description": "Neither the checkout nor the pin is an ancestor of the other.",
+          "type": "string",
+          "enum": [
+            "diverged"
+          ]
+        }
+      ]
+    },
     "PlacementConvergence": {
       "description": "Where a [`ProvenanceKind::PlacementDisagreement`] is converged. Moving a canonical clone strands every workweave worktree of it, so the move runs in the primary weave, after each such workweave is landed and retired.",
       "oneOf": [
@@ -1148,52 +1195,41 @@
           "type": "object",
           "required": [
             "absolute_path",
-            "actual",
             "kind",
-            "locked",
+            "listed",
             "path",
-            "project"
+            "project",
+            "sub_kind"
           ],
           "properties": {
             "absolute_path": {
               "$ref": "#/definitions/WirePath"
             },
             "actual": {
-              "type": "string"
+              "description": "The commit the checkout is at; absent for `none` and `unreachable`.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "kind": {
               "type": "string",
               "enum": [
-                "stale-lock"
+                "pin"
               ]
+            },
+            "listed": {
+              "description": "The commits only the checkout holds; empty unless `unpinned`.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             },
             "locked": {
-              "type": "string"
-            },
-            "path": {
-              "type": "string"
-            },
-            "project": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "absolute_path",
-            "kind",
-            "path",
-            "project"
-          ],
-          "properties": {
-            "absolute_path": {
-              "$ref": "#/definitions/WirePath"
-            },
-            "kind": {
-              "type": "string",
-              "enum": [
-                "incomplete-lock"
+              "description": "The commit the lock pins; absent for `none` and `unreachable`.",
+              "type": [
+                "string",
+                "null"
               ]
             },
             "path": {
@@ -1201,6 +1237,9 @@
             },
             "project": {
               "type": "string"
+            },
+            "sub_kind": {
+              "$ref": "#/definitions/PinKind"
             }
           }
         },
@@ -1484,32 +1523,6 @@
               "enum": [
                 "unnameable-project"
               ]
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "absolute_path",
-            "kind",
-            "path",
-            "project"
-          ],
-          "properties": {
-            "absolute_path": {
-              "$ref": "#/definitions/WirePath"
-            },
-            "kind": {
-              "type": "string",
-              "enum": [
-                "unresolvable-lock-entry"
-              ]
-            },
-            "path": {
-              "type": "string"
-            },
-            "project": {
-              "type": "string"
             }
           }
         },

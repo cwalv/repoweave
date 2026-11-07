@@ -168,10 +168,10 @@ sub-kind — the name `rwv explain <token>` serves the finding's entry under. Un
 ```
 
 The `$schema` URL points to the committed schema artifact. Variants are
-discriminated by the `kind` tag — `alignment`, `cargo-patch-shadowing`, `cargo-version-skew`, `clone-topology`, `confusable-siblings`, `dangling-active-project`, `dangling-reference`, `dead-op-lease`, `head-unreadable`, `incomplete-lock`, `index-drift`, `legacy-manifest-format`, `legacy-workweave-index`, `legacy-workweave-marker`, `lock-pinned-by-name`, `member-permissions`, `merge-driver-config-unreadable`, `missing-canonical-clone`, `missing-merge-driver-config`, `missing-replay-exclusion`, `orphaned-clone`, `orphaned-savepoint`, `phantom-merge-driver`, `projectless-dir`, `projects-dir-unreadable`, `provenance`, `replay-exclusion-unreadable`, `role-disagreement`, `stale-lock`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unknown-segment-clone`, `unnameable-project`, `unparseable-project`, `unreadable-active-project`, `unreadable-owned-state`, `unreadable-workweave-index`, `unrecognized-savepoint-ref`, `unresolvable-lock-entry`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
+discriminated by the `kind` tag — `alignment`, `cargo-patch-shadowing`, `cargo-version-skew`, `clone-topology`, `confusable-siblings`, `dangling-active-project`, `dangling-reference`, `dead-op-lease`, `head-unreadable`, `index-drift`, `legacy-manifest-format`, `legacy-workweave-index`, `legacy-workweave-marker`, `lock-pinned-by-name`, `member-permissions`, `merge-driver-config-unreadable`, `missing-canonical-clone`, `missing-merge-driver-config`, `missing-replay-exclusion`, `orphaned-clone`, `orphaned-savepoint`, `phantom-merge-driver`, `pin`, `projectless-dir`, `projects-dir-unreadable`, `provenance`, `replay-exclusion-unreadable`, `role-disagreement`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unknown-segment-clone`, `unnameable-project`, `unparseable-project`, `unreadable-active-project`, `unreadable-owned-state`, `unreadable-workweave-index`, `unrecognized-savepoint-ref`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
 Every per-repo variant carries `path` (manifest-relative) and
 `absolute_path` (fully resolved). Variants with subkinds
-(`alignment`, `clone-topology`, `dead-op-lease`, `index-drift`, `member-permissions`, `missing-replay-exclusion`, `orphaned-savepoint`, `provenance`, `stale-worktree-registration`, `uninitialized-submodule`, `unparseable-project`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
+(`alignment`, `clone-topology`, `dead-op-lease`, `index-drift`, `member-permissions`, `missing-replay-exclusion`, `orphaned-savepoint`, `pin`, `provenance`, `stale-worktree-registration`, `uninitialized-submodule`, `unparseable-project`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
 `workweave-tree-integrity` carries `workweave_dir` and a `sub_kind`
 (`dangling-parent`, `foreign-primary`, `foreign-primary-other-workspace`, `misnamed-dir`, `nested-workweave-dir`, `parent-chain-anomaly`, `stale-registry-entry`, `tracked-index`, `unreadable-marker`, `unregistered-dir`, `unregistered-workweave`).
 
@@ -802,6 +802,53 @@ Schema:
         }
       ]
     },
+    "PinKind": {
+      "description": "How a member's pin stands against its checkout, or whether it has one.",
+      "oneOf": [
+        {
+          "description": "The lock has a file but no entry for the member.",
+          "type": "string",
+          "enum": [
+            "none"
+          ]
+        },
+        {
+          "description": "The lock pins a commit this clone cannot resolve.",
+          "type": "string",
+          "enum": [
+            "unreachable"
+          ]
+        },
+        {
+          "description": "The checkout is at an ancestor of the pin.",
+          "type": "string",
+          "enum": [
+            "behind"
+          ]
+        },
+        {
+          "description": "The checkout holds commits beyond the pin, each pushed or pinned by another project's live lock.",
+          "type": "string",
+          "enum": [
+            "ahead"
+          ]
+        },
+        {
+          "description": "The checkout holds commits beyond the pin that nothing else holds.",
+          "type": "string",
+          "enum": [
+            "unpinned"
+          ]
+        },
+        {
+          "description": "Neither the checkout nor the pin is an ancestor of the other.",
+          "type": "string",
+          "enum": [
+            "diverged"
+          ]
+        }
+      ]
+    },
     "PlacementConvergence": {
       "description": "Where a `ProvenanceKind::PlacementDisagreement` is converged. Moving a canonical clone strands every workweave worktree of it, so the move runs in the primary weave, after each such workweave is landed and retired.",
       "oneOf": [
@@ -1352,52 +1399,41 @@ Schema:
           "type": "object",
           "required": [
             "absolute_path",
-            "actual",
             "kind",
-            "locked",
+            "listed",
             "path",
-            "project"
+            "project",
+            "sub_kind"
           ],
           "properties": {
             "absolute_path": {
               "$ref": "#/definitions/WirePath"
             },
             "actual": {
-              "type": "string"
+              "description": "The commit the checkout is at; absent for `none` and `unreachable`.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "kind": {
               "type": "string",
               "enum": [
-                "stale-lock"
+                "pin"
               ]
+            },
+            "listed": {
+              "description": "The commits only the checkout holds; empty unless `unpinned`.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             },
             "locked": {
-              "type": "string"
-            },
-            "path": {
-              "type": "string"
-            },
-            "project": {
-              "type": "string"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "absolute_path",
-            "kind",
-            "path",
-            "project"
-          ],
-          "properties": {
-            "absolute_path": {
-              "$ref": "#/definitions/WirePath"
-            },
-            "kind": {
-              "type": "string",
-              "enum": [
-                "incomplete-lock"
+              "description": "The commit the lock pins; absent for `none` and `unreachable`.",
+              "type": [
+                "string",
+                "null"
               ]
             },
             "path": {
@@ -1405,6 +1441,9 @@ Schema:
             },
             "project": {
               "type": "string"
+            },
+            "sub_kind": {
+              "$ref": "#/definitions/PinKind"
             }
           }
         },
@@ -1688,32 +1727,6 @@ Schema:
               "enum": [
                 "unnameable-project"
               ]
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "absolute_path",
-            "kind",
-            "path",
-            "project"
-          ],
-          "properties": {
-            "absolute_path": {
-              "$ref": "#/definitions/WirePath"
-            },
-            "kind": {
-              "type": "string",
-              "enum": [
-                "unresolvable-lock-entry"
-              ]
-            },
-            "path": {
-              "type": "string"
-            },
-            "project": {
-              "type": "string"
             }
           }
         },
@@ -3013,10 +3026,11 @@ Get a weave-wide JSON report (all projects, orphan detection enabled):
 rwv doctor --all --json
 ```
 
-Find every stale lock and the paths involved (weave-wide):
+Find every member whose checkout does not stand at its pin, and the paths
+involved (weave-wide):
 
 ```
-rwv doctor --all --json | jq '.violations[] | select(.kind == "stale-lock")'
+rwv doctor --all --json | jq '.violations[] | select(.kind == "pin")'
 ```
 
 Repair every finding marked Auto-fixable, safe drift (index trees that match
