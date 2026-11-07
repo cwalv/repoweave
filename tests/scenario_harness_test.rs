@@ -1399,7 +1399,7 @@ fn dc27_envelope_routes_once_per_kind_last_and_changes_nothing() {
     );
     let lib_path = Repo::Lib.rel_path();
     let manifest = primary.join("projects/proj/rwv.toml");
-    let manifest_before = std::fs::read(&manifest).unwrap();
+    let manifest_before = std::fs::read_to_string(&manifest).unwrap();
     let before = refs_and_locks(&sandbox);
 
     let out = sandbox.rwv(&primary, &["remove", &lib_path, "--delete"]);
@@ -1432,7 +1432,11 @@ fn dc27_envelope_routes_once_per_kind_last_and_changes_nothing() {
         "the route lines are last, after a blank one:\n{stderr}"
     );
     assert_eq!(refs_and_locks(&sandbox), before, "a refusal moves no ref");
-    assert_eq!(std::fs::read(&manifest).unwrap(), manifest_before);
+    assert_eq!(
+        std::fs::read_to_string(&manifest).unwrap(),
+        manifest_before,
+        "a refusal writes no rwv.toml"
+    );
     assert!(lib.join("scratch.txt").is_file() && raw.is_dir());
 
     let seat = sandbox.place_root(&ww("drops"));

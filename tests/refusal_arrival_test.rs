@@ -931,6 +931,30 @@ fn a_rejected_member_push_routes_to_publish() {
     assert_eq!(envelope["outcomes"][0]["kind"], "failed", "{envelope:#}");
 }
 
+/// `rwv sync-to` judges both sides it would move before refusing on either:
+/// the source's dirty member and the target's, each named in its own line,
+/// the target's with the workspace it is in, routed once.
+#[test]
+fn a_landing_judges_the_edits_of_both_sides_in_one_refusal() {
+    let tmp = common::tempdir().unwrap();
+    let (primary, workweave) = primary_and_workweave(tmp.path());
+    for side in [&primary, &workweave] {
+        std::fs::write(side.join(SERVER_PATH).join("README.md"), "edited\n").unwrap();
+    }
+
+    let stderr = refusal_stderr(&["sync-to"], &workweave);
+    for line in [
+        format!("rwv sync-to: {SERVER_PATH}: edits dirty\n    README.md\n"),
+        format!(
+            "rwv sync-to: {SERVER_PATH} in {}: edits dirty\n    README.md\n",
+            primary.display()
+        ),
+    ] {
+        assert!(stderr.contains(&line), "expected {line:?}:\n{stderr}");
+    }
+    assert_routes_to(&stderr, "edits");
+}
+
 /// A verb refused on the repos it judged before printing anything prints
 /// the refusal envelope under `--json`, carrying each judged repo.
 #[test]
