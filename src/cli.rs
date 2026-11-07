@@ -826,12 +826,11 @@ pub enum WorkweaveAction {
     },
     /// Record where `workweave create` places new workweaves by default.
     ///
-    /// Sets the `container` field in `projects/<project>/.rwv-workweave-index`
-    /// — the directory `workweave create` places new workweaves under by
-    /// default. Per-workweave `--dir` and `--basedir` on `create` are
-    /// unaffected. The recorded directory is an explicit act, audit-visible
-    /// via the file itself, which git excludes through the project repo's
-    /// `.git/info/exclude`.
+    /// Sets the `basedir` of the project's workweave index — the directory
+    /// `workweave create` places new workweaves under by default. Per-workweave
+    /// `--dir` and `--basedir` on `create` are unaffected. Until it is set, the
+    /// default is `<parent-of-primary>/.workweaves`. The index is kept with the
+    /// project clone, outside its working tree.
     SetDefaultCreateBasedir {
         /// Path to record. Relative paths resolve against the invocation
         /// directory.

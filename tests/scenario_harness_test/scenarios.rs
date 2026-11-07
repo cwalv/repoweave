@@ -1,5 +1,7 @@
 use crate::invariants::{LockSite, Mode, Record};
-use crate::runner::{Claim, Exit, Forge, MergeHow, MissingVerb, Scenario, Step};
+use crate::runner::{
+    Claim, Exit, Forge, IndexAt, MarkerState, MergeHow, MissingVerb, Scenario, Step, Tamper,
+};
 use crate::sandbox::{
     declared_branch_text, Machine, Place, Remote, Repo, SecondProject, Seed, RECORDS_BRANCH,
 };
@@ -1934,4 +1936,271 @@ pub fn overwrite_lease_refuses_a_moved_remote() -> Vec<Step> {
             }),
     ]);
     steps
+}
+
+pub fn dc20_state_location() -> Scenario {
+    let aligning = |args: &[&str]| {
+        Step::rwv(&ww("w"), args)
+            .expect(Exit::Succeeds)
+            .claim(Claim::WorkspaceStateKept(ww("w")))
+            .claim(Claim::LocalStateUnchanged(ww("w")))
+    };
+    scenario(
+        "workspace state: where each record lives, and when the stored one is written",
+        vec![
+            create("w"),
+            Step::git(&a(), Repo::Proj, &["clean", "-xfd"]),
+            Step::rwv(&a(), &["workweave", "list", "--project", "proj"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("w"))
+                .claim(Claim::IndexFile {
+                    machine: Machine::A,
+                    at: IndexAt::Common,
+                    present: true,
+                })
+                .claim(Claim::IndexFile {
+                    machine: Machine::A,
+                    at: IndexAt::Old,
+                    present: false,
+                }),
+            Step::rwv(&a(), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("reads as absent"))
+                .claim(Claim::OutputLacks("project unaligned")),
+            Step::rwv(&ww("w"), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("reads as absent"))
+                .claim(Claim::OutputLacks("project unaligned"))
+                .claim(Claim::WorkspaceStatesApart(a(), ww("w"))),
+            Step::rwv(&a(), &["branch", "list"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("proj--w"))
+                .claim(Claim::OutputLacks("unrecorded")),
+            aligning(&["update"]),
+            aligning(&["update"]),
+            aligning(&["update", "--repo", "app"]),
+            aligning(&["update", "--repo", "lib"]),
+            aligning(&["update", "--repo", "docs"]),
+            aligning(&["update", "--role", "owned"]),
+            aligning(&["update", "--repo", "app", "--repo", "lib"]),
+            aligning(&["update"]),
+            aligning(&["status"]),
+            aligning(&["update"]),
+        ],
+    )
+}
+
+pub fn dc21_marker_disagreement() -> Scenario {
+    let refused_naming_the_repair = |step: Step| {
+        step.expect(Exit::Fails)
+            .claim(Claim::OutputContains("rwv doctor --fix"))
+    };
+    scenario(
+        "marker disagreement: destroying verbs refuse, every other verb restores",
+        vec![
+            create("w"),
+            Step::tamper("corrupt w's marker", Tamper::CorruptMarker(ww("w"))),
+            refused_naming_the_repair(Step::rwv(&a(), &["workweave", "delete", "w"]))
+                .claim(Claim::DirStands(Machine::A, ".workweaves/proj--w"))
+                .claim(Claim::MarkerIs(ww("w"), MarkerState::Corrupt)),
+            refused_naming_the_repair(Step::rwv(&ww("w"), &["sync-to", "--retire"]))
+                .claim(Claim::DirStands(Machine::A, ".workweaves/proj--w"))
+                .claim(Claim::MarkerIs(ww("w"), MarkerState::Corrupt)),
+            Step::rwv(&ww("w"), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("restored"))
+                .claim(Claim::MarkerParent {
+                    at: ww("w"),
+                    parent: a(),
+                }),
+            Step::tamper("delete w's marker", Tamper::DeleteMarker(ww("w"))),
+            refused_naming_the_repair(Step::rwv(&ww("w"), &["sync-to", "--retire"]))
+                .claim(Claim::MarkerIs(ww("w"), MarkerState::Absent)),
+            Step::rwv(&ww("w"), &["doctor", "--fix"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::MarkerParent {
+                    at: ww("w"),
+                    parent: a(),
+                }),
+            Step::tamper("delete the index", Tamper::DeleteIndex(Machine::A)),
+            Step::rwv(&ww("w"), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("listed"))
+                .claim(Claim::IndexLists {
+                    machine: Machine::A,
+                    name: "w",
+                    parent: a(),
+                }),
+        ],
+    )
+}
+
+pub fn index_parent() -> Scenario {
+    scenario(
+        "the index keeps each workweave's parent, so a marker restores whole",
+        vec![
+            create("outer"),
+            Step::rwv(
+                &ww("outer"),
+                &["workweave", "create", "--project", "proj", "inner"],
+            )
+            .expect(Exit::Succeeds)
+            .claim(Claim::IndexLists {
+                machine: Machine::A,
+                name: "inner",
+                parent: ww("outer"),
+            })
+            .claim(Claim::IndexLists {
+                machine: Machine::A,
+                name: "outer",
+                parent: a(),
+            }),
+            Step::tamper("delete inner's marker", Tamper::DeleteMarker(ww("inner"))),
+            Step::rwv(&ww("inner"), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("restored"))
+                .claim(Claim::MarkerParent {
+                    at: ww("inner"),
+                    parent: ww("outer"),
+                }),
+            Step::tamper("delete the index", Tamper::DeleteIndex(Machine::A)),
+            Step::rwv(&ww("inner"), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("listed"))
+                .claim(Claim::IndexLists {
+                    machine: Machine::A,
+                    name: "inner",
+                    parent: ww("outer"),
+                }),
+            Step::rwv(&ww("outer"), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::IndexLists {
+                    machine: Machine::A,
+                    name: "outer",
+                    parent: a(),
+                }),
+        ],
+    )
+}
+
+pub fn index_old_path() -> Scenario {
+    let refused_as_old_path = |step: Step| {
+        step.expect(Exit::Fails)
+            .claim(Claim::OutputContains("legacy-workweave-index"))
+            .claim(Claim::OutputContains("rwv doctor --fix"))
+            .claim(Claim::IndexFile {
+                machine: Machine::A,
+                at: IndexAt::Old,
+                present: true,
+            })
+            .claim(Claim::IndexFile {
+                machine: Machine::A,
+                at: IndexAt::Common,
+                present: false,
+            })
+    };
+    scenario(
+        "an index at the old path refuses its readers until doctor converts it",
+        vec![
+            create("w1"),
+            Step::rwv(
+                &a(),
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    "far",
+                    "--dir",
+                    "../far-ww",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::tamper(
+                "write the index as an earlier release kept it",
+                Tamper::MoveIndexToOldPath(Machine::A),
+            ),
+            refused_as_old_path(Step::rwv(&a(), &["workweave", "list", "--project", "proj"])),
+            refused_as_old_path(Step::rwv(
+                &a(),
+                &["workweave", "create", "--project", "proj", "w2"],
+            ))
+            .claim(Claim::DirStands(Machine::A, ".workweaves/proj--w1"))
+            .claim(Claim::LocalStateUnchanged(a())),
+            refused_as_old_path(Step::rwv(
+                &a(),
+                &[
+                    "workweave",
+                    "set-default-create-basedir",
+                    "../elsewhere",
+                    "--project",
+                    "proj",
+                ],
+            )),
+            refused_as_old_path(Step::rwv(&a(), &["workweave", "delete", "w1"]))
+                .claim(Claim::DirStands(Machine::A, ".workweaves/proj--w1")),
+            Step::rwv(&a(), &["doctor", "--fix"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::IndexFile {
+                    machine: Machine::A,
+                    at: IndexAt::Old,
+                    present: false,
+                })
+                .claim(Claim::IndexFile {
+                    machine: Machine::A,
+                    at: IndexAt::Common,
+                    present: true,
+                })
+                .claim(Claim::IndexBasedir {
+                    machine: Machine::A,
+                    dir: Some("old-container"),
+                })
+                .claim(Claim::IndexLists {
+                    machine: Machine::A,
+                    name: "w1",
+                    parent: a(),
+                }),
+            Step::rwv(&a(), &["workweave", "list", "--project", "proj"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("w1"))
+                .claim(Claim::OutputContains("far")),
+        ],
+    )
+}
+
+pub fn basedir_default() -> Scenario {
+    scenario(
+        "the basedir is the default until it is set, and is kept in the index",
+        vec![
+            Step::rwv(&a(), &["workweave", "create", "--project", "proj", "ww"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::DirStands(Machine::A, ".workweaves/proj--ww"))
+                .claim(Claim::IndexBasedir {
+                    machine: Machine::A,
+                    dir: None,
+                }),
+            Step::rwv(
+                &a(),
+                &[
+                    "workweave",
+                    "set-default-create-basedir",
+                    "../chosen",
+                    "--project",
+                    "proj",
+                ],
+            )
+            .expect(Exit::Succeeds)
+            .claim(Claim::IndexBasedir {
+                machine: Machine::A,
+                dir: Some("chosen"),
+            }),
+            Step::rwv(&a(), &["workweave", "create", "--project", "proj", "ww2"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::DirStands(Machine::A, "chosen/proj--ww2")),
+            Step::rwv(&a(), &["workweave", "list", "--project", "proj"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("ww2"))
+                .claim(Claim::OutputContains("ww")),
+        ],
+    )
 }

@@ -76,7 +76,7 @@ rwv workweave create <name> [--from <source>] [--replace-existing] [--capture-di
   intentionally want to continue in-flight edits inside the workweave.
 - `--dir <path>` — the exact path to place the workweave at; there is no
   default. Relative paths resolve against the directory rwv runs in, or the
-  `-C`/`-w` directory. The absolute path is recorded in `.rwv-workweave-index`, so every
+  `-C`/`-w` directory. The absolute path is recorded in the project clone's workweave index, so every
   `find`-direction verb (list, delete, sync targets by bare name) resolves
   it via the registry — the workweave does not have to live under the
   default basedir to be addressable. Useful for big-disk workweaves and
@@ -93,7 +93,7 @@ rwv workweave create <name> [--from <source>] [--replace-existing] [--capture-di
   it runs them later.
 
 **Placement.** Workweaves live at `<basedir>/<project>--<name>/` by default,
-where `<basedir>` is recorded per-project in `projects/<project>/.rwv-workweave-index`.
+where `<basedir>` is recorded per-project in the workweave index the project clone keeps.
 The default basedir is `<parent-of-primary>/.workweaves`; set it explicitly
 with `rwv workweave set-default-create-basedir <path>`. `--basedir <path>`
 replaces it for one invocation, and `--dir <path>` places the workweave at
@@ -139,15 +139,16 @@ is the standard "ensure workweave exists" path.
    request `--claude-hook` handles, the agent runtime is waiting for the
    workweave: the create exits `0`, prints the path as usual, and the failure
    is a warning on stderr naming `rwv materialize`.
-6. An entry in `projects/<project>/.rwv-workweave-index` recording the
-   workweave's absolute path. Best-effort adds `.rwv-workweave-index` to the
-   project repo's `.gitignore` so the machine-local index stays untracked.
+6. An entry in the project clone's workweave index recording the workweave's
+   absolute path and the workspace it was forked from. The index is kept in the
+   directory the clone shares with its worktrees, outside the working tree, so
+   nothing is added to the project repo's ignore surface.
 
 ### `rwv workweave set-default-create-basedir <path>`
 
 Record the default basedir for the project — the directory `create` places
-new workweaves under. Writes the `container` field of
-`projects/<project>/.rwv-workweave-index`. Absolute paths are used as-is;
+new workweaves under. Writes the `basedir` of the project clone's workweave
+index. Absolute paths are used as-is;
 relative paths resolve against the directory rwv runs in (or the `-C`/`-w`
 directory). Existing entries in the
 registry are preserved. Per-workweave `--dir` and `--basedir` on `create` are

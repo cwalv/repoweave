@@ -481,7 +481,12 @@ fn a_kind_shared_with_a_finding_has_exactly_one_entry_and_explain_resolves_it() 
         .collect();
     assert_eq!(
         shared,
-        ["alignment", "pin", "unparseable-project"],
+        [
+            "alignment",
+            "legacy-workweave-index",
+            "pin",
+            "unparseable-project"
+        ],
         "the kinds doctor also reports"
     );
 

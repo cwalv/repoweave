@@ -691,10 +691,10 @@ fn case_drift_between_the_record_and_the_disk_is_reported() {
     let drifted = container.join("web-app--Feat");
     std::fs::rename(&recorded_spelling, &drifted).unwrap();
 
-    let index_path = ws.join("projects/web-app/.rwv-workweave-index");
+    let index_path = common::index_file_of(ws.join("projects/web-app"));
     let mut index: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&index_path).unwrap()).unwrap();
-    index["workweaves"]["feat"] =
+    index["workweaves"]["feat"]["path"] =
         serde_json::json!(repoweave::path_spelling::resolve(&drifted).unwrap());
     std::fs::write(&index_path, serde_json::to_string(&index).unwrap()).unwrap();
 

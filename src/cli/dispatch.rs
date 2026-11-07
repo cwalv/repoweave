@@ -411,6 +411,18 @@ fn refuse_symlinked_members_here(ctx: &WorkspaceContext) -> anyhow::Result<()> {
     }
 }
 
+/// Whether `command` removes the workweave it runs in, or one it names.
+fn destroys_workweave(command: Option<&Commands>) -> bool {
+    matches!(
+        command,
+        Some(Commands::SyncTo { retire: true, .. })
+            | Some(Commands::Workweave {
+                action: Some(WorkweaveAction::Delete { .. }),
+                ..
+            })
+    )
+}
+
 /// Run the requested verb and render whatever it declined with.
 ///
 /// The single funnel every refusal leaves through, which is what lets a
@@ -609,6 +621,18 @@ pub fn run() -> anyhow::Result<()> {
     // calls apply `with_workweave_flag_provenance()` to stamp the correct
     // chain-step provenance on the resolved context.
     let use_workweave_flag = workweave_flag_project.is_some();
+
+    // Step 3: the root's marker against the index and the worktree relation,
+    // before the verb resolves the root it runs in. A verb that destroys the
+    // workweave refuses on a disagreement; every other verb repairs it.
+    crate::workspace::reconcile_invocation(
+        origin_dir,
+        if destroys_workweave(cli.command.as_ref()) {
+            crate::workspace::Policy::Refuse
+        } else {
+            crate::workspace::Policy::Restore
+        },
+    )?;
 
     match cli.command {
         None => {
@@ -928,7 +952,7 @@ pub fn run() -> anyhow::Result<()> {
                     WorkweaveAction::SetDefaultCreateBasedir { path, project } => {
                         let ctx = workweave_context(origin_dir, project, use_workweave_flag)?;
                         let project = ctx.require_active_project_on_disk()?;
-                        let recorded = crate::workweave_index::set_container(
+                        let recorded = crate::workweave_index::set_basedir(
                             ctx.primary_path(),
                             project,
                             CanonicalPath::of(&path.locate(&invocation)),

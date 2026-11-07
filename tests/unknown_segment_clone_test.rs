@@ -311,6 +311,7 @@ fn an_unknown_segment_clone_is_reported_from_inside_a_workweave() {
         ),
     )
     .unwrap();
+    common::make_project_repo(&project_dir);
 
     let container = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&container).unwrap();

@@ -804,8 +804,8 @@ stand together: a commit lists the removal before the addition, and git's
 index replaces the one with the other either way.
 
 **No receipts.** Nothing records that rwv created a ref. The workweave index
-keeps a `receipts` list, always empty, so that an index written before the field
-existed stays distinguishable (`legacy-workweave-index`).
+carries no `receipts` at all; an index an earlier release kept at the old path
+is converted, `receipts` dropped (`legacy-workweave-index`).
 
 ---
 
@@ -2035,10 +2035,9 @@ landed — plus a seventh the implementation exposed.
    `projects/<project>/.rwv-workweave-index` in the **primary**, keyed by
    (canonical store, ref name), because the refs outlive the workweave
    directory and a marker-homed receipt would die with `remove_dir_all`. The
-   receipts are gone (§3.7): the index keeps a `receipts` list, always empty, so
-   that an index written before the field existed stays distinguishable, and
-   `rwv doctor --fix` adds the field to one that lacks it
-   (`legacy-workweave-index`). Writes still go through one durable path
+   receipts are gone (§3.7): the index carries no `receipts`, and
+   `rwv doctor --fix` converts an index an earlier release kept at the old path,
+   dropping them (`legacy-workweave-index`). Writes still go through one durable path
    (`durable_file::replace`) with the read-modify-write held under a
    cross-process claim (`IndexClaim`), which the workweave registry still needs.
    The marker is still `{primary, project, parent}` and nothing else. Legacy

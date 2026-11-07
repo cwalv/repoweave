@@ -56,7 +56,7 @@ src/check.rs	alignment on branch	-	2
 src/check.rs	alignment on branch with stray commits	-	2
 src/check.rs	alignment project detached	-	1
 src/check.rs	alignment unaligned	-	2
-src/check.rs	repair-target-changed	-	1
+src/check.rs	repair-target-changed	-	2
 src/check.rs	unknown-finding-kind	-	1
 src/cli/dispatch.rs	(untokened:argv-shim)	-	1
 src/cli/dispatch.rs	ambiguous-workweave-address	-	1
@@ -197,6 +197,7 @@ src/workspace.rs	occupied-bootstrap-dir	-	1
 src/workspace.rs	project-dir-missing	-	1
 src/workspace.rs	unreadable-active-project	tests/unreadable_active_project_test.rs	1
 src/workspace.rs	unregistered-workweave	-	1
+src/workspace/reconcile.rs	stale-registry-entry	-	2
 src/workspace/root_identity.rs	weave-root-identity-conflict	-	1
 src/workweave.rs	(untokened:UNCLASSIFIED)	-	1
 src/workweave.rs	(untokened:environment-passthrough)	-	1
@@ -219,7 +220,7 @@ src/workweave.rs	standalone-in-workweave	-	3
 src/workweave.rs	target-dir-occupied	-	2
 src/workweave.rs	unreadable-status	-	1
 src/workweave.rs	unregistered-workweave	-	1
-src/workweave.rs	workweave-drift	tests/symlinked_member_migration_test.rs	2
-src/workweave_index.rs	legacy-workweave-index	-	1
-src/workweave_index.rs	project-dir-missing	-	2
+src/workweave.rs	workweave-drift	tests/symlinked_member_migration_test.rs	3
+src/workweave_index.rs	legacy-workweave-index old path	-	1
+src/workweave_index.rs	project-dir-missing	-	1
 src/workweave_index.rs	state-claim-held	-	1

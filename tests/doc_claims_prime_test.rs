@@ -76,6 +76,7 @@ fn make_workspace(tmp: &Path, project: &str) -> std::path::PathBuf {
         repo = common::url_path(&repo_path)
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
+    common::make_project_repo(&project_dir);
     ws
 }
 

@@ -382,12 +382,12 @@ fn the_page_check_reports_a_mark_that_drifted_from_the_code() {
     let gaps = page_gaps(&dropped, &register);
     assert!(
         gaps.iter()
-            .any(|g| g.starts_with("legacy-workweave-index:")),
+            .any(|g| g.starts_with("legacy-workweave-index/")),
         "a finding the page stops documenting must be reported; got:\n  {}",
         gaps.join("\n  ")
     );
     assert!(
-        gaps.iter().any(|g| g.contains("`not-a-finding`")),
+        gaps.iter().any(|g| g.contains("`not-a-finding/")),
         "an entry for a finding that does not exist must be reported; got:\n  {}",
         gaps.join("\n  ")
     );
@@ -1425,8 +1425,11 @@ fn repair_bindings() -> Vec<(&'static str, Binding)> {
             Findings(&["weave-root-identity-conflict/registered-workweave"]),
         ),
         (
-            "added the `receipts` key to",
-            Findings(&["legacy-workweave-index"]),
+            "and moved it to",
+            Findings(&[
+                "legacy-workweave-index/before-receipts",
+                "legacy-workweave-index/old-path",
+            ]),
         ),
         // One message family for the two legacy-spelling migrations (with
         // and without a commit), matched by their shared prefix.
@@ -1456,6 +1459,10 @@ fn repair_bindings() -> Vec<(&'static str, Binding)> {
         ),
         (
             "pruned stale registry entry",
+            Findings(&["workweave-tree-integrity/stale-registry-entry"]),
+        ),
+        (
+            "restored the marker of workweave",
             Findings(&["workweave-tree-integrity/stale-registry-entry"]),
         ),
         (

@@ -177,6 +177,13 @@ Schema:
           "enum": [
             "alignment"
           ]
+        },
+        {
+          "description": "A project's workweave index at the path earlier releases kept it at.",
+          "type": "string",
+          "enum": [
+            "legacy-workweave-index"
+          ]
         }
       ]
     },

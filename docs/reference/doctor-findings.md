@@ -37,8 +37,8 @@ rwv doctor --json | jq -r '.issues[] |
     (if (.kind | type) == "string" then .kind else (.kind | keys[0]) end)'
 ```
 
-Sixteen kinds carry a `sub_kind` — `alignment`, `clone-topology`,
-`dead-op-lease`, `index-drift`, `member-permissions`,
+Seventeen kinds carry a `sub_kind` — `alignment`, `clone-topology`,
+`dead-op-lease`, `index-drift`, `legacy-workweave-index`, `member-permissions`,
 `missing-replay-exclusion`, `orphaned-savepoint`, `pin`, `provenance`,
 `stale-worktree-registration`, `unparseable-project`, `uninitialized-submodule`,
 `weave-root-identity-conflict`,
@@ -87,11 +87,11 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`weave-root-identity-conflict`](#weave-root-identity-conflict) / `registered-workweave` | Error | Auto-fixable |
 | [`weave-root-identity-conflict`](#weave-root-identity-conflict) / `marker-unverifiable`, `unwitnessed` | Error | Report-only |
 | [`legacy-workweave-marker`](#legacy-workweave-marker) | Warning | Auto-fixable |
-| [`legacy-workweave-index`](#legacy-workweave-index) | Warning | Auto-fixable |
+| [`legacy-workweave-index`](#legacy-workweave-index) (`before-receipts`, `old-path`) | Warning | Auto-fixable |
 | [`unreadable-owned-state`](#unreadable-owned-state) | Warning | Report-only |
 | [`unreadable-workweave-index`](#unreadable-workweave-index) | Error | Report-only |
 | [`workweave-tree-integrity`](#workweave-tree-integrity) / `dangling-parent`, `unregistered-workweave`, `stale-registry-entry` | Warning | Auto-fixable |
-| [`workweave-tree-integrity`](#workweave-tree-integrity) / `parent-chain-anomaly`, `unregistered-dir`, `foreign-primary`, `foreign-primary-other-workspace`, `tracked-index`, `unreadable-marker`, `misnamed-dir`, `nested-workweave-dir` | Warning | Report-only |
+| [`workweave-tree-integrity`](#workweave-tree-integrity) / `parent-chain-anomaly`, `unregistered-dir`, `foreign-primary`, `foreign-primary-other-workspace`, `unreadable-marker`, `misnamed-dir`, `nested-workweave-dir` | Warning | Report-only |
 | [`workweave-drift`](#workweave-drift) / `missing`, `symlink`, `dangling-link` | Error | Auto-fixable |
 | [`workweave-drift`](#workweave-drift) / `missing-unfetched`, `symlink-unfetched` | Error | Report-only |
 | [`workweave-drift`](#workweave-drift) / `dangling-link-unfetched` | Error | Report-only by default (`--abandon-lost-pins`) |
@@ -567,12 +567,11 @@ identity with nothing keeping them in agreement.
 Fixability turns on evidence held *outside* the tree, because the two files
 are themselves the ambiguity. Primary-ness has no independent signature: a
 primary root and a workweave root both hold `projects/` and registry
-directories. The workweave registry at
-`<primary>/projects/<project>/.rwv-workweave-index` is the outside witness —
-it is written only by `rwv workweave create` and records the absolute path of
-every workweave it made, so a tree the registry names is a workweave on the
-authority of a file that tree does not contain and could not have forged by
-being copied.
+directories. The workweave index the primary's project clone keeps is the
+outside witness — it is written only by `rwv workweave create` and records the
+absolute path of every workweave it made, so a tree the index names is a
+workweave on the authority of a file that tree does not contain and could not
+have forged by being copied.
 
 #### `registered-workweave`
 
@@ -621,17 +620,35 @@ workweave the marker refuses before any verb dispatches.
 
 ### `legacy-workweave-index`
 
-**Warning. Auto-fixable.** A `.rwv-workweave-index` written before the
-`receipts` key was kept, with no `receipts` field — the index-side twin of
-`legacy-workweave-marker`.
+A project's workweave index is still at `projects/<name>/.rwv-workweave-index`, where earlier releases kept it, in whatever shape they wrote it.
 
-`workweave create` refuses against a legacy index rather than erasing the only
-signal that the migration has not run. It is reported rather than refused at
-read, because the migration has to be able to read the index it is about to
-migrate.
+**Why.** The index of a project's workweaves lives in the project clone's shared directory, where a workweave reaches it from its own project checkout and a clean of the primary's project checkout cannot remove it. A file at the old location is a second index: acting on it would trust placements no current writer validated, and ignoring it would lose the workweaves it records. Every verb that reads the index refuses until the file is converted, and `rwv doctor` reports it instead.
 
-**What to do:** `rwv doctor --fix` adds the field, discarding any receipts the
-old index held.
+**States.** A verb that judges a repo in one of these prints `rwv <verb>: <repo>: legacy-workweave-index <state>`, with what the state lists beneath it, and refuses unless its row below says it completes.
+
+| State | Means | Refused by |
+|---|---|---|
+| `old path` | the project's workweave index is at the old path, listed; no verb reads it as the index | every verb that reads the workweave index: `rwv workweave create`, `list`, `delete`, `set-default-create-basedir` and `-w` addressing; `rwv doctor` reports it instead |
+
+**Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
+
+| State | Choice | Spelled | Where | Keeps work because |
+|---|---|---|---|---|
+| `old path` | convert the index and move it into the project clone | `rwv doctor --fix` | here | every recorded workweave is kept; the old file is removed only after the new one is written |
+
+**Where this sits.** [Weave root](../explanation/joints/weave-root.md); [Upgrade rwv](../how-to/upgrade-rwv.md).
+
+#### `before-receipts`
+
+**Warning. Auto-fixable.** The old file has no `receipts` key: an earlier release wrote it before that key was kept. `rwv workweave create`, `list`, `delete`, `set-default-create-basedir` and `-w` addressing refuse until it is converted, and `rwv explain legacy-workweave-index` is their route line.
+
+**What to do:** `rwv doctor --fix`. It writes the index into the project clone's shared directory — `container` becomes `basedir`, each workweave gains the parent its marker records, and `receipts` is not carried over — and then removes the old file.
+
+#### `old-path`
+
+**Warning. Auto-fixable.** The old file carries the `receipts` key, which a release that still kept the index in the project checkout wrote, empty or not. The same verbs refuse, and the same repair converts it.
+
+**What to do:** `rwv doctor --fix`, as above. A copy of the old file committed to the project repo is converted all the same; removing the working file leaves a deletion for you to commit.
 
 ### `unreadable-owned-state`
 
@@ -667,18 +684,19 @@ current content matters, inspect it before you re-derive.
 
 ### `unreadable-workweave-index`
 
-**Error. Report-only.** A `.rwv-workweave-index` that exists and does not
-parse. Everything derived from it is unevaluated: the recorded placements and
-whether the file needs the `legacy-workweave-index` migration.
+**Error. Report-only.** A workweave index that exists and does not parse, in
+the project clone's shared directory or at the old path. Everything derived
+from it is unevaluated: the recorded placements and, for a file at the old
+path, whether it can be converted by the `legacy-workweave-index` repair.
 
-While `.rwv-workweave-index` cannot be parsed, `unregistered-workweave` and
+While the index cannot be parsed, `unregistered-workweave` and
 `stale-registry-entry` are suppressed for the project because attempting to
 adopt or prune against an unreadable index would fail on the same parse error.
 
-**What to do:** repair the file by hand, or delete it and re-run `rwv doctor
---fix`, which re-adopts the workweaves on disk into a fresh index. `--fix`
-never rewrites it for you: a corrupt index gives no way to tell which entries
-it meant to hold.
+**What to do:** repair the file, or delete it and re-run `rwv doctor --fix`,
+which re-adopts the workweaves on disk into a fresh index. `--fix` never
+rewrites it for you: a corrupt index gives no way to tell which entries it
+meant to hold.
 
 ### `workweave-tree-integrity`
 
@@ -717,12 +735,14 @@ workweave.
 #### `unregistered-workweave`
 
 **Warning. Auto-fixable.** A marker-bearing directory whose `(project, name)`
-is not recorded in that project's registry. The workweave exists on disk but
-primary does not know about it.
+is not recorded in that project's workweave index. The workweave exists on disk
+but the project clone does not know about it.
 
-**What to do:** `rwv doctor --fix` adopts the entry. Read paths (`list`,
-`delete`) do not adopt on the fly — adoption is an operator
-decision, so it happens where you asked for it.
+**What to do:** `rwv doctor --fix` adopts the entry, with the parent its
+marker records. Read paths (`list`, `delete`) do not adopt on the fly —
+adoption is an operator decision, so it happens where you asked for it. A verb
+run from inside the workweave lists it again on its own when its marker and its
+project checkout's link to the project clone agree.
 
 **Scope.** The scan enumerates the containers each project records, so this
 finding covers a directory sitting in one of them. A workweave placed outside
@@ -739,12 +759,18 @@ project does not render carries no name to adopt, and reports
 #### `stale-registry-entry`
 
 **Warning. Auto-fixable.** A registered workweave whose recorded path is not a
-valid workweave: missing directory, missing marker, or marker validation
-fails. This covers both "deleted out of band with the registry left behind"
-and "an index committed to version control carries paths that are wrong on
-this machine".
+valid workweave: missing directory, missing or unreadable marker, a marker that
+names another primary or project or a different parent than the entry records.
+This covers both "deleted out of band with the registry left behind" and "the
+marker was lost or edited".
 
-**What to do:** `rwv doctor --fix` prunes the entry.
+**What to do:** `rwv doctor --fix`. Where the directory is still a worktree of
+the project clone, it writes the marker again from the entry and the worktree
+relation (`primary`, `project` and the `parent` the entry keeps). Where nothing
+the entry names is left, it removes the entry. A verb that does not destroy
+the workweave, run from inside it, restores the marker the same way and says
+so; `rwv workweave delete` and `rwv sync-to --retire` refuse instead, naming
+`rwv doctor --fix`.
 
 #### `foreign-primary`
 
@@ -765,17 +791,6 @@ otherwise repeat this about every other sibling. It is still enumerated under
 `--json`.
 
 **What to do:** nothing.
-
-#### `tracked-index`
-
-**Warning. Report-only.** The `.rwv-workweave-index` is tracked by the project
-repo. The index is machine-local state; a checked-in copy propagates absolute
-paths to every clone and every workweave checkout.
-
-**What to do:** `git -C projects/<project> rm --cached .rwv-workweave-index`,
-then commit the removal. rwv excludes the index through the project repo's
-`.git/info/exclude`, so it needs no `.gitignore` entry. `--fix` cannot untrack
-a file without touching commit history, so this stays yours.
 
 #### `unreadable-marker`
 

@@ -1,23 +1,23 @@
-//! An index write and a ledger stamp in one project keep every ignore line.
+//! A ledger stamp keeps every ignore line a peer wrote, and an index write
+//! adds none.
 //!
-//! The two records share a directory: the workweave index and the owned-digest
-//! ledger are both files of `projects/<p>/`, so their VCS-hygiene appends land
-//! on one ignore surface — `.git/info/exclude` when the project is a git
-//! checkout. Each writer runs under the claim of its own record; nothing
-//! serializes the two families against each other, and they contribute
-//! different names. A surface republished whole-file from a read that predates
-//! the other family's append drops that family's names with both writers
-//! exiting zero.
+//! The owned-digest ledger is a file of `projects/<p>/`, so its VCS-hygiene
+//! appends land on the project's ignore surface — `.git/info/exclude` when the
+//! project is a git checkout. The workweave index lives in the clone's shared
+//! directory, outside the working tree, and needs no ignore line. A surface
+//! republished whole-file from a read that predates a peer's append drops the
+//! peer's names with both writers exiting zero.
 //!
 //! **What is pinned, and why it needs no concurrency.** Losing a peer's line
 //! needs a writer that replaces the surface from a stale read. An append never
 //! replaces it: the bytes already there stay where they are and the file stays
-//! the same file. So the test seeds the surface with a line a peer wrote, holds
-//! an open handle to that file, runs one writer of each family, and requires
-//! that
+//! the same file. So the test seeds the surface with a line a peer wrote,
+//! holds an open handle to that file, runs an index write and a ledger stamp,
+//! and requires that
 //!
 //! - the bytes that were there are still a prefix of what the handle reads;
-//! - every name both families contribute is present in what the handle reads.
+//! - every name the ledger contributes is present in what the handle reads;
+//! - the index write contributed no name of its own.
 //!
 //! The handle names the file that existed before the writers ran, so a writer
 //! that republishes the surface as a new file leaves the handle reading the
@@ -38,14 +38,8 @@ use std::io::Read;
 
 const PROJECT: &str = "web-app";
 
-/// Every name the two writers contribute to the shared surface: the index
-/// family, then the ledger family.
-const EXPECTED_LINES: [&str; 4] = [
-    ".rwv-workweave-index",
-    ".rwv-workweave-index.lock",
-    ".rwv-owned-digests",
-    ".rwv-owned-digests.lock",
-];
+/// Every name the ledger contributes to the shared surface.
+const EXPECTED_LINES: [&str; 2] = [".rwv-owned-digests", ".rwv-owned-digests.lock"];
 
 const PEER_LINE: &str = "# a line a peer wrote\n";
 
@@ -56,14 +50,6 @@ fn hygiene_appends_extend_the_surface_in_place_and_keep_a_peers_line() {
     let project_dir = root.join("projects").join(PROJECT);
     std::fs::create_dir_all(&project_dir).expect("project dir");
     common::git_in(&project_dir, &["init"]);
-    std::fs::write(
-        project_dir.join(".rwv-workweave-index"),
-        format!(
-            r#"{{"container":{:?},"workweaves":{{}},"receipts":[]}}"#,
-            root.join(".workweaves").to_string_lossy()
-        ),
-    )
-    .expect("seed index");
     let store = root.join("store");
     std::fs::create_dir_all(&store).expect("store dir");
 
@@ -78,8 +64,18 @@ fn hygiene_appends_extend_the_surface_in_place_and_keep_a_peers_line() {
         &project,
         &WorkweaveName::new("seat").expect("name"),
         CanonicalPath::of(&store),
+        CanonicalPath::of(&root),
     )
     .expect("the index write succeeds");
+    let mut after_index = String::new();
+    std::fs::File::open(&exclude)
+        .expect("reopen the surface")
+        .read_to_string(&mut after_index)
+        .expect("read the surface");
+    assert_eq!(
+        after_index, PEER_LINE,
+        "an index write adds nothing to the project's ignore surface"
+    );
     stamp_owned_digest(&project_dir, "Cargo.lock", b"version = 4\n")
         .expect("the ledger stamp succeeds");
 

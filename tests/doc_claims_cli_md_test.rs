@@ -672,14 +672,14 @@ fn possible_values_are_found_for_the_enum_valued_flag() {
 }
 
 #[test]
-fn set_default_create_basedir_help_names_info_exclude_not_gitignore() {
+fn set_default_create_basedir_help_places_the_index_with_the_clone_not_the_working_tree() {
     let help = help_text(&["workweave", "set-default-create-basedir"]);
     assert!(
-        help.contains("set-default-create-basedir") && help.contains("`.git/info/exclude`"),
-        "set-default-create-basedir help must name the exclusion mechanism, got:\n{help}"
+        help.contains("`basedir`") && help.contains("project clone, outside its working tree"),
+        "set-default-create-basedir help must say where the index lives, got:\n{help}"
     );
     assert!(
-        !help.contains(".gitignore"),
-        "cli.md says the index is never excluded through .gitignore, got:\n{help}"
+        !help.contains(".gitignore") && !help.contains("info/exclude"),
+        "an index outside the working tree needs no ignore entry, got:\n{help}"
     );
 }

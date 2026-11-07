@@ -62,6 +62,7 @@ included, on [Doctor findings](./doctor-findings.md):
 - [`unparseable-project`](./doctor-findings.md#unparseable-project)
 - [`pin`](./doctor-findings.md#pin)
 - [`alignment`](./doctor-findings.md#alignment)
+- [`legacy-workweave-index`](./doctor-findings.md#legacy-workweave-index)
 
 The others follow.
 
@@ -716,7 +717,7 @@ aside and add the repo by its URL.
 **Condition.** The address names no recorded workweave.
 
 **Why.** Addressing is by record, not by directory scan: a directory that
-looks like a workweave but is not recorded in `.rwv-workweave-index` is not addressable.
+looks like a workweave but is not recorded in the project clone's workweave index is not addressable.
 
 **Exits.** `rwv workweave list` shows what is recorded. If the
 directory exists but is unrecorded, `rwv doctor --fix` adopts it when it sits

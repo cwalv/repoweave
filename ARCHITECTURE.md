@@ -96,7 +96,7 @@ empty is what lets the consent tokens in `src/cli/consent.rs` stay
 | `manifest` (`src/manifest.rs`, 3152) | `Manifest`, `LockFile`, `Project`, and the newtypes `RepoPath`, `RepoEntry`, `Role`, `RepoUrl`. `ProjectName` and `WorkweaveName` are re-exports from `naming`. |
 | `lock` (`src/lock.rs`, 392) | Snapshotting member HEADs into `rwv.lock`. |
 | `workweave` (`src/workweave.rs`, 4294) | Workweave create / delete / list / log, and member birth (`birth_ephemeral_worktree`, `materialize_member`). |
-| `workweave_index` (`src/workweave_index.rs`, 1779) | The primary-side `.rwv-workweave-index`: the container path and the name-to-path map of the project's workweaves. |
+| `workweave_index` (`src/workweave_index.rs`) | The workweave index a project clone keeps in the directory its worktrees share: the basedir setting and, per workweave, its path and the workspace it was forked from. Converts an index an earlier release kept at the old path. |
 | `op_state` (`src/op_state.rs`) | The in-flight-operation record: `OpVerb`, `OpPhase`, `OwnerRecord`, `PhaseTips`, `TouchedWorkspaces`, `acquire_op`; and `OpId`, `SavepointKey` and `SyncStrategy`: the two record fields the engine also reads, and the key a savepoint is filed under. |
 | `owned_state` (`src/owned_state.rs`, 1025) | The attested-generation ledger `.rwv-owned-digests` (`OWNED_DIGESTS_FILE`,): what rwv last accepted for each fully-owned generated file, and the inputs a generation read. Consumed by `activate`, `check`, `workweave` and the cargo integration. |
 | `durable_file` (`src/durable_file.rs`) | The one whole-file publish path: `replace` (overwrite) and `create_new` (refuse an occupied target), both temp-then-fsync-then-publish. A state file reaches it only through `StatePath`. |
@@ -210,27 +210,31 @@ All durable rwv state is files. There is no database and no cache directory.
 | `rwv.toml` | — | `projects/<name>/` | Committed intent: membership, roles, per-integration config. |
 | `rwv.lock` | — | `projects/<name>/` | Committed intent: the revision each member is pinned to. |
 | `.rwv-active` | `ACTIVE_PROJECT_FILE`, `src/workspace.rs` | weave root | Which project the primary root currently presents. Ambient default. Read only by `observe_root`, through the private `read_active_pointer`; a file naming no project refuses where a verb would select by it (`unreadable-active-project`). |
-| `.rwv-workweave` | `WORKWEAVE_MARKER_FILE`, `src/workspace.rs` | each workweave root | A workweave's only identity file: `{primary, project, parent}`. Self-describing without the index. |
-| `.rwv-workweave-index` | `INDEX_FILENAME`, `src/workweave_index.rs` | `projects/<project>/` | The primary's inverse view: container path and name→path map. |
+| `.rwv-workweave` | `WORKWEAVE_MARKER_FILE`, `src/workspace.rs` | each workweave root | A workweave's only identity file: `{primary, project, parent}`. Restored from the index and the worktree relation when missing or disagreeing (`src/workspace/reconcile.rs`). |
+| `rwv-workweave-index` | `StateFile::WorkweaveIndex`, `src/state_file.rs` | the project clone's common dir (`Vcs::store_of`) | The primary's inverse view: the basedir setting and, per workweave, `{path, parent}`. A file of the old name at `projects/<project>/` (`StateFile::LegacyWorkweaveIndex`) is read only by its conversion. |
 | `.rwv-op` | `OP_STATE_FILE`, `src/op_state.rs` | a weave root | The owner record of an in-flight multi-repo operation. §5. |
 | `.rwv-op-lease` | `OP_LEASE_FILE`, `src/op_state.rs` | every other workspace the operation mutates | A mutex plus a redirect to the owner. Immutable once written. |
 | `.rwv-owned-digests` | `OWNED_DIGESTS_FILE`, `src/owned_state.rs` | beside a generated file | SHA-256 of fully-owned generated content, so drift is detectable. |
 
 Two ownership rules are structural rather than conventional:
 
-**The marker and the index point opposite ways, and the marker wins.** The
-marker tells a workweave where its primary is; the index tells a primary where
-its workweaves are. The index is **advisory** — every entry consumed from it is
-validated by round-tripping through the target's marker (`marker.primary`
-canonicalizes to this primary, `marker.project` matches). A stale or foreign
-entry degrades to `None` plus a `rwv doctor` finding; destructive operations
-hard-require the round-trip (`src/workweave_index.rs`).
+**The marker, the index and the worktree relation are three records of one fact.**
+The marker tells a workweave where its primary is; the index tells a primary
+where its workweaves are and what each was forked from; the relation is the
+link from the workweave's project checkout to the primary's project clone. Every
+entry consumed from the index is validated by round-tripping through the
+target's marker (`marker.primary` canonicalizes to this primary, `marker.project`
+matches). A stale or foreign entry degrades to `None` plus a `rwv doctor`
+finding. Where two of the three agree, the third is rewritten from them by every
+verb that does not destroy the workweave (`reconcile_invocation`, run once in
+`cli::dispatch` before the verb resolves its root); `workweave delete` and
+`sync-to --retire` refuse on any disagreement instead (`src/workspace/reconcile.rs`).
 
 **The index records no ownership.** What rwv may delete is decided by the
 deletion rule (`src/deletion.rs`) from the branch records and the refs
-themselves, never from a record that rwv created a ref; the index file keeps
-an empty `receipts` list so the format stays one a reader can tell from a
-pre-record one (`src/workweave_index.rs`).
+themselves, never from a record that rwv created a ref; the index carries no
+`receipts` at all, and a file at the old path that still does is converted
+(`src/workweave_index.rs`).
 
 `.rwv-active` and `.rwv-workweave` are **mutually exclusive**; `rwv doctor`
 reports the conflict.

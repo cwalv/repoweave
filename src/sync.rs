@@ -1900,13 +1900,13 @@ pub(crate) fn recorded_workweaves(
         let Some(index) = crate::workweave_index::read(primary_root, &project)? else {
             continue;
         };
-        for (name, dir) in index.workweaves {
+        for (name, entry) in index.workweaves {
             out.push((
                 crate::manifest::WorkweaveId {
                     project: project.clone(),
                     name,
                 },
-                dir,
+                entry.path,
             ));
         }
     }
@@ -8394,7 +8394,7 @@ mod tests {
     /// Returns the context, the checkout path to build, and the project.
     fn workweave_without_primary_canonical(tmp: &Path) -> (WorkspaceContext, PathBuf, ProjectName) {
         let primary = tmp.join("weave");
-        std::fs::create_dir_all(primary.join("projects").join("web-app")).unwrap();
+        crate::workweave_index::init_project_clone(&primary, &ProjectName::new("web-app").unwrap());
         // Deliberately no `primary/github/example/server`.
 
         let ww = primary.join(".workweaves").join("web-app--feat");
@@ -8412,6 +8412,7 @@ mod tests {
             &ProjectName::new("web-app").unwrap(),
             &crate::manifest::WorkweaveName::new("feat").unwrap(),
             CanonicalPath::of(&ww),
+            CanonicalPath::of(&primary_canon),
         )
         .unwrap();
 
@@ -8530,7 +8531,7 @@ mod tests {
         init_repo(&origin);
 
         let primary = tmp.join("weave");
-        std::fs::create_dir_all(primary.join("projects").join("web-app")).unwrap();
+        crate::workweave_index::init_project_clone(&primary, &ProjectName::new("web-app").unwrap());
         std::fs::create_dir_all(primary.join("github/example")).unwrap();
         let canonical = primary.join("github/example/server");
         git(
@@ -8559,6 +8560,7 @@ mod tests {
             &ProjectName::new("web-app").unwrap(),
             &crate::manifest::WorkweaveName::new("feat").unwrap(),
             CanonicalPath::of(&ww),
+            CanonicalPath::of(&primary_canon),
         )
         .unwrap();
 

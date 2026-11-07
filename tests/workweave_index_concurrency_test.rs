@@ -52,8 +52,8 @@ const MEMBER: &str = "github/acme/lib";
 /// The index's claim file. Not exported by the crate, so the literal is spelled
 /// here; a wrong spelling holds nothing, the recorders succeed, and the
 /// exclusion pin goes red.
-const INDEX_CLAIM_FILE: &str = ".rwv-workweave-index.lock";
-const INDEX_FILE: &str = ".rwv-workweave-index";
+const INDEX_CLAIM_FILE: &str = "rwv-workweave-index.lock";
+const INDEX_FILE: &str = "rwv-workweave-index";
 
 /// Not a test: the child half of the recorder drive. Inert in an ordinary suite
 /// run — without [`CHILD_ROOT`] set it returns immediately. It records one
@@ -74,6 +74,7 @@ fn recorder_child() {
         &project,
         &WorkweaveName::new(&name).expect("ww name"),
         CanonicalPath::of(Path::new(&store)),
+        CanonicalPath::of(Path::new(&root)),
     ) {
         Ok(()) => "ok".to_string(),
         Err(e) => match repoweave::refusal::kind_of(&e) {
@@ -114,10 +115,11 @@ fn seeded_primary(tmp: &Path, tag: &str) -> (PathBuf, PathBuf) {
     let root = tmp.join(tag);
     let project_dir = root.join("projects").join(PROJECT);
     std::fs::create_dir_all(&project_dir).expect("project dir");
+    common::git_in(&project_dir, &["init", "-q"]);
     std::fs::write(
-        project_dir.join(".rwv-workweave-index"),
+        common::index_file_of(&project_dir),
         format!(
-            r#"{{"container":{:?},"workweaves":{{}},"receipts":[]}}"#,
+            r#"{{"basedir":{:?},"workweaves":{{}}}}"#,
             root.join(".workweaves").to_string_lossy()
         ),
     )
@@ -128,12 +130,8 @@ fn seeded_primary(tmp: &Path, tag: &str) -> (PathBuf, PathBuf) {
 }
 
 fn recorded_workweaves(root: &Path) -> Vec<String> {
-    let text = std::fs::read_to_string(
-        root.join("projects")
-            .join(PROJECT)
-            .join(".rwv-workweave-index"),
-    )
-    .expect("index readable");
+    let text = std::fs::read_to_string(common::index_file_of(root.join("projects").join(PROJECT)))
+        .expect("index readable");
     let value: serde_json::Value = serde_json::from_str(&text).expect("index parses");
     value["workweaves"]
         .as_object()
@@ -177,9 +175,10 @@ fn a_held_claim_refuses_every_recorder_and_leaves_the_index_untouched() {
     let results = tmp.path().join("results");
     std::fs::create_dir_all(&results).expect("results dir");
     let project_dir = root.join("projects").join(PROJECT);
-    let before = std::fs::read(project_dir.join(INDEX_FILE)).expect("seeded index");
+    let store_dir = project_dir.join(".git");
+    let before = std::fs::read(store_dir.join(INDEX_FILE)).expect("seeded index");
 
-    let claim = project_dir.join(INDEX_CLAIM_FILE);
+    let claim = store_dir.join(INDEX_CLAIM_FILE);
     std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -197,7 +196,7 @@ fn a_held_claim_refuses_every_recorder_and_leaves_the_index_untouched() {
          succeeded wrote without the exclusion"
     );
     assert_eq!(
-        std::fs::read(project_dir.join(INDEX_FILE)).expect("index still present"),
+        std::fs::read(store_dir.join(INDEX_FILE)).expect("index still present"),
         before,
         "a refused record must write nothing"
     );

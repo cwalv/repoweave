@@ -284,24 +284,53 @@ pub fn register_workweave(
     dir: impl AsRef<std::path::Path>,
 ) {
     let primary = primary.as_ref();
-    let dir = dir.as_ref();
-    let canonical = repoweave::path_spelling::resolve(dir).unwrap_or_else(|_| dir.to_path_buf());
-    let index_path = primary
-        .join("projects")
-        .join(project)
-        .join(".rwv-workweave-index");
+    register_workweave_from(primary, project, name, dir, primary);
+}
+
+/// [`register_workweave`] for a workweave forked from `parent`.
+pub fn register_workweave_from(
+    primary: impl AsRef<std::path::Path>,
+    project: &str,
+    name: &str,
+    dir: impl AsRef<std::path::Path>,
+    parent: impl AsRef<std::path::Path>,
+) {
+    let (primary, dir, parent) = (primary.as_ref(), dir.as_ref(), parent.as_ref());
+    let resolved = |path: &std::path::Path| {
+        repoweave::path_spelling::resolve(path).unwrap_or_else(|_| path.to_path_buf())
+    };
+    let clone = primary.join("projects").join(project);
+    std::fs::create_dir_all(&clone).unwrap();
+    if !clone.join(".git").exists() {
+        git_in(&clone, &["init", "-q"]);
+    }
+    let index_path = index_file_of(&clone);
     let mut index: serde_json::Value = match std::fs::read_to_string(&index_path) {
         Ok(raw) => serde_json::from_str(&raw).expect("fixture: index should parse"),
-        Err(_) => serde_json::json!({
-            "container": canonical.parent().expect("a workweave dir has a parent"),
-            "workweaves": {},
-            "receipts": [],
-        }),
+        Err(_) => serde_json::json!({ "workweaves": {} }),
     };
-    index["workweaves"][name] = serde_json::json!(canonical);
-    std::fs::create_dir_all(index_path.parent().unwrap()).unwrap();
+    index["workweaves"][name] = serde_json::json!({
+        "path": resolved(dir),
+        "parent": resolved(parent),
+    });
     std::fs::write(&index_path, serde_json::to_string(&index).unwrap())
         .unwrap_or_else(|e| panic!("write {}: {e}", index_path.display()));
+}
+
+/// Where the project clone at `clone` keeps its workweave index: in the
+/// directory its worktrees share.
+pub fn index_file_of(clone: impl AsRef<std::path::Path>) -> std::path::PathBuf {
+    let clone = clone.as_ref();
+    let common = git_in(
+        clone,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    );
+    std::path::PathBuf::from(common.trim()).join("rwv-workweave-index")
+}
+
+/// Where the index an earlier release kept in the project checkout sat.
+pub fn old_path_index_of(clone: impl AsRef<std::path::Path>) -> std::path::PathBuf {
+    clone.as_ref().join(".rwv-workweave-index")
 }
 
 /// `read_to_string` modulo git's eol filter: under `core.autocrlf` a
@@ -515,6 +544,20 @@ pub fn record_trunk(project_dir: &std::path::Path) {
         .expect("a fixture project directory names a project");
     repoweave::branch::record_trunk(repoweave::git::git_vcs().as_ref(), &project, project_dir)
         .unwrap_or_else(|e| panic!("cannot record {}: {e:#}", project_dir.display()));
+}
+
+/// Make `project_dir` the repository a weave's project always is, holding what
+/// it holds now: the clone that keeps the workweave index, and that a
+/// workweave's project checkout is a worktree of. Commits everything in it and
+/// records the trunk, as `rwv init` leaves a project it makes.
+pub fn make_project_repo(project_dir: impl AsRef<std::path::Path>) {
+    let project_dir = project_dir.as_ref();
+    if !project_dir.join(".git").exists() {
+        git_in(project_dir, &["init", "-q"]);
+    }
+    git_in(project_dir, &["add", "-A"]);
+    commit_staged(project_dir, "project");
+    record_trunk(project_dir);
 }
 
 /// Record `branch` of the project repo at `project_dir` as a feature onto

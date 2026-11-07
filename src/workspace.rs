@@ -2495,39 +2495,11 @@ impl RootObservation {
 mod root_identity;
 pub use root_identity::{PrimaryIdentity, WeaveRootIdentity, WorkweaveIdentity};
 
-/// The index-side counterpart of the legacy-marker check in
-/// [`WorkweaveMarker::read`]: does `(primary_root, project)`'s workweave
-/// index lack the `receipts` key?
-///
-/// Two legacy shapes migrate in the same `rwv doctor --fix` pass and each is
-/// detected where it lives — the marker's YAML-or-missing-`parent:` shape
-/// above, the index's missing `receipts` key here. `Some(path)` is the file to
-/// migrate, and [`crate::workweave_index::migrate_legacy_index`] is what
-/// migrates it.
-///
-/// The two detections differ in one deliberate way. A legacy *marker* is
-/// refused at read: nothing downstream can proceed without knowing the
-/// workweave's parent. A legacy *index* is reported, not refused, because the
-/// migration pass has to be able to read the index it is about to migrate;
-/// `workweave create` refuses against it.
-///
-/// `None` when the index is current, or when there is no index file at all
-/// — an absent file records no workweaves, so there is no key to migrate.
-pub fn pending_index_migration(
-    primary_root: &Path,
-    project: &ProjectName,
-) -> anyhow::Result<Option<StatePath>> {
-    let Some(index) = crate::workweave_index::read(primary_root, project)? else {
-        return Ok(None);
-    };
-    if !index.is_legacy() {
-        return Ok(None);
-    }
-    Ok(Some(crate::workweave_index::index_path(
-        primary_root,
-        project,
-    )))
-}
+mod reconcile;
+pub use reconcile::{
+    disagreement_at, reconcile_invocation, require_agreement, restore_marker_of_entry,
+    Disagreement, Policy,
+};
 
 // ---------------------------------------------------------------------------
 // Unit tests
@@ -2552,12 +2524,13 @@ mod tests {
     /// a marker-bearing directory a name a resolution can find.
     fn register_workweave(primary: &Path, project: &str, name: &str, dir: &Path) {
         let project = ProjectName::new(project).unwrap();
-        std::fs::create_dir_all(project_dir(primary, &project)).unwrap();
+        crate::workweave_index::init_project_clone(primary, &project);
         crate::workweave_index::record_workweave(
             primary,
             &project,
             &crate::manifest::WorkweaveName::new(name).unwrap(),
             CanonicalPath::of(dir),
+            CanonicalPath::of(primary),
         )
         .unwrap();
     }
@@ -3413,56 +3386,6 @@ mod tests {
             &CanonicalPath::of(Path::new("/home/user/weaveroot/has: a colon-space"))
         );
         assert_eq!(marker.parent(), marker.primary());
-    }
-
-    /// Fixture: a primary with `projects/<name>/`, ready for an index.
-    fn primary_with_project(root: &Path, name: &str) -> ProjectName {
-        std::fs::create_dir_all(root.join("projects").join(name)).unwrap();
-        ProjectName::new(name).unwrap()
-    }
-
-    #[test]
-    fn pending_index_migration_reports_an_index_without_receipts() {
-        // The index-side legacy shape, next to the marker-side one above:
-        // written before the `receipts` key was kept.
-        let tmp = crate::tempdir().unwrap();
-        let primary = tmp.path().join("ws");
-        let project = primary_with_project(&primary, "web-app");
-        let path = crate::workweave_index::index_path(&primary, &project);
-        path.publish(br#"{"container":"/c","workweaves":{}}"#)
-            .unwrap();
-
-        assert_eq!(
-            pending_index_migration(&primary, &project).unwrap(),
-            Some(path),
-            "an index with no receipts field needs the migration"
-        );
-    }
-
-    #[test]
-    fn pending_index_migration_is_quiet_for_current_and_absent_indexes() {
-        let tmp = crate::tempdir().unwrap();
-        let primary = tmp.path().join("ws");
-        let project = primary_with_project(&primary, "web-app");
-
-        assert_eq!(
-            pending_index_migration(&primary, &project).unwrap(),
-            None,
-            "no index file records no workweaves, so there is no field to migrate"
-        );
-
-        crate::workweave_index::IndexClaim::hold(&primary, &project, |claim| {
-            crate::workweave_index::write(
-                claim,
-                &crate::workweave_index::WorkweaveIndex::new(CanonicalPath::of(Path::new("/c"))),
-            )
-        })
-        .unwrap();
-        assert_eq!(
-            pending_index_migration(&primary, &project).unwrap(),
-            None,
-            "an index this build wrote is not a legacy one, empty registry or not"
-        );
     }
 
     // ========================================================================

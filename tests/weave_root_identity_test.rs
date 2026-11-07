@@ -30,7 +30,7 @@
 //! presence is the only witness of that: primary roots and workweave roots
 //! are structurally identical (both hold `projects/` and registry dirs). So
 //! the discriminator has to be evidence the tree does not contain — the
-//! primary-side `.rwv-workweave-index`, which names every workweave `rwv
+//! workweave index in the project clone, which names every workweave `rwv
 //! workweave create` made. A tree that index does not name gets reported and
 //! left alone, because deleting the wrong one of two files destroys operator
 //! state (the marker carries `primary` and `parent` values that exist
@@ -569,6 +569,7 @@ fn doctor_fix_ignores_a_conflicted_root_of_another_workspace() {
         ),
     )
     .unwrap();
+    common::make_project_repo(&proj_b);
     rwv()
         .args(["workweave", "create", "--project", "beta", "b1"])
         .current_dir(&ws_b)
@@ -662,7 +663,7 @@ fn doctor_fix_leaves_an_unregistered_both_files_tree_alone() {
 }
 
 /// A tree that is itself the registry's home — it holds
-/// `projects/<project>/.rwv-workweave-index` — yet also carries a
+/// an index of workweaves in its project clone — yet also carries a
 /// `.rwv-workweave` marker is report-only, the same as an unregistered copy.
 /// The registry it holds names entries elsewhere (the real workweave `w1`),
 /// never itself, so the reverse lookup this root would need to be
@@ -673,7 +674,7 @@ fn doctor_fix_leaves_a_registry_holding_root_alone() {
     let ws = make_workspace(tmp.path(), "demo");
     create_workweave(&ws, "demo", "w1");
 
-    // `ws` already holds `projects/demo/.rwv-workweave-index` from the create
+    // `ws` already holds the index of `demo`'s workweaves from the create
     // above. Giving it a marker of its own recreates a hand-added-marker (or
     // primary-copied-onto-a-workweave) accident without touching the real
     // registry.

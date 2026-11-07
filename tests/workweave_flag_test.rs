@@ -83,16 +83,10 @@ fn register_workweave(ws: &Path, project: &str, name: &str) -> PathBuf {
     std::fs::write(ww_project_dir.join("rwv.toml"), "[repositories]\n").unwrap();
 
     // Register the workweave in the index.
-    workweave_index::record_workweave(
-        &ws_canon,
-        &ProjectName::new(project).unwrap(),
-        &repoweave::manifest::WorkweaveName::new(name).unwrap(),
-        repoweave::path_spelling::CanonicalPath::of(&ww_dir),
-    )
-    .unwrap();
+    common::register_workweave(&ws_canon, project, name, &ww_dir);
 
-    // Seed the container in the index (required by `list`).
-    workweave_index::set_container(
+    // Seed the basedir in the index (required by `list`).
+    workweave_index::set_basedir(
         &ws_canon,
         &ProjectName::new(project).unwrap(),
         repoweave::path_spelling::CanonicalPath::of(&container),

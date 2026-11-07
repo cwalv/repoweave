@@ -32,6 +32,8 @@ pub enum StateFile {
     ProjectLock,
     /// Replaced, by a writer holding [`StateFile::IndexClaim`].
     WorkweaveIndex,
+    /// Read, and removed once its content is in [`StateFile::WorkweaveIndex`].
+    LegacyWorkweaveIndex,
     /// Replaced.
     HealthFloor,
     /// Replaced, when its content changes.
@@ -59,12 +61,13 @@ pub const OPERATOR_AUTHORED: [&str; 2] = [
 ];
 
 impl StateFile {
-    pub const ALL: [StateFile; 12] = [
+    pub const ALL: [StateFile; 13] = [
         StateFile::OwnedDigests,
         StateFile::ActiveProject,
         StateFile::WorkweaveMarker,
         StateFile::ProjectLock,
         StateFile::WorkweaveIndex,
+        StateFile::LegacyWorkweaveIndex,
         StateFile::HealthFloor,
         StateFile::WorkspaceState,
         StateFile::OpRecord,
@@ -81,6 +84,7 @@ impl StateFile {
             StateFile::WorkweaveMarker => crate::workspace::WORKWEAVE_MARKER_FILE,
             StateFile::ProjectLock => crate::manifest::LockFile::FILE_NAME,
             StateFile::WorkweaveIndex => crate::workweave_index::INDEX_FILENAME,
+            StateFile::LegacyWorkweaveIndex => crate::workweave_index::LEGACY_INDEX_FILENAME,
             StateFile::HealthFloor => crate::health_floor::FLOOR_FILE,
             StateFile::WorkspaceState => crate::alignment::WORKSPACE_STATE_FILE,
             StateFile::OpRecord => crate::op_state::OP_STATE_FILE,

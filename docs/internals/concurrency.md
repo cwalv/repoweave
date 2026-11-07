@@ -35,6 +35,11 @@ invocation's write. A missing property here is a defect, not a hardening
 opportunity. The lease machinery in [op-state.md](op-state.md) is this tier's
 exclusion primitive.
 
+The workweave index is one of these records, and its claim sits beside it in the
+project clone's shared directory, not in the project's working tree. The primary
+and every workweave of a project write the one index from different checkouts,
+so the claim has to be the one file they all reach, which that directory is.
+
 Readers of these records take no claim, as git's readers take no
 `index.lock`: the claim serializes writers, and write-then-rename is all a
 reader needs. Windows will not rename onto a file while any handle to it is
@@ -74,14 +79,14 @@ of VCS is git's file, not rwv's: operators and other tools legitimately write
 it, and git takes no lock over it. So it earns no exclusion of its own — a
 claim here would bind only rwv's processes while installing the wedged-lock
 failure mode on a file rwv does not own. Instead the hygiene write is
-line-granular (`append_ignore_line` in `src/workweave_index.rs`): the two
-writers that share one surface under different claims — the workweave index's
-and the owned-digest ledger's, both records of `projects/<p>/` — cannot drop
-each other's line, because an append publishes only the missing line and never
-a stale image of the whole file. An external whole-file rewrite remains
-detect-don't-prevent: the next publish of a record re-appends its lost line,
-and doctor's tracked-index finding is the net behind a copy that reaches the
-index. Driven and pinned by `tests/ignore_surface_concurrency_test.rs`.
+line-granular (`append_ignore_line` in `src/workweave_index.rs`): writers that
+share one surface cannot drop each other's line, because an append publishes
+only the missing line and never a stale image of the whole file. The owned-digest
+ledger, a file of `projects/<p>/`, is such a writer; the workweave index is not,
+since it lives in the project clone's shared directory and needs no ignore line.
+An external whole-file rewrite remains detect-don't-prevent: the next publish of
+a record re-appends its lost line. Driven and pinned by
+`tests/ignore_surface_concurrency_test.rs`.
 
 ## The attestation invariant
 

@@ -173,13 +173,15 @@ fn the_parity_check_reports_a_json_renderer_that_drops_a_kind() {
         renders_as_json(v)
     };
     let gaps = parity_gaps(&renders_as_text, &holed, JSON_ONLY_BY_DESIGN);
-    assert!(
-        gaps.contains(
-            &"legacy-workweave-index: the text report renders it, --json does not".to_string()
-        ),
-        "a --json renderer that drops a kind must be reported; got:\n  {}",
-        gaps.join("\n  ")
-    );
+    for sub_kind in ["old-path", "before-receipts"] {
+        assert!(
+            gaps.contains(&format!(
+                "legacy-workweave-index/{sub_kind}: the text report renders it, --json does not"
+            )),
+            "a --json renderer that drops a kind must be reported; got:\n  {}",
+            gaps.join("\n  ")
+        );
+    }
 }
 
 #[test]
@@ -198,7 +200,8 @@ fn the_corpus_covers_every_kind_and_is_not_empty() {
         "duplicate sample tokens hide a missing case: {tokens:?}"
     );
     for expected in [
-        "legacy-workweave-index",
+        "legacy-workweave-index/old-path",
+        "legacy-workweave-index/before-receipts",
         "index-drift/safe-to-fix",
         "workweave-tree-integrity/foreign-primary-other-workspace",
     ] {
@@ -516,7 +519,7 @@ fn a_legacy_index_reaches_both_the_report_and_the_wire_format() {
         .unwrap();
     let text_stdout = String::from_utf8_lossy(&text.stdout).into_owned();
     assert!(
-        text_stdout.contains(".rwv-workweave-index") && text_stdout.contains("receipts"),
+        text_stdout.contains(".rwv-workweave-index") && text_stdout.contains("rwv doctor --fix"),
         "the text report must carry the finding; got:\n{text_stdout}"
     );
 

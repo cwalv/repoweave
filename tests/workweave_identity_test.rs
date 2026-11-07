@@ -54,6 +54,7 @@ role = "owned"
         ),
     )
     .unwrap();
+    common::make_project_repo(&project_dir);
 
     ws
 }

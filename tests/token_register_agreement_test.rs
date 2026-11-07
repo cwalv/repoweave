@@ -126,8 +126,8 @@ const INTENDED_REUSE: &[(&str, &[&str], &str)] = &[
     ),
     (
         "legacy-workweave-index",
-        &["doctor", "refusal"],
-        "the workweave index is in the retired format",
+        &["doctor", "kind"],
+        "the workweave index is at the path an earlier release kept it",
     ),
     (
         "legacy-workweave-marker",
@@ -765,7 +765,7 @@ const ALREADY_WALKED: &[&str] = &[
 /// sub-kinds and missed four vocabularies outright; this file's own walk is
 /// the source of truth for the number below, and a mismatch here means the
 /// walk moved, not that the constant needs editing to match.
-const UNWALKED_KEBAB_CENSUS: (usize, usize) = (45, 172);
+const UNWALKED_KEBAB_CENSUS: (usize, usize) = (46, 173);
 
 /// A residue sub-kind token deliberately mirrored from `RefusalKind`, and the
 /// vocabulary that mirrors it — the D1 sentence again, one level deeper than

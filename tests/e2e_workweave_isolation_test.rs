@@ -107,6 +107,7 @@ func Message() string {
     let rwv_yaml = "[repositories.\"github/chatly/protocol\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/protocol.git\"\nbranch = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/chatly/server\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/server.git\"\nbranch = \"main\"\nrole = \"owned\"\n";
 
     std::fs::write(project_dir.join("rwv.toml"), rwv_yaml).unwrap();
+    common::make_project_repo(&project_dir);
     // Select web-app. Intent-mode activation regenerates content but never
     // selects, so the weave root only surfaces what `.rwv-active` names.
     std::fs::write(ws.join(".rwv-active"), "web-app\n").unwrap();
@@ -150,6 +151,7 @@ func Message() string {
     // ------------------------------------------------------------------
     let workweave_root = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&workweave_root).unwrap();
+    common::make_project_repo(ws.join("projects/web-app"));
 
     let ww_name = repoweave::manifest::WorkweaveName::new("agent-1").unwrap();
     let ww_project = repoweave::manifest::ProjectName::new("web-app").unwrap();

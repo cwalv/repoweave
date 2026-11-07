@@ -208,7 +208,7 @@ fn a_default_scope_holding_only_reference_repos_fails_saying_how_to_include_them
 }
 
 #[test]
-fn an_unregistered_workweave_runs_once_doctor_fix_registers_it() {
+fn an_unlisted_workweave_runs_and_is_listed_again_by_the_verb() {
     let pw = common::build_workspace("demo", &[(APP, "owned")]);
     let created = common::rwv()
         .args(["workweave", "create", "--project", "demo", "seat"])
@@ -232,7 +232,7 @@ fn an_unregistered_workweave_runs_once_doctor_fix_registers_it() {
         .unwrap()
         .to_path_buf();
 
-    let index = pw.workspace.join("projects/demo/.rwv-workweave-index");
+    let index = common::index_file_of(pw.workspace.join("projects/demo"));
     let mut doc: Value = serde_json::from_str(&std::fs::read_to_string(&index).unwrap()).unwrap();
     doc["workweaves"] = serde_json::json!({});
     std::fs::write(&index, serde_json::to_string(&doc).unwrap()).unwrap();
@@ -255,19 +255,13 @@ fn an_unregistered_workweave_runs_once_doctor_fix_registers_it() {
             .output()
             .unwrap()
     };
-    let refused = each(&seat);
-    assert_eq!(refused.status.code(), Some(1));
-    let advised = common::advised_command(&stderr(&refused), "rwv doctor");
-    assert!(advised.contains("--fix"), "{advised}");
-
-    let fixed = common::run_advised(&advised, &seat);
-    assert!(
-        fixed.status.success(),
-        "`{advised}`:\n{}",
-        String::from_utf8_lossy(&fixed.stderr)
-    );
     let out = each(&seat);
     assert!(out.status.success(), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("listed workweave `seat`"),
+        "the verb says it listed the workweave again: {}",
+        stderr(&out)
+    );
     let ran_in = PathBuf::from(
         outcome_of(&envelope(&out), APP)["stdout"]
             .as_str()
@@ -276,6 +270,8 @@ fn an_unregistered_workweave_runs_once_doctor_fix_registers_it() {
     );
     let canonical = |p: &Path| repoweave::path_spelling::resolve(p).unwrap();
     assert_eq!(canonical(&ran_in), canonical(&checkout));
+    let relisted: Value = serde_json::from_str(&std::fs::read_to_string(&index).unwrap()).unwrap();
+    assert!(relisted["workweaves"]["seat"].is_object(), "{relisted}");
 }
 
 #[test]

@@ -67,7 +67,7 @@ fn a_member_to_add(base: &Path) -> String {
 }
 
 fn index_path(ws: &Path) -> PathBuf {
-    ws.join("projects/web-app/.rwv-workweave-index")
+    common::index_file_of(ws.join("projects/web-app"))
 }
 
 fn read_index(ws: &Path) -> serde_json::Value {
@@ -140,11 +140,34 @@ fn make_registered_workweave(ws: &Path) -> PathBuf {
         .current_dir(ws)
         .assert()
         .success();
-    let dir = read_index(ws)["workweaves"]["feat"]
+    let dir = read_index(ws)["workweaves"]["feat"]["path"]
         .as_str()
         .map(PathBuf::from)
         .expect("fixture: create must record a placement");
     assert!(dir.join(".rwv-workweave").exists());
+    dir
+}
+
+/// Create workweave `seat` at a directory whose basename names no workweave of
+/// the project. Once its record is gone nothing can derive a name for it, so a
+/// verb run inside it cannot list it again: the unregistered state stays.
+fn make_unlistable_workweave(ws: &Path, container: &Path) -> PathBuf {
+    let dir = container.join("seat-dir");
+    rwv()
+        .args([
+            "workweave",
+            "create",
+            "--project",
+            "web-app",
+            "seat",
+            "--dir",
+            dir.to_str().unwrap(),
+        ])
+        .current_dir(ws)
+        .assert()
+        .success();
+    assert!(dir.join(".rwv-workweave").exists());
+    deregister(ws, "seat");
     dir
 }
 
@@ -171,7 +194,9 @@ fn make_drifted_workweave(ws: &Path, container: &Path) -> PathBuf {
         "fixture: the workweave must exist at the overridden placement"
     );
     assert_eq!(
-        read_index(ws)["workweaves"]["feat"].as_str().map(Path::new),
+        read_index(ws)["workweaves"]["feat"]["path"]
+            .as_str()
+            .map(Path::new),
         Some(repoweave::path_spelling::resolve(&dir).unwrap().as_path()),
         "fixture: the registry must record `feat` at the drifted directory"
     );
@@ -253,8 +278,7 @@ fn drifted_basename_mints_the_recorded_name() {
 fn unregistered_workweave_refuses_an_identity_consuming_verb() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
-    let dir = make_registered_workweave(&ws);
-    deregister(&ws, "feat");
+    let dir = make_unlistable_workweave(&ws, &tmp.path().join("elsewhere"));
 
     let out = rwv()
         .args(["member", "add", &a_member_to_add(tmp.path())])
@@ -284,8 +308,7 @@ fn unregistered_workweave_refuses_an_identity_consuming_verb() {
 fn unregistered_workweave_lets_diagnostics_proceed_and_report() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
-    let dir = make_registered_workweave(&ws);
-    deregister(&ws, "feat");
+    let dir = make_unlistable_workweave(&ws, &tmp.path().join("elsewhere"));
 
     for verb in [vec!["status"], vec!["prime"]] {
         let out = rwv()
@@ -310,15 +333,19 @@ fn unregistered_workweave_lets_diagnostics_proceed_and_report() {
         );
     }
 
-    // doctor is the verb that repairs this, so it above all must run.
-    let doctor = rwv().args(["doctor"]).current_dir(&dir).output().unwrap();
+    // doctor is the verb that repairs this, so it above all must run. A
+    // workweave whose name its directory spells is reported from the primary;
+    // run inside, any verb would list it again.
+    make_registered_workweave(&ws);
+    deregister(&ws, "feat");
+    let doctor = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
     let doctor_out = format!(
         "{}{}",
         String::from_utf8_lossy(&doctor.stdout),
         String::from_utf8_lossy(&doctor.stderr)
     );
     assert!(
-        doctor_out.contains("present on disk but not recorded in `.rwv-workweave-index`"),
+        doctor_out.contains("present on disk but not recorded in the workweave index"),
         "doctor must report the unregistered workweave: {doctor_out}"
     );
 
@@ -376,8 +403,7 @@ fn a_dir_placed_workweave_still_refuses_and_routes_to_the_condition() {
     let ws = make_workspace(tmp.path());
     let outside = tmp.path().join("elsewhere");
     std::fs::create_dir_all(&outside).unwrap();
-    let dir = make_drifted_workweave(&ws, &outside);
-    deregister(&ws, "feat");
+    let dir = make_unlistable_workweave(&ws, &outside);
 
     // The no-op is the premise, so measure it rather than assume it.
     let _ = rwv().args(["doctor", "--fix"]).current_dir(&ws).output();

@@ -75,6 +75,7 @@ fn a_silent_hook_refusing_a_manifest_repo_is_still_named_to_the_operator() {
     let project_dir = ws.join("projects").join("myproject");
     std::fs::create_dir_all(&project_dir).unwrap();
     write_manifest(&project_dir, &repo_path);
+    common::make_project_repo(&project_dir);
     std::fs::create_dir_all(tmp.path().join(".workweaves")).unwrap();
     assert_word_absent_from_paths(&[tmp.path(), &ws, &repo_path]);
 

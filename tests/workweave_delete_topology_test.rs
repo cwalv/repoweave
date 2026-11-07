@@ -102,13 +102,7 @@ fn write_marker(ww_dir: &Path, primary: &Path, project: &str) {
         .and_then(|n| n.rsplit_once("--"))
         .map(|(_, n)| repoweave::manifest::WorkweaveName::new(n).unwrap())
         .expect("workweave dir name must be `<project>--<name>`");
-    repoweave::workweave_index::record_workweave(
-        primary,
-        &repoweave::manifest::ProjectName::new(project).unwrap(),
-        &name,
-        repoweave::path_spelling::CanonicalPath::of(ww_dir),
-    )
-    .expect("record_workweave should succeed for test fixture");
+    common::register_workweave(primary, project, name.as_str(), ww_dir);
 }
 
 /// Sanity test: under correct topology, `store_of`

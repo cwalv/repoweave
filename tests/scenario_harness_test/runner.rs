@@ -151,6 +151,8 @@ pub enum Action {
     TruncateWorkspaceState {
         at: Place,
     },
+    /// An edit to one of rwv's own records, made behind its back.
+    Tamper(Tamper),
     /// An empty weave root on `machine`, filled by `rwv clone` from `proj`'s
     /// remote.
     NewMachine(Machine),
@@ -172,6 +174,42 @@ pub enum Action {
     Unreachable(Remote),
     Reachable(Remote),
     Pending(MissingVerb),
+}
+
+/// What a scenario does to a record rwv keeps.
+#[derive(Debug, Clone)]
+pub enum Tamper {
+    DeleteMarker(Place),
+    /// Overwrite the marker with text no parser reads.
+    CorruptMarker(Place),
+    DeleteIndex(Machine),
+    /// Write the index as an earlier release kept it: at the top of the
+    /// project checkout, `container` for `basedir`, bare paths, an empty
+    /// `receipts`, and the container somewhere the current default is not.
+    MoveIndexToOldPath(Machine),
+}
+
+/// What a claim captured before its step ran.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Captured {
+    Checkouts,
+    StateFile,
+}
+
+fn same_dir(one: &std::path::Path, other: &std::path::Path) -> bool {
+    let resolved = |path: &std::path::Path| {
+        repoweave::path_spelling::resolve(path).unwrap_or_else(|_| path.to_path_buf())
+    };
+    resolved(one) == resolved(other)
+}
+
+/// Which index file a claim is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IndexAt {
+    /// In the directory the project clone shares with its worktrees.
+    Common,
+    /// At the top of the project checkout, where earlier releases kept it.
+    Old,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -253,6 +291,47 @@ pub enum Claim {
         at: Place,
         project: Repo,
     },
+    /// The marker at `at` names its machine's primary, project `proj`, and
+    /// `parent` as the workspace it was forked from.
+    MarkerParent {
+        at: Place,
+        parent: Place,
+    },
+    /// The index on `machine` lists workweave `name` at its place, forked from
+    /// `parent`.
+    IndexLists {
+        machine: Machine,
+        name: &'static str,
+        parent: Place,
+    },
+    /// The index on `machine` records `<machine's directory>/<dir>` as its
+    /// basedir, or none when `dir` is none.
+    IndexBasedir {
+        machine: Machine,
+        dir: Option<&'static str>,
+    },
+    /// Whether an index file is at `at` on `machine`.
+    IndexFile {
+        machine: Machine,
+        at: IndexAt,
+        present: bool,
+    },
+    /// The workspace-state file of the project checkout at `at` has the
+    /// identity (inode and modification time) it had before the step.
+    WorkspaceStateKept(Place),
+    /// The two places keep their workspace state in files of their own.
+    WorkspaceStatesApart(Place, Place),
+    /// The marker at `at` is as a tamper left it.
+    MarkerIs(Place, MarkerState),
+    /// `rel`, under machine `machine`'s directory, is a directory.
+    DirStands(Machine, &'static str),
+}
+
+/// What is left at a marker's path after a tamper.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkerState {
+    Absent,
+    Corrupt,
 }
 
 /// The outcome a step is expected to have. A step whose outcome the adopted
@@ -423,6 +502,10 @@ impl Step {
             },
             Expect::succeeds(),
         )
+    }
+
+    pub fn tamper(label: &str, tamper: Tamper) -> Step {
+        Step::new(label, Action::Tamper(tamper), Expect::succeeds())
     }
 
     pub fn truncate_workspace_state(at: &Place) -> Step {
@@ -719,12 +802,17 @@ pub fn run_in(sandbox: &Sandbox, scenario: Scenario) -> Report {
             report.pending = Some((step.label, verb));
             break;
         }
-        let unmoved: Vec<(Place, String)> = step
+        let unmoved: Vec<(Captured, Place, String)> = step
             .expect
             .claims
             .iter()
             .filter_map(|claim| match claim {
-                Claim::LocalStateUnchanged(at) => Some((at.clone(), run.local_state(at))),
+                Claim::LocalStateUnchanged(at) => {
+                    Some((Captured::Checkouts, at.clone(), run.local_state(at)))
+                }
+                Claim::WorkspaceStateKept(at) => {
+                    Some((Captured::StateFile, at.clone(), run.state_file_identity(at)))
+                }
                 _ => None,
             })
             .collect();
@@ -881,6 +969,10 @@ impl Run<'_> {
                 std::fs::write(&state, &bytes[..bytes.len() / 2]).unwrap();
                 (true, String::new())
             }
+            Action::Tamper(tamper) => match self.tamper(tamper) {
+                Ok(()) => (true, String::new()),
+                Err(why) => (false, why),
+            },
             Action::NewMachine(machine) => {
                 let root = sb.prepare_machine(*machine);
                 let fetch = sb.clone_command(Repo::Proj);
@@ -1088,6 +1180,72 @@ impl Run<'_> {
 
     /// Every checkout at `at`, as one text: its HEAD, its branches, its
     /// uncommitted changes, and the project's lock bytes.
+    fn read_index(&self, machine: Machine) -> Result<serde_json::Value, String> {
+        let path = self.sandbox.index_file(machine);
+        let text = std::fs::read_to_string(&path)
+            .map_err(|e| format!("no index at {}: {e}", path.display()))?;
+        serde_json::from_str(&text)
+            .map_err(|e| format!("{} does not parse: {e}\n{text}", path.display()))
+    }
+
+    fn state_file_identity(&self, at: &Place) -> String {
+        let file = self.sandbox.private_dir(at).join("rwv-workspace-state");
+        let Ok(meta) = std::fs::metadata(&file) else {
+            return format!("{}: absent", file.display());
+        };
+        #[cfg(unix)]
+        let inode = {
+            use std::os::unix::fs::MetadataExt;
+            meta.ino()
+        };
+        #[cfg(not(unix))]
+        let inode = 0u64;
+        format!(
+            "{}: inode {inode}, {} bytes, modified {:?}",
+            file.display(),
+            meta.len(),
+            meta.modified().ok()
+        )
+    }
+
+    fn tamper(&self, tamper: &Tamper) -> Result<(), String> {
+        let sb = self.sandbox;
+        let io = |what: &std::path::Path, e: std::io::Error| format!("{}: {e}", what.display());
+        match tamper {
+            Tamper::DeleteMarker(at) => {
+                let marker = sb.place_root(at).join(".rwv-workweave");
+                std::fs::remove_file(&marker).map_err(|e| io(&marker, e))
+            }
+            Tamper::CorruptMarker(at) => {
+                let marker = sb.place_root(at).join(".rwv-workweave");
+                std::fs::write(&marker, "{ not a marker").map_err(|e| io(&marker, e))
+            }
+            Tamper::DeleteIndex(machine) => {
+                let index = sb.index_file(*machine);
+                std::fs::remove_file(&index).map_err(|e| io(&index, e))
+            }
+            Tamper::MoveIndexToOldPath(machine) => {
+                let index = self.read_index(*machine)?;
+                let workweaves: serde_json::Map<String, serde_json::Value> = index["workweaves"]
+                    .as_object()
+                    .into_iter()
+                    .flatten()
+                    .map(|(name, entry)| (name.clone(), entry["path"].clone()))
+                    .collect();
+                let old = serde_json::json!({
+                    "container": sb.machine_dir(*machine).join("old-container"),
+                    "workweaves": workweaves,
+                    "receipts": [],
+                });
+                let at = sb.old_path_index(*machine);
+                std::fs::write(&at, serde_json::to_string_pretty(&old).unwrap())
+                    .map_err(|e| io(&at, e))?;
+                let new = sb.index_file(*machine);
+                std::fs::remove_file(&new).map_err(|e| io(&new, e))
+            }
+        }
+    }
+
     fn local_state(&self, at: &Place) -> String {
         let sb = self.sandbox;
         let mut text = String::new();
@@ -1122,7 +1280,7 @@ impl Run<'_> {
         claim: &Claim,
         after: &Snapshot,
         output: &str,
-        unmoved: &[(Place, String)],
+        unmoved: &[(Captured, Place, String)],
     ) -> Result<(), String> {
         let sb = self.sandbox;
         match claim {
@@ -1230,12 +1388,144 @@ impl Run<'_> {
                     ))
                 }
             }
+            Claim::MarkerIs(at, state) => {
+                let marker = sb.place_root(at).join(".rwv-workweave");
+                let found = std::fs::read_to_string(&marker).ok();
+                let matches = match (state, found.as_deref()) {
+                    (MarkerState::Absent, None) => true,
+                    (MarkerState::Corrupt, Some(text)) => text == "{ not a marker",
+                    _ => false,
+                };
+                if matches {
+                    Ok(())
+                } else {
+                    Err(format!("the marker at {at:?} is {found:?}, not {state:?}"))
+                }
+            }
+            Claim::DirStands(machine, rel) => {
+                let dir = sb.machine_dir(*machine).join(rel);
+                if dir.is_dir() {
+                    Ok(())
+                } else {
+                    Err(format!("{} is not a directory", dir.display()))
+                }
+            }
+            Claim::WorkspaceStateKept(at) => {
+                let before = &unmoved
+                    .iter()
+                    .find(|(kind, place, _)| *kind == Captured::StateFile && place == at)
+                    .expect("captured before the step")
+                    .2;
+                let now = self.state_file_identity(at);
+                if *before == now {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "the workspace state at {at:?} was written:\n--- before\n{before}\n--- after\n{now}"
+                    ))
+                }
+            }
+            Claim::WorkspaceStatesApart(one, other) => {
+                let (one_dir, other_dir) = (sb.private_dir(one), sb.private_dir(other));
+                let file = |dir: &std::path::Path| dir.join("rwv-workspace-state");
+                if one_dir == other_dir {
+                    Err(format!("{one:?} and {other:?} share {}", one_dir.display()))
+                } else if !file(&one_dir).is_file() || !file(&other_dir).is_file() {
+                    Err(format!(
+                        "no workspace state at {} or {}",
+                        file(&one_dir).display(),
+                        file(&other_dir).display()
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
+            Claim::MarkerParent { at, parent } => {
+                let marker = sb.place_root(at).join(".rwv-workweave");
+                let text = std::fs::read_to_string(&marker)
+                    .map_err(|e| format!("no marker at {}: {e}", marker.display()))?;
+                let value: serde_json::Value = serde_json::from_str(&text)
+                    .map_err(|e| format!("{} does not parse: {e}\n{text}", marker.display()))?;
+                let same = |field: &str, want: &std::path::Path| {
+                    let got = value[field].as_str().unwrap_or_default();
+                    if same_dir(std::path::Path::new(got), want) {
+                        Ok(())
+                    } else {
+                        Err(format!("marker {field} is {got:?}, not {}", want.display()))
+                    }
+                };
+                let machine = at.machine().expect("a marker belongs to a machine");
+                same("primary", &sb.weave_root(machine))?;
+                same("parent", &sb.place_root(parent))?;
+                if value["project"].as_str() == Some(Repo::Proj.name()) {
+                    Ok(())
+                } else {
+                    Err(format!("marker project is {:?}", value["project"]))
+                }
+            }
+            Claim::IndexLists {
+                machine,
+                name,
+                parent,
+            } => {
+                let index = self.read_index(*machine)?;
+                let entry = &index["workweaves"][*name];
+                let path = entry["path"].as_str().unwrap_or_default();
+                let recorded_parent = entry["parent"].as_str().unwrap_or_default();
+                let place = Place::Workweave(*machine, Repo::Proj, (*name).to_owned());
+                if !same_dir(std::path::Path::new(path), &sb.place_root(&place)) {
+                    return Err(format!("the index lists {name} at {path:?}:\n{index}"));
+                }
+                if !same_dir(
+                    std::path::Path::new(recorded_parent),
+                    &sb.place_root(parent),
+                ) {
+                    return Err(format!(
+                        "the index lists {name} as forked from {recorded_parent:?}:\n{index}"
+                    ));
+                }
+                Ok(())
+            }
+            Claim::IndexBasedir { machine, dir } => {
+                let index = self.read_index(*machine)?;
+                match (index.get("basedir").and_then(|v| v.as_str()), dir) {
+                    (None, None) => Ok(()),
+                    (Some(got), Some(dir)) => {
+                        let want = sb.machine_dir(*machine).join(dir);
+                        if same_dir(std::path::Path::new(got), &want) {
+                            Ok(())
+                        } else {
+                            Err(format!("basedir is {got:?}, not {}", want.display()))
+                        }
+                    }
+                    (got, want) => Err(format!("basedir is {got:?}; expected {want:?}")),
+                }
+            }
+            Claim::IndexFile {
+                machine,
+                at,
+                present,
+            } => {
+                let path = match at {
+                    IndexAt::Common => sb.index_file(*machine),
+                    IndexAt::Old => sb.old_path_index(*machine),
+                };
+                if path.is_file() == *present {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "{} is {}",
+                        path.display(),
+                        if *present { "absent" } else { "present" }
+                    ))
+                }
+            }
             Claim::LocalStateUnchanged(at) => {
                 let before = &unmoved
                     .iter()
-                    .find(|(place, _)| place == at)
+                    .find(|(kind, place, _)| *kind == Captured::Checkouts && place == at)
                     .expect("captured before the step")
-                    .1;
+                    .2;
                 let now = self.local_state(at);
                 if *before == now {
                     Ok(())

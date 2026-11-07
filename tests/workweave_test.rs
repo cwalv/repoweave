@@ -53,6 +53,7 @@ role = "owned"
         repo = common::url_path(&repo_path)
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
+    common::make_project_repo(&project_dir);
 
     ws
 }
@@ -349,6 +350,7 @@ copy = [".env"]
         repo = common::url_path(ws.join("github/org/repo"))
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
+    common::make_project_repo(&project_dir);
 
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
@@ -407,6 +409,7 @@ link = ["shared-state"]
         repo = common::url_path(ws.join("github/org/repo"))
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
+    common::make_project_repo(&project_dir);
 
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
@@ -747,6 +750,7 @@ role = "fork"
         client = common::url_path(&repo2)
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
+    common::make_project_repo(&project_dir);
 
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
@@ -1061,6 +1065,7 @@ role = "owned"
         repo = common::url_path(&repo_path)
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
+    common::make_project_repo(&project_dir);
 
     // Trigger-model split: pre-author the integration content
     // in the primary workspace so workweave-create (a context verb)
@@ -1075,6 +1080,7 @@ role = "owned"
         },
     )
     .expect("intent-mode activation should pre-author Cargo.toml in project dir");
+    common::make_project_repo(&project_dir);
     ws
 }
 
@@ -1454,7 +1460,7 @@ fn create_reuses_its_own_unmoved_leftover() {
         ],
     );
     std::fs::remove_dir_all(&ww_dir).unwrap();
-    let index = ws.join("projects/web-app/.rwv-workweave-index");
+    let index = common::index_file_of(ws.join("projects/web-app"));
     let mut idx: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&index).unwrap()).unwrap();
     idx["workweaves"]
@@ -1897,10 +1903,7 @@ fn claude_hook_remove_warning_carries_the_index_parse_cause() {
 
     // Corrupt the index so the removal path fails inside the JSON parse
     // (a real anyhow context chain), not the ok_or_else lookup beneath it.
-    let index_path = ws
-        .join("projects")
-        .join("web-app")
-        .join(".rwv-workweave-index");
+    let index_path = common::index_file_of(ws.join("projects").join("web-app"));
     assert!(index_path.exists(), "index should exist after create");
     std::fs::write(&index_path, "{not valid json").unwrap();
 
@@ -2029,6 +2032,7 @@ role = "owned"
         repo = common::url_path(&repo_path)
     );
     std::fs::write(project_b_dir.join("rwv.toml"), manifest_b).unwrap();
+    common::make_project_repo(&project_b_dir);
 
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
@@ -2195,6 +2199,7 @@ branch = "main"
 role = "owned"
 "#;
     std::fs::write(project_dir.join("rwv.toml"), bad_manifest).unwrap();
+    common::make_project_repo(&project_dir);
 
     rwv()
         .args(["workweave", "create", "--project", "web-app", "retryme"])
@@ -2287,6 +2292,7 @@ role = "owned"
         repo1 = common::url_path(&repo1),
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
+    common::make_project_repo(&project_dir);
     ws
 }
 
@@ -2385,6 +2391,7 @@ role = "owned"
         repo3 = common::url_path(&repo3),
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
+    common::make_project_repo(&project_dir);
     ws
 }
 
@@ -2466,6 +2473,7 @@ role = "owned"
         repo1 = common::url_path(&repo1),
     );
     std::fs::write(project_dir.join("rwv.toml"), &bad_manifest).unwrap();
+    common::make_project_repo(&project_dir);
 
     rwv()
         .args(["workweave", "create", "--project", "web-app", "retry-me"])
@@ -2484,6 +2492,7 @@ role = "owned"
         repo1 = common::url_path(&repo1),
     );
     std::fs::write(project_dir.join("rwv.toml"), &good_manifest).unwrap();
+    common::make_project_repo(&project_dir);
 
     // Second create (same name, no --replace-existing): must succeed because rollback
     // cleaned up all state from the first attempt.
@@ -2985,34 +2994,27 @@ fn workweave_create_capture_dirty_allows_dirty_primary() {
     );
 }
 
-/// A workspace without a git-backed project dir (plain directory) is not
-/// subject to the dirty check — there is nothing to check. Create must
-/// succeed without `--capture-dirty`.
+/// A project directory that is no repository has no clone to keep the
+/// workweave index with, so create refuses before it changes anything.
 #[test]
-fn workweave_create_no_project_repo_skips_dirty_check() {
+fn workweave_create_refuses_a_project_with_no_clone_before_changing_anything() {
     // `make_workspace` creates a plain (non-git) project dir.
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "plain-proj");
-
-    // Write an arbitrary file into the plain project dir to confirm it's
-    // not git-tracked (and thus the dirty check should not fire).
-    let project_dir = ws.join("projects/plain-proj");
-    std::fs::write(project_dir.join("extra.txt"), "extra").unwrap();
 
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
-        .args([
-            "workweave",
-            "create",
-            "--project",
-            "plain-proj",
-            "no-git-check",
-        ])
+        .args(["workweave", "create", "--project", "plain-proj", "no-clone"])
         .current_dir(&ws)
         .assert()
-        .success();
+        .failure()
+        .stderr(predicate::str::contains("not a repository"));
+    assert!(
+        !weaveroot.join("plain-proj--no-clone").exists(),
+        "a refused create must leave no workweave behind"
+    );
 }
 
 // ============================================================================
@@ -3204,6 +3206,7 @@ role = "owned"
         bad = common::url_path(&bad_repo)
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
+    common::make_project_repo(&project_dir);
 
     ws
 }
@@ -3489,6 +3492,7 @@ role = "owned"
         r2 = common::url_path(&repo2),
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
+    common::make_project_repo(&project_dir);
 
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
@@ -3589,6 +3593,7 @@ role = "owned"
         r1 = common::url_path(&repo1),
     );
     std::fs::write(project_dir.join("rwv.toml"), &manifest_content).unwrap();
+    common::make_project_repo(&project_dir);
 
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();

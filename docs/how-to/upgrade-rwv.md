@@ -11,7 +11,7 @@ rwv doctor --fix --all
 rwv doctor --all                    # a clean run records the health floor
 
 # 2. After installing the new binaries (from the primary weave root):
-rwv doctor --fix                    # migrate .rwv-workweave markers, reference worktrees and rwv.toml member keys
+rwv doctor --fix                    # migrate .rwv-workweave markers, the workweave index, reference worktrees and rwv.toml member keys
 rwv lock                            # only if rwv.lock is in an old format: it is written afresh, pinning nothing (Step 4)
 rwv branch set-mode main declared   # record the trunk; each workweave's branch is recorded from inside it (Step 6)
 rwv update                          # record what this workspace aligns its members for; run it once in every workweave too (Step 7)
@@ -26,6 +26,7 @@ For resting state on disk, installing a newer `rwv` does not touch existing file
 |---|---|---|
 | `.rwv-op` / `.rwv-op-lease` | In-flight sync state | Finish or run `rwv abort` on the **old** binary before upgrading |
 | `.rwv-workweave` & member slots | Written by `rwv` itself | `rwv doctor --fix` from the primary weave migrates them |
+| `projects/<project>/.rwv-workweave-index` | Written by `rwv` itself | `rwv doctor --fix` converts it and moves it into the project clone (Step 8) |
 | `rwv.yaml` → `rwv.toml` | Hand-authored by you | Rewrite as `rwv.toml` and delete `rwv.yaml` (no `--fix` arm) |
 | `version` and `submodules` keys in `rwv.toml` | Hand-authored by you | `rwv doctor --fix` renames them to `branch` and `recurse-submodules` and commits only that rename |
 | `rwv.lock` | Generated output | `rwv lock` writes a file that does not parse afresh, pinning nothing; `rwv member pin` gives each member its pin again |
@@ -182,6 +183,20 @@ rwv update
 It records the state, and puts each member where the checked-out project branch expects it: a `dependency` or `reference` member of a feature whose branch is checked out in another workspace detached at its pin, and any member on a branch other than the expected one back on it, where every commit it holds stays on some other ref. A member that would leave commits behind stays where it is and is reported with them and the commands that keep them. `rwv update` never writes `rwv.lock`. A workweave made by the new release records its state when it is created, so it needs no run.
 
 A member of a workweave that still carries the branch shape an earlier release used, `<project>--<name>/<segment>`, makes `rwv workweave create` and `rwv update` refuse with `health-floor-too-low` and name the bridge version to step through, as the next section describes.
+
+## Step 8 — a workweave index at the old path
+
+An earlier release kept each project's workweave index at `projects/<project>/.rwv-workweave-index`. The index now lives in the project clone, in the directory its worktrees share, so the primary and every workweave reach one copy and a clean of the project's working tree cannot remove it. A file left at the old path is read by nothing as the index: every verb that reads it refuses, whatever shape the file is in:
+
+The refusal is `legacy-workweave-index` in state `old path`, listing the file and offering `rwv doctor --fix`; `rwv explain legacy-workweave-index` serves the entry.
+
+`rwv doctor` reports it as `legacy-workweave-index` and `rwv doctor --fix` converts it. The conversion writes the new index first, then removes the old file: `container` becomes `basedir` with its value, each workweave keeps its path and gains the parent its marker records (the primary where the marker cannot be read), and `receipts` is not carried over. Workweaves placed with `--dir` stay listed.
+
+```bash
+rwv doctor --fix
+```
+
+If the old file was committed to the project repo, the conversion removes the working file and leaves the deletion for you to commit. A file that does not parse is reported as `unreadable-workweave-index` and left alone: delete it and run `rwv doctor --fix`, which lists the workweaves on disk again.
 
 ## The health floor and bridge versions
 

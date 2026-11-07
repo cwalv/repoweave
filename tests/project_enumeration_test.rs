@@ -351,7 +351,7 @@ fn a_deep_projects_workweave_is_not_reported_unregistered() {
 }
 
 /// And the repair writes the index the marker names, never one beside a path
-/// prefix — a `.rwv-workweave-index` at `projects/a/` would be a record
+/// prefix — a `rwv-workweave-index` kept with `projects/a/` would be a record
 /// nothing reads, since `a` is not a project.
 ///
 /// **This one guards; it does not pin.** Reverting the enumeration to its
@@ -375,18 +375,19 @@ fn doctor_fix_records_no_index_against_a_path_prefix() {
     let projects = ws.join("projects");
     for prefix in ["a", "a/b"] {
         assert!(
-            !projects.join(prefix).join(".rwv-workweave-index").exists(),
+            !projects.join(prefix).join("rwv-workweave-index").exists()
+                && !projects
+                    .join(prefix)
+                    .join(".git")
+                    .join("rwv-workweave-index")
+                    .exists(),
             "`projects/{prefix}/` is not a project, so nothing may record an \
              index there"
         );
     }
-    let index = std::fs::read_to_string(
-        projects
-            .join("a")
-            .join("b")
-            .join("c")
-            .join(".rwv-workweave-index"),
-    )
+    let index = std::fs::read_to_string(common::index_file_of(
+        projects.join("a").join("b").join("c"),
+    ))
     .expect("the project's own index must be the one that holds the entry");
     assert!(
         index.contains("wtest"),

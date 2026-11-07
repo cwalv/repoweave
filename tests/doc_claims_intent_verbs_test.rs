@@ -440,6 +440,7 @@ fn workweave_create_does_not_author_managed_content() {
     let project_dir = ws.join("projects/myapp");
     std::fs::create_dir_all(&project_dir).unwrap();
     write_manifest(&project_dir, &[]);
+    common::make_project_repo(&project_dir);
 
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();

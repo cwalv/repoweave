@@ -94,9 +94,10 @@ weave-local for them to bind to:
   (`git rev-parse --git-path refs/heads` from inside a workweave resolves
   into primary's `.git`). A per-weave view of these refs would be a shadow of
   the shared store, not a separate store.
-- The registry that records which workweaves exist lives only in primary, at
-  `projects/<project>/.rwv-workweave-index` — an untracked, primary-local
-  file. A workweave has no copy to write instead.
+- The registry that records which workweaves exist is one file, kept in the
+  directory primary's project clone shares with its worktrees. A workweave's
+  project checkout reaches that same file, so there is no workweave-local copy
+  to write instead.
 - The active-project pointer is a primary-only selector, and the only place it
   exists. `.rwv-active` and `.rwv-workweave` name the same fact — which
   project a tree belongs to — and are **mutually exclusive**: a primary root
@@ -122,7 +123,7 @@ as `weave-root-identity-conflict`.
 `--fix` repairs one of its three sub-kinds, and the split is not symmetric:
 
 - **`registered-workweave`** — the marker names this workspace's primary, and
-  that primary's `.rwv-workweave-index` records this exact directory as one of
+  that primary's workweave index records this exact directory as one of
   its workweaves. Evidence held *outside* the tree settles the identity, so
   the pointer is provably the redundant copy. `--fix` deletes `.rwv-active`
   and leaves the marker.
@@ -140,11 +141,10 @@ as `weave-root-identity-conflict`.
   a guess, and the marker in particular carries `primary` and `parent` values
   that exist nowhere else.
 
-The discriminator is deliberately the registry and not "does this tree contain
-a `.rwv-workweave-index`". That looks like a primary-ness signature and is not
-one: the index is untracked, so whether a workweave inherits a copy depends on
-whether its `projects/<project>/` is a linked worktree or a plain directory
-copy — a topology accident rather than a fact about identity.
+The discriminator is deliberately the registry's entry for this directory and
+not "does this tree reach a workweave index". Every workweave's project checkout
+reaches the one index its primary does, so reaching one says nothing about
+identity.
 
 Like the other arms in this class, the scan starts from primary
 unconditionally: `--fix` run inside workweave A will clear a stray pointer in

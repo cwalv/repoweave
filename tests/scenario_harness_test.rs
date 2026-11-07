@@ -233,6 +233,31 @@ fn a_workspace_state_that_does_not_parse_reads_as_absent_and_update_restores_it(
 }
 
 #[test]
+fn a_clean_of_the_project_checkout_loses_no_record_and_stored_state_is_written_only_on_change() {
+    runner::run(scenarios::dc20_state_location()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_marker_that_disagrees_is_restored_by_every_verb_that_does_not_destroy_the_workweave() {
+    runner::run(scenarios::dc21_marker_disagreement()).assert_fully_decided_green();
+}
+
+#[test]
+fn the_index_restores_a_marker_whole_with_its_parent_and_is_re_listed_from_the_markers() {
+    runner::run(scenarios::index_parent()).assert_fully_decided_green();
+}
+
+#[test]
+fn an_index_at_the_old_path_refuses_its_readers_and_doctor_converts_it() {
+    runner::run(scenarios::index_old_path()).assert_fully_decided_green();
+}
+
+#[test]
+fn the_basedir_defaults_beside_the_primary_and_set_default_create_basedir_stores_it_in_the_index() {
+    runner::run(scenarios::basedir_default()).assert_fully_decided_green();
+}
+
+#[test]
 fn status_lists_each_operator_branch_nothing_accounts_for_and_no_other() {
     runner::run(scenarios::status_operator_branches()).assert_fully_decided_green();
 }

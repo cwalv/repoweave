@@ -47,6 +47,19 @@ its root, not by the shape test above — a workweave directory also contains
 `projects/` (its own worktree of the project repo), so shape alone cannot
 tell a workweave from a primary weave.
 
+The marker is one of three records of that identity. The other two are the
+workweave index the primary's project clone keeps, which lists the root with the
+workspace it was forked from, and the link from the root's project checkout to
+that clone. Because the index and the link live outside the root, a marker that
+is lost or edited is not the end of the workweave: every verb checks the marker
+against the other two when it starts, writes it again from them when it is
+missing or disagrees — `primary`, `project` and `parent` all come back — and
+says so. A root the marker and the link agree on, but the index lacks, is listed
+again. A verb that destroys the workweave, `rwv workweave delete` or `rwv
+sync-to --retire`, restores nothing when the three disagree: it refuses and
+names `rwv doctor --fix`, so what it deletes is a workweave all three records
+name.
+
 This is the contract, not an approximation of one: a directory meeting the
 shape is a weave root by definition. One consequence worth stating rather
 than leaving implicit — first-ancestor-wins means a member checkout that

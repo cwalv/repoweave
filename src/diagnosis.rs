@@ -58,6 +58,8 @@ pub enum Axis {
     /// Where a workspace's checkouts sit against where the checked-out
     /// branch's record says they should.
     Alignment,
+    /// A project's workweave index at the path earlier releases kept it at.
+    LegacyWorkweaveIndex,
 }
 
 /// An axis's page prose: what it judges, why, and where the rule sits.
@@ -68,7 +70,7 @@ pub struct KindRow {
 }
 
 impl Axis {
-    pub const ALL: [Axis; 9] = [
+    pub const ALL: [Axis; 10] = [
         Self::Edits,
         Self::Checkout,
         Self::PushBranch,
@@ -78,6 +80,7 @@ impl Axis {
         Self::Pin,
         Self::Target,
         Self::Alignment,
+        Self::LegacyWorkweaveIndex,
     ];
 
     pub fn token(self) -> String {
@@ -212,6 +215,20 @@ impl Axis {
                        [Reconcile repos](../how-to/reconcile-repos.md); \
                        [Destructive operations](../explanation/destructive-operations.md).",
             },
+            Self::LegacyWorkweaveIndex => &KindRow {
+                condition: "A project's workweave index is still at \
+                            `projects/<name>/.rwv-workweave-index`, where earlier releases \
+                            kept it, in whatever shape they wrote it.",
+                why: "The index of a project's workweaves lives in the project clone's shared \
+                      directory, where a workweave reaches it from its own project checkout and \
+                      a clean of the primary's project checkout cannot remove it. A file at the \
+                      old location is a second index: acting on it would trust placements no \
+                      current writer validated, and ignoring it would lose the workweaves it \
+                      records. Every verb that reads the index refuses until the file is \
+                      converted, and `rwv doctor` reports it instead.",
+                sits: "[Weave root](../explanation/joints/weave-root.md); \
+                       [Upgrade rwv](../how-to/upgrade-rwv.md).",
+            },
         }
     }
 
@@ -232,6 +249,20 @@ impl Axis {
                     severity: sub_kind.severity(),
                     fix: sub_kind.fix_disposition(),
                     entry: sub_kind.entry(),
+                }),
+            )),
+            Self::LegacyWorkweaveIndex => Some(Finding::of(
+                crate::check::ViolationKind::LegacyWorkweaveIndex,
+                crate::check::LegacyWorkweaveIndexKind::ALL.map(|sub_kind| SubKindRow {
+                    token: crate::wire_token::wire_token(&sub_kind),
+                    severity: sub_kind.severity(),
+                    fix: sub_kind.fix_disposition(),
+                    entry: match sub_kind {
+                        crate::check::LegacyWorkweaveIndexKind::BeforeReceipts => {
+                            BEFORE_RECEIPTS_ENTRY
+                        }
+                        crate::check::LegacyWorkweaveIndexKind::OldPath => OLD_PATH_ENTRY,
+                    },
                 }),
             )),
             Self::Alignment => Some(Finding::of(
@@ -258,6 +289,22 @@ impl Axis {
         }
     }
 }
+
+const BEFORE_RECEIPTS_ENTRY: &str = "The old file has no `receipts` key: an earlier release \
+wrote it before that key was kept. `rwv workweave create`, `list`, `delete`, `set-default-create-basedir` \
+and `-w` addressing refuse until it is converted, and `rwv explain legacy-workweave-index` is their \
+route line.
+
+**What to do:** `rwv doctor --fix`. It writes the index into the project clone's shared directory \
+— `container` becomes `basedir`, each workweave gains the parent its marker records, and \
+`receipts` is not carried over — and then removes the old file.";
+
+const OLD_PATH_ENTRY: &str = "The old file carries the `receipts` key, which a release that \
+still kept the index in the project checkout wrote, empty or not. The same verbs refuse, and the \
+same repair converts it.
+
+**What to do:** `rwv doctor --fix`, as above. A copy of the old file committed to the project \
+repo is converted all the same; removing the working file leaves a deletion for you to commit.";
 
 const PRE_SCHEMA_ENTRY: &str = "The project's `rwv.toml` names member-entry keys an earlier \
 release wrote: `version` where `branch` is now expected, or `submodules` where \
@@ -348,6 +395,7 @@ pub enum State {
     PublishNoPin,
     UnparseableProjectHere,
     UnparseableProjectMalformed,
+    LegacyWorkweaveIndexOldPath,
     PinWouldBeUnreachable,
     TargetNoTarget,
     TargetUnrecorded,
@@ -391,7 +439,7 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 51] = [
+    pub const ALL: [State; 52] = [
         Self::EditsDirty,
         Self::EditsMidOperation,
         Self::EditsLockFilesUncommitted,
@@ -427,6 +475,7 @@ impl State {
         Self::PublishNoPin,
         Self::UnparseableProjectHere,
         Self::UnparseableProjectMalformed,
+        Self::LegacyWorkweaveIndexOldPath,
         Self::TargetNoTarget,
         Self::TargetUnrecorded,
         Self::TargetConflict,
@@ -725,6 +774,17 @@ impl State {
                              the project repo is replayed; `rwv doctor` reports it for every \
                              project",
                 offers: &[],
+                verb_offers: &[],
+            },
+            Self::LegacyWorkweaveIndexOldPath => &StateRow {
+                axis: Axis::LegacyWorkweaveIndex,
+                name: "old path",
+                means: "the project's workweave index is at the old path, listed; no verb reads \
+                        it as the index",
+                refused_by: "every verb that reads the workweave index: `rwv workweave create`, \
+                             `list`, `delete`, `set-default-create-basedir` and `-w` addressing; \
+                             `rwv doctor` reports it instead",
+                offers: &[Form::ConvertIndex],
                 verb_offers: &[],
             },
             Self::PinWouldBeUnreachable => &StateRow {
@@ -1069,6 +1129,7 @@ pub enum ChoiceId {
     C40,
     AnotherName,
     DoctorFix,
+    ConvertIndex,
 }
 
 /// A choice's id, as `--json` and the page print it (none for a choice the
@@ -1265,6 +1326,12 @@ impl ChoiceId {
                 phrase: "rewrite the keys an earlier release wrote, committing only that",
                 keeps_work: "commits only the rewrite; other edits stay uncommitted",
             },
+            Self::ConvertIndex => &ChoiceRow {
+                id: None,
+                phrase: "convert the index and move it into the project clone",
+                keeps_work: "every recorded workweave is kept; the old file is removed only \
+                             after the new one is written",
+            },
         }
     }
 }
@@ -1403,6 +1470,7 @@ pub enum Form {
     C40,
     AnotherName,
     DoctorFix,
+    ConvertIndex,
 }
 
 /// A form's choice, steps and Where, and whether its verb has shipped.
@@ -1414,7 +1482,7 @@ pub struct FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 64] = [
+    pub const ALL: [Form; 65] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -1479,6 +1547,7 @@ impl Form {
         Self::C40,
         Self::AnotherName,
         Self::DoctorFix,
+        Self::ConvertIndex,
     ];
 
     pub fn row(self) -> &'static FormRow {
@@ -1873,6 +1942,12 @@ impl Form {
             },
             Self::DoctorFix => &FormRow {
                 choice: C::DoctorFix,
+                steps: &[Rwv("rwv doctor --fix")],
+                at: W::Here,
+                shipped: true,
+            },
+            Self::ConvertIndex => &FormRow {
+                choice: C::ConvertIndex,
                 steps: &[Rwv("rwv doctor --fix")],
                 at: W::Here,
                 shipped: true,
@@ -2865,21 +2940,29 @@ mod tests {
                 finding.sub_kinds.iter().map(|s| s.token.clone()).collect();
             assert_eq!(listed, carried, "{axis:?}");
         }
-        assert_eq!(with_finding, 3);
+        assert_eq!(with_finding, 4);
     }
 
     #[test]
     fn a_findings_entry_opens_each_sub_kind_with_the_registers_marks() {
         let entries = finding_entries_markdown(crate::manifest::VcsType::Git);
-        let [(Axis::UnparseableProject, entry), (Axis::Pin, pin), (Axis::Alignment, alignment)] =
+        let [(Axis::UnparseableProject, entry), (Axis::Pin, pin), (Axis::Alignment, alignment), (Axis::LegacyWorkweaveIndex, index)] =
             &entries[..]
         else {
-            panic!("the three axes with a finding yield the three entries: {entries:?}");
+            panic!("the four axes with a finding yield the four entries: {entries:?}");
         };
         assert!(pin.starts_with("### `pin`\n"), "{pin}");
         assert!(
             pin.contains("\n#### `behind`\n\n**Error. Report-only.** "),
             "{pin}"
+        );
+        assert!(
+            index.starts_with("### `legacy-workweave-index`\n"),
+            "{index}"
+        );
+        assert!(
+            index.contains("\n#### `old-path`\n\n**Warning. Auto-fixable.** "),
+            "{index}"
         );
         assert!(alignment.starts_with("### `alignment`\n"), "{alignment}");
         assert!(

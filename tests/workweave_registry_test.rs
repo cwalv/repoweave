@@ -1,4 +1,4 @@
-//! Tests for the `projects/<name>/.rwv-workweave-index` registry.
+//! Tests for the workweave index a project clone keeps.
 //!
 //! Covers the acceptance criteria added by the workweave-addressing
 //! design (§5): create-records / delete-removes / marker round-trip
@@ -44,14 +44,13 @@ role = "owned"
         repo = common::url_path(&repo_path)
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
+    common::make_project_repo(&project_dir);
 
     ws
 }
 
 fn index_path(ws: &Path, project: &str) -> PathBuf {
-    ws.join("projects")
-        .join(project)
-        .join(".rwv-workweave-index")
+    common::index_file_of(ws.join("projects").join(project))
 }
 
 fn read_index(ws: &Path, project: &str) -> serde_json::Value {
@@ -78,14 +77,21 @@ fn create_records_workweave_in_the_index() {
         .success();
 
     let idx = read_index(&ws, "web-app");
-    // Container was recorded from the compiled-in default.
-    assert_eq!(
-        idx["container"].as_str().unwrap(),
-        repoweave::path_spelling::resolve(&weaveroot)
-            .unwrap_or_else(|_| weaveroot.clone())
-            .to_string_lossy()
+    assert!(
+        idx.get("basedir").is_none(),
+        "a basedir nobody set is the compiled-in default and is not written: {idx}"
     );
-    let recorded_path = idx["workweaves"]["feat"].as_str().unwrap().to_string();
+    assert_eq!(
+        idx["workweaves"]["feat"]["parent"].as_str().unwrap(),
+        repoweave::path_spelling::resolve(&ws)
+            .unwrap()
+            .to_string_lossy(),
+        "a workweave created from the primary records the primary as its parent"
+    );
+    let recorded_path = idx["workweaves"]["feat"]["path"]
+        .as_str()
+        .unwrap()
+        .to_string();
     let ww_dir = weaveroot.join("web-app--feat");
     assert_eq!(
         recorded_path,
@@ -129,7 +135,7 @@ fn a_symlinked_container_is_recorded_canonicalized() {
         .success();
 
     let idx = read_index(&ws, "web-app");
-    let container = idx["container"].as_str().unwrap();
+    let container = idx["basedir"].as_str().unwrap();
     assert_eq!(
         container,
         repoweave::path_spelling::resolve(&real)
@@ -137,7 +143,7 @@ fn a_symlinked_container_is_recorded_canonicalized() {
             .to_string_lossy()
     );
 
-    let placement = idx["workweaves"]["feat"].as_str().unwrap();
+    let placement = idx["workweaves"]["feat"]["path"].as_str().unwrap();
     assert!(
         repoweave::path_spelling::CanonicalPath::of(std::path::Path::new(container)).contains(
             &repoweave::path_spelling::CanonicalPath::of(std::path::Path::new(placement))
@@ -170,7 +176,7 @@ fn set_container_records_a_symlinked_path_canonicalized() {
 
     let idx = read_index(&ws, "web-app");
     assert_eq!(
-        idx["container"].as_str().unwrap(),
+        idx["basedir"].as_str().unwrap(),
         repoweave::path_spelling::resolve(&real)
             .unwrap()
             .to_string_lossy()
@@ -263,7 +269,7 @@ fn list_returns_empty_when_no_registry() {
 }
 
 // ---------------------------------------------------------------------------
-// doctor: prune stale, adopt orphan, flag tracked index
+// doctor: prune stale, adopt orphan
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -334,7 +340,7 @@ fn doctor_fix_adopts_unregistered_workweave() {
         .current_dir(&ws)
         .assert()
         .stdout(predicate::str::contains(
-            "not recorded in `.rwv-workweave-index`",
+            "not recorded in the workweave index",
         ));
 
     // Doctor with --fix must adopt it.
@@ -436,7 +442,7 @@ fn an_unparseable_index_reports_itself_rather_than_an_adoption_that_cannot_run()
 
     rwv().args(["doctor"]).current_dir(&ws).assert().stdout(
         predicate::str::contains("workweave index does not parse")
-            .and(predicate::str::contains("not recorded in `.rwv-workweave-index`").not()),
+            .and(predicate::str::contains("not recorded in the workweave index").not()),
     );
 
     rwv()
@@ -452,17 +458,10 @@ fn an_unparseable_index_reports_itself_rather_than_an_adoption_that_cannot_run()
 }
 
 #[test]
-fn doctor_flags_tracked_index_until_the_named_untrack_is_committed() {
+fn the_index_lives_in_the_clone_and_leaves_the_project_checkout_untouched() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
-
-    // Make the project a git repo so we can commit the index into it.
     let project_dir = ws.join("projects").join("web-app");
-    init_repo_with_commit(&project_dir);
-    common::record_trunk(&project_dir);
-
-    let weaveroot = tmp.path().join(".workweaves");
-    std::fs::create_dir_all(&weaveroot).unwrap();
 
     rwv()
         .args(["workweave", "create", "--project", "web-app", "feat"])
@@ -470,53 +469,21 @@ fn doctor_flags_tracked_index_until_the_named_untrack_is_committed() {
         .assert()
         .success();
 
-    // Force-add the index into the project repo — even though `create`
-    // listed it in the project repo's `.git/info/exclude`.
-    common::git_in(&project_dir, &["add", "--force", ".rwv-workweave-index"]);
-    common::git_in(&project_dir, &["commit", "-m", "track index"]);
-
-    let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
-    let report = String::from_utf8_lossy(&out.stdout);
-    let finding = report
-        .lines()
-        .find(|l| l.contains("tracked by the project repo"))
-        .unwrap_or_else(|| panic!("the tracked index must be reported:\n{report}"));
     assert!(
-        finding.contains("needs no `.gitignore` entry"),
-        "the finding must say exclusion needs no `.gitignore` entry: {finding}"
+        project_dir
+            .join(".git")
+            .join("rwv-workweave-index")
+            .is_file(),
+        "the index is kept in the clone's shared directory"
     );
-    let untrack = finding
-        .split('`')
-        .skip(1)
-        .step_by(2)
-        .find(|span| span.starts_with("git ") && span.contains("rm --cached"))
-        .unwrap_or_else(|| panic!("the finding must name the untrack: {finding}"));
-    let mut words = untrack.split_whitespace().skip(1);
-    let ran = common::git()
-        .args(&mut words)
-        .current_dir(&ws)
-        .output()
-        .unwrap();
     assert!(
-        ran.status.success(),
-        "`{untrack}` failed:\n{}",
-        String::from_utf8_lossy(&ran.stderr)
-    );
-    common::git_in(&project_dir, &["commit", "-m", "untrack index"]);
-
-    rwv()
-        .args(["doctor"])
-        .current_dir(&ws)
-        .assert()
-        .stdout(predicate::str::contains("tracked by the project repo").not());
-    assert!(
-        index_path(&ws, "web-app").exists(),
-        "the index stays on disk"
+        !common::old_path_index_of(&project_dir).exists(),
+        "nothing writes the path earlier releases kept it at"
     );
     assert_eq!(
-        common::git_in(&project_dir, &["status", "--porcelain"]),
+        common::git_in(&project_dir, &["status", "--porcelain", "--ignored"]),
         "",
-        "the project repo's exclude keeps the untracked index out of status"
+        "the project checkout holds no index file, ignored or not"
     );
     assert!(
         !project_dir.join(".gitignore").exists(),
@@ -556,9 +523,9 @@ fn env_var_no_longer_steers_placement_or_output() {
     );
 
     let idx = read_index(&ws, "web-app");
-    let recorded_path = PathBuf::from(idx["workweaves"]["feat"].as_str().unwrap());
+    let recorded_path = PathBuf::from(idx["workweaves"]["feat"]["path"].as_str().unwrap());
     let default_container =
-        repoweave::path_spelling::resolve(&repoweave::workweave_index::default_container(&ws))
+        repoweave::path_spelling::resolve(&repoweave::workweave_index::default_basedir(&ws))
             .unwrap();
     assert_eq!(
         recorded_path.parent().unwrap(),
@@ -598,7 +565,7 @@ fn per_workweave_dir_override_lands_and_records_absolute_path() {
     assert!(custom.join(".rwv-workweave").exists());
 
     let idx = read_index(&ws, "web-app");
-    let recorded_path = idx["workweaves"]["feat"].as_str().unwrap();
+    let recorded_path = idx["workweaves"]["feat"]["path"].as_str().unwrap();
     let expected = repoweave::path_spelling::resolve(&custom)
         .unwrap_or_else(|_| custom.clone())
         .to_string_lossy()
@@ -658,7 +625,10 @@ fn basedir_places_one_workweave_under_it_and_records_the_path() {
         .unwrap_or_else(|_| placed.clone())
         .to_string_lossy()
         .into_owned();
-    assert_eq!(idx["workweaves"]["feat"].as_str().unwrap(), expected);
+    assert_eq!(
+        idx["workweaves"]["feat"]["path"].as_str().unwrap(),
+        expected
+    );
 
     // The override is for one run: the recorded default is untouched.
     rwv()
@@ -739,7 +709,7 @@ fn set_default_create_basedir_verb_records_the_basedir() {
         .success();
 
     let idx = read_index(&ws, "web-app");
-    let recorded = idx["container"].as_str().unwrap();
+    let recorded = idx["basedir"].as_str().unwrap();
     let expected = repoweave::path_spelling::resolve(&alt)
         .unwrap_or_else(|_| alt.clone())
         .to_string_lossy()
@@ -781,8 +751,8 @@ fn an_index_recording_an_illegal_workweave_name_is_refused_at_load() {
     let idx_p = index_path(&ws, "web-app");
     let mut index: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&idx_p).unwrap()).unwrap();
-    let path = index["workweaves"]["feat"].clone();
-    index["workweaves"] = serde_json::json!({ "fe--at": path });
+    let entry = index["workweaves"]["feat"].clone();
+    index["workweaves"] = serde_json::json!({ "fe--at": entry });
     std::fs::write(&idx_p, serde_json::to_string_pretty(&index).unwrap()).unwrap();
 
     let kinds = doctor_kinds(&ws);

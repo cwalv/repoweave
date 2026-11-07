@@ -50,6 +50,7 @@ role = "owned"
         repo = common::url_path(&repo_path)
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
+    common::make_project_repo(&project_dir);
 
     ws
 }
@@ -648,13 +649,6 @@ fn workweave_create_succeeds_after_rm_rf_leaves_stale_git_registration() {
 fn workweave_delete_keeps_a_branch_whose_commits_have_not_landed() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
-    let project_dir = ws.join("projects/web-app");
-    common::git_in(&project_dir, &["init", "--initial-branch=main"]);
-    common::git_in(&project_dir, &["config", "user.email", "test@test.com"]);
-    common::git_in(&project_dir, &["config", "user.name", "Test"]);
-    common::git_in(&project_dir, &["add", "rwv.toml"]);
-    common::git_in(&project_dir, &["commit", "-m", "add manifest"]);
-    common::record_trunk(&project_dir);
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 

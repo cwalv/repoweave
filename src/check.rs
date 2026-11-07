@@ -265,26 +265,27 @@ pub enum CheckViolation {
         primary: PathBuf,
     },
 
-    /// A `.rwv-workweave-index` written before its `receipts` key was kept
-    /// (no `receipts` field) — the index-side twin of
-    /// [`LegacyWorkweaveMarker`](Self::LegacyWorkweaveMarker).
+    /// A workweave index still at `projects/<project>/.rwv-workweave-index`,
+    /// where earlier releases kept it, in any shape.
     ///
-    /// Auto-fixable: `--fix` adds the field. `workweave create` refuses
-    /// against a legacy index rather than erasing the only signal that the
-    /// migration has not run.
+    /// Auto-fixable: `--fix` converts it and moves it to the project clone's
+    /// shared directory. Every verb that reads the index refuses until then.
     ///
     /// Reported rather than refused at read (unlike the marker), because the
-    /// migration has to be able to read the index it is about to migrate.
+    /// conversion has to be able to read the file it is about to move.
     LegacyWorkweaveIndex {
-        /// The project whose index needs the field.
+        /// The project whose index is at the old path.
         project: ProjectName,
-        /// Absolute path to the index file.
+        /// Absolute path to the old-path index file.
         index_path: PathBuf,
+        /// How the old file was written.
+        sub_kind: LegacyWorkweaveIndexKind,
     },
 
-    /// A `.rwv-workweave-index` that exists but does not parse, so nothing
-    /// derived from it is evaluated: the recorded placements and the migration
-    /// state ([`LegacyWorkweaveIndex`](Self::LegacyWorkweaveIndex)) alike.
+    /// A workweave index that exists but does not parse, at the path it lives
+    /// at or at the old path, so nothing derived from it is evaluated: the
+    /// recorded placements and the conversion
+    /// ([`LegacyWorkweaveIndex`](Self::LegacyWorkweaveIndex)) alike.
     ///
     /// Reported so the state names itself. Without it every marker-bearing
     /// workweave in the project reads as
@@ -677,12 +678,12 @@ impl CheckViolation {
             | CheckViolation::DanglingActiveProject { .. }
             | CheckViolation::UnreadableActiveProject { .. }
             | CheckViolation::LegacyWorkweaveMarker { .. }
-            | CheckViolation::LegacyWorkweaveIndex { .. }
             | CheckViolation::DeadOpLease { .. }
             | CheckViolation::MemberPermissions { .. } => Auto,
 
             CheckViolation::UnparseableProject { sub_kind, .. } => sub_kind.fix_disposition(),
             CheckViolation::Pin { sub_kind, .. } => sub_kind.fix_disposition(),
+            CheckViolation::LegacyWorkweaveIndex { sub_kind, .. } => sub_kind.fix_disposition(),
             CheckViolation::MissingReplayExclusion { sub_kind, .. } => match sub_kind {
                 ReplayExclusionKind::Absent
                 | ReplayExclusionKind::LegacySpelling
@@ -724,7 +725,6 @@ impl CheckViolation {
                 | WorkweaveTreeIntegrityKind::UnregisteredDir
                 | WorkweaveTreeIntegrityKind::ForeignPrimary { .. }
                 | WorkweaveTreeIntegrityKind::ForeignPrimaryOtherWorkspace { .. }
-                | WorkweaveTreeIntegrityKind::TrackedIndex { .. }
                 | WorkweaveTreeIntegrityKind::UnreadableMarker { .. }
                 | WorkweaveTreeIntegrityKind::NestedWorkweaveDir { .. }
                 | WorkweaveTreeIntegrityKind::MisnamedDir { .. } => ReportOnly,
@@ -787,7 +787,6 @@ impl CheckViolation {
             | CheckViolation::UnnameableProject { .. }
             | CheckViolation::LockPinnedByName { .. }
             | CheckViolation::LegacyWorkweaveMarker { .. }
-            | CheckViolation::LegacyWorkweaveIndex { .. }
             | CheckViolation::UnreadableOwnedState { .. }
             | CheckViolation::WorkweaveTreeIntegrity { .. }
             | CheckViolation::Alignment { .. }
@@ -805,6 +804,7 @@ impl CheckViolation {
 
             CheckViolation::UnparseableProject { sub_kind, .. } => sub_kind.severity(),
             CheckViolation::Pin { sub_kind, .. } => sub_kind.severity(),
+            CheckViolation::LegacyWorkweaveIndex { sub_kind, .. } => sub_kind.severity(),
             CheckViolation::WorkweaveDrift { kind, .. } => match kind {
                 DriftKind::Extra => Warning,
                 DriftKind::Missing
@@ -1134,6 +1134,40 @@ impl PinKind {
     }
 }
 
+/// How the workweave index at the old path was written, which decides nothing
+/// about the repair.
+#[derive(Debug, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum LegacyWorkweaveIndexKind {
+    /// No `receipts` key: written before that key was kept.
+    BeforeReceipts,
+    /// Carries `receipts`, empty or not: the shape of the release that kept
+    /// the index in the project checkout.
+    OldPath,
+}
+
+impl LegacyWorkweaveIndexKind {
+    pub const ALL: [Self; 2] = [Self::BeforeReceipts, Self::OldPath];
+
+    pub fn severity(self) -> crate::integration::Severity {
+        match self {
+            Self::BeforeReceipts | Self::OldPath => crate::integration::Severity::Warning,
+        }
+    }
+
+    pub fn fix_disposition(self) -> FixDisposition {
+        match self {
+            Self::BeforeReceipts | Self::OldPath => FixDisposition::Auto,
+        }
+    }
+
+    pub(crate) fn of(shape: crate::workweave_index::LegacyShape) -> Self {
+        match shape {
+            crate::workweave_index::LegacyShape::BeforeReceipts => Self::BeforeReceipts,
+            crate::workweave_index::LegacyShape::OldPath => Self::OldPath,
+        }
+    }
+}
 /// How a member's checkout stands against where its workspace expects it.
 #[derive(Debug, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -1386,19 +1420,15 @@ pub enum WorkingTreeDriftKind {
 /// makes unanswerable from the tree alone, and the discriminator has to come
 /// from somewhere else.
 ///
-/// The registry is that somewhere else. It lives at
-/// `<primary>/projects/<project>/.rwv-workweave-index`, is written only by
-/// `rwv workweave create`, and records the absolute path of every workweave
-/// it made. A tree the registry names is a workweave on the authority of a
+/// The registry is that somewhere else. It lives in the primary's project
+/// clone, is written only by `rwv workweave create`, and records the absolute
+/// path of every workweave it made. A tree the registry names is a workweave on the authority of a
 /// file the tree does not contain and could not have forged by being copied.
 ///
 /// Note what is deliberately NOT used as the discriminator: whether the tree
-/// itself contains a `.rwv-workweave-index`. That looks like a primary-ness
-/// signature and is not one. The index is untracked, so whether a workweave
-/// inherits a copy depends on whether its `projects/<project>/` is a linked
-/// worktree (it is not copied) or a plain directory copy (it is) — a
-/// topology accident, not a fact about identity. Keying on it would classify
-/// real workweaves as unwitnessed in the copy topology and leave their stray
+/// itself holds a workweave index. A workweave's project checkout shares its
+/// clone's index with the primary, so holding one says nothing about identity.
+/// Keying on it would classify real workweaves as unwitnessed and leave their stray
 /// pointers unfixable.
 #[derive(Debug, Serialize, JsonSchema, Clone)]
 #[serde(rename_all = "kebab-case")]
@@ -1537,8 +1567,8 @@ pub enum WorkweaveTreeIntegrityKind<P> {
         reason: String,
     },
     /// A marker-bearing directory in a workweave container whose
-    /// `(project, name)` are NOT recorded in that project's
-    /// `.rwv-workweave-index`. The workweave exists on disk but the
+    /// `(project, name)` are NOT recorded in that project's workweave index.
+    /// The workweave exists on disk but the
     /// primary-side registry does not know about it. Auto-fixable via
     /// `rwv doctor --fix` (adopts the entry into the registry) — the design
     /// requires operator-consented adoption, so read paths (`list`,
@@ -1548,20 +1578,6 @@ pub enum WorkweaveTreeIntegrityKind<P> {
         project: ProjectName,
         /// Workweave name parsed from the directory basename.
         workweave_name: WorkweaveName,
-    },
-    /// The `.rwv-workweave-index` file at `projects/<project>/` is tracked
-    /// by the project repo's VCS. The index is machine-local state and
-    /// should not be committed; a checked-in copy propagates absolute
-    /// paths to every clone and every workweave checkout. Report-only —
-    /// `--fix` cannot un-track without touching commit history; the
-    /// operator runs `git rm --cached .rwv-workweave-index` in the project
-    /// repo and commits the removal. rwv excludes the index through the
-    /// project repo's `.git/info/exclude`, never `.gitignore`.
-    TrackedIndex {
-        /// Project whose index is committed.
-        project: ProjectName,
-        /// Path to the tracked index file.
-        index_path: P,
     },
     /// A `.rwv-workweave` marker that parses as neither current JSON nor a
     /// `migrate_legacy`-repairable legacy shape — YAML with no `primary:`
@@ -1663,13 +1679,6 @@ impl WorkweaveTreeIntegrityKind<PathBuf> {
             } => Wire::UnregisteredWorkweave {
                 project,
                 workweave_name,
-            },
-            Self::TrackedIndex {
-                project,
-                index_path,
-            } => Wire::TrackedIndex {
-                project,
-                index_path: WirePath::of(&index_path),
             },
             Self::UnreadableMarker { detail } => Wire::UnreadableMarker { detail },
             Self::NestedWorkweaveDir {
@@ -2067,6 +2076,8 @@ pub enum ViolationOutput {
     LegacyWorkweaveIndex {
         project: ProjectName,
         index_path: WirePath,
+        #[serde(rename = "sub_kind")]
+        sub_kind: LegacyWorkweaveIndexKind,
     },
     UnreadableOwnedState {
         project: ProjectName,
@@ -2505,9 +2516,11 @@ impl ViolationOutput {
             CheckViolation::LegacyWorkweaveIndex {
                 project,
                 index_path,
+                sub_kind,
             } => Self::LegacyWorkweaveIndex {
                 project: project.clone(),
                 index_path: WirePath::of(&index_path),
+                sub_kind,
             },
             CheckViolation::UnreadableOwnedState {
                 project,
@@ -2958,7 +2971,7 @@ pub fn scan_for_legacy_workweave_markers(ws_root: &Path) -> Vec<LegacyWorkweaveM
 
 /// Enumerate the distinct workweave containers to scan for reconciliation.
 ///
-/// Every project records its own container in `.rwv-workweave-index`; the
+/// Every project records its own basedir in its workweave index; the
 /// default `<parent-of-primary>/.workweaves` is also always scanned so that
 /// a workspace without any registered containers (bootstrap case for a
 /// pre-registry workspace) still surfaces on-disk workweaves. Duplicates are
@@ -3020,12 +3033,14 @@ fn nested_workweave_findings(ws_root: &Path, dir: &Path) -> Vec<CheckViolation> 
 
 fn workweave_containers_for_scan(ws_root: &Path) -> BTreeSet<CanonicalPath> {
     let mut containers = BTreeSet::new();
-    containers.insert(CanonicalPath::of(
-        &crate::workweave_index::default_container(ws_root),
-    ));
+    containers.insert(CanonicalPath::of(&crate::workweave_index::default_basedir(
+        ws_root,
+    )));
     for project in crate::workspace::discover_projects(ws_root) {
         if let Ok(Some(idx)) = crate::workweave_index::read(ws_root, &project) {
-            containers.insert(idx.container);
+            if let Some(basedir) = idx.basedir {
+                containers.insert(basedir);
+            }
         }
     }
     containers
@@ -3094,6 +3109,12 @@ pub fn fix_dangling_parent(marker_dir: &Path, primary: &Path) -> anyhow::Result<
             marker_dir.display()
         )
     })?;
+    crate::workweave_index::set_parent_of(
+        primary,
+        marker.project(),
+        marker_dir,
+        CanonicalPath::of(primary),
+    )?;
     Ok(true)
 }
 
@@ -3264,20 +3285,18 @@ pub(crate) fn fix_pre_schema_manifest(
 // Workweave-tree integrity scanning
 // ---------------------------------------------------------------------------
 
-/// Reconcile every project's `.rwv-workweave-index` against on-disk state.
+/// Reconcile every project's workweave index against on-disk state.
 ///
-/// Emits four registry-specific finding kinds:
+/// Emits three registry-specific finding kinds:
 ///
 /// * `stale-registry-entry` — a recorded name → path whose validation fails
-///   (missing directory, missing / foreign / cross-project marker). Prunable
-///   via `rwv doctor --fix`.
+///   (missing directory, missing / foreign / cross-project marker) or whose
+///   marker disagrees with the entry. `rwv doctor --fix` restores the marker
+///   where the worktree relation still holds, else prunes the entry.
 /// * `unregistered-workweave` — a marker-bearing workweave present in a
 ///   container that is NOT recorded in that project's index. Adoptable via
 ///   `rwv doctor --fix`. Silent adoption in read paths is deliberately not
 ///   done — adoption is an operator-consented act.
-/// * `tracked-index` — the `.rwv-workweave-index` file is tracked by the
-///   project repo's VCS. The design tolerates this (reads route to primary;
-///   the index is advisory) but tracks it as a hygiene finding.
 /// * `unreadable-workweave-index` — the file exists and does not parse. This
 ///   is the read that decides the other three, so it is also the read that
 ///   reports its own failure: a project whose index does not parse is
@@ -3320,7 +3339,7 @@ fn scan_unreadable_owned_state(ws_root: &Path) -> Vec<CheckViolation> {
         .collect()
 }
 
-fn scan_registry_reconciliation(vcs: &dyn crate::vcs::Vcs, ws_root: &Path) -> Vec<CheckViolation> {
+fn scan_registry_reconciliation(ws_root: &Path) -> Vec<CheckViolation> {
     let mut violations = Vec::new();
 
     // Pass 1 — every recorded entry that fails validation is stale. Also
@@ -3333,25 +3352,53 @@ fn scan_registry_reconciliation(vcs: &dyn crate::vcs::Vcs, ws_root: &Path) -> Ve
     let mut unreadable_index_projects: std::collections::HashSet<String> =
         std::collections::HashSet::new();
     for project in crate::workspace::discover_projects(ws_root) {
+        let legacy = crate::workweave_index::legacy_index_path(ws_root, &project);
+        if legacy.exists() {
+            unreadable_index_projects.insert(project.as_str().to_string());
+            if let Err(e) = crate::workweave_index::legacy_shape(ws_root, &project) {
+                violations.push(CheckViolation::UnreadableWorkweaveIndex {
+                    project: project.clone(),
+                    index_path: legacy.reported(),
+                    error: format!("{e:#}"),
+                });
+            }
+            continue;
+        }
         let index = match crate::workweave_index::read(ws_root, &project) {
             Ok(Some(idx)) => Some(idx),
             Ok(None) => None,
             Err(e) => {
                 unreadable_index_projects.insert(project.as_str().to_string());
-                violations.push(CheckViolation::UnreadableWorkweaveIndex {
-                    project: project.clone(),
-                    index_path: crate::workweave_index::index_path(ws_root, &project).reported(),
-                    error: format!("{e:#}"),
-                });
+                if let Some(index_path) = crate::workweave_index::index_path(ws_root, &project) {
+                    violations.push(CheckViolation::UnreadableWorkweaveIndex {
+                        project: project.clone(),
+                        index_path: index_path.reported(),
+                        error: format!("{e:#}"),
+                    });
+                }
                 None
             }
         };
-        for (name, path) in index.iter().flat_map(|idx| idx.workweaves.iter()) {
+        for (name, entry) in index.iter().flat_map(|idx| idx.workweaves.iter()) {
+            let path = &entry.path;
             let validation =
                 crate::workweave::validate_registry_entry(&primary, &project, path.as_path());
             match validation {
                 crate::workweave::RegistryEntryValidation::Valid => {
                     recorded_valid_paths.insert((project.as_str().to_string(), path.clone()));
+                    if let Ok(Some(disagreement)) =
+                        crate::workspace::disagreement_at(path.as_path())
+                    {
+                        violations.push(CheckViolation::WorkweaveTreeIntegrity {
+                            workweave_dir: path.as_path().to_path_buf(),
+                            sub_kind: WorkweaveTreeIntegrityKind::StaleRegistryEntry {
+                                project: project.clone(),
+                                workweave_name: name.clone(),
+                                recorded_path: path.as_path().to_path_buf(),
+                                reason: disagreement.what(),
+                            },
+                        });
+                    }
                 }
                 other => {
                     let reason = match other {
@@ -3387,20 +3434,6 @@ fn scan_registry_reconciliation(vcs: &dyn crate::vcs::Vcs, ws_root: &Path) -> Ve
                     });
                 }
             }
-        }
-
-        // Tracked-index hygiene finding. Only meaningful for git-tracked
-        // project repos; a non-git project has nothing to track. Silent on
-        // errors (a missing repo, a non-git repo) — hygiene, not correctness.
-        let index_path = crate::workweave_index::index_path(ws_root, &project);
-        if index_path.exists() && is_tracked_in_parent_repo(vcs, &index_path) {
-            violations.push(CheckViolation::WorkweaveTreeIntegrity {
-                workweave_dir: index_path.reported(),
-                sub_kind: WorkweaveTreeIntegrityKind::TrackedIndex {
-                    project: project.clone(),
-                    index_path: index_path.reported(),
-                },
-            });
         }
     }
 
@@ -3439,21 +3472,8 @@ fn scan_registry_reconciliation(vcs: &dyn crate::vcs::Vcs, ws_root: &Path) -> Ve
     violations
 }
 
-/// Best-effort check for whether `path` is tracked by the repo containing it.
-///
-/// Asks from the file's parent directory, so a path whose parent is not a
-/// repo at all answers `false` rather than escaping upward. An unreachable
-/// git is `false` too — hygiene surfaces should never fabricate findings on
-/// non-git-managed projects.
-fn is_tracked_in_parent_repo(
-    vcs: &dyn crate::vcs::Vcs,
-    path: &crate::state_file::StatePath,
-) -> bool {
-    vcs.is_tracked(path.dir(), Path::new(path.file().file_name()))
-        .unwrap_or(false)
-}
-
-/// Adopt an on-disk workweave into its project's `.rwv-workweave-index`.
+/// Adopt an on-disk workweave into its project's workweave index, with the
+/// parent its marker records.
 ///
 /// Called by `rwv doctor --fix` for each `UnregisteredWorkweave` finding.
 /// Idempotent: a race with a concurrent `workweave create` recording the
@@ -3465,15 +3485,36 @@ pub fn fix_unregistered_workweave(
     workweave_name: &WorkweaveName,
     workweave_dir: &Path,
 ) -> anyhow::Result<()> {
+    let marker = crate::workspace::WorkweaveMarker::read(workweave_dir)?.ok_or_else(|| {
+        refusal(
+            RefusalKind::RepairTargetChanged,
+            format!(
+                "{}/.rwv-workweave vanished before --fix could adopt the workweave",
+                workweave_dir.display()
+            ),
+        )
+    })?;
     crate::workweave_index::record_workweave(
         ws_root,
         project,
         workweave_name,
         CanonicalPath::of(workweave_dir),
+        marker.parent().clone(),
     )
 }
 
-/// Prune a stale entry from a project's `.rwv-workweave-index`.
+/// What `rwv doctor --fix` did with a stale registry entry.
+pub enum StaleEntryFix {
+    /// The directory is still a worktree of the project clone: its marker
+    /// was written again from the entry.
+    MarkerRestored,
+    /// Nothing the entry names is left to restore: the entry was removed.
+    Pruned,
+}
+
+/// Repair a stale entry of a project's workweave index: restore the marker
+/// from the entry where the worktree relation still holds, else prune the
+/// entry.
 ///
 /// Called by `rwv doctor --fix` for each `StaleRegistryEntry` finding.
 /// Idempotent.
@@ -3481,8 +3522,17 @@ pub fn fix_stale_registry_entry(
     ws_root: &Path,
     project: &crate::manifest::ProjectName,
     workweave_name: &WorkweaveName,
-) -> anyhow::Result<()> {
-    crate::workweave_index::forget_workweave(ws_root, project, workweave_name)
+) -> anyhow::Result<StaleEntryFix> {
+    let primary = CanonicalPath::of(ws_root);
+    let entry = crate::workweave_index::read(ws_root, project)?
+        .and_then(|index| index.workweaves.get(workweave_name).cloned());
+    if let Some(entry) = &entry {
+        if crate::workspace::restore_marker_of_entry(&primary, project, entry)? {
+            return Ok(StaleEntryFix::MarkerRestored);
+        }
+    }
+    crate::workweave_index::forget_workweave(ws_root, project, workweave_name)?;
+    Ok(StaleEntryFix::Pruned)
 }
 
 /// Scan the workweave parent directories for `.rwv-workweave` marker tree
@@ -3499,16 +3549,15 @@ pub fn fix_stale_registry_entry(
 ///    has no `.rwv-workweave` marker file.
 /// 4. **`foreign-primary`** — marker's `primary:` does not canonicalize to
 ///    `ws_root`.
-/// 5. **`stale-registry-entry`** — a `.rwv-workweave-index` entry whose
-///    recorded path fails marker round-trip validation. Auto-fixable
-///    (`--fix` prunes the entry).
+/// 5. **`stale-registry-entry`** — a workweave index entry whose recorded
+///    path fails marker round-trip validation or whose marker disagrees with
+///    it. Auto-fixable (`--fix` restores the marker where the worktree
+///    relation holds, else prunes the entry).
 /// 6. **`unregistered-workweave`** — a marker-bearing workweave present on
 ///    disk but absent from its project's index. Auto-fixable (`--fix`
 ///    adopts the entry). This is also the migration surface for
 ///    workspaces that predate the registry: run `rwv doctor --fix` to
 ///    self-heal the index from the on-disk workweaves.
-/// 7. **`tracked-index`** — the machine-local `.rwv-workweave-index` file
-///    is tracked by the project's VCS. Report-only hygiene finding.
 ///
 /// Workweave containers are enumerated per project (every recorded
 /// container, plus the compiled-in default), so per-workweave placement
@@ -3632,12 +3681,16 @@ fn classify_weave_root_identity(
     }
 
     // The registry entry is the external witness: it lives at
-    // `<primary>/projects/<project>/.rwv-workweave-index`, is written only by
-    // `rwv workweave create`, and names this directory by absolute path.
+    // the primary's project clone, is written only by `rwv workweave create`,
+    // and names this directory by absolute path.
     let recorded = crate::workweave_index::read(primary.as_path(), marker.project())
         .ok()
         .flatten()
-        .and_then(|idx| idx.workweaves.into_iter().find(|(_, path)| path == root_id));
+        .and_then(|idx| {
+            idx.workweaves
+                .into_iter()
+                .find(|(_, entry)| entry.path == *root_id)
+        });
 
     match recorded {
         Some((workweave_name, _)) => Some(CheckViolation::WeaveRootIdentityConflict {
@@ -3742,22 +3795,18 @@ fn scan_confusable_siblings(ws_root: &Path, projects: &[Project]) -> Vec<CheckVi
     violations
 }
 
-pub fn scan_workweave_tree_integrity(
-    vcs: &dyn crate::vcs::Vcs,
-    ws_root: &Path,
-) -> Vec<CheckViolation> {
+pub fn scan_workweave_tree_integrity(ws_root: &Path) -> Vec<CheckViolation> {
     let ws_canonical = CanonicalPath::of(ws_root);
 
     let mut violations = Vec::new();
 
     // Emit registry-vs-disk reconciliation findings first: stale entries
     // (registered but not a valid workweave on disk), unregistered
-    // workweaves (present on disk but not in the registry), and tracked
-    // indexes (index file committed to the project repo). These are the
+    // workweaves (present on disk but not in the registry). These are the
     // findings the registry-based design added; the marker-integrity
     // checks that follow are unchanged from the pre-registry era except
     // that they now iterate over every recorded container.
-    violations.extend(scan_registry_reconciliation(vcs, ws_root));
+    violations.extend(scan_registry_reconciliation(ws_root));
     violations.extend(scan_unreadable_owned_state(ws_root));
 
     // Enumerate every unique container to scan for marker-shape issues.
@@ -6443,9 +6492,9 @@ impl CheckViolation {
                 marker_path.display()
             ),
             CheckViolation::LegacyWorkweaveIndex { index_path, .. } => format!(
-                "{} is a legacy workweave index (no `receipts` field), so \
-                     `rwv workweave create` refuses for this project; run \
-                     `rwv doctor --fix` to add the field",
+                "{} is a workweave index at the path earlier releases kept it, so every \
+                     verb that reads the index refuses for this project; run \
+                     `rwv doctor --fix` to convert it and move it into the project clone",
                 index_path.display()
             ),
             CheckViolation::UnreadableOwnedState {
@@ -6625,25 +6674,11 @@ impl CheckViolation {
                         workweave_name,
                     } => format!(
                         "{}: workweave `{}` for project `{}` is present on \
-                             disk but not recorded in `.rwv-workweave-index`; \
+                             disk but not recorded in the workweave index; \
                              run `rwv doctor --fix` to adopt it",
                         workweave_dir.display(),
                         workweave_name,
                         project
-                    ),
-                    WorkweaveTreeIntegrityKind::TrackedIndex {
-                        project,
-                        index_path,
-                    } => format!(
-                        "{}: `.rwv-workweave-index` for project `{}` is \
-                             tracked by the project repo; the index is \
-                             machine-local — run `git -C {} rm --cached \
-                             .rwv-workweave-index` and commit the removal. rwv \
-                             excludes the index through the project repo's \
-                             `.git/info/exclude`, so it needs no `.gitignore` entry",
-                        index_path.display(),
-                        project,
-                        index_path.parent().unwrap_or(index_path).display()
                     ),
                     WorkweaveTreeIntegrityKind::UnreadableMarker { detail } => detail.clone(),
                     WorkweaveTreeIntegrityKind::NestedWorkweaveDir {
@@ -7483,14 +7518,16 @@ fn apply_workspace_repairs(
                 continue;
             }
         }
-        match crate::workweave_index::migrate_legacy_index(ctx.primary_path(), &project) {
-            Ok(true) => outln!(
-                "[fixed] core: added the `receipts` key to {}",
-                crate::workweave_index::index_path(ctx.primary_path(), &project)
+        match crate::workweave_index::convert_legacy_index(ctx.primary_path(), &project) {
+            Ok(Some(converted)) => outln!(
+                "[fixed] core: converted {} and moved it to {} ({} workweave(s) kept)",
+                converted.from,
+                converted.to,
+                converted.workweaves
             ),
-            Ok(false) => {}
+            Ok(None) => {}
             Err(e) => fix_errors.push(format!(
-                "failed to migrate {}'s workweave index: {e:#}",
+                "failed to convert {}'s workweave index: {e:#}",
                 project
             )),
         }
@@ -7688,7 +7725,17 @@ fn apply_finding_repairs(
             } => {
                 let outcome = fix_stale_registry_entry(ctx.primary_path(), project, workweave_name);
                 match outcome {
-                    Ok(()) => {
+                    Ok(StaleEntryFix::MarkerRestored) => {
+                        outln!(
+                            "[fixed] core: restored the marker of workweave `{}` at {} in \
+                             project `{}` from the index and the worktree relation",
+                            workweave_name,
+                            recorded_path.display(),
+                            project
+                        );
+                        true
+                    }
+                    Ok(StaleEntryFix::Pruned) => {
                         outln!(
                             "[fixed] core: pruned stale registry entry `{}` \
                              → {} in project `{}`",
@@ -9007,22 +9054,22 @@ fn collect_doctor_violations(
                 continue;
             }
         }
-        match crate::workspace::pending_index_migration(ctx.primary_path(), &project) {
-            Ok(Some(index_path)) => violations.push(CheckViolation::LegacyWorkweaveIndex {
-                project,
-                index_path: index_path.reported(),
-            }),
+        match crate::workweave_index::legacy_shape(ctx.primary_path(), &project) {
+            Ok(Some((index_path, shape))) => {
+                violations.push(CheckViolation::LegacyWorkweaveIndex {
+                    project,
+                    index_path: index_path.reported(),
+                    sub_kind: LegacyWorkweaveIndexKind::of(shape),
+                })
+            }
             Ok(None) => {}
-            // An index that does not parse has no shape to classify, and this
-            // loop is `project_scope`-narrowed where the read that suppresses
-            // the findings a parse failure invalidates is not. Reporting it
-            // here too would let a narrowed scan suppress and stay silent, so
-            // `scan_registry_reconciliation` owns the whole state.
+            // An old-path file that does not parse has no shape to classify;
+            // `scan_registry_reconciliation` reports it as unreadable.
             Err(_) => {}
         }
     }
 
-    violations.extend(scan_workweave_tree_integrity(vcs, ctx.primary_path()));
+    violations.extend(scan_workweave_tree_integrity(ctx.primary_path()));
     violations.extend(scan_confusable_siblings(
         ctx.primary_path(),
         &input.projects,

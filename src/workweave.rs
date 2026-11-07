@@ -3,9 +3,9 @@
 //! A workweave is a parallel working directory containing worktrees for each
 //! repo in a project, including the project repo itself. Placement and
 //! discovery are **recorded**, not computed: each `(primary, project)` carries
-//! a `.rwv-workweave-index` (see [`crate::workweave_index`]) that names the
-//! container directory `workweave create` places new workweaves under and the
-//! `name → absolute path` inverted index every `find`-direction verb consults.
+//! a workweave index (see [`crate::workweave_index`]) that names the
+//! basedir `workweave create` places new workweaves under and the
+//! `name → {path, parent}` inverted index every `find`-direction verb consults.
 //! Each workweave still carries its own `.rwv-workweave` marker, so it is
 //! self-describing without the index. The marker is its ONLY identity file:
 //! `.rwv-active` is the primary root's project-selection pointer, and the two
@@ -109,20 +109,20 @@ pub fn refuse_symlinked_members(workspace_dir: &Path, project: &ProjectName) -> 
     )
 }
 
-/// Determine the workweave container for `(primary_root, project)`.
+/// Determine the workweave basedir for `(primary_root, project)`.
 ///
-/// The container is the directory `workweave create` places new workweaves
+/// The basedir is the directory `workweave create` places new workweaves
 /// under when no per-workweave `--dir` override is passed. Resolution
 /// priority:
 ///
-///   1. The `container` field of the recorded `.rwv-workweave-index`.
+///   1. The `basedir` of the recorded workweave index.
 ///   2. `<parent-of-primary>/.workweaves` (compiled-in default).
 ///
 /// Prefer using this in the `create` direction only. The `find` direction
 /// (list, delete, sync targets, etc.) resolves via the recorded name → path
 /// entries, so it does not consult this at all.
-pub fn workweave_container(primary_root: &Path, project: &ProjectName) -> anyhow::Result<PathBuf> {
-    workweave_index::resolve_container(primary_root, project).map(CanonicalPath::into_path_buf)
+pub fn workweave_basedir(primary_root: &Path, project: &ProjectName) -> anyhow::Result<PathBuf> {
+    workweave_index::resolve_basedir(primary_root, project).map(CanonicalPath::into_path_buf)
 }
 
 /// Result of validating a registry entry against its on-disk marker.
@@ -229,7 +229,7 @@ pub fn workweave_name_for_path(
     let found = index
         .workweaves
         .into_iter()
-        .find(|(_, recorded)| recorded.same_directory(path));
+        .find(|(_, recorded)| recorded.path.same_directory(path));
     Ok(found.map(|(name, _)| name))
 }
 
@@ -294,7 +294,14 @@ pub fn ensure_registered_workweave(
         ),
     };
     match validate_registry_entry(&CanonicalPath::of(primary_root), project, raw.as_path()) {
-        RegistryEntryValidation::Valid => Ok(raw.into_path_buf()),
+        RegistryEntryValidation::Valid => {
+            crate::workspace::require_agreement(
+                &CanonicalPath::of(primary_root),
+                project,
+                raw.as_path(),
+            )?;
+            Ok(raw.into_path_buf())
+        }
         RegistryEntryValidation::MissingDirectory => crate::refuse!(
             RefusalKind::StaleRegistryEntry,
             "workweave `{}` is recorded at {} but that directory no longer \
@@ -305,8 +312,9 @@ pub fn ensure_registered_workweave(
         RegistryEntryValidation::MissingMarker => crate::refuse!(
             RefusalKind::StaleRegistryEntry,
             "workweave `{}` is recorded at {} but the directory has no \
-             `.rwv-workweave` marker — refusing to touch it; run `rwv doctor` \
-             for guidance",
+             `.rwv-workweave` marker — refusing to touch it. Run `rwv doctor --fix`, \
+             which restores the marker from the index and the worktree relation, \
+             then retry.",
             name.as_str(),
             raw.as_path().display()
         ),
@@ -314,16 +322,17 @@ pub fn ensure_registered_workweave(
             RefusalKind::StaleRegistryEntry,
             "workweave `{}` is recorded at {} but the marker's `primary` \
              does not match this workspace — refusing to touch a foreign \
-             workweave. This can arise from a committed / hand-edited \
-             registry; run `rwv doctor` to investigate.",
+             workweave. This can arise from a hand-edited registry; run \
+             `rwv doctor --fix` to restore the marker from the index and the \
+             worktree relation, then retry.",
             name.as_str(),
             raw.as_path().display()
         ),
         RegistryEntryValidation::ProjectMismatch { actual } => crate::refuse!(
             RefusalKind::StaleRegistryEntry,
             "workweave `{}` is recorded at {} but the marker records project \
-             `{}`, not `{}` — refusing to touch it; run `rwv doctor` to \
-             investigate the registry / marker disagreement",
+             `{}`, not `{}` — refusing to touch it; run `rwv doctor --fix` to \
+             restore the marker from the index and the worktree relation, then retry",
             name.as_str(),
             raw.as_path().display(),
             actual.as_str(),
@@ -332,8 +341,8 @@ pub fn ensure_registered_workweave(
         RegistryEntryValidation::MarkerUnreadable { detail } => crate::refuse!(
             RefusalKind::StaleRegistryEntry,
             "workweave `{}` is recorded at {} but its marker could not be \
-             read ({detail}); refusing to touch it. Run `rwv doctor` for \
-             remediation.",
+             read ({detail}); refusing to touch it. Run `rwv doctor --fix` to \
+             restore it from the index and the worktree relation, then retry.",
             name.as_str(),
             raw.as_path().display()
         ),
@@ -1710,7 +1719,7 @@ pub enum DirtySource {
 /// absolute.
 pub enum Placement {
     /// At `<basedir>/<project>--<name>`, the basedir the project records
-    /// ([`workweave_container`]).
+    /// ([`workweave_basedir`]).
     DefaultBasedir,
     /// At `<basedir>/<project>--<name>` for this run, in place of the
     /// recorded one.
@@ -1774,6 +1783,7 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
     } = request;
     let project_vcs = project_vcs();
     let manifest = load_manifest(source_root, project)?;
+    workweave_index::require_clone(primary_root, project)?;
     refuse_symlinked_members(source_root, project)?;
     let flat = WorkweaveId {
         project: project.clone(),
@@ -1787,7 +1797,7 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
     let workweave_dir = match placement {
         Placement::Dir(dir) => dir.clone(),
         Placement::Basedir(basedir) => basedir.join(&flat),
-        Placement::DefaultBasedir => workweave_container(primary_root, project)?.join(&flat),
+        Placement::DefaultBasedir => workweave_basedir(primary_root, project)?.join(&flat),
     };
 
     // Name uniqueness is checked against the workweave INDEX, not just the
@@ -2198,6 +2208,20 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
         // Producing a non-worktree copy here looks identical to a real
         // workweave on disk but has no upstream — commits go nowhere.
         std::fs::create_dir_all(project_wt_dest.parent().unwrap())?;
+        if project_vcs.prune_stale_worktree_registration(&project_dir, &project_wt_dest)?
+            == RegistrationPrune::Locked
+        {
+            crate::refuse!(
+                RefusalKind::WorkweaveDrift,
+                "the project clone at {} holds a locked registration of {}, whose directory \
+                 is gone, so no worktree can be made there. Unlock it with `git -C {} worktree \
+                 unlock {}` if nothing else uses it, then re-run.",
+                project_dir.display(),
+                project_wt_dest.display(),
+                project_dir.display(),
+                project_wt_dest.display(),
+            );
+        }
         // Record the project repo for the post-rollback prune pass BEFORE the
         // birth, for the same hook-failure reason as manifest repos above.
         // The project repo is an instance of the model, so this arm runs the
@@ -2427,6 +2451,7 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
         project,
         name,
         CanonicalPath::of(&workweave_dir),
+        CanonicalPath::of(source_root),
     )
     .context("failed to record workweave in the primary-side registry")?;
 
@@ -3308,7 +3333,15 @@ fn adopt_children_of(retiree_dir: &Path, primary_root: &Path) {
             continue;
         }
         marker.repoint_parent(&new_parent);
-        if let Err(e) = marker.write(&child_dir) {
+        let rewritten = marker.write(&child_dir).and_then(|()| {
+            workweave_index::set_parent_of(
+                primary_root,
+                marker.project(),
+                &child_dir,
+                CanonicalPath::of(&new_parent),
+            )
+        });
+        if let Err(e) = rewritten {
             eprintln!(
                 "warning: failed to adopt child workweave {child}: could not rewrite \
                  marker ({e:#}); run `rwv doctor --fix` to re-point its parent"
@@ -4131,7 +4164,7 @@ fn delete_workweave_inner_at(
 ///
 /// **Missing index is not fatal.** A workspace that predates the registry
 /// (or that has never been touched by `workweave create` since the index
-/// landed) has no `.rwv-workweave-index`. List returns an empty vector in
+/// landed) has no workweave index. List returns an empty vector in
 /// that case; `rwv doctor --fix` scans the container and adopts on-disk
 /// workweaves into the registry with the operator's consent.
 pub fn list_workweaves(
@@ -4165,13 +4198,13 @@ fn list_workweave_dirs_for_project(
     let mut result: Vec<(WorkweaveName, PathBuf)> = index
         .workweaves
         .into_iter()
-        .filter(|(_, path)| {
+        .filter(|(_, entry)| {
             matches!(
-                validate_registry_entry(&primary, project, path.as_path()),
+                validate_registry_entry(&primary, project, entry.path.as_path()),
                 RegistryEntryValidation::Valid
             )
         })
-        .map(|(name, path)| (name, path.into_path_buf()))
+        .map(|(name, entry)| (name, entry.path.into_path_buf()))
         .collect();
     result.sort_by(|a, b| a.0.cmp(&b.0));
     Ok(result)
@@ -4193,12 +4226,14 @@ fn list_workweave_dirs_for_project(
 /// directories whose `.rwv-workweave` `primary` canonicalizes to `ws_root`.
 pub fn list_workweave_dirs(ws_root: &Path) -> Vec<(WorkweaveId, PathBuf)> {
     let mut containers = std::collections::BTreeSet::new();
-    containers.insert(CanonicalPath::of(&workweave_index::default_container(
+    containers.insert(CanonicalPath::of(&workweave_index::default_basedir(
         ws_root,
     )));
     for project in crate::workspace::discover_projects(ws_root) {
         if let Ok(Some(idx)) = workweave_index::read(ws_root, &project) {
-            containers.insert(idx.container);
+            if let Some(basedir) = idx.basedir {
+                containers.insert(basedir);
+            }
         }
     }
 

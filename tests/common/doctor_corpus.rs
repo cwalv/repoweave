@@ -24,9 +24,10 @@
 
 use repoweave::check::{
     AlignmentKind, CheckViolation, CloneTopologyKind, DeadOpLeaseKind, DriftKind, IndexDriftKind,
-    OrphanedSavepointKind, PermissionsKind, PinKind, PlacementConvergence, ProvenanceKind,
-    RegistrationDirectoryKind, ReplayExclusionKind, SubmoduleCommitKind, UnparseableProjectKind,
-    WeaveRootIdentityConflictKind, WorkingTreeDriftKind, WorkweaveTreeIntegrityKind,
+    LegacyWorkweaveIndexKind, OrphanedSavepointKind, PermissionsKind, PinKind,
+    PlacementConvergence, ProvenanceKind, RegistrationDirectoryKind, ReplayExclusionKind,
+    SubmoduleCommitKind, UnparseableProjectKind, WeaveRootIdentityConflictKind,
+    WorkingTreeDriftKind, WorkweaveTreeIntegrityKind,
 };
 use repoweave::integration::{Issue, IssueKind, IssueSource, Severity};
 use repoweave::integration::{MemberIncompatibility, Observed};
@@ -185,7 +186,12 @@ pub fn case_token(v: &CheckViolation) -> String {
             }
         },
         CheckViolation::LegacyWorkweaveMarker { .. } => "legacy-workweave-marker".into(),
-        CheckViolation::LegacyWorkweaveIndex { .. } => "legacy-workweave-index".into(),
+        CheckViolation::LegacyWorkweaveIndex { sub_kind, .. } => match sub_kind {
+            LegacyWorkweaveIndexKind::BeforeReceipts => {
+                "legacy-workweave-index/before-receipts".into()
+            }
+            LegacyWorkweaveIndexKind::OldPath => "legacy-workweave-index/old-path".into(),
+        },
         CheckViolation::UnreadableOwnedState { .. } => "unreadable-owned-state".into(),
         CheckViolation::UnreadableWorkweaveIndex { .. } => "unreadable-workweave-index".into(),
         CheckViolation::UnparseableProject { sub_kind, .. } => match sub_kind {
@@ -205,7 +211,6 @@ pub fn case_token(v: &CheckViolation) -> String {
                 WorkweaveTreeIntegrityKind::UnregisteredWorkweave { .. } => {
                     "unregistered-workweave"
                 }
-                WorkweaveTreeIntegrityKind::TrackedIndex { .. } => "tracked-index",
                 WorkweaveTreeIntegrityKind::UnreadableMarker { .. } => "unreadable-marker",
                 WorkweaveTreeIntegrityKind::MisnamedDir { .. } => "misnamed-dir",
                 WorkweaveTreeIntegrityKind::NestedWorkweaveDir { .. } => "nested-workweave-dir",
@@ -500,6 +505,12 @@ pub fn corpus() -> Vec<CheckViolation> {
         CheckViolation::LegacyWorkweaveIndex {
             project: project(),
             index_path: path("/ws/projects/proj/.rwv-workweave-index"),
+            sub_kind: LegacyWorkweaveIndexKind::OldPath,
+        },
+        CheckViolation::LegacyWorkweaveIndex {
+            project: project(),
+            index_path: path("/ws/projects/proj/.rwv-workweave-index"),
+            sub_kind: LegacyWorkweaveIndexKind::BeforeReceipts,
         },
         CheckViolation::UnreadableOwnedState {
             project: project(),
@@ -566,13 +577,6 @@ pub fn corpus() -> Vec<CheckViolation> {
             sub_kind: WorkweaveTreeIntegrityKind::UnregisteredWorkweave {
                 project: project(),
                 workweave_name: WorkweaveName::new("feat-a").unwrap(),
-            },
-        },
-        CheckViolation::WorkweaveTreeIntegrity {
-            workweave_dir: path("/ws/.workweaves/proj--feat-a"),
-            sub_kind: WorkweaveTreeIntegrityKind::TrackedIndex {
-                project: project(),
-                index_path: path("/ws/projects/proj/.rwv-workweave-index"),
             },
         },
         CheckViolation::WorkweaveTreeIntegrity {

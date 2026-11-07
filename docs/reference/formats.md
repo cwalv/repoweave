@@ -218,7 +218,7 @@ Updated by `rwv activate <project>`, by `rwv init`, and by the `rwv clone` or `r
 
 ## `.rwv-workweave` — workweave marker
 
-Lives at every workweave directory root, and is a workweave root's *only* identity file — a workweave never carries `.rwv-active` beside it, and `rwv doctor` reports a root holding both. Records the workweave's identity and parent.
+Lives at every workweave directory root, and is a workweave root's *only* identity file — a workweave never carries `.rwv-active` beside it, and `rwv doctor` reports a root holding both. Records the workweave's identity and parent. The project clone's workweave index keeps the same `parent`, with the workweave's path, so a marker that is lost or edited is written again from the index and the workweave's project checkout being a worktree of that clone; a verb that does not destroy the workweave restores it and says so, and `rwv workweave delete` and `rwv sync-to --retire` refuse instead, naming `rwv doctor --fix`.
 
 Written by `rwv workweave create <name>`, which is also the verb that duplicates an existing workweave (`--from <source>`); removed with the workweave by `rwv workweave delete <name>` or `rwv sync-to --retire`.
 
@@ -245,11 +245,13 @@ Consumed by:
 
 See [workweave hierarchy](../explanation/joints/workweave-hierarchy.md) for one-hop semantics.
 
-## `.rwv-workweave-index` — workweave registry
+## `rwv-workweave-index` — workweave registry
 
-Lives at `<primary>/projects/<project>/.rwv-workweave-index`. Machine-local JSON state (excluded from git through the project repo's `.git/info/exclude`), written and updated by `rwv workweave create`, `delete`, `set-default-create-basedir`, and `rwv doctor --fix`.
+Lives in the directory the project clone's worktrees share (git: `.git/` of `<primary>/projects/<project>/`), so the primary and every workweave reach the same one, and a clean of the project's working tree cannot remove it. Machine-local JSON state, written and updated by `rwv workweave create`, `delete`, `set-default-create-basedir`, and `rwv doctor --fix`.
 
-It records the project's default workweave basedir (`<parent-of-primary>/.workweaves` unless `set-default-create-basedir` recorded another), and the absolute path of every workweave created for the project, which `-w <project>--<name>` and `rwv workweave list` resolve through. Its field-level schema is an implementation detail; read it through `rwv workweave list` and `rwv doctor`, and let `rwv doctor --fix` repair it.
+It records the project's default workweave basedir once `set-default-create-basedir` has written one (`<parent-of-primary>/.workweaves` until then), and, for every workweave created for the project, its absolute path and the workspace it was forked from. `-w <project>--<name>` and `rwv workweave list` resolve through the paths; the parents are what restore a workweave's marker whole. Its field-level schema is an implementation detail; read it through `rwv workweave list` and `rwv doctor`, and let `rwv doctor --fix` repair it.
+
+An index that earlier releases kept at `<primary>/projects/<project>/.rwv-workweave-index`, in any shape, is not read: every verb that reads the index refuses it as `legacy-workweave-index`, and `rwv doctor --fix` converts it and moves it into the clone. See [upgrade-rwv — Step 8](../how-to/upgrade-rwv.md#step-8--a-workweave-index-at-the-old-path).
 
 ## `rwv-workspace-state` — what the workspace last aligned for
 

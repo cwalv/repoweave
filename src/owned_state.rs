@@ -1226,8 +1226,7 @@ mod tests {
     fn stamp_ensures_digests_file_ignored() {
         // Non-git directory: stamp must write a .gitignore fallback so the
         // state file never appears as an untracked file in a dirty-tree
-        // check. This mirrors the workweave_index::write chokepoint for
-        // .rwv-workweave-index.
+        // check.
         let tmp = crate::tempdir().unwrap();
         stamp_owned_digest(tmp.path(), "Cargo.lock", b"version = 3\n").unwrap();
 

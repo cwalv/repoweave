@@ -66,33 +66,33 @@ fn an_index_written_in_a_symlinked_spelling_reads_as_the_directories_it_names() 
     let g = geometry();
     let container = g.real.join("workweaves");
     std::fs::create_dir_all(container.join("web-app--feat")).unwrap();
+    let clone = g.real.join("ws").join("projects").join(PROJECT);
+    common::git_in(&clone, &["init", "-q"]);
     let index = format!(
-        "{{\"container\": \"{}\", \"workweaves\": {{\"feat\": \"{}\"}}, \"receipts\": []}}\n",
+        "{{\"basedir\": \"{}\", \"workweaves\": {{\"feat\": {{\"path\": \"{}\", \"parent\": \"{}\"}}}}}}\n",
         common::json_escaped(g.link.join("workweaves")),
         common::json_escaped(g.link.join("workweaves").join("web-app--feat")),
+        common::json_escaped(g.link.join("ws")),
     );
-    std::fs::write(
-        g.real
-            .join("ws")
-            .join("projects")
-            .join(PROJECT)
-            .join(".rwv-workweave-index"),
-        index,
-    )
-    .unwrap();
+    std::fs::write(common::index_file_of(&clone), index).unwrap();
 
     let read = repoweave::workweave_index::read(&g.real.join("ws"), &project())
         .unwrap()
         .expect("the planted index");
-    assert_eq!(read.container, CanonicalPath::of(&container));
+    assert_eq!(read.basedir, Some(CanonicalPath::of(&container)));
+    let feat = read
+        .workweaves
+        .get(&WorkweaveName::new("feat").unwrap())
+        .expect("the recorded workweave");
     assert_eq!(
-        read.workweaves.get(&WorkweaveName::new("feat").unwrap()),
-        Some(&CanonicalPath::of(&container.join("web-app--feat")))
+        feat.path,
+        CanonicalPath::of(&container.join("web-app--feat"))
     );
+    assert_eq!(feat.parent, CanonicalPath::of(&g.real.join("ws")));
     assert_eq!(
-        read.container.as_path(),
+        read.basedir.unwrap().as_path(),
         repoweave::path_spelling::resolve(&container).unwrap(),
-        "the recorded container is the resolved spelling, not the one written"
+        "the recorded basedir is the resolved spelling, not the one written"
     );
 }
 
@@ -155,11 +155,16 @@ fn a_registered_workweave_resolves_through_a_symlinked_primary() {
     let g = geometry();
     let ww = g.real.join("workweaves").join("web-app--feat");
     workweave_at(&g.real.join("ws"), &ww);
+    common::git_in(
+        g.real.join("ws").join("projects").join(PROJECT),
+        &["init", "-q"],
+    );
     repoweave::workweave_index::record_workweave(
         &g.real.join("ws"),
         &project(),
         &WorkweaveName::new("feat").unwrap(),
         CanonicalPath::of(&g.link.join("workweaves").join("web-app--feat")),
+        CanonicalPath::of(&g.link.join("ws")),
     )
     .unwrap();
 

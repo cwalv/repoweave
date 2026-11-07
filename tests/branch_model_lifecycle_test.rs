@@ -71,21 +71,14 @@ fn make_workspace(tmp: &Path) -> PathBuf {
         ),
     )
     .unwrap();
+    common::make_project_repo(&project_dir);
     ws
 }
 
 /// `make_workspace`, with the project directory a repo whose trunk is
 /// recorded, so a workweave has a branch whose record the deletion rule reads.
 fn make_workspace_with_project_repo(tmp: &Path) -> PathBuf {
-    let ws = make_workspace(tmp);
-    let project_dir = ws.join("projects/web-app");
-    common::git_in(&project_dir, &["init", "--initial-branch=main"]);
-    common::git_in(&project_dir, &["config", "user.email", "test@test.com"]);
-    common::git_in(&project_dir, &["config", "user.name", "Test"]);
-    common::git_in(&project_dir, &["add", "rwv.toml"]);
-    common::git_in(&project_dir, &["commit", "-m", "add manifest"]);
-    common::record_trunk(&project_dir);
-    ws
+    make_workspace(tmp)
 }
 
 /// Create a branch at HEAD carrying a commit reachable from nowhere else,

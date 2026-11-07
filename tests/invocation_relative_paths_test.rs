@@ -33,11 +33,12 @@ fn weave_with_member(tmp: &Path) -> PathBuf {
         ),
     )
     .unwrap();
+    common::make_project_repo(&project_dir);
     ws
 }
 
 fn index(ws: &Path) -> serde_json::Value {
-    let raw = std::fs::read_to_string(ws.join("projects/web-app/.rwv-workweave-index"))
+    let raw = std::fs::read_to_string(common::index_file_of(ws.join("projects/web-app")))
         .expect("index must exist");
     serde_json::from_str(&raw).expect("index must parse")
 }
@@ -76,10 +77,7 @@ fn set_container_reads_a_relative_path_from_the_invocation_subdirectory() {
         .assert()
         .success();
 
-    assert_eq!(
-        index(&ws)["container"].as_str().unwrap(),
-        canonical(&wanted)
-    );
+    assert_eq!(index(&ws)["basedir"].as_str().unwrap(), canonical(&wanted));
 }
 
 #[test]
@@ -106,7 +104,7 @@ fn create_dir_reads_a_relative_path_from_the_c_directory() {
 
     assert!(wanted.join(".rwv-workweave").is_file());
     assert_eq!(
-        index(&ws)["workweaves"]["feat"].as_str().unwrap(),
+        index(&ws)["workweaves"]["feat"]["path"].as_str().unwrap(),
         canonical(&wanted)
     );
 }

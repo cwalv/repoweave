@@ -94,9 +94,10 @@ weave-local for them to bind to:
   (`git rev-parse --git-path refs/heads` from inside a workweave resolves
   into primary's `.git`). A per-weave view of these refs would be a shadow of
   the shared store, not a separate store.
-- The registry that records which workweaves exist lives only in primary, at
-  `projects/<project>/.rwv-workweave-index` — an untracked, primary-local
-  file. A workweave has no copy to write instead.
+- The registry that records which workweaves exist is one file, kept in the
+  directory primary's project clone shares with its worktrees. A workweave's
+  project checkout reaches that same file, so there is no workweave-local copy
+  to write instead.
 - The active-project pointer is a primary-only selector, and the only place it
   exists. `.rwv-active` and `.rwv-workweave` name the same fact — which
   project a tree belongs to — and are **mutually exclusive**: a primary root
@@ -122,7 +123,7 @@ as `weave-root-identity-conflict`.
 `--fix` repairs one of its three sub-kinds, and the split is not symmetric:
 
 - **`registered-workweave`** — the marker names this workspace's primary, and
-  that primary's `.rwv-workweave-index` records this exact directory as one of
+  that primary's workweave index records this exact directory as one of
   its workweaves. Evidence held *outside* the tree settles the identity, so
   the pointer is provably the redundant copy. `--fix` deletes `.rwv-active`
   and leaves the marker.
@@ -140,11 +141,10 @@ as `weave-root-identity-conflict`.
   a guess, and the marker in particular carries `primary` and `parent` values
   that exist nowhere else.
 
-The discriminator is deliberately the registry and not "does this tree contain
-a `.rwv-workweave-index`". That looks like a primary-ness signature and is not
-one: the index is untracked, so whether a workweave inherits a copy depends on
-whether its `projects/<project>/` is a linked worktree or a plain directory
-copy — a topology accident rather than a fact about identity.
+The discriminator is deliberately the registry's entry for this directory and
+not "does this tree reach a workweave index". Every workweave's project checkout
+reaches the one index its primary does, so reaching one says nothing about
+identity.
 
 Like the other arms in this class, the scan starts from primary
 unconditionally: `--fix` run inside workweave A will clear a stray pointer in
@@ -171,9 +171,9 @@ The `$schema` URL points to the committed schema artifact. Variants are
 discriminated by the `kind` tag — `alignment`, `cargo-patch-shadowing`, `cargo-version-skew`, `clone-topology`, `confusable-siblings`, `dangling-active-project`, `dangling-reference`, `dead-op-lease`, `head-unreadable`, `index-drift`, `legacy-manifest-format`, `legacy-workweave-index`, `legacy-workweave-marker`, `lock-pinned-by-name`, `member-permissions`, `merge-driver-config-unreadable`, `missing-canonical-clone`, `missing-merge-driver-config`, `missing-replay-exclusion`, `orphaned-clone`, `orphaned-savepoint`, `phantom-merge-driver`, `pin`, `projectless-dir`, `projects-dir-unreadable`, `provenance`, `replay-exclusion-unreadable`, `role-disagreement`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unknown-segment-clone`, `unnameable-project`, `unparseable-project`, `unreadable-active-project`, `unreadable-owned-state`, `unreadable-workweave-index`, `unrecognized-savepoint-ref`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
 Every per-repo variant carries `path` (manifest-relative) and
 `absolute_path` (fully resolved). Variants with subkinds
-(`alignment`, `clone-topology`, `dead-op-lease`, `index-drift`, `member-permissions`, `missing-replay-exclusion`, `orphaned-savepoint`, `pin`, `provenance`, `stale-worktree-registration`, `uninitialized-submodule`, `unparseable-project`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
+(`alignment`, `clone-topology`, `dead-op-lease`, `index-drift`, `legacy-workweave-index`, `member-permissions`, `missing-replay-exclusion`, `orphaned-savepoint`, `pin`, `provenance`, `stale-worktree-registration`, `uninitialized-submodule`, `unparseable-project`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
 `workweave-tree-integrity` carries `workweave_dir` and a `sub_kind`
-(`dangling-parent`, `foreign-primary`, `foreign-primary-other-workspace`, `misnamed-dir`, `nested-workweave-dir`, `parent-chain-anomaly`, `stale-registry-entry`, `tracked-index`, `unreadable-marker`, `unregistered-dir`, `unregistered-workweave`).
+(`dangling-parent`, `foreign-primary`, `foreign-primary-other-workspace`, `misnamed-dir`, `nested-workweave-dir`, `parent-chain-anomaly`, `stale-registry-entry`, `unreadable-marker`, `unregistered-dir`, `unregistered-workweave`).
 
 The `plugins` array is the PATH inventory of `rwv-*` executables found at
 run time. Each record carries `name` (the verb typed as `rwv <verb>`: the file
@@ -656,6 +656,25 @@ Schema:
           "$ref": "#/definitions/SeverityOutput"
         }
       }
+    },
+    "LegacyWorkweaveIndexKind": {
+      "description": "How the workweave index at the old path was written, which decides nothing about the repair.",
+      "oneOf": [
+        {
+          "description": "No `receipts` key: written before that key was kept.",
+          "type": "string",
+          "enum": [
+            "before-receipts"
+          ]
+        },
+        {
+          "description": "Carries `receipts`, empty or not: the shape of the release that kept the index in the project checkout.",
+          "type": "string",
+          "enum": [
+            "old-path"
+          ]
+        }
+      ]
     },
     "MarkerDefect": {
       "description": "Why a `.rwv-workweave` file cannot witness the identity it claims.\n\n`Legacy` covers every YAML marker `WorkweaveMarker::migrate_legacy` can repair: `primary:` and a valid `project:` both present, with or without the `parent:` field that became required before the format changed (it backfills from `primary`). A YAML marker missing either — no `primary:` to backfill from, or no `project:` `migrate_legacy` can construct a `crate::manifest::ProjectName` from — is `Unreadable` instead: a defect naming a repair nothing performs is worse than one that names none.\n\n`Serialize`/`JsonSchema` so `check::WeaveRootIdentityConflictKind` can carry a defect into a doctor finding's wire shape — the same value `require_exclusive` refuses on, its path respelled by `Self::into_wire`, not a re-description of it.",
@@ -1894,7 +1913,8 @@ Schema:
           "required": [
             "index_path",
             "kind",
-            "project"
+            "project",
+            "sub_kind"
           ],
           "properties": {
             "index_path": {
@@ -1908,6 +1928,9 @@ Schema:
             },
             "project": {
               "type": "string"
+            },
+            "sub_kind": {
+              "$ref": "#/definitions/LegacyWorkweaveIndexKind"
             }
           }
         },
@@ -2594,7 +2617,7 @@ Schema:
       ]
     },
     "WeaveRootIdentityConflictKind": {
-      "description": "Discriminator for `CheckViolation::WeaveRootIdentityConflict` findings: whether anything outside the tree settles which of its two identity files is the true one.\n\nThe split is not symmetric, and deliberately so. The naive reading — \"a workweave's stray pointer is safe to delete, a primary's stray marker is not\" — cannot be implemented, because it presumes we already know which kind of root this is, and the marker's presence is the only witness of that. Primary-ness has no independent signature: a primary root and a workweave root both hold `projects/` and registry directories. So the question \"which file is the stray?\" is exactly the question the conflict makes unanswerable from the tree alone, and the discriminator has to come from somewhere else.\n\nThe registry is that somewhere else. It lives at `<primary>/projects/<project>/.rwv-workweave-index`, is written only by `rwv workweave create`, and records the absolute path of every workweave it made. A tree the registry names is a workweave on the authority of a file the tree does not contain and could not have forged by being copied.\n\nNote what is deliberately NOT used as the discriminator: whether the tree itself contains a `.rwv-workweave-index`. That looks like a primary-ness signature and is not one. The index is untracked, so whether a workweave inherits a copy depends on whether its `projects/<project>/` is a linked worktree (it is not copied) or a plain directory copy (it is) — a topology accident, not a fact about identity. Keying on it would classify real workweaves as unwitnessed in the copy topology and leave their stray pointers unfixable.",
+      "description": "Discriminator for `CheckViolation::WeaveRootIdentityConflict` findings: whether anything outside the tree settles which of its two identity files is the true one.\n\nThe split is not symmetric, and deliberately so. The naive reading — \"a workweave's stray pointer is safe to delete, a primary's stray marker is not\" — cannot be implemented, because it presumes we already know which kind of root this is, and the marker's presence is the only witness of that. Primary-ness has no independent signature: a primary root and a workweave root both hold `projects/` and registry directories. So the question \"which file is the stray?\" is exactly the question the conflict makes unanswerable from the tree alone, and the discriminator has to come from somewhere else.\n\nThe registry is that somewhere else. It lives in the primary's project clone, is written only by `rwv workweave create`, and records the absolute path of every workweave it made. A tree the registry names is a workweave on the authority of a file the tree does not contain and could not have forged by being copied.\n\nNote what is deliberately NOT used as the discriminator: whether the tree itself holds a workweave index. A workweave's project checkout shares its clone's index with the primary, so holding one says nothing about identity. Keying on it would classify real workweaves as unwitnessed and leave their stray pointers unfixable.",
       "oneOf": [
         {
           "description": "The marker names THIS workspace's primary, and that primary's registry for the marker's project records THIS exact directory. External evidence settles it: the tree is a workweave, so `.rwv-active` is the redundant copy and deleting it destroys nothing the marker and the registry do not already say. Auto-fixable — `--fix` deletes the pointer and leaves the marker.",
@@ -2857,7 +2880,7 @@ Schema:
           "additionalProperties": false
         },
         {
-          "description": "A marker-bearing directory in a workweave container whose `(project, name)` are NOT recorded in that project's `.rwv-workweave-index`. The workweave exists on disk but the primary-side registry does not know about it. Auto-fixable via `rwv doctor --fix` (adopts the entry into the registry) — the design requires operator-consented adoption, so read paths (`list`, `delete`) deliberately do NOT auto-adopt on the fly.",
+          "description": "A marker-bearing directory in a workweave container whose `(project, name)` are NOT recorded in that project's workweave index. The workweave exists on disk but the primary-side registry does not know about it. Auto-fixable via `rwv doctor --fix` (adopts the entry into the registry) — the design requires operator-consented adoption, so read paths (`list`, `delete`) deliberately do NOT auto-adopt on the fly.",
           "type": "object",
           "required": [
             "unregistered-workweave"
@@ -2876,37 +2899,6 @@ Schema:
                 },
                 "workweave_name": {
                   "description": "Workweave name parsed from the directory basename.",
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "additionalProperties": false
-        },
-        {
-          "description": "The `.rwv-workweave-index` file at `projects/<project>/` is tracked by the project repo's VCS. The index is machine-local state and should not be committed; a checked-in copy propagates absolute paths to every clone and every workweave checkout. Report-only — `--fix` cannot un-track without touching commit history; the operator runs `git rm --cached .rwv-workweave-index` in the project repo and commits the removal. rwv excludes the index through the project repo's `.git/info/exclude`, never `.gitignore`.",
-          "type": "object",
-          "required": [
-            "tracked-index"
-          ],
-          "properties": {
-            "tracked-index": {
-              "type": "object",
-              "required": [
-                "index_path",
-                "project"
-              ],
-              "properties": {
-                "index_path": {
-                  "description": "Path to the tracked index file.",
-                  "allOf": [
-                    {
-                      "$ref": "#/definitions/WirePath"
-                    }
-                  ]
-                },
-                "project": {
-                  "description": "Project whose index is committed.",
                   "type": "string"
                 }
               }

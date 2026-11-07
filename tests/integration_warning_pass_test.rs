@@ -116,6 +116,7 @@ fn unauthored_project(tmp: &Path) -> PathBuf {
     let project_dir = ws.join("projects/myapp");
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(project_dir.join("rwv.toml"), "[repositories]\n").unwrap();
+    common::make_project_repo(&project_dir);
     std::fs::create_dir_all(tmp.join(".workweaves")).unwrap();
     ws
 }

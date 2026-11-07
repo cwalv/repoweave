@@ -603,15 +603,15 @@ fn a_published_project_branch_whose_push_branch_has_not_landed_is_an_open_head()
 fn no_receipts_are_minted() {
     let w = weave(&[LIB]);
     create_workweave(&w.workspace, "feat");
-    let index = project_dir(&w.workspace).join(".rwv-workweave-index");
+    let index = common::index_file_of(project_dir(&w.workspace));
 
     let written: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&index).unwrap()).unwrap();
-    assert_eq!(written["receipts"], serde_json::json!([]));
+    assert!(written.get("receipts").is_none(), "{written}");
     succeed(&["workweave", "delete", "feat"], &w.workspace);
     let written: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&index).unwrap()).unwrap();
-    assert_eq!(written["receipts"], serde_json::json!([]));
+    assert!(written.get("receipts").is_none(), "{written}");
 }
 
 #[test]

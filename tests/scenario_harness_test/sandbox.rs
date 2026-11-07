@@ -399,12 +399,44 @@ impl Sandbox {
         }
     }
 
+    /// The directory holding `machine`'s weave root and workweave container.
+    pub fn machine_dir(&self, machine: Machine) -> PathBuf {
+        self.root.join(machine.dir_name())
+    }
+
     pub fn weave_root(&self, machine: Machine) -> PathBuf {
         self.root.join(machine.dir_name()).join("weave")
     }
 
     pub fn workweave_container(&self, machine: Machine) -> PathBuf {
         self.root.join(machine.dir_name()).join(".workweaves")
+    }
+
+    /// The workweave index the project clone on `machine` keeps, in the
+    /// directory its worktrees share.
+    pub fn index_file(&self, machine: Machine) -> PathBuf {
+        let clone = self.checkout(&Place::Primary(machine), Repo::Proj);
+        let common = self.git_ok(
+            &clone,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        );
+        PathBuf::from(common.trim()).join("rwv-workweave-index")
+    }
+
+    /// Where an earlier release kept the index.
+    pub fn old_path_index(&self, machine: Machine) -> PathBuf {
+        self.checkout(&Place::Primary(machine), Repo::Proj)
+            .join(".rwv-workweave-index")
+    }
+
+    /// The directory the checkout of the project repo at `place` keeps its own
+    /// state in.
+    pub fn private_dir(&self, place: &Place) -> PathBuf {
+        let project = self.checkout(place, Repo::Proj);
+        PathBuf::from(
+            self.git_ok(&project, &["rev-parse", "--absolute-git-dir"])
+                .trim(),
+        )
     }
 
     pub fn place_root(&self, place: &Place) -> PathBuf {
