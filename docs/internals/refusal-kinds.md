@@ -61,6 +61,32 @@ from it; the page is generated, so it cannot say something the refusal does not
 print. A VCS action's spelling is the backend's (`Vcs::hint`); core fills its
 placeholders from what the site judged.
 
+**A kind that `rwv doctor` also reports is an axis whose `Axis::finding` names
+that finding.** Its states, facts and choices live in the table like any
+axis's, and the finding's facts — its sub-kinds, each with the severity and
+`--fix` disposition the doctor register gives it — are read from the sub-kind
+type (`UnparseableProjectKind::severity` and `fix_disposition`, which
+`CheckViolation::severity` and `fix_disposition` delegate to), so the entry
+never states either a second time. The kind has one entry, and it is on
+[Doctor findings](../reference/doctor-findings.md), because that page is where
+every condition doctor reports keeps its entry and where the `--fix`
+dispositions are held to the register. The generator writes it there, in
+place, from the heading ``### `<kind>` `` to the next heading of level three or
+above; the heading is a stub the page's author places, once, in the topical
+section it belongs to, and the Summary index rows for the kind stay
+hand-written and are compared to the register as any finding's are. The
+refusals page lists the kind with a link and holds no entry for it.
+`explain::lookup` does not depend on which page carries an entry, so `rwv
+explain <kind>` and `rwv explain <kind>/<sub-kind>` resolve it either way.
+
+**A typed error can be a state of the table.** `PreSchemaManifest` reaches the
+funnel through `?`; `diagnosis::report_of` reads it as the judged line
+`unparseable-project here` for the project it was read in, named by the weave
+root that `WorkspaceContext::resolve_unbound` finds from the manifest's
+directory. It stays a typed error for `rwv doctor`, which classifies a finding
+by it, and has no `RefusalKind`: a token naming a kind the table carries would
+be a second way to refuse it.
+
 **A choice prints only once its verb ships.** Every choice is data, shipped or
 not; a form whose `shipped` is false, or that runs after one that is, prints on
 no surface. Shipping a verb is flipping `shipped` on the forms that spell it;
@@ -161,14 +187,18 @@ rwv explain <kind>
 
 1. Add the `State` variant, its arm in `State::row` and its place in
    `State::ALL`; a new axis adds an `Axis` variant and its `Axis::row` arm
-   too, in the order its lines should print.
+   too, in the order its lines should print. An axis that is also a doctor
+   finding returns its `Finding` from `Axis::finding` and puts the heading
+   stub of its entry on the findings page; `Axis::finding` matches every axis,
+   so an axis added without a decision does not compile.
 2. Offer the forms the state prints, in order. A choice whose verb has not
    shipped is offered all the same, marked unshipped on its form; it prints
    once its verb ships and the mark is flipped.
 3. Judge it at each site — `State::…of(repo)`, its listing and bindings,
    `.judge(vcs)` — into the verb's `Report`, and refuse once every repo the
    check covers has been judged.
-4. Regenerate. The kind's entry on the refusals page is the table's output;
+4. Regenerate. The kind's entry — on the refusals page, or on the findings page
+   for a kind doctor also reports — is the table's output;
    `tests/refusal_entry_test.rs` holds the page to it, and the gate's drift
    stage to what was committed.
 

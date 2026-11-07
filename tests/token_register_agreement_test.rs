@@ -151,7 +151,7 @@ const INTENDED_REUSE: &[(&str, &[&str], &str)] = &[
     ),
     (
         "unparseable-project",
-        &["doctor", "refusal"],
+        &["doctor", "kind"],
         "a project directory does not parse as a project",
     ),
     (

@@ -644,7 +644,10 @@ becomes `docs/reference/explain/<verb>.md`, and for the seven verbs with a JSON
 envelope the schemars-derived schema is spliced in and also written out to
 `docs/reference/schemas/<verb>.json`. It renders `docs/reference/refusals.md`
 from its template, the kinds' entries from `src/diagnosis.rs`'s table, so the
-page a refusal routes to cannot say what the refusal does not print.
+page a refusal routes to cannot say what the refusal does not print. A kind
+that `rwv doctor` also reports has its one entry on
+`docs/reference/doctor-findings.md` instead, and the generator writes it there,
+in place, from the same table and the doctor register.
 `src/explain.rs` then `include_str!`s the assembled markdown into the binary,
 which is how `rwv explain` works with no filesystem access at runtime.
 

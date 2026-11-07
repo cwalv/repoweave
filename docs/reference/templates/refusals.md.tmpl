@@ -29,7 +29,9 @@ carry — why the rule exists, which exit applies under which circumstances, and
 where the rule sits in the machine.
 
 This page has one entry per kind and per token, under that exact name, so a
-refusal you met in the terminal can be looked up without translation.
+refusal you met in the terminal can be looked up without translation. A kind or
+token that `rwv doctor` also reports has its one entry on
+[Doctor findings](./doctor-findings.md) instead.
 
 ## Reading an entry
 
@@ -39,8 +41,8 @@ Run the command the refusal printed:
 rwv explain edits
 ```
 
-`rwv explain` serves the entry below verbatim. A token whose condition `rwv
-doctor` also reports keeps its single entry on
+`rwv explain` serves the entry below verbatim. A kind or token whose condition
+`rwv doctor` also reports keeps its single entry on
 [Doctor findings](./doctor-findings.md) — one condition has one entry
 wherever that entry lives, and `rwv explain` finds it either way.
 
@@ -53,6 +55,12 @@ invariant, or an argument the parser rejected before any verb ran — those
 print `error:` and exit 2, where a refusal exits 1.
 
 ## Kinds
+
+A kind that `rwv doctor` also reports has its one entry, states and choices
+included, on [Doctor findings](./doctor-findings.md):
+
+{{FINDING_KINDS}}
+The others follow.
 
 {{KINDS}}
 ## Tokens

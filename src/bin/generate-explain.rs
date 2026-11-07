@@ -327,20 +327,67 @@ fn schema_refusal() -> String {
 }
 
 /// The refusals page: `template` with `{{KINDS}}` replaced by one entry per
-/// axis the state-to-choices table defines, VCS actions spelled for git.
+/// axis the state-to-choices table defines that `rwv doctor` does not also
+/// report, and `{{FINDING_KINDS}}` by a link to each of the others' entries on
+/// the findings page. VCS actions are spelled for git.
 fn render_refusals_page(template: &str) -> anyhow::Result<String> {
-    const PLACEHOLDER: &str = "{{KINDS}}";
-    if template.matches(PLACEHOLDER).count() != 1 {
-        anyhow::bail!("the refusals template must hold `{PLACEHOLDER}` exactly once");
+    const KINDS: &str = "{{KINDS}}";
+    const FINDING_KINDS: &str = "{{FINDING_KINDS}}";
+    for placeholder in [KINDS, FINDING_KINDS] {
+        if template.matches(placeholder).count() != 1 {
+            anyhow::bail!("the refusals template must hold `{placeholder}` exactly once");
+        }
     }
-    let mut page = template.replace(
-        PLACEHOLDER,
-        &repoweave::diagnosis::kind_entries_markdown(repoweave::manifest::VcsType::Git),
-    );
+    let mut page = template
+        .replace(
+            KINDS,
+            &repoweave::diagnosis::kind_entries_markdown(repoweave::manifest::VcsType::Git),
+        )
+        .replace(
+            FINDING_KINDS,
+            &repoweave::diagnosis::finding_kind_links_markdown(),
+        );
     if !page.ends_with('\n') {
         page.push('\n');
     }
     Ok(page)
+}
+
+/// `page` with the entry of each axis that `rwv doctor` also reports written
+/// from the state-to-choices table: the lines from the entry's heading to the
+/// next heading of level three or above. The heading must already stand on the
+/// page, once, because where the entry sits is for the page's author to say.
+fn splice_finding_entries(page: &str) -> anyhow::Result<String> {
+    let mut lines: Vec<String> = page.lines().map(str::to_owned).collect();
+    for (axis, entry) in
+        repoweave::diagnosis::finding_entries_markdown(repoweave::manifest::VcsType::Git)
+    {
+        let token = axis.token();
+        let heading = format!("### `{token}`");
+        let at: Vec<usize> = lines
+            .iter()
+            .enumerate()
+            .filter_map(|(i, line)| (*line == heading).then_some(i))
+            .collect();
+        let [start] = at[..] else {
+            anyhow::bail!(
+                "docs/reference/doctor-findings.md must hold the heading `{heading}` exactly \
+                 once, where the entry of `{token}` belongs; it holds it {} times",
+                at.len()
+            );
+        };
+        let end = lines[start + 1..]
+            .iter()
+            .position(|line| line.starts_with("## ") || line.starts_with("### "))
+            .map_or(lines.len(), |offset| start + 1 + offset);
+        let region = entry
+            .trim_end_matches('\n')
+            .lines()
+            .map(str::to_owned)
+            .chain(std::iter::once(String::new()));
+        lines.splice(start..end, region);
+    }
+    Ok(lines.join("\n") + "\n")
 }
 
 fn schema_push() -> String {
@@ -4524,11 +4571,13 @@ fn main() -> anyhow::Result<()> {
     fs::create_dir_all(&explain_dir)?;
     fs::create_dir_all(&schemas_dir)?;
 
-    // --- refusals page -------------------------------------------------------
+    // --- refusals and findings pages ------------------------------------------
     // Renders docs/reference/templates/refusals.md.tmpl →
     //         docs/reference/refusals.md, its {{KINDS}} the entries the
-    // state-to-choices table generates, and the schema of the envelope a
-    // refused verb prints under --json when it printed nothing of its own.
+    // state-to-choices table generates, writes the entry of each kind that is
+    // also a doctor finding into docs/reference/doctor-findings.md, and writes
+    // the schema of the envelope a refused verb prints under --json when it
+    // printed nothing of its own.
     {
         let template_path = root.join("docs/reference/templates/refusals.md.tmpl");
         let template = fs::read_to_string(&template_path).map_err(|e| {
@@ -4539,6 +4588,11 @@ fn main() -> anyhow::Result<()> {
         })?;
         let page = render_refusals_page(&template)?;
         write_if_changed(&root.join("docs/reference/refusals.md"), &page)?;
+
+        let findings_path = root.join("docs/reference/doctor-findings.md");
+        let findings = fs::read_to_string(&findings_path)
+            .map_err(|e| anyhow::anyhow!("missing {}: {e:#}", findings_path.display()))?;
+        write_if_changed(&findings_path, &splice_finding_entries(&findings)?)?;
 
         let mut schema = schema_refusal();
         schema.push('\n');
@@ -8797,5 +8851,44 @@ mod tests {
             let errors = check_plugin_library_boundary(&root.join(dir), LIBRARY_CRATE);
             assert!(errors.is_empty(), "{}", errors.join("\n"));
         }
+    }
+
+    fn findings_page(body: &str) -> String {
+        format!(
+            "# Doctor findings\n\n## A\n\n### `before`\n\nbefore\n\n{body}### `after`\n\nafter\n"
+        )
+    }
+
+    #[test]
+    fn the_findings_entry_is_written_from_its_heading_to_the_next_heading() {
+        let stub = findings_page("### `unparseable-project`\n\nhand-written\n\n");
+        let spliced = splice_finding_entries(&stub).unwrap();
+        assert!(spliced.contains(
+            "### `before`\n\nbefore\n\n### `unparseable-project`\n\nA project directory"
+        ));
+        assert!(spliced.contains("#### `malformed`"));
+        assert!(!spliced.contains("hand-written"));
+        assert!(spliced.ends_with("### `after`\n\nafter\n"));
+        assert_eq!(
+            splice_finding_entries(&spliced).unwrap(),
+            spliced,
+            "regeneration is a fixed point"
+        );
+    }
+
+    #[test]
+    fn a_page_without_exactly_one_heading_for_the_entry_is_refused() {
+        let absent = findings_page("");
+        let err = splice_finding_entries(&absent).unwrap_err().to_string();
+        assert!(
+            err.contains("`### `unparseable-project``") && err.contains("0 times"),
+            "{err}"
+        );
+
+        let doubled = findings_page(
+            "### `unparseable-project`\n\none\n\n### `unparseable-project`\n\ntwo\n\n",
+        );
+        let err = splice_finding_entries(&doubled).unwrap_err().to_string();
+        assert!(err.contains("2 times"), "{err}");
     }
 }

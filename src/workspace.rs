@@ -558,6 +558,16 @@ pub(crate) fn project_name_from_dir(root: &Path, dir: &Path) -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
+/// `projects/<name>` for the project whose manifest is `manifest`, named
+/// relative to the weave root that a verb run from the project's directory
+/// resolves, or `None` when no weave root holds it.
+pub(crate) fn project_rel_path_of_manifest(manifest: &Path) -> Option<String> {
+    let dir = CanonicalPath::existing(manifest.parent()?).ok()?;
+    let root = WorkspaceContext::resolve_unbound(dir.as_path()).ok()?;
+    let name = project_name_from_dir(root.active_path(), dir.as_path())?;
+    Some(format!("{PROJECTS_DIR}/{name}"))
+}
+
 /// Where a manifest member's checkout is for this run, and which of the two
 /// kinds it turned out to be.
 ///

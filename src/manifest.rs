@@ -704,7 +704,20 @@ pub struct PreSchemaKey {
 #[derive(Debug)]
 pub struct PreSchemaManifest {
     pub keys: Vec<PreSchemaKey>,
+    /// The file it was read from; none for text that was not read from one.
+    pub path: Option<PathBuf>,
     cause: toml::de::Error,
+}
+
+impl PreSchemaManifest {
+    /// One line per renamed key: the member, the key it names, the key it
+    /// should name.
+    pub fn listing(&self) -> Vec<String> {
+        self.keys
+            .iter()
+            .map(|k| format!("{}: `{}` is now `{}`", k.member, k.key, k.replacement))
+            .collect()
+    }
 }
 
 impl fmt::Display for PreSchemaManifest {
@@ -1835,8 +1848,17 @@ impl Manifest {
                     .with_context(|| format!("failed to read {}", path.display()));
             }
         };
-        Self::from_toml_str(&content)
-            .with_context(|| format!("failed to parse {} at {}", Self::FILE_NAME, path.display()))
+        Self::from_toml_str(&content).map_err(|e| match e.downcast::<PreSchemaManifest>() {
+            Ok(pre_schema) => anyhow::Error::new(PreSchemaManifest {
+                path: Some(path.to_path_buf()),
+                ..pre_schema
+            }),
+            Err(e) => e.context(format!(
+                "failed to parse {} at {}",
+                Self::FILE_NAME,
+                path.display()
+            )),
+        })
     }
 
     /// The remedy for any `rwv.toml` parse failure.
@@ -1868,7 +1890,11 @@ impl Manifest {
         toml::from_str(content).map_err(|e| {
             let keys = pre_schema_keys(content);
             if !keys.is_empty() {
-                return anyhow::Error::new(PreSchemaManifest { keys, cause: e });
+                return anyhow::Error::new(PreSchemaManifest {
+                    keys,
+                    path: None,
+                    cause: e,
+                });
             }
             let msg = format!("{e:#}");
             // When the error is an unknown top-level field, append a

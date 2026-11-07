@@ -11,7 +11,13 @@
 //! [`State::ALL`]; shipping a verb is flipping `shipped` on the forms that
 //! spell it. A form that is not shipped is never printed, by any state, on any
 //! surface.
+//!
+//! A kind that `rwv doctor` also reports is an axis whose [`Axis::finding`]
+//! names that finding. Its one entry is written into the findings page, not
+//! the refusals page, and carries the finding's sub-kinds with the severity
+//! and `--fix` disposition the doctor register gives them.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -36,6 +42,8 @@ pub enum Axis {
     Name,
     /// What `rwv push` withheld.
     Publish,
+    /// A project whose `rwv.toml` does not load.
+    UnparseableProject,
 }
 
 /// An axis's page prose: what it judges, why, and where the rule sits.
@@ -46,7 +54,13 @@ pub struct KindRow {
 }
 
 impl Axis {
-    pub const ALL: [Axis; 4] = [Self::Edits, Self::Checkout, Self::Name, Self::Publish];
+    pub const ALL: [Axis; 5] = [
+        Self::Edits,
+        Self::Checkout,
+        Self::Name,
+        Self::Publish,
+        Self::UnparseableProject,
+    ];
 
     pub fn token(self) -> String {
         crate::wire_token::wire_token(&self)
@@ -93,6 +107,97 @@ impl Axis {
                       pins is published.",
                 sits: "",
             },
+            Self::UnparseableProject => &KindRow {
+                condition: "A project directory exists but does not load: its `rwv.toml` or \
+                            its `rwv.lock` failed to parse.",
+                why: "A project rwv cannot see into must not read as a clean project with zero \
+                      findings, so `rwv doctor` reports it at error severity. Its `message` \
+                      names which of the two files failed and carries that file's remedy, and \
+                      `manifest_path` always names the manifest, because it locates the project \
+                      rather than the failure. A verb that reads the manifest at the checked-out \
+                      tip refuses when it names member-entry keys an earlier release wrote: no \
+                      verb reads them, and the repair is mechanical.",
+                sits: "[Formats](./formats.md) states the member-entry keys; \
+                       [Upgrade rwv](../how-to/upgrade-rwv.md) walks through the rewrite.",
+            },
+        }
+    }
+
+    /// The `rwv doctor` finding of the same name, when there is one. Its
+    /// entry is then the findings page's, written there from this table.
+    pub fn finding(self) -> Option<Finding> {
+        match self {
+            Self::Edits | Self::Checkout | Self::Name | Self::Publish => None,
+            Self::UnparseableProject => Some(Finding::of(
+                crate::check::ViolationKind::UnparseableProject,
+                crate::check::UnparseableProjectKind::ALL.map(|sub_kind| SubKindRow {
+                    token: crate::wire_token::wire_token(&sub_kind),
+                    severity: sub_kind.severity(),
+                    fix: sub_kind.fix_disposition(),
+                    entry: match sub_kind {
+                        crate::check::UnparseableProjectKind::PreSchema => PRE_SCHEMA_ENTRY,
+                        crate::check::UnparseableProjectKind::Malformed => MALFORMED_ENTRY,
+                    },
+                }),
+            )),
+        }
+    }
+}
+
+const PRE_SCHEMA_ENTRY: &str = "The project's `rwv.toml` names member-entry keys an earlier \
+release wrote: `version` where `branch` is now expected, or `submodules` where \
+`recurse-submodules` is. Every verb that reads the manifest at the checked-out tip refuses with \
+this kind, and `rwv explain unparseable-project` is its route line.
+
+**What to do:** `rwv doctor --fix`, run in the project's checkout. It renames the keys in place \
+— `version` to `branch`, `submodules = \"skip\"` to `recurse-submodules = false`, and drops \
+`submodules = \"local\"`, which is what an absent `recurse-submodules` means — keeping the \
+file's comments and key order. It writes the rename into the working file and into the project's \
+HEAD commit and commits only that, in one commit: any other edit to `rwv.toml`, and any edit to \
+another file, stays uncommitted where it was. It declines, changing nothing, while another file \
+is staged or a rebase, merge or cherry-pick is in progress in the project repo, and says so; run \
+it again once that is dealt with. A value of `submodules` other than `\"local\"` or \
+`\"skip\"`, or an entry that names both a key and its replacement, is not guessed at: the repair \
+names it and leaves the file.
+
+A commit other than the checked-out one that names the old keys is not reported and is not \
+refused. It declares nothing to the verbs that read it, and its `rwv.lock` is read as any lock \
+is.";
+
+const MALFORMED_ENTRY: &str = "Any other reason the project did not load. The message names which \
+file failed and carries that file's remedy — the manifest is yours to edit, at the line the \
+parser names; the lock is generated, so `rwv lock` rewrites it. A repository entry with no \
+`role`, an unknown top-level key, an unknown `[integrations.<name>]` table, an unknown key in \
+one, and an `enabled` that is not `true` or `false` are all parse failures of this kind, each \
+naming the line and what was expected.
+
+`--fix` has no arm for it. Rewriting a manifest rwv could not parse would be guesswork, and \
+regenerating a lock re-pins the workspace to whatever the working tips happen to be — a decision \
+about state, not a repair.";
+
+/// What `rwv doctor` reports under a kind's name: the sub-kinds the finding
+/// carries, each with the severity and `--fix` disposition the doctor
+/// register gives it.
+pub struct Finding {
+    pub kind: crate::check::ViolationKind,
+    pub sub_kinds: Vec<SubKindRow>,
+}
+
+pub struct SubKindRow {
+    pub token: String,
+    pub severity: crate::integration::Severity,
+    pub fix: crate::check::FixDisposition,
+    pub entry: &'static str,
+}
+
+impl Finding {
+    fn of(
+        kind: crate::check::ViolationKind,
+        sub_kinds: impl IntoIterator<Item = SubKindRow>,
+    ) -> Self {
+        Self {
+            kind,
+            sub_kinds: sub_kinds.into_iter().collect(),
         }
     }
 }
@@ -109,6 +214,7 @@ pub enum State {
     NameARevision,
     NameNoSuchBranch,
     PublishWithheld,
+    UnparseableProjectHere,
 }
 
 /// A state's row: its axis and name, the page prose, and the forms it offers,
@@ -136,6 +242,7 @@ impl State {
         Self::NameARevision,
         Self::NameNoSuchBranch,
         Self::PublishWithheld,
+        Self::UnparseableProjectHere,
     ];
 
     pub fn row(self) -> &'static StateRow {
@@ -230,6 +337,17 @@ impl State {
                 offers: &[Form::C7Push, Form::C17],
                 verb_offers: &[],
             },
+            Self::UnparseableProjectHere => &StateRow {
+                axis: Axis::UnparseableProject,
+                name: "here",
+                means: "the project's `rwv.toml` at the checked-out tip names member-entry keys \
+                        an earlier release wrote, each listed with the key that replaces it",
+                refused_by: "every verb that reads the project's `rwv.toml`; `rwv doctor` \
+                             reports it instead, and `rwv status` and `rwv prime` skip the \
+                             project with a warning",
+                offers: &[Form::DoctorFix],
+                verb_offers: &[],
+            },
         }
     }
 
@@ -295,6 +413,7 @@ pub enum ChoiceId {
     C39,
     C40,
     AnotherName,
+    DoctorFix,
 }
 
 /// A choice's id, as `--json` and the page print it (none for a choice the
@@ -486,6 +605,11 @@ impl ChoiceId {
                 phrase: "use another name",
                 keeps_work: "nothing changes",
             },
+            Self::DoctorFix => &ChoiceRow {
+                id: None,
+                phrase: "rewrite the keys an earlier release wrote, committing only that",
+                keeps_work: "commits only the rewrite; other edits stay uncommitted",
+            },
         }
     }
 }
@@ -614,6 +738,7 @@ pub enum Form {
     C39,
     C40,
     AnotherName,
+    DoctorFix,
 }
 
 /// A form's choice, steps and Where, and whether its verb has shipped.
@@ -625,7 +750,7 @@ pub struct FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 61] = [
+    pub const ALL: [Form; 62] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C2Pull,
@@ -687,6 +812,7 @@ impl Form {
         Self::C39,
         Self::C40,
         Self::AnotherName,
+        Self::DoctorFix,
     ];
 
     pub fn row(self) -> &'static FormRow {
@@ -1064,6 +1190,12 @@ impl Form {
             Self::AnotherName => &FormRow {
                 choice: C::AnotherName,
                 steps: &[],
+                at: W::Here,
+                shipped: true,
+            },
+            Self::DoctorFix => &FormRow {
+                choice: C::DoctorFix,
+                steps: &[Rwv("rwv doctor --fix")],
                 at: W::Here,
                 shipped: true,
             },
@@ -1543,23 +1675,42 @@ impl fmt::Display for Refused {
 
 impl std::error::Error for Refused {}
 
+/// The report one link of an error chain refuses with: a judged refusal, or
+/// a typed error that is a state of the table and reaches the terminal
+/// through `?`.
+fn report_at<'a>(link: &'a (dyn std::error::Error + 'static)) -> Option<Cow<'a, Report>> {
+    if let Some(refused) = link.downcast_ref::<Refused>() {
+        return Some(Cow::Borrowed(&refused.0));
+    }
+    let pre_schema = link.downcast_ref::<crate::manifest::PreSchemaManifest>()?;
+    let repo = crate::workspace::project_rel_path_of_manifest(pre_schema.path.as_deref()?)?;
+    let mut report = Report::default();
+    report.add(
+        State::UnparseableProjectHere
+            .of(repo)
+            .listing(pre_schema.listing())
+            .judge(crate::vcs::vcs_for(crate::manifest::VcsType::Git).as_ref()),
+    );
+    Some(Cow::Owned(report))
+}
+
 /// The report `err` refuses with, wherever in its chain it sits.
-pub fn report_of(err: &anyhow::Error) -> Option<&Report> {
-    err.chain()
-        .find_map(|link| link.downcast_ref::<Refused>())
-        .map(|refused| &refused.0)
+pub fn report_of(err: &anyhow::Error) -> Option<Cow<'_, Report>> {
+    err.chain().find_map(report_at)
 }
 
 /// The judged lines `err` refuses with, for a `--json` record; empty when it
 /// judged none.
 pub fn refused_output(err: &anyhow::Error) -> Vec<JudgedOutput> {
-    report_of(err).map(Report::output).unwrap_or_default()
+    report_of(err)
+        .map(|report| report.output())
+        .unwrap_or_default()
 }
 
 /// The context lines wrapped above `err`'s report, outermost first.
 pub fn contexts_above_report(err: &anyhow::Error) -> Vec<String> {
     err.chain()
-        .take_while(|link| link.downcast_ref::<Refused>().is_none())
+        .take_while(|link| report_at(*link).is_none())
         .map(ToString::to_string)
         .collect()
 }
@@ -1621,80 +1772,162 @@ pub struct ChoiceOutput {
     pub run: Vec<String>,
 }
 
-/// Every axis's entry for the refusals page: what it judges, its states, and
+/// The entries of the refusals page: what each axis judges, its states, and
 /// each state's printable choices, VCS actions spelled by `vcs_type`'s backend.
+/// An axis with a finding has its one entry on the findings page instead
+/// ([`finding_entries_markdown`]).
 pub fn kind_entries_markdown(vcs_type: crate::manifest::VcsType) -> String {
     let vcs = crate::vcs::vcs_for(vcs_type);
-    let vcs = vcs.as_ref();
     let vcs_name = crate::wire_token::wire_token(&vcs_type);
-    let vcs_name = vcs_name.as_str();
-    let mut entries: Vec<String> = Vec::new();
-    for axis in Axis::ALL {
-        let mut out = String::new();
-        let kind = axis.row();
-        let states: Vec<State> = State::ALL
-            .into_iter()
-            .filter(|s| s.axis() == axis)
-            .collect();
-        out.push_str(&format!("### `{}`\n\n", axis.token()));
-        out.push_str(&format!("**Condition.** {}\n\n", kind.condition));
-        out.push_str(&format!("**Why.** {}\n\n", kind.why));
-        out.push_str(&format!(
-            // rwv-advice: not-an-invocation
-            "**States.** A refused verb prints `rwv <verb>: <repo>: {} <state>` for each repo it \
-             judged in one of these, with what the state lists beneath it.\n\n",
-            axis.token()
-        ));
-        out.push_str("| State | Means | Refused by |\n|---|---|---|\n");
-        for state in &states {
-            let row = state.row();
-            out.push_str(&format!(
-                "| `{}` | {} | {} |\n",
-                row.name, row.means, row.refused_by
-            ));
-        }
-        out.push_str(
-            "\n**Choices.** Each state's choices print under `choices:` in this order, with a \
-             directory named where a choice does not run where the verb did. A state with no \
-             row here prints none.\n\n",
-        );
-        out.push_str(
-            "| State | Choice | Spelled | Where | Keeps work because |\n|---|---|---|---|---|\n",
-        );
-        for state in &states {
-            let state_row = state.row();
-            let every = state_row.offers.iter().map(|form| (None, form));
-            let by_verb = state_row
-                .verb_offers
-                .iter()
-                .map(|(verb, form)| (Some(*verb), form));
-            for (verb, form) in every.chain(by_verb).filter(|(_, f)| f.printable()) {
-                let row = form.row();
-                let choice = row.choice.row();
-                let label = match choice.id {
-                    Some(id) => format!("{id}: {}", choice.phrase),
-                    None => choice.phrase.to_owned(),
-                };
-                let state_cell = match verb {
-                    None => format!("`{}`", state.name()),
-                    Some(verb) => format!("`{}`, for `rwv {verb}`", state.name()),
-                };
+    Axis::ALL
+        .into_iter()
+        .filter(|axis| axis.finding().is_none())
+        .map(|axis| {
+            format!(
+                "### `{}`\n\n**Condition.** {}\n\n{}",
+                axis.token(),
+                axis.row().condition,
+                kind_sections(axis, vcs.as_ref(), &vcs_name)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The refusals page's pointers to the kinds whose entry is on the findings
+/// page, one bullet each.
+pub fn finding_kind_links_markdown() -> String {
+    Axis::ALL
+        .into_iter()
+        .filter(|axis| axis.finding().is_some())
+        .map(|axis| {
+            let token = axis.token();
+            format!("- [`{token}`](./doctor-findings.md#{token})\n")
+        })
+        .collect()
+}
+
+/// The entry of each axis that has a finding, as the findings page carries
+/// it: the axis's prose, its states and choices, then one section per
+/// sub-kind opening with the severity and `--fix` disposition the doctor
+/// register gives it.
+pub fn finding_entries_markdown(vcs_type: crate::manifest::VcsType) -> Vec<(Axis, String)> {
+    let vcs = crate::vcs::vcs_for(vcs_type);
+    let vcs_name = crate::wire_token::wire_token(&vcs_type);
+    Axis::ALL
+        .into_iter()
+        .filter_map(|axis| Some((axis, axis.finding()?)))
+        .map(|(axis, finding)| {
+            let mut out = format!(
+                "### `{}`\n\n{}\n\n{}",
+                axis.token(),
+                axis.row().condition,
+                kind_sections(axis, vcs.as_ref(), &vcs_name)
+            );
+            for sub_kind in &finding.sub_kinds {
                 out.push_str(&format!(
-                    "| {} | {} | {} | {} | {} |\n",
-                    state_cell,
-                    label,
-                    spelled(*form, vcs, vcs_name),
-                    row.at.describe(),
-                    choice.keeps_work
+                    "\n#### `{}`\n\n**{}. {}** {}\n",
+                    sub_kind.token,
+                    severity_text(sub_kind.severity),
+                    fix_text(sub_kind.fix),
+                    consent_note(sub_kind.fix, sub_kind.entry)
                 ));
             }
-        }
-        if !kind.sits.is_empty() {
-            out.push_str(&format!("\n**Where this sits.** {}\n", kind.sits));
-        }
-        entries.push(out);
+            (axis, out)
+        })
+        .collect()
+}
+
+fn severity_text(severity: crate::integration::Severity) -> &'static str {
+    match severity {
+        crate::integration::Severity::Warning => "Warning",
+        crate::integration::Severity::Error => "Error",
     }
-    entries.join("\n")
+}
+
+fn fix_text(fix: crate::check::FixDisposition) -> &'static str {
+    match fix {
+        crate::check::FixDisposition::Auto => "Auto-fixable.",
+        crate::check::FixDisposition::ReportOnly => "Report-only.",
+        crate::check::FixDisposition::Consented(_) => "Report-only by default.",
+    }
+}
+
+fn consent_note(fix: crate::check::FixDisposition, entry: &str) -> String {
+    match fix {
+        crate::check::FixDisposition::Consented(flag) => {
+            format!("`rwv doctor --fix {flag}` repairs it. {entry}")
+        }
+        crate::check::FixDisposition::Auto | crate::check::FixDisposition::ReportOnly => {
+            entry.to_owned()
+        }
+    }
+}
+
+/// The part of an axis's entry that comes from the table: why the rule
+/// exists, the states, their choices, and where the rule sits.
+fn kind_sections(axis: Axis, vcs: &dyn Vcs, vcs_name: &str) -> String {
+    let mut out = String::new();
+    let kind = axis.row();
+    let states: Vec<State> = State::ALL
+        .into_iter()
+        .filter(|s| s.axis() == axis)
+        .collect();
+    out.push_str(&format!("**Why.** {}\n\n", kind.why));
+    out.push_str(&format!(
+        // rwv-advice: not-an-invocation
+        "**States.** A refused verb prints `rwv <verb>: <repo>: {} <state>` for each repo it \
+         judged in one of these, with what the state lists beneath it.\n\n",
+        axis.token()
+    ));
+    out.push_str("| State | Means | Refused by |\n|---|---|---|\n");
+    for state in &states {
+        let row = state.row();
+        out.push_str(&format!(
+            "| `{}` | {} | {} |\n",
+            row.name, row.means, row.refused_by
+        ));
+    }
+    out.push_str(
+        "\n**Choices.** Each state's choices print under `choices:` in this order, with a \
+         directory named where a choice does not run where the verb did. A state with no \
+         row here prints none.\n\n",
+    );
+    out.push_str(
+        "| State | Choice | Spelled | Where | Keeps work because |\n|---|---|---|---|---|\n",
+    );
+    for state in &states {
+        let state_row = state.row();
+        let every = state_row.offers.iter().map(|form| (None, form));
+        let by_verb = state_row
+            .verb_offers
+            .iter()
+            .map(|(verb, form)| (Some(*verb), form));
+        for (verb, form) in every.chain(by_verb).filter(|(_, f)| f.printable()) {
+            let row = form.row();
+            let choice = row.choice.row();
+            let label = match choice.id {
+                Some(id) => format!("{id}: {}", choice.phrase),
+                None => choice.phrase.to_owned(),
+            };
+            let state_cell = match verb {
+                None => format!("`{}`", state.name()),
+                Some(verb) => format!("`{}`, for `rwv {verb}`", state.name()),
+            };
+            out.push_str(&format!(
+                "| {} | {} | {} | {} | {} |\n",
+                state_cell,
+                label,
+                spelled(*form, vcs, vcs_name),
+                row.at.describe(),
+                choice.keeps_work
+            ));
+        }
+    }
+    if !kind.sits.is_empty() {
+        out.push_str(&format!("\n**Where this sits.** {}\n", kind.sits));
+    }
+    out
 }
 
 fn spelled(form: Form, vcs: &dyn Vcs, vcs_name: &str) -> String {
@@ -1839,6 +2072,46 @@ mod tests {
         assert_eq!(
             fill("cd <dir>", &BTreeMap::from([("<dir>", "a b".into())])),
             "cd \"a b\""
+        );
+    }
+
+    #[test]
+    fn an_axis_with_a_finding_spells_its_token_and_carries_every_sub_kind() {
+        let mut with_finding = 0;
+        for axis in Axis::ALL {
+            let Some(finding) = axis.finding() else {
+                continue;
+            };
+            with_finding += 1;
+            assert_eq!(finding.kind.to_string(), axis.token());
+            let carried = crate::check::finding_sub_kinds()
+                .remove(&axis.token())
+                .unwrap_or_default();
+            let listed: std::collections::BTreeSet<String> =
+                finding.sub_kinds.iter().map(|s| s.token.clone()).collect();
+            assert_eq!(listed, carried, "{axis:?}");
+        }
+        assert_eq!(with_finding, 1);
+    }
+
+    #[test]
+    fn a_findings_entry_opens_each_sub_kind_with_the_registers_marks() {
+        let entries = finding_entries_markdown(crate::manifest::VcsType::Git);
+        let [(Axis::UnparseableProject, entry)] = &entries[..] else {
+            panic!("the one axis with a finding yields the one entry: {entries:?}");
+        };
+        assert!(entry.starts_with("### `unparseable-project`\n"), "{entry}");
+        assert!(
+            entry.contains("\n#### `pre-schema`\n\n**Error. Auto-fixable.** "),
+            "{entry}"
+        );
+        assert!(
+            entry.contains("\n#### `malformed`\n\n**Error. Report-only.** "),
+            "{entry}"
+        );
+        assert!(
+            !kind_entries_markdown(crate::manifest::VcsType::Git).contains("unparseable-project"),
+            "the refusals page holds no entry for a kind the findings page holds"
         );
     }
 

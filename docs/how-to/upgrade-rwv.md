@@ -90,6 +90,18 @@ An `rwv.toml` whose member entries name `version` for the tracked branch, or `su
 [error: unparseable-project/pre-schema] core: <project>: failed to parse rwv.toml at <dir>/rwv.toml: rwv.toml names member-entry keys an earlier release wrote: `version` is now `branch` in <member>; `rwv doctor --fix` rewrites them and commits only that rewrite: TOML parse error at line 4, column 1
 ```
 
+A verb that reads the manifest refuses instead, naming the same repair:
+
+```text
+rwv lock: projects/<project>: unparseable-project here
+    <member>: `version` is now `branch`
+choices:
+  rewrite the keys an earlier release wrote, committing only that
+    rwv doctor --fix
+
+rwv explain unparseable-project
+```
+
 Run the repair from the project's checkout:
 
 ```bash

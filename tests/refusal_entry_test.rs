@@ -6,7 +6,9 @@
 //! page, and what the terminal prints is a slice of that page rather than a
 //! copy of it. Two spellings is the failure being guarded, and a copy is how
 //! it arrives. A kind's entry is generated from the state-to-choices table, so
-//! the page carrying exactly the generated text is pinned here as well.
+//! the page carrying exactly the generated text is pinned here as well. A kind
+//! that `rwv doctor` also reports keeps its one entry on the findings page,
+//! like a token that doctor also reports.
 
 use repoweave::diagnosis::Axis;
 use repoweave::refusal::RefusalKind;
@@ -180,12 +182,13 @@ fn finding_tokens() -> BTreeMap<String, usize> {
     tokens
 }
 
-/// Tokens a refusal shares with a `rwv doctor` finding — one condition,
-/// reported by both.
+/// Tokens and kinds a refusal shares with a `rwv doctor` finding — one
+/// condition, reported by both.
 fn tokens_shared_with_a_finding() -> BTreeSet<String> {
     let findings = finding_tokens();
     minted_tokens()
         .into_iter()
+        .chain(kind_tokens())
         .filter(|t| findings.contains_key(t))
         .collect()
 }
@@ -239,12 +242,15 @@ fn every_token_has_one_entry_per_condition_across_the_pages() {
 /// A refusal whose condition `rwv doctor` also reports keeps its single entry
 /// on the findings page, and `rwv explain` serves it from there. Serving must
 /// not depend on which page carries the entry — that indifference is what
-/// stops a second one being written on the refusals page.
+/// stops a second one being written on the refusals page. A kind of the
+/// state-to-choices table is shared in the same way as a token is.
 #[test]
 fn a_token_shared_with_a_finding_keeps_its_one_entry_on_the_findings_page() {
     let shared = tokens_shared_with_a_finding();
     assert!(
-        shared.len() >= 15 && shared.contains("stale-lock"),
+        shared.len() >= 15
+            && shared.contains("stale-lock")
+            && shared.contains("unparseable-project"),
         "the shared set read {} tokens, too few to be the whole overlap: {shared:?}",
         shared.len()
     );
@@ -268,11 +274,16 @@ fn a_token_shared_with_a_finding_keeps_its_one_entry_on_the_findings_page() {
 }
 
 /// The seeded failures for the two pins above: a second entry for a shared
-/// kind and for a shared sub-kind, each written on the refusals page.
+/// token, for a shared kind of the table and for a shared sub-kind, each
+/// written on the refusals page.
 #[test]
 fn a_seeded_duplicate_of_a_shared_entry_is_reported() {
     let shared = tokens_shared_with_a_finding();
-    for (seed, heading) in [("stale-lock", "###"), ("dangling-parent", "####")] {
+    for (seed, heading) in [
+        ("stale-lock", "###"),
+        ("unparseable-project", "###"),
+        ("dangling-parent", "####"),
+    ] {
         assert!(shared.contains(seed), "`{seed}` is no longer shared");
         let mut pages = entry_pages();
         pages[0]
@@ -390,13 +401,28 @@ fn a_verb_serves_its_bundle_and_no_token_contests_one() {
     );
 }
 
-/// Each kind's entry on the page is the one the state-to-choices table
+/// Every entry the state-to-choices table generates, wherever its page is:
+/// the refusals page's, and the findings page's for a kind doctor also reports.
+fn generated_entries() -> String {
+    let vcs = repoweave::manifest::VcsType::Git;
+    let findings: Vec<String> = repoweave::diagnosis::finding_entries_markdown(vcs)
+        .into_iter()
+        .map(|(_, entry)| entry)
+        .collect();
+    format!(
+        "{}\n{}",
+        repoweave::diagnosis::kind_entries_markdown(vcs),
+        findings.join("\n")
+    )
+}
+
+/// Each kind's entry on its page is the one the state-to-choices table
 /// generates, byte for byte, and `rwv explain <kind>` reaches it: the page is
 /// the table's output, not a hand copy that could say something the refusal
 /// does not print.
 #[test]
 fn every_kind_serves_the_entry_the_table_generates() {
-    let generated = repoweave::diagnosis::kind_entries_markdown(repoweave::manifest::VcsType::Git);
+    let generated = generated_entries();
     let kinds = kind_tokens();
     assert!(
         kinds.len() >= 4 && kinds.contains(&"edits".to_owned()),
@@ -418,12 +444,69 @@ fn every_kind_serves_the_entry_the_table_generates() {
 }
 
 /// The seeded failure for the pin above: an entry that differs from the
-/// table's by one word is reported.
+/// table's by one word is reported, for a kind of each page.
 #[test]
 fn a_kind_entry_edited_by_hand_is_not_the_generated_one() {
-    let generated = repoweave::diagnosis::kind_entries_markdown(repoweave::manifest::VcsType::Git);
-    let entry = repoweave::explain::entry_for_token("edits").expect("edits is served");
-    let edited = entry.replacen("commit your edits", "commit your work", 1);
-    assert_ne!(edited, entry, "the seed must change the entry");
-    assert!(!generated.contains(&edited));
+    let generated = generated_entries();
+    for (kind, phrase, edit) in [
+        ("edits", "commit your edits", "commit your work"),
+        (
+            "unparseable-project",
+            "committing only that",
+            "committing everything",
+        ),
+    ] {
+        let entry = repoweave::explain::entry_for_token(kind).expect("the kind is served");
+        let edited = entry.replacen(phrase, edit, 1);
+        assert_ne!(edited, entry, "the seed must change the `{kind}` entry");
+        assert!(!generated.contains(&edited));
+    }
+}
+
+/// A kind the table shares with a doctor finding has its one entry on the
+/// findings page and none on the refusals page, and a kind it does not share
+/// has its one entry on the refusals page; `rwv explain` resolves each, and
+/// the shared one's sub-kinds too. The token a refusal printed as a bare
+/// condition, before the kind existed, is no longer a refusal token.
+#[test]
+fn a_kind_shared_with_a_finding_has_exactly_one_entry_and_explain_resolves_it() {
+    let findings = finding_tokens();
+    let pages = entry_pages();
+    let at = entry_locations(&pages);
+    let shared: Vec<String> = kind_tokens()
+        .into_iter()
+        .filter(|k| findings.contains_key(k))
+        .collect();
+    assert_eq!(
+        shared,
+        ["unparseable-project"],
+        "the kinds doctor also reports"
+    );
+
+    for kind in kind_tokens() {
+        let want = if findings.contains_key(&kind) {
+            vec!["doctor-findings.md"]
+        } else {
+            vec!["refusals.md"]
+        };
+        assert_eq!(
+            at.get(&kind),
+            Some(&want),
+            "`{kind}` has entries on the wrong pages"
+        );
+        assert!(
+            repoweave::explain::entry_for_token(&kind).is_some(),
+            "`rwv explain {kind}` resolves to nothing"
+        );
+    }
+    for sub_kind in ["pre-schema", "malformed"] {
+        let name = format!("unparseable-project/{sub_kind}");
+        let entry = repoweave::explain::entry_for_token(&name)
+            .unwrap_or_else(|| panic!("`rwv explain {name}` resolves to nothing"));
+        assert!(entry.starts_with(&format!("#### `{sub_kind}`")), "{entry}");
+    }
+    assert!(
+        !minted_tokens().contains(&"unparseable-project".to_owned()),
+        "a token refusal for a kind the table carries would be a second way to refuse it"
+    );
 }

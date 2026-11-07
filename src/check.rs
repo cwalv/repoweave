@@ -766,10 +766,7 @@ impl CheckViolation {
             | CheckViolation::DeadOpLease { .. }
             | CheckViolation::MemberPermissions { .. } => Auto,
 
-            CheckViolation::UnparseableProject { sub_kind, .. } => match sub_kind {
-                UnparseableProjectKind::PreSchema => Auto,
-                UnparseableProjectKind::Malformed => ReportOnly,
-            },
+            CheckViolation::UnparseableProject { sub_kind, .. } => sub_kind.fix_disposition(),
             CheckViolation::MissingReplayExclusion { sub_kind, .. } => match sub_kind {
                 ReplayExclusionKind::Absent
                 | ReplayExclusionKind::LegacySpelling
@@ -880,7 +877,6 @@ impl CheckViolation {
             | CheckViolation::UnreadableActiveProject { .. }
             | CheckViolation::WeaveRootIdentityConflict { .. }
             | CheckViolation::UnreadableWorkweaveIndex { .. }
-            | CheckViolation::UnparseableProject { .. }
             | CheckViolation::CloneTopology { .. } => Error,
 
             CheckViolation::MemberPermissions { .. }
@@ -913,6 +909,7 @@ impl CheckViolation {
             | CheckViolation::UninitializedSubmodule { .. }
             | CheckViolation::PhantomMergeDriver { .. } => Warning,
 
+            CheckViolation::UnparseableProject { sub_kind, .. } => sub_kind.severity(),
             CheckViolation::WorkweaveDrift { kind, .. } => match kind {
                 DriftKind::Extra => Warning,
                 DriftKind::Missing
@@ -1141,6 +1138,21 @@ pub enum UnparseableProjectKind {
 }
 
 impl UnparseableProjectKind {
+    pub const ALL: [Self; 2] = [Self::PreSchema, Self::Malformed];
+
+    pub fn severity(self) -> crate::integration::Severity {
+        match self {
+            Self::PreSchema | Self::Malformed => crate::integration::Severity::Error,
+        }
+    }
+
+    pub fn fix_disposition(self) -> FixDisposition {
+        match self {
+            Self::PreSchema => FixDisposition::Auto,
+            Self::Malformed => FixDisposition::ReportOnly,
+        }
+    }
+
     fn of(failure: &anyhow::Error) -> Self {
         if failure
             .chain()

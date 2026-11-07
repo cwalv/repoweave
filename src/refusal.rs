@@ -104,9 +104,6 @@ pub enum RefusalKind {
     UnresolvableLockEntry,
     /// The lock↔HEAD relation is not `ok`.
     StaleLock,
-    /// A project directory does not parse as a project, or its `rwv.toml`
-    /// names member-entry keys an earlier release wrote.
-    UnparseableProject,
     /// An untracked file stands where the operation must write.
     UntrackedCollision,
     /// An op-state lease outlived the process that took it.
@@ -367,12 +364,6 @@ fn kind_of_link(link: &(dyn std::error::Error + 'static)) -> Option<RefusalKind>
     }
     if let Some(e) = link.downcast_ref::<crate::selector::FilterError>() {
         return Some(filter_kind(e));
-    }
-    if link
-        .downcast_ref::<crate::manifest::PreSchemaManifest>()
-        .is_some()
-    {
-        return Some(RefusalKind::UnparseableProject);
     }
     None
 }

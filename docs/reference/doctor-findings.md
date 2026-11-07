@@ -46,7 +46,9 @@ Fifteen kinds carry a `sub_kind` — `branch-discipline`, `clone-topology`,
 sub-kind decides the disposition the entry has a sub-heading per `sub_kind`;
 where it only narrows what was found, one entry covers them all.
 
-`rwv explain <kind>` serves a kind's entry. A finding with a sub-kind is
+`rwv explain <kind>` serves a kind's entry. A kind that a refused verb also
+routes to has, ahead of its sub-kinds, the states the refusal prints and the
+choices each state offers. A finding with a sub-kind is
 looked up as `rwv explain <kind>/<sub-kind>`, for example
 `rwv explain working-tree-drift/safe-to-fix`: that serves the sub-kind's own
 entry, or the kind's entry where one covers them all. A sub-kind only one kind
@@ -265,50 +267,37 @@ clone the URL a second time at the recorded path.
 
 ### `unparseable-project`
 
-A project directory exists but does not load: either its `rwv.toml` or its
-`rwv.lock` failed to parse. It is reported at error severity specifically so a
-project rwv cannot see into does not read as a clean project with zero
-findings. The `message` names which of the two files failed and carries that
-file's remedy, and `manifest_path` always names the manifest, because it locates
-the project rather than the failure.
+A project directory exists but does not load: its `rwv.toml` or its `rwv.lock` failed to parse.
+
+**Why.** A project rwv cannot see into must not read as a clean project with zero findings, so `rwv doctor` reports it at error severity. Its `message` names which of the two files failed and carries that file's remedy, and `manifest_path` always names the manifest, because it locates the project rather than the failure. A verb that reads the manifest at the checked-out tip refuses when it names member-entry keys an earlier release wrote: no verb reads them, and the repair is mechanical.
+
+**States.** A refused verb prints `rwv <verb>: <repo>: unparseable-project <state>` for each repo it judged in one of these, with what the state lists beneath it.
+
+| State | Means | Refused by |
+|---|---|---|
+| `here` | the project's `rwv.toml` at the checked-out tip names member-entry keys an earlier release wrote, each listed with the key that replaces it | every verb that reads the project's `rwv.toml`; `rwv doctor` reports it instead, and `rwv status` and `rwv prime` skip the project with a warning |
+
+**Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
+
+| State | Choice | Spelled | Where | Keeps work because |
+|---|---|---|---|---|
+| `here` | rewrite the keys an earlier release wrote, committing only that | `rwv doctor --fix` | here | commits only the rewrite; other edits stay uncommitted |
+
+**Where this sits.** [Formats](./formats.md) states the member-entry keys; [Upgrade rwv](../how-to/upgrade-rwv.md) walks through the rewrite.
 
 #### `pre-schema`
 
-**Error. Auto-fixable.** The project's `rwv.toml` names member-entry keys an
-earlier release wrote: `version` where `branch` is now expected, or
-`submodules` where `recurse-submodules` is. Every verb that reads the manifest
-at the checked-out tip refuses with this kind, and `rwv explain
-unparseable-project` is its route line.
+**Error. Auto-fixable.** The project's `rwv.toml` names member-entry keys an earlier release wrote: `version` where `branch` is now expected, or `submodules` where `recurse-submodules` is. Every verb that reads the manifest at the checked-out tip refuses with this kind, and `rwv explain unparseable-project` is its route line.
 
-**What to do:** `rwv doctor --fix`, run in the project's checkout. It renames the
-keys in place — `version` to `branch`, `submodules = "skip"` to
-`recurse-submodules = false`, and drops `submodules = "local"`, which is what an
-absent `recurse-submodules` means — keeping the file's comments and key order.
-It writes the rename into the working file and into the project's HEAD commit
-and commits only that, in one commit: any other edit to `rwv.toml`, and any edit
-to another file, stays uncommitted where it was. It declines, changing nothing,
-while another file is staged or a rebase, merge or cherry-pick is in progress in
-the project repo, and says so; run it again once that is dealt with. A value of
-`submodules` other than `"local"` or `"skip"`, or an entry that names both a key
-and its replacement, is not guessed at: the repair names it and leaves the file.
+**What to do:** `rwv doctor --fix`, run in the project's checkout. It renames the keys in place — `version` to `branch`, `submodules = "skip"` to `recurse-submodules = false`, and drops `submodules = "local"`, which is what an absent `recurse-submodules` means — keeping the file's comments and key order. It writes the rename into the working file and into the project's HEAD commit and commits only that, in one commit: any other edit to `rwv.toml`, and any edit to another file, stays uncommitted where it was. It declines, changing nothing, while another file is staged or a rebase, merge or cherry-pick is in progress in the project repo, and says so; run it again once that is dealt with. A value of `submodules` other than `"local"` or `"skip"`, or an entry that names both a key and its replacement, is not guessed at: the repair names it and leaves the file.
 
-A commit other than the checked-out one that names the old keys is not
-reported and is not refused. It declares nothing to the verbs that read it, and
-its `rwv.lock` is read as any lock is.
+A commit other than the checked-out one that names the old keys is not reported and is not refused. It declares nothing to the verbs that read it, and its `rwv.lock` is read as any lock is.
 
 #### `malformed`
 
-**Error. Report-only.** Any other reason the project did not load. The message
-names which file failed and carries that file's remedy — the manifest is yours
-to edit, at the line the parser names; the lock is generated, so `rwv lock`
-rewrites it. A repository entry with no `role`, an unknown top-level key, an
-unknown `[integrations.<name>]` table, an unknown key in one, and an `enabled`
-that is not `true` or `false` are all parse failures of this kind, each naming
-the line and what was expected.
+**Error. Report-only.** Any other reason the project did not load. The message names which file failed and carries that file's remedy — the manifest is yours to edit, at the line the parser names; the lock is generated, so `rwv lock` rewrites it. A repository entry with no `role`, an unknown top-level key, an unknown `[integrations.<name>]` table, an unknown key in one, and an `enabled` that is not `true` or `false` are all parse failures of this kind, each naming the line and what was expected.
 
-`--fix` has no arm for it. Rewriting a manifest rwv could not parse would be
-guesswork, and regenerating a lock re-pins the workspace to whatever the
-working tips happen to be — a decision about state, not a repair.
+`--fix` has no arm for it. Rewriting a manifest rwv could not parse would be guesswork, and regenerating a lock re-pins the workspace to whatever the working tips happen to be — a decision about state, not a repair.
 
 ### `legacy-manifest-format`
 

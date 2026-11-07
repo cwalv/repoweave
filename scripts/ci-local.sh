@@ -194,17 +194,18 @@ if run_stage drift; then
     # Regenerate explain markdown + JSON Schema artifacts from templates + Rust
     # types. If anyone changed a `--json`-backing type or a template without
     # committing the regenerated output, this fails.
-    # Also regenerates docs/reference/prime/overview.md from its template, and
+    # Also regenerates docs/reference/prime/overview.md from its template,
     # docs/reference/refusals.md from its template and the state-to-choices
-    # table in src/diagnosis.rs.
+    # table in src/diagnosis.rs, and the entries of
+    # docs/reference/doctor-findings.md that table shares with a finding.
     # A pass says only that the paths below match what the generator
     # currently produces from current inputs — nothing about a hand edit
     # anywhere else, and nothing about one made inside them, since
     # regeneration already overwrote it before this diff ran.
     cargo run --quiet --example generate-explain
-    git diff --exit-code -- docs/reference/explain/ docs/reference/schemas/ docs/reference/prime/ docs/reference/refusals.md || {
+    git diff --exit-code -- docs/reference/explain/ docs/reference/schemas/ docs/reference/prime/ docs/reference/refusals.md docs/reference/doctor-findings.md || {
         status=$?
-        printf 'explain artifacts changed by regeneration — commit them (this check compares the regenerated docs/reference/explain, docs/reference/schemas, docs/reference/prime and docs/reference/refusals.md against the index; it does not inspect files the generator does not write)\n' >&2
+        printf 'explain artifacts changed by regeneration — commit them (this check compares the regenerated docs/reference/explain, docs/reference/schemas, docs/reference/prime, docs/reference/refusals.md and docs/reference/doctor-findings.md against the index; it does not inspect files the generator does not write; an entry of doctor-findings.md that the state-to-choices table generates is changed in the table, not in the page)\n' >&2
         exit "$status"
     }
 fi

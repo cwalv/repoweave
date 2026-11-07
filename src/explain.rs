@@ -41,10 +41,11 @@ const VCS_ERRORS_PAGE: &str = include_str!("../docs/reference/vcs-errors.md");
 /// The published pages an entry can live on.
 ///
 /// A token names one condition, so it has one entry wherever that entry
-/// already lives — a refusal reporting a state `rwv doctor` also reports is
-/// served from the findings page rather than given a second entry here. That
-/// is why this is a list of pages and not a page: nothing about serving an
-/// entry may depend on which page carries it.
+/// already lives — a refusal token or a kind of the state-to-choices table
+/// reporting a state `rwv doctor` also reports is served from the findings
+/// page rather than given a second entry here. That is why this is a list of
+/// pages and not a page: nothing about serving an entry may depend on which
+/// page carries it.
 ///
 /// The vocabulary this resolves over is every register that publishes an
 /// operator-facing token, **the integration channel's issue kinds included**.

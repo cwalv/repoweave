@@ -467,13 +467,18 @@ and register rules:
    `check_no_internals_on_operator_surfaces`.
 4. **Generated operator reference (`docs/reference/explain/*.md`,
    `docs/reference/schemas/*.json`, `docs/reference/prime/overview.md`,
-   `docs/reference/refusals.md`)** — committed outputs of `cargo run --example
-   generate-explain` derived from `src/explain.rs`, `src/prime.rs`, the
-   state-to-choices table in `src/diagnosis.rs`, the templates beside them, and
+   `docs/reference/refusals.md`, and the entries of
+   `docs/reference/doctor-findings.md` that `Axis::finding` names)** —
+   committed outputs of `cargo run --example generate-explain` derived from
+   `src/explain.rs`, `src/prime.rs`, the state-to-choices table in
+   `src/diagnosis.rs`, the templates beside them, and
    `#[derive(JsonSchema)]`. The refusals page's template is
    `docs/reference/templates/refusals.md.tmpl`, where a token's entry is
-   written. Edit the generator inputs and re-run `cargo run --example
-   generate-explain`; never hand-edit the generated files.
+   written. The findings page is otherwise hand-written; the generator
+   rewrites an entry of it from its heading to the next heading of level
+   three or above, so a hand edit inside one is overwritten. Edit the
+   generator inputs and re-run `cargo run --example generate-explain`; never
+   hand-edit the generated files.
 
 ### Operator prose register (`README.md` and `docs/SUMMARY.md` pages)
 

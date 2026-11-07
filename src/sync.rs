@@ -1690,19 +1690,16 @@ fn replay_exclusion_source_only_refusal(
 
 /// CWD's project as Phase 1' left it: the manifest the op ends with.
 fn reload_replayed_project(ctx: &OpContext<'_>) -> anyhow::Result<Project> {
-    Project::from_dir(&ctx.cwd_project_dir, ctx.cwd_project_name.clone()).map_err(|e| {
-        crate::refusal::refusal(
-            RefusalKind::UnparseableProject,
-            format!(
-                "failed to reload project manifest after Phase 1' ({e:#}).\n\
-                 \n\
-                 The project repo was successfully rebased/merged, but the manifest \
-                 in {cwd_project_dir} could not be parsed. Proceeding would silently \
-                 omit newly-added repos from the regenerated lock.\n\
-                 \n\
-                 To recover: `rwv abort`",
-                cwd_project_dir = ctx.cwd_project_dir.display(),
-            ),
+    Project::from_dir(&ctx.cwd_project_dir, ctx.cwd_project_name.clone()).with_context(|| {
+        format!(
+            "failed to reload project manifest after Phase 1'.\n\
+             \n\
+             The project repo was successfully rebased/merged, but the manifest \
+             in {cwd_project_dir} could not be parsed. Proceeding would silently \
+             omit newly-added repos from the regenerated lock.\n\
+             \n\
+             To recover: `rwv abort`",
+            cwd_project_dir = ctx.cwd_project_dir.display(),
         )
     })
 }

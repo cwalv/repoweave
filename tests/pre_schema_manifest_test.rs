@@ -12,7 +12,7 @@ use assert_cmd::Command;
 use repoweave::manifest::{
     rewrite_pre_schema_keys, Manifest, PreSchemaManifest, SubmoduleRecursion,
 };
-use repoweave::refusal::{kind_of, RefusalKind};
+use repoweave::refusal::kind_of;
 use std::path::{Path, PathBuf};
 
 mod common;
@@ -84,6 +84,14 @@ fn weave_committing(parent: &Path, manifest: &str) -> Weave {
     Weave { root, project }
 }
 
+fn assert_routes_to(stderr: &str, token: &str) {
+    let routed: Vec<&str> = stderr
+        .lines()
+        .filter_map(|l| l.strip_prefix("rwv explain "))
+        .collect();
+    assert_eq!(routed, vec![token], "stderr was:\n{stderr}");
+}
+
 fn commits(weave: &Weave) -> usize {
     project_git(weave, &["rev-list", "--count", "HEAD"])
         .parse()
@@ -103,8 +111,8 @@ fn the_old_member_keys_are_refused_at_the_checked_out_tip_and_never_read() {
         );
         assert_eq!(
             kind_of(&err),
-            Some(RefusalKind::UnparseableProject),
-            "{err:#}"
+            None,
+            "the refusal is a state of the table, so no token names it: {err:#}"
         );
         assert!(
             format!("{err:#}").contains("`rwv doctor --fix`"),
@@ -116,11 +124,60 @@ fn the_old_member_keys_are_refused_at_the_checked_out_tip_and_never_read() {
     let tmp = common::tempdir().unwrap();
     let weave = weave_committing(tmp.path(), OLD_MANIFEST);
     let assert = rwv(&weave).arg("lock").assert().failure();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
-    assert!(
-        stderr.contains("`rwv doctor --fix`")
-            && stderr.ends_with("rwv explain unparseable-project\n"),
-        "a verb reading the file at the tip refuses with the kind's route and the fix: {stderr}"
+    let stderr: String = String::from_utf8_lossy(&assert.get_output().stderr)
+        .lines()
+        .filter(|line| !line.starts_with("target:"))
+        .map(|line| format!("{line}\n"))
+        .collect();
+    assert_eq!(
+        stderr,
+        "rwv lock: failed to load project 'web-app'\n\
+         rwv lock: projects/web-app: unparseable-project here\n\
+         \x20   github/acme/lib: `version` is now `branch`\n\
+         \x20   github/acme/lib: `submodules` is now `recurse-submodules`\n\
+         \x20   github/acme/server: `version` is now `branch`\n\
+         \x20   github/acme/server: `submodules` is now `recurse-submodules`\n\
+         choices:\n\
+         \x20 rewrite the keys an earlier release wrote, committing only that\n\
+         \x20   rwv doctor --fix\n\
+         \n\
+         rwv explain unparseable-project\n",
+        "a verb reading the file at the tip refuses with the kind's envelope"
+    );
+    assert_routes_to(&stderr, "unparseable-project");
+}
+
+#[test]
+fn the_refusal_carries_axis_state_listing_and_choices_under_json() {
+    let tmp = common::tempdir().unwrap();
+    let weave = weave_committing(tmp.path(), OLD_MANIFEST);
+    let assert = rwv(&weave).args(["update", "--json"]).assert().failure();
+    let envelope: serde_json::Value = serde_json::from_slice(&assert.get_output().stdout)
+        .expect("a verb refused before printing anything prints the refusal envelope");
+    let refused = envelope["refused"].as_array().expect("refused is an array");
+    assert_eq!(refused.len(), 1, "{envelope}");
+    let line = &refused[0];
+    assert_eq!(line["path"], "projects/web-app");
+    assert_eq!(line["axis"], "unparseable-project");
+    assert_eq!(line["state"], "here");
+    assert_eq!(
+        line["listed"],
+        serde_json::json!([
+            "github/acme/lib: `version` is now `branch`",
+            "github/acme/lib: `submodules` is now `recurse-submodules`",
+            "github/acme/server: `version` is now `branch`",
+            "github/acme/server: `submodules` is now `recurse-submodules`",
+        ])
+    );
+    assert_eq!(line["facts"], serde_json::json!([]));
+    assert_eq!(
+        line["choices"],
+        serde_json::json!([{
+            "id": null,
+            "phrase": "rewrite the keys an earlier release wrote, committing only that",
+            "where": null,
+            "run": ["rwv doctor --fix"],
+        }])
     );
 }
 
