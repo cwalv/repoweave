@@ -74,8 +74,10 @@ Step 3 lands by fast-forwarding the branch each target repo is on, so the
 target must be in a state to receive it. Before step 1 begins, `sync-to`
 refuses when any target repo (manifest or project) has uncommitted tracked
 changes step 3 would fast-forward over, or is on a **detached HEAD** — there
-is no branch there to advance, so the landing would be recorded nowhere.
-`rwv update --detach-checkouts`, `rwv update --remote --detach-checkouts` and `rwv pull --detach-checkouts` leave repos detached; check out the receiving branch in the target and re-run.
+is no branch there to advance, so the landing would be recorded nowhere. A
+`dependency` or `reference` member detached at its pin is not such a repo: it
+receives no landing, and holds nothing of its own. Check out the receiving
+branch in any other target repo that is detached and re-run.
 
 Untracked files in the target are not scanned by this preflight — a
 fast-forward only overwrites a path the incoming commits write, so an

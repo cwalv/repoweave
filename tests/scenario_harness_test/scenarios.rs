@@ -953,3 +953,59 @@ pub fn records_unreadable_entry() -> Scenario {
         ],
     )
 }
+
+pub fn workspace_state_corrupt() -> Scenario {
+    scenario(
+        "workspace state: a file that does not parse",
+        vec![
+            Step::truncate_workspace_state(&a()),
+            Step::rwv(&a(), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains(
+                    "projects/proj aligned for no branch (workspace state reads as absent",
+                ))
+                .claim(Claim::OutputContains("alignment project unaligned"))
+                .claim(Claim::OutputContains("rwv update")),
+            Step::rwv(&a(), &["update"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("reads as absent")),
+            Step::rwv(&a(), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("projects/proj aligned for main"))
+                .claim(Claim::OutputLacks("reads as absent"))
+                .claim(Claim::OutputLacks("project unaligned")),
+        ],
+    )
+}
+
+pub fn status_operator_branches() -> Scenario {
+    scenario(
+        "status lists the branches nothing accounts for",
+        vec![
+            Step::git(&a(), Repo::App, &["switch", "-c", "wip"]),
+            Step::commit(&a(), Repo::App, "wip-one"),
+            Step::commit(&a(), Repo::App, "wip-two"),
+            Step::git(&a(), Repo::App, &["switch", "main"]),
+            create("feat"),
+            Step::commit(&ww("feat"), Repo::App, "feat-app"),
+            Step::commit(&a(), Repo::Lib, "lib-main"),
+            Step::git(&a(), Repo::Lib, &["switch", "-c", "elsewhere"]),
+            Step::rwv(&a(), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains(
+                    "operator branch local/remotes/app  wip  2 unpushed",
+                ))
+                .claim(Claim::OutputLacks(
+                    "operator branch local/remotes/app  proj--feat",
+                ))
+                .claim(Claim::OutputLacks(
+                    "operator branch local/remotes/app  main",
+                ))
+                .claim(Claim::OutputLacks("operator branch local/remotes/lib")),
+            Step::rwv(&a(), &["status", "--json"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("\"operator_branches\""))
+                .claim(Claim::OutputContains("wip-two")),
+        ],
+    )
+}

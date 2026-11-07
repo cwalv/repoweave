@@ -15,7 +15,7 @@ follow-up actions.
 ## Invocation
 
 ```
-rwv doctor [--all] [--locked] [--json] [--fix] [--reattach-checkouts]
+rwv doctor [--all] [--locked] [--json] [--fix] [--abandon-lost-pins]
            [--kind <kind>]...
 ```
 
@@ -48,19 +48,11 @@ rwv doctor [--all] [--locked] [--json] [--fix] [--reattach-checkouts]
   copy goes stale the first time an arm moves, and the one an operator reads
   is the last to be corrected. A finding marked **Report-only by default**
   is repaired only when you also pass the flag named in its entry —
-  `--reattach-checkouts` or `--adopt-detached-checkouts`. Idempotent.
-  Mutually exclusive with `--locked` and `--json`.
-- `--reattach-checkouts` widens `--fix` by exactly one arm
-  (`branch-model.md` §7.2): a canonical store whose HEAD is detached is
-  reattached to its tracking declaration's local counterpart **when that
-  branch exists and its tip equals HEAD**. Without the flag that finding is
-  reported with the `git switch` that would repair it, and nothing moves.
-  The condition is deliberately narrow — it is false for the ordinary
-  post-fetch state (a stale counterpart with HEAD at the lock SHA), so this
-  repairs the minority it can prove safe rather than reattaching a weave.
-  Named for what it changes, per the house rule on override flags: moving
-  which name your commits hang off is a different consequence from losing
-  it (`--detach-checkouts`), so they are two flags.
+  `--abandon-lost-pins`. Idempotent. Mutually exclusive with `--locked` and
+  `--json`.
+- `--abandon-lost-pins` widens `--fix` by exactly one arm: a workweave
+  checkout whose pinned revision is in no clone is relinked onto the canonical
+  clone's HEAD, and the pin is given up. Named for what it destroys.
 
 **A branch that looks like rwv's is not rwv's.** Every deletion `--fix`
 performs is gated on a persisted ownership receipt for that exact ref in

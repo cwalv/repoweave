@@ -2463,7 +2463,7 @@ mod tests {
         }
         assert_eq!(
             offering_nothing,
-            [State::UnparseableProjectMalformed],
+            [State::UnparseableProjectMalformed, State::AlignmentAligned],
             "a state that offers nothing is a decision the table records, not an omission"
         );
         for axis in Axis::ALL {
@@ -2577,15 +2577,20 @@ mod tests {
                 finding.sub_kinds.iter().map(|s| s.token.clone()).collect();
             assert_eq!(listed, carried, "{axis:?}");
         }
-        assert_eq!(with_finding, 1);
+        assert_eq!(with_finding, 2);
     }
 
     #[test]
     fn a_findings_entry_opens_each_sub_kind_with_the_registers_marks() {
         let entries = finding_entries_markdown(crate::manifest::VcsType::Git);
-        let [(Axis::UnparseableProject, entry)] = &entries[..] else {
-            panic!("the one axis with a finding yields the one entry: {entries:?}");
+        let [(Axis::UnparseableProject, entry), (Axis::Alignment, alignment)] = &entries[..] else {
+            panic!("the two axes with a finding yield the two entries: {entries:?}");
         };
+        assert!(alignment.starts_with("### `alignment`\n"), "{alignment}");
+        assert!(
+            alignment.contains("\n#### `on-branch`\n\n**Warning. Report-only.** "),
+            "{alignment}"
+        );
         assert!(entry.starts_with("### `unparseable-project`\n"), "{entry}");
         assert!(
             entry.contains("\n#### `pre-schema`\n\n**Error. Auto-fixable.** "),

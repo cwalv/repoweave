@@ -92,10 +92,14 @@ workweave holding one, and `rwv doctor` reports the slot as
 
 A repo's checked-out branch is owned by exactly one workspace. The
 canonical store sits on a non-ephemeral branch (the manifest's tracking
-branch, e.g. `main`). Every worktree
-checkout sits on an **ephemeral branch** named
-`<project>--<workweave>` — a branch name visible only to that
-workweave.
+branch, e.g. `main`). In a feature workweave, an `owned` or `fork` member's
+worktree sits on an **ephemeral branch** named `<project>--<workweave>` — a
+branch name visible only to that workweave. A member whose branch is checked
+out in another workspace sits **detached at its pin** instead: a `dependency`
+or `reference` member of a feature, whose declared branch the canonical
+holds, is born that way, and `rwv update` puts any member there for the same
+reason. `rwv status` reports it as the fact `checkout`, naming where the
+branch is checked out; nothing moves that branch.
 
 Operationally: the ephemeral naming scheme is what makes two
 workweaves both "on main" non-contradictory — they are on disjoint
@@ -172,7 +176,7 @@ worked example of the general spec; future Vcs impls
 |---|---|
 | Canonical store at `<weave>/<repo_path>` (I1) | A directory containing a `.git/` (or a `.git` file resolving into the canonical store, but not into a workweave). |
 | Linked workspace (I2) | A `git worktree`-created checkout whose `.git` file resolves into the canonical store's `git-common-dir`. |
-| Ephemeral branch ownership (I3) | A branch named `<project>--<workweave>`, present in the canonical store's refs, checked out only in the workweave's worktree. |
+| Ephemeral branch ownership (I3) | A branch named `<project>--<workweave>`, present in the canonical store's refs, checked out only in the workweave's worktree. A branch checked out in one worktree cannot be checked out in another: git refuses, and the second workspace is detached at its pin. |
 
 The decisive git query is `git rev-parse --git-common-dir`. Run from
 inside any workspace, it resolves to the path of the shared object/refs
@@ -212,7 +216,10 @@ The invariants are about clone topology, not about repo-internal state:
   topologies.
 - rwv does not own the canonical store's branch state beyond I3. The
   canonical store can sit on any non-ephemeral branch the operator
-  picked.
+  picked. `rwv update` moves a checkout to the branch the checked-out
+  project branch expects only where every commit it holds stays on some other
+  ref; a checkout that would leave commits behind is reported on the
+  `alignment` axis, with the commands that keep them.
 - rwv does not police bare clones the operator made by hand outside
   any `<repo_path>` slot. The invariants govern the manifest-named
   slots; anything else is the operator's territory.

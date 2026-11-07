@@ -1,27 +1,26 @@
 //! Tests for branch-discipline checks (`rwv doctor`).
 //!
-//! Enforces the I3 invariant from `docs/explanation/joints/clone-topology.md`
-//! (every workweave repo checkout sits on its owned
-//! `<project>--<workweave>` ephemeral branch; canonicals sit on a
-//! non-ephemeral branch) plus the safe/live doctrine from
-//! `docs/explanation/joints/shared-refs-drift.md` applied to refs in (c).
+//! Enforces the safe/live doctrine from
+//! `docs/explanation/joints/shared-refs-drift.md` applied to the refs rwv holds
+//! a receipt for, and leaves alone those it does not.
 //! The ownership rules the tests below name — R1, R2 — are stated in
 //! `docs/internals/branch-model.md`.
 //!
-//! Three checks:
+//! Two checks:
 //!
-//!   (a) workweave-branch — `shared-branch`, `foreign-ephemeral`, `detached`
-//!   (b) the canonical-store arms —
-//!       `canonical-holds-live-workweave-ref`, `canonical-holds-leaked-ref`,
-//!       `canonical-detached`
-//!   (c) stale-ephemeral-branches — `safe` (auto-fixable) / `live` (never) /
+//!   (a) the canonical-store arms —
+//!       `canonical-holds-live-workweave-ref`, `canonical-holds-leaked-ref`
+//!   (b) stale-ephemeral-branches — `safe` (auto-fixable) / `live` (never) /
 //!       `unowned` (never — rwv holds no receipt)
+//!
+//! Where a checkout sits is the `alignment` finding's to judge
+//! (`tests/doctor_alignment_test.rs`).
 //!
 //! Healthy fixtures (workweave on its own ephemeral branch, canonical on
 //! `main`, ephemeral branch whose workweave still exists) must stay clean.
 //!
-//! **Ownership is by record.** Everything in (b), and the safe/live half of
-//! (c), keys on an ownership receipt, not on the branch's name. So most
+//! **Ownership is by record.** Everything in (a), and the safe/live half of
+//! (b), keys on an ownership receipt, not on the branch's name. So most
 //! fixtures below record a receipt explicitly — see
 //! [`record_receipt`] for how a receipt for `<p>--<a>/<b>` is adopted rather
 //! than minted. A fixture that skips the receipt is asserting the *other*
@@ -128,8 +127,7 @@ fn worktree_add(repo: &Path, worktree_path: &Path, branch_name: &str) -> PathBuf
 }
 
 /// Add a worktree from canonical `repo` at `worktree_path`, on the *existing*
-/// branch `branch_name` (no `-b`). Used to fixture shared-branch and
-/// foreign-ephemeral cases.
+/// branch `branch_name` (no `-b`).
 fn worktree_add_existing(repo: &Path, worktree_path: &Path, branch_name: &str) {
     git_in(
         repo,
@@ -1578,28 +1576,23 @@ fn json_output_includes_branch_discipline_kind() {
 // Symlinked member slots, and reference members as worktrees
 //
 // Older releases materialized a `reference` member as a symlink to the
-// canonical clone, so through the link it sits on the canonical's shared
-// non-ephemeral branch (e.g. `main`). `scan_repos_on_disk` discovers it
-// because `is_dir()` follows the symlink; the I3 branch-discipline scan would
-// mis-read it as a `shared-branch` violation. The scan must not read through
-// it: it is unmigrated state, reported as `workweave-drift`.
-//
-// A `reference` member is a worktree on the workweave's ephemeral branch like
-// any other member, and is checked like any other.
+// canonical clone, so through the link it sits on the canonical's branch
+// (e.g. `main`). `scan_repos_on_disk` discovers it because `is_dir()` follows
+// the symlink; a scan that read through it would take the canonical for a
+// workweave checkout that wandered. It must not: the slot is unmigrated state,
+// reported as `workweave-drift`.
 // ===========================================================================
 
-/// A symlinked member slot must NOT fire a branch-discipline finding, even
-/// though it resolves (through the symlink) to the canonical store on its
-/// shared `main` branch. It is the canonical viewed through a link, not a
-/// workweave checkout that wandered onto a shared branch.
+/// A symlinked member slot must NOT fire a branch-discipline or alignment
+/// finding, even though it resolves (through the symlink) to the canonical
+/// store on its `main` branch. It is the canonical viewed through a link, not a
+/// workweave checkout that wandered.
 #[test]
-fn symlinked_reference_does_not_fire_shared_branch() {
+fn symlinked_reference_fires_no_branch_finding() {
     let tmp = common::tempdir().unwrap();
     let ws = make_primary(tmp.path());
     let canonical = ws.join("github").join("acme").join("repo");
     init_repo_with_commit(&canonical);
-    // The canonical sits on `main` — exactly the branch a shared-branch
-    // finding flags when a *worktree* checkout sits on it.
 
     let ww_dir = workweaves_dir(&ws).join("myproj--ref");
     write_marker(&ww_dir, &ws, "myproj", &ws);
@@ -1619,20 +1612,17 @@ fn symlinked_reference_does_not_fire_shared_branch() {
     let stdout = String::from_utf8_lossy(&out.stdout);
 
     assert!(
-        !stdout.contains("shared-branch")
-            && !stdout.contains("workweave checkout is on")
-            && !stdout.contains("detached-HEAD")
-            && !stdout.contains("foreign-ephemeral"),
-        "a symlinked member slot must not fire any branch-discipline finding \
+        !stdout.contains("alignment")
+            && !stdout.contains("branch-discipline")
+            && !stdout.contains("detached-HEAD"),
+        "a symlinked member slot must not fire any branch finding \
          (through the link it is the canonical on its `main`); got:\n{stdout}"
     );
 }
 
-/// A `reference` member is a *real worktree* on its own ephemeral branch, and
-/// flows through the normal I2/I3 checks unchanged: healthy on its ephemeral
-/// branch → clean, and (the adversarial half, below) if it wanders onto
-/// `main`, it must STILL fire `shared-branch`. The skip keys on the slot
-/// being a symlink, never on role.
+/// A `reference` member that is a *real worktree* on the workweave's ephemeral
+/// branch flows through the normal checks: its slot is not skipped, whatever
+/// its role.
 #[test]
 fn worktree_reference_on_ephemeral_branch_flows_through_normally() {
     let tmp = common::tempdir().unwrap();
@@ -1654,26 +1644,20 @@ fn worktree_reference_on_ephemeral_branch_flows_through_normally() {
     let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        !stdout.contains("workweave checkout is on")
-            && !stdout.contains("detached-HEAD")
-            && !stdout.contains("pre-flat"),
-        "a worktree'd reference on its ephemeral branch should be clean; got:\n{stdout}"
+        !stdout.contains("detached-HEAD") && !stdout.contains("pre-flat"),
+        "a worktree'd reference on its ephemeral branch carries no branch-discipline finding; \
+         got:\n{stdout}"
     );
 }
 
 // ===========================================================================
-// The migration pass and the flat-name cutover
+// The flat name
 // ===========================================================================
 //
-// The cutover is atomic by construction: `EphemeralRefName::mint` produces
-// the flat name, the scanner asks `AttachedRef::is_minted` for the healthy
-// case, and the delete path globs `is_this_workweaves_namespace` — all three
-// derive from the same mint. There is no build in which one has moved and
-// another has not, because nothing spells the shape independently any more.
-// `healthy_workweave_ephemeral_branch_is_clean` (flat) and
-// `unmigrated_ephemeral_branch_is_reported_and_renamed` (pre-flat) are the
-// two ends of that: the first fails if the scanner still wants a segment,
-// the second fails if it no longer recognizes one.
+// `EphemeralRefName::mint` produces the flat name, the scanner asks
+// `AttachedRef::is_minted` for the healthy case, and the delete path globs
+// `is_this_workweaves_namespace` — all three derive from the same mint, and
+// nothing spells the shape independently.
 
 /// Read the `receipts` array's recorded tip for `ref_name`, if present.
 fn receipt_created_at(primary: &Path, project: &str, ref_name: &str) -> Option<String> {

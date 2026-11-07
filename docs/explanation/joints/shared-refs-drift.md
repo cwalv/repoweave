@@ -47,8 +47,11 @@ about git's ref store is corrupt, yet B's index and working tree are now
 drifted from its own `HEAD`.
 
 `rwv` keeps workweaves from competing for a branch name by giving each
-workweave its own flat ephemeral branch (`<project>--<workweave>`,
-Invariant I3 in [clone-topology](./clone-topology.md)), so no rwv operation
+workweave's `owned` and `fork` members its own flat ephemeral branch
+(`<project>--<workweave>`, Invariant I3 in
+[clone-topology](./clone-topology.md)), and by leaving a member whose branch
+another workspace has checked out detached at its pin (`rwv update` does this,
+and `rwv status` names where the branch is checked out), so no rwv operation
 moves a branch another workspace has checked out. The drift classes below
 are about what happens when something outside rwv does.
 

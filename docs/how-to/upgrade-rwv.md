@@ -14,6 +14,7 @@ rwv doctor --all                    # a clean run records the health floor
 rwv doctor --fix                    # migrate .rwv-workweave markers, reference worktrees and rwv.toml member keys
 rwv lock                            # regenerate rwv.lock in the current JSON format
 rwv branch set-mode main declared   # record the trunk; each workweave's branch is recorded from inside it (Step 6)
+rwv update                          # record what this workspace aligns its members for; run it once in every workweave too (Step 7)
 rwv materialize --remove-undeclared-links   # optional: unlink retired go.sum root symlink
 ```
 
@@ -28,6 +29,7 @@ For resting state on disk, installing a newer `rwv` does not touch existing file
 | `rwv.yaml` → `rwv.toml` | Hand-authored by you | Rewrite as `rwv.toml` and delete `rwv.yaml` (no `--fix` arm) |
 | `version` and `submodules` keys in `rwv.toml` | Hand-authored by you | `rwv doctor --fix` renames them to `branch` and `recurse-submodules` and commits only that rename |
 | `rwv.lock` | Generated output | `rwv lock` regenerates it |
+| What a workspace last aligned its members for | Written by `rwv` itself | `rwv update`, once in the weave root and once in each workweave |
 | A weave branch with no record | Written by `rwv` itself | `rwv branch set-mode main declared` records the trunk; `rwv branch set-mode <project>--<name> feature --target main` records a workweave's branch |
 
 ## Install the new binaries
@@ -167,6 +169,18 @@ rwv branch set-mode feature --target main
 ```
 
 `rwv branch list` shows every weave branch with its record, and `unrecorded` for the ones still to do. `rwv init` and `rwv clone` record the trunk themselves, and `rwv workweave create` records the branch it makes, so a weave made by the new release has nothing to migrate.
+
+## Step 7 — every seat runs `rwv update` once
+
+Each workspace keeps the branch it last aligned its members for, in state of its own beside the project repo's. A workspace an earlier release made has none, so `rwv status` lists the project as `project unaligned` and the members as they stand, and nothing is moved. Run `rwv update` once in the weave root, and once from inside each workweave:
+
+```bash
+rwv update
+```
+
+It records the state, and puts each member where the checked-out project branch expects it: a `dependency` or `reference` member of a feature whose branch is checked out in another workspace detached at its pin, and any member on a branch other than the expected one back on it, where every commit it holds stays on some other ref. A member that would leave commits behind stays where it is and is reported with them and the commands that keep them. `rwv update` never writes `rwv.lock`. A workweave made by the new release records its state when it is created, so it needs no run.
+
+A member of a workweave that still carries the branch shape an earlier release used, `<project>--<name>/<segment>`, makes `rwv workweave create` and `rwv update` refuse with `health-floor-too-low` and name the bridge version to step through, as the next section describes.
 
 ## The health floor and bridge versions
 

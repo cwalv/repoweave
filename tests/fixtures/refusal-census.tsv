@@ -33,6 +33,8 @@ src/alignment.rs	alignment detached with unpushed commits	-	1
 src/alignment.rs	alignment on branch	-	1
 src/alignment.rs	alignment on branch with stray commits	-	1
 src/alignment.rs	alignment unaligned	-	1
+src/alignment.rs	pin none	tests/backup_verb_test.rs	1
+src/alignment.rs	pin unreachable	tests/backup_verb_test.rs	1
 src/alignment.rs	pin not on declared branch	tests/backup_verb_test.rs	1
 src/alignment.rs	push-branch foreign upstream	-	1
 src/backup.rs	pin would be unreachable	tests/backup_verb_test.rs	1

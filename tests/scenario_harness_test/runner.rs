@@ -143,6 +143,11 @@ pub enum Action {
         project: Repo,
         member: Repo,
     },
+    /// Cut the workspace-state file the project repo at `at` keeps in its
+    /// private directory to half its bytes.
+    TruncateWorkspaceState {
+        at: Place,
+    },
     /// An empty weave root on `machine`, filled by `rwv clone` from `proj`'s
     /// remote.
     NewMachine(Machine),
@@ -205,6 +210,8 @@ pub enum Claim {
     },
     /// What the step printed holds this text.
     OutputContains(&'static str),
+    /// What the step printed does not hold this text.
+    OutputLacks(&'static str),
     /// Machine `machine`'s records branch holds exactly this entry for
     /// `branch`: none when it holds none.
     RecordIs {
@@ -382,6 +389,14 @@ impl Step {
                 project,
                 member,
             },
+            Expect::succeeds(),
+        )
+    }
+
+    pub fn truncate_workspace_state(at: &Place) -> Step {
+        Step::new(
+            "truncate the workspace state",
+            Action::TruncateWorkspaceState { at: at.clone() },
             Expect::succeeds(),
         )
     }
@@ -811,6 +826,17 @@ impl Run<'_> {
                 std::fs::write(&path, text).unwrap();
                 (true, String::new())
             }
+            Action::TruncateWorkspaceState { at } => {
+                let project = sb.checkout(at, Repo::Proj);
+                let private = sb.git_ok(&project, &["rev-parse", "--absolute-git-dir"]);
+                let state = std::path::Path::new(&private).join("rwv-workspace-state");
+                let bytes = match std::fs::read(&state) {
+                    Ok(bytes) => bytes,
+                    Err(e) => return (false, format!("{}: {e}", state.display())),
+                };
+                std::fs::write(&state, &bytes[..bytes.len() / 2]).unwrap();
+                (true, String::new())
+            }
             Action::NewMachine(machine) => {
                 let root = sb.prepare_machine(*machine);
                 let fetch = sb.clone_command(Repo::Proj);
@@ -1061,6 +1087,13 @@ impl Run<'_> {
                     Ok(())
                 } else {
                     Err(format!("the output does not hold {text:?}:\n{output}"))
+                }
+            }
+            Claim::OutputLacks(text) => {
+                if output.contains(text) {
+                    Err(format!("the output holds {text:?}:\n{output}"))
+                } else {
+                    Ok(())
                 }
             }
             Claim::RecordIs {

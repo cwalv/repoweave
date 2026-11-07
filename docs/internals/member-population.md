@@ -16,8 +16,10 @@ the tree at time of writing; nothing is cited by line number.
 ## 1. One member shape
 
 Every member of a workweave, whatever its `role`, is a worktree of the
-canonical clone, on the workweave's ephemeral branch. In the primary, a member
-is the canonical clone itself. There is no second shape. A symlink at a member
+canonical clone: an `owned` or `fork` member on the workweave's ephemeral
+branch, a `dependency` or `reference` member detached at the revision the
+workweave's lock pins. In the primary, a member is the canonical clone itself.
+There is no second shape. A symlink at a member
 slot is not a member checkout of any kind, and is refused or repaired (§8).
 `rwv workweave create --worktree-references`, which once asked for
 a worktree where the default was a symlink, exits 2 saying every member is now
@@ -32,13 +34,15 @@ Windows; and every verb that walks members had to branch on which shape it was
 looking at. The disk it saved is what §4's placement modes save instead, on
 filesystems that support them.
 
-A member worktree is born in one place, `birth_ephemeral_worktree` in
-`src/workweave.rs`, reached from `workweave create`'s member loop and from
-`materialize_member` (which `update`, `add`, `sync`, `sync-to` and
-`doctor --fix` use to give a workweave a member it lacks). Its `WorktreeFiles`
-argument says where the tracked files come from: `Shared` for members, placed
-as §4 describes; `Written` for the project repo, which the VCS checks out
-itself.
+A member worktree on a branch is born in one place,
+`birth_ephemeral_worktree` in `src/workweave.rs`, reached from
+`workweave create`'s member loop and from `materialize_member` (which
+`update`, `add`, `sync`, `sync-to` and `doctor --fix` use to give a workweave a
+member it lacks). Its `WorktreeFiles` argument says where the tracked files
+come from: `Shared` for members, placed as §4 describes; `Written` for the
+project repo, which the VCS checks out itself. A detached member goes through
+`create_detached_populated` in `src/share.rs`, which places files the same way
+and takes no branch, so no receipt is minted for it.
 
 ## 2. Two rules
 
@@ -363,7 +367,9 @@ the canonical clone. rwv no longer operates on that shape:
   else the workweave's receipted branch is checked out where it stands
   (`ReceiptedBranch::Attach` in `birth_ephemeral_worktree`, or
   `Vcs::register_worktree_in_place` for a slot that keeps its files); else the
-  branch is created at the start revision under a fresh receipt. A stale
+  branch is created at the start revision under a fresh receipt. A
+  `dependency` or `reference` member is relinked detached at the start revision
+  and takes no branch. A stale
   registration of a removed slot is dropped first
   (`Vcs::prune_stale_worktree_registration`), never a locked one. No branch is
   deleted or moved on any of these paths.

@@ -131,7 +131,6 @@ Fetch, fast-forward the project branch to its upstream, then update the members 
 
 | Flag | Effect |
 |---|---|
-| `--detach-checkouts` | As for `rwv update` |
 | `--role` / `--repo` | Selector filters; they narrow step 3 only |
 | `-j N` | Parallel per-repo workers (default: `min(nproc, 8)`) |
 | `--json` | Structured output: one JSON envelope with the fetch's records (`fetched`), the project branch's (`project`) and the update's (`outcomes`) |
@@ -140,43 +139,43 @@ Fetch, fast-forward the project branch to its upstream, then update the members 
 
 ### `rwv update [...]`
 
-Clone the members missing on disk, then align each present member to the commit `rwv.lock` pins for it. It never advances a pin and never writes the lock; [`rwv update --remote`](#rwv-update---remote-) is the form that does. Run it from the weave root or a workweave.
+Clone the members missing on disk, then align the rest with the branch the project repo has checked out. Each member goes where that branch's record, its member entries and its lock say it sits (the expected state), and the workspace records the branch it aligned for. It never advances a pin and never writes the lock; [`rwv update --remote`](#rwv-update---remote-) is the form that does. Run it from the weave root or a workweave.
 
-This is the repair after members drift or go missing: a manifest entry pointing at a missing clone (the `missing-canonical-clone` and `dangling-reference` findings from `rwv doctor` point here), a raw checkout in a member, a workweave lacking a member's worktree. With no project active and exactly one project in the weave, it updates that project and then activates it, printing `rwv update: activating project '<name>', the only project in this weave (none was active)`; with several, it refuses with `no-active-project` unless `--project` names one.
+This is the repair after members drift or go missing: a manifest entry pointing at a missing clone (the `missing-canonical-clone` and `dangling-reference` findings from `rwv doctor` point here), a raw checkout in a member, a workweave lacking a member's worktree, a project repo switched with the VCS. With no project active and exactly one project in the weave, it updates that project and then activates it, printing `rwv update: activating project '<name>', the only project in this weave (none was active)`; with several, it refuses with `no-active-project` unless `--project` names one.
 
-How `rwv update` handles each manifest repository:
+A member's expected state:
 
-| Clone & lock state | `rwv update` behavior |
+| Workspace and role | Expected state |
 |---|---|
-| Absent on disk | Clones from remote and attaches the declared `branch` at the locked SHA; with no lock entry, or a locked SHA no ref in the clone reaches, at the tip of the remote's branch |
-| Present, locked SHA is a fast-forward of the declared `branch` | Fast-forwards the local branch to the locked SHA and leaves HEAD attached (local object store only; no network fetch) |
-| Present, locked SHA is missing from the local object store | Errors (`update` does not contact the remote for an already-present clone; run `rwv fetch` first) |
-| Present, locked SHA is not a fast-forward or checkout is on another branch | Fails that repo, unless `--detach-checkouts` is passed to materialize the pin on a detached HEAD (use `git checkout <branch>` later before running `rwv sync-to`). The other repos still align, and the run exits 1 with `partial-run-aborted` |
-| Present, no lock entry (or no `rwv.lock`) | Leaves the clone at its current HEAD; the lock is not written |
+| A declared branch, or a `dependency` or `reference` member of a feature | On the branch its entry declares when that branch or its upstream reaches the pinned commit and the branch is not checked out in another workspace; else detached at the pin |
+| A feature: an `owned` or `fork` member | On the feature's own branch, created at the pin where it is missing |
+| A detached workspace | Detached at the pin |
+| No lock entry | On the declared branch as found; where it is found nowhere, left where it is |
+| A pin no ref in the clone reaches | Left where it is, reported as `pin` `unreachable` |
+
+A member on its branch behind the pin is fast-forwarded to it; one ahead of it stays where it is. A member detached because its branch is checked out in another workspace carries the fact `checkout`, naming where, and nothing moves that branch. A member on a branch other than the expected one moves off it only when every commit it holds stays on some other ref: its branch is a declared branch or named after a recorded weave branch, or no commit it holds is left on no other branch, remote-tracking branch or backup. A member that moves off another branch is reported as `moved from <branch>`. A member that cannot move is reported on the `alignment` axis with the commits that would be left, and so is one with uncommitted changes or an operation in progress; `update` exits 0 for these and leaves them for the choices the report prints. A member whose branch takes in from a branch of another name refuses (`push-branch` `foreign upstream`).
 
 | Flag | Effect |
 |---|---|
-| `--detach-checkouts` | Realign a present clone even where that changes what HEAD is attached to: materialize the pin on a detached HEAD instead of refusing |
-| `--role` / `--repo` | Selector filters (see [Selector grammar](#selector-grammar)) |
+| `--role` / `--repo` | Selector filters (see [Selector grammar](#selector-grammar)). A run with a filter does not record the branch the workspace aligned for |
 | `-j N` | Parallel per-repo workers (default: `min(nproc, 8)`; `-j 1` for serial execution) |
 | `--json` | Structured output: one JSON envelope, whatever `-j` is |
 | `--project <name>` | Update this project instead of the active one (does not change `.rwv-active`) |
 | `--no-materialize` | Skip the install hooks of the activation an update performs when it selects the weave's only project; `.rwv-active` and the weave-root links are still written. With a project already active, an update activates nothing and the flag has no effect |
 
-`--json` emits the envelope `{ "$schema": "...", "outcomes": [...] }` once every repo is done, with `outcomes` sorted by repo path, whatever `-j` is. See [JSON envelope convention](#--json-envelope-convention) and `rwv explain update`.
+`--json` emits the envelope `{ "$schema": "...", "outcomes": [...], "judged": [...] }` once every repo is done, with `outcomes` sorted by repo path, whatever `-j` is; each outcome carries `moved_from` and `facts` where they apply, and `judged` carries the members left where they were. See [JSON envelope convention](#--json-envelope-convention) and `rwv explain update`.
 
 ### `rwv update --remote [...]`
 
 **The form that gets the latest.** Advance each member repo to its branch HEAD on the remote, then re-snapshot `rwv.lock`. Maps semantically to `cargo update` / `npm update`. The pruning fetch it runs first is the one `rwv fetch` runs.
 
-The advance is a **fast-forward of the branch the checkout is on**, not a checkout of the tip: on the canonical, that branch must be the local counterpart of the one `branch` declares, and `update --remote` refuses when the checkout is on any other branch. It also refuses when the tip is not a fast-forward — reconcile the branch with its tracking tip yourself (ordinary `git rebase` / `git merge`) and re-run, or pass `--detach-checkouts` to materialize the tip on a detached HEAD without moving your branch. Inside a workweave the same fast-forward rule applies to the workweave's own branch, and a divergence points at `rwv sync` rather than at a flag. An already-detached member stays detached, unless the repo is stopped mid-rebase / mid-merge / mid-bisect, which refuses.
+The advance is a **fast-forward of the branch the checkout is on**, not a checkout of the tip: on the canonical, that branch must be the local counterpart of the one `branch` declares, and `update --remote` refuses when the checkout is on any other branch, naming `rwv update`. It also refuses when the tip is not a fast-forward — reconcile the branch with its tracking tip yourself (ordinary `git rebase` / `git merge`) and re-run. Inside a workweave the same fast-forward rule applies to the workweave's own branch, and a divergence points at `rwv sync` rather than at a flag. An already-detached member stays detached, unless the repo is stopped mid-rebase / mid-merge / mid-bisect, which refuses.
 
 `advanced N repo(s)` counts repos whose SHA actually changed.
 
 | Flag | Effect |
 |---|---|
 | `--remote` | Selects this form |
-| `--detach-checkouts` | Advance a repo even where that changes what HEAD is attached to: materialize the tip on a detached HEAD instead of refusing |
 | `--role` / `--repo` | Selector filters |
 | `-j N` | Parallel per-repo workers (default: min(nproc, 8)) |
 | `--json` | Structured output: one JSON envelope, whatever `-j` is |
@@ -469,7 +468,7 @@ List each weave branch, local or only on a remote as last fetched, with its reco
 
 ### `rwv status [--json] [...]`
 
-Show per-repo state for the CWD workspace.
+Show per-repo state for the CWD workspace: each repo's branch, tip and lock relation, and below the table what stands apart on the axes `status` reads.
 
 | Flag | Effect |
 |---|---|
@@ -488,7 +487,15 @@ Show per-repo state for the CWD workspace.
 
 `--json` emits the envelope `{"$schema": "...", "repos": [...]}`. Each record includes `lock_pinned_by_name` (`true` when an older or hand-edited `rwv.lock` entry holds a tag or branch name rather than a 40-character hex commit SHA; `rwv lock` rewrites it to a commit SHA). See [JSON envelope convention](#--json-envelope-convention).
 
-Below the table, `status` prints one `push-branch` line for each member whose checked-out branch stands apart from the branch it publishes to, with that state's choices: `behind` (take it in with `rwv update --remote --repo <m>`), `ahead` (`rwv push --repo <m>`), `diverged`, `gone`, `foreign upstream` and `no push target`. A `gone` line appears only while the branch holds commits no remote-tracking branch reaches, and lists them: a branch whose upstream was deleted after its work landed is not marked. It reads refs as last fetched, so `rwv fetch` first. `--json` carries the same lines as `judged`, each with its `axis`, `state`, `facts` and `choices`; the array is empty when no member stands apart.
+Below the table, `status` prints:
+
+- the branch each project's workspace last aligned its members for (`<project> aligned for <branch>`, `aligned detached`, or `aligned for no branch`);
+- one `alignment` line for each member that is not in its expected state, with the commits that a move off its branch would leave, and one for a member carrying the fact `checkout` (its branch is checked out in another workspace, so it sits detached at its pin); for the project repo, `project moved`, `project unaligned` or `project detached` against the aligned branch;
+- one `push-branch` line for each member whose checked-out branch needs attention: `behind` (take it in with `rwv update --remote --repo <m>`), `diverged`, `gone`, `foreign upstream` and `no push target`. A branch that is `ahead` of its push branch is the ordinary state of work in progress and has no line. A `gone` line appears only while the branch holds commits no remote-tracking branch reaches, and lists them: a branch whose upstream was deleted after its work landed is not marked;
+- one `operator branch` line for each local branch of a member that holds unpushed commits nothing else accounts for: it is checked out nowhere, is named after no recorded weave branch of any project here, and is no declared branch of that member. The line gives the member, the branch and its count of unpushed commits, and notes a gone upstream; it prints no choice, because such a branch is legal;
+- the backups each repo holds (`backup <repo> <name> <tip>`), the listing `rwv backup list` gives.
+
+The lines about a member follow the selector. The lines about the project (`aligned for`, `project moved`, `project unaligned`, `project detached`) print only when no `--role` or `--repo` is given. It reads refs as last fetched, so `rwv fetch` first. `--json` carries the same as `aligned`, `judged` (each line with its `axis`, `state`, `facts` and `choices`; empty when none stands apart), `operator_branches` (with the unpushed `commits`) and `backups`.
 
 A `missing` relation names a clone directory that has vanished; the repair is [`rwv update`](#rwv-update-), which clones the member again, run from the weave root (see `rwv doctor` for the paired detection: `missing-canonical-clone`, `dangling-reference`). An `unreachable` relation names a clone that is present but whose object store lacks the locked SHA; `rwv update` does not repair it (with the directory present it performs a local checkout without a network fetch). If the remote still has the revision, [`rwv fetch`](#rwv-fetch-) or `git fetch` in the affected repo re-pulls it; if the remote's history was rewritten, re-lock to a reachable state — see [reconcile repos](../how-to/reconcile-repos.md).
 
@@ -520,9 +527,7 @@ Convention and health audit across clones, `rwv.toml`, `rwv.lock`, workweaves, o
 | `--fix` | Repair every finding marked **Auto-fixable** in [Doctor findings](./doctor-findings.md), which carries that mark on each finding it documents. Never touches live staged content or live edits. Idempotent. |
 | `--json` | Emits envelope `{"$schema": "...", "violations": [...], "issues": [...], "advisories": [...], "plugins": [...]}`: rwv's own findings on `violations`, integration findings on `issues` |
 | `--all` | Scan all projects and run weave-wide checks (orphan detection, cross-project stale locks, etc.). By default only the active project is checked |
-| `--reattach-checkouts` | With `--fix`, reattach a canonical store's detached HEAD to its tracking counterpart when that counterpart exists and its tip equals HEAD. Without this flag, `--fix` only reports a detached canonical, naming the `git switch` that would reattach it |
 | `--abandon-lost-pins` | With `--fix`, relink a workweave checkout whose link dangles and whose pinned revision and branch are in no clone onto the workweave's branch created at the canonical clone's HEAD, keeping every file: the pinned commits are given up, and their changes stand as edits. Without this flag, `--fix` reports the checkout |
-| `--adopt-detached-checkouts` | With `--fix`, let the branch-model migration mint a workweave's ephemeral branch at a detached checkout's HEAD (the lock SHA), giving up a pre-flat branch holding that name if one exists (warns if doing so strands commits HEAD does not carry). Without this flag, `--fix` reports both tips and leaves the checkout alone |
 | `--kind <kind>` | Filter the report to the named finding kind (repeatable; text and `--json` both). Kind names are the wire spellings `--json` emits, for `violations` and `issues` alike (e.g. `branch-discipline`, `orphaned-savepoint`, `tool-missing`); a filter naming only `violations` kinds excludes every integration issue. An unknown name refuses (`unknown-finding-kind`), listing the valid set. Kinds whose classes normally collapse to a per-class count line render itemized under the filter — this is the drill-down. The exit code reflects the filtered view, text and `--json` alike: non-zero on any finding in the view, warnings included, so `rwv doctor --kind tool-missing` (or `--json --kind tool-missing`) fails a CI job on a missing tool |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 

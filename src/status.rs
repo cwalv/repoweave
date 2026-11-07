@@ -360,7 +360,7 @@ pub fn run_status(
                 None
             }
         };
-        if let Some(aligner) = &aligner {
+        if let Some(aligner) = aligner.as_ref().filter(|_| filter.is_empty()) {
             aligned.push(aligned_status(&pname, aligner));
             if let Some(line) = project_line(&pname, &project_dir, aligner) {
                 judged.add(line);
@@ -537,10 +537,11 @@ pub fn run_status(
     }
 
     let op = op_state::resolve_to_owner(&workspace_dir)?;
-    let backups = if ctx.active_project().is_some() {
-        crate::backup::held_by_project(ctx)?
-    } else {
-        Vec::new()
+    let backups = match ctx.active_project() {
+        Some(active) if !unreadable_projects.iter().any(|u| &u.project == active) => {
+            crate::backup::held_by_project(ctx)?
+        }
+        _ => Vec::new(),
     };
 
     if output.is_json() {
@@ -569,23 +570,23 @@ pub fn run_status(
             print_op_header(op);
         }
         print_table(&entries);
-        for record in &records {
-            outln!("{}", record.line());
-        }
-        for status in &aligned {
-            outln!("{}", status.line());
-        }
-        for branch in &operator_branches {
-            outln!("{}", branch.line());
-        }
+        let mut lines: Vec<String> = records.iter().map(|record| record.line()).collect();
+        lines.extend(aligned.iter().map(AlignedStatus::line));
+        lines.extend(operator_branches.iter().map(OperatorBranch::line));
         for held in &backups {
             for backup in &held.backups {
-                outln!(
+                lines.push(format!(
                     "backup {}  {}  {}",
                     held.path,
                     backup.name,
                     backup.tip.short()
-                );
+                ));
+            }
+        }
+        if !lines.is_empty() {
+            outln!();
+            for line in lines {
+                outln!("{line}");
             }
         }
         if !judged.is_empty() {
@@ -600,10 +601,14 @@ pub fn run_status(
 impl AlignedStatus {
     fn line(&self) -> String {
         let project = crate::workspace::project_rel_path(&self.project);
-        match (&self.branch, self.detached) {
+        let line = match (&self.branch, self.detached) {
             (Some(branch), _) => format!("{project} aligned for {branch}"),
             (None, true) => format!("{project} aligned detached"),
             (None, false) => format!("{project} aligned for no branch"),
+        };
+        match &self.unreadable {
+            Some(why) => format!("{line} (workspace state reads as absent: {why})"),
+            None => line,
         }
     }
 }

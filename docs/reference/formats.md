@@ -67,7 +67,7 @@ Any other key in an entry is rejected, naming it. `version` and `submodules`, th
 - **`rwv member add <url>`** populates `branch` from the remote's default branch, and `rwv member add --new` from the branch the new repo is on.
 - A `branch` that reads as a commit id (seven or more hex digits) or a release tag (`v2.0`, `v0.3.4-rc1`) fails to parse, naming the value and its line, and `rwv member add` refuses with [`name`](./refusals.md#name) `a revision` rather than record such a branch.
 - **`rwv update --remote`** reads `branch` to know which remote branch tip to advance each repo to before re-snapshotting `rwv.lock`.
-- **`rwv clone`** and **`rwv update`** check a new clone out on the local counterpart of the branch `branch` names, and `rwv update` refuses to move a present checkout attached to any other branch. **`rwv doctor --fix --reattach-checkouts`** reattaches a detached canonical clone to that same branch.
+- **`rwv clone`** and **`rwv update`** check a new clone out on the local counterpart of the branch `branch` names, and `rwv update` puts a present checkout there too, moving it off another branch only where every commit it holds stays on some other ref.
 - **`rwv clone`**, **`rwv update`** and **`rwv sync`** align checkouts to the 40-character commit SHA in `rwv.lock`. A member that `rwv clone` or `rwv update` clones and the lock has no entry for is checked out at the tip of `branch` instead; neither verb records it, and `rwv lock` does.
 
 The role for your own code is spelled `role = "owned"`; a manifest spelling it `primary` fails to parse. See [reference/roles — Migrating from `role: primary`](./roles.md#migrating-from-role-primary).
@@ -250,6 +250,12 @@ See [workweave hierarchy](../explanation/joints/workweave-hierarchy.md) for one-
 Lives at `<primary>/projects/<project>/.rwv-workweave-index`. Machine-local JSON state (excluded from git through the project repo's `.git/info/exclude`), written and updated by `rwv workweave create`, `delete`, `set-default-create-basedir`, and `rwv doctor --fix`.
 
 It records the project's default workweave basedir (`<parent-of-primary>/.workweaves` unless `set-default-create-basedir` recorded another), the absolute path of every workweave created for the project, which `-w <project>--<name>` and `rwv workweave list` resolve through, and an ownership receipt for every ephemeral `<project>--<workweave>` branch `rwv` created, so `delete` and `doctor --fix` delete only branches `rwv` itself minted. Its field-level schema is an implementation detail; read it through `rwv workweave list` and `rwv doctor`, and let `rwv doctor --fix` repair it.
+
+## `rwv-workspace-state` — what the workspace last aligned for
+
+Lives in the project repo's private directory for the checkout (`git rev-parse --absolute-git-dir` in `projects/<project>/`), so the weave root and every workweave each keep their own and none is tracked. It holds the branch the workspace last aligned its members for, or that it aligned them detached, and the member entries it aligned them by.
+
+`rwv update` writes it when it aligned every member of the project and what it holds changed, and writes nothing otherwise; `rwv init`, `rwv clone` and `rwv workweave create` record it for the workspace they make. `rwv status` reads it to say whether the project repo has moved to another branch since. A file that cannot be read or does not parse reads as absent, and `rwv status` and `rwv update` say so: a workspace with no state is `project unaligned`, and the next `rwv update` writes it again. Its field-level schema is an implementation detail; read it through `rwv status`.
 
 ## `.rwv-owned-digests` — attested generated-file ledger
 

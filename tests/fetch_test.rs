@@ -383,7 +383,7 @@ fn fetch_leaves_a_repo_unconfirmed_and_exits_one_once_every_repo_was_tried() {
 #[test]
 fn fetch_refuses_arguments_that_belong_to_other_verbs() {
     let weave = weave();
-    for flag in ["--frozen", "--detach-checkouts", "--allow-non-empty-dir"] {
+    for flag in ["--frozen", "--dirty", "--allow-non-empty-dir"] {
         let out = weave.rwv(&["fetch", flag]);
         assert_eq!(out.status.code(), Some(2), "{flag}");
     }

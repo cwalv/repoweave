@@ -312,9 +312,8 @@ fn realignment_resolves_the_pin_locally_and_does_not_fetch_a_missing_one() {
         .arg("update")
         .current_dir(&fx.workspace)
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("failed to resolve"))
-        .stderr(predicate::str::contains("not found"));
+        .success()
+        .stdout(predicate::str::contains("github/acme/a: pin unreachable"));
 
     assert!(
         !git_ok(&["cat-file", "-e", &format!("{third}^{{commit}}")], &dest),

@@ -927,8 +927,8 @@ pub fn assert_on_branch(repo: &std::path::Path, branch: &str) {
 
 /// Assert that `repo`'s HEAD names no branch.
 ///
-/// Use where a detach is the *specified* outcome (`--detach-checkouts`, a
-/// lock-pinned materialization). Everywhere else, prefer [`assert_on_branch`]:
+/// Use where a detach is the *specified* outcome (a member of a feature that
+/// is not owned, a lock-pinned materialization). Everywhere else, prefer [`assert_on_branch`]:
 /// asserting the positive is what makes an unintended detach a failure.
 pub fn assert_detached(repo: &std::path::Path) {
     if let Some(branch) = checkout_ref(repo) {

@@ -2187,10 +2187,7 @@ impl fmt::Display for HeadAttachment {
 // savepoint this module writes (`DiscardWarrant::new`).
 //
 // House rule: escape hatches are named for the precondition they waive,
-// never a bare `--force`. `--detach-checkouts` and `--reattach-checkouts`
-// name two categorically different consequences — losing the name your
-// commits hang off, versus moving which name they hang off — so they are
-// two tokens, not one `ChangeAttachmentConsent`.
+// never a bare `--force`.
 
 /// Whether a push may replace a remote tip that is not an ancestor of the one
 /// it pushes.

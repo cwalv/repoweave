@@ -13,8 +13,10 @@ the observable lifecycle: what exists, when, and how to move it forward.
 
 Feature work happens in workweaves. Canonical clones in the primary weave
 stay on the branch `rwv.toml` declares for each member (`branch`, which
-`rwv member add` records from the remote's default branch); a workweave puts every
-member on a branch of its own and lands back with `rwv sync-to --retire`.
+`rwv member add` records from the remote's default branch); a workweave puts its
+`owned` and `fork` members on a branch of its own, leaves each `dependency` and
+`reference` member detached at its pin, and lands back with
+`rwv sync-to --retire`.
 
 ## Creation
 
@@ -42,8 +44,11 @@ and current.
 ### What create writes
 
 1. One `git worktree` per member repo, whatever its role (plus the project
-   repo), at `{workweave}/{repo-path}/`, each on a fresh flat ephemeral branch
-   named `{project}--{name}` (with `/` in scoped project names encoded as `+`).
+   repo), at `{workweave}/{repo-path}/`. The project repo and each `owned` or
+   `fork` member is on a fresh flat ephemeral branch named `{project}--{name}`
+   (with `/` in scoped project names encoded as `+`); each `dependency` or
+   `reference` member is detached at the commit the lock pins, and carries no
+   branch of the workweave's.
    Each worktree belongs to the canonical weave-root clone, so a nested
    workweave's worktrees belong to the same store as its parent's. A
    `role = "reference"` repo's tracked files are read-only. Where the
@@ -136,8 +141,8 @@ own lock (see [lock-as-derived](./lock-as-derived.md)). Before landing with
 `rwv sync-to`, a manual `rwv lock` is optional because `rwv sync-to`
 auto-relocks CWD at op-start.
 
-The workweave's project and member repos run on a flat ephemeral branch
-(`{project}--{name}`). This branch name is what allows `rwv sync-to`
+The workweave's project repo and its `owned` and `fork` members run on a flat
+ephemeral branch (`{project}--{name}`). This branch name is what allows `rwv sync-to`
 to push cleanly into primary's `main` without a detach-or-stash dance —
 two worktrees never compete for the same branch name. See
 [workweave-hierarchy](./workweave-hierarchy.md#ephemeral-branch-names-and-the-git-worktree-constraint).
@@ -208,7 +213,7 @@ does without its `--discard-*` overrides:
 - Every member-repo worktree is removed (`git worktree remove`), whatever
   its role.
 - Stale `.git/worktrees/` entries are pruned.
-- Each repo's ephemeral branch (`{project}--{name}`) is deleted if its
+- Each ephemeral branch (`{project}--{name}`) a repo holds is deleted if its
   creation receipt is recorded in `.rwv-workweave-index`.
 - The project-repo worktree and its ephemeral branch are removed.
 - The workweave directory is removed.

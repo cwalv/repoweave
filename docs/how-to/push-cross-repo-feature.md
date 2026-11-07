@@ -62,7 +62,7 @@ rwv explain lock-state-mismatch
   git -C github/chatly/server reset --keep <lock-sha>
   rwv push
   ```
-  `rwv update` does not do this: it refuses to move a branch backward (not a fast-forward). A detached checkout at the locked revision (`rwv update --detach-checkouts` or `git checkout <lock-sha>`) does not either: `rwv push` refuses a detached member (`unpushable-repo-branch`).
+  `rwv update` does not do this: it moves a branch forward to the lock, never backward. A detached checkout at the locked revision (`git checkout <lock-sha>`) does not either: `rwv push` refuses a detached member (`unpushable-repo-branch`).
 
 ## Related
 

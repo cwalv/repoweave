@@ -339,10 +339,10 @@ fn doctor_fix_replaces_each_symlink_with_a_worktree_at_the_pinned_revision() {
             .lines()
             .filter(|l| !before.0.lines().any(|b| b == *l))
             .collect();
-        assert_eq!(
-            added,
-            vec![format!("refs/heads/{PROJECT}--{SEAT} {}", before.1)],
-            "the only change to the canonical clone is the workweave's own branch"
+        assert!(
+            added.is_empty(),
+            "a reference member is detached at its pin, so nothing is added to the canonical \
+             clone: {added:?}"
         );
     }
 

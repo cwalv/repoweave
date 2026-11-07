@@ -41,12 +41,33 @@ disclosure the in-flight refusal makes on a conflicting mutation — `status`
 surfaces it read-only, so a clean `git status` in every repo is not mistaken
 for "no op in progress".
 
-Below the table, one `push-branch` line prints for each member whose
-checked-out branch stands apart from the branch it publishes to, with that
-state's choices: `behind`, `ahead`, `diverged`, `gone`, `foreign upstream` or
-`no push target`. A `gone` line prints only while the branch holds commits no
-remote-tracking branch reaches, and lists them. The lines read refs as last
-fetched.
+Below the table, `status` prints what stands apart, reading refs as last
+fetched:
+
+- `<project> aligned for <branch>` (or `aligned detached`, or `aligned for no
+  branch`): the branch the project's workspace last aligned its members for.
+  It and the project repo's own `alignment` line print only without `--role` or
+  `--repo`, which narrow the rest to the selected repos.
+- One `alignment` line for each member that is not in its expected state, with
+  the commits that a move off its branch would leave and the state's choices;
+  one for a member carrying the fact `checkout` (its branch is checked out in
+  another workspace, which is named, so it sits detached at its pin); and for
+  the project repo, `project moved`, `project unaligned` or `project detached`
+  against the aligned branch. A workspace state file that cannot be read is
+  said so, and reads as absent.
+- One `push-branch` line for each member whose checked-out branch needs
+  attention, with that state's choices: `behind`, `diverged`, `gone`, `foreign
+  upstream` or `no push target`. A branch `ahead` of its push branch is the
+  ordinary state of work in progress and prints no line. A `gone` line prints
+  only while the branch holds commits no remote-tracking branch reaches, and
+  lists them.
+- `operator branch <repo>  <branch>  <n> unpushed`, with ` (upstream gone)`
+  where it applies, for each local branch of a member that holds unpushed
+  commits nothing else accounts for: one that is checked out nowhere, is named
+  after no recorded weave branch of any project in the weave, and is no
+  declared branch of that member. Such a branch is legal, so no choice prints.
+- `backup <repo>  <name>  <tip>` for each backup a repo holds, the listing
+  `rwv backup list` gives.
 
 Under `--json`, output is the envelope:
 
@@ -55,7 +76,10 @@ Under `--json`, output is the envelope:
   "$schema": "<url>",
   "repos": [ { "path": "...", ... }, ... ],
   "unreadable_projects": [ { "project": "...", "error": "..." } ],
-  "judged": [ { "path": "...", "axis": "push-branch", "state": "behind", "choices": [ ... ] } ],
+  "aligned": [ { "project": "...", "branch": "main", "detached": false } ],
+  "judged": [ { "path": "...", "axis": "alignment", "state": "on-branch", "choices": [ ... ] } ],
+  "operator_branches": [ { "path": "...", "branch": "...", "unpushed": 2, "commits": [ ... ], "gone_upstream": false } ],
+  "backups": [ { "path": "...", ... } ],
   "op": { "id": "...", "verb": "sync", "phase": "replay", ... }
 }
 ```
@@ -67,10 +91,20 @@ The `$schema` URL points to the committed schema artifact. Each element of
 `mid_op` (`mid-rebase`/`mid-merge`/`mid-cherry-pick`/`mid-bisect`, or `null`),
 `role`, `url`, `project`.
 
-`judged` carries the `push-branch` lines above as the table's generated
-choices: each element has the repo's `path`, the `axis` and `state` it was
-judged on, its `facts` and its `choices`. Empty, not absent, when no member
-stands apart.
+`aligned` has one element for each project: the `branch` its workspace last
+aligned for (absent where none is recorded or the workspace is detached),
+`detached`, and `unreadable` with the reason when the state file could not be
+read.
+
+`judged` carries the `alignment` and `push-branch` lines above as the table's
+generated choices: each element has the repo's `path`, the `axis` and `state`
+it was judged on, its `facts` and its `choices`. Empty, not absent, when no
+member stands apart.
+
+`operator_branches` carries the `operator branch` lines: the member's `path`,
+the `branch`, the count `unpushed`, the unpushed `commits` themselves (each
+with its `sha`, `short` id and `subject`), and `gone_upstream`. `backups` carries the
+backups each repo holds, as `rwv backup list --json` does.
 
 `unreadable_projects` lists each project whose `rwv.toml` or `rwv.lock` did
 not load, with the load `error` naming the file and line; none of its repos is

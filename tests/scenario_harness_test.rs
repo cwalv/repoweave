@@ -217,6 +217,16 @@ fn a_tombstone_becomes_a_backup_and_backup_drop_releases_it() {
     runner::run(scenarios::tombstone_to_backup()).assert_green();
 }
 
+#[test]
+fn a_workspace_state_that_does_not_parse_reads_as_absent_and_update_restores_it() {
+    runner::run(scenarios::workspace_state_corrupt()).assert_fully_decided_green();
+}
+
+#[test]
+fn status_lists_each_operator_branch_nothing_accounts_for_and_no_other() {
+    runner::run(scenarios::status_operator_branches()).assert_fully_decided_green();
+}
+
 macro_rules! pending_on {
     ($($name:ident => $verb:ident),* $(,)?) => {
         $(

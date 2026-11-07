@@ -888,7 +888,7 @@ fn clone_refuses_the_arguments_that_belong_to_other_verbs() {
         &["--frozen"],
         &["--role", "owned"],
         &["--repo", "local/team/dep"],
-        &["--detach-checkouts"],
+        &["--dirty"],
         &["--project", "x"],
     ];
     for args in refused {

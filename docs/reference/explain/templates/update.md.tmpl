@@ -5,9 +5,10 @@
 Two forms of one verb:
 
 - **`rwv update`** brings the weave up to the state the project records. It
-  clones the members missing on disk and aligns each member present to the
-  commit `rwv.lock` pins for it. It never advances a pin and never writes the
-  lock.
+  clones the members missing on disk and aligns each member present with the
+  branch the project repo has checked out: the branch its record and member
+  entries say, at the commit `rwv.lock` pins. It never advances a pin and never
+  writes the lock.
 - **`rwv update --remote`** advances each repo to the latest HEAD of its branch
   on the remote and re-snapshots `rwv.lock` (network bump). It is
   semantically analogous to `cargo update` / `npm update` — the form that
@@ -34,54 +35,92 @@ exactly one project, `update` updates that project and then activates it, as
 (`no-active-project`) and names `--project`.
 
 Run in a workweave, `update` treats the canonical clones in the primary as the
-store the workweave's worktrees share, not as checkouts to align. It moves no
-branch and no checkout of theirs: where a canonical clone lacks a revision the
-workweave's `rwv.lock` pins, it fetches from that clone's remote, and where one
-is not on disk, it clones it at the revision the primary's own `rwv.lock` pins
-(at the workweave's pin when the primary pins none). It then gives the workweave
-its worktree for every member its `rwv.lock` pins and the workweave lacks —
+store the workweave's worktrees share, not as checkouts to align. Where a
+canonical clone lacks a revision the workweave's `rwv.lock` pins, it fetches
+from that clone's remote, and where one is not on disk, it clones it at the
+revision the primary's own `rwv.lock` pins (at the workweave's pin when the
+primary pins none); no branch of theirs moves. It then gives the workweave its
+worktree for every member its `rwv.lock` pins and the workweave lacks —
 nothing at the slot, a symlink there, which is replaced, or a checkout whose
 worktree link dangles, which keeps its files; a symlinked member the lock does
-not pin starts from the canonical clone's HEAD. The worktree goes on the
-workweave's own branch at its own tip where that branch survives, and on that
-branch created at the pinned revision where it does not; no branch is moved or
-deleted. It does not write the workweave's `rwv.lock`, which records the
-workweave's own worktrees; `rwv lock` does. It is the repair `rwv doctor` names
+not pin starts from the canonical clone's HEAD. An `owned` or `fork` member's
+worktree goes on the workweave's own branch at its own tip where that branch
+survives, and on that branch created at the pinned revision where it does not;
+a `dependency` or `reference` member's goes detached at the pinned revision, and
+carries no branch of the workweave's. It then aligns the workweave's members as
+in the weave root. It does not write the workweave's `rwv.lock`, which records
+the workweave's own worktrees; `rwv lock` does. It is the repair `rwv doctor` names
 for a `workweave-drift` finding whose canonical clone does not hold the pinned
 revision or is not on disk; one whose canonical clone holds what the worktree
 needs, `rwv doctor --fix` gives back without the network.
 
 ### What happens to a clone that is already present
 
-A present clone is not skipped. What `update` does to it depends on whether the
-lock covers it:
+A present clone is not skipped. `update` aligns it: it puts the clone in the
+state the checked-out project branch expects, resolving the locked revision *in
+that clone's own object store*.
 
-- **The lock has an entry for the repo.** `update` realigns the clone: it
-  resolves the locked revision *in that clone's own object store* and moves the
-  checkout onto it, **without changing what HEAD is attached to**. When the
-  clone is on the local counterpart of the branch the manifest's `branch`
-  declares, that branch is fast-forwarded to the pin and the clone stays on it.
-  When the pin is not a fast-forward of that branch, or the clone is on some
-  other branch, `update` refuses — see below. A clone already at the pin is
-  untouched; a clone whose HEAD is already detached stays detached, now at the
-  pin.
-- **The lock has no entry for the repo**, or there is no lock. The clone is left
-  exactly as it is. The lock is not written; `rwv lock` records it.
+| Workspace and role | Expected state |
+|---|---|
+| A declared branch, or a `dependency` or `reference` member of a feature | On the branch its entry declares when that branch or its upstream reaches the pinned commit and the branch is not checked out in another workspace; else detached at the pin |
+| A feature: an `owned` or `fork` member | On the feature's own branch, created at the pin where it is missing |
+| A detached workspace | Detached at the pin |
+| No lock entry for the member | On the declared branch as found; where it is found nowhere, left where it is |
+| A pin no ref in the clone reaches | Left where it is |
 
-A repo not on disk that the lock has no entry for, or pins at a commit no ref in
-its new clone reaches, is cloned on the branch its entry declares at that
-branch's tip.
+The declared branch is found in the order the clone offers it: a local branch
+with a same-named upstream is used; one with no upstream whose name a remote
+has is given that upstream first; one taking in from a branch of another name
+refuses (`push-branch` `foreign upstream`); a branch only a remote has is
+created from that remote, at the pin when the remote's branch reaches it and at
+the remote's tip otherwise; a declared branch found nowhere is left alone and
+the member is reported.
 
-At the primary, realignment is a *local* operation: nothing of the member's own
-history is fetched over the network for a clone that is already present (its
-submodules are another matter; see below). If the locked revision is not in that
-clone's object store, the repo fails with `revision ... not found` rather than
-being re-fetched — run `rwv fetch` and rerun, or re-lock to a reachable
-revision (see the reconcile-repos how-to).
+A member on its branch behind the pin is fast-forwarded to it. A member on its
+branch ahead of the pin, or diverged from it, stays where it is. A member
+detached because its branch is checked out in another workspace carries the
+fact `checkout`, naming where; the branch is never moved, and no clone is
+detached from a branch only the primary holds.
 
-A newly cloned repo is *born* on that same branch, positioned at the lock
+### Which clones move
+
+A clone moves by the VCS's branch switch, which keeps the commits of the branch
+it leaves on that branch. It moves when it is clean and not stopped in an
+operation, and:
+
+- it is on the branch the workspace last aligned its members for, by the
+  entries stored for it, or on a declared branch of that member, or on a branch
+  named after a recorded weave branch; or
+- it is on any other branch and every commit it holds is also reached by
+  another branch, a remote-tracking branch or a backup (it is then reported
+  `moved from <branch>`); or
+- it is detached and holds no commit that no branch or remote-tracking branch
+  reaches.
+
+Any other clone stays where it is and is reported on the `alignment` axis with
+the commits that moving it would leave on no other ref, and the choices that
+keep them. So is a clone with uncommitted changes (`edits`) or one stopped
+mid-rebase, mid-merge, mid-cherry-pick or mid-bisect. `update` exits 0 for
+these, and prints no failure for a clone it merely reports. A clone whose
+branch takes in from a branch of another name is a failure of that repo.
+
+After an update that aligned every member, the workspace records the branch it
+aligned for and the entries it aligned it by. It is the workspace's own state,
+kept beside the project repo's other private state and written only when it
+changes. A file that cannot be read or does not parse reads as though it were
+absent, is said so, and is written again by the next full update. A run narrowed
+by `--role` or `--repo` records nothing.
+
+A newly cloned repo is *born* on the declared branch, positioned at the lock
 revision rather than at the remote tip — so bringing up a weave from a lock that
 is behind its remote leaves every member attached, not detached.
+
+At the primary, alignment is a *local* operation: nothing of the member's own
+history is fetched over the network for a clone that is already present (its
+submodules are another matter; see below). A locked revision no ref in that
+clone reaches leaves the member where it is, reported as `pin` `unreachable`;
+run `rwv fetch` and rerun, or re-lock to a reachable revision (see the
+reconcile-repos how-to).
 
 ### Submodules
 
@@ -98,35 +137,6 @@ Run in a workweave, `update` also checks out the empty submodules of the
 workweave's members from the canonical clone's copies, after fetching into them
 the commits the workweave's checkouts record. This is the repair `rwv doctor`
 names for `uninitialized-submodule` / `unfetched`, run in that workweave.
-
-### Realignment refuses to change what HEAD is attached to
-
-Realigning a present clone is gated. `update` moves a branch only when it can
-relate that branch to the lock, and only in the direction the lock justifies:
-
-- **Not a fast-forward.** The pin is not a descendant of the branch tip —
-  materializing an older lock does this, and so does a branch carrying commits
-  its remote has never seen. Taking the pin would either rewind the branch or
-  abandon it, so `update` refuses.
-- **On some other branch.** The checkout is on a branch that is not the local
-  counterpart of `branch` — an operator's personal branch. `update` names both
-  refs and refuses; it does not relocate a branch it cannot relate to the lock,
-  even when doing so would be a fast-forward. Your bookmark is yours.
-
-The refusal names the repo, and that repo is reported as a failure while the
-rest of the run continues. It does not fire when the pin is a fast-forward, when
-HEAD is already detached, or when the clone is already at the locked revision —
-so the ordinary case, including a CI runner with a warm clone cache, realigns
-without a flag.
-
-`--detach-checkouts` waives both refusals by materializing the pin on a
-**detached HEAD**. Nothing is discarded and no branch is moved: uncommitted
-changes come along, and the branch ref keeps every commit it had.
-
-A workspace whose members were detached this way sits on detached HEADs, and
-`rwv sync-to` refuses to land onto a detached target. Put a member back on its
-branch with `git checkout <branch>` in that repo; use `rwv update --remote` when
-the intent is to move the *lock* forward to branch HEAD instead.
 
 ## `rwv update --remote`
 
@@ -149,10 +159,9 @@ where you are:
   not a fast-forward of it, `update --remote` points at `rwv sync` — the verb
   that reconciles a workweave with its parent — rather than at a flag.
 
-A tip that is not a fast-forward refuses in the canonical too, naming two exits:
+A tip that is not a fast-forward refuses in the canonical too, naming the exit:
 reconcile the branch with its tracking tip yourself (ordinary `git rebase` /
-`git merge`) and re-run, or pass `--detach-checkouts` to materialize the tip on
-a detached HEAD without moving your branch.
+`git merge`) and re-run.
 
 A repo whose HEAD is already detached stays detached at the new tip; no consent
 is needed, because there is no branch to abandon. It refuses while the repo is
@@ -167,9 +176,9 @@ they were.
 ## Invocation
 
 ```
-rwv update [--detach-checkouts] [--project <name>] [--role <role>]...
+rwv update [--project <name>] [--role <role>]...
            [--repo <selector>]... [-j <n>] [--json] [--no-materialize]
-rwv update --remote [--dirty] [--commit [-m <MSG>]] [--detach-checkouts]
+rwv update --remote [--dirty] [--commit [-m <MSG>]]
            [--project <name>] [--role <role>]... [--repo <selector>]...
            [-j <n>] [--json] [--no-materialize]
 ```
@@ -186,9 +195,6 @@ rwv update --remote [--dirty] [--commit [-m <MSG>]] [--detach-checkouts]
   changes outside that set.
 - `-m, --message <MSG>` — the commit message for `--commit`, in place of the
   generated one. Without `--commit` it is a usage error (exit 2).
-- `--detach-checkouts` — align or advance a repo even where that changes what
-  HEAD is attached to: materialize the pin, or the tip, on a detached HEAD
-  instead of refusing. The branch it leaves behind is not moved.
 - `--role <role>` / `--repo <selector>` — limit the update to a subset of the
   manifest. Repeat for union. Bare strings match exactly; `re:<pat>` is regex;
   `glob:<pat>` is glob.
@@ -209,9 +215,13 @@ Run `rwv update --help` for the full clap surface.
 ### `rwv update`
 
 Default text output is one line per repo on the standard text channel. Lines
-report whether each repo was cloned fresh, aligned to a lock-pinned revision, or
-left where it is. Errors (including per-repo failures) are printed to stderr. A
-final summary line reports how many repos are ready.
+report whether each repo was cloned fresh or moved: `moved from <branch>` for a
+clone taken off a branch nothing declares, and the fact `checkout: <branch> is
+checked out in <path>` for a member left detached at its pin. A repo it left
+where it is gets its `alignment` state, the commits that moving it would leave,
+and the choices; a pin that is missing or that no ref reaches is reported as
+`pin` `none` or `unreachable`. Errors (including per-repo failures) are printed
+to stderr. A final summary line reports how many repos are ready.
 
 Under `--json`, `update` emits a single JSON envelope after all repos finish,
 whatever `-j` is:
@@ -220,6 +230,7 @@ whatever `-j` is:
 {
   "$schema": "<url>",
   "outcomes": [ { "path": "...", ... }, ... ],
+  "judged": [ { "path": "...", "axis": "alignment", "state": "...", ... }, ... ],
   "placements": [ { "path": "...", "absolute_path": "...", "files": { ... } }, ... ],
   "skipped": [ { "effect": "install-hooks", "reason": "no-materialize", "remedy": "rwv materialize" }, ... ]
 }
@@ -230,6 +241,9 @@ Each record has the shape: `path` (manifest-relative), `absolute_path` (on-disk)
 `status` (`ok` / `skipped` / `failed`), `message` (human-readable detail; absent
 for `ok`, present for `skipped` and `failed`), and, on a `failed` record whose
 cause is a refusal, `refusal`: its token, which `rwv explain <token>` resolves.
+A repo that moved off a branch nothing declares carries `moved_from`, and one
+carrying a fact carries `facts`. `judged` lists the repos left where they were,
+each with its `axis`, `state`, `facts` and `choices`, empty when it left none.
 In text mode the same token follows the repo's error line as `rwv explain
 <token>`.
 
@@ -355,13 +369,6 @@ The same for a named project, leaving `.rwv-active` as it is:
 rwv update --project web-app
 ```
 
-Realign every present clone to the lock even where that means detaching it from
-the branch it is on:
-
-```
-rwv update --detach-checkouts
-```
-
 Advance the lock to the latest upstream tips:
 
 ```
@@ -381,20 +388,16 @@ rwv update --remote --repo github/acme/server --commit
   project.
 - *no active project* — the weave holds zero or several projects and none is
   active; pass `--project <name>` or run `rwv activate <name>`.
-- *aligning … is not a fast-forward* — the pin is not a descendant of the branch
-  tip (an older lock, or a branch carrying commits its remote does not have).
-  Reconcile the branch with the pin yourself and re-run, or pass
-  `--detach-checkouts` to materialize the pin on a detached HEAD.
-- *is on branch 'X', which is not the local counterpart of …* — the checkout is
-  on a branch the manifest does not declare. Switch to the declared branch and
-  re-run, or pass `--detach-checkouts`.
-- *repo is mid-…* — an already-detached repo is stopped mid-rebase, mid-merge or
-  mid-bisect. Finish or abort that operation and re-run; rwv will not move a HEAD
-  that is carrying an in-flight operation's state.
-- *revision … not found in …* — at the primary, the clone is present but its
-  object store does not have the locked revision, and a present clone is
-  realigned without a network fetch. Run `rwv fetch`, or re-lock to a reachable
-  revision.
+- *alignment on branch with stray commits* — the checkout is on a branch the
+  workspace does not expect and holds commits no other ref reaches. `update`
+  leaves it; keep the commits on a branch or copy them onto the expected one,
+  as the choices print, and re-run.
+- *edits mid-operation* — a repo is stopped mid-rebase, mid-merge, mid-cherry-pick
+  or mid-bisect. Finish or abort that operation and re-run; rwv will not move a
+  HEAD that is carrying an in-flight operation's state.
+- *pin unreachable* — the clone is present but its object store does not have
+  the locked revision, and a present clone is aligned without a network fetch.
+  Run `rwv fetch`, or re-lock to a reachable revision.
 - *clone missing on disk* (with `--remote`) — a manifest entry references a repo
   that isn't cloned on disk; run `rwv update` to re-materialize missing manifest
   members, then re-run `rwv update --remote`.

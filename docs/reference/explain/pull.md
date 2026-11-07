@@ -25,21 +25,19 @@ commits the other lacks — is refused with nothing changed, as `push-branch`
    - `member-changed <member>: …` for each member entry the pulled `rwv.toml`
      adds, removes or changes, with each changed field and both values.
 3. **Update.** `rwv update`, narrowed by `--role` and `--repo`: members missing
-   on disk are cloned, and the rest are aligned to the lock as the branch now
-   holds it. It writes no lock.
+   on disk are cloned, and the rest are aligned with the branch as it now
+   stands: each member where its record and the lock, as the branch now holds
+   them, say. It writes no lock.
 
 ## Invocation
 
 ```
-rwv pull [--detach-checkouts] [--project <name>] [--role <role>]...
+rwv pull [--project <name>] [--role <role>]...
          [--repo <selector>]... [-j <N>] [--json] [--no-materialize]
 ```
 
 - `--role` / `--repo` — limit the update of step 3 to a subset of the manifest.
   Repeat for union. The fetch of step 1 covers every repo.
-- `--detach-checkouts` — as for `rwv update`: align a member even where that
-  changes what its HEAD is attached to, by materializing the pin on a detached
-  HEAD instead of refusing.
 - `--project <name>` — operate on this project instead of the active project.
   Does not change `.rwv-active`.
 - `-j <N>` — run up to `N` per-repo workers in parallel. Default:

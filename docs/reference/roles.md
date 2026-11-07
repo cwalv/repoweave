@@ -40,6 +40,8 @@ Code you build against but don't own. Changes need upstream acceptance, or conve
 
 `dependency` repos are part of the build graph — they appear in generated ecosystem workspace files (`go.work`, `package.json` workspaces, Cargo `[workspace]` members) so cross-package imports resolve locally.
 
+In a workweave a `dependency` repo sits detached at the commit the workweave's lock pins, so the workweave's own branch exists only in `owned` and `fork` repos; `rwv update` keeps it there.
+
 Use `dependency` over `reference` when the repo is actually a build input. Use `reference` when you're reading the code for study or design and don't want it in the build graph.
 
 ### `reference`
@@ -57,8 +59,10 @@ Cloned for reading or study, not as a build input. Examples: a sibling project's
 #### In a workweave
 
 A workweave holds a `reference` repo the way it holds every other repo: as a
-worktree of the canonical weave-root clone, on the workweave's own ephemeral
-branch. Where the filesystem supports copy-on-write cloning, a new
+worktree of the canonical weave-root clone. An `owned` or `fork` repo sits on
+the workweave's own ephemeral branch; a `reference` repo, like a `dependency`
+repo, sits detached at the commit the workweave's lock pins, and carries no
+branch of the workweave's. Where the filesystem supports copy-on-write cloning, a new
 workweave's files are cloned from another workspace's copy, so it costs disk
 only where its files differ. On Linux, a `reference` repo's read-only files
 can instead be hard links to another workspace's read-only copy of the same

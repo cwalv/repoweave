@@ -64,6 +64,22 @@ the model exists — but none of them describes the present. Where a passage is
 historical it says so, and where the fix is pinned by a test the test is named,
 because a named test is the only citation that survives a refactor.
 
+**Superseded in part by alignment.** `rwv update` no longer refuses a
+present checkout that sits on another branch. Every member is aligned through
+the engine in `src/alignment.rs`, which moves a checkout off a branch only
+where every commit it holds stays on some other ref and reports the rest on the
+`alignment` axis, and which holds a sealed `Departure` proof for each detach or
+reattach it performs. So these passages describe a model that is gone and are
+historical: the consent flags `--detach-checkouts` (on `update`,
+`update --remote` and `pull`), `--adopt-detached-checkouts` and
+`--reattach-checkouts`, with `DetachConsent`, `AdoptDetachedConsent` and
+`ReattachConsent` (§4.4); §5.3's refusal with a flag as its exit; §5.2's
+carve-out for a `reference` member, which is now a worktree like any other and
+is detached at its pin, as a `dependency` member is; and the migration passes
+of §7, whose pre-flat shape now refuses as `health-floor-too-low` naming the
+bridge version. In force are the type split (§4), the receipts and warrants
+(R2, R3), the flat ephemeral name (§3.5), and the backups (§4.4.1).
+
 **If this document and the tree diverge again, re-run the full sweep and
 update this paragraph's commit hash — do not patch individual citations one
 at a time as drift is noticed.** Piecemeal patching is exactly how the

@@ -2042,8 +2042,7 @@ pub enum BranchDisciplineKind {
     },
 }
 
-/// How a detached HEAD stands against its workweave's existing branch, which
-/// decides the one reattach that strands no commit.
+/// How a detached HEAD stands against its workweave's existing branch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum DetachedAncestry {
@@ -5382,7 +5381,8 @@ fn canonical_stores(vcs: &dyn crate::vcs::Vcs, ws_root: &Path) -> Vec<CanonicalS
 ///   * `Unborn(_)` — no arm. There is no ref to own yet and nothing to
 ///     reattach; a freshly `init`ed canonical is a legal state, and `lock`
 ///     is where the unborn HEAD is reported.
-///   * `Detached(_)` — [`CanonicalDetached`].
+///   * `Detached(_)` — no arm; the `alignment` finding judges a checkout's
+///     attachment.
 ///
 /// (c) leaked ephemeral refs. **Ranges over the store's receipts**, not over
 /// its branch listing: "this ref belongs to a workweave that is gone" is a
@@ -5410,7 +5410,6 @@ fn canonical_stores(vcs: &dyn crate::vcs::Vcs, ws_root: &Path) -> Vec<CanonicalS
 ///
 /// [`CanonicalHoldsLiveWorkweaveRef`]: BranchDisciplineKind::CanonicalHoldsLiveWorkweaveRef
 /// [`CanonicalHoldsLeakedRef`]: BranchDisciplineKind::CanonicalHoldsLeakedRef
-/// [`CanonicalDetached`]: BranchDisciplineKind::CanonicalDetached
 /// [`Merged`]: crate::vcs::DeletionWarrant::merged
 fn scan_canonical_stores(
     vcs: &dyn crate::vcs::Vcs,
@@ -6425,10 +6424,6 @@ fn repair_standalone_members(
 /// One symbolic-ref read per workweave checkout plus one branch listing
 /// per canonical store. The check is VCS-neutral: it consumes only the
 /// [`Vcs`] trait surface and never spells git plumbing.
-///
-/// `projects` supplies the tracking declarations the Detached arm projects
-/// a reattach target from; pass every loaded project. With an empty
-/// slice the arm still reports, it just cannot name a counterpart.
 ///
 /// See:
 ///   * `docs/explanation/joints/clone-topology.md` (I3 — branch ownership).

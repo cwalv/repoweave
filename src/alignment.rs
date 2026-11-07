@@ -700,7 +700,8 @@ impl Aligner {
             Target::Detached { why, .. } => why.fact().into_iter().collect(),
             _ => Vec::new(),
         };
-        let notes = self.notes(m, plan, repo);
+        let mut notes = self.notes(m, plan, repo);
+        notes.extend(Self::pin_note(m, plan, repo));
         if let Target::Branch {
             found: Found::Foreign { upstream },
             name,
@@ -762,6 +763,22 @@ impl Aligner {
             facts,
             notes,
         })
+    }
+
+    fn pin_note(m: &Member<'_>, plan: &Plan, repo: &dyn std::fmt::Display) -> Option<Judged> {
+        let state = match plan.pin {
+            Pin::At(_) => return None,
+            Pin::None => State::PinNone,
+            Pin::Unreachable => State::PinUnreachable,
+        };
+        Some(
+            state
+                .of(repo)
+                .member()
+                .checkout(m.dir)
+                .bind("<m>", m.path)
+                .judge(m.vcs),
+        )
     }
 
     fn notes(&self, m: &Member<'_>, plan: &Plan, repo: &dyn std::fmt::Display) -> Vec<Judged> {
