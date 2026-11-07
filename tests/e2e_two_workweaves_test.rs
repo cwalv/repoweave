@@ -449,7 +449,7 @@ fn sync_phase3_materializes_newly_added_repo_in_workweave() {
 
     // Commit the manifest change and lock.
     common::git_in(&main.project_dir, &["add", "rwv.toml"]);
-    common::git_in(&main.project_dir, &["commit", "-m", "add: extras"]);
+    common::commit_staged(&main.project_dir, "add: extras");
     rwv_lock_commit(&main.root);
 
     // Sanity: primary's lock now includes the new repo.
@@ -557,7 +557,7 @@ fn sync_phase3_materialize_failure_is_fatal() {
         .assert()
         .success();
     common::git_in(&main.project_dir, &["add", "rwv.toml"]);
-    common::git_in(&main.project_dir, &["commit", "-m", "add: extras"]);
+    common::commit_staged(&main.project_dir, "add: extras");
     rwv_lock_commit(&main.root);
 
     // Now sabotage the canonical clone: remove it so `git worktree add`

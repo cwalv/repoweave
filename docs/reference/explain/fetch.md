@@ -129,6 +129,74 @@ Schema:
     }
   },
   "definitions": {
+    "Axis": {
+      "description": "What a refusal judged a repo on. Its token is the kind `rwv explain` serves; the order here is the order a repo's lines print in.",
+      "oneOf": [
+        {
+          "description": "Uncommitted work, or a VCS operation in progress, in a checkout.",
+          "type": "string",
+          "enum": [
+            "edits"
+          ]
+        },
+        {
+          "description": "Another checkout derives from what the verb would remove.",
+          "type": "string",
+          "enum": [
+            "checkout"
+          ]
+        },
+        {
+          "description": "A branch and the branch it takes in from or publishes to.",
+          "type": "string",
+          "enum": [
+            "push-branch"
+          ]
+        },
+        {
+          "description": "A name the verb was given is unusable.",
+          "type": "string",
+          "enum": [
+            "name"
+          ]
+        },
+        {
+          "description": "What `rwv push` withheld.",
+          "type": "string",
+          "enum": [
+            "publish"
+          ]
+        },
+        {
+          "description": "A project whose `rwv.toml` does not load.",
+          "type": "string",
+          "enum": [
+            "unparseable-project"
+          ]
+        },
+        {
+          "description": "The commit a lock pins for a member, and whether a ref reaches it.",
+          "type": "string",
+          "enum": [
+            "pin"
+          ]
+        },
+        {
+          "description": "A weave branch's record: how it is used and the branch it lands into.",
+          "type": "string",
+          "enum": [
+            "target"
+          ]
+        },
+        {
+          "description": "Where a workspace's checkouts sit against where the checked-out branch's record says they should.",
+          "type": "string",
+          "enum": [
+            "alignment"
+          ]
+        }
+      ]
+    },
     "BranchMoveKind": {
       "description": "How a remote-tracking branch moved, as `rwv fetch --json` spells it.",
       "oneOf": [
@@ -193,6 +261,114 @@ Schema:
         }
       }
     },
+    "ChoiceOutput": {
+      "type": "object",
+      "required": [
+        "phrase",
+        "run"
+      ],
+      "properties": {
+        "id": {
+          "description": "The choice's id on the axis's page; null for one it does not number.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "phrase": {
+          "type": "string"
+        },
+        "run": {
+          "description": "The commands, one per line, as the terminal prints them.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "where": {
+          "description": "The directory it must run in; null where it runs here or names its own directory.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/WirePath"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "FactKind": {
+      "description": "A fact about a judged repo. Facts are reported; they never select a choice.",
+      "oneOf": [
+        {
+          "description": "A superseded tip was recorded for the branch.",
+          "type": "string",
+          "enum": [
+            "rewritten"
+          ]
+        },
+        {
+          "description": "The branch is an ancestor of where it lands.",
+          "type": "string",
+          "enum": [
+            "landed"
+          ]
+        },
+        {
+          "description": "Another project's live lock pins the commits.",
+          "type": "string",
+          "enum": [
+            "pinned-by"
+          ]
+        },
+        {
+          "description": "Other live weave branches declare the branch.",
+          "type": "string",
+          "enum": [
+            "shared"
+          ]
+        },
+        {
+          "description": "The pin is on the branch it lands into.",
+          "type": "string",
+          "enum": [
+            "pin-landed"
+          ]
+        },
+        {
+          "description": "The member was left detached because its branch is checked out elsewhere.",
+          "type": "string",
+          "enum": [
+            "checkout"
+          ]
+        },
+        {
+          "description": "The unlanded commits carry changes equivalent to commits where they land.",
+          "type": "string",
+          "enum": [
+            "patch-equivalent"
+          ]
+        }
+      ]
+    },
+    "FactOutput": {
+      "type": "object",
+      "required": [
+        "fact"
+      ],
+      "properties": {
+        "about": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fact": {
+          "$ref": "#/definitions/FactKind"
+        }
+      }
+    },
     "FetchStatus": {
       "description": "How a repo's fetch ended.",
       "oneOf": [
@@ -226,6 +402,7 @@ Schema:
         "absolute_path",
         "moved",
         "path",
+        "pins_off_remote",
         "status"
       ],
       "properties": {
@@ -250,6 +427,13 @@ Schema:
           "description": "The repo's path: a member's manifest path, or `projects/<name>` for the project repo.",
           "type": "string"
         },
+        "pins_off_remote": {
+          "description": "Each commit some live lock pins that no remote-tracking branch of this repo reaches after the fetch (`pin` off remote), with the locks that hold it and the choices that apply in this workspace.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/JudgedOutput"
+          }
+        },
         "refusal": {
           "description": "The refusal token of an `unconfirmed` repo whose cause is a refusal, resolvable with `rwv explain <token>`.",
           "type": [
@@ -259,6 +443,74 @@ Schema:
         },
         "status": {
           "$ref": "#/definitions/FetchStatus"
+        }
+      }
+    },
+    "JudgedOutput": {
+      "description": "One judged repo, as `--json` carries it.",
+      "type": "object",
+      "required": [
+        "axis",
+        "choices",
+        "facts",
+        "listed",
+        "path",
+        "state"
+      ],
+      "properties": {
+        "axis": {
+          "description": "What it was judged on; `rwv explain <axis>` serves the axis's page.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Axis"
+            }
+          ]
+        },
+        "choices": {
+          "description": "What this state can run, in the order the page lists it.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ChoiceOutput"
+          }
+        },
+        "facts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/FactOutput"
+          }
+        },
+        "listed": {
+          "description": "The files, paths or commits the state lists.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "path": {
+          "description": "The repo's path, `projects/<name>` for the project repo.",
+          "type": "string"
+        },
+        "state": {
+          "description": "The state it was judged in, as that page names it.",
+          "type": "string"
+        },
+        "subject": {
+          "description": "What the state names, when it names something.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workspace": {
+          "description": "The workspace the repo was judged in, when that is not the one the verb ran in.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/WirePath"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },

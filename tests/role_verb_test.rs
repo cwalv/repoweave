@@ -476,6 +476,7 @@ fn a_role_change_lands_through_sync_to_and_reaches_other_workweaves() {
         &seat_project,
         &["commit", "-qm", "beta becomes a reference"],
     );
+    succeed(&["update"], &seat);
     succeed(&["lock", "--commit"], &seat);
     succeed(&["sync-to", &weave.ws.to_string_lossy()], &seat);
 

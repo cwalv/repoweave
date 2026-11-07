@@ -290,6 +290,7 @@ fn fixture() -> Fixture {
          inherit it through git and prove nothing"
     );
 
+    common::pin_every_member(&f.ws);
     f.relock_and_commit();
     std::fs::create_dir_all(f.ws.parent().unwrap().join(".workweaves")).unwrap();
     f.rwv(

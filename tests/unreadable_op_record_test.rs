@@ -114,7 +114,7 @@ fn park() -> Parked {
     .unwrap();
     std::fs::write(primary.root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
     common::record_trunk(&primary.project);
-    succeed(&primary.root, &["lock"]);
+    common::pin_every_member(&primary.root);
     common::git_in(&primary.project, &["add", "-A"]);
     common::git_in(&primary.project, &["commit", "-m", "initial"]);
 
@@ -359,12 +359,14 @@ fn removing_a_record_that_names_no_op_leaves_only_what_its_error_names() {
     let stderr = stderr_of(&out);
     assert!(
         stderr.contains("rwv explain stale-lock")
-            && stderr.contains("bless the current HEAD with `rwv lock --commit`"),
+            && stderr.contains(
+                "record the current HEAD by name with `rwv lock --repo local/owner/lib --commit`"
+            ),
         "the replay the removal left in place pins the member at the target's tip, \
          which the next sync-to reports with its own remedy:\n{}",
         transcript(&out)
     );
-    succeed(&parked.seat.root, &["lock", "--commit"]);
+    succeed(&parked.seat.root, &["lock", "--repo", LIB, "--commit"]);
     land(&parked);
     assert_no_op_residue(&parked);
     assert_doctor_reports_no_op_state(&parked);

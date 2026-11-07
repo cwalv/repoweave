@@ -7,8 +7,10 @@
 //!     hooks (i.e., ecosystem install hooks such as `cargo generate-lockfile`
 //!     do not fire). Source anchor: `src/lock.rs` — no integration-runner
 //!     call in the lock codepath.
-//!   - `rwv lock` does not read or honor the previous `rwv.lock`. It
-//!     overwrites with the current HEAD SHA of each manifest repo.
+//!   - `rwv lock` reads the previous `rwv.lock` as the pins it moves: it
+//!     records the current HEAD of each member it acts on when that is at or
+//!     beyond the pin, and refuses a pin it cannot show the new commit
+//!     descends from unless `--repo` names the member.
 //!   - `rwv lock` does not fetch from the network.  Running it when a remote
 //!     has advanced beyond the local clone leaves the lock at the local HEAD,
 //!     not at the remote tip.
@@ -110,18 +112,21 @@ fn lock_does_not_run_integration_hooks() {
 }
 
 // ===========================================================================
-// 2. rwv lock overwrites the previous lock from current HEAD
+// 2. rwv lock moves a pin forward, and a pin it cannot show it descends from
+//    only by name
 //
 // Doc claim, from docs/explanation/joints/lock-as-derived.md:
-//   `rwv lock` does not read or honor the previous `rwv.lock`. It
-//   overwrites with whatever HEAD says.
+//   `rwv lock` records where each member is, moving a pin forward only. A
+//   pin the new commit does not descend from is refused unless `--repo`
+//   names the member.
 //
-// We hand-write an rwv.lock with a fabricated SHA, then run `rwv lock`.
-// The resulting lock must contain the real HEAD SHA, not the fabricated one.
+// We hand-write an rwv.lock with a fabricated SHA no ref reaches. Plain
+// `rwv lock` refuses and writes nothing; `rwv lock --repo` overwrites it
+// with the real HEAD SHA.
 // ===========================================================================
 
 #[test]
-fn lock_overwrites_previous_lock_with_current_head() {
+fn lock_refuses_a_pin_it_cannot_move_forward_from_and_repo_names_it() {
     let tmp = common::tempdir().unwrap();
     let (_root, project_dir, real_sha) = make_workspace_with_repo(tmp.path());
 
@@ -135,21 +140,35 @@ fn lock_overwrites_previous_lock_with_current_head() {
             fake_sha,
         )],
     );
+    let before = std::fs::read_to_string(project_dir.join("rwv.lock")).unwrap();
 
     rwv()
         .arg("lock")
         .current_dir(&project_dir)
         .assert()
-        .success();
+        .failure()
+        .stderr(predicates::str::contains("pin backwards"));
+    assert_eq!(
+        std::fs::read_to_string(project_dir.join("rwv.lock")).unwrap(),
+        before,
+        "a refused lock writes nothing"
+    );
+
+    rwv()
+        .args(["lock", "--repo", "github/acme/server"])
+        .current_dir(&project_dir)
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("re-pinned"));
 
     let lock_content = std::fs::read_to_string(project_dir.join("rwv.lock")).unwrap();
     assert!(
         lock_content.contains(&real_sha),
-        "`rwv lock` must overwrite with the real HEAD SHA {real_sha}; got:\n{lock_content}"
+        "`rwv lock --repo` must overwrite with the real HEAD SHA {real_sha}; got:\n{lock_content}"
     );
     assert!(
         !lock_content.contains(fake_sha),
-        "`rwv lock` must not preserve the fabricated SHA {fake_sha}; got:\n{lock_content}"
+        "`rwv lock --repo` must not preserve the fabricated SHA {fake_sha}; got:\n{lock_content}"
     );
 }
 
@@ -203,21 +222,21 @@ fn lock_records_local_head_not_remote_tip() {
             local_clone.to_str().unwrap(),
         ],
     );
-    let local_sha = common::git_in(&local_clone, &["rev-parse", "HEAD"]);
 
     // Advance the bare past the local clone (simulate a collaborator pushing).
     std::fs::write(seed.join("advance.txt"), "remote-advance\n").unwrap();
     common::git_in(&seed, &["add", "."]);
     common::git_in(&seed, &["commit", "-m", "remote advance"]);
     common::git_in(&seed, &["push", "origin", "main"]);
-    // Verify the bare is ahead of the local clone.
     let remote_sha = common::git_in(&seed, &["rev-parse", "HEAD"]);
     assert_ne!(
-        local_sha, remote_sha,
+        common::git_in(&local_clone, &["rev-parse", "HEAD"]),
+        remote_sha,
         "remote must have advanced past local"
     );
 
-    // Set up the project.
+    // Set up the project, the member pinned at the local clone's HEAD, and the
+    // local clone one commit past the pin.
     let project_dir = root.join("projects/my-app");
     std::fs::create_dir_all(&project_dir).unwrap();
     let bare_url = common::file_url(&bare);
@@ -229,6 +248,11 @@ fn lock_records_local_head_not_remote_tip() {
     )
     .unwrap();
     std::fs::write(root.join(".rwv-active"), "my-app\n").unwrap();
+    common::pin_every_member(&root);
+    std::fs::write(local_clone.join("local.txt"), "local\n").unwrap();
+    common::git_in(&local_clone, &["add", "."]);
+    common::git_in(&local_clone, &["commit", "-m", "local work"]);
+    let local_sha = common::git_in(&local_clone, &["rev-parse", "HEAD"]);
 
     rwv()
         .arg("lock")

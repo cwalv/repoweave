@@ -361,7 +361,15 @@ fn sync_to_refuses_a_detached_reference_member_that_holds_commits_of_its_own() {
 
     let held = commit_file(&ww.ref_checkout, "R", "r\n", "ww: reference");
     commit_file(&ww.owned_checkout, "O", "o\n", "ww: owned");
-    rwv_lock_commit(&ww.root);
+
+    rwv()
+        .args(["lock", "--commit"])
+        .current_dir(&ww.root)
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "github/org/reference: alignment detached with unpushed commits",
+        ));
 
     rwv()
         .args(["sync-to", &primary.root.to_string_lossy()])

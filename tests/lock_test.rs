@@ -100,20 +100,34 @@ fn rwv_cmd() -> Command {
     cmd
 }
 
+/// Give every member of the project active at `root` its first pin at the
+/// commit its clone is at: `rwv lock` records pins forward and gives none.
+fn first_pins(root: &Path) {
+    common::pin_every_member(root);
+}
+
+/// A further commit in the clone at `repo_dir`, returning its id.
+fn advance(repo_dir: &Path, file: &str) -> String {
+    std::fs::write(repo_dir.join(file), "advance\n").unwrap();
+    common::git_in(repo_dir, &["add", file]);
+    common::git_in(repo_dir, &["commit", "-q", "-m", file]);
+    common::git_in(repo_dir, &["rev-parse", "HEAD"])
+}
+
 // ---------------------------------------------------------------------------
 // 1. `rwv lock` in a primary directory with a project
 // ---------------------------------------------------------------------------
 
 #[test]
-fn lock_in_primary_creates_lock_file() {
+fn lock_in_primary_records_each_members_head_over_its_pin() {
     let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     // Create two repos under the workspace
     let repo_a_path = "github/acme/server";
     let repo_b_path = "github/acme/client";
-    let sha_a = init_git_repo(&root.join(repo_a_path));
-    let sha_b = init_git_repo(&root.join(repo_b_path));
+    init_git_repo(&root.join(repo_a_path));
+    init_git_repo(&root.join(repo_b_path));
 
     // Create a project that references both repos
     let project_dir = root.join("projects").join("my-app");
@@ -124,6 +138,9 @@ fn lock_in_primary_creates_lock_file() {
             (repo_b_path, "https://github.com/acme/client.git"),
         ],
     );
+    first_pins(&root);
+    let sha_a = advance(&root.join(repo_a_path), "a.txt");
+    let sha_b = advance(&root.join(repo_b_path), "b.txt");
 
     rwv_cmd()
         .arg("lock")
@@ -131,10 +148,7 @@ fn lock_in_primary_creates_lock_file() {
         .assert()
         .success();
 
-    // Verify rwv.lock was created
     let lock_path = project_dir.join("rwv.lock");
-    assert!(lock_path.exists(), "rwv.lock should be created");
-
     let lock_content = std::fs::read_to_string(&lock_path).unwrap();
 
     // Verify SHAs appear in lock file
@@ -161,6 +175,35 @@ fn lock_in_primary_creates_lock_file() {
         .get_entry(&repoweave::manifest::RepoPath::new(repo_b_path).expect("known-safe literal"))
         .expect("lock should contain repo B");
     assert_eq!(entry_b.version.as_str(), &sha_b);
+}
+
+/// A member the lock does not pin keeps none: only a verb that names a commit
+/// (`member add`, `member pin`, `update --remote`) gives a first pin.
+#[test]
+fn lock_gives_a_member_with_no_pin_none_and_says_so() {
+    let tmp = common::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+
+    let repo_path = "github/acme/server";
+    init_git_repo(&root.join(repo_path));
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(
+        &project_dir,
+        &[(repo_path, "https://github.com/acme/server.git")],
+    );
+
+    rwv_cmd()
+        .arg("lock")
+        .current_dir(&project_dir)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(format!("{repo_path}: pin none")))
+        .stderr(predicate::str::contains(format!(
+            "rwv member pin {repo_path} <rev> --commit"
+        )));
+
+    let lock = repoweave::manifest::LockFile::from_path(&project_dir.join("rwv.lock")).unwrap();
+    assert!(lock.is_empty(), "no pin was given: {lock:?}");
 }
 
 // ---------------------------------------------------------------------------
@@ -209,7 +252,13 @@ fn lock_in_workweave_writes_to_workweave_project_dir_not_primary() {
     // Repo also exists in the workweave on a different commit so we can
     // observe whose tip ends up in which lock.
     let workweave_repo = workweave_dir.join(repo_path);
-    let workweave_sha = init_git_repo(&workweave_repo);
+    init_git_repo(&workweave_repo);
+    rwv_cmd()
+        .args(["member", "pin", repo_path, "HEAD"])
+        .current_dir(&workweave_dir)
+        .assert()
+        .success();
+    let workweave_sha = advance(&workweave_repo, "ww.txt");
 
     rwv_cmd()
         .arg("lock")
@@ -252,13 +301,15 @@ fn lock_file_format_has_correct_fields() {
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
-    let sha = init_git_repo(&root.join(repo_path));
+    init_git_repo(&root.join(repo_path));
 
     let project_dir = root.join("projects").join("my-app");
     write_manifest(
         &project_dir,
         &[(repo_path, "https://github.com/acme/server.git")],
     );
+    first_pins(&root);
+    let sha = advance(&root.join(repo_path), "next.txt");
 
     rwv_cmd()
         .arg("lock")
@@ -352,11 +403,7 @@ fn stale_lock_detected_after_new_commit() {
     );
 
     // Create initial lock
-    rwv_cmd()
-        .arg("lock")
-        .current_dir(&project_dir)
-        .assert()
-        .success();
+    first_pins(&root);
 
     let lock_path = project_dir.join("rwv.lock");
     let lock_before = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
@@ -520,13 +567,15 @@ fn lock_dirty_flag_bypasses_uncommitted_check() {
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
-    let sha = init_git_repo(&root.join(repo_path));
+    init_git_repo(&root.join(repo_path));
 
     let project_dir = root.join("projects").join("my-app");
     write_manifest(
         &project_dir,
         &[(repo_path, "https://github.com/acme/server.git")],
     );
+    first_pins(&root);
+    let sha = advance(&root.join(repo_path), "next.txt");
 
     // Create an uncommitted change
     let repo_dir = root.join(repo_path);
@@ -559,13 +608,15 @@ fn lock_ignores_untracked_files_and_records_head() {
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
-    let sha = init_git_repo(&root.join(repo_path));
+    init_git_repo(&root.join(repo_path));
 
     let project_dir = root.join("projects").join("my-app");
     write_manifest(
         &project_dir,
         &[(repo_path, "https://github.com/acme/server.git")],
     );
+    first_pins(&root);
+    let sha = advance(&root.join(repo_path), "next.txt");
 
     std::fs::write(root.join(repo_path).join("scratch.txt"), "untracked\n").unwrap();
 
@@ -663,15 +714,17 @@ fn lock_records_the_commit_id_when_head_is_tagged() {
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
-    let sha = init_git_repo(&root.join(repo_path));
+    init_git_repo(&root.join(repo_path));
     let repo_dir = root.join(repo_path);
-    common::git_in(&repo_dir, &["tag", "-a", "v1.0.0", "-m", "release"]);
 
     let project_dir = root.join("projects").join("my-app");
     write_manifest(
         &project_dir,
         &[(repo_path, "https://github.com/acme/server.git")],
     );
+    first_pins(&root);
+    let sha = advance(&repo_dir, "release.txt");
+    common::git_in(&repo_dir, &["tag", "-a", "v1.0.0", "-m", "release"]);
 
     rwv_cmd()
         .arg("lock")
@@ -717,13 +770,15 @@ fn lock_records_sha_when_head_is_not_tagged() {
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
-    let sha = init_git_repo(&root.join(repo_path));
+    init_git_repo(&root.join(repo_path));
 
     let project_dir = root.join("projects").join("my-app");
     write_manifest(
         &project_dir,
         &[(repo_path, "https://github.com/acme/server.git")],
     );
+    first_pins(&root);
+    let sha = advance(&root.join(repo_path), "next.txt");
 
     rwv_cmd()
         .arg("lock")
@@ -979,9 +1034,14 @@ fn lock_commit_flag_commits_lock_file() {
         &project_dir,
         &[(repo_path, "https://github.com/acme/server.git")],
     );
+    first_pins(&root);
+    advance(&root.join(repo_path), "next.txt");
 
-    // Commit the initial workspace state so HEAD exists.
+    // Commit the initial workspace state so HEAD exists, the lock left
+    // untracked: this workspace is one repo, whose status names the lock by
+    // its path below the root.
     run_git(&["add", "."]);
+    run_git(&["reset", "-q", "--", "projects/my-app/rwv.lock"]);
     run_git(&["commit", "-m", "initial"]);
 
     rwv_cmd()
@@ -1038,8 +1098,11 @@ fn lock_commit_flag_skips_when_lock_unchanged() {
         &project_dir,
         &[(repo_path, "https://github.com/acme/server.git")],
     );
+    first_pins(&root);
+    advance(&root.join(repo_path), "next.txt");
 
     run_git(&["add", "."]);
+    run_git(&["reset", "-q", "--", "projects/my-app/rwv.lock"]);
     run_git(&["commit", "-m", "initial"]);
 
     // First lock --commit creates the commit.
@@ -1188,8 +1251,12 @@ fn lock_commit_message_summarizes_repos() {
             (repo_b, "https://github.com/acme/client.git"),
         ],
     );
+    first_pins(&root);
+    advance(&root.join(repo_a), "next.txt");
+    advance(&root.join(repo_b), "next.txt");
 
     run_git(&["add", "."]);
+    run_git(&["reset", "-q", "--", "projects/my-app/rwv.lock"]);
     run_git(&["commit", "-m", "initial"]);
 
     rwv_cmd()
@@ -1499,166 +1566,88 @@ fn lock_succeeds_over_conflict_markered_rwv_lock() {
         "test precondition: markered rwv.lock must fail strict parse"
     );
 
-    // The actual regression: `rwv lock` must succeed and rewrite the file.
+    // The actual regression: `rwv lock` must succeed and rewrite the file. A
+    // lock that does not parse pins nothing, so the member has no pin to move.
     rwv_cmd()
         .arg("lock")
         .current_dir(&project_dir)
         .assert()
-        .success();
+        .success()
+        .stderr(predicate::str::contains("does not parse"))
+        .stderr(predicate::str::contains(format!("{repo_path}: pin none")));
 
-    // Post-condition: no conflict markers remain, and the fresh lock
-    // pins the manifest repo at its actual HEAD.
+    // Post-condition: no conflict markers remain, and the strict loader now
+    // parses the file.
     let regen = std::fs::read_to_string(&lock_path).unwrap();
     assert!(
         !regen.contains("<<<<<<<") && !regen.contains(">>>>>>>") && !regen.contains("======="),
         "regenerated rwv.lock must not contain conflict markers, got:\n{regen}"
     );
-    assert!(
-        regen.contains(&sha),
-        "regenerated rwv.lock must pin the manifest repo at HEAD ({sha}), got:\n{regen}"
-    );
-
-    // And the strict loader now parses it — the write really produced
-    // clean JSON, not something merely "not conflict-markered".
     let reparsed = repoweave::manifest::LockFile::from_path(&lock_path)
         .expect("strict parse must succeed post-regeneration");
-    let entry = &reparsed.repo_map()
+    assert!(
+        reparsed.is_empty(),
+        "neither side's pin survives a file that pinned nothing: {reparsed:?}"
+    );
+
+    // Giving the member a pin by name is what makes the lock pin it again.
+    rwv_cmd()
+        .args(["member", "pin", repo_path, "HEAD"])
+        .current_dir(&project_dir)
+        .assert()
+        .success();
+    let repinned = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
+    let entry = &repinned.repo_map()
         [&repoweave::manifest::RepoPath::new(repo_path).expect("known-safe literal")];
     assert_eq!(entry.version.as_str(), &sha);
 }
 
 // ---------------------------------------------------------------------------
-// 17. Detached HEAD member: lock succeeds with a warning
+// 17. Detached HEAD member: lock refuses it as not aligned
 // ---------------------------------------------------------------------------
 
-/// Helper: initialize a git repo, detach HEAD at the tip, and return the SHA.
-fn init_git_repo_detached(path: &Path) -> String {
-    std::fs::create_dir_all(path).unwrap();
-
-    let run = |args: &[&str], dir: &Path| -> String {
-        let out = common::git()
-            .args(args)
-            .current_dir(dir)
-            .env("GIT_AUTHOR_NAME", "Test")
-            .env("GIT_AUTHOR_EMAIL", "test@test.com")
-            .env("GIT_COMMITTER_NAME", "Test")
-            .env("GIT_COMMITTER_EMAIL", "test@test.com")
-            .output()
-            .expect("git command failed to start");
-        assert!(
-            out.status.success(),
-            "git {:?} failed: {}",
-            args,
-            String::from_utf8_lossy(&out.stderr)
-        );
-        String::from_utf8(out.stdout).unwrap().trim().to_string()
-    };
-
-    run(&["init", "-b", "main"], path);
-    std::fs::write(path.join("README.md"), "init\n").unwrap();
-    run(&["add", "."], path);
-    run(&["commit", "-m", "initial"], path);
-
-    let sha = run(&["rev-parse", "HEAD"], path);
-
-    // Detach HEAD at the current tip.
-    run(&["checkout", "--detach", "HEAD"], path);
-
+/// Pin the member at its tip, then detach its HEAD there.
+fn detach_pinned_member(root: &Path, repo_path: &str) -> String {
+    let sha = common::git_in(root.join(repo_path), &["rev-parse", "HEAD"]);
+    first_pins(root);
+    common::git_in(
+        root.join(repo_path),
+        &["checkout", "-q", "--detach", "HEAD"],
+    );
     sha
 }
 
-/// Like [`init_git_repo_detached`], but cloned from a real local bare
-/// remote `rwv fetch` can clone from — needed to drive a later fetch against
-/// this pin, not just read the warning `rwv lock` prints about it. Returns
-/// the detached SHA and the origin URL.
-fn init_git_repo_detached_from_origin(tmp: &Path, path: &Path) -> (String, String) {
-    let seed = tmp.join("origin-seed");
-    init_git_repo(&seed);
-    let bare = tmp.join("origin.git");
-    common::git_in(
-        tmp,
-        &[
-            "clone",
-            "-q",
-            "--bare",
-            &seed.to_string_lossy(),
-            &bare.to_string_lossy(),
-        ],
-    );
-    let url = common::file_url(&bare);
-    common::git_in(tmp, &["clone", "-q", &url, &path.to_string_lossy()]);
-    let sha = common::git_in(path, &["rev-parse", "HEAD"]);
-    common::git_in(path, &["checkout", "-q", "--detach", "HEAD"]);
-    (sha, url)
-}
-
 #[test]
-fn lock_detached_head_member_succeeds_with_warning() {
-    // A repo member in detached-HEAD state: `rwv lock` must succeed
-    // (pinning the detached SHA) but emit a warning to stderr that names:
-    //   - the state ("pinning detached HEAD")
-    //   - the consequence ("no branch names this commit; a later fetch
-    //     materializes it attached to a branch at this pin, never detached")
-    //   - the next verb ("Create/checkout a branch if this is unintended")
+fn lock_refuses_a_member_detached_where_its_branch_is_expected() {
     let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
     let repo_path = "github/acme/server";
-    let sha = init_git_repo_detached(&root.join(repo_path));
+    init_git_repo(&root.join(repo_path));
 
     let project_dir = root.join("projects").join("my-app");
     write_manifest(
         &project_dir,
         &[(repo_path, "https://github.com/acme/server.git")],
     );
+    detach_pinned_member(&root, repo_path);
+    let before = std::fs::read_to_string(project_dir.join("rwv.lock")).unwrap();
 
-    // Must succeed (not fail) — detached HEAD is a warning, not a hard error.
     rwv_cmd()
         .arg("lock")
         .current_dir(&project_dir)
         .assert()
-        .success()
-        .stderr(predicate::str::contains("detached HEAD"))
-        .stderr(predicate::str::contains("no branch names this commit"))
-        .stderr(predicate::str::contains("Create/checkout a branch"));
+        .failure()
+        .stderr(predicate::str::contains(format!(
+            "{repo_path}: alignment detached"
+        )))
+        .stderr(predicate::str::contains("rwv update"));
 
-    // The lock file must be written with the detached SHA pinned.
-    let lock_path = project_dir.join("rwv.lock");
-    assert!(lock_path.exists(), "rwv.lock should be created");
-    let lock = repoweave::manifest::LockFile::from_path(&lock_path).unwrap();
-    let entry = lock
-        .get_entry(&repoweave::manifest::RepoPath::new(repo_path).expect("known-safe literal"))
-        .expect("lock should contain the repo");
     assert_eq!(
-        entry.version.as_str(),
-        &sha,
-        "lock should pin the detached SHA"
+        std::fs::read_to_string(project_dir.join("rwv.lock")).unwrap(),
+        before,
+        "a refusal writes nothing"
     );
-}
-
-#[test]
-fn lock_detached_head_warning_contains_short_sha() {
-    // The warning must include the abbreviated SHA so the operator can
-    // identify which commit is pinned without opening rwv.lock.
-    let tmp = common::tempdir().unwrap();
-    let root = make_workspace(tmp.path(), "ws");
-
-    let repo_path = "github/acme/server";
-    let sha = init_git_repo_detached(&root.join(repo_path));
-    let short_sha = &sha[..7];
-
-    let project_dir = root.join("projects").join("my-app");
-    write_manifest(
-        &project_dir,
-        &[(repo_path, "https://github.com/acme/server.git")],
-    );
-
-    rwv_cmd()
-        .arg("lock")
-        .current_dir(&project_dir)
-        .assert()
-        .success()
-        .stderr(predicate::str::contains(short_sha));
 }
 
 #[test]
@@ -1681,56 +1670,7 @@ fn lock_normal_head_no_detached_warning() {
         .current_dir(&project_dir)
         .assert()
         .success()
-        .stderr(predicate::str::contains("detached HEAD").not());
-}
-
-#[test]
-fn lock_detached_head_warning_matches_what_a_later_fetch_does() {
-    // Pin the warning's claim against the fetch path it describes: delete
-    // the checkout the lock just pinned detached, run `rwv fetch`, and
-    // confirm the re-materialized checkout lands attached, not detached.
-    let tmp = common::tempdir().unwrap();
-    let root = make_workspace(tmp.path(), "ws");
-
-    let repo_path = "github/acme/server";
-    let (sha, url) = init_git_repo_detached_from_origin(tmp.path(), &root.join(repo_path));
-
-    let project_dir = root.join("projects").join("my-app");
-    write_manifest(&project_dir, &[(repo_path, url.as_str())]);
-
-    rwv_cmd()
-        .arg("lock")
-        .current_dir(&project_dir)
-        .assert()
-        .success()
-        .stderr(predicate::str::contains(
-            "a later fetch materializes it attached to a branch at this pin, never detached",
-        ));
-
-    let member = root.join(repo_path);
-    std::fs::remove_dir_all(&member).unwrap();
-
-    rwv_cmd()
-        .arg("update")
-        .current_dir(&project_dir)
-        .assert()
-        .success();
-
-    assert!(
-        member.exists(),
-        "fetch must re-materialize the deleted member"
-    );
-    assert_eq!(
-        common::checkout_ref(&member).as_deref(),
-        Some("main"),
-        "the warning claims a later fetch attaches a branch at the pin; the \
-         re-materialized checkout must not be detached"
-    );
-    assert_eq!(
-        common::git_in(&member, &["rev-parse", "HEAD"]),
-        sha,
-        "the re-materialized checkout must sit at the pinned commit"
-    );
+        .stderr(predicate::str::contains("detached").not());
 }
 
 // ---------------------------------------------------------------------------
@@ -1754,15 +1694,10 @@ fn init_git_repo_unborn(path: &Path) {
 }
 
 #[test]
-fn lock_unborn_head_member_refuses_with_clear_message() {
-    // A repo member that has no commits yet (unborn HEAD): `rwv lock` must
-    // refuse and emit a clear message that:
-    //   - names the repo path
-    //   - names the state ("unborn HEAD")
-    //   - tells the operator what to do ("make an initial commit")
-    //
-    // Before this fix, the raw git error ("ambiguous argument 'HEAD'")
-    // leaked to the terminal.
+fn lock_over_an_unborn_member_has_no_commit_to_record_and_says_so() {
+    // A repo member that has no commits yet (unborn HEAD) has nothing a pin
+    // could name: `rwv lock` keeps it without one and says `pin none`, and the
+    // members it can record are recorded.
     let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
@@ -1775,46 +1710,17 @@ fn lock_unborn_head_member_refuses_with_clear_message() {
         &[(repo_path, "https://github.com/acme/server.git")],
     );
 
-    // Must fail — cannot pin an unborn HEAD.
     rwv_cmd()
         .arg("lock")
         .current_dir(&project_dir)
         .assert()
-        .failure()
-        // Clear state name, not the raw git error.
-        .stderr(predicate::str::contains("unborn HEAD"))
-        // Operator action.
-        .stderr(predicate::str::contains("initial commit"))
+        .success()
+        .stderr(predicate::str::contains(format!("{repo_path}: pin none")))
         // Raw git error must NOT leak.
         .stderr(predicate::str::contains("ambiguous argument").not());
-}
 
-#[test]
-fn lock_unborn_head_does_not_write_lock_file() {
-    // When the member has an unborn HEAD, no rwv.lock should be written —
-    // an early failure before the write step is the safe outcome.
-    let tmp = common::tempdir().unwrap();
-    let root = make_workspace(tmp.path(), "ws");
-
-    let repo_path = "github/acme/server";
-    init_git_repo_unborn(&root.join(repo_path));
-
-    let project_dir = root.join("projects").join("my-app");
-    write_manifest(
-        &project_dir,
-        &[(repo_path, "https://github.com/acme/server.git")],
-    );
-
-    rwv_cmd()
-        .arg("lock")
-        .current_dir(&project_dir)
-        .assert()
-        .failure();
-
-    assert!(
-        !project_dir.join("rwv.lock").exists(),
-        "rwv.lock must not be written when a member has an unborn HEAD"
-    );
+    let lock = repoweave::manifest::LockFile::from_path(&project_dir.join("rwv.lock")).unwrap();
+    assert!(lock.is_empty(), "an unborn member has no commit to pin");
 }
 
 // ============================================================================
@@ -1857,7 +1763,7 @@ fn lock_commit_carries_an_untracked_manifest() {
     assert_eq!(common::git_in(&project_dir, &["status", "--porcelain"]), "");
     assert_eq!(
         common::git_in(&project_dir, &["log", "-1", "--format=%s"]),
-        "lock: refresh 1 repo, record rwv.toml"
+        "lock: record rwv.toml"
     );
 }
 

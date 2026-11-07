@@ -128,7 +128,7 @@ fn park(seat_project_commit: bool) -> Parked {
     )
     .unwrap();
     std::fs::write(primary.root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
-    succeed(&primary.root, &["lock"]);
+    common::pin_every_member(&primary.root);
     common::git_in(&primary.project, &["add", "-A"]);
     common::git_in(&primary.project, &["commit", "-m", "initial"]);
 

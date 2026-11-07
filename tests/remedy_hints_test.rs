@@ -77,7 +77,7 @@ impl Weave {
         std::fs::write(project.join("rwv.toml"), manifest).unwrap();
         let weave = Weave { tmp, ws };
         weave.ok(&["doctor", "--fix"]);
-        weave.ok(&["lock"]);
+        common::pin_every_member(&weave.ws);
         common::git_in(&project, &["add", "-A"]);
         common::git_in(&project, &["commit", "-q", "-m", "members"]);
         let bare = weave.tmp.path().join("app.git");
@@ -186,11 +186,12 @@ fn no_remote_default_branch_names_only_the_remedy_that_works() {
     );
 }
 
-/// A member whose HEAD is not its lock commit: the hint's two remedies are
-/// recording the local state, and moving the branch back without detaching
-/// it — a detached HEAD at the lock commit is what push refuses next.
+/// A member holding a commit its lock does not pin: push judges it `pin
+/// unpinned` and names `rwv lock --commit`, which records the commit. Moving
+/// the branch back without detaching it also gets push through, and a
+/// detached HEAD at the pin is what push refuses next.
 #[test]
-fn lock_state_mismatch_names_remedies_that_push_accepts() {
+fn an_unpinned_commit_names_the_remedy_push_accepts() {
     let weave = Weave::new(&["web"]);
     weave.set_project_head();
     let member = weave.ws.join("github/acme/web");
@@ -201,27 +202,17 @@ fn lock_state_mismatch_names_remedies_that_push_accepts() {
 
     let report = weave.refused(&["push"]);
     assert!(
-        report.contains("rwv explain lock-state-mismatch"),
-        "fixture: the push stops on the lock mismatch:\n{report}"
-    );
-    assert!(
-        report.contains(
-            "Hint: run `rwv lock --commit` to record each listed repo's HEAD in the lock, or \
-             move the repo's branch to its lock commit without detaching it: `git reset \
-             --keep <lock commit>` in the repo (after `git branch <name>` to keep the commits \
-             it moves off)."
-        ),
-        "the hint names remedies that work:\n{report}"
-    );
-    assert!(
-        !report.contains("`git checkout` in each repo"),
-        "a checkout of the lock commit detaches HEAD, which push refuses:\n{report}"
+        report.contains("github/acme/web: pin unpinned")
+            && report.contains("ahead of the lock")
+            && report.contains("rwv lock --commit")
+            && report.contains("rwv explain pin"),
+        "the push stops on the unpinned commit and names the lock that records it:\n{report}"
     );
 
     common::git_in(&member, &["checkout", "-q", &locked]);
     let report = weave.refused(&["push"]);
     assert!(
-        !report.contains("lock-state-mismatch"),
+        !report.contains("pin unpinned"),
         "fixture: the checkout agrees with the lock:\n{report}"
     );
     assert!(
@@ -235,7 +226,7 @@ fn lock_state_mismatch_names_remedies_that_push_accepts() {
     common::git_in(&member, &["reset", "-q", "--keep", &locked]);
     let report = weave.ok(&["push"]);
     assert!(
-        !report.contains("lock-state-mismatch") && !report.contains("unpushable-repo-branch"),
+        !report.contains("pin unpinned") && !report.contains("unpushable-repo-branch"),
         "the branch moved back without detaching gets push through:\n{report}"
     );
     assert!(
@@ -243,23 +234,21 @@ fn lock_state_mismatch_names_remedies_that_push_accepts() {
         "and the commits it moved off are kept"
     );
 
-    // The hint's other remedy — recording the local state instead of moving
-    // the branch back — also gets push through.
     std::fs::write(member.join("ahead-again.txt"), "ahead again\n").unwrap();
     common::git_in(&member, &["add", "-A"]);
     common::git_in(&member, &["commit", "-q", "-m", "ahead of the lock again"]);
 
     let report = weave.refused(&["push"]);
     assert!(
-        report.contains("rwv explain lock-state-mismatch"),
-        "fixture: the push stops on the lock mismatch again:\n{report}"
+        report.contains("github/acme/web: pin unpinned"),
+        "fixture: the push stops on the unpinned commit again:\n{report}"
     );
 
     weave.ok(&["lock", "--commit"]);
     let new_head = common::git_in(&member, &["rev-parse", "HEAD"]);
     let report = weave.ok(&["push"]);
     assert!(
-        !report.contains("lock-state-mismatch"),
+        !report.contains("pin unpinned"),
         "`rwv lock --commit` recorded the member's new HEAD and push got past the \
          gate:\n{report}"
     );
@@ -271,27 +260,34 @@ fn lock_state_mismatch_names_remedies_that_push_accepts() {
 }
 
 /// A member added to the manifest after `rwv.lock` was last written: push
-/// refuses, naming the missing entry, and `rwv lock --commit` is what clears
-/// it.
+/// refuses it as `pin none`, `rwv lock` leaves it without a pin, and `rwv
+/// member pin` is what gives it one.
 #[test]
-fn push_names_lock_commit_for_a_member_missing_from_the_lock() {
+fn push_names_the_first_pin_verbs_for_a_member_missing_from_the_lock() {
     let weave = Weave::new(&["web"]);
     weave.set_project_head();
     weave.add_unlocked_member("api");
 
     let report = weave.refused(&["push"]);
     assert!(
-        report.contains("github/acme/api: missing from")
-            && report.contains("run `rwv lock --commit` to record local state"),
-        "the refusal names the remedy for the member the lock has never seen:\n{report}"
+        report.contains("github/acme/api: pin none")
+            && report.contains("rwv member pin github/acme/api <rev> --commit")
+            && report.contains("rwv update --remote --repo github/acme/api --commit"),
+        "the refusal names the verbs that give the member its first pin:\n{report}"
     );
 
     weave.ok(&["lock", "--commit"]);
+    let lock = std::fs::read_to_string(weave.project().join("rwv.lock")).unwrap();
+    assert!(
+        !lock.contains("github/acme/api"),
+        "`rwv lock` gives no first pin:\n{lock}"
+    );
+
+    weave.ok(&["member", "pin", "github/acme/api", "HEAD", "--commit"]);
     let report = weave.ok(&["push"]);
     assert!(
-        !report.contains("missing from"),
-        "`rwv lock --commit` recorded the member's HEAD and push got past the \
-         gate:\n{report}"
+        !report.contains("pin none"),
+        "`rwv member pin` gave the member its pin and push got past the gate:\n{report}"
     );
     let lock = std::fs::read_to_string(weave.project().join("rwv.lock")).unwrap();
     assert!(
@@ -451,7 +447,7 @@ fn weave_with_two_projects(tmp: &Path) -> PathBuf {
 fn commit_project(ws: &Path, project: &str) {
     let dir = ws.join("projects").join(project);
     common::git_in(&dir, &["add", "-A"]);
-    common::git_in(&dir, &["commit", "-q", "-m", "settled"]);
+    common::commit_staged(&dir, "settled");
 }
 
 /// A sync that needs a member of a project the primary does not present

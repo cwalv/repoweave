@@ -114,6 +114,11 @@ fn a_checkout_gone_from_disk_is_restored_by_update() {
         .current_dir(&ws)
         .assert()
         .success();
+    common::rwv()
+        .args(["member", "pin", "local/acme/new", "HEAD"])
+        .current_dir(&ws)
+        .assert()
+        .success();
     assert_eq!(kinds(&ws), Vec::new());
     std::fs::remove_dir_all(common::under(&ws, "local/acme/new")).unwrap();
     assert_eq!(
@@ -166,8 +171,8 @@ fn a_checkout_moved_to_its_placement_is_re_keyed_and_locked() {
     let advice = dangling_advice(&ws, "local/acme/old");
     assert!(
         advice.contains(
-            "re-key the entry in rwv.toml from `local/acme/old` to `local/acme/new` and run \
-             `rwv lock`"
+            "re-key the entry in rwv.toml from `local/acme/old` to `local/acme/new`, run \
+             `rwv lock`, and pin it with `rwv member pin local/acme/new <rev> --commit`"
         ),
         "{advice}"
     );
@@ -176,6 +181,11 @@ fn a_checkout_moved_to_its_placement_is_re_keyed_and_locked() {
     rekey(&ws, "local/acme/old", "local/acme/new");
     common::rwv()
         .arg("lock")
+        .current_dir(&ws)
+        .assert()
+        .success();
+    common::rwv()
+        .args(["member", "pin", "local/acme/new", "HEAD"])
         .current_dir(&ws)
         .assert()
         .success();

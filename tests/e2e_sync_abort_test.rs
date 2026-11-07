@@ -140,7 +140,7 @@ fn make_shared_workspaces(parent: &Path) -> (Workspace, Workspace, String) {
             "add",
             &ww_server.to_string_lossy(),
             "-b",
-            "ww/main",
+            "ww/project",
         ],
     );
 
@@ -400,7 +400,7 @@ fn sync_ff_is_symmetric_workweave_catches_up_to_primary() {
         .success();
 
     // Workweave's ww/main branch (inside the shared clone) should be at C2.
-    let ww_head = common::git_in(&primary.server_dir, &["rev-parse", "ww/main"]);
+    let ww_head = common::git_in(&primary.server_dir, &["rev-parse", "ww/project"]);
     assert_eq!(
         ww_head, c2,
         "ww/main should be at C2 after syncing workweave from primary"
@@ -971,7 +971,7 @@ fn sync_rebase_replays_local_commits_on_source_tip() {
         .success();
 
     // After rebase, ww/main should be a descendant of C2.
-    let ww_head = common::git_in(&primary.server_dir, &["rev-parse", "ww/main"]);
+    let ww_head = common::git_in(&primary.server_dir, &["rev-parse", "ww/project"]);
     let is_descendant = common::git()
         .args(["merge-base", "--is-ancestor", &c2, &ww_head])
         .current_dir(&primary.server_dir)
@@ -1044,7 +1044,7 @@ fn abort_restores_repos_to_pre_op_state() {
     common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww"]);
 
     // Record ww's server tip before the attempted sync.
-    let pre_op_sha = common::git_in(&primary.server_dir, &["rev-parse", "ww/main"]);
+    let pre_op_sha = common::git_in(&primary.server_dir, &["rev-parse", "ww/project"]);
     assert_eq!(pre_op_sha, c_ww);
 
     // Attempt rebase sync — should hit a conflict and leave repos mid-op.
@@ -1065,7 +1065,7 @@ fn abort_restores_repos_to_pre_op_state() {
     // Abort should restore ww/main back to pre-op state.
     rwv().arg("abort").current_dir(&ww.root).assert().success();
 
-    let post_abort_sha = common::git_in(&primary.server_dir, &["rev-parse", "ww/main"]);
+    let post_abort_sha = common::git_in(&primary.server_dir, &["rev-parse", "ww/project"]);
     assert_eq!(
         post_abort_sha, pre_op_sha,
         "abort should restore ww/main to pre-op SHA {pre_op_sha}; got {post_abort_sha}"
@@ -1406,7 +1406,7 @@ fn make_marker_workweave(parent: &Path, ww_name: &str) -> MarkerSharedWorkspaces
             "worktree",
             "add",
             "-b",
-            &format!("primary--{ww_name}/main"),
+            &format!("primary--{ww_name}/project"),
             &ww_server.to_string_lossy(),
         ],
     );

@@ -1274,6 +1274,7 @@ A member's checkout, or the project repo's, is not where the checked-out project
 | `detached`, for `rwv activate` | C6: align members for the checked-out branch | `rwv activate <project> --update` | here | moves only what alignment moves |
 | `detached with unpushed commits` | C14: keep this work on a branch, then return to the expected branch | VCS action (git: `git -C <checkout> branch <name> <sha>`); then `rwv update` | any workspace | the branch holds the work before anything moves |
 | `detached with unpushed commits` | C15: copy these commits onto `<b>` | VCS action (git: `git -C <checkout> cherry-pick <ids>`); then `rwv lock --commit` | where `<b>` is checked out | a copy adds only |
+| `unaligned` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |
 | `unaligned` | C18: start `<m>`'s `<b>` at a commit you choose | VCS action (git: `git -C <checkout> branch <name> <sha>`); then `rwv update` | any workspace | creates only |
 | `project moved` | C6: align members for the checked-out branch | `rwv update` | here | moves only what alignment moves |
 | `project unaligned` | C6: align members for the checked-out branch | `rwv update` | here | moves only what alignment moves |

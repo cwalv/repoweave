@@ -2413,7 +2413,7 @@ fn a_sync_to_parked_mid_rebase_draws_no_switch_advice() {
     .unwrap();
     std::fs::write(primary.join(".rwv-active"), "app\n").unwrap();
     common::record_trunk(&primary_project);
-    rwv().arg("lock").current_dir(&primary).assert().success();
+    common::pin_every_member(&primary);
     git_in(&primary_project, &["add", "-A"]);
     git_in(&primary_project, &["commit", "-q", "-m", "initial"]);
     rwv()

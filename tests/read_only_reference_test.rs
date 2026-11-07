@@ -503,18 +503,17 @@ fn a_reference_member_arriving_by_sync_is_read_only() {
             &late.to_string_lossy(),
         ],
     );
-    let manifest = weave.project_dir().join("rwv.toml");
-    let body = common::read_normalized(&manifest);
-    std::fs::write(
-        &manifest,
-        format!(
-            "{body}\n{}",
-            manifest_entry("github/org/late", &late_upstream, "reference")
-        ),
-    )
-    .unwrap();
-    commit_all(&weave.project_dir(), "add late");
-    succeed(&["lock", "--commit"], &weave.primary);
+    succeed(
+        &[
+            "member",
+            "add",
+            "--adopt",
+            &late.to_string_lossy(),
+            "--role",
+            "reference",
+        ],
+        &weave.primary,
+    );
 
     succeed(&["sync", "primary"], &seat);
 
@@ -547,6 +546,7 @@ fn abort_restoring_an_older_manifest_resettles_the_target() {
         "reference",
         "reference",
     );
+    succeed(&["update"], &seat);
     succeed(&["lock", "--commit"], &seat);
     std::fs::write(seat.join(OWNED_PATH).join("UNTRACKED"), "u\n").unwrap();
 

@@ -203,22 +203,42 @@ The others follow.
 
 | State | Means | Refused by |
 |---|---|---|
-| `none` | the lock has no entry for the member, or there is no lock file; the checkout is on the declared branch at the tip of the remote's branch | `rwv clone`, which does not refuse: it completes, lists the member and exits with status 3 |
-| `unreachable` | the lock pins a commit that no ref in the clone reaches; the checkout is on the declared branch at the tip of the remote's branch | `rwv clone`, which does not refuse: it completes, lists the member and exits with status 3 |
+| `behind` | the checkout's commit is an ancestor of the commit the lock pins: the lock records commits the checkout lacks | `rwv push`; `rwv status` reports it |
+| `ahead` | the checkout holds commits beyond the commit the lock pins, and each is pushed or pinned by another live lock, which the facts name; the commits are published with `rwv push` only where none is pushed yet | `rwv status` reports it; `rwv push` reports it and goes on |
+| `unpinned` | the checkout holds the commits listed beyond the commit the lock pins, which no remote-tracking branch and no live lock reaches | `rwv push`; `rwv status` reports it |
+| `none` | the lock has no entry for the member, or there is no lock file; the checkout is on the declared branch at the tip of the remote's branch, or where it was found | `rwv push`; `rwv clone`, which does not refuse: it completes, lists the member and exits with status 3; `rwv lock`, `rwv update` and `rwv status` report it |
+| `diverged` | neither the checkout's commit nor the commit the lock pins is an ancestor of the other | `rwv push`; `rwv status` reports it |
+| `not on declared branch` | the lock pins a commit that neither the member's declared branch nor its upstream reaches, so the checkout sits detached at the pin | `rwv member pin`, for a commit that neither reaches; `rwv update` and `rwv status` report it |
+| `unreachable` | the lock pins a commit that no ref in the clone reaches; the checkout is on the declared branch at the tip of the remote's branch | `rwv push`; `rwv clone`, which does not refuse: it completes, lists the member and exits with status 3; `rwv status` reports it |
+| `off remote` | a live lock pins a commit that no remote-tracking branch of the member reaches after the pruning fetch, listed with the locks that pin it. Choices print only in a workspace whose checked-out branch's lock holds the pin: a feature's offers publishing it, a declared branch's offers pinning another commit; elsewhere the state is a fact and offers waiting | nothing refuses; `rwv fetch` and `rwv pull` report it |
+| `backwards` | recording the commit the checkout is at would move the pin to one that does not descend from the pinned commit: it is behind the pin or has diverged from it, or the pinned commit is in no ref here | `rwv lock`, for a member `--repo` does not name; `rwv update --remote` |
 | `would be unreachable` | a live lock pins a commit that only the backups being dropped reach, listed with the locks that pin it | `rwv backup drop` and `rwv backup prune` |
-| `not on declared branch` | the lock pins a commit that neither the member's declared branch nor its upstream reaches, so the checkout sits detached at the pin | `rwv update` and `rwv status` report it |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
 
 | State | Choice | Spelled | Where | Keeps work because |
 |---|---|---|---|---|
-| `none` | C1: take in theirs | `rwv update --remote --repo <m>` | any workspace | fast-forward only |
-| `unreachable` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
-| `unreachable` | C19: wait until the PR lands or its branch is deleted, then rerun | — | nowhere | nothing changes |
-| `would be unreachable` | C7: publish it (again) | `rwv push` | here | adds only |
-| `would be unreachable` | C27: publish this commit under a branch name you choose | VCS action (git: `git -C <checkout> push <r> <sha>:refs/heads/<name>`) | any workspace | creates or fast-forwards |
+| `behind` | C6: align members for the checked-out branch | `rwv update` | here | moves only what alignment moves |
+| `behind` | C1: take in theirs | `rwv update --remote --repo <m>` | any workspace | fast-forward only |
+| `ahead` | C5: record it: the lock, and `rwv.toml` as it stands | `rwv lock --commit` | a workspace with the branch checked out | records only |
+| `ahead` | C7: publish it (again) | `rwv push --repo <m>` | here | adds only |
+| `unpinned` | C5: record it: the lock, and `rwv.toml` as it stands | `rwv lock --commit` | a workspace with the branch checked out | records only |
+| `none` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |
+| `none` | C1: take in theirs | `rwv update --remote --repo <m> --commit` | any workspace | fast-forward only |
+| `diverged` | C5: record it: the lock, and `rwv.toml` as it stands | `rwv lock --repo <m> --commit` | a workspace with the branch checked out | records only |
 | `not on declared branch` | C19: wait until the PR lands or its branch is deleted, then rerun | — | nowhere | nothing changes |
 | `not on declared branch` | C15: copy these commits onto `<b>` | VCS action (git: `git -C <checkout> cherry-pick <ids>`); then `rwv lock --commit` | where `<b>` is checked out | a copy adds only |
+| `not on declared branch` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |
+| `unreachable` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
+| `unreachable` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |
+| `unreachable` | C19: wait until the PR lands or its branch is deleted, then rerun | — | nowhere | nothing changes |
+| `off remote` | C7: publish it (again) | `rwv push --repo <m>` | here | adds only |
+| `off remote` | C27: publish this commit under a branch name you choose | VCS action (git: `git -C <checkout> push <r> <sha>:refs/heads/<name>`) | any workspace | creates or fast-forwards |
+| `off remote` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |
+| `off remote` | C19: wait until the PR lands or its branch is deleted, then rerun | — | nowhere | nothing changes |
+| `backwards` | C5: record it: the lock, and `rwv.toml` as it stands | `rwv lock --repo <m> --commit` | a workspace with the branch checked out | records only |
+| `would be unreachable` | C7: publish it (again) | `rwv push` | here | adds only |
+| `would be unreachable` | C27: publish this commit under a branch name you choose | VCS action (git: `git -C <checkout> push <r> <sha>:refs/heads/<name>`) | any workspace | creates or fast-forwards |
 
 **Where this sits.** [Lock as derived](../explanation/joints/lock-as-derived.md); [Reconcile repos](../how-to/reconcile-repos.md); [Destructive operations](../explanation/destructive-operations.md).
 

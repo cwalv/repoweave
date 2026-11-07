@@ -1452,7 +1452,7 @@ Schema:
               "$ref": "#/definitions/WirePath"
             },
             "clone_at_placement": {
-              "description": "The path the entry's URL places it at, when a clone of the same remote stands there and no entry of the project names it; `null` otherwise. Present, the repair is to re-key the entry to it and run `rwv lock`; absent, it is `rwv update`.",
+              "description": "The path the entry's URL places it at, when a clone of the same remote stands there and no entry of the project names it; `null` otherwise. Present, the repair is to re-key the entry to it, run `rwv lock` and pin it with `rwv member pin`; absent, it is `rwv update`.",
               "type": [
                 "string",
                 "null"

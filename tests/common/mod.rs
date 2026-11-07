@@ -411,6 +411,48 @@ impl LineEndings {
     }
 }
 
+/// Give every member of the project active at the weave root `root` its first
+/// pin at the commit its clone is at, through `rwv member pin`, the verb that
+/// gives a pin by name. `rwv lock` records a pin forward only and gives none.
+pub fn pin_every_member(root: &std::path::Path) {
+    let active = std::fs::read_to_string(root.join(".rwv-active"))
+        .expect("a fixture weave has an active project")
+        .trim()
+        .to_owned();
+    let manifest = repoweave::manifest::Manifest::from_path(
+        &root.join("projects").join(&active).join("rwv.toml"),
+    )
+    .expect("a fixture project's manifest parses");
+    for (path, _) in manifest.iter_entries() {
+        let out = rwv()
+            .args(["member", "pin", path.as_str(), "HEAD"])
+            .current_dir(root)
+            .output()
+            .expect("rwv member pin should run");
+        assert!(
+            out.status.success(),
+            "rwv member pin {path} HEAD in {} failed:\n{}",
+            root.display(),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
+/// Commit what is staged in `dir`, unless nothing is: a verb that commits its
+/// own change leaves nothing for the fixture to commit after it.
+pub fn commit_staged(dir: impl AsRef<std::path::Path>, message: &str) {
+    let dir = dir.as_ref();
+    let nothing_staged = git()
+        .args(["diff", "--cached", "--quiet"])
+        .current_dir(dir)
+        .status()
+        .expect("git diff --cached should run")
+        .success();
+    if !nothing_staged {
+        git_in(dir, &["commit", "-q", "-m", message]);
+    }
+}
+
 /// Run `git args` in `dir`, panic on a non-zero exit, and hand back trimmed
 /// stdout.
 ///

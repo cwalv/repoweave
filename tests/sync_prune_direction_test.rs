@@ -66,7 +66,7 @@ fn weave() -> Weave {
     )
     .unwrap();
     std::fs::write(root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
-    succeed(&root, &["lock"]);
+    common::pin_every_member(&root);
     common::git_in(&project, &["add", "-A"]);
     common::git_in(&project, &["commit", "-m", "initial"]);
 
@@ -110,7 +110,7 @@ fn add_and_commit(workspace: &Path, url: &str, role: &str) {
     succeed(workspace, &["lock"]);
     let project = project_dir(workspace);
     common::git_in(&project, &["add", "rwv.toml", "rwv.lock"]);
-    common::git_in(&project, &["commit", "-m", "add extra"]);
+    common::commit_staged(&project, "add extra");
 }
 
 fn names_extra(workspace: &Path) -> bool {
@@ -308,12 +308,8 @@ fn a_member_dropped_and_re_added_here_keeps_its_checkout_through_a_landing() {
     let s1 = seat(&weave, &target, "s1");
     let own = head(&common::under(&s1, EXTRA));
 
-    let manifest = std::fs::read_to_string(project_dir(&s1).join("rwv.toml")).unwrap();
     drop_and_commit(&s1, "seat drops extra");
-    std::fs::write(project_dir(&s1).join("rwv.toml"), manifest).unwrap();
-    succeed(&s1, &["lock"]);
-    common::git_in(project_dir(&s1), &["add", "rwv.toml", "rwv.lock"]);
-    common::git_in(project_dir(&s1), &["commit", "-m", "re-add extra"]);
+    succeed(&s1, &["member", "add", &weave.extra_url, "--role", "owned"]);
 
     drop_and_commit(&target, "target drops extra");
 

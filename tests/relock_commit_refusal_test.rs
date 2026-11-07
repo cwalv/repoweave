@@ -74,7 +74,7 @@ fn weave() -> Weave {
     .unwrap();
     std::fs::write(root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
     common::record_trunk(&project);
-    succeed(&root, &["lock"]);
+    common::pin_every_member(&root);
     common::git_in(&project, &["add", "-A"]);
     common::git_in(&project, &["commit", "-m", "initial"]);
 

@@ -19,7 +19,7 @@
 //! the wrong tree, which is the defect worth a fixture.
 //!
 //! Scope: this drives manifest-declared branch resolution through
-//! `workweave create` and `lock`. It says nothing about a repo whose *remote*
+//! `workweave create` and `member pin`. It says nothing about a repo whose *remote*
 //! default diverges — `add_url_resolves_a_non_main_remote_default_branch` in
 //! `tests/add_remove_test.rs` covers that direction.
 
@@ -122,7 +122,7 @@ fn the_primary_checkout_stays_on_the_declared_branch() {
 }
 
 #[test]
-fn lock_resolves_the_declared_branch_not_main() {
+fn a_first_pin_reads_the_declared_branch_not_main() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     let repo = ws.join("github/org/repo");
@@ -135,17 +135,24 @@ fn lock_resolves_the_declared_branch_not_main() {
     );
 
     common::rwv()
-        .args(["lock", "--project", "web-app"])
+        .args([
+            "member",
+            "pin",
+            "github/org/repo",
+            "trunk",
+            "--project",
+            "web-app",
+        ])
         .current_dir(&ws)
         .assert()
         .success();
 
     let raw = common::read_normalized(ws.join("projects/web-app/rwv.lock"));
-    let lock =
-        repoweave::manifest::LockFile::from_json_str(&raw).expect("rwv lock writes valid JSON");
+    let lock = repoweave::manifest::LockFile::from_json_str(&raw)
+        .expect("rwv member pin writes valid JSON");
     let entry = lock
         .get_entry(&repoweave::manifest::RepoPath::new("github/org/repo").unwrap())
-        .expect("the locked repo must be recorded");
+        .expect("the pinned repo must be recorded");
     assert_eq!(
         entry.version.as_str(),
         trunk_tip,

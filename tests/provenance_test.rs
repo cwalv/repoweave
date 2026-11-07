@@ -708,7 +708,6 @@ fn weave_with_misplaced_member(tmp: &Path) -> PathBuf {
         .current_dir(&ws)
         .assert()
         .success();
-    rwv().arg("lock").current_dir(&ws).assert().success();
     ws
 }
 
@@ -793,6 +792,7 @@ fn moving_the_checkout_and_re_keying_the_entry_clears_placement_disagreement() {
         format!("move the checkout to `{PLACED}`"),
         format!("re-key the entry in rwv.toml from `{MISPLACED}` to `{PLACED}`"),
         "run `rwv lock`".to_owned(),
+        format!("pin it with `rwv member pin {PLACED} <rev> --commit`"),
     ] {
         assert!(advice.contains(&step), "must advise `{step}`: {advice}");
     }
@@ -800,6 +800,11 @@ fn moving_the_checkout_and_re_keying_the_entry_clears_placement_disagreement() {
     move_checkout(&ws);
     re_key(&ws);
     rwv().arg("lock").current_dir(&ws).assert().success();
+    rwv()
+        .args(["member", "pin", PLACED, "HEAD"])
+        .current_dir(&ws)
+        .assert()
+        .success();
 
     assert_eq!(
         all_violations(&ws),
@@ -830,6 +835,11 @@ fn re_keying_alone_clears_placement_disagreement_once_the_checkout_is_already_th
 
     re_key(&ws);
     rwv().arg("lock").current_dir(&ws).assert().success();
+    rwv()
+        .args(["member", "pin", PLACED, "HEAD"])
+        .current_dir(&ws)
+        .assert()
+        .success();
 
     assert_eq!(
         all_violations(&ws),
@@ -906,6 +916,11 @@ fn a_workweave_holding_the_clone_is_landed_and_retired_before_the_move() {
     move_checkout(&ws);
     re_key(&ws);
     rwv().arg("lock").current_dir(&ws).assert().success();
+    rwv()
+        .args(["member", "pin", PLACED, "HEAD"])
+        .current_dir(&ws)
+        .assert()
+        .success();
     commit_project(&ws, "re-key");
 
     let placed = common::under(&ws, PLACED);

@@ -76,7 +76,7 @@ fn succeed(dir: &Path, args: &[&str]) {
 fn commit_all(workspace: &Path, message: &str) {
     let project = project_dir(workspace);
     common::git_in(&project, &["add", "rwv.toml", "rwv.lock"]);
-    common::git_in(&project, &["commit", "-m", message]);
+    common::commit_staged(&project, message);
 }
 
 /// A primary weave whose project names `lib` and `extra`, both owned.
@@ -111,7 +111,7 @@ fn weave() -> Weave {
     )
     .unwrap();
     std::fs::write(root.join(".rwv-active"), format!("{PROJECT}\n")).unwrap();
-    succeed(&root, &["lock"]);
+    common::pin_every_member(&root);
     common::git_in(&project, &["add", "-A"]);
     common::git_in(&project, &["commit", "-m", "initial"]);
     let weave = Weave {
@@ -458,6 +458,7 @@ fn delete_releases_the_primary_clone_of_a_member_only_the_workweave_added() {
             PROJECT,
             "s1",
             "--discard-uncommitted",
+            "--discard-unmerged-commits",
         ],
     );
 

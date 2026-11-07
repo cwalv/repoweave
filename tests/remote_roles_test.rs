@@ -521,8 +521,13 @@ fn a_gone_upstream_is_marked_only_while_the_branch_holds_unpushed_commits() {
 fn push_leaves_a_gone_branch_unpublished_unless_the_repo_is_named() {
     let weave = Weave::new();
     feature_whose_upstream_is_gone_with_nothing_unpushed(&weave);
-    commit(&weave.member(), "mine alone");
-    assert!(weave.rwv(&["lock", "--commit"]).status.success());
+    let head = commit(&weave.member(), "mine alone");
+    common::fixture_lock(
+        &weave.project(),
+        &[(MEMBER, &common::file_url(weave.bare()), &head)],
+    );
+    common::git_in(&weave.project(), &["add", "rwv.lock"]);
+    common::commit_staged(&weave.project(), "pin the member's commit");
 
     let skipped = weave.rwv(&["push"]);
     assert!(skipped.status.success(), "{}", text(&skipped.stderr));

@@ -110,7 +110,7 @@ impl Weave {
     fn commit_project_file(&self, name: &str) {
         let project = self.ws.join("projects/demo");
         common::git_in(&project, &["add", name]);
-        common::git_in(&project, &["commit", "-qm", name]);
+        common::commit_staged(&project, name);
     }
 
     /// Put a stand-in `name` on the runs' `PATH`, running `script`.
@@ -255,13 +255,20 @@ fn a_lock_written_where_its_link_was_missing_over_a_committed_copy_is_adopted() 
     assert_eq!(
         common::git_in(
             &project,
-            &["diff", "--name-only", "--", "package-lock.json"]
+            &[
+                "diff",
+                "--name-only",
+                "HEAD~1",
+                "HEAD",
+                "--",
+                "package-lock.json"
+            ]
         ),
         "package-lock.json",
-        "the adopted lock is the project's uncommitted change"
+        "the adopted lock is part of the commit the add made"
     );
     assert_eq!(
-        common::git_in(&project, &["show", "HEAD:package-lock.json"]),
+        common::git_in(&project, &["show", "HEAD~1:package-lock.json"]),
         "{\"lockfileVersion\": 3}",
         "and the copy it replaced is still in history"
     );
