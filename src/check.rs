@@ -1085,18 +1085,6 @@ impl PinKind {
         FixDisposition::ReportOnly
     }
 
-    pub fn state(self) -> crate::diagnosis::State {
-        use crate::diagnosis::State;
-        match self {
-            Self::None => State::PinNone,
-            Self::Unreachable => State::PinUnreachable,
-            Self::Behind => State::PinBehind,
-            Self::Ahead => State::PinAhead,
-            Self::Unpinned => State::PinUnpinned,
-            Self::Diverged => State::PinDiverged,
-        }
-    }
-
     pub fn entry(self) -> &'static str {
         match self {
             Self::None => {
