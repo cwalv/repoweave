@@ -438,6 +438,50 @@ fn push_refuses_detached_head() {
 // A recorded feature branch publishes from the primary
 // ============================================================================
 
+/// A publishing push leaves `rwv.lock` as the committed lock holds it: it
+/// judges the pins and never writes them.
+#[test]
+fn push_leaves_the_lock_byte_for_byte_as_committed() {
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
+    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
+    let lock_before = std::fs::read(project_dir.join("rwv.lock")).unwrap();
+    let head_before = common::git_in(&project_dir, &["rev-parse", "HEAD"]);
+
+    rwv()
+        .args(["push"])
+        .current_dir(&ws.workspace)
+        .assert()
+        .success();
+
+    assert_eq!(
+        std::fs::read(project_dir.join("rwv.lock")).unwrap(),
+        lock_before
+    );
+    assert_eq!(
+        common::git_in(&project_dir, &["rev-parse", "HEAD"]),
+        head_before,
+        "and no commit was made"
+    );
+}
+
+/// `--branch` names a weave branch that exists; a name nothing has refuses
+/// before any remote is touched.
+#[test]
+fn push_branch_refuses_a_name_the_project_repo_lacks() {
+    let ws = common::build_workspace("alpha", &[("local/org/a", "owned")]);
+    let output = rwv()
+        .args(["push", "--branch", "nosuch"])
+        .current_dir(&ws.workspace)
+        .output()
+        .expect("rwv push");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("projects/alpha: name no-such-branch (nosuch)"),
+        "got: {stderr}"
+    );
+}
+
 /// The project repo need not be on the remote's default branch: a push
 /// publishes the recorded branch it is on, and the record before it.
 #[test]

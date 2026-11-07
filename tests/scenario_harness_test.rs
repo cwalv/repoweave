@@ -1507,6 +1507,16 @@ fn landed() -> Claim {
 }
 
 holding_rwv! {
+    /// The lease on an overwrite is the tip the push read: a remote that moved
+    /// since refuses the replacement of its branch, and keeps what it holds.
+    fn an_overwrite_leased_to_a_tip_the_remote_has_moved_past_is_refused() {
+        bad_steps(
+            "a stale lease",
+            scenarios::overwrite_lease_refuses_a_moved_remote(),
+        )
+        .assert_fully_decided_green();
+    }
+
     /// Two machines publish records at once; the loser's push to the remote
     /// loses, so it fetches, merges and retries, and no entry is lost.
     fn a_records_push_that_loses_the_race_fetches_merges_and_retries() {

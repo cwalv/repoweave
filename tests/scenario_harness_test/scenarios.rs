@@ -101,51 +101,90 @@ fn feat_x_record() -> Option<Record> {
 }
 
 /// A cross-repo PR: one `push` publishes the members' branches, the record and
-/// the project branch; an amend of `app` is republished only by a named,
-/// leased `--overwrite`, which keeps the replaced tip as a backup.
+/// the project branch; an amend of `app` and `lib` is republished only by a
+/// named, leased `--overwrite` per repo, which keeps the replaced tip as a
+/// backup.
 pub fn cross_repo_pr() -> Scenario {
-    let app = Repo::App.rel_path();
     let mut steps = two_member_feature_in_primary();
+    steps.extend([push_feat_x_everywhere(Step::rwv(&a(), &["push"]))
+        .expect(Exit::Succeeds)
+        .claim(Claim::RemoteContains {
+            repo: Repo::App,
+            branch: "feat-x",
+            mark: "pr-app",
+        })
+        .claim(Claim::RemoteContains {
+            repo: Repo::Lib,
+            branch: "feat-x",
+            mark: "pr-lib",
+        })
+        .claim(Claim::RemoteRecordIs {
+            branch: "feat-x",
+            record: feat_x_record(),
+        })]);
+    steps.extend(amend_both());
     steps.extend([
-        push_feat_x_everywhere(Step::rwv(&a(), &["push"]))
-            .expect(Exit::Succeeds)
-            .claim(Claim::RemoteContains {
-                repo: Repo::App,
-                branch: "feat-x",
-                mark: "pr-app",
-            })
-            .claim(Claim::RemoteContains {
-                repo: Repo::Lib,
-                branch: "feat-x",
-                mark: "pr-lib",
-            })
-            .claim(Claim::RemoteRecordIs {
-                branch: "feat-x",
-                record: feat_x_record(),
-            }),
-        Step::git(
-            &a(),
-            Repo::App,
-            &["commit", "--amend", "-m", "pr-app amended"],
-        ),
-        Step::rwv(&a(), &["lock", "--repo", &app, "--commit"])
-            .expect(Exit::Succeeds)
-            .may_rewind(&[Repo::App]),
         Step::rwv(&a(), &["push"])
             .expect(Exit::Fails)
-            .claim(Claim::OutputContains("push-branch diverged"))
+            .claim(Claim::OutputContains(
+                "local/remotes/app: push-branch diverged",
+            ))
+            .claim(Claim::OutputContains(
+                "local/remotes/lib: push-branch diverged",
+            ))
             .claim(Claim::OutputLacks("--overwrite")),
-        Step::rwv(&a(), &["push", "--overwrite", &app])
-            .overwrites(Remote::origin(Repo::App), "feat-x")
-            .pushes(Remote::origin(Repo::Proj), "feat-x")
-            .expect(Exit::Succeeds)
-            .claim(Claim::BackedUp {
-                repo: Repo::App,
-                mark: "pr-app",
-                marked: None,
-            }),
+        Step::rwv(&a(), &["push", "--overwrite", "local/remotes/app"])
+            .expect(Exit::Fails)
+            .claim(Claim::OutputContains(
+                "local/remotes/lib: push-branch diverged",
+            ))
+            .claim(Claim::OutputLacks(
+                "local/remotes/app: push-branch diverged",
+            )),
+        Step::rwv(
+            &a(),
+            &[
+                "push",
+                "--overwrite",
+                "local/remotes/app",
+                "--overwrite",
+                "local/remotes/lib",
+            ],
+        )
+        .overwrites(Remote::origin(Repo::App), "feat-x")
+        .overwrites(Remote::origin(Repo::Lib), "feat-x")
+        .pushes(Remote::origin(Repo::Proj), "feat-x")
+        .expect(Exit::Succeeds)
+        .claim(Claim::BackedUp {
+            repo: Repo::App,
+            mark: "pr-app",
+            marked: None,
+        })
+        .claim(Claim::BackedUp {
+            repo: Repo::Lib,
+            mark: "pr-lib",
+            marked: None,
+        }),
     ]);
     scenario("cross-repo PR from a workweave", steps)
+}
+
+/// `app` and `lib` each amended after review, and their pins re-pinned by name.
+fn amend_both() -> Vec<Step> {
+    let mut steps = Vec::new();
+    for repo in [Repo::App, Repo::Lib] {
+        steps.push(Step::git(
+            &a(),
+            repo,
+            &["commit", "--amend", "-m", "amended after review"],
+        ));
+        steps.push(
+            Step::rwv(&a(), &["lock", "--repo", &repo.rel_path(), "--commit"])
+                .expect(Exit::Succeeds)
+                .may_rewind(&[repo]),
+        );
+    }
+    steps
 }
 
 /// The fork variant: the members publish to a `fork` remote their push target
@@ -1856,4 +1895,43 @@ pub fn records_push_race() -> Vec<Step> {
                 record: Some(Record::Declared),
             }),
     ]
+}
+
+/// An overwrite is leased to the tip the push read: the remote moves while the
+/// push is held before its member pushes, so the replacement is refused and the
+/// remote keeps the move.
+pub fn overwrite_lease_refuses_a_moved_remote() -> Vec<Step> {
+    let mut steps = two_member_feature_in_primary();
+    steps.push(push_feat_x_everywhere(Step::rwv(&a(), &["push"])).expect(Exit::Succeeds));
+    steps.extend(amend_both());
+    steps.extend([
+        Step::rwv_paused(
+            &a(),
+            &[
+                "push",
+                "--overwrite",
+                "local/remotes/app",
+                "--overwrite",
+                "local/remotes/lib",
+            ],
+            "push-members",
+            "replacing",
+        ),
+        Step::forge(Forge::Commit {
+            repo: Repo::App,
+            branch: "feat-x",
+            mark: "colleague-app",
+        }),
+        Step::release("replacing")
+            .overwrites(Remote::origin(Repo::Lib), "feat-x")
+            .may_leave_unresolved(&[Repo::Lib])
+            .expect(Exit::Fails)
+            .claim(Claim::OutputContains("rejected"))
+            .claim(Claim::RemoteContains {
+                repo: Repo::App,
+                branch: "feat-x",
+                mark: "colleague-app",
+            }),
+    ]);
+    steps
 }

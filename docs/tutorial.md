@@ -127,7 +127,7 @@ Now push the member repo commits and the updated project lock together:
 rwv push
 ```
 
-`rwv push` pushes every `owned` and `fork` member repo first, and only pushes `projects/web-app/` after all member pushes succeed — so no teammate ever pulls a `rwv.lock` referencing an unpushed member commit. It refuses before contacting any remote while `projects/web-app/` has uncommitted changes, or while a member repo's `HEAD` differs from `rwv.lock`.
+`rwv push` pushes every `owned` and `fork` member repo first, then the branch's record, and only pushes `projects/web-app/` after all member pushes succeed — so no teammate ever pulls a `rwv.lock` referencing an unpushed member commit. It refuses before pushing anything while `projects/web-app/` has uncommitted changes, or while a member repo holds a commit `rwv.lock` does not pin.
 
 `sha256sum projects/web-app/rwv.lock` is the project fingerprint: two machines with the same checksum pin the same commit in every member repo, which is the state a fresh `rwv clone` reproduces. A pin is not a checkout — a member committed past its pin shows as `ahead` in `rwv status` until `rwv lock` records it.
 

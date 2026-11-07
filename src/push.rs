@@ -315,7 +315,7 @@ pub fn run_push(ctx: &WorkspaceContext, request: PushRequest<'_>) -> anyhow::Res
     .map_err(|(reported, e)| json_refusal(&reported, e))?;
 
     if request.mode == PushMode::DryRun {
-        plan.print_dry_run(&pushed, &members, push_project);
+        plan.print_dry_run(&pushed, push_project);
         return Ok(());
     }
 
@@ -701,7 +701,7 @@ struct ProjectPlan {
 }
 
 impl Plan {
-    fn print_dry_run(&self, pushed: &Pushed, members: &[Member], push_project: bool) {
+    fn print_dry_run(&self, pushed: &Pushed, push_project: bool) {
         outln!("rwv push (dry-run):");
         for item in &self.items {
             outln!(
@@ -717,7 +717,6 @@ impl Plan {
                 path.as_str(),
             );
         }
-        let _ = members;
         if let (true, Some(project)) = (push_project, &self.project) {
             outln!(
                 "  projects/{}: would publish the record of {} -> {}",
@@ -1454,7 +1453,7 @@ fn publish(
 
     if project_plan.push_branch {
         let mut gate = Report::default();
-        gate_reachability(pushed, members, pvcs, fetched, &mut gate);
+        gate_reachability(pushed, members, fetched, &mut gate);
         if let Err(refusal) = gate.into_result() {
             if output.is_json() {
                 print_envelope(json_outcomes, &refusal, reported, ctx);
@@ -1617,13 +1616,7 @@ fn publish(
 /// declared branch's by the push branch of the branch each member declares,
 /// and a `dependency` or `reference` member's by a remote-tracking branch of
 /// its url remote.
-fn gate_reachability(
-    pushed: &Pushed,
-    members: &[Member],
-    pvcs: &dyn Vcs,
-    fetched: &Fetched,
-    gate: &mut Report,
-) {
+fn gate_reachability(pushed: &Pushed, members: &[Member], fetched: &Fetched, gate: &mut Report) {
     for member in members {
         let vcs = member.vcs.as_ref();
         let path = &member.path;
@@ -1715,7 +1708,6 @@ fn gate_reachability(
                 .judge(vcs),
         );
     }
-    let _ = pvcs;
 }
 
 /// Per-repo worker: push one member branch to its push target. All

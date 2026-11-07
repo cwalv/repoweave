@@ -70,12 +70,11 @@ To start from the exact commits the superproject's gitlinks pinned rather than f
 
 ### 5. Publish the project repository
 
-Push the project repo and set `origin/HEAD`, which `rwv push` requires:
+Add the project repo's remote, then publish with `rwv push`, which sends the members' branches, the branch's record and the project branch:
 
 ```bash
 git -C projects/web-app remote add origin https://github.com/chatly/web-app.git
-git -C projects/web-app push -u origin main
-git -C projects/web-app remote set-head origin main
+rwv push
 ```
 
 Teammates can now replace their superproject checkout with `rwv clone https://github.com/chatly/web-app.git` in an empty directory.

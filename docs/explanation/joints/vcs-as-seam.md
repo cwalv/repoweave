@@ -289,8 +289,9 @@ takes the ref as a `PublishRef`, a value only the push verb can
 construct, and the remote as the handle `push_target` resolved, so the
 decision is made once at the publish gate and the
 refusal for a detached checkout is stated there, in the verb's own
-voice. What that gate *should* choose for a detached checkout is still
-open; the signature only makes the choice visible.
+voice. Whether a push may replace the remote's branch is a `Replace`
+argument: fast-forward only, or a lease on the tip the push read, which
+only a repo the operator named with `--overwrite` yields.
 
 The push verb does the cross-repo work — walking the manifest, applying
 selectors, ordering project-repo last, checking the lock-state

@@ -154,8 +154,9 @@ the snapshot logic and lock format.
 
 ### `rwv push`
 
-Pushes each member repo in the default scope (owned + fork), then
-the project repo last; refuses on lock mismatch.
+Pushes each member repo in the default scope (owned + fork), then the
+weave branch's record, then the project repo last; refuses on lock
+mismatch.
 
 - *Per-repo policy from role?* Yes — `dependency` and `reference` repos
   are excluded from the default push scope: they return 403 against
@@ -165,8 +166,9 @@ the project repo last; refuses on lock mismatch.
   must never reference unpushed manifest SHAs (otherwise
   collaborators' `rwv clone` hits "object missing" against
   pinned-but-unpublished commits).
-- *rwv-owned state?* The lock is read as a precondition (HEAD must
-  match recorded SHA, else refuse).
+- *rwv-owned state?* The lock is read as a precondition (a member's
+  branch must reach its pinned SHA, else refuse) and never written; the
+  branch's record is rwv-owned state that travels with the branch.
 
 Strong pass. All three criteria fire. See
 [verb-vs-vocabulary](./verb-vs-vocabulary.md) for why this is `push`
