@@ -8988,13 +8988,15 @@ mod tests {
     #[test]
     fn the_findings_entry_is_written_from_its_heading_to_the_next_heading() {
         let stub = findings_page(
-            "### `unparseable-project`\n\nhand-written\n\n### `alignment`\n\nhand-written\n\n",
+            "### `unparseable-project`\n\nhand-written\n\n### `pin`\n\nhand-written\n\n\
+             ### `alignment`\n\nhand-written\n\n",
         );
         let spliced = splice_finding_entries(&stub).unwrap();
         assert!(spliced.contains(
             "### `before`\n\nbefore\n\n### `unparseable-project`\n\nA project directory"
         ));
         assert!(spliced.contains("#### `malformed`"));
+        assert!(spliced.contains("#### `unreachable`"));
         assert!(spliced.contains("#### `on-branch`"));
         assert!(!spliced.contains("hand-written"));
         assert!(spliced.ends_with("### `after`\n\nafter\n"));
