@@ -2108,7 +2108,7 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
                             result = Err(e);
                         }
                     }
-                    // Failed before any receipt existed: nothing was claimed, so
+                    // Failed before a branch was found: nothing was placed, so
                     // there is nothing for the guard to undo in this repo.
                     Err(e) => result = Err(e),
                 }

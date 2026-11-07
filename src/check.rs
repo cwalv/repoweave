@@ -274,19 +274,16 @@ pub enum CheckViolation {
         primary: PathBuf,
     },
 
-    /// A `.rwv-workweave-index` written before ref-ownership receipts existed
+    /// A `.rwv-workweave-index` written before its `receipts` key was kept
     /// (no `receipts` field) — the index-side twin of
     /// [`LegacyWorkweaveMarker`](Self::LegacyWorkweaveMarker).
     ///
-    /// Auto-fixable: `--fix` adds the field, which is the precondition for
-    /// every other arm of the migration — `RefRegistry::record_created`
-    /// refuses against a legacy index rather than erasing the only signal
-    /// that the migration has not run.
+    /// Auto-fixable: `--fix` adds the field. `workweave create` refuses
+    /// against a legacy index rather than erasing the only signal that the
+    /// migration has not run.
     ///
     /// Reported rather than refused at read (unlike the marker), because the
-    /// migration has to be able to read the index it is about to migrate, and
-    /// because an unmigrated index already fails closed on its own: it holds
-    /// no receipts, so under R2 nothing in it is destroyable.
+    /// migration has to be able to read the index it is about to migrate.
     LegacyWorkweaveIndex {
         /// The project whose index needs the field.
         project: ProjectName,
@@ -295,9 +292,8 @@ pub enum CheckViolation {
     },
 
     /// A `.rwv-workweave-index` that exists but does not parse, so nothing
-    /// derived from it is evaluated: the recorded placements, the ownership
-    /// receipts, and the migration state
-    /// ([`LegacyWorkweaveIndex`](Self::LegacyWorkweaveIndex)) alike.
+    /// derived from it is evaluated: the recorded placements and the migration
+    /// state ([`LegacyWorkweaveIndex`](Self::LegacyWorkweaveIndex)) alike.
     ///
     /// Reported so the state names itself. Without it every marker-bearing
     /// workweave in the project reads as
@@ -6318,11 +6314,9 @@ impl CheckViolation {
                 marker_path.display()
             ),
             CheckViolation::LegacyWorkweaveIndex { index_path, .. } => format!(
-                "{} is a legacy workweave index written before ref-ownership \
-                     receipts existed (no `receipts` field), so rwv can neither \
-                     record nor destroy an ephemeral ref for this project; run \
-                     `rwv doctor --fix` to add the field — it is the precondition \
-                     for every other arm of the migration",
+                "{} is a legacy workweave index (no `receipts` field), so \
+                     `rwv workweave create` refuses for this project; run \
+                     `rwv doctor --fix` to add the field",
                 index_path.display()
             ),
             CheckViolation::UnreadableOwnedState {
@@ -6363,7 +6357,7 @@ impl CheckViolation {
                 error,
             } => format!(
                 "{}: workweave index does not parse ({error}); the recorded \
-                     workweaves and ownership receipts for project `{project}` are \
+                     workweaves for project `{project}` are \
                      unevaluated, and every `rwv doctor --fix` arm that writes this \
                      file fails until it parses — repair or delete the file, then \
                      re-run `rwv doctor --fix` to re-adopt the workweaves on disk",
@@ -7275,15 +7269,12 @@ fn apply_prelude_repairs(ctx: &crate::workspace::WorkspaceContext, fix_errors: &
 ///
 /// They run before [`collect_doctor_violations`], which is what lets a
 /// repaired workspace report as healthy instead of surfacing both `[fixed]`
-/// and the warning it just resolved. Within this function the order is load
-/// bearing: the pre-flat receipt arm must precede the adoption of unrecorded
-/// flat refs so it inspects only receipts that predate this run.
+/// and the warning it just resolved.
 ///
-/// Every arm through the adoption reads state the workspace holds in exactly
-/// one place — receipts live only in primary's `.rwv-workweave-index`, and the
-/// refs they describe live in the one physical refdb every linked worktree
-/// shares — so they take `primary_path()` and ignore which weave invoked
-/// doctor. Arms repairing per-weave state must take `active_path()` instead.
+/// Every arm reads state the workspace holds in exactly one place — the
+/// workweave index lives only in primary — so they take `primary_path()` and
+/// ignore which weave invoked doctor. Arms repairing per-weave state must take
+/// `active_path()` instead.
 ///
 /// This pass runs before collection and names no [`CheckViolation`], so the
 /// runtime disposition gate in [`apply_finding_repairs`] never sees it. What

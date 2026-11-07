@@ -72,7 +72,7 @@ To throw away a workweave without landing its changes:
 rwv workweave delete payments
 ```
 
-Deletion refuses if any checkout in the workweave, a manifest member or not, has uncommitted changes or commits not reachable from the recorded parent or primary weave; pass `--discard-uncommitted` and/or `--discard-unmerged-commits` to confirm discarding that work.
+Deletion refuses if any checkout in the workweave, a manifest member or not, has uncommitted changes, or a detached HEAD holding commits no branch reaches; pass `--discard-uncommitted` and/or `--discard-unlanded` to confirm discarding that work. A branch of the workweave whose commits have not landed on the branch it lands into is not a refusal: the workweave is removed, the branch stays, and the exit status is `3` (see [`rwv branch delete`](../reference/cli.md#rwv-branch)).
 
 ## Related
 

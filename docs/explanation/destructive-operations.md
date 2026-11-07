@@ -98,7 +98,7 @@ keeps git's name.
 ### 3. Discards stay recoverable
 
 Discard-by-design operations — `rwv abort`, `rwv sync --discard-local-commits`,
-`rwv workweave delete --discard-uncommitted` and `--discard-unmerged-commits`,
+`rwv workweave delete --discard-uncommitted` and `--discard-unlanded`,
 ref surgery during phase replay — must keep what they discard
 recoverable where possible, and the operation's documentation must
 say where. Two mechanisms do it, one per kind of discard.
@@ -120,8 +120,9 @@ branch and no other backup. It lives under `refs/rwv/backup/<branch>/<id>`
 user ref lives in, and `rwv backup list` shows it with the commits only
 it holds. Three discards make one first:
 
-- `rwv workweave delete --discard-unmerged-commits` keeps each branch tip
-  it deletes, and what a detached HEAD holds that no branch reaches;
+- `rwv workweave delete --discard-unlanded` and `rwv branch delete
+  --discard-unlanded` keep each branch tip they delete that has not landed,
+  and what a detached HEAD holds that no branch reaches;
 - `rwv workweave delete --discard-uncommitted` keeps the edits of each
   checkout as a commit on its HEAD (untracked files included, ignored
   ones not), then the backup ref;

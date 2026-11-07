@@ -521,13 +521,13 @@ fn a_pin_lost_with_the_deleted_clone_is_given_up_under_consent_keeping_the_files
     rwv(&w.primary, &["update", "--project", "demo"]);
     let fixed = doctor_fix(&w.primary);
     assert!(
-        !fixed.contains("retracted dangling ownership receipt"),
-        "the workweave's claim on its branch is kept: {fixed}"
+        !fixed.contains("retracted"),
+        "the workweave's branch is kept: {fixed}"
     );
     let found = findings(&w.primary, true);
     assert!(
         found.contains(&format!("workweave-drift/dangling-link-unfetched {MEMBER}"))
-            && !found.iter().any(|f| f.starts_with("dangling-ref-receipt")),
+            && !found.iter().any(|f| f.starts_with("alignment")),
         "{found:?}"
     );
     let printed = advice(

@@ -55,10 +55,10 @@ Return to the primary weave root (`cd ../../<weave>` from `../.workweaves/web-ap
 
 ```bash
 cd ../../<weave>
-rwv workweave delete pr-42 --discard-unmerged-commits
+rwv workweave delete pr-42 --discard-unlanded
 ```
 
-`--discard-unmerged-commits` discards only the PR commits checked out in the workweave, which the PR's remote still holds. Add `--discard-uncommitted` when the review left uncommitted changes, for example a project lockfile that `rwv materialize` rewrote for the PR's dependencies; check `rwv status` and `git status` first for anything you meant to keep. `rwv workweave delete` also works from inside the workweave.
+`--discard-unlanded` deletes the branch holding the PR commits checked out in the workweave, which the PR's remote still holds, after keeping its tip as a backup. Add `--discard-uncommitted` when the review left uncommitted changes, for example a project lockfile that `rwv materialize` rewrote for the PR's dependencies; check `rwv status` and `git status` first for anything you meant to keep. `rwv workweave delete` also works from inside the workweave.
 
 ## Related
 

@@ -388,7 +388,7 @@ fn remove_delete_refuses_a_claimed_store_and_succeeds_after_the_claim_is_gone() 
 }
 
 // ---------------------------------------------------------------------------
-// §6.1 — the Claude WorktreeRemove hook can construct no warrant
+// §6.1 — the Claude WorktreeRemove hook holds no consent
 // ---------------------------------------------------------------------------
 
 /// The hook used to pass both waivers unconditionally, which made it the one

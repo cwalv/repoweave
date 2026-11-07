@@ -75,9 +75,8 @@
 //!
 //! **Workspace-rooted arms — the invoking weave is ignored. NOT pinned here,
 //! and correctly so.** Repairs of state the workspace holds in exactly one
-//! place: the ownership receipts and the refs they describe (dangling-receipt
-//! retraction, the ref-registry migration, the canonical-store migration and
-//! reattach arms, safe-class stale-branch deletion), plus the workweave
+//! place: the workweave index (its migration), the canonical-store migration
+//! and reattach arms, plus the workweave
 //! registry itself (stale-entry prune, unregistered-workweave adopt), the
 //! dangling-parent re-point, the dangling-active-project clear, and the
 //! weave-root-identity-conflict clear. These take `ctx.primary_path()`
@@ -94,27 +93,10 @@
 //!   * `.rwv-workweave-index` exists only in primary (untracked, listed in
 //!     `.git/info/exclude`). A workweave has no copy.
 //!
-//! So a workweave-scoped `--fix` retracting a receipt recorded for a
-//! DIFFERENT workweave is expected behavior, not a leak of the contract
-//! above. Do not "fix" it by pointing those arms at `active_path()` — that
-//! would make them silently no-op against a registry that is not there.
-//!
-//! # The separate question, which is a policy and not a consequence
-//!
-//! Sharing the refdb forces the workspace-rooted arms to SEE every weave's
-//! refs. It does not by itself force `--fix` run in weave A to DESTROY a ref
-//! recorded for weave B. That rwv does so is a choice — the alternative,
-//! acting only on refs the invoking weave minted, would make the reclaimable
-//! population unreachable, since a stale ephemeral branch is by definition
-//! one whose workweave is gone.
-//!
-//! The consequence to keep in view: the invoking weave contributes nothing to
-//! the destroy decision, so it backstops nothing either. What bounds the
-//! destroy is the receipt (R2), the live-workweave test, and the merged
-//! warrant (R3) — all three of which are evaluated against workspace-wide
-//! state. A misclassification in that trio is not caught by having been run
-//! from an unrelated weave. `fix_stale_ephemeral_branches` re-derives all
-//! three immediately before each destroy for exactly this reason.
+//! So a workweave-scoped `--fix` repairing the index for a DIFFERENT workweave
+//! is expected behavior, not a leak of the contract above. Do not "fix" it by
+//! pointing those arms at `active_path()` — that would make them silently
+//! no-op against a registry that is not there.
 //!
 //! The test:
 //!   1. Builds a scratch primary weave with the `go-work` integration active

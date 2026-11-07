@@ -11,11 +11,10 @@
 //! Atomic is not durable. A temp written with `write(2)` and published leaves
 //! both the bytes and the directory entry in the page cache: a power loss can
 //! lose either, and ext4's delayed-allocation flush on rename-over-an-existing
-//! file is a heuristic, not a guarantee. The ownership receipts in the
-//! workweave index are the sharp case — their whole contract is that the
-//! receipt reaches disk *before* the ref it describes, and git fsyncs a loose
-//! ref it writes, so a cached receipt leaves a ref with no receipt, the one
-//! state R2 permanently disowns.
+//! file is a heuristic, not a guarantee. The workweave index is the sharp
+//! case — a workweave it records is addressed by name from then on, and git
+//! fsyncs the loose ref it writes beside it, so a cached index entry leaves a
+//! workweave on disk that no verb can find.
 //!
 //! ## Why the temp name carries a pid and a counter and no clock
 //!

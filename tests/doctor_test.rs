@@ -1743,16 +1743,6 @@ mod doctor_json {
             op_id: String,
             recorded_owner: String,
         },
-        DanglingRefReceipt {
-            project: String,
-            store_path: String,
-            ref_name: String,
-        },
-        PreFlatRefReceipt {
-            project: String,
-            store_path: String,
-            ref_name: String,
-        },
         OrphanedSavepoint {
             path: String,
             absolute_path: String,

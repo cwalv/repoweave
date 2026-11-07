@@ -583,8 +583,8 @@ workweave the marker refuses before any verb dispatches.
 ### `legacy-workweave-index`
 
 **Warning. Auto-fixable.** A `.rwv-workweave-index` written before the
-`receipts` field was kept empty, with no `receipts` field — the index-side twin
-of `legacy-workweave-marker`.
+`receipts` key was kept, with no `receipts` field — the index-side twin of
+`legacy-workweave-marker`.
 
 `workweave create` refuses against a legacy index rather than erasing the only
 signal that the migration has not run. It is reported rather than refused at

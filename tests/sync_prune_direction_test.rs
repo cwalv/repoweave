@@ -519,7 +519,7 @@ fn registered_worktrees(store: &Path) -> usize {
 }
 
 /// After the seat's prune the primary's clone holds nothing of the seat's —
-/// no worktree registration, no branch, no receipt — so `rwv member remove --delete`
+/// no worktree registration, no branch — so `rwv member remove --delete`
 /// in the primary deletes it.
 fn assert_the_clone_is_released(weave: &Weave) {
     let clone = common::under(&weave.root, EXTRA);

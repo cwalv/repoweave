@@ -1348,13 +1348,12 @@ fn delete_workweave_cleans_up_ephemeral_branches() {
     );
 }
 
-/// R2 inverted: a branch that merely *looks* like rwv's is not rwv's.
+/// A branch that merely *looks* like the workweave's is not the workweave's.
 ///
-/// This is the §2.1 `[S]` scenario the shipped code got backwards. It ran
-/// `git branch -D` on "already exists" and retried, so a `web-app--stale-test/main`
-/// standing in the way was destroyed with no `--force` and nothing printed —
-/// even when it carried a commit reachable from nowhere else. Ownership is by
-/// **record**: rwv holds no receipt for a branch it did not create, so the
+/// The shipped code ran `git branch -D` on "already exists" and retried, so a
+/// `web-app--stale-test/main` standing in the way was destroyed with no
+/// `--force` and nothing printed — even when it carried a commit reachable from
+/// nowhere else. A branch the create did not put there is refused and kept: the
 /// create refuses and the branch survives with its commit intact.
 ///
 /// Break the guard and this fails: restore the force-delete retry and the
@@ -1409,7 +1408,7 @@ fn create_refuses_and_preserves_a_branch_it_does_not_own() {
     let branches = branch_names(&primary_repo);
     assert!(
         branches.iter().any(|b| b == "web-app--stale-test/main"),
-        "a branch rwv holds no receipt for must survive the create, got: {branches:?}"
+        "a branch the create did not make must survive the create, got: {branches:?}"
     );
     let after = common::git()
         .args(["rev-parse", "web-app--stale-test/main"])
@@ -1423,10 +1422,10 @@ fn create_refuses_and_preserves_a_branch_it_does_not_own() {
     );
 }
 
-/// The stale-leftover case the shipped justification only *claimed*: a ref rwv
-/// recorded creating, still at exactly the recorded tip, left behind by a
-/// create that did not finish. That one is destroyed and recreated, because
-/// `DeletionWarrant::unmoved` runs the comparison rather than asserting it.
+/// The stale-leftover case: the workweave's branch, still at exactly the start
+/// point, left behind by a create that did not finish. The re-run takes it
+/// rather than refusing, because the comparison with the start point is run,
+/// not assumed.
 #[test]
 fn create_reuses_its_own_unmoved_leftover() {
     let tmp = common::tempdir().unwrap();
@@ -1442,7 +1441,7 @@ fn create_reuses_its_own_unmoved_leftover() {
         .success();
 
     // Simulate a create that died after the ref write: drop the directory and
-    // the placement entry by hand, leaving the ref AND its receipt standing.
+    // the placement entry by hand, leaving the ref standing.
     let ww_dir = weaveroot.join("web-app--leftover");
     let primary_repo = ws.join("github/org/repo");
     common::git_in(
@@ -1467,10 +1466,10 @@ fn create_reuses_its_own_unmoved_leftover() {
         branch_names(&primary_repo)
             .iter()
             .any(|b| b == "web-app--leftover"),
-        "precondition: the recorded ref must still be standing"
+        "precondition: the branch must still be standing"
     );
 
-    // Recreating the same workweave proceeds: receipt present, tip unmoved.
+    // Recreating the same workweave proceeds: the branch stands at the start point.
     rwv()
         .args(["workweave", "create", "--project", "web-app", "leftover"])
         .current_dir(&ws)
@@ -3542,9 +3541,9 @@ role = "owned"
 /// The obstruction is arranged by a `post-checkout` hook in repo1 that makes
 /// the shared store's `refs/heads` read-only and then exits 0: `git worktree
 /// add` has already written the ephemeral ref by the time the hook runs, so
-/// the birth succeeds and the branch exists at exactly the revision the
-/// receipt records — the rollback's `DeletionWarrant::unmoved` is satisfied
-/// and it is `git branch -D` itself that then fails on EACCES. repo2 is
+/// the birth succeeds and the branch exists at exactly the start point — the
+/// rollback's landed proof is satisfied and it is the delete itself that then
+/// fails on EACCES. repo2 is
 /// missing, which is what triggers the rollback in the first place.
 ///
 /// NOTE: `CreateRollbackGuard` is private; the test drives `create_workweave`

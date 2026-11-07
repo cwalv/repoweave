@@ -10,9 +10,9 @@ losing it.
 
 Backups are made by:
 
-- `rwv workweave delete --discard-unmerged-commits`, which keeps each
-  workweave branch it deletes at its tip, and the commits a detached HEAD holds
-  that no branch reaches;
+- `rwv workweave delete --discard-unlanded` and `rwv branch delete
+  --discard-unlanded`, which keep each branch they delete that had not landed
+  at its tip, and the commits a detached HEAD holds that no branch reaches;
 - `rwv workweave delete --discard-uncommitted`, which keeps each checkout's
   uncommitted edits as a commit on its HEAD (untracked files included, ignored
   ones not);

@@ -261,7 +261,7 @@ pub(crate) fn compute_relation(
 /// The name of the ref `repo_abs`'s checkout is on, for the `branch` column.
 ///
 /// Status asks [`Vcs::head_attachment`] only what a checkout is on: it never
-/// writes a ref, so it wants no witness and no receipt.
+/// writes a ref, so it wants no witness.
 ///
 /// What each arm means:
 ///

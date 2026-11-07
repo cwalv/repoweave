@@ -3424,7 +3424,7 @@ mod tests {
     #[test]
     fn pending_index_migration_reports_an_index_without_receipts() {
         // The index-side legacy shape, next to the marker-side one above:
-        // written before ref-ownership receipts existed.
+        // written before the `receipts` key was kept.
         let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = primary_with_project(&primary, "web-app");
@@ -3435,7 +3435,7 @@ mod tests {
         assert_eq!(
             pending_index_migration(&primary, &project).unwrap(),
             Some(path),
-            "an index with no receipts field needs the §7.1 arm-7 migration"
+            "an index with no receipts field needs the migration"
         );
     }
 

@@ -409,7 +409,7 @@ fn the_reachability_check_catches_a_producer_not_named_scan() {
     // the parameter list, ahead of its real closing paren — the shape that
     // needs the split tracked by depth rather than found at the first `)`.
     let seeded = "\
-fn gather_orphaned_receipts(
+fn gather_orphaned_records(
     ws_root: &Path,
     marker: &(String, String),
 ) -> Vec<CheckViolation> {
@@ -419,7 +419,7 @@ fn detect_something(out: &mut Vec<CheckViolation>) {
 fn scan_the_pipeline_calls(out: &mut Vec<CheckViolation>) {
 }
 fn run_check() {
-    gather_orphaned_receipts(ws_root, marker);
+    gather_orphaned_records(ws_root, marker);
     detect_something(&mut v);
 }
 fn collect_doctor_violations() {
@@ -432,7 +432,7 @@ fn collect_doctor_violations() {
         orphans,
         vec![
             "detect_something".to_string(),
-            "gather_orphaned_receipts".to_string(),
+            "gather_orphaned_records".to_string(),
         ],
         "a producer's signature marks it whether or not its name starts with \
          `scan_`"

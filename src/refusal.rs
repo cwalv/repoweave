@@ -148,7 +148,7 @@ pub enum RefusalKind {
     /// `.rwv-active` is empty, unreadable, or holds text that is not a project
     /// name.
     UnreadableActiveProject,
-    /// A `.rwv-workweave-index` written before ownership receipts existed.
+    /// A `.rwv-workweave-index` written before its `receipts` key was kept.
     LegacyWorkweaveIndex,
     /// A `.rwv-workweave` marker in the YAML shape `--fix` migrates.
     LegacyWorkweaveMarker,
