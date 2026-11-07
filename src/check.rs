@@ -7046,17 +7046,8 @@ pub fn fix_dangling_receipts(
 /// reachable from one place fewer afterwards. What the weave is left with is
 /// an Unowned ref: reported, and under R2 not rwv's to delete.
 ///
-/// **Ordering — this runs *before* [`fix_branch_model_migration`], and that
-/// is the design.** The pre-flat migration holds exactly this receipt for
-/// the width of its rename, so an arm that ran after the migration would be reading state
-/// the migration had just written, and its safety would rest on
-/// `migrate_legacy_ref` having retracted every receipt it took — a property
-/// of a function three call levels away, silently load-bearing here.
-/// Running first, this pass can only ever see what was on disk before doctor
-/// touched anything: residue from earlier runs, never a receipt in flight.
-/// The migration then re-adopts, at the tip it observes now, whatever is
-/// still migratable — so one `--fix` both clears the false record and
-/// finishes the migration where it can.
+/// Nothing else writes these receipts any more, so this pass reads only what
+/// earlier runs left: residue, never a receipt in flight.
 ///
 /// The classification lives in the scan and nowhere else, the way
 /// [`fix_dangling_receipts`] keeps the absence check in
