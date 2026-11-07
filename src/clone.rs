@@ -177,7 +177,6 @@ pub fn run_clone(
         &project_dir,
         workspace_root,
         selection,
-        None,
         jobs,
         output,
         None,
@@ -193,6 +192,7 @@ pub fn run_clone(
     };
     let left = judge_left(&run.pins);
     let mut report = run.report;
+    crate::alignment::record(workspace_root, &name)?;
 
     let ctx = crate::workspace::WorkspaceContext::resolve_unbound(workspace_root)?;
     let active = match ctx.primary_identity() {

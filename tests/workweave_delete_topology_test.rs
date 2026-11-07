@@ -111,7 +111,7 @@ fn write_marker(ww_dir: &Path, primary: &Path, project: &str) {
     .expect("record_workweave should succeed for test fixture");
 }
 
-/// Sanity test: under correct topology, `resolve_canonical_store`
+/// Sanity test: under correct topology, `store_of`
 /// resolves a workweave checkout's store path back to the canonical clone
 /// it links into (via `.parent()`).
 #[test]
@@ -123,8 +123,8 @@ fn canonical_store_resolves_to_linked_clone_under_correct_topology() {
 
     let checkout = ww_root.join("github/org/repo");
     let store_path = repoweave::git::git_vcs()
-        .resolve_canonical_store(&checkout)
-        .expect("resolve_canonical_store returned None");
+        .store_of(&checkout)
+        .expect("store_of returned None");
     // `.parent()` strips the trailing `.git` component to get the clone directory.
     let resolved = repoweave::path_spelling::resolve(
         store_path

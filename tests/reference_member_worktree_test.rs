@@ -1,16 +1,17 @@
 //! A `reference` member is a worktree like every other member, and flows
-//! through every verb that walks a workweave's members the way an `owned` one
-//! does.
+//! through every verb that walks a workweave's members.
 //!
-//!   - create: every member is a worktree of the canonical clone on the
-//!     workweave's ephemeral branch; no member slot is a symlink.
+//!   - create: every member is a worktree of the canonical clone; no member
+//!     slot is a symlink. An `owned` member is on the workweave's ephemeral
+//!     branch; a `reference` one sits detached at its pin, because its branch
+//!     is checked out in the primary.
 //!   - nested create: the child's worktree links into the canonical store, not
 //!     into the parent workweave.
 //!   - delete: the canonical clone keeps everything but the workweave's own
 //!     branch, even while it is dirty.
-//!   - sync, sync-to, `--retire` and abort move and restore a reference
-//!     member's worktree like an owned one, and never write into the canonical
-//!     clone's own branch except by landing.
+//!   - sync, sync-to, `--retire` and abort pass over a detached `reference`
+//!     member that holds nothing of its own, and never write into the
+//!     canonical clone's own branch except by landing.
 
 use assert_cmd::Command as AssertCommand;
 use std::path::{Path, PathBuf};
@@ -167,8 +168,9 @@ fn store_of(checkout: &Path) -> PathBuf {
 }
 
 /// What every member of a workweave is: a linked worktree of the canonical
-/// clone, on the workweave's ephemeral branch.
-fn assert_member_worktree(checkout: &Path, canonical: &Path, branch: &str) {
+/// clone. `branch` is the workweave's ephemeral branch it sits on, or `None`
+/// for a member sitting detached at its pin.
+fn assert_member_worktree(checkout: &Path, canonical: &Path, branch: Option<&str>) {
     assert!(
         !checkout.is_symlink(),
         "{} is a symlink; no member is ever one",
@@ -186,22 +188,32 @@ fn assert_member_worktree(checkout: &Path, canonical: &Path, branch: &str) {
         checkout.display()
     );
     assert_eq!(
-        common::git_in(checkout, &["symbolic-ref", "--short", "HEAD"]),
+        common::checkout_ref(checkout).as_deref(),
         branch,
-        "{} must sit on the workweave's ephemeral branch",
-        checkout.display()
+        "{} must sit on {}",
+        checkout.display(),
+        branch.map_or("no branch".to_owned(), |b| format!("`{b}`")),
     );
 }
 
 #[test]
-fn create_gives_every_member_a_worktree_on_the_ephemeral_branch() {
+fn create_gives_every_member_a_worktree_and_an_owned_one_the_ephemeral_branch() {
     let tmp = common::tempdir().unwrap();
     let primary = make_primary(tmp.path());
 
     let ww = create_workweave(&primary, "feat");
 
-    assert_member_worktree(&ww.owned_checkout, &primary.owned_canonical, "app--feat");
-    assert_member_worktree(&ww.ref_checkout, &primary.ref_canonical, "app--feat");
+    assert_member_worktree(
+        &ww.owned_checkout,
+        &primary.owned_canonical,
+        Some("app--feat"),
+    );
+    assert_member_worktree(&ww.ref_checkout, &primary.ref_canonical, None);
+    assert_eq!(
+        common::git_in(&ww.ref_checkout, &["rev-parse", "HEAD"]),
+        common::git_in(&primary.ref_canonical, &["rev-parse", "HEAD"]),
+        "the reference member sits at its pin"
+    );
 }
 
 #[test]
@@ -225,7 +237,7 @@ fn a_nested_workweave_links_its_reference_worktree_into_the_canonical_store() {
         .success();
     let child = workweave_at(parent.root.parent().unwrap().join("app--child"));
 
-    assert_member_worktree(&child.ref_checkout, &primary.ref_canonical, "app--child");
+    assert_member_worktree(&child.ref_checkout, &primary.ref_canonical, None);
     assert_eq!(
         common::git_in(&child.ref_checkout, &["rev-parse", "HEAD"]),
         common::git_in(&parent.ref_checkout, &["rev-parse", "HEAD"]),
@@ -273,7 +285,7 @@ fn two_workweaves_hold_separate_reference_worktrees() {
     let primary = make_primary(tmp.path());
     let wa = create_workweave(&primary, "wa");
     let wb = create_workweave(&primary, "wb");
-    commit_file(&wb.ref_checkout, "B", "b\n", "wb: reference commit");
+    let pin = common::git_in(&wb.ref_checkout, &["rev-parse", "HEAD"]);
 
     rwv()
         .args(["workweave", "delete", "--project", PROJECT, "wa"])
@@ -282,10 +294,11 @@ fn two_workweaves_hold_separate_reference_worktrees() {
         .success();
 
     assert!(!wa.root.exists(), "wa must be gone");
-    assert_member_worktree(&wb.ref_checkout, &primary.ref_canonical, "app--wb");
-    assert!(
-        wb.ref_checkout.join("B").is_file(),
-        "wb's reference worktree keeps its own commit after wa is deleted"
+    assert_member_worktree(&wb.ref_checkout, &primary.ref_canonical, None);
+    assert_eq!(
+        common::git_in(&wb.ref_checkout, &["rev-parse", "HEAD"]),
+        pin,
+        "wb's reference worktree keeps its pin after wa is deleted"
     );
 }
 
@@ -304,21 +317,21 @@ fn sync_brings_a_reference_advance_into_a_workweave() {
         .assert()
         .success();
 
-    assert_member_worktree(&ww.ref_checkout, &primary.ref_canonical, "app--feat");
+    assert_member_worktree(&ww.ref_checkout, &primary.ref_canonical, None);
     assert_eq!(
         common::git_in(&ww.ref_checkout, &["rev-parse", "HEAD"]),
         advanced,
-        "sync must fast-forward the workweave's reference worktree to the source's pin"
+        "sync must move the workweave's reference worktree to the source's pin"
     );
 }
 
 #[test]
-fn sync_to_lands_a_reference_commit_like_an_owned_one() {
+fn sync_to_lands_an_owned_commit_past_a_detached_reference_member() {
     let tmp = common::tempdir().unwrap();
     let primary = make_primary(tmp.path());
+    let before = fingerprint(&primary.ref_canonical);
     let ww = create_workweave(&primary, "feat");
 
-    let ref_sha = commit_file(&ww.ref_checkout, "R", "r\n", "ww: reference");
     let owned_sha = commit_file(&ww.owned_checkout, "O", "o\n", "ww: owned");
     rwv_lock_commit(&ww.root);
 
@@ -333,9 +346,36 @@ fn sync_to_lands_a_reference_commit_like_an_owned_one() {
         owned_sha
     );
     assert_eq!(
-        common::git_in(&primary.ref_canonical, &["rev-parse", "main"]),
-        ref_sha,
-        "a reference member's commit lands upward exactly like an owned one's"
+        fingerprint(&primary.ref_canonical),
+        before,
+        "a reference member holding nothing of its own lands nothing"
+    );
+    assert_member_worktree(&ww.ref_checkout, &primary.ref_canonical, None);
+}
+
+#[test]
+fn sync_to_refuses_a_detached_reference_member_that_holds_commits_of_its_own() {
+    let tmp = common::tempdir().unwrap();
+    let primary = make_primary(tmp.path());
+    let ww = create_workweave(&primary, "feat");
+
+    let held = commit_file(&ww.ref_checkout, "R", "r\n", "ww: reference");
+    commit_file(&ww.owned_checkout, "O", "o\n", "ww: owned");
+    rwv_lock_commit(&ww.root);
+
+    rwv()
+        .args(["sync-to", &primary.root.to_string_lossy()])
+        .current_dir(&ww.root)
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "github/org/reference (detached HEAD",
+        ));
+
+    assert_eq!(
+        common::git_in(&ww.ref_checkout, &["rev-parse", "HEAD"]),
+        held,
+        "the refusal leaves the commit where it is"
     );
 }
 

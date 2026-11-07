@@ -1121,8 +1121,9 @@ pub(crate) struct Materialized {
     pub(crate) files: Option<FilePlacement>,
     /// What survived in the canonical clone for it, and so what was done.
     pub(crate) relink: Relink,
-    /// The workweave's ephemeral branch it is on.
-    pub(crate) branch: EphemeralRefName,
+    /// The workweave's ephemeral branch it is on; none where the member sits
+    /// detached at its pin.
+    pub(crate) branch: Option<EphemeralRefName>,
 }
 
 /// How [`materialize_member`] gave a workweave its member's worktree, decided
@@ -1143,7 +1144,9 @@ impl Materialized {
     /// What was done, for a line naming the checkout before it.
     pub(crate) fn summary(&self) -> String {
         let at = self.at.id().short();
-        let branch = &self.branch;
+        let Some(branch) = &self.branch else {
+            return format!("detached at {at}");
+        };
         match self.relink {
             Relink::Repaired => format!(
                 "relinked through the registration the canonical clone kept, on `{branch}` at \
@@ -1221,7 +1224,7 @@ pub(crate) fn materialize_member(
                 at: vcs.head_revision(&dest)?,
                 files: None,
                 relink: Relink::Repaired,
-                branch,
+                branch: Some(branch),
             });
         }
     } else if vcs.prune_stale_worktree_registration(&canonical, &dest)? == RegistrationPrune::Locked
@@ -1236,6 +1239,23 @@ pub(crate) fn materialize_member(
             canonical.display(),
             dest.display(),
         );
+    }
+
+    if !in_place && matches!(role, Role::Dependency | Role::Reference) {
+        let at = vcs
+            .resolve_revision(&canonical, start)
+            .with_context(|| format!("failed to resolve {start} in canonical clone"))?;
+        let files =
+            crate::share::create_detached_populated(vcs, &canonical, &dest, &at, role, &Filesystem)
+                .with_context(|| format!("cannot materialize {repo_path}"))?;
+        crate::settle::settle(vcs, &dest, role)?;
+        populate_member_submodules(vcs, &dest, repo_path, role, recurse_submodules, "rwv: ");
+        return Ok(Materialized {
+            at,
+            files,
+            relink: Relink::Created,
+            branch: None,
+        });
     }
 
     let mut registry = RefRegistry::for_project(primary_root, project);
@@ -1290,7 +1310,7 @@ pub(crate) fn materialize_member(
         at,
         files,
         relink,
-        branch,
+        branch: Some(branch),
     })
 }
 
@@ -1447,7 +1467,7 @@ fn refuse_unless_replaceable(
         ));
     }
 
-    let canonical_is_clone = match vcs.resolve_canonical_store(canonical) {
+    let canonical_is_clone = match vcs.store_of(canonical) {
         None => {
             reasons.push(format!(
                 "there is no canonical clone at {} to link a worktree into; \
@@ -1606,15 +1626,18 @@ pub(crate) fn birth_ephemeral_worktree(
         .collect();
     if !occupied.is_empty() {
         crate::refuse!(
-            RefusalKind::UnmigratedEphemeralBranch,
+            RefusalKind::HealthFloorTooLow,
             "cannot create branch `{ephemeral}` in {store}: {n} branch(es) already occupy \
              its namespace, and git cannot hold both `refs/heads/{ephemeral}` and \
              `refs/heads/{ephemeral}/...`:\n  {list}\n\n\
-             These carry the pre-flat shape `{{project}}--{{workweave}}/<segment>`, which \
-             rwv no longer mints. Run `rwv doctor --fix` to migrate the ones rwv created; \
-             one you made yourself is yours to rename or delete — rwv will not touch it.",
+             These carry the shape `{{project}}--{{workweave}}/<segment>`, which rwv minted \
+             before version {bridge} and no longer migrates, so this weave's health floor is \
+             below what this rwv requires. Install rwv {bridge}, run `rwv doctor --fix --all` \
+             until `rwv doctor --all` reports clean, then upgrade again; a branch you made \
+             yourself is yours to rename or delete.",
             store = store.display(),
             n = occupied.len(),
+            bridge = crate::health_floor::PRE_FLAT_BRIDGE,
             list = occupied
                 .iter()
                 .map(|b| b.as_str().to_owned())
@@ -1697,6 +1720,22 @@ pub(crate) fn birth_ephemeral_worktree(
         failure,
         placement,
     })
+}
+
+/// Where a detached member of a new workweave starts: the commit the source's
+/// lock pins for it where this clone holds it, else the source's HEAD.
+fn pinned_start(
+    lock: &Option<LockFile>,
+    vcs: &dyn Vcs,
+    repo: &Path,
+    repo_path: &RepoPath,
+) -> anyhow::Result<ResolvedRevisionId> {
+    if let Some(entry) = lock.as_ref().and_then(|lock| lock.get_entry(repo_path)) {
+        if let Ok(at) = vcs.resolve_revision(repo, entry.version.as_str()) {
+            return Ok(at);
+        }
+    }
+    Ok(vcs.head_revision(repo)?)
 }
 
 /// Copy, byte for byte, an enabled integration's managed or generated file
@@ -2129,6 +2168,15 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
     let ephemeral = EphemeralRefName::mint(&flat);
     let mut registry = RefRegistry::for_project(primary_root, project);
 
+    let workspace_lock = {
+        let path = LockFile::path_in(&project_dir(source_root, project));
+        if path.exists() {
+            LockFile::from_state(&path).ok()
+        } else {
+            None
+        }
+    };
+
     let mut errors: Vec<String> = Vec::new();
     let mut submodule_warnings: Vec<String> = Vec::new();
 
@@ -2157,31 +2205,48 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
             // any more. `birth_ephemeral_worktree` hands back what it claimed
             // even when the birth call failed, which is the hook-failure case
             // the old pre-recording existed for.
-            match vcs
-                .head_revision(&repo_abs)
-                .map_err(anyhow::Error::from)
-                .and_then(|start| {
-                    birth_ephemeral_worktree(
+            if matches!(entry.role, Role::Dependency | Role::Reference) {
+                let started = pinned_start(&workspace_lock, vcs.as_ref(), &repo_abs, repo_path);
+                match started.and_then(|at| {
+                    crate::share::create_detached_populated(
                         vcs.as_ref(),
-                        &mut registry,
                         &repo_abs,
                         &worktree_dest,
-                        &ephemeral,
-                        start,
-                        WorktreeFiles::Shared(&Filesystem, entry.role),
-                        ReceiptedBranch::Replace,
+                        &at,
+                        entry.role,
+                        &Filesystem,
                     )
                 }) {
-                Ok(outcome) => {
-                    placement = outcome.placement;
-                    rollback.record_ref_attempt(outcome.owned, outcome.birth);
-                    if let Some(e) = outcome.failure {
-                        result = Err(e);
-                    }
+                    Ok(files) => placement = files,
+                    Err(e) => result = Err(e),
                 }
-                // Failed before any receipt existed: nothing was claimed, so
-                // there is nothing for the guard to undo in this repo.
-                Err(e) => result = Err(e),
+            } else {
+                match vcs
+                    .head_revision(&repo_abs)
+                    .map_err(anyhow::Error::from)
+                    .and_then(|start| {
+                        birth_ephemeral_worktree(
+                            vcs.as_ref(),
+                            &mut registry,
+                            &repo_abs,
+                            &worktree_dest,
+                            &ephemeral,
+                            start,
+                            WorktreeFiles::Shared(&Filesystem, entry.role),
+                            ReceiptedBranch::Replace,
+                        )
+                    }) {
+                    Ok(outcome) => {
+                        placement = outcome.placement;
+                        rollback.record_ref_attempt(outcome.owned, outcome.birth);
+                        if let Some(e) = outcome.failure {
+                            result = Err(e);
+                        }
+                    }
+                    // Failed before any receipt existed: nothing was claimed, so
+                    // there is nothing for the guard to undo in this repo.
+                    Err(e) => result = Err(e),
+                }
             }
         }
 
@@ -2508,6 +2573,7 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
             eprintln!("rwv workweave create: {line}");
         }
     }
+    crate::alignment::record(&workweave_dir, project)?;
 
     // All steps complete — defuse the rollback guard so Drop is a no-op.
     rollback.defuse();
@@ -3014,7 +3080,7 @@ fn collect_diverged_paths(
         // workweave checkout differs from the baseline's canonical store,
         // and we conservatively decline to vouch — see below.
         let wt_canonical = match vcs
-            .resolve_canonical_store(wt)
+            .store_of(wt)
             .and_then(|s| s.parent().map(CanonicalPath::of))
         {
             Some(p) => p,
@@ -3040,7 +3106,7 @@ fn collect_diverged_paths(
             // workweave checkout's, treat as not-vouched-by-this-baseline
             // and let the operator run `rwv doctor`.
             let base_canonical = match vcs
-                .resolve_canonical_store(&canonical)
+                .store_of(&canonical)
                 .and_then(|s| s.parent().map(CanonicalPath::of))
             {
                 Some(p) => p,
@@ -3158,7 +3224,7 @@ pub(crate) fn resolved_worktree_parent(
         return CanonicalPath::of(fallback);
     }
     match vcs
-        .resolve_canonical_store(checkout)
+        .store_of(checkout)
         .and_then(|s| s.parent().map(CanonicalPath::of))
     {
         Some(p) => p,
@@ -3199,7 +3265,7 @@ fn refuse_if_checkouts_host_foreign_worktrees(
             return;
         }
         let canonical = match vcs
-            .resolve_canonical_store(checkout)
+            .store_of(checkout)
             .and_then(|s| s.parent().map(CanonicalPath::of))
         {
             Some(p) => p,

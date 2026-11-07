@@ -375,7 +375,7 @@ fn a_flat_address_cannot_be_built_from_text() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn detaching_a_checkout_requires_a_consent_token_nobody_else_can_mint() {
+fn detaching_a_checkout_requires_a_departure_proof_nobody_else_can_mint() {
     // `granted()` is the unconditional mint — it checks nothing, so holding
     // its result is the whole proof. It is `#[cfg(test)]`, which means it is
     // absent from the library that this probe (and the `rwv` binary, and
@@ -385,10 +385,24 @@ fn detaching_a_checkout_requires_a_consent_token_nobody_else_can_mint() {
         "E0599",
         "the unconditional mint does not exist outside a test build of the crate",
         r#"
-        use repoweave::cli::consent::DetachConsent;
+        use repoweave::alignment::Departure;
         use repoweave::vcs::{AttachedRef, ResolvedRevisionId, Vcs};
         pub fn detach(vcs: &dyn Vcs, a: &AttachedRef, to: &ResolvedRevisionId) {
-            let _ = vcs.detach_head(a, to, DetachConsent::granted());
+            let _ = vcs.detach_head(a, to, &Departure::granted());
+        }
+        "#,
+    );
+}
+
+#[test]
+fn a_checkout_cannot_be_detached_without_a_departure_argument() {
+    assert_fails_with(
+        "E0061",
+        "detach_head takes the proof alignment mints, not nothing",
+        r#"
+        use repoweave::vcs::{AttachedRef, ResolvedRevisionId, Vcs};
+        pub fn detach(vcs: &dyn Vcs, a: &AttachedRef, to: &ResolvedRevisionId) {
+            let _ = vcs.detach_head(a, to);
         }
         "#,
     );
@@ -396,21 +410,21 @@ fn detaching_a_checkout_requires_a_consent_token_nobody_else_can_mint() {
 
 #[test]
 fn the_flag_mint_is_not_reachable_from_outside_the_cli_module() {
-    // The other minting route. `from_flag` is `pub(in crate::cli)`, so this
-    // probe pins only half of what that buys: that it is not `pub`. The
-    // other half — that `vcs.rs`, inside the crate, cannot call it either —
-    // is not observable from an external crate, because every visibility
-    // narrower than `pub` looks identical from out here. It is instead a
-    // property of where dispatch lives: `cli::dispatch` is the only module
-    // in the `cli` tree that mints, and a mint appearing in `vcs.rs` fails
-    // `cargo build` with this same E0624.
+    // The flag route of a consent token. `from_flag` is `pub(in crate::cli)`,
+    // so this probe pins only half of what that buys: that it is not `pub`.
+    // The other half — that `vcs.rs`, inside the crate, cannot call it
+    // either — is not observable from an external crate, because every
+    // visibility narrower than `pub` looks identical from out here. It is
+    // instead a property of where dispatch lives: `cli::dispatch` is the only
+    // module in the `cli` tree that mints, and a mint appearing in `vcs.rs`
+    // fails `cargo build` with this same E0624.
     assert_fails_with(
         "E0624",
         "consent is minted from a named flag, at dispatch, and nowhere else",
         r#"
-        use repoweave::cli::consent::DetachConsent;
-        pub fn mint() -> Option<DetachConsent> {
-            DetachConsent::from_flag(true)
+        use repoweave::cli::consent::DiscardUnmergedConsent;
+        pub fn mint() -> Option<DiscardUnmergedConsent> {
+            DiscardUnmergedConsent::from_flag(true)
         }
         "#,
     );
@@ -429,31 +443,17 @@ fn the_flag_mint_is_not_reachable_from_outside_the_cli_module() {
 // plain-private and `pub(crate)` that would), so an external probe
 // demonstrating this also demonstrates the in-crate claim: no module of
 // `repoweave` other than `cli::consent` — not `vcs.rs`, not `fetch.rs` — can
-// write `DetachConsent(())` by hand either.
+// write `DiscardUnmergedConsent(())` by hand either.
 
 #[test]
-fn a_detach_consent_cannot_be_forged_by_tuple_literal() {
+fn a_departure_cannot_be_forged_by_tuple_literal() {
     assert_fails_with(
         "E0423",
-        "the field is private to cli::consent; only from_flag/granted can produce one",
+        "the field is private to alignment; only the engine can produce one",
         r#"
-        use repoweave::cli::consent::DetachConsent;
-        pub fn forge() -> DetachConsent {
-            DetachConsent(())
-        }
-        "#,
-    );
-}
-
-#[test]
-fn a_reattach_consent_cannot_be_forged_by_tuple_literal() {
-    assert_fails_with(
-        "E0423",
-        "the field is private to cli::consent; only from_flag/granted can produce one",
-        r#"
-        use repoweave::cli::consent::ReattachConsent;
-        pub fn forge() -> ReattachConsent {
-            ReattachConsent(())
+        use repoweave::alignment::Departure;
+        pub fn forge() -> Departure {
+            Departure(())
         }
         "#,
     );
@@ -468,23 +468,6 @@ fn a_discard_unmerged_consent_cannot_be_forged_by_tuple_literal() {
         use repoweave::cli::consent::DiscardUnmergedConsent;
         pub fn forge() -> DiscardUnmergedConsent {
             DiscardUnmergedConsent(())
-        }
-        "#,
-    );
-}
-
-#[test]
-fn an_adopt_detached_consent_cannot_be_forged_by_tuple_literal() {
-    // Unlike the other three, this token has no `granted()` — no in-crate
-    // fixture needs an unconditional mint yet — so `from_flag` is the only
-    // producer.
-    assert_fails_with(
-        "E0423",
-        "the field is private to cli::consent; only from_flag can produce one",
-        r#"
-        use repoweave::cli::consent::AdoptDetachedConsent;
-        pub fn forge() -> AdoptDetachedConsent {
-            AdoptDetachedConsent(())
         }
         "#,
     );

@@ -911,8 +911,6 @@ pub fn run() -> anyhow::Result<()> {
             fix,
             json,
             all,
-            reattach_checkouts,
-            adopt_detached_checkouts,
             abandon_lost_pins,
             kind,
             project,
@@ -922,15 +920,6 @@ pub fn run() -> anyhow::Result<()> {
                 WorkspaceContext::resolve_for_doctor(origin_dir, project_override)?,
                 use_workweave_flag,
             );
-            // Minted here — the CLI boundary is the only place that knows
-            // the operator asked. `run_check` gates the detached canonical
-            // store's reattach on it; without the flag `--fix` reports the
-            // `git switch` instead of performing the ATTACH.
-            let reattach_checkouts = consent::ReattachConsent::from_flag(reattach_checkouts);
-            // Consent for minting a workweave's ref at a detached HEAD, and
-            // for giving up a legacy branch's name to make room for it.
-            let adopt_detached_checkouts =
-                consent::AdoptDetachedConsent::from_flag(adopt_detached_checkouts);
             let abandon_lost_pins = consent::AbandonLostPinsConsent::from_flag(abandon_lost_pins);
             // Validated at the boundary: an unknown kind refuses here,
             // before any scan runs, naming the valid set.
@@ -952,8 +941,6 @@ pub fn run() -> anyhow::Result<()> {
                     &ctx,
                     check::Repair::from_fix_flag(fix),
                     scope,
-                    reattach_checkouts,
-                    adopt_detached_checkouts,
                     abandon_lost_pins,
                     kind_filter.as_ref(),
                 )?
@@ -1224,7 +1211,6 @@ pub fn run() -> anyhow::Result<()> {
             )?;
         }
         Some(Commands::Pull {
-            detach_checkouts,
             project,
             selector,
             jobs,
@@ -1237,7 +1223,6 @@ pub fn run() -> anyhow::Result<()> {
             pull::run_pull(
                 &ctx,
                 &selection,
-                consent::DetachConsent::from_flag(detach_checkouts),
                 crate::parallel::resolve_jobs(jobs),
                 OutputMode::from_flag(json),
                 activate::ActivateOptions { no_materialize },
@@ -1248,7 +1233,6 @@ pub fn run() -> anyhow::Result<()> {
             dirty,
             commit,
             message,
-            detach_checkouts,
             project,
             selector,
             jobs,
@@ -1270,9 +1254,6 @@ pub fn run() -> anyhow::Result<()> {
                     })?;
                 bind_project_scoped(ctx, use_workweave_flag)?
             };
-            // Mint once from the parsed flag; the token threads down to
-            // advance_checkout, where it gates the ff-or-refuse guard.
-            let detach_checkouts = consent::DetachConsent::from_flag(detach_checkouts);
             let jobs = crate::parallel::resolve_jobs(jobs);
             let output = OutputMode::from_flag(json);
             let opts = activate::ActivateOptions { no_materialize };
@@ -1286,14 +1267,12 @@ pub fn run() -> anyhow::Result<()> {
                     output,
                     &selector.parse_filter()?,
                     jobs,
-                    detach_checkouts,
                     opts,
                 )?;
             } else {
                 update::run_update(
                     &ctx,
                     &MemberSelection::new(selector.parse_filter()?, false),
-                    detach_checkouts,
                     jobs,
                     output,
                     opts,

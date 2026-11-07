@@ -50,7 +50,7 @@ impl FetchClaim {
 
     fn acquire(vcs: &dyn Vcs, repo: &Path) -> anyhow::Result<Self> {
         let store = vcs
-            .resolve_canonical_store(repo)
+            .store_of(repo)
             .with_context(|| format!("{} has no object store to fetch into", repo.display()))?;
         let path = StateFile::FetchClaim.in_dir(&store);
         match path.claim() {

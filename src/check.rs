@@ -430,11 +430,23 @@ pub enum CheckViolation {
     /// See `docs/explanation/joints/clone-topology.md` (I3) and
     /// `docs/explanation/joints/shared-refs-drift.md` (safe/live doctrine).
     BranchDiscipline {
-        /// Absolute path to the repo checkout (workweave repo for (a),
-        /// canonical clone for (b) and (c)) where the violation was found.
+        /// Absolute path to the canonical clone where the violation was found.
         repo_path: PathBuf,
         /// Discriminator for the specific branch-discipline anomaly.
         sub_kind: BranchDisciplineKind,
+    },
+    /// A member's checkout is not where the checked-out branch of its
+    /// workspace says it should be.
+    Alignment {
+        /// Absolute path to the checkout.
+        repo_path: PathBuf,
+        /// The project whose workspace the checkout belongs to.
+        project: ProjectName,
+        sub_kind: AlignmentKind,
+        /// The branch the checkout is on, where it is on one.
+        branch: Option<String>,
+        /// The commits listed beneath the state: those only the checkout holds.
+        listed: Vec<String>,
     },
     /// A worktree registration in a repo that no longer leads to a
     /// worktree: its directory is gone, or stands without its link back to
@@ -826,19 +838,11 @@ impl CheckViolation {
                 | CloneTopologyKind::WrongParentWorktree { .. }
                 | CloneTopologyKind::WeaveCloneIsWorktree { .. } => ReportOnly,
             },
+            CheckViolation::Alignment { sub_kind, .. } => sub_kind.fix_disposition(),
             CheckViolation::BranchDiscipline { sub_kind, .. } => match sub_kind {
-                BranchDisciplineKind::UnmigratedEphemeralBranch { .. }
-                | BranchDisciplineKind::UnrecordedEphemeralBranch { .. }
+                BranchDisciplineKind::UnrecordedEphemeralBranch { .. }
                 | BranchDisciplineKind::StaleEphemeralBranchSafe { .. } => Auto,
-                BranchDisciplineKind::Detached { .. } => Consented("--adopt-detached-checkouts"),
-                BranchDisciplineKind::CanonicalDetached { .. } => Consented("--reattach-checkouts"),
-                BranchDisciplineKind::SharedBranch { .. }
-                | BranchDisciplineKind::ForeignEphemeral { .. }
-                | BranchDisciplineKind::BlockedEphemeralNamespace { .. }
-                | BranchDisciplineKind::BlockedDetachedNamespace { .. }
-                | BranchDisciplineKind::DetachedOffEphemeralBranch { .. }
-                | BranchDisciplineKind::UnbornCheckout { .. }
-                | BranchDisciplineKind::CanonicalHoldsLiveWorkweaveRef { .. }
+                BranchDisciplineKind::CanonicalHoldsLiveWorkweaveRef { .. }
                 | BranchDisciplineKind::CanonicalHoldsLeakedRef { .. }
                 | BranchDisciplineKind::StaleEphemeralBranchLive { .. }
                 | BranchDisciplineKind::StaleEphemeralBranchUnowned { .. } => ReportOnly,
@@ -894,6 +898,7 @@ impl CheckViolation {
             | CheckViolation::UnreadableOwnedState { .. }
             | CheckViolation::WorkweaveTreeIntegrity { .. }
             | CheckViolation::BranchDiscipline { .. }
+            | CheckViolation::Alignment { .. }
             | CheckViolation::StaleWorktreeRegistration { .. }
             | CheckViolation::StaleOpState { .. }
             | CheckViolation::DeadOpLease { .. }
@@ -975,6 +980,7 @@ impl CheckViolation {
             CheckViolation::Provenance { .. } => ViolationKind::Provenance,
             CheckViolation::CloneTopology { .. } => ViolationKind::CloneTopology,
             CheckViolation::BranchDiscipline { .. } => ViolationKind::BranchDiscipline,
+            CheckViolation::Alignment { .. } => ViolationKind::Alignment,
             CheckViolation::StaleWorktreeRegistration { .. } => {
                 ViolationKind::StaleWorktreeRegistration
             }
@@ -1034,6 +1040,7 @@ pub enum ViolationKind {
     Provenance,
     CloneTopology,
     BranchDiscipline,
+    Alignment,
     StaleWorktreeRegistration,
     StaleOpState,
     DeadOpLease,
@@ -1050,7 +1057,7 @@ pub enum ViolationKind {
 }
 
 impl ViolationKind {
-    pub const ALL: [Self; 46] = [
+    pub const ALL: [Self; 47] = [
         Self::OrphanedClone,
         Self::UnknownSegmentClone,
         Self::DanglingReference,
@@ -1084,6 +1091,7 @@ impl ViolationKind {
         Self::Provenance,
         Self::CloneTopology,
         Self::BranchDiscipline,
+        Self::Alignment,
         Self::StaleWorktreeRegistration,
         Self::StaleOpState,
         Self::DeadOpLease,
@@ -1160,6 +1168,98 @@ impl UnparseableProjectKind {
             Self::PreSchema
         } else {
             Self::Malformed
+        }
+    }
+}
+
+/// How a member's checkout stands against where its workspace expects it.
+#[derive(Debug, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum AlignmentKind {
+    /// On a branch other than the expected one, and nothing it holds would be
+    /// left on no other ref if it moved off.
+    OnBranch,
+    /// On a branch other than the expected one, holding commits no other
+    /// branch, remote-tracking branch or backup reaches.
+    OnBranchWithStrayCommits,
+    /// Detached where it is not expected to be, holding nothing a branch
+    /// lacks.
+    Detached,
+    /// Detached, holding commits no branch or remote-tracking branch reaches.
+    DetachedWithUnpushedCommits,
+    /// The lock has no entry for the member and its expected branch is found
+    /// nowhere.
+    Unaligned,
+    /// The project repo is on no branch, and its workspace was not made
+    /// detached.
+    ProjectDetached,
+}
+
+impl AlignmentKind {
+    pub const ALL: [Self; 6] = [
+        Self::OnBranch,
+        Self::OnBranchWithStrayCommits,
+        Self::Detached,
+        Self::DetachedWithUnpushedCommits,
+        Self::Unaligned,
+        Self::ProjectDetached,
+    ];
+
+    pub fn severity(self) -> crate::integration::Severity {
+        crate::integration::Severity::Warning
+    }
+
+    pub fn fix_disposition(self) -> FixDisposition {
+        FixDisposition::ReportOnly
+    }
+
+    pub fn state(self) -> crate::diagnosis::State {
+        use crate::diagnosis::State;
+        match self {
+            Self::OnBranch => State::AlignmentOnBranch,
+            Self::OnBranchWithStrayCommits => State::AlignmentOnBranchWithStrayCommits,
+            Self::Detached => State::AlignmentDetachedElsewhere,
+            Self::DetachedWithUnpushedCommits => State::AlignmentDetachedUnpushed,
+            Self::Unaligned => State::AlignmentUnaligned,
+            Self::ProjectDetached => State::AlignmentProjectDetached,
+        }
+    }
+
+    pub fn entry(self) -> &'static str {
+        match self {
+            Self::OnBranch => {
+                "The checkout is on a branch the workspace does not expect, and moving it to \
+                 the expected state leaves every commit it holds on some other ref. \
+                 **What to do:** `rwv update`, which moves it."
+            }
+            Self::OnBranchWithStrayCommits => {
+                "The checkout is on a branch the workspace does not expect, and it holds \
+                 commits that no other branch, remote-tracking branch or backup reaches, \
+                 listed. `rwv update` leaves it. **What to do:** copy the commits onto the \
+                 expected branch, or keep them on a branch of their own and run `rwv update`; \
+                 the message names the command."
+            }
+            Self::Detached => {
+                "The checkout is detached where the workspace expects it on a branch, or at \
+                 another commit than its pin, and no commit reaches it that a branch lacks. \
+                 **What to do:** `rwv update`, which returns it."
+            }
+            Self::DetachedWithUnpushedCommits => {
+                "The checkout is detached and holds commits no branch or remote-tracking \
+                 branch reaches, listed. `rwv update` leaves it. **What to do:** keep the \
+                 commits on a branch, then run `rwv update`; the message names the command."
+            }
+            Self::Unaligned => {
+                "The lock has no entry for the member and its expected branch exists \
+                 nowhere, so it stays where it is. **What to do:** pin it at a commit you \
+                 choose, or start its branch at one."
+            }
+            Self::ProjectDetached => {
+                "The project repo's HEAD is on no branch, and the workspace was not made \
+                 detached, so no record says how its members should sit. The commits it \
+                 holds that no branch reaches are listed. **What to do:** keep them on a \
+                 branch if there are any, then switch the project repo back to a branch."
+            }
         }
     }
 }
@@ -1807,206 +1907,29 @@ impl CloneTopologyKind<PathBuf> {
         }
     }
 }
-/// Discriminator for [`CheckViolation::BranchDiscipline`] findings.
+/// Discriminator for [`CheckViolation::BranchDiscipline`] findings: the refs
+/// rwv holds an ownership receipt for.
 ///
-/// Three groupings, mirroring the three checks in the spec:
-///
-/// * (a) workweave-branch — a workweave checkout is on the wrong branch, or
-///   on a ref of its own namespace that predates the flat naming:
-///   [`SharedBranch`](Self::SharedBranch),
-///   [`ForeignEphemeral`](Self::ForeignEphemeral),
-///   [`Detached`](Self::Detached),
-///   [`UnmigratedEphemeralBranch`](Self::UnmigratedEphemeralBranch),
-///   [`UnrecordedEphemeralBranch`](Self::UnrecordedEphemeralBranch),
-///   [`UnbornCheckout`](Self::UnbornCheckout).
-/// * (b) canonical-store attachment — what the canonical store's HEAD is:
+/// * a workweave's flat ref with no receipt:
+///   [`UnrecordedEphemeralBranch`](Self::UnrecordedEphemeralBranch).
+/// * what a canonical store's HEAD is on:
 ///   [`CanonicalHoldsLiveWorkweaveRef`](Self::CanonicalHoldsLiveWorkweaveRef),
-///   [`CanonicalHoldsLeakedRef`](Self::CanonicalHoldsLeakedRef),
-///   [`CanonicalDetached`](Self::CanonicalDetached).
-/// * (c) stale-ephemeral-branches — a `<project>--<name>/...` branch
-///   exists in a canonical clone but workweave `<name>` no longer exists
-///   on disk: [`StaleEphemeralBranchSafe`](Self::StaleEphemeralBranchSafe),
-///   [`StaleEphemeralBranchLive`](Self::StaleEphemeralBranchLive), or
-///   [`StaleEphemeralBranchUnowned`](Self::StaleEphemeralBranchUnowned).
-///   The safe/live split applies the doctrine in
-///   `docs/explanation/joints/shared-refs-drift.md` to refs: a tip that is an
-///   ancestor of the primary's tracking-branch tip carries no unique work and
-///   is safely removable; a tip with commits not reachable from the primary
-///   is live work and must be left alone.
+///   [`CanonicalHoldsLeakedRef`](Self::CanonicalHoldsLeakedRef).
+/// * a `<project>--<name>` branch in a canonical clone whose workweave no
+///   longer exists on disk:
+///   [`StaleEphemeralBranchSafe`](Self::StaleEphemeralBranchSafe),
+///   [`StaleEphemeralBranchLive`](Self::StaleEphemeralBranchLive) or
+///   [`StaleEphemeralBranchUnowned`](Self::StaleEphemeralBranchUnowned). A tip
+///   that is an ancestor of the primary's tracking-branch tip carries no
+///   unique work and is safely removable; a tip with commits not reachable
+///   from the primary is live work and is left alone.
 ///
-/// # Ownership is by record, never by name shape (R2)
-///
-/// The (b) grouping and the safe/live/unowned split in (c) both key on
-/// whether rwv holds a persisted ownership receipt
-/// ([`crate::workweave_index::RefRegistry`]) for the exact ref in the exact
-/// store. A branch that merely *looks* like one of rwv's — a hand-made
-/// `<a>--<b>/<c>` — is an operator branch: the canonical-store pass leaves
-/// it alone, and `--fix` never deletes it.
+/// Ownership is by record, never by name shape: a branch that merely *looks*
+/// like one of rwv's is an operator branch, and `--fix` never deletes it.
 #[derive(Debug, Serialize, JsonSchema, Clone)]
 #[serde(rename_all = "kebab-case")]
 pub enum BranchDisciplineKind {
-    /// (a) The workweave checkout is on a non-ephemeral branch (e.g. `main`).
-    ///
-    /// Caused by `git switch main` inside a workweave or by a bare clone
-    /// that was never moved to an ephemeral branch. The fixture for this
-    /// sub-kind exercises the bare-main-in-workweave case from the spec's
-    /// acceptance criteria: the violation must flag from creation, before
-    /// any commit lands.
-    ///
-    /// Report-only, deliberately — not a missing arm. The state is
-    /// operator-made (a `git switch` run by hand), unlike the fetch-written
-    /// detachments whose repairs are native consented arms, and the
-    /// remediation prints the exact registry-aware `git switch` (it names
-    /// an existing recorded branch whenever a receipt exists), which is
-    /// what keeps hand-running it safe. If measured recurrence reopens the
-    /// question, the native form is a targeted repair naming one checkout,
-    /// not a bulk consent flag.
-    ///
-    /// A member slot holding a symlink is not scanned: read through the link
-    /// it is the canonical store, on the canonical store's branch. It is
-    /// reported as `workweave-drift`.
-    SharedBranch {
-        /// The branch currently checked out (e.g. `main`).
-        actual_branch: String,
-        /// The ephemeral ref this workweave mints (`<project>--<workweave>`).
-        expected_ref: String,
-        /// The ephemeral ref rwv holds a receipt for in this repo's
-        /// canonical store, when it holds one. Decides the remediation
-        /// spelling: `git switch <name>` returns to an existing ref,
-        /// `git switch -c` is only correct when there is none.
-        recorded_ref: Option<String>,
-    },
-    /// (a) The workweave checkout is on an ephemeral ref rwv **recorded**
-    /// for a *different* workweave. Report-only.
-    ///
-    /// Keyed on the receipt, not on the name (R2). Before the flat-name
-    /// cutover this arm fired on any `<a>--<b>/<c>`-shaped name, which meant
-    /// a hand-made branch was reported as "another workweave's" purely
-    /// because of how it was spelled; now it fires only when some project's
-    /// registry says the ref really is one rwv minted for another workweave.
-    /// A look-alike lands in [`SharedBranch`](Self::SharedBranch) instead —
-    /// both are report-only, so the distinction costs nothing but accuracy,
-    /// and report-only is deliberate for the same reason as
-    /// [`SharedBranch`](Self::SharedBranch)'s: the state is operator-made
-    /// and the printed switch is exact.
-    ForeignEphemeral {
-        /// The branch currently checked out.
-        actual_branch: String,
-        /// The ephemeral ref this workweave mints (`<project>--<workweave>`).
-        expected_ref: String,
-        /// See [`SharedBranch`](Self::SharedBranch)'s field of the same
-        /// name.
-        recorded_ref: Option<String>,
-    },
-    /// (a) The workweave checkout is in detached-HEAD state — HEAD points
-    /// directly at a commit instead of a named branch. With no branch
-    /// name there is nothing for the merged-check to ask about and
-    /// nothing for the workweave's ref namespace to be keyed by, so both
-    /// invariants lapse for as long as the checkout stays detached.
-    ///
-    /// `--fix --adopt-detached-checkouts` mints the workweave's flat ref
-    /// **at HEAD** — i.e. at the lock SHA — and, when `legacy_branch` is
-    /// `Some`, gives that branch's name up to make room for it.
-    Detached {
-        /// The ephemeral ref this workweave mints (`<project>--<workweave>`).
-        expected_ref: String,
-        /// See [`SharedBranch`](Self::SharedBranch)'s field of the same
-        /// name.
-        recorded_ref: Option<String>,
-        /// The commit HEAD names directly.
-        at_sha: CommitId,
-        /// A pre-flat branch of this workweave's own namespace, with its
-        /// tip. **Both** tips are reported, because they are the two things
-        /// the operator is choosing between.
-        legacy_branch: Option<LegacyRefAtTip>,
-    },
-    /// (a) The workweave checkout is attached to a pre-flat `<project>--<workweave>/<segment>` ref of its **own**
-    /// namespace.
-    ///
-    /// The common migration case and the fully automatic one: `--fix`
-    /// records a receipt at the ref's current tip and renames it to the flat
-    /// name. Nothing is lost — a rename preserves the tip — and the
-    /// namespace membership is decided against the name this workweave
-    /// *mints*, never by taking the observed name apart
-    /// ([`LegacyEphemeralRefName`](crate::vcs::LegacyEphemeralRefName)).
-    UnmigratedEphemeralBranch {
-        /// The pre-flat branch currently checked out.
-        actual_branch: String,
-        /// The flat ref it migrates to (`<project>--<workweave>`).
-        expected_ref: String,
-    },
-    /// (a) Two or more refs share this workweave's namespace in one store, so
-    /// the flat name cannot be created and no migration arm can run.
-    ///
-    /// git holds `refs/heads/p--w` and `refs/heads/p--w/x` as a file and a
-    /// directory of the same name, so the rename the migration would perform
-    /// is refused whatever order the arms take. `fix_branch_model_migration`
-    /// skips the pair before any arm, which is why this is reported in place
-    /// of [`UnmigratedEphemeralBranch`](Self::UnmigratedEphemeralBranch)
-    /// rather than beside it: that finding's message promises a rename this
-    /// state cannot produce.
-    ///
-    /// Report-only, and the repair is an operator's judgment rather than a
-    /// missing arm — which of the refs is this workweave's branch, and where
-    /// the others belong, is not derivable from the refs themselves.
-    BlockedEphemeralNamespace {
-        /// The flat ref no arm can create while the namespace is shared
-        /// (`<project>--<workweave>`).
-        expected_ref: String,
-        /// Every pre-flat ref found under that namespace, in listing order.
-        blocking_refs: Vec<String>,
-    },
-    /// (a) The workweave checkout is in detached-HEAD state AND two or more
-    /// refs share this workweave's namespace, so `--adopt-detached-checkouts`
-    /// cannot run.
-    ///
-    /// `fix_branch_model_migration` skips the whole repo before any arm when
-    /// `legacy_refs.len() > 1` — including the consented detached arm — which
-    /// is why this is reported in place of
-    /// [`Detached`](Self::Detached) rather than beside it: that finding's
-    /// message promises `--adopt-detached-checkouts`, a flag whose arm the
-    /// guard prevents from running. The principle is consent-tier-independent:
-    /// a consented remedy that cannot run misleads the operator exactly as an
-    /// auto remedy does — consent changes who acts, not whether the named
-    /// action works.
-    ///
-    /// Report-only. The operator must reduce the namespace to at most one ref,
-    /// then re-run to get the ordinary [`Detached`](Self::Detached) finding
-    /// with a remedy that will actually run.
-    BlockedDetachedNamespace {
-        /// The flat ref that cannot be created while the namespace is shared
-        /// (`<project>--<workweave>`).
-        expected_ref: String,
-        /// The commit HEAD names directly.
-        at_sha: CommitId,
-        /// Every pre-flat ref found under that namespace, in listing order.
-        blocking_refs: Vec<String>,
-    },
-    /// (a) The workweave checkout is in detached-HEAD state while its flat
-    /// ref already exists in the canonical store.
-    ///
-    /// Reported in place of [`Detached`](Self::Detached) because that
-    /// finding's remedy, `--adopt-detached-checkouts`, mints the flat ref and
-    /// refuses a name that already exists: moving an existing branch to HEAD
-    /// would be a MOVE no receipt witnesses. The migration's consented arm
-    /// skips this state for the same reason.
-    ///
-    /// Report-only. The reattach it names is chosen by `ancestry` so that
-    /// following it strands no commit: `git switch` where the branch carries
-    /// HEAD, a fast-forward of the branch to HEAD where HEAD carries the
-    /// branch, and a new branch for HEAD's commits first where they have
-    /// diverged.
-    DetachedOffEphemeralBranch {
-        /// The flat ref (`<project>--<workweave>`).
-        expected_ref: String,
-        /// The commit HEAD names directly.
-        at_sha: CommitId,
-        /// The commit the flat ref names.
-        branch_tip: CommitId,
-        /// How HEAD's commit stands against the flat ref's.
-        ancestry: DetachedAncestry,
-    },
-    /// (a) The workweave's flat ref exists in the canonical store, but rwv
+    /// The workweave's flat ref exists in the canonical store, but rwv
     /// holds no receipt for it.
     ///
     /// The state a build that minted flat names before receipts existed
@@ -2016,15 +1939,6 @@ pub enum BranchDisciplineKind {
     /// cannot clean it up; `--fix` adopts it at its observed tip.
     UnrecordedEphemeralBranch {
         /// The flat ref (`<project>--<workweave>`).
-        branch: String,
-    },
-    /// (a) The workweave checkout is on a branch with no commits.
-    ///
-    /// Report-only, and not because a fix is missing: there is no revision
-    /// to record a receipt against, so there is nothing the migration could
-    /// own. `rwv lock` is where an unborn HEAD is actionable.
-    UnbornCheckout {
-        /// The branch HEAD points at, which has no commits yet.
         branch: String,
     },
     /// (b) The canonical store is attached to a ref rwv recorded as
@@ -2060,31 +1974,6 @@ pub enum BranchDisciplineKind {
         /// recoverable only while one on disk would mint that name — which
         /// is exactly the case this variant is *not*.
         project: ProjectName,
-    },
-    /// (b) The canonical store — or the project repo — is in detached-HEAD
-    /// state.
-    ///
-    /// The project repo is an instance of the branch model, so it is
-    /// checked here rather than exempted.
-    ///
-    /// `--fix --reattach-checkouts` reattaches when
-    /// [`reattachable`](Self::CanonicalDetached::reattachable) — the
-    /// tracking declaration's local counterpart exists and its tip equals
-    /// HEAD. That condition is false for the ordinary post-fetch state
-    /// (stale counterpart, HEAD at the lock SHA), so the fix repairs the
-    /// minority; it is not weave-wide reattachment.
-    CanonicalDetached {
-        /// The commit HEAD names directly.
-        at_sha: CommitId,
-        /// The local counterpart of the ref this repo tracks — the
-        /// manifest's `branch` for a member, the remote's declared
-        /// default branch for the project repo. `None` when no tracking
-        /// declaration resolves, in which case there is nothing to name as
-        /// a reattach target.
-        counterpart: Option<String>,
-        /// Whether the reattach condition holds: `counterpart` exists as a
-        /// local branch **and** its tip equals HEAD.
-        reattachable: bool,
     },
     /// (c) A `<project>--<name>/...` branch in the canonical clone whose
     /// workweave `<name>` no longer exists on disk, **which rwv holds an
@@ -2151,20 +2040,6 @@ pub enum BranchDisciplineKind {
         /// The full branch name.
         branch: String,
     },
-}
-
-/// A pre-flat branch and the commit it reaches. **Both** tips are reported,
-/// side by side, because the operator is choosing between them.
-#[derive(Debug, Serialize, JsonSchema, Clone)]
-pub struct LegacyRefAtTip {
-    /// The pre-flat branch name (`<project>--<workweave>/<segment>`).
-    pub branch: String,
-    /// Its tip, or `null` where the branch names no commit.
-    pub tip_sha: Option<CommitId>,
-    /// Whether that tip carries commits the detached HEAD does not — i.e.
-    /// whether adopting the checkout would **strand** work. Arm 3 makes the
-    /// warning mandatory in exactly this case.
-    pub strands_commits: bool,
 }
 
 /// How a detached HEAD stands against its workweave's existing branch, which
@@ -2419,12 +2294,21 @@ pub enum ViolationOutput {
         sub_kind: CloneTopologyKind<WirePath>,
     },
     BranchDiscipline {
-        /// Absolute path to the repo checkout where the violation was
-        /// found (workweave checkout for (a), canonical clone for (b)/(c)).
+        /// Absolute path to the canonical clone where the violation was found.
         repo_path: WirePath,
         /// Discriminator for the specific branch-discipline anomaly.
         #[serde(rename = "sub_kind")]
         sub_kind: BranchDisciplineKind,
+    },
+    Alignment {
+        /// Absolute path to the checkout.
+        repo_path: WirePath,
+        project: ProjectName,
+        #[serde(rename = "sub_kind")]
+        sub_kind: AlignmentKind,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        branch: Option<String>,
+        listed: Vec<String>,
     },
     StaleWorktreeRegistration {
         path: String,
@@ -2896,6 +2780,19 @@ impl ViolationOutput {
             } => Self::BranchDiscipline {
                 repo_path: WirePath::of(&repo_path),
                 sub_kind,
+            },
+            CheckViolation::Alignment {
+                repo_path,
+                project,
+                sub_kind,
+                branch,
+                listed,
+            } => Self::Alignment {
+                repo_path: WirePath::of(&repo_path),
+                project,
+                sub_kind,
+                branch,
+                listed,
             },
             CheckViolation::StaleWorktreeRegistration {
                 workweave,
@@ -4781,7 +4678,7 @@ fn split_attribute_line(line: &str) -> Option<(&str, &str)> {
 ///   - every workweave checkout `<workweave>/R` (call its store WW_i).
 ///
 /// It then classifies each pair by comparing canonical-store paths
-/// resolved through [`crate::vcs::Vcs::resolve_canonical_store`] (intent:
+/// resolved through [`crate::vcs::Vcs::store_of`] (intent:
 /// "which object DAG does this workspace belong to?"). The four sub-kinds
 /// from the spec map to:
 ///
@@ -4826,7 +4723,7 @@ pub fn scan_clone_topology(
 
     for repo in repo_paths {
         let canonical_slot = ws_root.join(repo.as_path());
-        let canonical_store_raw = vcs.resolve_canonical_store(&canonical_slot);
+        let canonical_store_raw = vcs.store_of(&canonical_slot);
 
         // Expected canonical store path: `<canonical_slot>/.git`. Compare via
         // canonicalize to absorb any trailing-slash / symlink differences.
@@ -4875,7 +4772,7 @@ pub fn scan_clone_topology(
                 continue;
             }
 
-            let ww_store_raw = match vcs.resolve_canonical_store(&ww_checkout) {
+            let ww_store_raw = match vcs.store_of(&ww_checkout) {
                 Some(p) => p,
                 None => continue, // not a workspace there; skip silently
             };
@@ -5071,39 +4968,57 @@ fn workweave_checkouts(
     out
 }
 
-/// The refs of this workweave's own namespace that exist in `store`,
-/// **attached or not**.
-///
-/// The pass enumerates refs per store — attached and unattached — not
-/// attachment states, because a pass keyed on `head_attachment` alone
-/// silently disowns a commit-bearing legacy branch that a fetch left
-/// behind.
-///
-/// Membership is decided against the name this workweave **mints**, so the
-/// listing can never reach into another workweave's namespace however the
-/// refs are spelled. Returns `(flat_is_present, legacy_refs)`.
-fn refs_in_workweave_namespace(
+/// Whether the workweave's flat ref exists in `store`, attached or not.
+fn flat_ref_present(
     vcs: &dyn crate::vcs::Vcs,
     store: &Path,
     flat: &crate::vcs::EphemeralRefName,
-) -> (bool, Vec<crate::vcs::LegacyEphemeralRefName>) {
-    // The prefix comes from `to_raw`, the named conversion to the parse
-    // boundary — not from `Display`. A rendering is for a reader; what the
-    // VCS is asked to match on is a name.
+) -> bool {
     let flat_raw = flat.to_raw();
-    let Ok(observed) = vcs.list_branch_names_with_prefix(store, flat_raw.as_str()) else {
-        return (false, Vec::new());
-    };
-    let mut flat_present = false;
-    let mut legacy = Vec::new();
-    for name in observed {
-        if name == flat_raw {
-            flat_present = true;
-        } else if let Some(claimed) = crate::vcs::LegacyEphemeralRefName::claim(flat, &name) {
-            legacy.push(claimed);
+    vcs.list_branch_names_with_prefix(store, flat_raw.as_str())
+        .is_ok_and(|observed| observed.contains(&flat_raw))
+}
+
+/// Report the flat ref of a workweave that rwv holds no ownership receipt for.
+fn scan_unrecorded_flat_refs(
+    vcs: &dyn crate::vcs::Vcs,
+    recorded: &RecordedRefs,
+    workweave_dir: &Path,
+    workweave: &WorkweaveId,
+    out: &mut Vec<CheckViolation>,
+) {
+    let flat = crate::vcs::EphemeralRefName::mint(&workweave.flat());
+    let flat_raw = flat.to_raw();
+    for abs in workweave_checkouts(vcs, workweave_dir, &workweave.project) {
+        let store = crate::workweave::receipt_store_for(vcs, &abs);
+        let has_receipt = recorded
+            .for_store(&store)
+            .iter()
+            .any(|rec| rec.owned.name() == &flat_raw);
+        if flat_ref_present(vcs, &store, &flat) && !has_receipt {
+            out.push(CheckViolation::BranchDiscipline {
+                repo_path: abs,
+                sub_kind: BranchDisciplineKind::UnrecordedEphemeralBranch {
+                    branch: flat.to_string(),
+                },
+            });
         }
     }
-    (flat_present, legacy)
+}
+
+/// Whether giving up `left` for `kept` strands commits: anything `left`
+/// reaches that `kept` does not.
+///
+/// Structural: the question is ancestry, never how long ago anything
+/// happened. Unreadable ancestry counts as stranding. The direction that is
+/// wrong to guess is the quiet one.
+fn leaves_commits_behind(
+    vcs: &dyn crate::vcs::Vcs,
+    store: &Path,
+    left: &ResolvedRevisionId,
+    kept: &ResolvedRevisionId,
+) -> bool {
+    !vcs.is_ancestor(store, left, kept).unwrap_or(false)
 }
 
 // ---------------------------------------------------------------------------
@@ -5299,353 +5214,152 @@ fn live_workweave_names(
     names.into_iter().collect()
 }
 
-/// Scan a workweave's repo checkouts for (a) workweave-branch violations and
-/// for the migration arms.
+/// Scan every workspace's member checkouts against where the workspace's
+/// checked-out branch says they should be.
 ///
-/// One pass, because it is one question asked of one place: what refs does
-/// this workweave's namespace hold in each store, and what is each checkout
-/// attached to. Both halves are needed — the pass enumerates refs per store,
-/// attached and unattached, not attachment states — because a legacy branch
-/// a fetch left behind is invisible to a HEAD read, and a checkout on `main`
-/// is invisible to a ref listing.
-///
-/// The healthy state is the **minted** name, flat: `<project>--<workweave>`,
-/// no segment. The arms, and the sub-kind each produces:
-///
-///   * on the minted ref — healthy, nothing reported.
-///   * on a pre-flat ref of this workweave's own namespace —
-///     [`UnmigratedEphemeralBranch`], which `--fix` renames.
-///   * on a ref some project **recorded** for another workweave —
-///     [`ForeignEphemeral`].
-///   * on any other branch — [`SharedBranch`]; covers the
-///     bare-main-in-workweave case.
-///   * detached — [`Detached`], carrying the pre-flat branch and **both**
-///     tips when one exists, because those are the two things the operator
-///     is choosing between.
-///   * unborn — [`UnbornCheckout`]. Report-only: there is no revision to
-///     record a receipt against.
-///   * independently of the attachment: the minted ref present with no
-///     receipt — [`UnrecordedEphemeralBranch`], which `--fix` adopts.
-///
-/// Nothing here parses a branch name. "Is this ref mine" goes through
-/// [`EphemeralRefName::mint`] and [`LegacyEphemeralRefName::claim`], both of
-/// which start from the name this workweave *would* produce; "is this ref
-/// rwv's" goes through the receipt registry (R2).
-///
-/// The remediation each finding carries is **registry-aware**: when rwv
-/// holds a receipt for this workweave's ref in the repo's canonical store,
-/// the advice is `git switch <name>` — returning to a branch that exists.
-/// `git switch -c` is printed only when there is no recorded ref to return
-/// to. The distinction is not cosmetic: `git switch <name>` on an absent
-/// branch does not refuse, it invents the branch from a remote-tracking ref
-/// of the same name, or detaches when the name is a tag's, or reads the name
-/// as a pathspec and reverts the operator's uncommitted edits to it — all
-/// exiting 0.
-///
-/// [`UnmigratedEphemeralBranch`]: BranchDisciplineKind::UnmigratedEphemeralBranch
-/// [`UnrecordedEphemeralBranch`]: BranchDisciplineKind::UnrecordedEphemeralBranch
-/// [`ForeignEphemeral`]: BranchDisciplineKind::ForeignEphemeral
-/// [`SharedBranch`]: BranchDisciplineKind::SharedBranch
-/// [`Detached`]: BranchDisciplineKind::Detached
-/// [`UnbornCheckout`]: BranchDisciplineKind::UnbornCheckout
-/// [`EphemeralRefName::mint`]: crate::vcs::EphemeralRefName::mint
-/// [`LegacyEphemeralRefName::claim`]: crate::vcs::LegacyEphemeralRefName::claim
-fn scan_workweave_repo_branches(
-    vcs: &dyn crate::vcs::Vcs,
-    _ws_root: &Path,
-    recorded: &RecordedRefs,
-    workweave_dir: &Path,
-    workweave: &WorkweaveId,
+/// One pass over the primary and each workweave of each project: the engine
+/// that `rwv update` aligns with judges each checkout, and a checkout it
+/// would not leave alone is a finding. A workspace an operation holds is
+/// skipped, as is a checkout stopped in the middle of an operation of its
+/// own: git refuses to switch branches mid-rebase, and moving HEAD
+/// mid-bisect abandons the bisect.
+pub fn scan_alignment(ws_root: &Path, projects: &[Project]) -> Vec<CheckViolation> {
+    let mut out = Vec::new();
+    let accounting = crate::alignment::Accounting::scan(ws_root);
+    for project in projects {
+        let mut workspaces: Vec<PathBuf> = vec![ws_root.to_path_buf()];
+        workspaces.extend(
+            crate::workweave::list_workweave_dirs(ws_root)
+                .into_iter()
+                .filter(|(id, _)| id.project == project.name)
+                .map(|(_, dir)| dir),
+        );
+        for workspace in workspaces {
+            scan_workspace_alignment(ws_root, &workspace, project, &accounting, &mut out);
+        }
+    }
+    out
+}
+
+fn scan_workspace_alignment(
+    ws_root: &Path,
+    workspace: &Path,
+    project: &Project,
+    accounting: &crate::alignment::Accounting,
     out: &mut Vec<CheckViolation>,
 ) {
-    use crate::vcs::{EphemeralRefName, HeadAttachment};
+    use crate::alignment::{Aligner, Member};
+    use crate::diagnosis::State;
 
-    let flat = EphemeralRefName::mint(&workweave.flat());
-    let expected_ref = flat.to_string();
-    let op_owns_workweave = !matches!(
+    let held = !matches!(
         (
-            crate::op_state::read_owner(workweave_dir),
-            crate::op_state::read_lease(workweave_dir),
+            crate::op_state::read_owner(workspace),
+            crate::op_state::read_lease(workspace),
         ),
         (Ok(None), Ok(None))
     );
-
-    for abs in workweave_checkouts(vcs, workweave_dir, &workweave.project) {
-        // The receipt, if any, lives in this checkout's canonical store —
-        // resolved from the checkout itself rather than assembled from the
-        // primary and a manifest path, so an inverted topology reports
-        // against the store the refs are actually in. Resolved per repo
-        // because a receipt is keyed by (store, name).
-        let store = crate::workweave::receipt_store_for(vcs, &abs);
-        let store_receipts = recorded.for_store(&store);
-        let flat_raw = flat.to_raw();
-        let recorded_ref = store_receipts
+    if held {
+        return;
+    }
+    let project_dir = project_dir(workspace, &project.name);
+    let Ok(manifest) = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME)) else {
+        return;
+    };
+    let lock = LockFile::from_state(&LockFile::path_in(&project_dir)).ok();
+    let Ok(aligner) = Aligner::open(workspace, &project.name, accounting.clone()) else {
+        return;
+    };
+    if aligner.standing == crate::alignment::ProjectStanding::Detached {
+        let vcs = crate::vcs::project_vcs();
+        let listed = vcs
+            .head_revision(&project_dir)
+            .ok()
+            .and_then(|head| vcs.stray_commits(&project_dir, &head, None, None).ok())
+            .unwrap_or_default()
             .iter()
-            .find(|rec| rec.owned.name() == &flat_raw)
-            .map(|rec| rec.owned.to_string());
-
-        let (flat_present, legacy_refs) = refs_in_workweave_namespace(vcs, &store, &flat);
-
-        // Asked of the *store*, not of the attachment: the flat ref can
-        // exist with no receipt while HEAD sits somewhere
-        // else entirely, and that ref is exactly the one R2 would otherwise
-        // disown forever.
-        if flat_present && recorded_ref.is_none() {
-            out.push(CheckViolation::BranchDiscipline {
-                repo_path: abs.clone(),
-                sub_kind: BranchDisciplineKind::UnrecordedEphemeralBranch {
-                    branch: expected_ref.clone(),
-                },
+            .map(|c| {
+                format!(
+                    "{} {}",
+                    crate::vcs::short_revision(c.id.as_str()),
+                    c.subject
+                )
+            })
+            .collect();
+        out.push(CheckViolation::Alignment {
+            repo_path: project_dir,
+            project: project.name.clone(),
+            sub_kind: AlignmentKind::ProjectDetached,
+            branch: None,
+            listed,
+        });
+        return;
+    }
+    for (repo_path, entry) in manifest.iter_entries() {
+        let dir = workspace.join(repo_path.as_path());
+        if !dir.is_dir() || crate::workweave::is_symlinked_member(&dir) {
+            continue;
+        }
+        let member_vcs = crate::vcs::vcs_for(entry.vcs_type);
+        if member_vcs.mid_operation(&dir).is_some() {
+            continue;
+        }
+        let standalone = workspace != ws_root
+            && member_vcs
+                .store_of(&dir)
+                .is_some_and(|store| crate::workweave::is_own_store(&store, &dir));
+        if standalone {
+            continue;
+        }
+        let member = Member {
+            path: repo_path,
+            entry,
+            dir: &dir,
+            vcs: member_vcs.as_ref(),
+        };
+        let Ok(lines) = aligner.status_lines(&member, lock.as_ref(), repo_path) else {
+            continue;
+        };
+        for line in lines {
+            let sub_kind = match line.state() {
+                State::AlignmentOnBranch => AlignmentKind::OnBranch,
+                State::AlignmentOnBranchWithStrayCommits => AlignmentKind::OnBranchWithStrayCommits,
+                State::AlignmentDetachedElsewhere => AlignmentKind::Detached,
+                State::AlignmentDetachedUnpushed => AlignmentKind::DetachedWithUnpushedCommits,
+                State::AlignmentUnaligned => AlignmentKind::Unaligned,
+                _ => continue,
+            };
+            out.push(CheckViolation::Alignment {
+                repo_path: dir.clone(),
+                project: project.name.clone(),
+                sub_kind,
+                branch: line.subject().map(ToOwned::to_owned),
+                listed: line.listed().to_vec(),
             });
         }
-
-        let sub_kind = match vcs.head_attachment(&abs) {
-            Ok(HeadAttachment::Attached(a)) => {
-                if a.is_minted(&flat) {
-                    continue; // healthy
-                }
-                match a.legacy_name_under(&flat) {
-                    // Which of the two the migration can act on is decided
-                    // by the same count the migration pass skips on, so the
-                    // report never promises a rename git will refuse.
-                    Some(_) if legacy_refs.len() > 1 => {
-                        BranchDisciplineKind::BlockedEphemeralNamespace {
-                            expected_ref: expected_ref.clone(),
-                            blocking_refs: legacy_refs.iter().map(|r| r.to_string()).collect(),
-                        }
-                    }
-                    Some(legacy) => BranchDisciplineKind::UnmigratedEphemeralBranch {
-                        actual_branch: legacy.to_string(),
-                        expected_ref: expected_ref.clone(),
-                    },
-                    // Foreign vs shared is decided by the registry (R2): a ref some project recorded for a
-                    // different workweave really is another workweave's; a
-                    // look-alike is the operator's, and saying so is the
-                    // whole content of the rule.
-                    None if store_receipts
-                        .iter()
-                        .any(|rec| rec.owned.is_attached_by(&a)) =>
-                    {
-                        BranchDisciplineKind::ForeignEphemeral {
-                            actual_branch: a.to_string(),
-                            expected_ref: expected_ref.clone(),
-                            recorded_ref: recorded_ref.clone(),
-                        }
-                    }
-                    None => BranchDisciplineKind::SharedBranch {
-                        actual_branch: a.to_string(),
-                        expected_ref: expected_ref.clone(),
-                        recorded_ref: recorded_ref.clone(),
-                    },
-                }
-            }
-            Ok(HeadAttachment::Detached(_))
-                if op_owns_workweave || vcs.mid_operation(&abs).is_some() =>
-            {
-                continue;
-            }
-            Ok(HeadAttachment::Detached(d)) => {
-                // When two or more refs share the namespace the same guard
-                // that blocks UnmigratedEphemeralBranch also blocks the
-                // consented detached arm — fix_branch_model_migration skips
-                // the whole repo before reaching HeadAttachment::Detached.
-                // Emit BlockedDetachedNamespace instead so the report never
-                // names a remedy the guard prevents from running.
-                if legacy_refs.len() > 1 {
-                    BranchDisciplineKind::BlockedDetachedNamespace {
-                        expected_ref: expected_ref.clone(),
-                        at_sha: d.at().id().clone(),
-                        blocking_refs: legacy_refs.iter().map(|r| r.to_string()).collect(),
-                    }
-                } else if let Some(tip) = flat_present
-                    .then(|| {
-                        vcs.resolve_local_branch_tip(&store, &flat_raw)
-                            .ok()
-                            .flatten()
-                    })
-                    .flatten()
-                {
-                    BranchDisciplineKind::DetachedOffEphemeralBranch {
-                        expected_ref: expected_ref.clone(),
-                        at_sha: d.at().id().clone(),
-                        branch_tip: tip.id().clone(),
-                        ancestry: DetachedAncestry::observe(vcs, &store, d.at(), &tip),
-                    }
-                } else {
-                    BranchDisciplineKind::Detached {
-                        expected_ref: expected_ref.clone(),
-                        recorded_ref: recorded_ref.clone(),
-                        at_sha: d.at().id().clone(),
-                        legacy_branch: legacy_refs
-                            .first()
-                            .map(|legacy| legacy_ref_at_tip(vcs, &store, legacy, d.at())),
-                    }
-                }
-            }
-            Ok(HeadAttachment::Unborn(u)) => BranchDisciplineKind::UnbornCheckout {
-                branch: u.name().as_str().to_string(),
-            },
-            // Treat read failures as best-effort silence (matches existing
-            // doctor patterns for transient git errors).
-            Err(_) => continue,
-        };
-        out.push(CheckViolation::BranchDiscipline {
-            repo_path: abs,
-            sub_kind,
-        });
     }
-}
-
-/// Whether giving up `left` for `kept` strands commits: anything `left`
-/// reaches that `kept` does not.
-///
-/// Structural: the question is ancestry, never how long ago anything
-/// happened. Unreadable ancestry counts as stranding. The direction that is
-/// wrong to guess is the quiet one.
-fn leaves_commits_behind(
-    vcs: &dyn crate::vcs::Vcs,
-    store: &Path,
-    left: &ResolvedRevisionId,
-    kept: &ResolvedRevisionId,
-) -> bool {
-    !vcs.is_ancestor(store, left, kept).unwrap_or(false)
-}
-
-/// Read a pre-flat branch's tip and decide whether adopting the checkout at
-/// `head` would strand it. A stranded tip **must** be warned about.
-///
-/// A tip that is an ancestor of `head` is carried by the commit HEAD already
-/// names, so the branch's name can go without any commit going with it;
-/// anything else strands work, and the report has to say so.
-fn legacy_ref_at_tip(
-    vcs: &dyn crate::vcs::Vcs,
-    store: &Path,
-    legacy: &crate::vcs::LegacyEphemeralRefName,
-    head: &crate::vcs::ResolvedRevisionId,
-) -> LegacyRefAtTip {
-    let raw = legacy.to_raw();
-    let tip = vcs.resolve_local_branch_tip(store, &raw).ok().flatten();
-    let strands_commits = match &tip {
-        Some(t) => leaves_commits_behind(vcs, store, t, head),
-        None => false,
-    };
-    LegacyRefAtTip {
-        branch: legacy.to_string(),
-        tip_sha: tip.map(|t| t.id().clone()),
-        strands_commits,
-    }
-}
-
-/// Where a canonical store's tracking declaration comes from.
-///
-/// The two flavors mirror the two publish gates in `push.rs`: a manifest
-/// member's counterpart is the local projection of its declared `branch`,
-/// the project repo's is the local projection of the remote's declared
-/// default branch. The project repo *is* an instance of the branch model, so
-/// it gets an arm here rather than an exemption.
-enum TrackingSource {
-    /// A manifest member with exactly one declared `branch` across the
-    /// projects that reference it.
-    Declared(crate::vcs::TrackingRef),
-    /// The project repo. Its counterpart is observed, not declared: what a
-    /// channel's publish ref is stays open, and reading the remote's own HEAD
-    /// answers "which branch is this repo's trunk" without deciding it.
-    RemoteDefault,
-    /// No declaration resolves — the repo is on disk but in no manifest, or
-    /// two projects declare different `branch` values for it. Nothing can
-    /// be named as a reattach target, so the Detached arm reports only.
-    Unresolvable,
 }
 
 /// One canonical store the canonical-store pass visits.
 struct CanonicalStore {
     /// Absolute path of the store.
     path: PathBuf,
-    tracking: TrackingSource,
 }
 
-impl CanonicalStore {
-    /// The local branch a detached HEAD here would reattach to.
-    ///
-    /// Re-derived (never cached from the scan) at every use, including the
-    /// `--fix` path: the counterpart is a projection of state that can
-    /// change between report and repair.
-    fn local_counterpart(&self, vcs: &dyn crate::vcs::Vcs) -> Option<crate::vcs::LocalRefName> {
-        match &self.tracking {
-            TrackingSource::Declared(t) => Some(t.local_counterpart()),
-            TrackingSource::RemoteDefault => {
-                let url_remote = vcs.project_url_remote(&self.path).ok().flatten()?;
-                vcs.remote_default_branch(&self.path, &url_remote)
-                    .ok()
-                    .flatten()
-                    .map(|d| d.local_counterpart())
-            }
-            TrackingSource::Unresolvable => None,
-        }
-    }
-}
-
-/// Enumerate the canonical stores under `ws_root`, with the tracking
-/// declaration each one's counterpart is projected from.
-///
-/// Two sources, kept separate on purpose. Manifest members come from
-/// [`crate::workspace::scan_repos_on_disk`], which walks the registry
-/// directories. `projects/<project>/` does **not** — the scan there is by
-/// workspace, not by registry directory, so the project
-/// directory is enumerated on its own, the way `create` and `sync` already
-/// do it. Reusing the registry walker would keep the hole it left: today
-/// `git checkout --detach` in `projects/<project>/` yields zero findings
-/// while the same action on a member is a violation.
-fn canonical_stores(
-    vcs: &dyn crate::vcs::Vcs,
-    ws_root: &Path,
-    projects: &[Project],
-) -> Vec<CanonicalStore> {
-    // One repo may be declared by several projects. Collect the distinct
-    // declarations and only project a counterpart when they agree —
-    // disagreement is a manifest question, not something to pick a winner
-    // for inside a scan that may then MOVE the ref.
-    let mut declared: BTreeMap<RepoPath, std::collections::HashSet<&crate::vcs::TrackingRef>> =
-        BTreeMap::new();
-    for project in projects {
-        for (repo_path, entry) in project.manifest.iter_entries() {
-            declared
-                .entry(repo_path.clone())
-                .or_default()
-                .insert(&entry.branch);
-        }
-    }
-
-    let mut out = Vec::new();
-
-    for repo in crate::workspace::scan_repos_on_disk(ws_root, vcs) {
-        let tracking = match declared.get(&repo) {
-            Some(versions) if versions.len() == 1 => {
-                let only = versions.iter().next().expect("len == 1");
-                TrackingSource::Declared((*only).clone())
-            }
-            _ => TrackingSource::Unresolvable,
-        };
-        out.push(CanonicalStore {
+/// Enumerate the canonical stores under `ws_root`: the manifest members the
+/// registry directories hold, and `projects/<project>/`, which they do not.
+fn canonical_stores(vcs: &dyn crate::vcs::Vcs, ws_root: &Path) -> Vec<CanonicalStore> {
+    let mut out: Vec<CanonicalStore> = crate::workspace::scan_repos_on_disk(ws_root, vcs)
+        .into_iter()
+        .map(|repo| CanonicalStore {
             path: ws_root.join(repo.as_path()),
-            tracking,
-        });
-    }
-
+        })
+        .collect();
     for project in crate::workspace::discover_projects(ws_root) {
         let path = project_dir(ws_root, &project);
-        // "Not a repo" is a typed error, not a state, so the enumeration
-        // can ask the question directly instead of guessing from a
-        // collapsed `None`.
-        if !vcs.is_repo(&path) {
-            continue;
+        if vcs.is_repo(&path) {
+            out.push(CanonicalStore { path });
         }
-        out.push(CanonicalStore {
-            path,
-            tracking: TrackingSource::RemoteDefault,
-        });
     }
-
     out
 }
 
@@ -5701,11 +5415,10 @@ fn canonical_stores(
 fn scan_canonical_stores(
     vcs: &dyn crate::vcs::Vcs,
     ws_root: &Path,
-    projects: &[Project],
     recorded: &RecordedRefs,
     out: &mut Vec<CheckViolation>,
 ) {
-    use crate::vcs::{HeadAttachment, RawRefName};
+    use crate::vcs::HeadAttachment;
 
     // Every ref name a workweave on disk would mint, across projects. Used
     // by (c)'s unowned arm to stay out of the migration's way: a pre-flat ref
@@ -5713,7 +5426,7 @@ fn scan_canonical_stores(
     // is already reported there, with a fix attached.
     let live_namespaces = live_minted_ref_names(ws_root);
 
-    for store in canonical_stores(vcs, ws_root, projects) {
+    for store in canonical_stores(vcs, ws_root) {
         let abs = &store.path;
         let store_receipts = recorded.for_store(abs);
 
@@ -5745,30 +5458,7 @@ fn scan_canonical_stores(
                 // No receipt → arm 1: operator state, left alone.
             }
             Ok(HeadAttachment::Unborn(_)) => {}
-            Ok(HeadAttachment::Detached(d)) => {
-                let counterpart = store.local_counterpart(vcs);
-                let reattachable = match &counterpart {
-                    Some(name) => {
-                        // Both halves: the counterpart must exist as a
-                        // LOCAL branch, and its tip must
-                        // equal HEAD. Resolved in the local-branch namespace
-                        // so a tag of the same name cannot answer instead.
-                        matches!(
-                            vcs.resolve_local_branch_tip(abs, &RawRefName::new(name.as_str())),
-                            Ok(Some(ref tip)) if tip == d.at()
-                        )
-                    }
-                    None => false,
-                };
-                out.push(CheckViolation::BranchDiscipline {
-                    repo_path: abs.clone(),
-                    sub_kind: BranchDisciplineKind::CanonicalDetached {
-                        at_sha: d.at().id().clone(),
-                        counterpart: counterpart.map(|c| c.to_string()),
-                        reattachable,
-                    },
-                });
-            }
+            Ok(HeadAttachment::Detached(_)) => {}
             // Not a repo / unreadable ref database. Both are typed errors
             // rather than states; doctor stays best-effort silent on them,
             // matching how it treats every other transient VCS failure.
@@ -6159,7 +5849,7 @@ fn partition_uninitialized(
         .population()
         .and_then(|population| population.recorded_submodules(worktree).ok())
         .unwrap_or_default();
-    let store = vcs.resolve_canonical_store(worktree);
+    let store = vcs.store_of(worktree);
     let mut fetched = Vec::new();
     let mut unfetched = Vec::new();
     for path in empty_paths {
@@ -6699,7 +6389,7 @@ fn repair_standalone_members(
             }
             let vcs = crate::vcs::vcs_for(entry.vcs_type);
             let standalone = vcs
-                .resolve_canonical_store(&slot)
+                .store_of(&slot)
                 .is_some_and(|store| crate::workweave::is_own_store(&store, &slot));
             if !standalone {
                 continue;
@@ -6746,30 +6436,18 @@ fn repair_standalone_members(
 ///     applied here to refs instead of blobs).
 ///
 /// [`Vcs`]: crate::vcs::Vcs
-pub fn scan_branch_discipline(
-    ws_root: &Path,
-    vcs: &dyn crate::vcs::Vcs,
-    projects: &[Project],
-) -> Vec<CheckViolation> {
+pub fn scan_branch_discipline(ws_root: &Path, vcs: &dyn crate::vcs::Vcs) -> Vec<CheckViolation> {
     let mut violations = Vec::new();
     let recorded = RecordedRefs::new(ws_root);
 
-    // (a) workweave-branch: per workweave under .workweaves/, per repo
-    // checkout, validate the HEAD symbolic-ref prefix.
+    // The flat ref of each live workweave that rwv holds no receipt for.
     for (workweave, workweave_dir) in crate::workweave::list_workweave_dirs(ws_root) {
-        scan_workweave_repo_branches(
-            vcs,
-            ws_root,
-            &recorded,
-            &workweave_dir,
-            &workweave,
-            &mut violations,
-        );
+        scan_unrecorded_flat_refs(vcs, &recorded, &workweave_dir, &workweave, &mut violations);
     }
 
     // (b) + (c) — the canonical-store pass over every store under the
     // primary, `projects/<project>/` included.
-    scan_canonical_stores(vcs, ws_root, projects, &recorded, &mut violations);
+    scan_canonical_stores(vcs, ws_root, &recorded, &mut violations);
 
     violations
 }
@@ -6925,9 +6603,7 @@ pub fn scan_state_hygiene(
             Ok(listing) => listing,
             Err(_) => continue, // can't enumerate → leave repo alone
         };
-        let store = vcs
-            .resolve_canonical_store(&repo.abs)
-            .unwrap_or_else(|| repo.abs.clone());
+        let store = vcs.store_of(&repo.abs).unwrap_or_else(|| repo.abs.clone());
         for ref_name in listing.unrecognized {
             if !reported_refs.insert((store.clone(), ref_name.clone())) {
                 continue;
@@ -6983,16 +6659,10 @@ pub fn scan_state_hygiene(
 ///
 /// Two path shapes are handled:
 ///
-/// - **Workweave checkout** (sub-kinds a: `SharedBranch`, `ForeignEphemeral`,
-///   `Detached`): `repo_path` lives under the workweave parent directory
-///   (`<ws_root>/../.workweaves/<ww_dir>/`).  The project is read from the
-///   workweave directory's `.rwv-workweave` marker — the same source the
-///   scan that produced the finding minted from, and the same source
-///   `fix_branch_model_migration` scopes its repairs on. Reading the
-///   directory basename here instead (the pre-fix behavior) made the report
-///   and the repair scope the same finding to different projects whenever a
-///   hand-renamed directory disagreed with its marker: the report showed a
-///   remedy under one project while `--fix` skipped it under the other.
+/// - **Workweave checkout** (`UnrecordedEphemeralBranch`): `repo_path` lives
+///   under the workweave parent directory (`<ws_root>/../.workweaves/<ww_dir>/`).
+///   The project is read from the workweave directory's `.rwv-workweave`
+///   marker, the same source the repairs scope on.
 ///
 /// - **Canonical clone** (sub-kinds b/c: `StaleEphemeralBranchSafe`,
 ///   `StaleEphemeralBranchLive`, `StaleEphemeralBranchUnowned`): `repo_path`
@@ -7099,7 +6769,6 @@ fn branch_discipline_path_in_scope(
 pub fn fix_stale_ephemeral_branches(
     ws_root: &Path,
     vcs: &dyn crate::vcs::Vcs,
-    projects: &[Project],
     active_project: Option<&ProjectName>,
     known_repos: &BTreeSet<RepoPath>,
 ) -> EphemeralBranchRepair {
@@ -7115,7 +6784,7 @@ pub fn fix_stale_ephemeral_branches(
     // Re-scan so each delete sees the latest disk state and re-verifies
     // the safe-class precondition. `--fix` is meant to be idempotent: a
     // second invocation finds no safe-class violations to act on.
-    for violation in scan_branch_discipline(ws_root, vcs, projects) {
+    for violation in scan_branch_discipline(ws_root, vcs) {
         // Project-scope filter: only act on findings that belong to the
         // active project (or all when active_project is None).
         if let Some(ap) = active_project {
@@ -7236,69 +6905,21 @@ fn prune_gone_registrations(
     Ok(pruned)
 }
 
-/// Apply the migration pass — the flat-name cutover's other half.
+/// Adopt, into a receipt, the flat ref of each live workweave that rwv holds
+/// none for.
 ///
-/// Runs per workweave, and per repo checkout within it: members **and** the
-/// project repo, which the member walker does not reach. The arms:
-///
-///   1. attached to a pre-flat ref of this workweave's own namespace —
-///      record a receipt at its current tip, then rename it to the flat name.
-///      Automatic; nothing is lost, because a rename preserves the tip.
-///   2. the flat ref present with no receipt — adopt it at its observed tip.
-///      Without this arm a repo the migration half-processed falls into
-///      arm 4 on re-run and is disowned forever.
-///   3. detached with a pre-flat ref of this workweave at a different tip —
-///      only with `--adopt-detached-checkouts`: give the pre-flat ref's name
-///      up, then mint the flat one **at HEAD**, warning when that strands
-///      commits. Without the flag, report-only (both tips, from the scan).
-///   4. attached to anything else — report, do not touch. Under R2 these are
-///      not rwv's refs.
-///   5. detached with no pre-flat ref and no flat ref — as arm 3, minus the
-///      ref to give up. Detached beside an existing flat ref is report-only:
-///      the birth refuses a name that exists.
-///   6. unborn — nothing to attach a receipt to. Report-only.
-///
-/// Arm 7 (the legacy index and marker fields) is applied by `run_check`
-/// alongside the marker migration it mirrors, before this runs — a receipt
-/// cannot be recorded into a legacy index at all, so the field migration is
-/// this pass's precondition rather than one of its arms.
-///
-/// # The three pass rules that are not arms
-///
-/// **No in-flight operation state.** An operator who upgrades while a sync
-/// is stopped mid-rebase resolves or aborts it first, without being told to
-/// migrate. A workweave with op state is skipped with a message naming
-/// `rwv abort`; the rest of the weave still migrates.
-///
-/// **The flat name must be reachable.** At most one ref per (workweave,
-/// store) can exist; git holds `refs/heads/p--w` and `refs/heads/p--w/x`
-/// as a file and a directory of the same name, so where two or more refs
-/// share a namespace no arm can produce the flat one. That pair is skipped
-/// before any arm runs — a receipt written for a rename that then fails
-/// claims a pre-flat name, which resolves to no workweave on disk and so
-/// reads as stale and deletable. Collapsing the namespace is an
-/// operator's call about which ref is the workweave's, so the skip names
-/// the blocking refs and stops.
-///
-/// **Receipt before ref, durably, per repo.** Every arm records through
-/// [`RefRegistry`], which fsyncs the file and its directory before returning,
-/// and only then writes the ref. A crash leaves a dangling receipt — benign,
-/// retractable by a later pass — never an unreceipted ref, which R2 disowns
-/// permanently.
-///
-/// Idempotent over its own partial output, which is arm 2's whole purpose:
-/// `record_created` is a no-op on an existing key (and returns the *first*
-/// receipt, so a re-run cannot re-stamp `created_at` over a tip the operator
-/// has since moved), and every arm re-observes before it acts.
+/// Runs per workweave and per checkout, members and the project repo alike.
+/// A workweave with an operation in flight is skipped, naming `rwv abort`.
+/// Every arm records through [`RefRegistry`], which fsyncs the receipt before
+/// anything else is written, and is idempotent over its own partial output.
 ///
 /// [`RefRegistry`]: crate::workweave_index::RefRegistry
-pub fn fix_branch_model_migration(
+pub fn fix_unrecorded_flat_refs(
     ws_root: &Path,
     vcs: &dyn crate::vcs::Vcs,
     active_project: Option<&ProjectName>,
-    adopt_detached: Option<crate::cli::consent::AdoptDetachedConsent>,
 ) -> (Vec<String>, Vec<String>) {
-    use crate::vcs::{EphemeralRefName, HeadAttachment};
+    use crate::vcs::EphemeralRefName;
     use crate::workweave_index::RefRegistry;
 
     let mut applied = Vec::new();
@@ -7310,12 +6931,9 @@ pub fn fix_branch_model_migration(
                 continue;
             }
         }
-        // Pass rule: the migration runs only where no operation is in
-        // flight. Checked per workweave, against the workweave's own op
-        // state, because that is the granularity `rwv abort` resolves at.
         if let Err(e) = crate::op_state::check_no_op_in_progress(&[workweave_dir.as_path()]) {
             errors.push(format!(
-                "{}: skipped the branch-model migration — an operation is in flight \
+                "{}: skipped adopting the workweave's branch — an operation is in flight \
                  ({e:#}). Resolve or `rwv abort` it, then re-run `rwv doctor --fix`",
                 workweave_dir.display()
             ));
@@ -7327,203 +6945,18 @@ pub fn fix_branch_model_migration(
 
         for abs in workweave_checkouts(vcs, &workweave_dir, &workweave.project) {
             let store = crate::workweave::receipt_store_for(vcs, &abs);
-            let (flat_present, legacy_refs) = refs_in_workweave_namespace(vcs, &store, &flat);
-
-            // Pass rule: the migration runs only where the flat name is
-            // reachable. Two or more refs under one workweave's namespace put
-            // it out of reach — git will not create `refs/heads/{flat}` as a
-            // ref while `refs/heads/{flat}/` exists as a directory, so the
-            // rename cannot succeed however the arms are ordered, and the
-            // consented detached arms would delete one sibling and *then*
-            // fail to mint the flat name.
-            //
-            // Checked before any arm because every arm records its receipt
-            // BEFORE it writes the ref, so acting here
-            // persists an ownership claim for a rename that did not happen —
-            // and a receipt for a pre-flat name is worse than no receipt at
-            // all: the owning workweave is derived from the ref name, and
-            // under flat naming a name with a segment resolves to no
-            // workweave on disk. The branch is then judged stale, and being
-            // receipted is exactly what lifts it out of Unowned into the
-            // classes `--fix` deletes from.
-            if legacy_refs.len() > 1 {
-                let blocking = legacy_refs
-                    .iter()
-                    .map(|r| format!("`{r}`"))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                errors.push(format!(
-                    "{}: skipped the branch-model migration for `{flat}` — {} refs share \
-                     that namespace ({blocking}), and git cannot create the ref `{flat}` \
-                     while any ref exists under `{flat}/`. rwv recorded no ownership \
-                     receipt for `{flat}` and renamed nothing here; the rest of the \
-                     migration is unaffected. Which of those refs is this workweave's \
-                     branch, and where the others belong, is not rwv's call to make — \
-                     leave at most one ref under `{flat}/`, then re-run `rwv doctor --fix` \
-                     to migrate it",
-                    store.display(),
-                    legacy_refs.len()
-                ));
-                continue;
-            }
-
             let flat_raw = flat.to_raw();
             let flat_recorded = matches!(registry.lookup(&store, &flat_raw), Ok(Some(_)));
-
-            match vcs.head_attachment(&abs) {
-                // Arm 1: the common case, fully automatic.
-                Ok(HeadAttachment::Attached(a)) if a.legacy_name_under(&flat).is_some() => {
-                    let legacy = a
-                        .legacy_name_under(&flat)
-                        .expect("matched Some in the guard");
-                    match migrate_legacy_ref(vcs, &mut registry, &store, &a, legacy, &flat) {
-                        Ok(msg) => applied.push(msg),
-                        Err(e) => errors.push(format!("{}: {e:#}", abs.display())),
-                    }
+            if flat_ref_present(vcs, &store, &flat) && !flat_recorded {
+                match adopt_flat_ref(vcs, &mut registry, &store, &flat) {
+                    Ok(msg) => applied.push(msg),
+                    Err(e) => errors.push(format!("{}: {e:#}", abs.display())),
                 }
-                // Arm 2: the flat ref is there but unowned. Reached from any
-                // attachment state — the ref exists in the store whether or
-                // not this checkout is standing on it.
-                Ok(_) if flat_present && !flat_recorded => {
-                    match adopt_flat_ref(vcs, &mut registry, &store, &flat) {
-                        Ok(msg) => applied.push(msg),
-                        Err(e) => errors.push(format!("{}: {e:#}", abs.display())),
-                    }
-                }
-                // Arms 3 and 5, and only with the operator's consent. Never
-                // over an existing flat ref, which the birth would refuse.
-                Ok(HeadAttachment::Detached(d)) if !flat_present => {
-                    let Some(consent) = adopt_detached else {
-                        continue;
-                    };
-                    match adopt_detached_workweave_checkout(
-                        vcs,
-                        &mut registry,
-                        &store,
-                        &d,
-                        legacy_refs.first(),
-                        &flat,
-                        consent,
-                    ) {
-                        Ok(msgs) => applied.extend(msgs),
-                        Err(e) => errors.push(format!("{}: {e:#}", abs.display())),
-                    }
-                }
-                // Arms 4 and 6: report-only. The scan has already said so.
-                Ok(_) => {}
-                Err(_) => {}
             }
         }
     }
 
     (applied, errors)
-}
-
-/// Adopt a pre-flat ref into a receipt, then rename it flat.
-///
-/// A rename is a DESTROY of the old name plus a birth of the new, so the DESTROY takes the old name's receipt and a warrant, and the
-/// birth's receipt is on disk — fsynced — before the ref write, because an
-/// [`OwnedRef`] exists only after the registry has persisted one.
-///
-/// # The three crash windows, and what a re-run finds
-///
-/// **After the legacy receipt, before the flat one.** The ref still exists at
-/// the recorded tip; the re-run renames it. Unless the operator committed on
-/// it in between, which is the case the retraction below exists for.
-///
-/// **After both receipts, before the rename.** An extra receipt for a ref
-/// that does not exist yet. `fix_dangling_receipts` runs earlier in the same
-/// `--fix` and retracts it, and this arm then records it afresh at the tip it
-/// observes now — which is the right tip, not the crashed run's.
-///
-/// **After the rename, before the retraction.** A receipt for a name that is
-/// gone. Retracted below; if the process dies between the two,
-/// `fix_dangling_receipts` clears it on the next run.
-///
-/// MIGRATORY arm: renames pre-flat refs minted by rwv <= v0.15.0.
-/// Removable once every owned weave's health floor records a clean doctor
-/// at >= v0.18 after a migration-complete run (see
-/// [`crate::health_floor`]).
-///
-/// [`DeletionWarrant::unmoved`]: crate::vcs::DeletionWarrant::unmoved
-/// [`OwnedRef`]: crate::vcs::OwnedRef
-fn migrate_legacy_ref(
-    vcs: &dyn crate::vcs::Vcs,
-    registry: &mut crate::workweave_index::RefRegistry,
-    store: &Path,
-    attached: &crate::vcs::AttachedRef,
-    legacy: crate::vcs::LegacyEphemeralRefName,
-    flat: &crate::vcs::EphemeralRefName,
-) -> anyhow::Result<String> {
-    use crate::vcs::DeletionWarrant;
-
-    // Re-observe before acting: the scan's classification is a report, and
-    // this checkout may have been switched off the ref since. `git branch -m`
-    // would succeed anyway (a rename needs no worktree), and would leave a
-    // flat receipt for a ref this workweave is no longer standing on.
-    vcs.verify_attachment(attached)?;
-
-    let label = legacy.to_string();
-    let raw = legacy.to_raw();
-    let tip = vcs.resolve_local_branch_tip(store, &raw)?.ok_or_else(|| {
-        refusal(
-            RefusalKind::RepairTargetChanged,
-            format!("branch `{label}` vanished before it could be migrated"),
-        )
-    })?;
-
-    // A receipt for the pre-flat name can only have come from a previous,
-    // crashed run of this arm — nothing else in the tree adopts an observed
-    // name. If the operator committed on the branch in between, that receipt
-    // records a tip the ref will never return to, and the `Unmoved` warrant
-    // below would refuse it forever: the migration would be permanently
-    // wedged on the one workweave someone is actually working in.
-    //
-    // So retract the stale one and adopt at the tip observed now. This is the
-    // "caller that genuinely re-creates a ref retracts the old receipt, then
-    // records anew" path `record_created`'s contract names, and it is safe
-    // for the reason the whole arm is safe: the receipt authorizes a rename,
-    // and a rename preserves the tip. It cannot authorize a loss.
-    //
-    // `fix_pre_flat_receipts` now clears the same receipt earlier in a
-    // `--fix` run, so on that path this rarely finds anything. It stays
-    // because the pass is callable on its own and its idempotence over its
-    // own crash residue is its property, not something to borrow from
-    // doctor's arm ordering.
-    if let Some(stale) = registry.lookup(store, &raw)? {
-        if stale.created_at() != &tip {
-            registry.retract(store, &raw)?;
-        }
-    }
-    let owned_legacy = registry.adopt_legacy(store, legacy, tip)?;
-    let owned_flat =
-        registry.record_created(store, flat.clone(), owned_legacy.created_at().clone())?;
-
-    let warrant = DeletionWarrant::unmoved(vcs, &owned_legacy).ok_or_else(|| {
-        refusal(
-            RefusalKind::RepairTargetChanged,
-            format!(
-                "branch `{label}` moved while it was being migrated (recorded at {}); \
-                 re-run `rwv doctor --fix`",
-                owned_legacy.created_at().short_display()
-            ),
-        )
-    })?;
-    vcs.rename_owned_ref(&owned_legacy, &owned_flat, warrant)?;
-
-    // Retracted AFTER the ref is gone, never before: the reverse order would
-    // leave an unreceipted ref, which R2 disowns permanently.
-    if let Err(e) = registry.retract(store, &raw) {
-        return Ok(format!(
-            "migrated `{label}` → `{flat}` in {} (its old ownership receipt could not be \
-             retracted: {e:#}; `rwv doctor --fix` will clear it)",
-            store.display()
-        ));
-    }
-    Ok(format!(
-        "migrated `{label}` → `{flat}` in {}",
-        store.display()
-    ))
 }
 
 /// Record a receipt for a flat ref that exists without one.
@@ -7556,157 +6989,6 @@ fn adopt_flat_ref(
         store.display(),
         tip.short_display()
     ))
-}
-
-/// Mint the workweave's flat ref at a detached HEAD.
-///
-/// There may or may not be a pre-flat ref. When there is, git cannot hold
-/// both `refs/heads/p--w` and `refs/heads/p--w/<segment>`, so the flat name
-/// can only exist once the pre-flat one stops — which is precisely the
-/// stranding the caller must warn about, and why the operator's consent is
-/// required even when nothing is lost.
-///
-/// The warrant for that DESTROY is [`Merged`] when the pre-flat tip is an
-/// ancestor of HEAD (nothing is stranded, and rwv can prove it) and
-/// [`adopt_detached`] otherwise — the flag *is* the consent to the loss.
-/// Structural either way: ancestry, never wall-clock.
-///
-/// [`Merged`]: crate::vcs::DeletionWarrant::merged
-/// [`adopt_detached`]: crate::vcs::DeletionWarrant::adopt_detached
-fn adopt_detached_workweave_checkout(
-    vcs: &dyn crate::vcs::Vcs,
-    registry: &mut crate::workweave_index::RefRegistry,
-    store: &Path,
-    detached: &crate::vcs::DetachedHead,
-    legacy: Option<&crate::vcs::LegacyEphemeralRefName>,
-    flat: &crate::vcs::EphemeralRefName,
-    consent: crate::cli::consent::AdoptDetachedConsent,
-) -> anyhow::Result<Vec<String>> {
-    use crate::vcs::DeletionWarrant;
-
-    let mut msgs = Vec::new();
-    let head = detached.at().clone();
-
-    if let Some(legacy) = legacy {
-        let label = legacy.to_string();
-        let raw = legacy.to_raw();
-        let tip = vcs.resolve_local_branch_tip(store, &raw)?.ok_or_else(|| {
-            refusal(
-                RefusalKind::RepairTargetChanged,
-                format!("branch `{label}` vanished before it could be given up"),
-            )
-        })?;
-        let owned = registry.adopt_legacy(store, legacy.clone(), tip.clone())?;
-        let (warrant, note) = match DeletionWarrant::merged(vcs, &owned, &head) {
-            Some(w) => (w, String::new()),
-            None => (
-                DeletionWarrant::adopt_detached(consent),
-                format!(
-                    " — WARNING: this STRANDED the commits at {}, which HEAD does not carry; \
-                     they are reachable only through {}'s reflog",
-                    tip.short_display(),
-                    store.display()
-                ),
-            ),
-        };
-        vcs.delete_owned_ref(&owned, warrant)?;
-        // After the ref is gone, never before.
-        let _ = registry.retract(store, &raw);
-        msgs.push(format!(
-            "gave up `{label}` in {} to make room for `{flat}`{note}",
-            store.display()
-        ));
-    }
-
-    let owned_flat = registry.record_created(store, flat.clone(), head.clone())?;
-    vcs.adopt_detached_checkout(detached, &owned_flat, consent)?;
-    msgs.push(format!(
-        "adopted the detached checkout at {} onto `{flat}`",
-        detached.repo().display()
-    ));
-    Ok(msgs)
-}
-
-/// Apply the `rwv doctor --fix --reattach-checkouts` reattach for a
-/// detached canonical store.
-///
-/// Reattaches a detached canonical store to its tracking declaration's local
-/// counterpart **only** when that counterpart exists and its tip equals
-/// HEAD. Both halves are re-observed here, not taken from the scan: the
-/// counterpart is re-projected, the tip re-resolved, and
-/// [`Vcs::reattach_head`](crate::vcs::Vcs::reattach_head) itself refuses if
-/// the repo's HEAD state moved since.
-///
-/// **Honest but partial, by design.** That condition is false for the
-/// ordinary post-fetch state — a stale local counterpart with HEAD at the
-/// lock SHA — which is most detached repos in most weaves. This
-/// reattaches the minority it can prove safe. It is not weave-wide
-/// reattachment and must not be described as one.
-///
-/// `consent` is the [`ReattachConsent`] the CLI minted from
-/// `--reattach-checkouts`; without the flag this is not called at all, and
-/// `--fix` reports the correct `git switch` instead.
-///
-/// [`ReattachConsent`]: crate::cli::consent::ReattachConsent
-pub fn fix_detached_canonicals(
-    ws_root: &Path,
-    vcs: &dyn crate::vcs::Vcs,
-    projects: &[Project],
-    active_project: Option<&ProjectName>,
-    known_repos: &BTreeSet<RepoPath>,
-    consent: crate::cli::consent::ReattachConsent,
-) -> (Vec<(PathBuf, String)>, Vec<String>) {
-    use crate::vcs::RawRefName;
-
-    let mut reattached = Vec::new();
-    let mut errors = Vec::new();
-
-    let stores = canonical_stores(vcs, ws_root, projects);
-    for store in &stores {
-        if let Some(ap) = active_project {
-            if !branch_discipline_path_in_scope(&store.path, ws_root, ap, known_repos) {
-                continue;
-            }
-        }
-
-        // Re-observe. Anything but Detached means the state the fix was
-        // planned against no longer holds.
-        let Ok(observed @ crate::vcs::HeadAttachment::Detached(_)) =
-            vcs.head_attachment(&store.path)
-        else {
-            continue;
-        };
-        let crate::vcs::HeadAttachment::Detached(detached) = &observed else {
-            unreachable!("matched Detached above")
-        };
-        let Some(counterpart) = store.local_counterpart(vcs) else {
-            continue;
-        };
-        // Not "the counterpart exists" alone: reattaching
-        // to a counterpart whose tip differs from HEAD would move the
-        // operator's working state onto a different commit, which is a
-        // MOVE wearing an ATTACH's clothes.
-        let tip_matches = matches!(
-            vcs.resolve_local_branch_tip(&store.path, &RawRefName::new(counterpart.as_str())),
-            Ok(Some(ref tip)) if tip == detached.at()
-        );
-        if !tip_matches {
-            continue;
-        }
-
-        let label = counterpart.to_string();
-        match vcs.reattach_head(observed, &counterpart, consent) {
-            Ok(()) => reattached.push((store.path.clone(), label)),
-            Err(e) => errors.push(format!(
-                "failed to reattach detached canonical {} to `{}`: {:#}",
-                store.path.display(),
-                label,
-                e
-            )),
-        }
-    }
-
-    (reattached, errors)
 }
 
 /// Apply the `rwv doctor --fix` retraction for dangling ownership
@@ -8128,37 +7410,6 @@ pub fn find_violations(input: &CheckInput) -> Vec<CheckViolation> {
     violations
 }
 
-/// The `git switch` a branch-discipline finding should advise, spelled for
-/// what is actually on disk.
-///
-/// `git switch <name>` when rwv holds a receipt for the workweave's ref —
-/// the branch exists, and returning to it is the repair. `git switch -c`
-/// only when there is none, because that is the only case where a branch has
-/// to be created.
-///
-/// Getting this backwards is not a typo. Asked to switch to a name it cannot
-/// find as a local branch, git does not refuse: `checkout.guess` invents the
-/// branch from a remote-tracking ref of the same name, a tag-shaped name
-/// detaches HEAD, and a path-shaped name is read as a pathspec and reverts
-/// the operator's uncommitted edits to it — all exiting 0. Advice that says
-/// `-c` for an existing branch fails outright (`already exists`), which is
-/// merely useless; advice that omits `-c` for an absent one silently does
-/// one of those three things.
-fn reattach_advice(recorded_ref: Option<&str>, expected_prefix: &str) -> String {
-    match recorded_ref {
-        Some(name) => format!(
-            "rwv holds a receipt for `{name}` in this repo's canonical store — \
-             use `git switch {name}` to return to it"
-        ),
-        None => format!(
-            "rwv holds no receipt for an ephemeral ref in this repo's canonical \
-             store, so there is none to return to — `git switch -c \
-             {expected_prefix}/main` creates one, or recreate the workweave so \
-             rwv records it"
-        ),
-    }
-}
-
 /// A finding class the text report collapses to one per-class count line.
 ///
 /// The classes classified RECLAMATION (reclaims dead state; auto under
@@ -8181,10 +7432,8 @@ fn reattach_advice(recorded_ref: Option<&str>, expected_prefix: &str) -> String 
 ///   `stale-ephemeral-branch-safe`, `dead-op-lease`, `dangling-ref-receipt`,
 ///   redundant orphaned savepoints, live orphaned savepoints (kept as backups).
 /// * Frozen legacy — `stale-ephemeral-branch-live` / `-unowned` (only
-///   legacy/refused ones
-///   linger — deletion reaps the branch on the current path), and
-///   `shared-branch` (the pre-scheme workweave backlog; the count line
-///   keeps a fresh instance visible as regrowth).
+///   legacy/refused ones linger — deletion reaps the branch on the current
+///   path).
 ///
 /// Everything else stays itemized: a finding outside these classes is a
 /// distinct fact the operator has not seen before, and collapsing it would
@@ -8200,7 +7449,6 @@ enum CollapsedClass {
     DanglingRefReceipt,
     RedundantSavepoint,
     LiveSavepoint,
-    SharedBranch,
 }
 
 impl CollapsedClass {
@@ -8226,7 +7474,6 @@ impl CollapsedClass {
                 BranchDisciplineKind::StaleEphemeralBranchUnowned { .. } => {
                     Some(Self::StaleEphemeralBranchUnowned)
                 }
-                BranchDisciplineKind::SharedBranch { .. } => Some(Self::SharedBranch),
                 _ => None,
             },
             CheckViolation::DeadOpLease { .. } => Some(Self::DeadOpLease),
@@ -8249,9 +7496,7 @@ impl CollapsedClass {
             | Self::DanglingRefReceipt
             | Self::RedundantSavepoint
             | Self::LiveSavepoint => true,
-            Self::StaleEphemeralBranchLive
-            | Self::StaleEphemeralBranchUnowned
-            | Self::SharedBranch => false,
+            Self::StaleEphemeralBranchLive | Self::StaleEphemeralBranchUnowned => false,
         }
     }
 
@@ -8305,11 +7550,6 @@ impl CollapsedClass {
                 "{n} live orphaned-savepoint finding{s} — savepoint{s} holding \
                  commits no live ref anchors; `rwv doctor --fix` keeps them as \
                  backups, which `rwv backup list` shows"
-            ),
-            Self::SharedBranch => format!(
-                "{n} shared-branch finding{s} — checkout{s} standing on a \
-                 shared (non-ephemeral) branch; the switch target for each is \
-                 in its record"
             ),
         };
         let message = format!("{body}; per-item detail: `rwv doctor --json`");
@@ -9061,211 +8301,6 @@ impl CheckViolation {
                 sub_kind,
             } => {
                 let msg = match &sub_kind {
-                    BranchDisciplineKind::SharedBranch {
-                        actual_branch,
-                        expected_ref,
-                        recorded_ref,
-                    } => format!(
-                        "{}: workweave checkout is on shared-branch `{}` (expected its \
-                             ephemeral branch `{}`); manual `git switch` inside a \
-                             workweave breaks the I3 branch-ownership invariant — \
-                             {} (report-only; no rwv --fix path)",
-                        repo_path.display(),
-                        actual_branch,
-                        expected_ref,
-                        reattach_advice(recorded_ref.as_deref(), expected_ref)
-                    ),
-                    BranchDisciplineKind::ForeignEphemeral {
-                        actual_branch,
-                        expected_ref,
-                        recorded_ref,
-                    } => format!(
-                        "{}: workweave checkout is on `{}`, a ref rwv recorded for a \
-                             different workweave (expected its ephemeral branch `{}`); \
-                             {} (report-only; no rwv --fix path)",
-                        repo_path.display(),
-                        actual_branch,
-                        expected_ref,
-                        reattach_advice(recorded_ref.as_deref(), expected_ref)
-                    ),
-                    BranchDisciplineKind::Detached {
-                        expected_ref,
-                        recorded_ref,
-                        at_sha,
-                        legacy_branch,
-                    } => match legacy_branch {
-                        // Both tips, side by side, and the two
-                        // remediations in order: reattach first, adopt
-                        // second.
-                        Some(legacy) => {
-                            safe_to_fix = false;
-                            let relation = if legacy.strands_commits {
-                                "a commit HEAD does not carry"
-                            } else {
-                                "an ancestor of HEAD"
-                            };
-                            let stranding = if legacy.strands_commits {
-                                format!(
-                                    ". THAT STRANDS the commits on `{}`: adopting gives \
-                                         its name up, and they stay reachable only through \
-                                         the reflog",
-                                    legacy.branch
-                                )
-                            } else {
-                                String::new()
-                            };
-                            let sits_at = match &legacy.tip_sha {
-                                Some(tip) => format!("sits at {} ({relation})", tip.short()),
-                                None => "names no commit".to_owned(),
-                            };
-                            format!(
-                                "{}: workweave checkout is detached at {} while its \
-                                     pre-flat branch `{}` {}. Reattach to it \
-                                     (`git switch {}`) and re-run `rwv doctor --fix`, which \
-                                     renames it to `{}`; or run `rwv doctor --fix \
-                                     --adopt-detached-checkouts` to mint `{}` here at {} \
-                                     instead{}",
-                                repo_path.display(),
-                                at_sha.short(),
-                                legacy.branch,
-                                sits_at,
-                                legacy.branch,
-                                expected_ref,
-                                expected_ref,
-                                at_sha.short(),
-                                stranding,
-                            )
-                        }
-                        None => format!(
-                            "{}: workweave checkout is in detached-HEAD state at {} \
-                                 (expected its ephemeral branch `{}`); {} — or run \
-                                 `rwv doctor --fix --adopt-detached-checkouts` to mint \
-                                 `{}` here at {}",
-                            repo_path.display(),
-                            at_sha.short(),
-                            expected_ref,
-                            reattach_advice(recorded_ref.as_deref(), expected_ref),
-                            expected_ref,
-                            at_sha.short(),
-                        ),
-                    },
-                    // The fully automatic migration case.
-                    BranchDisciplineKind::UnmigratedEphemeralBranch {
-                        actual_branch,
-                        expected_ref,
-                    } => format!(
-                        "{}: workweave checkout is on `{}`, the pre-flat \
-                             `<project>--<workweave>/<segment>` shape rwv no longer \
-                             mints; `rwv doctor --fix` records an ownership receipt \
-                             for it and renames it to `{}` — a rename preserves the \
-                             tip, so no commit moves",
-                        repo_path.display(),
-                        actual_branch,
-                        expected_ref,
-                    ),
-                    BranchDisciplineKind::BlockedEphemeralNamespace {
-                        expected_ref,
-                        blocking_refs,
-                    } => {
-                        safe_to_fix = false;
-                        format!(
-                            "{}: {} refs share workweave namespace `{}` ({}), and git \
-                                 cannot create the ref `{}` while any ref exists under \
-                                 `{}/`. The branch-model migration skips this pair rather \
-                                 than recording an ownership receipt for a rename that \
-                                 cannot happen, so `rwv doctor --fix` will not touch it. \
-                                 Which of those refs is this workweave's branch, and where \
-                                 the others belong, is not rwv's call to make — leave at \
-                                 most one ref under `{}/`, then re-run `rwv doctor --fix` \
-                                 to migrate it",
-                            repo_path.display(),
-                            blocking_refs.len(),
-                            expected_ref,
-                            blocking_refs
-                                .iter()
-                                .map(|r| format!("`{r}`"))
-                                .collect::<Vec<_>>()
-                                .join(", "),
-                            expected_ref,
-                            expected_ref,
-                            expected_ref,
-                        )
-                    }
-                    BranchDisciplineKind::BlockedDetachedNamespace {
-                        expected_ref,
-                        at_sha,
-                        blocking_refs,
-                    } => {
-                        safe_to_fix = false;
-                        format!(
-                            "{}: workweave checkout is detached at {} while {} refs \
-                                 share its namespace `{}` ({}). git cannot create `{}` \
-                                 while any ref exists under `{}/`, so \
-                                 `--adopt-detached-checkouts` cannot run. Leave at most \
-                                 one ref under `{}/`, then re-run `rwv doctor` to get the \
-                                 ordinary detached-HEAD finding with a remedy that will \
-                                 actually run",
-                            repo_path.display(),
-                            at_sha.short(),
-                            blocking_refs.len(),
-                            expected_ref,
-                            blocking_refs
-                                .iter()
-                                .map(|r| format!("`{r}`"))
-                                .collect::<Vec<_>>()
-                                .join(", "),
-                            expected_ref,
-                            expected_ref,
-                            expected_ref,
-                        )
-                    }
-                    BranchDisciplineKind::DetachedOffEphemeralBranch {
-                        expected_ref,
-                        at_sha,
-                        branch_tip,
-                        ancestry,
-                    } => {
-                        safe_to_fix = false;
-                        let reattach = match ancestry {
-                            DetachedAncestry::Equal => format!(
-                                "`git switch {expected_ref}` reattaches it without moving \
-                                     the working tree"
-                            ),
-                            DetachedAncestry::HeadBehind => format!(
-                                "`{expected_ref}` carries HEAD, so `git switch \
-                                     {expected_ref}` reattaches it, checking out {} in \
-                                     place of {}",
-                                branch_tip.short(),
-                                at_sha.short()
-                            ),
-                            DetachedAncestry::HeadAhead => format!(
-                                "HEAD carries `{expected_ref}` and commits it lacks, which \
-                                     switching alone would leave on no branch; `git switch \
-                                     {expected_ref} && git merge --ff-only {at_sha}` \
-                                     reattaches it with `{expected_ref}` fast-forwarded to \
-                                     HEAD"
-                            ),
-                            DetachedAncestry::Diverged => format!(
-                                "HEAD and `{expected_ref}` have diverged, so reattaching \
-                                     either way leaves commits on no branch: `git switch -c \
-                                     <new-branch>` keeps HEAD's on a branch first, then `git \
-                                     rebase {expected_ref}` and `git switch {expected_ref} && \
-                                     git merge --ff-only <new-branch>` bring them onto \
-                                     `{expected_ref}`"
-                            ),
-                        };
-                        format!(
-                            "{}: workweave checkout is in detached-HEAD state at {} \
-                                 while its ephemeral branch `{}` stands at {}; {} \
-                                 (report-only; `--adopt-detached-checkouts` mints the \
-                                 branch only where none exists)",
-                            repo_path.display(),
-                            at_sha.short(),
-                            expected_ref,
-                            branch_tip.short(),
-                            reattach,
-                        )
-                    }
                     BranchDisciplineKind::UnrecordedEphemeralBranch { branch } => format!(
                         "{}: branch `{}` is this workweave's ephemeral ref but rwv \
                              holds no ownership receipt for it. rwv deletes a branch \
@@ -9276,18 +8311,6 @@ impl CheckViolation {
                         repo_path.display(),
                         branch,
                     ),
-                    BranchDisciplineKind::UnbornCheckout { branch } => {
-                        safe_to_fix = false;
-                        format!(
-                            "{}: workweave checkout is on branch `{}`, which has no \
-                                 commits yet — there is no revision to record an ownership \
-                                 receipt against, so the branch-model migration has nothing \
-                                 to adopt here. Make an initial commit, then re-run \
-                                 `rwv doctor --fix`",
-                            repo_path.display(),
-                            branch,
-                        )
-                    }
                     BranchDisciplineKind::CanonicalHoldsLiveWorkweaveRef {
                         actual_branch,
                         workweave,
@@ -9322,44 +8345,6 @@ impl CheckViolation {
                             project
                         )
                     }
-                    BranchDisciplineKind::CanonicalDetached {
-                        at_sha,
-                        counterpart,
-                        reattachable,
-                    } => match (counterpart, reattachable) {
-                        (Some(name), true) => format!(
-                            "{}: canonical store is in detached-HEAD state at {}; its \
-                                 tracking counterpart `{}` exists and points at the same \
-                                 commit — `rwv doctor --fix --reattach-checkouts` will \
-                                 reattach it, or `git switch {}` by hand",
-                            repo_path.display(),
-                            at_sha.short(),
-                            name,
-                            name
-                        ),
-                        (Some(name), false) => format!(
-                            "{}: canonical store is in detached-HEAD state at {}; its \
-                                 tracking counterpart `{}` does not exist or points \
-                                 elsewhere, so reattaching would move your working state \
-                                 onto a different commit — reconcile `{}` with {} \
-                                 yourself, then `git switch {}` \
-                                 (report-only; --reattach-checkouts will not fire here)",
-                            repo_path.display(),
-                            at_sha.short(),
-                            name,
-                            name,
-                            at_sha.short(),
-                            name
-                        ),
-                        (None, _) => format!(
-                            "{}: canonical store is in detached-HEAD state at {}; no \
-                                 tracking declaration resolves for this repo, so rwv \
-                                 cannot name a branch to reattach to \
-                                 (report-only; `git switch <branch>` by hand)",
-                            repo_path.display(),
-                            at_sha.short()
-                        ),
-                    },
                     BranchDisciplineKind::StaleEphemeralBranchSafe { branch, project } => {
                         format!(
                             "{}: leaked ephemeral branch `{}`, recorded by project `{}` \
@@ -9410,6 +8395,55 @@ impl CheckViolation {
                     }
                 };
                 msg
+            }
+            CheckViolation::Alignment {
+                repo_path,
+                sub_kind,
+                branch,
+                listed,
+                ..
+            } => {
+                let on = branch
+                    .as_deref()
+                    .map(|b| format!(" `{b}`"))
+                    .unwrap_or_default();
+                let listing = if listed.is_empty() {
+                    String::new()
+                } else {
+                    format!(" ({})", listed.join("; "))
+                };
+                match sub_kind {
+                    AlignmentKind::OnBranch => format!(
+                        "{}: checkout is on branch{on}, not where its workspace expects it; \
+                         `rwv update` moves it",
+                        repo_path.display()
+                    ),
+                    AlignmentKind::OnBranchWithStrayCommits => format!(
+                        "{}: checkout is on branch{on}, which is not where its workspace \
+                         expects it and holds commits no other ref reaches{listing}; `rwv \
+                         update` leaves it",
+                        repo_path.display()
+                    ),
+                    AlignmentKind::Detached => format!(
+                        "{}: checkout is detached where its workspace expects it elsewhere; \
+                         `rwv update` returns it",
+                        repo_path.display()
+                    ),
+                    AlignmentKind::DetachedWithUnpushedCommits => format!(
+                        "{}: checkout is detached and holds commits no branch reaches\
+                         {listing}; `rwv update` leaves it",
+                        repo_path.display()
+                    ),
+                    AlignmentKind::Unaligned => format!(
+                        "{}: the lock has no entry for this member and its expected branch \
+                         exists nowhere",
+                        repo_path.display()
+                    ),
+                    AlignmentKind::ProjectDetached => format!(
+                        "{}: the project repo is on no branch{listing}",
+                        repo_path.display()
+                    ),
+                }
             }
             CheckViolation::StaleWorktreeRegistration {
                 workweave,
@@ -9975,12 +9009,10 @@ fn apply_prelude_repairs(ctx: &crate::workspace::WorkspaceContext, fix_errors: &
 /// They run before [`collect_doctor_violations`], which is what lets a
 /// repaired workspace report as healthy instead of surfacing both `[fixed]`
 /// and the warning it just resolved. Within this function the order is load
-/// bearing twice over: the pre-flat receipt arm must precede the branch-model
-/// migration so it inspects only receipts that predate this run, and the
-/// reattach must precede it too, since a store that has just been reattached
-/// is no longer a detached finding.
+/// bearing: the pre-flat receipt arm must precede the adoption of unrecorded
+/// flat refs so it inspects only receipts that predate this run.
 ///
-/// Every arm through the migration reads state the workspace holds in exactly
+/// Every arm through the adoption reads state the workspace holds in exactly
 /// one place — receipts live only in primary's `.rwv-workweave-index`, and the
 /// refs they describe live in the one physical refdb every linked worktree
 /// shares — so they take `primary_path()` and ignore which weave invoked
@@ -9995,8 +9027,6 @@ fn apply_prelude_repairs(ctx: &crate::workspace::WorkspaceContext, fix_errors: &
 fn apply_workspace_repairs(
     ctx: &crate::workspace::WorkspaceContext,
     world: &DoctorWorld,
-    reattach: Option<crate::cli::consent::ReattachConsent>,
-    adopt_detached: Option<crate::cli::consent::AdoptDetachedConsent>,
     fix_errors: &mut Vec<String>,
 ) {
     let vcs = world.vcs.as_ref();
@@ -10107,27 +9137,8 @@ fn apply_workspace_repairs(
         }
     }
 
-    if let Some(consent) = reattach {
-        let (reattached, reattach_errs) = fix_detached_canonicals(
-            ctx.primary_path(),
-            vcs,
-            &world.input.projects,
-            project_scope,
-            &world.input.known_repos,
-            consent,
-        );
-        for (store_path, branch) in &reattached {
-            outln!(
-                "[fixed] core: reattached detached canonical {} to `{}`",
-                store_path.display(),
-                branch
-            );
-        }
-        fix_errors.extend(reattach_errs);
-    }
-
     let (applied, migration_errs) =
-        fix_branch_model_migration(ctx.primary_path(), vcs, project_scope, adopt_detached);
+        fix_unrecorded_flat_refs(ctx.primary_path(), vcs, project_scope);
     for msg in &applied {
         outln!("[fixed] core: {msg}");
     }
@@ -10294,7 +9305,6 @@ fn apply_finding_repairs(
     } = fix_stale_ephemeral_branches(
         ctx.primary_path(),
         vcs,
-        &world.input.projects,
         world.project_scope(),
         &world.input.known_repos,
     );
@@ -11121,22 +10131,10 @@ fn doctor_verdict(
 /// `ctx` is the already-resolved invocation context (with `--project` baked
 /// in when passed). Handlers must not re-resolve.
 ///
-/// `reattach` is the [`ReattachConsent`] the CLI minted from
-/// `--reattach-checkouts`, or `None` when the operator did not pass it.
-/// It gates exactly one thing: whether `--fix` *reattaches* a detached
-/// canonical store or only reports
-/// it with the `git switch` that would. Changing what a checkout's commits
-/// hang off is an ATTACH, and an ATTACH that is not a birth needs the
-/// operator's consent — which is why the token is threaded down here rather
-/// than a bool.
-///
-/// [`ReattachConsent`]: crate::cli::consent::ReattachConsent
 pub fn run_check(
     ctx: &crate::workspace::WorkspaceContext,
     repair: Repair,
     scope: Scope,
-    reattach: Option<crate::cli::consent::ReattachConsent>,
-    adopt_detached: Option<crate::cli::consent::AdoptDetachedConsent>,
     abandon_lost_pins: Option<crate::cli::consent::AbandonLostPinsConsent>,
     kind_filter: Option<&KindFilter>,
 ) -> anyhow::Result<Verdict> {
@@ -11164,7 +10162,7 @@ pub fn run_check(
     let world = load_doctor_world(ctx, scope)?;
 
     if fix {
-        apply_workspace_repairs(ctx, &world, reattach, adopt_detached, &mut fix_errors);
+        apply_workspace_repairs(ctx, &world, &mut fix_errors);
     }
 
     let mut findings = collect_doctor_violations(ctx, &world, ScanProgress::Heartbeat);
@@ -11764,7 +10762,7 @@ fn collect_doctor_violations(
     scan_dangling_receipts(vcs, ctx.primary_path(), project_scope, &mut violations);
     scan_pre_flat_receipts(ctx.primary_path(), project_scope, &mut violations);
 
-    for v in scan_branch_discipline(ctx.primary_path(), vcs, &input.projects) {
+    for v in scan_branch_discipline(ctx.primary_path(), vcs) {
         if let Some(active) = project_scope {
             if !branch_discipline_in_scope(&v, ctx.primary_path(), active, &input.known_repos) {
                 continue;
@@ -11772,6 +10770,15 @@ fn collect_doctor_violations(
         }
         violations.push(v);
     }
+
+    violations.extend(
+        scan_alignment(ctx.primary_path(), &input.projects)
+            .into_iter()
+            .filter(|v| match (project_scope, v) {
+                (Some(active), CheckViolation::Alignment { project, .. }) => project == active,
+                _ => true,
+            }),
+    );
 
     // Index-drift and working-tree-drift over every materialized worktree a
     // manifest names, plus — from primary — each workweave's copy. Deduped by

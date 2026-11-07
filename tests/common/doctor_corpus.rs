@@ -23,11 +23,11 @@
 //! a `BTreeMap<String, _>`.
 
 use repoweave::check::{
-    BranchDisciplineKind, CheckViolation, CloneTopologyKind, DeadOpLeaseKind, DetachedAncestry,
-    DriftKind, IndexDriftKind, LegacyRefAtTip, OrphanedSavepointKind, PermissionsKind,
-    PlacementConvergence, ProvenanceKind, RegistrationDirectoryKind, ReplayExclusionKind,
-    SubmoduleCommitKind, UnparseableProjectKind, WeaveRootIdentityConflictKind,
-    WorkingTreeDriftKind, WorkweaveTreeIntegrityKind,
+    AlignmentKind, BranchDisciplineKind, CheckViolation, CloneTopologyKind, DeadOpLeaseKind,
+    DriftKind, IndexDriftKind, OrphanedSavepointKind, PermissionsKind, PlacementConvergence,
+    ProvenanceKind, RegistrationDirectoryKind, ReplayExclusionKind, SubmoduleCommitKind,
+    UnparseableProjectKind, WeaveRootIdentityConflictKind, WorkingTreeDriftKind,
+    WorkweaveTreeIntegrityKind,
 };
 use repoweave::integration::{Issue, IssueKind, IssueSource, Severity};
 use repoweave::integration::{MemberIncompatibility, Observed};
@@ -219,32 +219,15 @@ pub fn case_token(v: &CheckViolation) -> String {
         }
         CheckViolation::BranchDiscipline { sub_kind, .. } => {
             let tail = match sub_kind {
-                BranchDisciplineKind::SharedBranch { .. } => "shared-branch",
-                BranchDisciplineKind::ForeignEphemeral { .. } => "foreign-ephemeral",
-                BranchDisciplineKind::Detached { .. } => "detached",
-                BranchDisciplineKind::BlockedEphemeralNamespace { .. } => {
-                    "blocked-ephemeral-namespace"
-                }
-                BranchDisciplineKind::BlockedDetachedNamespace { .. } => {
-                    "blocked-detached-namespace"
-                }
-                BranchDisciplineKind::DetachedOffEphemeralBranch { .. } => {
-                    "detached-off-ephemeral-branch"
-                }
-                BranchDisciplineKind::UnmigratedEphemeralBranch { .. } => {
-                    "unmigrated-ephemeral-branch"
-                }
                 BranchDisciplineKind::UnrecordedEphemeralBranch { .. } => {
                     "unrecorded-ephemeral-branch"
                 }
-                BranchDisciplineKind::UnbornCheckout { .. } => "unborn-checkout",
                 BranchDisciplineKind::CanonicalHoldsLiveWorkweaveRef { .. } => {
                     "canonical-holds-live-workweave-ref"
                 }
                 BranchDisciplineKind::CanonicalHoldsLeakedRef { .. } => {
                     "canonical-holds-leaked-ref"
                 }
-                BranchDisciplineKind::CanonicalDetached { .. } => "canonical-detached",
                 BranchDisciplineKind::StaleEphemeralBranchSafe { .. } => {
                     "stale-ephemeral-branch-safe"
                 }
@@ -256,6 +239,17 @@ pub fn case_token(v: &CheckViolation) -> String {
                 }
             };
             format!("branch-discipline/{tail}")
+        }
+        CheckViolation::Alignment { sub_kind, .. } => {
+            let tail = match sub_kind {
+                AlignmentKind::OnBranch => "on-branch",
+                AlignmentKind::OnBranchWithStrayCommits => "on-branch-with-stray-commits",
+                AlignmentKind::Detached => "detached",
+                AlignmentKind::DetachedWithUnpushedCommits => "detached-with-unpushed-commits",
+                AlignmentKind::Unaligned => "unaligned",
+                AlignmentKind::ProjectDetached => "project-detached",
+            };
+            format!("alignment/{tail}")
         }
         CheckViolation::StaleWorktreeRegistration { sub_kind, .. } => match sub_kind {
             RegistrationDirectoryKind::DirectoryGone => {
@@ -666,73 +660,7 @@ pub fn corpus() -> Vec<CheckViolation> {
         },
         CheckViolation::BranchDiscipline {
             repo_path: path("/ws/github/acme/repo"),
-            sub_kind: BranchDisciplineKind::SharedBranch {
-                actual_branch: "main".into(),
-                expected_ref: "proj--feat-a".into(),
-                recorded_ref: None,
-            },
-        },
-        CheckViolation::BranchDiscipline {
-            repo_path: path("/ws/github/acme/repo"),
-            sub_kind: BranchDisciplineKind::ForeignEphemeral {
-                actual_branch: "proj--other".into(),
-                expected_ref: "proj--feat-a".into(),
-                recorded_ref: Some("proj--other".into()),
-            },
-        },
-        CheckViolation::BranchDiscipline {
-            repo_path: path("/ws/github/acme/repo"),
-            sub_kind: BranchDisciplineKind::Detached {
-                expected_ref: "proj--feat-a".into(),
-                recorded_ref: None,
-                at_sha: commit(),
-                legacy_branch: Some(LegacyRefAtTip {
-                    branch: "proj--feat-a/main".into(),
-                    tip_sha: Some(commit()),
-                    strands_commits: false,
-                }),
-            },
-        },
-        CheckViolation::BranchDiscipline {
-            repo_path: path("/ws/github/acme/repo"),
-            sub_kind: BranchDisciplineKind::UnmigratedEphemeralBranch {
-                actual_branch: "proj--feat-a/main".into(),
-                expected_ref: "proj--feat-a".into(),
-            },
-        },
-        CheckViolation::BranchDiscipline {
-            repo_path: path("/ws/github/acme/repo"),
-            sub_kind: BranchDisciplineKind::BlockedEphemeralNamespace {
-                expected_ref: "proj--feat-a".into(),
-                blocking_refs: vec!["proj--feat-a/main".into(), "proj--feat-a/master".into()],
-            },
-        },
-        CheckViolation::BranchDiscipline {
-            repo_path: path("/ws/github/acme/repo"),
-            sub_kind: BranchDisciplineKind::BlockedDetachedNamespace {
-                expected_ref: "proj--feat-a".into(),
-                at_sha: commit(),
-                blocking_refs: vec!["proj--feat-a/main".into(), "proj--feat-a/master".into()],
-            },
-        },
-        CheckViolation::BranchDiscipline {
-            repo_path: path("/ws/github/acme/repo"),
-            sub_kind: BranchDisciplineKind::DetachedOffEphemeralBranch {
-                expected_ref: "proj--feat-a".into(),
-                at_sha: commit(),
-                branch_tip: commit(),
-                ancestry: DetachedAncestry::HeadAhead,
-            },
-        },
-        CheckViolation::BranchDiscipline {
-            repo_path: path("/ws/github/acme/repo"),
             sub_kind: BranchDisciplineKind::UnrecordedEphemeralBranch {
-                branch: "proj--feat-a".into(),
-            },
-        },
-        CheckViolation::BranchDiscipline {
-            repo_path: path("/ws/github/acme/repo"),
-            sub_kind: BranchDisciplineKind::UnbornCheckout {
                 branch: "proj--feat-a".into(),
             },
         },
@@ -750,13 +678,47 @@ pub fn corpus() -> Vec<CheckViolation> {
                 project: project(),
             },
         },
-        CheckViolation::BranchDiscipline {
+        CheckViolation::Alignment {
             repo_path: path("/ws/github/acme/repo"),
-            sub_kind: BranchDisciplineKind::CanonicalDetached {
-                at_sha: commit(),
-                counterpart: Some("main".into()),
-                reattachable: true,
-            },
+            project: project(),
+            sub_kind: AlignmentKind::OnBranch,
+            branch: Some("wip".into()),
+            listed: Vec::new(),
+        },
+        CheckViolation::Alignment {
+            repo_path: path("/ws/github/acme/repo"),
+            project: project(),
+            sub_kind: AlignmentKind::OnBranchWithStrayCommits,
+            branch: Some("wip".into()),
+            listed: vec!["abc1234 wip commit".into()],
+        },
+        CheckViolation::Alignment {
+            repo_path: path("/ws/github/acme/repo"),
+            project: project(),
+            sub_kind: AlignmentKind::Detached,
+            branch: None,
+            listed: Vec::new(),
+        },
+        CheckViolation::Alignment {
+            repo_path: path("/ws/github/acme/repo"),
+            project: project(),
+            sub_kind: AlignmentKind::DetachedWithUnpushedCommits,
+            branch: None,
+            listed: vec!["abc1234 wip commit".into()],
+        },
+        CheckViolation::Alignment {
+            repo_path: path("/ws/github/acme/repo"),
+            project: project(),
+            sub_kind: AlignmentKind::Unaligned,
+            branch: None,
+            listed: Vec::new(),
+        },
+        CheckViolation::Alignment {
+            repo_path: path("/ws/projects/proj"),
+            project: project(),
+            sub_kind: AlignmentKind::ProjectDetached,
+            branch: None,
+            listed: Vec::new(),
         },
         CheckViolation::BranchDiscipline {
             repo_path: path("/ws/github/acme/repo"),

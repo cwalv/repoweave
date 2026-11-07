@@ -212,6 +212,13 @@ Schema:
           "enum": [
             "target"
           ]
+        },
+        {
+          "description": "Where a workspace's checkouts sit against where the checked-out branch's record says they should.",
+          "type": "string",
+          "enum": [
+            "alignment"
+          ]
         }
       ]
     },

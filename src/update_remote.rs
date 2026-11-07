@@ -6,7 +6,6 @@
 //! `rwv update` aligns clones to the lock; `rwv lock` snapshots local tips;
 //! `rwv update --remote` advances and re-snapshots.
 
-use crate::cli::consent::DetachConsent;
 use crate::lock;
 use crate::manifest::{Project, ProjectName, RepoEntry, RepoPath};
 use crate::parallel::{run_in_parallel, OutputMode, Reporter};
@@ -123,7 +122,6 @@ pub fn run_update_remote(
     output: OutputMode,
     filter: &RepoFilter,
     jobs: usize,
-    detach_checkouts: Option<DetachConsent>,
     opts: crate::activate::ActivateOptions,
 ) -> anyhow::Result<()> {
     // Only reads the op-state; the sync engine takes its own exclusion.
@@ -148,7 +146,6 @@ pub fn run_update_remote(
         output,
         filter,
         jobs,
-        detach_checkouts,
         opts,
     )
 }
@@ -189,7 +186,6 @@ fn update_for_project(
     output: OutputMode,
     filter: &RepoFilter,
     jobs: usize,
-    detach_checkouts: Option<DetachConsent>,
     opts: crate::activate::ActivateOptions,
 ) -> anyhow::Result<()> {
     let active_root = ctx.active_path();
@@ -263,7 +259,6 @@ fn update_for_project(
             &item.entry,
             item.planned.as_ref(),
             &item.checkout,
-            detach_checkouts,
             &reporter,
             use_reporter,
         )
@@ -517,7 +512,6 @@ fn advance_one(
     entry: &RepoEntry,
     planned: Option<&crate::url_remote::Planned>,
     checkout: &MemberCheckout,
-    detach_checkouts: Option<DetachConsent>,
     reporter: &Reporter<'_>,
     use_reporter: bool,
 ) -> Result<String, String> {
@@ -606,15 +600,7 @@ fn advance_one(
         }
     };
 
-    advance_checkout(
-        vcs,
-        repo_path,
-        entry,
-        repo_dir,
-        in_workweave,
-        &resolved,
-        detach_checkouts,
-    )?;
+    advance_checkout(vcs, repo_path, entry, repo_dir, in_workweave, &resolved)?;
 
     // Capture the new SHA after checkout for JSON reporting.
     let new_sha = vcs
@@ -627,33 +613,15 @@ fn advance_one(
 }
 
 /// Advance one checkout onto `target`, the tracking branch's tip on the
-/// member's url remote, `remote`.
+/// member's url remote.
 ///
-/// Which ref is the legal object of the move depends on the checkout:
-///
-/// - **Canonical, attached to the tracking declaration's local counterpart**
-///   — fast-forward that branch. A non-fast-forward refuses, naming the two
-///   exits: reconcile the branch with its tracking tip yourself (ordinary
-///   `git rebase` / `git merge`) and re-run, or `--detach-checkouts` to
-///   materialize the tip without moving your branch.
-/// - **Canonical, attached to anything else** — refuses naming both refs.
-///   `update`'s justification comes from the tracking declaration, so its
-///   object must too; it does not relocate an operator's personal branch, not
-///   even by a fast-forward, because attachment is operator state.
-/// - **Inside a workweave** — advances the ephemeral ref the checkout is on
-///   when `target` is a fast-forward, and otherwise points at `rwv sync`.
-///   Where the canonical arm offers `--detach-checkouts`, this one does not:
-///   `rwv sync` is the verb that reconciles a workweave with its parent, and
-///   detaching the ephemeral ref would report "advanced 1 repo(s)" for a
-///   detach at the identical SHA. The relatedness guard is deliberately
-///   *not* applied here: whether an operator-created branch inside a
-///   workweave is legal at all is undecided, so this path does not decide it.
-/// - **Detached** — a MOVE of HEAD itself, which stays detached; the
-///   mid-operation precondition inside [`Vcs::advance_detached_head`]
-///   refuses when the repo is stopped mid-rebase, mid-merge or mid-bisect.
-/// - **Unborn** — refuses. As in `fetch`, both exits are unrepresentable
-///   rather than undecided: an `UnbornRef` cannot be passed to
-///   `advance_attached_ref`, and `detach_head` takes an `AttachedRef`.
+/// A checkout attached to the tracking declaration's local counterpart is
+/// fast-forwarded; one that is not fast-forwardable refuses, naming the
+/// reconcile. A checkout attached to anything else refuses, naming `rwv
+/// update`. Inside a workweave the ref the checkout is on advances when
+/// `target` is a fast-forward, and `rwv sync` is named otherwise. A detached
+/// HEAD moves, under the mid-operation precondition of
+/// [`Vcs::advance_detached_head`]. An unborn branch refuses.
 fn advance_checkout(
     vcs: &dyn Vcs,
     repo_path: &RepoPath,
@@ -661,7 +629,6 @@ fn advance_checkout(
     repo_dir: &Path,
     in_workweave: bool,
     target: &ResolvedRevisionId,
-    detach_checkouts: Option<DetachConsent>,
 ) -> Result<(), String> {
     let describe = |e: VcsError| format!("{}: {e:#}", repo_path.as_str());
 
@@ -710,22 +677,14 @@ fn advance_checkout(
     let counterpart = entry.branch.local_counterpart();
 
     if !attached.is_named(&counterpart) {
-        let Some(consent) = detach_checkouts else {
-            return Err(format!(
-                "{}: is on branch '{attached}', not the local counterpart \
-                 ('{counterpart}') of the branch the manifest declares — \
-                 rwv update --remote moves only that branch, so it will not relocate one it \
-                 cannot relate to the tracking declaration.\n  \
-                 Switch to '{counterpart}' and re-run, or re-run with \
-                 --detach-checkouts to materialize {} on a detached HEAD \
-                 (your branch is not moved).",
-                repo_path.as_str(),
-                target.display_str(),
-            ));
-        };
-        return vcs
-            .detach_head(&attached, target, consent)
-            .map_err(describe);
+        return Err(format!(
+            "{}: is on branch '{attached}', not the local counterpart \
+             ('{counterpart}') of the branch the manifest declares — \
+             rwv update --remote moves only that branch, so it will not relocate one it \
+             cannot relate to the tracking declaration.\n  \
+             Run `rwv update` to align the member, then re-run.",
+            repo_path.as_str(),
+        ));
     }
 
     if &head == target {
@@ -736,20 +695,13 @@ fn advance_checkout(
             .advance_attached_ref(&attached, target)
             .map_err(describe);
     }
-    let Some(consent) = detach_checkouts else {
-        return Err(format!(
-            "{}: advancing '{attached}' to {} is not a fast-forward — the branch \
-             carries commits '{declared}' on the remote does not have.\n  \
-             Reconcile '{attached}' with its tracking tip yourself (ordinary \
-             `git rebase` / `git merge`) and re-run, or re-run with \
-             --detach-checkouts to materialize {} on a detached HEAD (the branch \
-             ref is not moved).",
-            repo_path.as_str(),
-            target.display_str(),
-            target.display_str(),
-            declared = entry.branch,
-        ));
-    };
-    vcs.detach_head(&attached, target, consent)
-        .map_err(describe)
+    Err(format!(
+        "{}: advancing '{attached}' to {} is not a fast-forward — the branch \
+         carries commits '{declared}' on the remote does not have.\n  \
+         Reconcile '{attached}' with its tracking tip yourself (ordinary \
+         `git rebase` / `git merge`) and re-run.",
+        repo_path.as_str(),
+        target.display_str(),
+        declared = entry.branch,
+    ))
 }

@@ -141,7 +141,10 @@ fn store_of(checkout: &Path) -> PathBuf {
     repoweave::path_spelling::resolve(&checkout.join(common_dir)).unwrap()
 }
 
-fn assert_worktree_at(checkout: &Path, canonical: &Path, branch: &str, pin: &str) {
+/// `checkout` is a linked worktree of `canonical` at `pin`, on `branch` for a
+/// member of an `owned` or `fork` role and detached for a `dependency` or
+/// `reference` one, whose branch the primary has checked out.
+fn assert_worktree_at(checkout: &Path, canonical: &Path, role: &str, branch: &str, pin: &str) {
     assert!(
         checkout.join(".git").is_file(),
         "{} must be a linked worktree",
@@ -153,10 +156,11 @@ fn assert_worktree_at(checkout: &Path, canonical: &Path, branch: &str, pin: &str
         "{} must link into the canonical clone's store",
         checkout.display()
     );
-    assert_eq!(
-        common::git_in(checkout, &["symbolic-ref", "--short", "HEAD"]),
-        branch
-    );
+    let expected = match role {
+        "dependency" | "reference" => None,
+        _ => Some(branch),
+    };
+    assert_eq!(common::checkout_ref(checkout).as_deref(), expected);
     assert_eq!(common::git_in(checkout, &["rev-parse", "HEAD"]), pin);
 }
 
@@ -242,7 +246,7 @@ fn a_late_added_member_of_each_role_is_created_by_doctor_fix() {
 
         let fixed = run(&["doctor", "--fix"], &seat);
         assert!(fixed.status.success(), "role {role}: {}", describe(&fixed));
-        assert_worktree_at(&seat.join(LATE_PATH), &canonical, "app--seat", &pin);
+        assert_worktree_at(&seat.join(LATE_PATH), &canonical, role, "app--seat", &pin);
 
         let fetched = run(&["update"], &seat);
         assert!(
@@ -255,7 +259,7 @@ fn a_late_added_member_of_each_role_is_created_by_doctor_fix() {
             Vec::<String>::new(),
             "role {role}: fetch and doctor agree"
         );
-        assert_worktree_at(&seat.join(LATE_PATH), &canonical, "app--seat", &pin);
+        assert_worktree_at(&seat.join(LATE_PATH), &canonical, role, "app--seat", &pin);
     }
 }
 
@@ -299,7 +303,13 @@ fn a_late_added_member_whose_canonical_clone_is_not_on_disk_is_created_by_fetch(
 
     let fetched = run(&["update"], &seat);
     assert!(fetched.status.success(), "{}", describe(&fetched));
-    assert_worktree_at(&seat.join(LATE_PATH), &canonical, "app--seat", &pin);
+    assert_worktree_at(
+        &seat.join(LATE_PATH),
+        &canonical,
+        "reference",
+        "app--seat",
+        &pin,
+    );
     assert_eq!(
         findings_about(&seat, LATE_PATH),
         Vec::<String>::new(),
@@ -331,7 +341,13 @@ fn a_reference_member_arriving_by_sync_is_a_worktree_at_the_pinned_revision() {
     let synced = run(&["sync", "primary"], &seat);
     assert!(synced.status.success(), "{}", describe(&synced));
 
-    assert_worktree_at(&seat.join(LATE_PATH), &canonical, "app--seat", &pin);
+    assert_worktree_at(
+        &seat.join(LATE_PATH),
+        &canonical,
+        "reference",
+        "app--seat",
+        &pin,
+    );
     let lock =
         std::fs::read_to_string(seat.join("projects").join(PROJECT).join("rwv.lock")).unwrap();
     assert!(
@@ -371,8 +387,20 @@ fn a_sync_to_does_not_park_on_a_member_its_target_lacks() {
         !child.join(".rwv-op").exists() && !parent.join(".rwv-op-lease").exists(),
         "no op may be left parked"
     );
-    assert_worktree_at(&child.join(LATE_PATH), &canonical, "app--child", &pin);
-    assert_worktree_at(&parent.join(LATE_PATH), &canonical, "app--parent", &pin);
+    assert_worktree_at(
+        &child.join(LATE_PATH),
+        &canonical,
+        "reference",
+        "app--child",
+        &pin,
+    );
+    assert_worktree_at(
+        &parent.join(LATE_PATH),
+        &canonical,
+        "reference",
+        "app--parent",
+        &pin,
+    );
     assert_eq!(
         findings_about(&parent, LATE_PATH),
         Vec::<String>::new(),
@@ -404,7 +432,13 @@ fn a_sync_to_retire_lands_into_a_target_that_lacked_a_member() {
         describe(&landed)
     );
     assert!(!child.exists(), "--retire deletes the workweave");
-    assert_worktree_at(&parent.join(LATE_PATH), &canonical, "app--parent", &pin);
+    assert_worktree_at(
+        &parent.join(LATE_PATH),
+        &canonical,
+        "reference",
+        "app--parent",
+        &pin,
+    );
 }
 
 #[test]
@@ -460,7 +494,7 @@ fn a_member_added_with_new_from_a_workweave_is_created_after_its_first_commit() 
 
     let fixed = run(&["doctor", "--fix"], &seat);
     assert!(fixed.status.success(), "{}", describe(&fixed));
-    assert_worktree_at(&seat.join(member), &canonical, "app--seat", &pin);
+    assert_worktree_at(&seat.join(member), &canonical, "owned", "app--seat", &pin);
 
     let fetched = run(&["update"], &seat);
     assert!(fetched.status.success(), "{}", describe(&fetched));

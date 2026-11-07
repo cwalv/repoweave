@@ -13,12 +13,12 @@
 //! - present member ALREADY at the locked SHA is not moved (mtime/HEAD
 //!   unchanged) — which is not the same as "present members are untouched":
 //!   a present member whose HEAD differs from the pin IS realigned
-//! - realignment of a present member is a MOVE of the tracking branch's local
-//!   counterpart, not a detach: it fast-forwards, refuses a non-fast-forward,
-//!   and refuses outright when the checkout is on some other branch
-//! - `--detach-checkouts` is the named exit from both refusals
-//! - an already-detached member stays detached (a MOVE), but refuses while
-//!   the repo is mid-operation
+//! - alignment puts a present member in its expected state: on its declared
+//!   branch (fast-forwarded when behind the pin, left where it is when ahead),
+//!   moved off a branch whose commits other refs hold (reported), and left
+//!   and reported when the branch holds commits nothing else does, when it is
+//!   dirty, or when it is mid-operation
+//! - `--detach-checkouts` is no argument
 //! - the lock is never written: a member it lacks is cloned at the declared
 //!   branch's tip when missing and left where it is when present
 //! - `--repo` filter limits materialization
@@ -252,34 +252,29 @@ fn update_materializes_missing_member_at_locked_sha() {
 // ============================================================================
 
 #[test]
-fn update_leaves_present_member_at_locked_sha_unmoved() {
+fn update_leaves_a_member_that_is_in_its_expected_state_untouched() {
     let s = setup_workspace_with_locked_project(&["github/acme/a", "github/acme/b"]);
     let (repo_a, bare_a, first_a, _) = &s.repos[0];
-    let (_repo_b, _bare_b, _, _) = &s.repos[1];
 
-    // Pre-materialize repo_a at first_sha (matches the lock).
-    materialize_repo_at(&s.workspace, repo_a, bare_a, first_a);
-    let dest_a = s.workspace.join(repo_a);
+    let dest_a = materialize_repo_on_branch_at(&s.workspace, repo_a, bare_a, first_a);
     let head_before = common::git_in(&dest_a, &["rev-parse", "HEAD"]);
-    // Take a directory-inode marker: record the .git/config mtime.
     let git_config_before = std::fs::metadata(dest_a.join(".git/config"))
         .unwrap()
         .modified()
         .unwrap();
 
-    // Now run update — it should re-materialize repo_b but leave
-    // repo_a alone.
     rwv()
         .arg("update")
         .current_dir(&s.workspace)
         .assert()
         .success();
 
-    let head_after = common::git_in(&dest_a, &["rev-parse", "HEAD"]);
     assert_eq!(
-        head_before, head_after,
-        "present member's HEAD must be unchanged by update"
+        common::git_in(&dest_a, &["rev-parse", "HEAD"]),
+        head_before,
+        "a member on its declared branch at its pin must not move"
     );
+    assert_eq!(current_branch(&dest_a).as_deref(), Some("main"));
     let git_config_after = std::fs::metadata(dest_a.join(".git/config"))
         .unwrap()
         .modified()
@@ -287,6 +282,33 @@ fn update_leaves_present_member_at_locked_sha_unmoved() {
     assert_eq!(
         git_config_before, git_config_after,
         "present member's .git/config must not be touched by update"
+    );
+}
+
+#[test]
+fn update_returns_a_detached_member_to_its_declared_branch() {
+    let s = setup_workspace_with_locked_project(&["github/acme/a"]);
+    let (repo_a, bare_a, first_a, second_a) = &s.repos[0];
+
+    materialize_repo_at(&s.workspace, repo_a, bare_a, first_a);
+    let dest_a = s.workspace.join(repo_a);
+    assert_eq!(current_branch(&dest_a), None, "precondition: detached");
+
+    rwv()
+        .arg("update")
+        .current_dir(&s.workspace)
+        .assert()
+        .success();
+
+    assert_eq!(
+        current_branch(&dest_a).as_deref(),
+        Some("main"),
+        "a detached member holding nothing unpushed returns to its declared branch"
+    );
+    assert_eq!(
+        common::git_in(&dest_a, &["rev-parse", "HEAD"]),
+        *second_a,
+        "the declared branch is ahead of the pin, and the checkout sits at its tip"
     );
 }
 
@@ -343,14 +365,10 @@ fn update_fast_forwards_the_counterpart_and_stays_attached() {
 // ============================================================================
 
 #[test]
-fn update_refuses_to_rewind_the_counterpart_even_when_the_member_is_clean() {
+fn update_leaves_the_declared_branch_where_it_is_when_it_is_ahead_of_the_pin() {
     let s = setup_workspace_with_locked_project(&["github/acme/a"]);
     let (repo_a, bare_a, first_a, second_a) = &s.repos[0];
 
-    // Clean, on a published branch, nothing in flight — and the lock pins an
-    // ANCESTOR of the branch tip. Taking the pin would either rewind `main`
-    // (a MOVE needing a discard warrant) or leave `main` behind (a detach
-    // needing consent). rwv holds neither, so it refuses.
     let dest_a = materialize_repo_on_branch(&s.workspace, repo_a, bare_a);
     assert_eq!(current_branch(&dest_a).as_deref(), Some("main"));
 
@@ -358,52 +376,38 @@ fn update_refuses_to_rewind_the_counterpart_even_when_the_member_is_clean() {
         .arg("update")
         .current_dir(&s.workspace)
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("is not a fast-forward"))
-        .stderr(predicate::str::contains("--detach-checkouts"));
+        .success();
 
     assert_eq!(
         current_branch(&dest_a).as_deref(),
         Some("main"),
-        "the refusal must leave the member on its branch"
+        "a pin behind the branch's tip rewinds nothing and detaches nothing"
     );
     assert_eq!(common::git_in(&dest_a, &["rev-parse", "HEAD"]), *second_a);
     assert_ne!(common::git_in(&dest_a, &["rev-parse", "HEAD"]), *first_a);
 }
 
 #[test]
-fn update_refuses_to_rewind_a_counterpart_carrying_uncommitted_changes() {
+fn update_leaves_a_dirty_member_on_its_declared_branch_alone() {
     let s = setup_workspace_with_locked_project(&["github/acme/a"]);
-    let (repo_a, bare_a, first_a, second_a) = &s.repos[0];
+    let (repo_a, bare_a, _first_a, second_a) = &s.repos[0];
 
     let dest_a = materialize_repo_on_branch(&s.workspace, repo_a, bare_a);
-    // Dirt in a path the checkout does NOT touch, so git itself would happily
-    // carry it onto a detached HEAD. The refusal has to be rwv's.
     std::fs::write(dest_a.join("scratch.txt"), "work in progress\n").unwrap();
 
     rwv()
         .arg("update")
         .current_dir(&s.workspace)
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("is not a fast-forward"))
-        .stderr(predicate::str::contains("--detach-checkouts"));
+        .success();
 
-    assert_eq!(
-        current_branch(&dest_a).as_deref(),
-        Some("main"),
-        "the refusal must leave the member on its branch"
-    );
+    assert_eq!(current_branch(&dest_a).as_deref(), Some("main"));
     assert_eq!(common::git_in(&dest_a, &["rev-parse", "HEAD"]), *second_a);
-    assert_ne!(common::git_in(&dest_a, &["rev-parse", "HEAD"]), *first_a);
-    assert!(
-        dest_a.join("scratch.txt").exists(),
-        "a refusal touches nothing, including the working tree"
-    );
+    assert!(dest_a.join("scratch.txt").exists());
 }
 
 #[test]
-fn update_refuses_when_the_branch_carries_commits_origin_does_not_have() {
+fn update_keeps_commits_origin_does_not_have_on_the_declared_branch() {
     let s = setup_workspace_with_locked_project(&["github/acme/a"]);
     let (repo_a, bare_a, _first_a, _second_a) = &s.repos[0];
 
@@ -412,15 +416,11 @@ fn update_refuses_when_the_branch_carries_commits_origin_does_not_have() {
     common::git_in(&dest_a, &["commit", "-am", "third"]);
     let unpushed = common::git_in(&dest_a, &["rev-parse", "HEAD"]);
 
-    // A branch ahead of the pin can never fast-forward TO the pin, so the
-    // unpublished commit is protected by the same predicate that protects a
-    // clean rewind — the guard no longer has to ask origin what it has.
     rwv()
         .arg("update")
         .current_dir(&s.workspace)
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("is not a fast-forward"));
+        .success();
 
     assert_eq!(current_branch(&dest_a).as_deref(), Some("main"));
     assert_eq!(
@@ -432,15 +432,10 @@ fn update_refuses_when_the_branch_carries_commits_origin_does_not_have() {
 }
 
 #[test]
-fn update_refuses_when_attached_to_a_branch_the_manifest_does_not_declare() {
+fn update_moves_a_member_off_a_branch_whose_commits_other_refs_hold_and_reports_it() {
     let s = setup_workspace_with_locked_project(&["github/acme/a"]);
     let (repo_a, bare_a, first_a, second_a) = &s.repos[0];
 
-    // On a personal branch positioned so that taking the pin WOULD be a
-    // fast-forward. The refusal therefore cannot be the fast-forward check:
-    // it is the version-relatedness guard, which refuses to relate an
-    // operator's bookmark to the lock at all. Advancing it would strand no
-    // commits and still silently change what the bookmark means.
     let dest_a = materialize_repo_on_branch(&s.workspace, repo_a, bare_a);
     common::git_in(&dest_a, &["checkout", "-b", "feature", first_a]);
     let url_a = common::file_url(bare_a);
@@ -453,67 +448,62 @@ fn update_refuses_when_attached_to_a_branch_the_manifest_does_not_declare() {
         .arg("update")
         .current_dir(&s.workspace)
         .assert()
-        .failure()
-        // Names BOTH refs: the one it is on and the one it expected.
-        .stderr(predicate::str::contains("is on branch 'feature'"))
-        .stderr(predicate::str::contains("local counterpart ('main')"))
-        .stderr(predicate::str::contains("--detach-checkouts"))
-        .stderr(predicate::str::contains("is not a fast-forward").not());
+        .success()
+        .stdout(predicate::str::contains(
+            "github/acme/a: moved from feature",
+        ));
 
-    assert_eq!(current_branch(&dest_a).as_deref(), Some("feature"));
-    assert_eq!(common::git_in(&dest_a, &["rev-parse", "HEAD"]), *first_a);
-}
-
-#[test]
-fn update_detach_checkouts_waives_the_refusal() {
-    let s = setup_workspace_with_locked_project(&["github/acme/a"]);
-    let (repo_a, bare_a, first_a, _second_a) = &s.repos[0];
-
-    let dest_a = materialize_repo_on_branch(&s.workspace, repo_a, bare_a);
-    std::fs::write(dest_a.join("README"), "third\n").unwrap();
-    common::git_in(&dest_a, &["commit", "-am", "third"]);
-    let unpushed = common::git_in(&dest_a, &["rev-parse", "HEAD"]);
-    std::fs::write(dest_a.join("scratch.txt"), "work in progress\n").unwrap();
-
-    rwv()
-        .args(["update", "--detach-checkouts"])
-        .current_dir(&s.workspace)
-        .assert()
-        .success();
-
-    assert_eq!(common::git_in(&dest_a, &["rev-parse", "HEAD"]), *first_a);
-    assert_eq!(current_branch(&dest_a), None);
-    // The waiver is not a discard: the unpushed commits are still on the
-    // branch ref, and the uncommitted file came along.
-    assert_eq!(common::git_in(&dest_a, &["rev-parse", "main"]), unpushed);
-    assert!(dest_a.join("scratch.txt").exists());
-}
-
-#[test]
-fn update_detach_checkouts_waives_the_relatedness_refusal_too() {
-    let s = setup_workspace_with_locked_project(&["github/acme/a"]);
-    let (repo_a, bare_a, first_a, second_a) = &s.repos[0];
-
-    // The other refusal the branch model defines — version-relatedness rather
-    // than non-fast-forward. The consent detaches; it does not relocate the
-    // personal branch, which is the whole point of naming the flag after the
-    // consequence rather than after the precondition.
-    let dest_a = materialize_repo_on_branch(&s.workspace, repo_a, bare_a);
-    common::git_in(&dest_a, &["checkout", "-b", "feature"]);
-
-    rwv()
-        .args(["update", "--detach-checkouts"])
-        .current_dir(&s.workspace)
-        .assert()
-        .success();
-
-    assert_eq!(common::git_in(&dest_a, &["rev-parse", "HEAD"]), *first_a);
-    assert_eq!(current_branch(&dest_a), None);
+    assert_eq!(current_branch(&dest_a).as_deref(), Some("main"));
+    assert_eq!(common::git_in(&dest_a, &["rev-parse", "HEAD"]), *second_a);
     assert_eq!(
         common::git_in(&dest_a, &["rev-parse", "feature"]),
-        *second_a,
-        "the personal branch is left exactly where it was"
+        *first_a,
+        "the branch it left is where it was"
     );
+}
+
+#[test]
+fn update_reports_and_leaves_a_member_on_a_branch_holding_commits_nothing_else_does() {
+    let s = setup_workspace_with_locked_project(&["github/acme/a"]);
+    let (repo_a, bare_a, _first_a, _second_a) = &s.repos[0];
+
+    let dest_a = materialize_repo_on_branch(&s.workspace, repo_a, bare_a);
+    common::git_in(&dest_a, &["checkout", "-b", "wip"]);
+    std::fs::write(dest_a.join("README"), "wip\n").unwrap();
+    common::git_in(&dest_a, &["commit", "-am", "wip work"]);
+    let wip = common::git_in(&dest_a, &["rev-parse", "HEAD"]);
+
+    rwv()
+        .arg("update")
+        .current_dir(&s.workspace)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "github/acme/a: alignment on branch with stray commits (wip)",
+        ))
+        .stdout(predicate::str::contains("wip work"))
+        .stdout(predicate::str::contains("rwv explain alignment"));
+
+    assert_eq!(current_branch(&dest_a).as_deref(), Some("wip"));
+    assert_eq!(common::git_in(&dest_a, &["rev-parse", "HEAD"]), wip);
+}
+
+#[test]
+fn the_flags_alignment_replaced_no_longer_parse() {
+    for (verb, flag) in [
+        ("update", "--detach-checkouts"),
+        ("pull", "--detach-checkouts"),
+        ("doctor", "--adopt-detached-checkouts"),
+        ("doctor", "--reattach-checkouts"),
+    ] {
+        rwv()
+            .args([verb, flag])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(format!(
+                "unexpected argument '{flag}'"
+            )));
+    }
 }
 
 // ============================================================================
@@ -523,13 +513,10 @@ fn update_detach_checkouts_waives_the_relatedness_refusal_too() {
 // ============================================================================
 
 #[test]
-fn update_moves_an_already_detached_member_without_consent() {
+fn update_returns_a_detached_member_ahead_of_the_pin_to_its_declared_branch() {
     let s = setup_workspace_with_locked_project(&["github/acme/a"]);
-    let (repo_a, bare_a, first_a, second_a) = &s.repos[0];
+    let (repo_a, bare_a, _first_a, second_a) = &s.repos[0];
 
-    // Detached at the second commit; the lock pins the first. Nothing is
-    // attached, so nothing can be abandoned — no flag required, and the
-    // rewind-vs-fast-forward question does not arise.
     materialize_repo_at(&s.workspace, repo_a, bare_a, second_a);
     let dest_a = s.workspace.join(repo_a);
     assert_eq!(current_branch(&dest_a), None, "precondition: detached");
@@ -540,31 +527,26 @@ fn update_moves_an_already_detached_member_without_consent() {
         .assert()
         .success();
 
-    assert_eq!(common::git_in(&dest_a, &["rev-parse", "HEAD"]), *first_a);
-    assert_eq!(
-        current_branch(&dest_a),
-        None,
-        "a detached member stays detached — update does not reattach it"
-    );
+    assert_eq!(current_branch(&dest_a).as_deref(), Some("main"));
+    assert_eq!(common::git_in(&dest_a, &["rev-parse", "HEAD"]), *second_a);
 }
 
 #[test]
-fn update_refuses_to_move_a_detached_member_that_is_mid_operation() {
+fn update_reports_and_leaves_a_detached_member_that_is_mid_operation() {
     let s = setup_workspace_with_locked_project(&["github/acme/a"]);
     let (repo_a, bare_a, first_a, second_a) = &s.repos[0];
 
     materialize_repo_at(&s.workspace, repo_a, bare_a, second_a);
     let dest_a = s.workspace.join(repo_a);
-    // `Detached` collapses "rwv left this at a lock SHA" and "the operator is
-    // mid-bisect". Only the first is rwv's to move.
     common::git_in(&dest_a, &["bisect", "start"]);
 
     rwv()
         .arg("update")
         .current_dir(&s.workspace)
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("mid-bisect"));
+        .success()
+        .stdout(predicate::str::contains("edits mid-operation"))
+        .stdout(predicate::str::contains("bisect"));
 
     assert_eq!(
         common::git_in(&dest_a, &["rev-parse", "HEAD"]),
@@ -572,6 +554,7 @@ fn update_refuses_to_move_a_detached_member_that_is_mid_operation() {
         "the bisect's HEAD must not be yanked out from under it"
     );
     assert_ne!(common::git_in(&dest_a, &["rev-parse", "HEAD"]), *first_a);
+    assert_eq!(current_branch(&dest_a), None);
 }
 
 // ============================================================================
@@ -762,10 +745,7 @@ fn update_leaves_a_present_member_the_lock_lacks_where_it_is() {
         .arg("update")
         .current_dir(&p.workspace)
         .assert()
-        .success()
-        .stdout(predicate::str::contains(
-            "leaving github/acme/b where it is: the lock has no entry for it",
-        ));
+        .success();
 
     assert_eq!(current_branch(&dest_b).as_deref(), Some(B_BRANCH));
     assert_eq!(common::git_in(&dest_b, &["rev-parse", "HEAD"]), p.main_b);
@@ -777,7 +757,7 @@ fn update_leaves_a_present_member_the_lock_lacks_where_it_is() {
 }
 
 #[test]
-fn update_with_no_lock_leaves_every_present_member_where_it_is() {
+fn update_with_no_lock_sits_every_present_member_on_its_declared_branch_as_found() {
     let p = Pair::new(false);
     let dest_b = p.place_b_behind_its_tip();
     materialize_repo_at(&p.workspace, MEMBER_A, &p.bare_a, &p.first_a);
@@ -791,11 +771,15 @@ fn update_with_no_lock_leaves_every_present_member_where_it_is() {
         .success();
 
     assert_eq!(
-        common::git_in(&dest_a, &["rev-parse", "HEAD"]),
-        p.first_a,
-        "a detached member the lock is silent on stays at the commit it was on"
+        current_branch(&dest_a).as_deref(),
+        Some("main"),
+        "a detached member the lock is silent on sits on its declared branch as found"
     );
-    assert_eq!(current_branch(&dest_a), None);
+    assert_eq!(
+        common::git_in(&dest_a, &["rev-parse", "HEAD"]),
+        p.second_a,
+        "the declared branch is where it was"
+    );
     assert_eq!(current_branch(&dest_b).as_deref(), Some(B_BRANCH));
     assert_eq!(common::git_in(&dest_b, &["rev-parse", "HEAD"]), p.main_b);
     assert_eq!(p.lock_bytes(), None, "update must not create a lock");
@@ -1170,14 +1154,19 @@ fn update_from_workweave_materializes_at_primary() {
         "the workweave's worktree must share primary's canonical store (clone-topology I1)"
     );
     assert_eq!(
-        common::git_in(&workweave_dest, &["symbolic-ref", "--short", "HEAD"]),
-        "my-app--dev",
-        "the worktree sits on the workweave's ephemeral branch"
+        common::checkout_ref(&workweave_dest),
+        None,
+        "the project is no repo, so the workspace is declared: the primary holds `main`, \
+         so the worktree sits detached at the pin"
     );
     assert_eq!(
         common::git_in(&workweave_dest, &["rev-parse", "HEAD"]),
         *first_sha,
-        "the worktree is born at the revision the workweave's lock pins"
+        "the worktree sits at the revision the workweave's lock pins"
+    );
+    assert!(
+        combined.contains("checkout: main is checked out in"),
+        "the detach names the checkout holding the branch; got:\n{combined}"
     );
 }
 

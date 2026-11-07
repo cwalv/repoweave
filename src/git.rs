@@ -11,7 +11,7 @@ use crate::vcs::{
     MidOperation, NamedBranch, PinOutcome, PruningFetch, PublishRef, RangeListing, RawRefName,
     RawRevisionId, RecordedSubmodule, RecordedUrl, RecordsAdvance, RecordsSite, RefOrigin,
     RegistrationPrune, RemoteBranchCopies, RemoteBranchMove, RemoteDefaultBranch, RemoteHandle,
-    RemoteNameTaken, RemoteRef, RemoteTracking, ReplayExclusionState, ResolvedEndpoint,
+    RemoteNameTaken, RemoteRef, RemoteTip, RemoteTracking, ReplayExclusionState, ResolvedEndpoint,
     ResolvedRevisionId, SavepointListing, SubmoduleBirth, SubmoduleCheckout, TrackedFile,
     TrackedFileKind, UnconfirmedRemote, Upstream, UrlRemote, Vcs, VcsAction, VcsError,
     VerifiedRestoreOutcome, WorkspacePopulation,
@@ -547,7 +547,7 @@ pub const GIT_DIR_ENTRY_NAME: &str = ".git";
 /// a repo at all. Callers comparing an observed store against where one
 /// *should* sit want this; callers asking whether a repo lives there want
 /// `has_git_dir`, and callers wanting the store git actually resolves want
-/// [`Vcs::resolve_canonical_store`].
+/// [`Vcs::store_of`].
 pub fn store_path_in(dir: &Path) -> PathBuf {
     dir.join(GIT_DIR_ENTRY_NAME)
 }
@@ -1395,7 +1395,7 @@ impl GitVcs {
     /// The directory to run ref-level git commands in for a canonical
     /// store path.
     ///
-    /// A receipt is keyed by canonical store, and `resolve_canonical_store`
+    /// A receipt is keyed by canonical store, and `store_of`
     /// reports the store itself (`<clone>/.git`), not the working
     /// directory. git will accept a `.git` directory as its cwd, but the
     /// behavior differs subtly between porcelain commands, so normalize to
@@ -2984,7 +2984,7 @@ impl Vcs for GitVcs {
         Ok(names)
     }
 
-    fn resolve_canonical_store(&self, workspace: &Path) -> Option<PathBuf> {
+    fn store_of(&self, workspace: &Path) -> Option<PathBuf> {
         // `--path-format=absolute --git-common-dir` returns the absolute path
         // of the shared object/refs store, regardless of whether `workspace`
         // is a full clone (returns `<workspace>/.git`) or a linked worktree
@@ -3576,27 +3576,144 @@ impl Vcs for GitVcs {
         Ok(())
     }
 
-    fn birth_ref_at_head(&self, repo: &Path, name: &RawRefName) -> Result<(), VcsError> {
-        // Classify before acting, like `attach_head_to` above: `switch -c`
-        // on an existing name exits non-zero, but the refusal this contract
-        // owes is "rwv holds no receipt for that ref", not git's "already
-        // exists" — and stating it here keeps the reason on the model's
-        // terms rather than on git's.
+    fn private_dir(&self, checkout: &Path) -> Result<PathBuf, VcsError> {
+        Ok(PathBuf::from(Self::run_trimmed(
+            ["rev-parse", "--absolute-git-dir"],
+            checkout,
+        )?))
+    }
+
+    fn checkouts_of_branch(
+        &self,
+        repo: &Path,
+        branch: &RawRefName,
+    ) -> Result<Vec<PathBuf>, VcsError> {
+        Ok(Self::worktree_records(repo)?
+            .into_iter()
+            .filter(|record| !record.prunable)
+            .filter(|record| record.branch.as_ref() == Some(branch))
+            .map(|record| record.path)
+            .collect())
+    }
+
+    fn upstream_of(&self, repo: &Path, branch: &RawRefName) -> Result<Option<Upstream>, VcsError> {
+        let remote = Self::config_get(repo, &format!("branch.{branch}.remote"))?;
+        let merge = Self::config_get(repo, &format!("branch.{branch}.merge"))?;
+        Ok(match (remote, merge) {
+            (Some(remote), Some(merge)) if remote != "." => merge
+                .strip_prefix(LOCAL_BRANCH_NAMESPACE)
+                .map(|upstream| Upstream {
+                    remote: RemoteHandle::new(remote),
+                    branch: RawRefName::new(upstream),
+                }),
+            _ => None,
+        })
+    }
+
+    fn remote_copies(&self, repo: &Path, branch: &RawRefName) -> Result<Vec<RemoteTip>, VcsError> {
+        let mut found = Vec::new();
+        for name in Self::remote_names(repo)? {
+            let remote = RemoteHandle::new(name);
+            let qualified = remote_tracking(&remote, branch.as_str());
+            if let Ok(tip) = self.resolve_revision(repo, &qualified) {
+                found.push(RemoteTip { remote, tip });
+            }
+        }
+        Ok(found)
+    }
+
+    fn set_upstream(
+        &self,
+        repo: &Path,
+        branch: &RawRefName,
+        upstream: &Upstream,
+    ) -> Result<(), VcsError> {
+        Self::run(
+            [
+                "config",
+                &format!("branch.{branch}.remote"),
+                upstream.remote.name(),
+            ],
+            repo,
+        )?;
+        Self::run(
+            [
+                "config",
+                &format!("branch.{branch}.merge"),
+                &local_branch(upstream.branch.as_str()),
+            ],
+            repo,
+        )?;
+        Ok(())
+    }
+
+    fn create_branch(
+        &self,
+        repo: &Path,
+        name: &RawRefName,
+        at: &ResolvedRevisionId,
+        upstream: Option<&Upstream>,
+    ) -> Result<(), VcsError> {
         if self.resolve_local_branch_tip(repo, name)?.is_some() {
             return Err(VcsError::CommandFailed {
                 args: local_branch_tip_args(name.as_str()),
                 repo: repo.to_path_buf(),
-                stderr: format!(
-                    "a local branch named '{name}' already exists: birthing it here \
-                     would adopt a ref this call holds no receipt for, and moving it \
-                     to HEAD would be an unwitnessed MOVE"
-                ),
+                stderr: format!("a local branch named '{name}' already exists"),
             });
         }
-        // No start point: the ref is born where HEAD already is, so the
-        // working tree does not move.
-        Self::run(["switch", "-c", name.as_str()], repo)?;
+        Self::run(
+            ["branch", "--no-track", name.as_str(), at.id().as_str()],
+            repo,
+        )?;
+        if let Some(upstream) = upstream {
+            self.set_upstream(repo, name, upstream)?;
+        }
         Ok(())
+    }
+
+    fn stray_commits(
+        &self,
+        repo: &Path,
+        tip: &ResolvedRevisionId,
+        leaving: Option<&RawRefName>,
+        onto: Option<&ResolvedRevisionId>,
+    ) -> Result<Vec<CommitSummary>, VcsError> {
+        let backups = format!("--glob={BACKUP_NAMESPACE}/*");
+        let mut args: Vec<String> = vec![
+            "log".to_owned(),
+            "--pretty=format:%H%x00%s".to_owned(),
+            tip.id().as_str().to_owned(),
+            "--not".to_owned(),
+        ];
+        if let Some(leaving) = leaving {
+            args.push(format!("--exclude={}", leaving.as_str()));
+        }
+        args.extend(["--branches".to_owned(), "--remotes".to_owned(), backups]);
+        if let Some(onto) = onto {
+            args.push(onto.id().as_str().to_owned());
+        }
+        args.push("--".to_owned());
+        let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+        Self::run_trimmed(argv.as_slice(), repo)?
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|line| {
+                let (id, subject) = line.split_once('\0').unwrap_or((line, ""));
+                Ok(CommitSummary {
+                    id: commit_id_printed(id, &argv, repo)?,
+                    subject: subject.to_owned(),
+                })
+            })
+            .collect()
+    }
+
+    fn materialize_worktree_detached(
+        &self,
+        store: &Path,
+        dest: &Path,
+        at: &ResolvedRevisionId,
+    ) -> Result<(), VcsError> {
+        self.add_detached_worktree(store, dest, at, WorktreeFiles::Written)
     }
 
     fn push_ref(
@@ -4212,6 +4329,34 @@ impl GitVcs {
         Ok(RefOrigin::Authored)
     }
 
+    fn add_detached_worktree(
+        &self,
+        store: &Path,
+        dest: &Path,
+        at: &ResolvedRevisionId,
+        files: WorktreeFiles,
+    ) -> Result<(), VcsError> {
+        let store = Self::work_dir_for_store(store);
+        let dest_arg = GitArg::from_path(dest, "worktree path")?;
+        let registered_before =
+            (files == WorktreeFiles::Written).then(|| self.is_registered_worktree(&store, dest));
+        let add: &[&str] = match files {
+            WorktreeFiles::Written => &["worktree", "add", "--detach"],
+            WorktreeFiles::Unwritten => &["worktree", "add", "--detach", "--no-checkout"],
+        };
+        Self::awaiting_peer_registration(&store, UNWRITTEN_REGISTRATION_WAIT, || {
+            Self::run(
+                Argv::from(add).path(&dest_arg).text(at.id().as_str()),
+                &store,
+            )
+        })
+        .map_err(|e| match registered_before {
+            Some(before) => self.classify_worktree_add_failure(e, &store, dest, before),
+            None => e,
+        })?;
+        Ok(())
+    }
+
     /// [`GitVcs::run`] with `input` on stdin.
     fn run_with_stdin(args: impl Into<Argv>, dir: &Path, input: &[u8]) -> Result<String, VcsError> {
         let args = args.into();
@@ -4473,6 +4618,17 @@ impl WorkspacePopulation for GitVcs {
         // makes the workspace record its revision before any file exists.
         Self::run(["read-tree", "HEAD"], dest)?;
         Ok(ref_origin)
+    }
+
+    fn materialize_unpopulated_worktree_detached(
+        &self,
+        store: &Path,
+        dest: &Path,
+        at: &ResolvedRevisionId,
+    ) -> Result<(), VcsError> {
+        self.add_detached_worktree(store, dest, at, WorktreeFiles::Unwritten)?;
+        Self::run(["read-tree", "HEAD"], dest)?;
+        Ok(())
     }
 
     fn tracked_files(&self, workspace: &Path) -> Result<Vec<TrackedFile>, VcsError> {
@@ -4862,8 +5018,7 @@ mod branch_model_tests {
 
     use super::*;
     use crate::cli::consent::{
-        DetachConsent, DiscardLocalCommitsConsent, DiscardUnmergedConsent, ForcePushConsent,
-        ReattachConsent,
+        DiscardLocalCommitsConsent, DiscardUnmergedConsent, ForcePushConsent,
     };
     use crate::op_state::OpId;
     use crate::vcs::{
@@ -5209,7 +5364,7 @@ mod branch_model_tests {
 
     #[test]
     fn a_receipt_keyed_to_a_git_dir_still_names_a_workable_repo() {
-        // Receipts are keyed by canonical store, which `resolve_canonical_store`
+        // Receipts are keyed by canonical store, which `store_of`
         // reports as `<clone>/.git` — not the working directory.
         let store = repo();
         let recorded = GitVcs.head_revision(store.path()).unwrap();
@@ -5429,7 +5584,7 @@ mod branch_model_tests {
         };
 
         GitVcs
-            .detach_head(&w, &target, DetachConsent::granted())
+            .detach_head(&w, &target, &crate::alignment::Departure::granted())
             .unwrap();
 
         match GitVcs.head_attachment(p.path()).unwrap() {
@@ -5448,7 +5603,7 @@ mod branch_model_tests {
         git(p.path(), &["checkout", "-b", "elsewhere"]);
 
         let err = GitVcs
-            .detach_head(&w, &target, DetachConsent::granted())
+            .detach_head(&w, &target, &crate::alignment::Departure::granted())
             .unwrap_err();
         assert_eq!(err.kind(), VcsErrorKind::StaleRefWitness);
         assert_eq!(
@@ -5467,7 +5622,11 @@ mod branch_model_tests {
 
         let from = GitVcs.head_attachment(p.path()).unwrap();
         GitVcs
-            .reattach_head(from, &local("target"), ReattachConsent::granted())
+            .reattach_head(
+                from,
+                &local("target"),
+                &crate::alignment::Departure::granted(),
+            )
             .unwrap();
 
         assert_eq!(
@@ -5488,7 +5647,11 @@ mod branch_model_tests {
         git(p.path(), &["checkout", "main"]);
 
         let err = GitVcs
-            .reattach_head(from, &local("target"), ReattachConsent::granted())
+            .reattach_head(
+                from,
+                &local("target"),
+                &crate::alignment::Departure::granted(),
+            )
             .unwrap_err();
         assert_eq!(err.kind(), VcsErrorKind::StaleRefWitness);
         assert_eq!(
@@ -5528,7 +5691,7 @@ mod branch_model_tests {
         ] {
             let from = GitVcs.head_attachment(&work).unwrap();
             let err = GitVcs
-                .reattach_head(from, &local(name), ReattachConsent::granted())
+                .reattach_head(from, &local(name), &crate::alignment::Departure::granted())
                 .unwrap_err();
 
             assert_eq!(
@@ -5571,7 +5734,11 @@ mod branch_model_tests {
 
         let from = GitVcs.head_attachment(&work).unwrap();
         let err = GitVcs
-            .reattach_head(from, &local("absent"), ReattachConsent::granted())
+            .reattach_head(
+                from,
+                &local("absent"),
+                &crate::alignment::Departure::granted(),
+            )
             .unwrap_err();
 
         let VcsError::CommandFailed { args, repo, .. } = err else {
@@ -5637,7 +5804,11 @@ mod branch_model_tests {
         let from = GitVcs.head_attachment(&work).unwrap();
 
         GitVcs
-            .reattach_head(from, &local("shared"), ReattachConsent::granted())
+            .reattach_head(
+                from,
+                &local("shared"),
+                &crate::alignment::Departure::granted(),
+            )
             .unwrap();
 
         assert_eq!(

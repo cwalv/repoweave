@@ -235,6 +235,13 @@ Schema:
           "enum": [
             "target"
           ]
+        },
+        {
+          "description": "Where a workspace's checkouts sit against where the checked-out branch's record says they should.",
+          "type": "string",
+          "enum": [
+            "alignment"
+          ]
         }
       ]
     },
@@ -488,7 +495,21 @@ Schema:
         "absolute_path": {
           "$ref": "#/definitions/WirePath"
         },
+        "facts": {
+          "description": "What holds for the member in its expected state, such as the branch it would sit on being checked out in another workspace.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/FactOutput"
+          }
+        },
         "message": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "moved_from": {
+          "description": "The branch the checkout was moved off, when it was neither a declared branch nor named after a recorded weave branch.",
           "type": [
             "string",
             "null"

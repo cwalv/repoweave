@@ -1,5 +1,6 @@
 //! `rwv status` — per-repo state of the CWD workspace.
 
+use crate::alignment::{Accounting, Aligner, Member, ProjectStanding};
 use crate::manifest::{Project, ProjectName, Role};
 use crate::op_state;
 use crate::parallel::OutputMode;
@@ -32,11 +33,25 @@ pub struct StatusJsonOutput {
     /// land into it, read in memory from the records as last fetched. A
     /// project whose repo is not on a branch has none.
     pub records: Vec<crate::branch::BranchRecordStatus>,
-    /// Each repo whose branch stands apart from the one it publishes to,
-    /// judged on the `push-branch` axis with that state's choices: behind,
-    /// ahead, diverged, gone with commits of its own, with a foreign upstream
-    /// or with no push target. Empty, not absent, when none does.
+    /// The branch each project's workspace last aligned its members for.
+    pub aligned: Vec<AlignedStatus>,
+    /// Each repo judged on the axes `rwv status` reads, with that state's
+    /// choices: `alignment` (a member not in its expected state, or carrying a
+    /// fact such as `checkout`, and the project repo against the aligned
+    /// branch), and `push-branch` where the branch needs attention: behind,
+    /// diverged, gone with commits of its own, with a foreign upstream or with
+    /// no push target. A branch that is ahead of its push branch is the
+    /// ordinary state of work in progress and has no line; the per-repo
+    /// `relation` and `operator_branches` carry what is unpublished. Empty,
+    /// not absent, when none stands apart.
     pub judged: Vec<crate::diagnosis::JudgedOutput>,
+    /// Each member's local branch holding unpushed commits that nothing else
+    /// accounts for: checked out nowhere, named after no recorded weave
+    /// branch of any project here, and no declared branch of that member.
+    pub operator_branches: Vec<OperatorBranch>,
+    /// The backups each repo holds, with what each keeps that no branch
+    /// reaches. Only repos that hold one.
+    pub backups: Vec<crate::backup::RepoBackupsOutput>,
     /// Resolved workspace coordinates (weave root, optional workweave
     /// identity, project). Absent when no project is resolved.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -47,6 +62,35 @@ pub struct StatusJsonOutput {
     /// attempt a mutation to learn it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub op: Option<OpStatus>,
+}
+
+/// What a project's workspace last aligned its members for.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct AlignedStatus {
+    pub project: ProjectName,
+    /// The branch it last aligned for; absent where none is recorded or the
+    /// workspace is detached.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// Whether the workspace was made detached.
+    pub detached: bool,
+    /// Why the workspace state, which reads as absent, could not be read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unreadable: Option<String>,
+}
+
+/// A member's local branch holding unpushed commits that nothing else
+/// accounts for.
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+pub struct OperatorBranch {
+    /// The member's path.
+    pub path: String,
+    pub branch: String,
+    /// How many commits no remote-tracking branch reaches.
+    pub unpushed: usize,
+    pub commits: Vec<crate::log::LogCommit>,
+    /// The branch takes in from a remote branch its remote no longer has.
+    pub gone_upstream: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -283,6 +327,9 @@ pub fn run_status(
     let mut unreadable_projects: Vec<UnreadableProject> = Vec::new();
     let mut judged = crate::diagnosis::Report::default();
     let mut records: Vec<crate::branch::BranchRecordStatus> = Vec::new();
+    let mut aligned: Vec<AlignedStatus> = Vec::new();
+    let mut operator_branches: Vec<OperatorBranch> = Vec::new();
+    let accounting = Accounting::scan(ctx.primary_path());
 
     for pname in project_names_for_ctx(ctx) {
         let project_dir = project_dir(&workspace_dir, &pname);
@@ -306,6 +353,20 @@ pub fn run_status(
                 eprintln!("rwv status: could not read the branch records of project {pname}: {e:#}")
             }
         }
+        let aligner = match Aligner::open(&workspace_dir, &pname, accounting.clone()) {
+            Ok(aligner) => Some(aligner),
+            Err(e) => {
+                eprintln!("rwv status: could not read the alignment of project {pname}: {e:#}");
+                None
+            }
+        };
+        if let Some(aligner) = &aligner {
+            aligned.push(aligned_status(&pname, aligner));
+            if let Some(line) = project_line(&pname, &project_dir, aligner) {
+                judged.add(line);
+            }
+        }
+        let aligned_lock = project.lock.clone();
         // Resolve lock entries against their on-disk repos so equality with
         // a tip ResolvedRevisionId (which always carries the canonical SHA) works
         // whether the lock pinned a tag, branch, or raw SHA.
@@ -403,8 +464,28 @@ pub fn run_status(
                 continue;
             }
 
-            if let Some(line) = judge_push_branch(vcs.as_ref(), repo_path, &repo_abs, entry) {
+            if let Some(line) = judge_push_branch(vcs.as_ref(), repo_path, &repo_abs, entry)
+                .filter(|line| line.state() != crate::diagnosis::State::PushBranchAhead)
+            {
                 judged.add(line);
+            }
+            if let Some(aligner) = &aligner {
+                let member = Member {
+                    path: repo_path,
+                    entry,
+                    dir: &repo_abs,
+                    vcs: vcs.as_ref(),
+                };
+                match aligner.status_lines(&member, aligned_lock.as_ref(), repo_path) {
+                    Ok(lines) => lines.into_iter().for_each(|line| judged.add(line)),
+                    Err(e) => {
+                        eprintln!("rwv status: {repo_path}: could not judge its alignment: {e:#}")
+                    }
+                }
+            }
+            match operator_branches_of(vcs.as_ref(), repo_path, &repo_abs, &accounting) {
+                Ok(found) => operator_branches.extend(found),
+                Err(e) => eprintln!("rwv status: {repo_path}: could not list its branches: {e:#}"),
             }
 
             let branch = checkout_branch(vcs.as_ref(), &repo_abs);
@@ -456,6 +537,11 @@ pub fn run_status(
     }
 
     let op = op_state::resolve_to_owner(&workspace_dir)?;
+    let backups = if ctx.active_project().is_some() {
+        crate::backup::held_by_project(ctx)?
+    } else {
+        Vec::new()
+    };
 
     if output.is_json() {
         let envelope = StatusJsonOutput {
@@ -463,7 +549,10 @@ pub fn run_status(
             repos: entries,
             unreadable_projects,
             records,
+            aligned,
             judged: judged.output(),
+            operator_branches,
+            backups,
             resolution: Some(ctx.resolution()),
             op: op.as_ref().map(OpStatus::from),
         };
@@ -483,6 +572,22 @@ pub fn run_status(
         for record in &records {
             outln!("{}", record.line());
         }
+        for status in &aligned {
+            outln!("{}", status.line());
+        }
+        for branch in &operator_branches {
+            outln!("{}", branch.line());
+        }
+        for held in &backups {
+            for backup in &held.backups {
+                outln!(
+                    "backup {}  {}  {}",
+                    held.path,
+                    backup.name,
+                    backup.tip.short()
+                );
+            }
+        }
         if !judged.is_empty() {
             outln!();
             outln!("{}", judged.render("status").trim_end_matches('\n'));
@@ -490,6 +595,115 @@ pub fn run_status(
     }
 
     Ok(())
+}
+
+impl AlignedStatus {
+    fn line(&self) -> String {
+        let project = crate::workspace::project_rel_path(&self.project);
+        match (&self.branch, self.detached) {
+            (Some(branch), _) => format!("{project} aligned for {branch}"),
+            (None, true) => format!("{project} aligned detached"),
+            (None, false) => format!("{project} aligned for no branch"),
+        }
+    }
+}
+
+impl OperatorBranch {
+    fn line(&self) -> String {
+        let gone = if self.gone_upstream {
+            " (upstream gone)"
+        } else {
+            ""
+        };
+        format!(
+            "operator branch {}  {}  {} unpushed{gone}",
+            self.path, self.branch, self.unpushed
+        )
+    }
+}
+
+fn aligned_status(project: &ProjectName, aligner: &Aligner) -> AlignedStatus {
+    use crate::alignment::Aligned;
+    let (branch, detached) = match &aligner.state.aligned {
+        Some(Aligned::Branch(name)) => (Some(name.clone()), false),
+        Some(Aligned::Detached) => (None, true),
+        None => (None, false),
+    };
+    AlignedStatus {
+        project: project.clone(),
+        branch,
+        detached,
+        unreadable: aligner.corrupt.clone(),
+    }
+}
+
+/// The line for the project repo against the branch its workspace last
+/// aligned for.
+fn project_line(
+    project: &ProjectName,
+    project_dir: &Path,
+    aligner: &Aligner,
+) -> Option<crate::diagnosis::Judged> {
+    use crate::diagnosis::State;
+    let vcs = crate::vcs::project_vcs();
+    let judging = match &aligner.standing {
+        ProjectStanding::Aligned => return None,
+        ProjectStanding::Moved { aligned } => State::AlignmentProjectMoved
+            .of(crate::workspace::project_rel_path(project))
+            .subject(aligned),
+        ProjectStanding::Unaligned => {
+            State::AlignmentProjectUnaligned.of(crate::workspace::project_rel_path(project))
+        }
+        ProjectStanding::Detached => {
+            State::AlignmentProjectDetached.of(crate::workspace::project_rel_path(project))
+        }
+    };
+    Some(
+        judging
+            .project_repo()
+            .checkout(project_dir)
+            .bind("<b>", aligner.state_aligned_text())
+            .judge(vcs.as_ref()),
+    )
+}
+
+/// The member's local branches holding unpushed commits that nothing else
+/// accounts for.
+fn operator_branches_of(
+    vcs: &dyn Vcs,
+    repo_path: &crate::manifest::RepoPath,
+    repo_abs: &Path,
+    accounting: &Accounting,
+) -> anyhow::Result<Vec<OperatorBranch>> {
+    let mut found = Vec::new();
+    for name in vcs.list_local_branch_names(repo_abs)? {
+        let text = name.as_str();
+        if accounting.is_recorded(text) || accounting.declares(repo_path, text) {
+            continue;
+        }
+        if !vcs.checkouts_of_branch(repo_abs, &name)?.is_empty() {
+            continue;
+        }
+        let unpushed = vcs.unpushed_commits(repo_abs, &name)?;
+        if unpushed.is_empty() {
+            continue;
+        }
+        let gone_upstream = match vcs.upstream_of(repo_abs, &name)? {
+            Some(upstream) => !vcs
+                .remote_copies(repo_abs, &upstream.branch)?
+                .iter()
+                .any(|copy| copy.remote == upstream.remote),
+            None => false,
+        };
+        found.push(OperatorBranch {
+            path: repo_path.to_string(),
+            branch: text.to_owned(),
+            unpushed: unpushed.len(),
+            commits: unpushed.into_iter().map(Into::into).collect(),
+            gone_upstream,
+        });
+    }
+    Ok(found)
 }
 
 /// Where the branch `repo_abs` is on stands to the branch it publishes to,
@@ -616,7 +830,10 @@ mod tests {
             schema_url: STATUS_SCHEMA_URL.to_string(),
             unreadable_projects: Vec::new(),
             records: Vec::new(),
+            aligned: Vec::new(),
             judged: Vec::new(),
+            operator_branches: Vec::new(),
+            backups: Vec::new(),
             repos: vec![RepoStatus {
                 path: "github/org/repo".into(),
                 branch: Some("main".into()),
@@ -681,7 +898,10 @@ mod tests {
             repos: vec![],
             unreadable_projects: Vec::new(),
             records: Vec::new(),
+            aligned: Vec::new(),
             judged: Vec::new(),
+            operator_branches: Vec::new(),
+            backups: Vec::new(),
             resolution: None,
             op: Some(OpStatus {
                 id: "1779769917405921588".into(),
@@ -722,7 +942,10 @@ mod tests {
             schema_url: STATUS_SCHEMA_URL.to_string(),
             unreadable_projects: Vec::new(),
             records: Vec::new(),
+            aligned: Vec::new(),
             judged: Vec::new(),
+            operator_branches: Vec::new(),
+            backups: Vec::new(),
             repos: vec![RepoStatus {
                 path: "github/org/repo".into(),
                 branch: Some("app--wwb/app--wwa/main".into()),

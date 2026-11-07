@@ -60,6 +60,7 @@ A kind that `rwv doctor` also reports has its one entry, states and choices
 included, on [Doctor findings](./doctor-findings.md):
 
 - [`unparseable-project`](./doctor-findings.md#unparseable-project)
+- [`alignment`](./doctor-findings.md#alignment)
 
 The others follow.
 
@@ -205,6 +206,7 @@ The others follow.
 | `none` | the lock has no entry for the member, or there is no lock file; the checkout is on the declared branch at the tip of the remote's branch | `rwv clone`, which does not refuse: it completes, lists the member and exits with status 3 |
 | `unreachable` | the lock pins a commit that no ref in the clone reaches; the checkout is on the declared branch at the tip of the remote's branch | `rwv clone`, which does not refuse: it completes, lists the member and exits with status 3 |
 | `would be unreachable` | a live lock pins a commit that only the backups being dropped reach, listed with the locks that pin it | `rwv backup drop` and `rwv backup prune` |
+| `not on declared branch` | the lock pins a commit that neither the member's declared branch nor its upstream reaches, so the checkout sits detached at the pin | `rwv update` and `rwv status` report it |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
 
@@ -215,6 +217,8 @@ The others follow.
 | `unreachable` | C19: wait until the PR lands or its branch is deleted, then rerun | — | nowhere | nothing changes |
 | `would be unreachable` | C7: publish it (again) | `rwv push` | here | adds only |
 | `would be unreachable` | C27: publish this commit under a branch name you choose | VCS action (git: `git -C <checkout> push <r> <sha>:refs/heads/<name>`) | any workspace | creates or fast-forwards |
+| `not on declared branch` | C19: wait until the PR lands or its branch is deleted, then rerun | — | nowhere | nothing changes |
+| `not on declared branch` | C15: copy these commits onto `<b>` | VCS action (git: `git -C <checkout> cherry-pick <ids>`); then `rwv lock --commit` | where `<b>` is checked out | a copy adds only |
 
 **Where this sits.** [Lock as derived](../explanation/joints/lock-as-derived.md); [Reconcile repos](../how-to/reconcile-repos.md); [Destructive operations](../explanation/destructive-operations.md).
 

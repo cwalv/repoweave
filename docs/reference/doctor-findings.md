@@ -37,7 +37,7 @@ rwv doctor --json | jq -r '.issues[] |
     (if (.kind | type) == "string" then .kind else (.kind | keys[0]) end)'
 ```
 
-Fifteen kinds carry a `sub_kind` — `branch-discipline`, `clone-topology`,
+Sixteen kinds carry a `sub_kind` — `alignment`, `branch-discipline`, `clone-topology`,
 `dead-op-lease`, `index-drift`, `member-permissions`,
 `missing-replay-exclusion`, `orphaned-savepoint`, `provenance`,
 `stale-worktree-registration`, `unparseable-project`, `uninitialized-submodule`,
@@ -108,10 +108,9 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`uninitialized-submodule`](#uninitialized-submodule) / `unfetched` | Warning | Report-only |
 | [`provenance`](#provenance) / `origin-url-mismatch`, `relative-remote`, `placement-disagreement` | Warning | Report-only |
 | [`provenance`](#provenance) / `unresolvable-url`, `lock-sha-unreachable` | Error | Report-only |
-| [`branch-discipline`](#branch-discipline) / `unmigrated-ephemeral-branch`, `unrecorded-ephemeral-branch`, `stale-ephemeral-branch-safe` | Warning | Auto-fixable |
-| [`branch-discipline`](#branch-discipline) / `detached` | Warning | Report-only by default (`--adopt-detached-checkouts`) |
-| [`branch-discipline`](#branch-discipline) / `canonical-detached` | Warning | Report-only by default (`--reattach-checkouts`) |
-| [`branch-discipline`](#branch-discipline) / `shared-branch`, `foreign-ephemeral`, `blocked-ephemeral-namespace`, `blocked-detached-namespace`, `detached-off-ephemeral-branch`, `unborn-checkout`, `canonical-holds-live-workweave-ref`, `canonical-holds-leaked-ref`, `stale-ephemeral-branch-live`, `stale-ephemeral-branch-unowned` | Warning | Report-only |
+| [`alignment`](#alignment) / `on-branch`, `on-branch-with-stray-commits`, `detached`, `detached-with-unpushed-commits`, `unaligned`, `project-detached` | Warning | Report-only |
+| [`branch-discipline`](#branch-discipline) / `unrecorded-ephemeral-branch`, `stale-ephemeral-branch-safe` | Warning | Auto-fixable |
+| [`branch-discipline`](#branch-discipline) / `canonical-holds-live-workweave-ref`, `canonical-holds-leaked-ref`, `stale-ephemeral-branch-live`, `stale-ephemeral-branch-unowned` | Warning | Report-only |
 | [`dangling-ref-receipt`](#dangling-ref-receipt) | Warning | Auto-fixable |
 | [`pre-flat-ref-receipt`](#pre-flat-ref-receipt) | Warning | Auto-fixable |
 | [`index-drift`](#index-drift) / `safe-to-fix` | Warning | Auto-fixable |
@@ -1243,156 +1242,85 @@ record's `converge` carries those workweaves as `{"here": {"retire_first":
 
 ## Branches and ownership receipts
 
+### `alignment`
+
+A member's checkout, or the project repo's, is not where the checked-out project branch says it should be: on a branch other than the expected one, detached where it should be attached, or attached where it should be detached; or the workspace's record of what it last aligned for no longer matches the branch.
+
+**Why.** The checked-out project branch's record, its member entries and its lock say which branch each member sits on, and where a member's branch is checked out in another workspace, or does not reach the commit the lock pins, that it sits detached at the pin. A checkout anywhere else builds something other than what the branch describes, and a lock written from it would record that. `rwv update` moves the members it can without leaving a commit on no ref, and reports the rest with the commits that would be left.
+
+**States.** A verb that judges a repo in one of these prints `rwv <verb>: <repo>: alignment <state>`, with what the state lists beneath it, and refuses unless its row below says it completes.
+
+| State | Means | Refused by |
+|---|---|---|
+| `aligned` | the checkout is in its expected state; the state is printed only when it carries a fact: `checkout`, the member's branch being checked out in another workspace (named), so the member sits detached at its pin and nothing moves it | `rwv status` reports it with the fact; `rwv update` reports the fact for each member it detaches |
+| `on branch` | the checkout is on a branch other than the expected one, and no commit it holds would be left on no other branch or backup if it moved off | `rwv update` reports it for a checkout it did not move, one with uncommitted changes or an operation in progress; `rwv status` reports it |
+| `on branch with stray commits` | the checkout is on a branch other than the expected one, which is neither a declared branch nor named after a recorded weave branch, and holds the commits listed that no other branch, remote-tracking branch or backup reaches | `rwv update` reports it and leaves the checkout; `rwv status` reports it |
+| `detached` | the checkout is detached where it is not expected to be, and no commit reaches it that a branch lacks | `rwv update` reports it for a checkout it did not move; `rwv status` reports it |
+| `detached with unpushed commits` | the checkout is detached and holds the commits listed, which no branch or remote-tracking branch reaches | `rwv update` reports it and leaves the checkout; `rwv status` reports it |
+| `unaligned` | the lock has no entry for the member and its expected branch is found nowhere, so it stays where it is and its pin stays out of the lock | `rwv update` and `rwv status` report it |
+| `project moved` | the project repo is on another branch than the one the workspace last aligned its members for, which still exists, named in the subject | nothing refuses at the project level; `rwv status` reports it as a fact, and each member not aligned for the checked-out branch reports its own line |
+| `project unaligned` | the workspace has no record of the branch it last aligned its members for, or that branch is gone | `rwv status` reports it; `rwv update` records it |
+| `project detached` | the project repo's HEAD is on no branch and the workspace was not made detached; the commits it holds that no branch reaches are listed | `rwv update`; `rwv status` reports it |
+
+**Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
+
+| State | Choice | Spelled | Where | Keeps work because |
+|---|---|---|---|---|
+| `on branch` | C6: align members for the checked-out branch | `rwv update` | here | moves only what alignment moves |
+| `on branch with stray commits` | C15: copy these commits onto `<b>` | VCS action (git: `git -C <checkout> cherry-pick <ids>`); then `rwv lock --commit` | where `<b>` is checked out | a copy adds only |
+| `on branch with stray commits` | C14: keep this work on a branch, then return to the expected branch | VCS action (git: `git -C <checkout> branch <name> <sha>`); then `rwv update` | any workspace | the branch holds the work before anything moves |
+| `detached` | C6: align members for the checked-out branch | `rwv update` | here | moves only what alignment moves |
+| `detached with unpushed commits` | C14: keep this work on a branch, then return to the expected branch | VCS action (git: `git -C <checkout> branch <name> <sha>`); then `rwv update` | any workspace | the branch holds the work before anything moves |
+| `detached with unpushed commits` | C15: copy these commits onto `<b>` | VCS action (git: `git -C <checkout> cherry-pick <ids>`); then `rwv lock --commit` | where `<b>` is checked out | a copy adds only |
+| `unaligned` | C18: start `<m>`'s `<b>` at a commit you choose | VCS action (git: `git -C <checkout> branch <name> <sha>`); then `rwv update` | any workspace | creates only |
+| `project moved` | C6: align members for the checked-out branch | `rwv update` | here | moves only what alignment moves |
+| `project unaligned` | C6: align members for the checked-out branch | `rwv update` | here | moves only what alignment moves |
+| `project detached` | C14: keep this work on a branch, then return to the expected branch | VCS action (git: `git -C <checkout> branch <name> <sha>`); then `rwv update` | any workspace | the branch holds the work before anything moves |
+
+**Where this sits.** [Clone topology](../explanation/joints/clone-topology.md); [Workweave lifecycle](../explanation/joints/workweave-lifecycle.md); [Shared refs and drift](../explanation/joints/shared-refs-drift.md).
+
+#### `on-branch`
+
+**Warning. Report-only.** The checkout is on a branch the workspace does not expect, and moving it to the expected state leaves every commit it holds on some other ref. **What to do:** `rwv update`, which moves it.
+
+#### `on-branch-with-stray-commits`
+
+**Warning. Report-only.** The checkout is on a branch the workspace does not expect, and it holds commits that no other branch, remote-tracking branch or backup reaches, listed. `rwv update` leaves it. **What to do:** copy the commits onto the expected branch, or keep them on a branch of their own and run `rwv update`; the message names the command.
+
+#### `detached`
+
+**Warning. Report-only.** The checkout is detached where the workspace expects it on a branch, or at another commit than its pin, and no commit reaches it that a branch lacks. **What to do:** `rwv update`, which returns it.
+
+#### `detached-with-unpushed-commits`
+
+**Warning. Report-only.** The checkout is detached and holds commits no branch or remote-tracking branch reaches, listed. `rwv update` leaves it. **What to do:** keep the commits on a branch, then run `rwv update`; the message names the command.
+
+#### `unaligned`
+
+**Warning. Report-only.** The lock has no entry for the member and its expected branch exists nowhere, so it stays where it is. **What to do:** pin it at a commit you choose, or start its branch at one.
+
+#### `project-detached`
+
+**Warning. Report-only.** The project repo's HEAD is on no branch, and the workspace was not made detached, so no record says how its members should sit. The commits it holds that no branch reaches are listed. **What to do:** keep them on a branch if there are any, then switch the project repo back to a branch.
+
 ### `branch-discipline`
 
-`branch-discipline` enforces the invariant that every workweave repo checkout
-sits on its own `<project>--<workweave>` ephemeral branch, every canonical
-clone sits on a non-ephemeral branch, and stale ephemeral branches left over
-from deleted workweaves are surfaced. It catches manual operations no other
-scan can see — a `git switch main` inside a workweave, or a `branch -D` that
-left an orphan behind in the canonical.
+`branch-discipline` covers the refs rwv holds an ownership receipt for: a
+workweave's own ref, what a canonical store is attached to, and stale
+ephemeral branches left over from deleted workweaves. Where a member's checkout
+stands against the branch it should be on is [`alignment`](#alignment).
 
 Every deletion `--fix` performs is gated twice: on an ownership receipt for
 that exact ref in that exact store, and on a warrant proving the loss is safe.
 Neither gate is inferable from a branch name.
 
-Its findings are grouped below by what each one is about — the workweave
-checkout, the canonical store, or a leftover ephemeral branch — because the
+Its findings are grouped below by what each one is about, because the
 disposition differs across them and no statement about the kind as a whole
 would be true. Every finding names a `sub_kind`, which `rwv doctor --json`
 prints and which `rwv explain <sub-kind>` serves directly; that is the entry
 to read, and this one is only the route to it.
 
-### `branch-discipline` — a workweave checkout on the wrong branch
-
-#### `shared-branch`
-
-**Warning. Report-only.** The workweave checkout is on a non-ephemeral branch
-such as `main` — from a `git switch` inside the workweave, or a clone that was
-never moved onto an ephemeral branch.
-
-A member slot holding a symlink is not scanned: read through the link it is
-the canonical store, on the canonical store's branch. It is reported as
-`workweave-drift`.
-
-**What to do:** the message names the `git switch` that repairs it, and picks
-between `git switch <name>` and `git switch -c <name>` based on whether the
-ref already exists.
-
-This finding is report-only: the state is operator-made (`git switch` run by
-hand), and the printed command is exact and registry-aware (naming an existing
-recorded branch whenever a receipt exists).
-
-#### `foreign-ephemeral`
-
-**Warning. Report-only.** The checkout is on an ephemeral ref rwv recorded for
-a *different* workweave. Keyed on the receipt, not on the name: a hand-made
-look-alike lands in `shared-branch` instead. Both are report-only, so the
-distinction costs nothing but accuracy.
-
-**What to do:** switch to this workweave's own ref. Report-only for the same
-reason as `shared-branch`: the state is operator-made and the printed switch is
-exact.
-
-#### `detached`
-
-**Warning. Report-only by default.** HEAD points directly at a commit instead
-of a named branch, which breaks the merged-check and ref-namespace
-invariants.
-
-Neither this finding nor
-[`blocked-detached-namespace`](#blocked-detached-namespace) or
-[`detached-off-ephemeral-branch`](#detached-off-ephemeral-branch) is reported
-while an operation owns HEAD: an rwv operation holding the workweave, whose
-exits, `--continue` and `rwv abort`, [`stale-op-state`](#stale-op-state)
-names, or a rebase, merge, cherry-pick or bisect stopped in the checkout,
-which `rwv status` shows. git refuses to switch branches mid-rebase, and moving
-HEAD mid-bisect abandons the bisect.
-
-**What to do:** `rwv doctor --fix --adopt-detached-checkouts` mints the
-workweave's flat ref *at HEAD*. When a pre-flat branch of this workweave's
-namespace also exists, both tips are reported side by side, because those two
-commits are what you are choosing between — adopting at HEAD can strand the
-other one. When the flat ref itself already exists there is nothing to mint,
-and the checkout reports
-[`detached-off-ephemeral-branch`](#detached-off-ephemeral-branch) instead.
-
-#### `unmigrated-ephemeral-branch`
-
-**Warning. Auto-fixable.** The checkout is on a pre-flat
-`<project>--<workweave>/<segment>` ref of its own namespace — the shape rwv
-minted before ephemeral names were flattened.
-
-**What to do:** `rwv doctor --fix` records a receipt at the ref's current tip
-and renames it to the flat name. A rename preserves the tip, so no commit
-moves. Namespace membership is decided against the name this workweave
-*mints*, never by taking the observed name apart.
-
-#### `blocked-ephemeral-namespace`
-
-**Warning. Report-only.** Two or more refs share this workweave's namespace in
-one store. git holds `refs/heads/p--w` and `refs/heads/p--w/x` as a file and a
-directory of the same name, so the flat ref cannot be created and no migration
-arm can run.
-
-Reported *in place of* `unmigrated-ephemeral-branch`, not beside it: the
-migration pass skips the pair before any arm runs, so the rename that finding
-promises cannot happen. Every migration arm records its ownership receipt
-before writing the ref, and a receipt for a pre-flat name resolves to no
-workweave on disk, which would read as stale and deletable.
-
-**What to do:** decide which ref is this workweave's branch and move or delete
-the others, leaving at most one ref under the namespace; then re-run `rwv
-doctor --fix` to migrate it. Never auto-fixed: which ref is which is not
-derivable from the refs.
-
-#### `blocked-detached-namespace`
-
-**Warning. Report-only.** The workweave checkout is in detached-HEAD state AND
-two or more refs share its namespace in one store. The same guard that skips
-`fix_branch_model_migration` when the namespace is blocked also prevents the
-`--adopt-detached-checkouts` arm from running — the guard fires before any arm
-is reached.
-
-Reported *in place of* `detached`, not beside it, because the
-`--adopt-detached-checkouts` remedy on `detached` cannot run while the
-namespace is blocked.
-
-**What to do:** decide which ref is this workweave's branch and move or delete
-the others, leaving at most one ref under the namespace; then re-run `rwv
-doctor` to get the ordinary `detached` finding with a remedy that will actually
-run. Never auto-fixed: which ref is which is not derivable from the refs.
-
-#### `detached-off-ephemeral-branch`
-
-**Warning. Report-only.** The workweave checkout is in detached-HEAD state
-while its flat `<project>--<workweave>` branch already exists — a checkout
-detached by hand, such as onto a pull request's tip in a review workweave.
-
-Reported *in place of* `detached`, not beside it: `--adopt-detached-checkouts`
-mints the branch only where none exists, and leaves this checkout alone.
-
-Not reported while an operation owns HEAD, as for [`detached`](#detached).
-
-**What to do:** the message names the reattach that leaves every commit on a
-branch. Which one depends on how HEAD stands against the branch, reported as
-`ancestry` in `--json`:
-
-- `equal` or `head-behind` — the branch carries HEAD. `git switch <branch>`
-  reattaches the checkout, moving the working tree to the branch's tip when
-  the two differ.
-- `head-ahead` — HEAD carries the branch and commits it lacks, which a bare
-  `git switch <branch>` would leave on no branch.
-  `git switch <branch> && git merge --ff-only <HEAD>` reattaches the checkout
-  and fast-forwards the branch to HEAD.
-- `diverged` — each holds commits the other lacks, so switching strands
-  HEAD's and moving the branch strands its own. `git switch -c <new-branch>`
-  puts HEAD's commits on a branch first. The checkout then reports
-  [`shared-branch`](#shared-branch), whose switch target is `<branch>`.
-  Switching back strands nothing, since `<new-branch>` holds the commits, but
-  leaves them off the workweave's branch, which is what `rwv sync-to` lands.
-  To bring them onto it, run `git rebase <branch>` on `<new-branch>`, then
-  `git switch <branch> && git merge --ff-only <new-branch>`.
+### `branch-discipline` — a workweave's own ref
 
 #### `unrecorded-ephemeral-branch`
 
@@ -1402,14 +1330,6 @@ before receipts existed leaves behind. Until it is adopted the ref is nobody's,
 so `rwv workweave delete` will leave it behind.
 
 **What to do:** `rwv doctor --fix` adopts it at its observed tip.
-
-#### `unborn-checkout`
-
-**Warning. Report-only.** The checkout is on a branch with no commits. This is
-report-only not because a fix is missing but because there is no revision to
-record a receipt against, so there is nothing the migration could own.
-
-**What to do:** make an initial commit, then re-run `rwv doctor --fix`.
 
 ### `branch-discipline` — what the canonical store is attached to
 
@@ -1434,19 +1354,6 @@ uses, so there is no arm here even though the ref is one rwv owns.
 **What to do:** `git switch <tracking-branch>`, then re-run
 `rwv doctor --fix`. Once the store is off the ref it becomes an ordinary
 stale-branch finding and `--fix` reclaims it under a warrant.
-
-#### `canonical-detached`
-
-**Warning. Report-only by default.** The canonical store — or the project
-repo, which is an instance of the same branch model rather than an exception
-to it — is in detached-HEAD state.
-
-**What to do:** `rwv doctor --fix --reattach-checkouts` reattaches, but only
-when the tracking declaration's local counterpart exists *and* its tip equals
-HEAD. That condition is false for the ordinary post-fetch state
-(a stale counterpart with HEAD at the lock SHA), so the flag repairs the
-minority it can prove safe rather than reattaching a whole weave. Without it,
-the finding names the `git switch` that would repair it and nothing moves.
 
 ### `branch-discipline` — stale ephemeral branches
 

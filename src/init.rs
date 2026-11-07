@@ -173,6 +173,7 @@ pub fn init(
     }
 
     record_trunk(vcs.as_ref(), name, &project_dir)?;
+    crate::alignment::record(ctx.primary_path(), name)?;
 
     eprintln!(
         "Initialized project '{}' at {}",
@@ -320,6 +321,7 @@ pub fn init_adopt(
         .context("failed to plant merge.rwv-ours config")?;
 
     record_trunk(vcs.as_ref(), &project_name, &project_dir)?;
+    crate::alignment::record(root, &project_name)?;
 
     eprintln!(
         "Adopted project '{}' at {}",

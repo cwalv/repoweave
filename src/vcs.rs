@@ -3,10 +3,8 @@
 //! repoweave operates on repos and worktrees. The VCS layer abstracts over
 //! the specific tool (git, jj, sl, hg) so core logic doesn't hardcode git.
 
-use crate::cli::consent::{
-    AdoptDetachedConsent, DetachConsent, DiscardLocalCommitsConsent, DiscardUnmergedConsent,
-    ForcePushConsent, ReattachConsent,
-};
+use crate::alignment::Departure;
+use crate::cli::consent::{DiscardLocalCommitsConsent, DiscardUnmergedConsent, ForcePushConsent};
 use crate::naming::FlatAddress;
 use crate::op_state::SavepointKey;
 use crate::registry::CloneUrl;
@@ -1136,6 +1134,13 @@ pub struct Upstream {
     pub branch: RawRefName,
 }
 
+/// A remote's copy of a branch, as last fetched.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteTip {
+    pub remote: RemoteHandle,
+    pub tip: ResolvedRevisionId,
+}
+
 /// How a branch tip stands to another, by ancestry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Relation {
@@ -1528,6 +1533,12 @@ pub enum BranchChange {
 pub struct LocalRefName(String);
 
 impl LocalRefName {
+    /// The local branch the engine found for a member, named at the point it
+    /// attaches a checkout to it.
+    pub fn of_branch(found: &RawRefName) -> Self {
+        Self(found.as_str().to_owned())
+    }
+
     /// Borrow the underlying string.
     pub fn as_str(&self) -> &str {
         &self.0
@@ -2290,8 +2301,6 @@ enum WarrantKind {
     /// The ref's tip was kept as a backup before the operator's named
     /// override discarded it.
     BackedUp { backup: BackupWitness },
-    /// The operator passed the named override that consents to this loss.
-    OperatorAdopted,
 }
 
 impl DeletionWarrant {
@@ -2349,28 +2358,11 @@ impl DeletionWarrant {
         Ok(Self(WarrantKind::BackedUp { backup }))
     }
 
-    /// The operator passed `--adopt-detached-checkouts`, the consent for
-    /// stranding a legacy branch's tip.
-    ///
-    /// A second constructor rather than a widened `operator_discarded`
-    /// because the two flags consent to different losses and the house rule
-    /// is one token per consequence: `--discard-unmerged-commits`
-    /// gives up commits at `workweave delete`, `--adopt-detached-checkouts`
-    /// gives up the *name* a legacy branch holds so the flat one can exist in
-    /// its place. The caller must warn when that strands a tip; the token
-    /// records only that the operator asked for it.
-    pub fn adopt_detached(consent: AdoptDetachedConsent) -> Self {
-        let _ = consent;
-        Self(WarrantKind::OperatorAdopted)
-    }
-
     /// The backup this warrant rests on, when it rests on one.
     pub fn backup(&self) -> Option<&BackupWitness> {
         match &self.0 {
             WarrantKind::BackedUp { backup } => Some(backup),
-            WarrantKind::Unmoved { .. }
-            | WarrantKind::Merged { .. }
-            | WarrantKind::OperatorAdopted => None,
+            WarrantKind::Unmoved { .. } | WarrantKind::Merged { .. } => None,
         }
     }
 
@@ -2393,7 +2385,6 @@ impl DeletionWarrant {
                     backup.backup().name
                 )
             }
-            WarrantKind::OperatorAdopted => "operator passed --adopt-detached-checkouts".to_owned(),
         }
     }
 }
@@ -3497,7 +3488,7 @@ pub trait Vcs: Send + Sync {
     ///
     /// For git: runs `git rev-parse
     /// --path-format=absolute --git-common-dir` in `workspace`.
-    fn resolve_canonical_store(&self, workspace: &Path) -> Option<PathBuf>;
+    fn store_of(&self, workspace: &Path) -> Option<PathBuf>;
     /// List paths registered as worktrees of `repo` whose on-disk
     /// directories no longer exist. The administrative entries are still
     /// in the VCS state and will be dropped by [`worktree_prune`].
@@ -3806,6 +3797,65 @@ pub trait Vcs: Send + Sync {
     /// [`mid_op`]: Vcs::mid_op
     fn mid_operation(&self, repo: &Path) -> Option<MidOperation>;
 
+    /// The directory the VCS keeps `checkout`'s own state in, apart from
+    /// what it shares with every other checkout of its store (git: the
+    /// worktree's private dir; `.git` itself for a clone).
+    fn private_dir(&self, checkout: &Path) -> Result<PathBuf, VcsError>;
+
+    /// Every checkout of `repo`'s store that has `branch` checked out, the
+    /// checkout `repo` names included.
+    fn checkouts_of_branch(
+        &self,
+        repo: &Path,
+        branch: &RawRefName,
+    ) -> Result<Vec<PathBuf>, VcsError>;
+
+    /// The remote branch the VCS records for the local branch `branch`,
+    /// checked out or not, or `None` when it records none.
+    fn upstream_of(&self, repo: &Path, branch: &RawRefName) -> Result<Option<Upstream>, VcsError>;
+
+    /// Each remote's copy of `branch` as last fetched, one per remote that
+    /// has it.
+    fn remote_copies(&self, repo: &Path, branch: &RawRefName) -> Result<Vec<RemoteTip>, VcsError>;
+
+    /// Record `upstream` as the branch `branch` takes in from.
+    fn set_upstream(
+        &self,
+        repo: &Path,
+        branch: &RawRefName,
+        upstream: &Upstream,
+    ) -> Result<(), VcsError>;
+
+    /// Create the local branch `name` at `at`, taking in from `upstream` when
+    /// one is given. No checkout moves. Refuses a name already taken.
+    fn create_branch(
+        &self,
+        repo: &Path,
+        name: &RawRefName,
+        at: &ResolvedRevisionId,
+        upstream: Option<&Upstream>,
+    ) -> Result<(), VcsError>;
+
+    /// The commits `tip` reaches that neither `onto`, nor any branch other
+    /// than `leaving`, nor any remote-tracking branch, nor any backup
+    /// reaches, newest first: what leaving `leaving` for `onto` would leave
+    /// on no other ref.
+    fn stray_commits(
+        &self,
+        repo: &Path,
+        tip: &ResolvedRevisionId,
+        leaving: Option<&RawRefName>,
+        onto: Option<&ResolvedRevisionId>,
+    ) -> Result<Vec<CommitSummary>, VcsError>;
+
+    /// Materialize a worktree of `store` at `dest`, detached at `at`.
+    fn materialize_worktree_detached(
+        &self,
+        store: &Path,
+        dest: &Path,
+        at: &ResolvedRevisionId,
+    ) -> Result<(), VcsError>;
+
     // ---- MOVE --------------------------------------------------------------
 
     /// Fast-forward the ref `on` witnesses, refusing rather than clobbering
@@ -3956,18 +4006,16 @@ pub trait Vcs: Send + Sync {
 
     /// Leave the checkout `from` witnesses on no branch, at `to`.
     ///
-    /// Post-birth attachment change: requires the operator's consent,
-    /// because what is lost is the name their commits hang off. `consent`
-    /// is not otherwise inspected: its field is private to `cli::consent`,
-    /// so this module cannot even destructure it. Holding a value of the
-    /// type is the whole proof.
+    /// Post-birth attachment change: the [`Departure`] is the proof that
+    /// alignment found the checkout may leave the branch it is on, which
+    /// keeps every commit the branch holds.
     fn detach_head(
         &self,
         from: &AttachedRef,
         to: &ResolvedRevisionId,
-        consent: DetachConsent,
+        departure: &Departure,
     ) -> Result<(), VcsError> {
-        let _ = consent;
+        let _ = departure;
         self.verify_attachment(from)?;
         self.set_detached_head(from.repo(), to)
     }
@@ -3977,15 +4025,14 @@ pub trait Vcs: Send + Sync {
     /// Takes the whole [`HeadAttachment`] rather than a witness: reattach
     /// is reachable from all three states (including `Unborn`, where the
     /// operator wants off a branch that never got a commit), and the state
-    /// it planned against must still hold. `consent` is not otherwise
-    /// inspected — see [`detach_head`](Vcs::detach_head)'s doc comment.
+    /// it planned against must still hold.
     fn reattach_head(
         &self,
         from: HeadAttachment,
         to: &LocalRefName,
-        consent: ReattachConsent,
+        departure: &Departure,
     ) -> Result<(), VcsError> {
-        let _ = consent;
+        let _ = departure;
         let repo = from.repo().to_path_buf();
         let observed = self.head_attachment(&repo)?;
         if observed != from {
@@ -4104,50 +4151,6 @@ pub trait Vcs: Send + Sync {
         from: &RawRefName,
         to: &RawRefName,
     ) -> Result<(), VcsError>;
-
-    // ---- adoption of a detached checkout ---------------------------------
-
-    /// Birth `to` at the commit `from` is detached on, and attach the
-    /// checkout to it.
-    ///
-    /// A birth *and* an ATTACH, which is why it takes a consent token: R1
-    /// makes detached → attached an attachment change, and the workweave's
-    /// HEAD is at the lock SHA, not at whatever a legacy branch reached.
-    ///
-    /// No start point is passed to the birth. The ref is created where HEAD
-    /// already is, so the working tree does not move and the call cannot be a
-    /// rewind wearing a birth's clothes — `to`'s recorded tip is the same
-    /// commit by construction (the caller records the receipt from this very
-    /// observation), and re-deriving it from the receipt would only create a
-    /// way for the two to disagree.
-    fn adopt_detached_checkout(
-        &self,
-        from: &DetachedHead,
-        to: &OwnedRef,
-        consent: AdoptDetachedConsent,
-    ) -> Result<(), VcsError> {
-        let _ = consent;
-        let repo = from.repo().to_path_buf();
-        let observed = self.head_attachment(&repo)?;
-        if observed != HeadAttachment::Detached(from.clone()) {
-            return Err(VcsError::StaleRefWitness {
-                repo,
-                expected: HeadAttachment::Detached(from.clone()).to_string(),
-                observed: observed.to_string(),
-            });
-        }
-        self.birth_ref_at_head(&repo, to.name())
-    }
-
-    /// VCS-specific half of [`adopt_detached_checkout`]: create `name` at
-    /// `repo`'s current HEAD and attach HEAD to it.
-    ///
-    /// **The impl must refuse when `name` already exists.** Reusing an
-    /// existing branch here would be an adoption of a ref this call holds no
-    /// receipt for, and moving it to HEAD would be an unwitnessed MOVE.
-    ///
-    /// [`adopt_detached_checkout`]: Vcs::adopt_detached_checkout
-    fn birth_ref_at_head(&self, repo: &Path, name: &RawRefName) -> Result<(), VcsError>;
 
     // ---- publish ----------------------------------------------------------
 
@@ -4501,6 +4504,14 @@ pub trait WorkspacePopulation: Send + Sync {
         name: &RawRefName,
         start_point: &ResolvedRevisionId,
     ) -> Result<RefOrigin, VcsError>;
+
+    /// [`Vcs::materialize_worktree_detached`], writing no tracked file.
+    fn materialize_unpopulated_worktree_detached(
+        &self,
+        store: &Path,
+        dest: &Path,
+        at: &ResolvedRevisionId,
+    ) -> Result<(), VcsError>;
 
     /// Every tracked file `workspace` records, with what a checkout writes
     /// for it. A path mid-merge records no single content and is omitted.

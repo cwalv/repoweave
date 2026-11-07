@@ -479,7 +479,7 @@ fn a_kind_shared_with_a_finding_has_exactly_one_entry_and_explain_resolves_it() 
         .collect();
     assert_eq!(
         shared,
-        ["unparseable-project"],
+        ["alignment", "unparseable-project"],
         "the kinds doctor also reports"
     );
 

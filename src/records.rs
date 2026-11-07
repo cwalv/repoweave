@@ -425,6 +425,11 @@ impl View {
         None
     }
 
+    /// The name of every branch the records hold an entry for.
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.snapshot.keys().map(String::as_str)
+    }
+
     /// Every branch whose record names `branch` as its target.
     pub fn dependents(&self, branch: &BranchName) -> Vec<BranchName> {
         self.snapshot

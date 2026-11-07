@@ -135,6 +135,26 @@ pub(crate) fn create_worktree_populated(
     Populated { created, filled }
 }
 
+/// Create a worktree of `store` at `dest`, detached at `at`, with every file
+/// another workspace of the repository holds placed from it for a member of
+/// `role`.
+pub(crate) fn create_detached_populated(
+    vcs: &dyn Vcs,
+    store: &Path,
+    dest: &Path,
+    at: &ResolvedRevisionId,
+    role: Role,
+    fs: &dyn FilePrimitives,
+) -> anyhow::Result<Option<FilePlacement>> {
+    let Some(population) = vcs.population() else {
+        vcs.materialize_worktree_detached(store, dest, at)?;
+        return Ok(None);
+    };
+    population.materialize_unpopulated_worktree_detached(store, dest, at)?;
+    let sources = sources(vcs, dest, at);
+    fill(population, dest, role, &sources, fs).map(Some)
+}
+
 fn fill(
     population: &dyn WorkspacePopulation,
     dest: &Path,
@@ -303,7 +323,7 @@ fn sources(vcs: &dyn Vcs, dest: &Path, at: &ResolvedRevisionId) -> Vec<Source> {
         _ => false,
     };
     let primary = vcs
-        .resolve_canonical_store(dest)
+        .store_of(dest)
         .and_then(|store| store.parent().map(Path::to_path_buf));
     let mut found: Vec<(bool, bool, PathBuf)> = vcs
         .list_worktrees(dest)
@@ -477,10 +497,7 @@ pub(crate) fn populate_submodules(
     let Some(population) = vcs.population() else {
         return done;
     };
-    let (Some(store), Ok(at)) = (
-        vcs.resolve_canonical_store(member),
-        vcs.head_revision(member),
-    ) else {
+    let (Some(store), Ok(at)) = (vcs.store_of(member), vcs.head_revision(member)) else {
         return done;
     };
     let level = Level {
@@ -639,7 +656,7 @@ fn fetch_level(
     role: Role,
     done: &mut SubmoduleFetch,
 ) {
-    let Some(module_data) = vcs.resolve_canonical_store(workspace) else {
+    let Some(module_data) = vcs.store_of(workspace) else {
         return;
     };
     let own = if records_submodules(workspace) {

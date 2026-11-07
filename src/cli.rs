@@ -202,20 +202,6 @@ pub enum Commands {
         /// By default only the active project is checked.
         #[arg(long)]
         all: bool,
-        /// With `--fix`, reattach a canonical store's detached HEAD to its
-        /// tracking counterpart when that counterpart exists and its tip
-        /// equals HEAD. Without this flag, `--fix` only reports a detached
-        /// canonical, naming the `git switch` that would reattach it.
-        #[arg(long)]
-        reattach_checkouts: bool,
-        /// With `--fix`, let the branch-model migration mint a workweave's
-        /// ephemeral branch at a detached checkout's HEAD (the lock SHA).
-        /// When a pre-flat `<project>--<workweave>/<segment>` branch holds
-        /// that name, it is given up to make room — and the migration warns
-        /// when doing so strands commits HEAD does not carry. Without this
-        /// flag, `--fix` reports both tips and leaves the checkout alone.
-        #[arg(long)]
-        adopt_detached_checkouts: bool,
         /// With `--fix`, relink a workweave checkout whose link dangles and
         /// whose pinned revision and branch are in no clone onto the
         /// workweave's branch created at the canonical clone's HEAD, keeping
@@ -223,7 +209,7 @@ pub enum Commands {
         /// stand as edits. Without this flag, `--fix` reports the checkout.
         #[arg(long)]
         abandon_lost_pins: bool,
-        /// Filter the report to the named finding kind (repeatable). Kind names are the wire spellings `--json` emits for violations and integration issues (e.g. `branch-discipline`, `orphaned-savepoint`, `tool-missing`); an unknown name refuses, listing the valid set. Kinds whose classes normally collapse to a per-class count line render itemized under the filter — this is the drill-down. The exit code reflects the filtered view; with `--json`, any finding in it exits non-zero, warnings included.
+        /// Filter the report to the named finding kind (repeatable). Kind names are the wire spellings `--json` emits for violations and integration issues (e.g. `alignment`, `orphaned-savepoint`, `tool-missing`); an unknown name refuses, listing the valid set. Kinds whose classes normally collapse to a per-class count line render itemized under the filter — this is the drill-down. The exit code reflects the filtered view; with `--json`, any finding in it exits non-zero, warnings included.
         #[arg(long = "kind", value_name = "KIND", conflicts_with_all = ["locked", "fix"])]
         kind: Vec<String>,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
@@ -445,10 +431,6 @@ pub enum Commands {
     },
     /// Fetch, fast-forward the project branch to its upstream, then update the members to the lock it holds.
     Pull {
-        /// Align a repo even when that detaches a branch attached to
-        /// something other than its tracking counterpart
-        #[arg(long)]
-        detach_checkouts: bool,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
@@ -478,11 +460,6 @@ pub enum Commands {
         /// Commit message for `--commit`, in place of the generated summary of which repos changed
         #[arg(short = 'm', long = "message", value_name = "MSG", requires = "commit")]
         message: Option<String>,
-        /// Align a repo even when that detaches a branch attached to
-        /// something other than its tracking counterpart, or moves the
-        /// counterpart in a way that is not a fast-forward
-        #[arg(long)]
-        detach_checkouts: bool,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,

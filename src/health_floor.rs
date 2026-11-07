@@ -53,6 +53,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
 
+/// The newest release that still migrates the pre-flat workweave branch shape
+/// `{project}--{workweave}/<segment>`.
+pub const PRE_FLAT_BRIDGE: &str = "0.25.0";
+
 /// File name of the floor record, at the weave root.
 pub const FLOOR_FILE: &str = ".rwv-health-floor";
 

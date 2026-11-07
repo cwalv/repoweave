@@ -730,7 +730,7 @@ fn adopt_placement(
 
 fn shares_store(vcs: &dyn Vcs, a: &Path, b: &Path) -> bool {
     let store = |p: &Path| {
-        vcs.resolve_canonical_store(p)
+        vcs.store_of(p)
             .and_then(|s| CanonicalPath::existing(&s).ok())
     };
     matches!((store(a), store(b)), (Some(x), Some(y)) if x == y)

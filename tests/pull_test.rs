@@ -239,7 +239,7 @@ fn pull_reports_a_member_the_pulled_lock_moved_backward_as_re_pinned() {
     weave.git_project(&["push", "origin", "main"]);
     weave.forge_project_commit(None, Some(&old_member));
 
-    let out = weave.rwv(&["pull", "--detach-checkouts"]);
+    let out = weave.rwv(&["pull"]);
 
     assert!(out.status.success(), "{}", stderr(&out));
     let text = stdout(&out);

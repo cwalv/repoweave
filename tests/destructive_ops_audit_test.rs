@@ -305,7 +305,7 @@ const ALLOWLIST: &[Allowed] = &[
             --discard-uncommitted and the unmerged refusal unless \
             DiscardUnmergedConsent (see the workweave.rs/remove_dir_all \
             entry), after resolving each worktree's actual canonical-store \
-            parent (Vcs::resolve_canonical_store) and refusing when that \
+            parent (Vcs::store_of) and refusing when that \
             checkout is itself a canonical store with dependents outside the \
             workweave — the tier-0 topology precondition, not bypassable by \
             any waiver. From CheckoutRemoval::perform's RegisteredWorktree \
@@ -380,9 +380,8 @@ const ALLOWLIST: &[Allowed] = &[
             (2) set_detached_head: the branch-model ATTACH/MOVE primitive \
             for a HEAD that names no branch. No -f, so git's own refusal to \
             overwrite modified paths still applies. Reachable only through \
-            detach_head, which requires a DetachConsent minted from \
-            --detach-checkouts and re-verifies the attachment witness \
-            first, or through advance_detached_head, which is a MOVE of an \
+            detach_head, which requires a Departure proof alignment mints \
+            and re-verifies the attachment witness first, or through advance_detached_head, which is a MOVE of an \
             already-detached HEAD and refuses when the repo is mid-op \
             (including mid-bisect). \
             (3) attach_head_to: reattaches to an EXISTING local branch. \
@@ -396,9 +395,8 @@ const ALLOWLIST: &[Allowed] = &[
             defense in depth for the window after the check. No -f, so \
             git's own refusal to overwrite modified paths still applies. \
             Reachable only through reattach_head, which requires a \
-            ReattachConsent minted from --reattach-checkouts and refuses \
-            when the observed HEAD state differs from the one the caller \
-            planned against. \
+            Departure proof alignment mints and refuses when the observed \
+            HEAD state differs from the one the caller planned against. \
             (4) clone_attached_at: the second half of a birth, and it can \
             only ever run against a repo the first half of the same call \
             just created — there is no signature that points it at an \

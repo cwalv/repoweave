@@ -6,7 +6,6 @@
 //! then aligned to the lock the pulled commit brought.
 
 use crate::activate::ActivateOptions;
-use crate::cli::consent::DetachConsent;
 use crate::diagnosis::{judge_edits, Report, State};
 use crate::fetch::{fetch_repos, FetchedRepoOutput};
 use crate::manifest::{LockFile, Manifest, ProjectName, RepoEntry, RepoPath};
@@ -107,6 +106,8 @@ pub struct PullJsonOutput {
     pub project: ProjectTakeInOutput,
     /// The update's per-member outcomes.
     pub outcomes: Vec<MemberOutcomeOutput>,
+    /// Each member the update left where it was, judged.
+    pub judged: Vec<crate::diagnosis::JudgedOutput>,
     /// How the files of each checkout the update moved or created were
     /// placed. Empty, not absent, when it placed none.
     pub placements: Vec<PlacementOutput>,
@@ -161,7 +162,6 @@ impl Recorded {
 pub fn run_pull(
     ctx: &WorkspaceContext,
     selection: &MemberSelection,
-    detach_checkouts: Option<DetachConsent>,
     jobs: usize,
     output: OutputMode,
     activation: ActivateOptions,
@@ -184,13 +184,14 @@ pub fn run_pull(
     crate::branch::require_recorded(ctx)?;
     let project = take_in_project(ctx, &project_name, output)?;
 
-    let run = update_members(ctx, selection, detach_checkouts, jobs, output, activation)?;
+    let run = update_members(ctx, selection, jobs, output, activation)?;
     if output.is_json() {
         PullJsonOutput {
             schema: PULL_SCHEMA_URL.to_owned(),
             fetched: fetched.records,
             project,
             outcomes: run.envelope.outcomes,
+            judged: run.envelope.judged,
             placements: run.envelope.placements,
             resolution: Some(ctx.resolution()),
             skipped: run.envelope.skipped,

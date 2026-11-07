@@ -36,6 +36,8 @@ fn clone_json_envelope_round_trips() {
                 status: MemberOutcomeStatus::Ok,
                 message: None,
                 refusal: None,
+                moved_from: None,
+                facts: Vec::new(),
             },
             MemberOutcomeOutput {
                 path: "github/org/beta".into(),
@@ -45,6 +47,8 @@ fn clone_json_envelope_round_trips() {
                 status: MemberOutcomeStatus::Skipped,
                 message: Some("skipped github/org/beta".into()),
                 refusal: None,
+                moved_from: None,
+                facts: Vec::new(),
             },
         ],
         left: Vec::new(),
@@ -97,6 +101,8 @@ fn member_outcome_failed_serializes() {
         status: MemberOutcomeStatus::Failed,
         message: Some("clone failed: connection refused".into()),
         refusal: None,
+        moved_from: None,
+        facts: Vec::new(),
     };
     let v = serde_json::to_value(&record).expect("serializes");
     assert_eq!(v["status"], "failed");

@@ -204,7 +204,8 @@ fn update_refuses_when_attached_to_a_branch_the_manifest_does_not_declare() {
         .failure()
         .stderr(predicate::str::contains("is on branch 'feature'"))
         .stderr(predicate::str::contains("local counterpart ('main')"))
-        .stderr(predicate::str::contains("--detach-checkouts"))
+        .stderr(predicate::str::contains("rwv update"))
+        .stderr(predicate::str::contains("--detach-checkouts").not())
         .stderr(predicate::str::contains("is not a fast-forward").not());
 
     assert_eq!(current_branch(&fx.canonical).as_deref(), Some("feature"));
@@ -212,34 +213,12 @@ fn update_refuses_when_attached_to_a_branch_the_manifest_does_not_declare() {
     assert_ne!(fx.head(), tip);
 }
 
-#[test]
-fn update_detach_checkouts_detaches_rather_than_relocating_the_branch() {
-    let fx = build_workspace();
-    let before = fx.head();
-    common::git_in(&fx.canonical, &["checkout", "-b", "feature"]);
-    let tip = fx.advance_remote();
-
-    rwv()
-        .args(["update", "--remote", "--detach-checkouts"])
-        .current_dir(&fx.workspace)
-        .assert()
-        .success();
-
-    assert_eq!(fx.head(), tip, "the consent materializes the tip");
-    assert_eq!(current_branch(&fx.canonical), None);
-    assert_eq!(
-        common::git_in(&fx.canonical, &["rev-parse", "feature"]),
-        before,
-        "the flag names a detach, so the personal branch is left where it was"
-    );
-}
-
 // ============================================================================
-// A non-fast-forward refuses, naming the two exits §5 states.
+// A non-fast-forward refuses, naming the reconcile.
 // ============================================================================
 
 #[test]
-fn update_refuses_a_non_fast_forward_naming_both_exits() {
+fn update_refuses_a_non_fast_forward_naming_the_reconcile() {
     let fx = build_workspace();
     std::fs::write(fx.canonical.join("local.txt"), "local work").unwrap();
     common::git_in(&fx.canonical, &["add", "."]);
@@ -254,10 +233,9 @@ fn update_refuses_a_non_fast_forward_naming_both_exits() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("is not a fast-forward"))
-        // Exit (1): reconcile it yourself with ordinary git and re-run.
+        // The exit: reconcile it yourself with ordinary git and re-run.
         .stderr(predicate::str::contains("git rebase"))
-        // Exit (2): materialize the tip without moving your branch.
-        .stderr(predicate::str::contains("--detach-checkouts"));
+        .stderr(predicate::str::contains("--detach-checkouts").not());
 
     assert_eq!(current_branch(&fx.canonical).as_deref(), Some("main"));
     assert_eq!(
@@ -289,7 +267,7 @@ fn update_moves_an_already_detached_member_and_leaves_it_detached() {
     assert_eq!(
         current_branch(&fx.canonical),
         None,
-        "update does not reattach a detached member — that is --reattach-checkouts' job"
+        "update --remote does not reattach a detached member — `rwv update` does"
     );
 }
 

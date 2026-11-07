@@ -341,12 +341,12 @@ fn the_page_walk_actually_reads_the_page() {
         "only {auto} findings are auto-fixable; the register has stopped classifying"
     );
     assert_eq!(
-        consented, 3,
-        "the findings repaired behind a consent flag are pinned at 3; got {consented}"
+        consented, 1,
+        "the findings repaired behind a consent flag are pinned at 1; got {consented}"
     );
     for expected in [
         "index-drift/safe-to-fix",
-        "branch-discipline/canonical-detached",
+        "alignment/on-branch",
         "workweave-tree-integrity/unregistered-workweave",
         "stale-op-state",
     ] {
@@ -403,13 +403,14 @@ fn the_page_check_reports_a_mark_that_drifted_from_the_code() {
         gaps.join("\n  ")
     );
 
-    let unflagged = PAGE.replace("rwv doctor --fix --reattach-checkouts", "rwv doctor --fix");
+    let unflagged = PAGE.replace("rwv doctor --fix --abandon-lost-pins", "rwv doctor --fix");
     assert_ne!(unflagged, PAGE, "the seeded edit matched nothing");
     let gaps = page_gaps(&unflagged, &register);
     assert!(
-        gaps.iter()
-            .any(|g| g.starts_with("branch-discipline/canonical-detached:")
-                && g.contains("--reattach-checkouts")),
+        gaps.iter().any(
+            |g| g.starts_with("workweave-drift/dangling-link-unfetched:")
+                && g.contains("--abandon-lost-pins")
+        ),
         "a consented entry that stops naming its flag must be reported; got:\n  {}",
         gaps.join("\n  ")
     );
@@ -1388,7 +1389,10 @@ fn repair_bindings() -> Vec<(&'static str, Binding)> {
         ),
         (
             "relinked the worktree for",
-            Findings(&["workweave-drift/dangling-link"]),
+            Findings(&[
+                "workweave-drift/dangling-link",
+                "workweave-drift/dangling-link-unfetched",
+            ]),
         ),
         // --- repair_standalone_members ---------------------------------
         (
@@ -1433,19 +1437,10 @@ fn repair_bindings() -> Vec<(&'static str, Binding)> {
             "added the ref-ownership registry",
             Findings(&["legacy-workweave-index"]),
         ),
-        (
-            "reattached detached canonical",
-            Findings(&["branch-discipline/canonical-detached"]),
-        ),
-        // The branch-model migration announces through one relayed message,
-        // covering the rename, adopt-receipt, and consented-adoption arms.
+        // The adoption of a flat ref announces through one relayed message.
         (
             "core: {msg}",
-            Findings(&[
-                "branch-discipline/unmigrated-ephemeral-branch",
-                "branch-discipline/unrecorded-ephemeral-branch",
-                "branch-discipline/detached",
-            ]),
+            Findings(&["branch-discipline/unrecorded-ephemeral-branch"]),
         ),
         // One message family for the two legacy-spelling migrations (with
         // and without a commit), matched by their shared prefix.

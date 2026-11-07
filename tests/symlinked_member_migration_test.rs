@@ -200,8 +200,9 @@ fn assert_worktree_at(checkout: &Path, canonical: &Path, pin: &str) {
         checkout.display()
     );
     assert_eq!(
-        common::git_in(checkout, &["symbolic-ref", "--short", "HEAD"]),
-        format!("{PROJECT}--{SEAT}"),
+        common::checkout_ref(checkout),
+        None,
+        "a reference member sits detached at its pin, its branch being checked out in the primary"
     );
     assert_eq!(common::git_in(checkout, &["rev-parse", "HEAD"]), pin);
 }
@@ -610,7 +611,7 @@ fn doctor_fix_migrates_a_member_under_a_parked_op_and_abort_then_restores() {
     );
 
     // What an older release left: the reference member as a link into the
-    // canonical clone, with no worktree or branch of the workweave's own.
+    // canonical clone, with no worktree of the workweave's own.
     let seat_linked = seat.join(LINKED_PATH);
     common::git_in(
         &linked,
@@ -621,7 +622,6 @@ fn doctor_fix_migrates_a_member_under_a_parked_op_and_abort_then_restores() {
             &seat_linked.to_string_lossy(),
         ],
     );
-    common::git_in(&linked, &["branch", "-D", &format!("{PROJECT}--{SEAT}")]);
     repoweave::symlink::create(
         &linked,
         &seat_linked,

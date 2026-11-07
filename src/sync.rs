@@ -4305,6 +4305,25 @@ fn judge_edits_in(
     }
 }
 
+/// A `dependency` or `reference` member sitting detached with no commit of
+/// its own: the state alignment puts such a member in wherever its branch is
+/// checked out elsewhere. It holds nothing a branch lacks, so a verb that
+/// needs every member on a branch passes over it.
+fn follows_its_pin_detached(role: crate::manifest::Role, vcs: &dyn Vcs, repo: &Path) -> bool {
+    if !matches!(
+        role,
+        crate::manifest::Role::Dependency | crate::manifest::Role::Reference
+    ) {
+        return false;
+    }
+    match vcs.head_attachment(repo) {
+        Ok(HeadAttachment::Detached(d)) => vcs
+            .stray_commits(repo, d.at(), None, None)
+            .is_ok_and(|stray| stray.is_empty()),
+        _ => false,
+    }
+}
+
 /// sync-to detached-source preflight: refuse if the source project repo or any
 /// source member repo is not on a branch. The work being landed must sit on a
 /// branch of its own; `--retire` deletes the source branches, and a detached
@@ -4360,7 +4379,9 @@ fn check_detached_source_preflight(
     };
     for (repo_path, entry) in cwd_project.manifest.iter_entries() {
         let repo = cwd_workspace_dir.join(repo_path.as_path());
-        if repo.exists() {
+        if repo.exists()
+            && !follows_its_pin_detached(entry.role, vcs_for(entry.vcs_type).as_ref(), &repo)
+        {
             report(
                 repo_path.to_string(),
                 vcs_for(entry.vcs_type).as_ref(),
@@ -4462,7 +4483,11 @@ fn check_detached_target_preflight(
         if !target_repo.exists() {
             continue;
         }
-        if let Some(state) = unattached(vcs_for(entry.vcs_type).as_ref(), &target_repo) {
+        let member_vcs = vcs_for(entry.vcs_type);
+        if follows_its_pin_detached(entry.role, member_vcs.as_ref(), &target_repo) {
+            continue;
+        }
+        if let Some(state) = unattached(member_vcs.as_ref(), &target_repo) {
             detached.push(format!("{repo_path} ({state})"));
         }
     }

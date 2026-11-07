@@ -5,7 +5,10 @@
   "type": "object",
   "required": [
     "$schema",
+    "aligned",
+    "backups",
     "judged",
+    "operator_branches",
     "records",
     "repos",
     "unreadable_projects"
@@ -14,8 +17,22 @@
     "$schema": {
       "type": "string"
     },
+    "aligned": {
+      "description": "The branch each project's workspace last aligned its members for.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/AlignedStatus"
+      }
+    },
+    "backups": {
+      "description": "The backups each repo holds, with what each keeps that no branch reaches. Only repos that hold one.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/RepoBackupsOutput"
+      }
+    },
     "judged": {
-      "description": "Each repo whose branch stands apart from the one it publishes to, judged on the `push-branch` axis with that state's choices: behind, ahead, diverged, gone with commits of its own, with a foreign upstream or with no push target. Empty, not absent, when none does.",
+      "description": "Each repo judged on the axes `rwv status` reads, with that state's choices: `alignment` (a member not in its expected state, or carrying a fact such as `checkout`, and the project repo against the aligned branch), and `push-branch` where the branch needs attention: behind, diverged, gone with commits of its own, with a foreign upstream or with no push target. A branch that is ahead of its push branch is the ordinary state of work in progress and has no line; the per-repo `relation` and `operator_branches` carry what is unpublished. Empty, not absent, when none stands apart.",
       "type": "array",
       "items": {
         "$ref": "#/definitions/JudgedOutput"
@@ -31,6 +48,13 @@
           "type": "null"
         }
       ]
+    },
+    "operator_branches": {
+      "description": "Each member's local branch holding unpushed commits that nothing else accounts for: checked out nowhere, named after no recorded weave branch of any project here, and no declared branch of that member.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/OperatorBranch"
+      }
     },
     "records": {
       "description": "Each project's checked-out branch with its record and the branches that land into it, read in memory from the records as last fetched. A project whose repo is not on a branch has none.",
@@ -65,6 +89,37 @@
     }
   },
   "definitions": {
+    "AlignedStatus": {
+      "description": "What a project's workspace last aligned its members for.",
+      "type": "object",
+      "required": [
+        "detached",
+        "project"
+      ],
+      "properties": {
+        "branch": {
+          "description": "The branch it last aligned for; absent where none is recorded or the workspace is detached.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "detached": {
+          "description": "Whether the workspace was made detached.",
+          "type": "boolean"
+        },
+        "project": {
+          "type": "string"
+        },
+        "unreadable": {
+          "description": "Why the workspace state, which reads as absent, could not be read.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
     "Axis": {
       "description": "What a refusal judged a repo on. Its token is the kind `rwv explain` serves; the order here is the order a repo's lines print in.",
       "oneOf": [
@@ -123,8 +178,79 @@
           "enum": [
             "target"
           ]
+        },
+        {
+          "description": "Where a workspace's checkouts sit against where the checked-out branch's record says they should.",
+          "type": "string",
+          "enum": [
+            "alignment"
+          ]
         }
       ]
+    },
+    "BackupMark": {
+      "description": "What a backup says about the step that made it. An ordinary backup says nothing.",
+      "oneOf": [
+        {
+          "description": "Made before a rebase rewrote the branch.",
+          "type": "string",
+          "enum": [
+            "rebased"
+          ]
+        },
+        {
+          "description": "The tip `rwv abort --abandon-foreign-tip` gave up.",
+          "type": "string",
+          "enum": [
+            "abandoned"
+          ]
+        }
+      ]
+    },
+    "BackupOutput": {
+      "type": "object",
+      "required": [
+        "held",
+        "name",
+        "redundant",
+        "tip"
+      ],
+      "properties": {
+        "held": {
+          "description": "The commits the backup holds that no branch reaches, newest first.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/HeldCommitOutput"
+          }
+        },
+        "mark": {
+          "description": "`rebased` for a branch a rebase rewrote, `abandoned` for a tip `rwv abort --abandon-foreign-tip` gave up; absent for any other.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/BackupMark"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "description": "The name `rwv backup drop` takes.",
+          "type": "string"
+        },
+        "redundant": {
+          "description": "A branch reaches everything the backup holds, so dropping it loses nothing.",
+          "type": "boolean"
+        },
+        "tip": {
+          "description": "The commit the backup holds.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/CommitId"
+            }
+          ]
+        }
+      }
     },
     "BranchRecordStatus": {
       "description": "A project repo's checked-out branch and what its record reads as, with the branches that land into it, as `rwv status` shows it.",
@@ -267,6 +393,25 @@
         }
       }
     },
+    "HeldCommitOutput": {
+      "type": "object",
+      "required": [
+        "sha",
+        "short",
+        "subject"
+      ],
+      "properties": {
+        "sha": {
+          "$ref": "#/definitions/CommitId"
+        },
+        "short": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        }
+      }
+    },
     "JudgedOutput": {
       "description": "One judged repo, as `--json` carries it.",
       "type": "object",
@@ -364,6 +509,25 @@
           ]
         }
       ]
+    },
+    "LogCommit": {
+      "type": "object",
+      "required": [
+        "sha",
+        "short",
+        "subject"
+      ],
+      "properties": {
+        "sha": {
+          "$ref": "#/definitions/CommitId"
+        },
+        "short": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        }
+      }
     },
     "MidOperation": {
       "description": "The operation a repository is stopped in: a conflict being resolved, or a bisect.",
@@ -493,6 +657,42 @@
           ]
         }
       ]
+    },
+    "OperatorBranch": {
+      "description": "A member's local branch holding unpushed commits that nothing else accounts for.",
+      "type": "object",
+      "required": [
+        "branch",
+        "commits",
+        "gone_upstream",
+        "path",
+        "unpushed"
+      ],
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "commits": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/LogCommit"
+          }
+        },
+        "gone_upstream": {
+          "description": "The branch takes in from a remote branch its remote no longer has.",
+          "type": "boolean"
+        },
+        "path": {
+          "description": "The member's path.",
+          "type": "string"
+        },
+        "unpushed": {
+          "description": "How many commits no remote-tracking branch reaches.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        }
+      }
     },
     "Override": {
       "description": "A named consent supplied at invocation and recorded on the owner record.\n\nEach variant is one CLI flag, and serializes to that flag's name without the leading dashes — the spelling already on disk in every `.rwv-op` written so far. `--continue` re-derives the op's consent from this list and `cleanup` reads it to decide whether the project savepoint survives as the only remaining pointer to discarded commits, so mint and read must be the same value rather than the same text.",
@@ -660,6 +860,25 @@
           }
         }
       ]
+    },
+    "RepoBackupsOutput": {
+      "type": "object",
+      "required": [
+        "backups",
+        "path"
+      ],
+      "properties": {
+        "backups": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/BackupOutput"
+          }
+        },
+        "path": {
+          "description": "The repo as `rwv backup drop` names it: its workspace-relative path, or `projects/<name>` for the project repo.",
+          "type": "string"
+        }
+      }
     },
     "RepoStatus": {
       "description": "Per-repo status entry.",

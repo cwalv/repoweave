@@ -71,10 +71,7 @@ use repoweave::backup::{
 use repoweave::branch::{
     BranchListJsonOutput, ListedBranch, RecordOutput, ValueOutput, BRANCH_SCHEMA_URL,
 };
-use repoweave::check::{
-    BranchDisciplineKind, CheckViolation, DetachedAncestry, PlacementConvergence, ProvenanceKind,
-    DOCTOR_SCHEMA_URL,
-};
+use repoweave::check::{CheckViolation, PlacementConvergence, ProvenanceKind, DOCTOR_SCHEMA_URL};
 use repoweave::clone::{CloneJsonOutput, CLONE_SCHEMA_URL};
 use repoweave::diagnosis::{
     Axis, ChoiceOutput, FactKind, FactOutput, JudgedOutput, RefusalJsonOutput, REFUSAL_SCHEMA_URL,
@@ -492,22 +489,6 @@ fn doctor_corpus_supplement() -> (Vec<CheckViolation>, Vec<Issue>) {
         verb: OpVerb::Sync,
         started_at: "2026-01-01T00:00:00Z".to_owned(),
     }];
-    violations.extend(
-        [
-            DetachedAncestry::Equal,
-            DetachedAncestry::HeadBehind,
-            DetachedAncestry::Diverged,
-        ]
-        .map(|ancestry| CheckViolation::BranchDiscipline {
-            repo_path: common::doctor_corpus::path("/ws/github/acme/repo"),
-            sub_kind: BranchDisciplineKind::DetachedOffEphemeralBranch {
-                expected_ref: "proj--feat-a".into(),
-                at_sha: common::doctor_corpus::commit(),
-                branch_tip: common::doctor_corpus::commit(),
-                ancestry,
-            },
-        }),
-    );
     violations.push(CheckViolation::Provenance {
         project: common::doctor_corpus::project(),
         repo: common::doctor_corpus::repo(),
@@ -595,6 +576,15 @@ fn member_outcomes() -> Vec<MemberOutcomeOutput> {
             absolute_path: wire(ABS),
             refusal: (status == MemberOutcomeStatus::Failed)
                 .then(|| "unresolvable-repo-source".to_owned()),
+            moved_from: (status == MemberOutcomeStatus::Ok).then(|| "wip".to_owned()),
+            facts: if status == MemberOutcomeStatus::Ok {
+                vec![FactOutput {
+                    fact: FactKind::Checkout,
+                    about: Some("main is checked out in /primary".to_owned()),
+                }]
+            } else {
+                Vec::new()
+            },
             status,
             message,
         }
@@ -666,6 +656,7 @@ fn update_corpus() -> Vec<(&'static str, Value)> {
             value(UpdateJsonOutput {
                 schema: UPDATE_SCHEMA_URL.to_owned(),
                 outcomes: member_outcomes(),
+                judged: left_members(),
                 placements: placements(),
                 resolution: Some(resolution()),
                 skipped: every_skip(),
@@ -676,6 +667,7 @@ fn update_corpus() -> Vec<(&'static str, Value)> {
             value(UpdateJsonOutput {
                 schema: UPDATE_SCHEMA_URL.to_owned(),
                 outcomes: Vec::new(),
+                judged: Vec::new(),
                 placements: Vec::new(),
                 resolution: None,
                 skipped: Vec::new(),
@@ -822,6 +814,7 @@ fn pull_corpus() -> Vec<(&'static str, Value)> {
                     fetched: if full { fetched_repos() } else { Vec::new() },
                     project,
                     outcomes: if full { member_outcomes() } else { Vec::new() },
+                    judged: if full { left_members() } else { Vec::new() },
                     placements: if full { placements() } else { Vec::new() },
                     resolution: full.then(resolution),
                     skipped: if full { every_skip() } else { Vec::new() },
@@ -1116,6 +1109,66 @@ fn status_records() -> Vec<repoweave::branch::BranchRecordStatus> {
     ]
 }
 
+fn status_aligned() -> Vec<repoweave::status::AlignedStatus> {
+    let project = repoweave::manifest::ProjectName::new("app").unwrap();
+    vec![
+        repoweave::status::AlignedStatus {
+            project: project.clone(),
+            branch: Some("main".to_owned()),
+            detached: false,
+            unreadable: None,
+        },
+        repoweave::status::AlignedStatus {
+            project: project.clone(),
+            branch: None,
+            detached: true,
+            unreadable: None,
+        },
+        repoweave::status::AlignedStatus {
+            project,
+            branch: None,
+            detached: false,
+            unreadable: Some("it does not parse: EOF while parsing".to_owned()),
+        },
+    ]
+}
+
+fn status_operator_branches() -> Vec<repoweave::status::OperatorBranch> {
+    vec![repoweave::status::OperatorBranch {
+        path: REPO.to_owned(),
+        branch: "wip".to_owned(),
+        unpushed: 1,
+        commits: vec![repoweave::log::LogCommit {
+            sha: common::doctor_corpus::commit(),
+            short: "abcdef0".to_owned(),
+            subject: "wip".to_owned(),
+        }],
+        gone_upstream: true,
+    }]
+}
+
+fn status_backups() -> Vec<repoweave::backup::RepoBackupsOutput> {
+    let backup = |name: &str, mark| repoweave::backup::BackupOutput {
+        name: name.to_owned(),
+        tip: common::doctor_corpus::commit(),
+        mark,
+        redundant: false,
+        held: vec![repoweave::backup::HeldCommitOutput {
+            sha: common::doctor_corpus::commit(),
+            short: "abcdef0".to_owned(),
+            subject: "kept".to_owned(),
+        }],
+    };
+    vec![repoweave::backup::RepoBackupsOutput {
+        path: REPO.to_owned(),
+        backups: vec![
+            backup("main/1", Some(repoweave::vcs::BackupMark::Abandoned)),
+            backup("main/2", Some(repoweave::vcs::BackupMark::Rebased)),
+            backup("main/3", None),
+        ],
+    }]
+}
+
 fn status_corpus() -> Vec<(&'static str, Value)> {
     let mut docs = vec![
         (
@@ -1125,7 +1178,10 @@ fn status_corpus() -> Vec<(&'static str, Value)> {
                 repos: status_repos(),
                 unreadable_projects: Vec::new(),
                 records: status_records(),
+                aligned: status_aligned(),
                 judged: Vec::new(),
+                operator_branches: status_operator_branches(),
+                backups: status_backups(),
                 resolution: Some(resolution()),
                 op: None,
             }),
@@ -1137,7 +1193,10 @@ fn status_corpus() -> Vec<(&'static str, Value)> {
                 repos: status_repos(),
                 unreadable_projects: Vec::new(),
                 records: Vec::new(),
+                aligned: Vec::new(),
                 judged: judged_on_every_axis(),
+                operator_branches: Vec::new(),
+                backups: Vec::new(),
                 resolution: Some(resolution()),
                 op: None,
             }),
@@ -1149,7 +1208,10 @@ fn status_corpus() -> Vec<(&'static str, Value)> {
                 repos: Vec::new(),
                 unreadable_projects: Vec::new(),
                 records: Vec::new(),
+                aligned: Vec::new(),
                 judged: Vec::new(),
+                operator_branches: Vec::new(),
+                backups: Vec::new(),
                 resolution: None,
                 op: None,
             }),
@@ -1164,7 +1226,10 @@ fn status_corpus() -> Vec<(&'static str, Value)> {
                     error: "failed to parse rwv.toml".to_owned(),
                 }],
                 records: Vec::new(),
+                aligned: Vec::new(),
                 judged: Vec::new(),
+                operator_branches: Vec::new(),
+                backups: Vec::new(),
                 resolution: Some(resolution()),
                 op: None,
             }),
@@ -1189,7 +1254,10 @@ fn status_corpus() -> Vec<(&'static str, Value)> {
                 repos: Vec::new(),
                 unreadable_projects: Vec::new(),
                 records: Vec::new(),
+                aligned: Vec::new(),
                 judged: Vec::new(),
+                operator_branches: Vec::new(),
+                backups: Vec::new(),
                 resolution: Some(primary_resolution()),
                 op: Some(op_status(verb, phase)),
             }),
@@ -2031,8 +2099,7 @@ fn a_dropped_field_inside_a_record_is_reported_for_every_verb() {
 }
 
 /// A commit a doctor finding names is a commit id, so the empty string that
-/// once stood for "none" is reported, as is an abbreviation; the one tip
-/// that can be absent is `null`.
+/// once stood for "none" is reported, as is an abbreviation.
 #[test]
 fn a_doctor_commit_field_holds_a_full_commit_id_or_null() {
     let schema = json_schema::committed_schema("doctor");
@@ -2043,13 +2110,16 @@ fn a_doctor_commit_field_holds_a_full_commit_id_or_null() {
     let doc = first_doc(&case);
     let with = |edit: &dyn Fn(&mut Value)| {
         let mut doc = doc.clone();
-        let detached = doc["violations"]
+        let finding = doc["violations"]
             .as_array_mut()
             .expect("violations is an array")
             .iter_mut()
-            .find_map(|v| v.get_mut("sub_kind")?.get_mut("detached"))
-            .expect("the corpus carries a detached finding");
-        edit(detached);
+            .find_map(|v| {
+                v.get_mut("sub_kind")?
+                    .get_mut("stale-ephemeral-branch-live")
+            })
+            .expect("the corpus carries a stale-ephemeral-branch-live finding");
+        edit(finding);
         json_schema::conform(&doc, &schema).0
     };
 
@@ -2060,21 +2130,13 @@ fn a_doctor_commit_field_holds_a_full_commit_id_or_null() {
     );
     for not_an_id in ["", "aaaaaaaaaaaa", "not-a-commit"] {
         assert!(
-            !with(&|d| d["at_sha"] = json!(not_an_id)).is_empty(),
-            "at_sha {not_an_id:?} was not reported"
-        );
-        assert!(
-            !with(&|d| d["legacy_branch"]["tip_sha"] = json!(not_an_id)).is_empty(),
-            "legacy tip_sha {not_an_id:?} was not reported"
+            !with(&|d| d["tip_sha"] = json!(not_an_id)).is_empty(),
+            "tip_sha {not_an_id:?} was not reported"
         );
     }
     assert!(
-        with(&|d| d["legacy_branch"]["tip_sha"] = Value::Null).is_empty(),
-        "an absent legacy tip is null"
-    );
-    assert!(
-        !with(&|d| d["at_sha"] = Value::Null).is_empty(),
-        "HEAD always names a commit, so at_sha is never null"
+        !with(&|d| d["tip_sha"] = Value::Null).is_empty(),
+        "a stale branch's tip always names a commit, so tip_sha is never null"
     );
 }
 

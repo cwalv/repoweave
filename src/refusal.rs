@@ -180,8 +180,6 @@ pub enum RefusalKind {
     DanglingPrimary,
     /// A weave root carries both the marker and the active-project pointer.
     WeaveRootIdentityConflict,
-    /// A branch in this workweave's namespace carries the pre-flat shape.
-    UnmigratedEphemeralBranch,
     /// A checkout inside a workweave is a full clone rather than a worktree of
     /// the canonical clone, and the verb will not remove it.
     StandaloneInWorkweave,

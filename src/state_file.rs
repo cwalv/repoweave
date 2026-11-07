@@ -34,6 +34,8 @@ pub enum StateFile {
     WorkweaveIndex,
     /// Replaced.
     HealthFloor,
+    /// Replaced, when its content changes.
+    WorkspaceState,
     /// Created exclusively by the op that acquires its workspace, then
     /// replaced by that op as it advances. The create's refusal on an
     /// occupied path is the mutual exclusion between ops.
@@ -57,13 +59,14 @@ pub const OPERATOR_AUTHORED: [&str; 2] = [
 ];
 
 impl StateFile {
-    pub const ALL: [StateFile; 11] = [
+    pub const ALL: [StateFile; 12] = [
         StateFile::OwnedDigests,
         StateFile::ActiveProject,
         StateFile::WorkweaveMarker,
         StateFile::ProjectLock,
         StateFile::WorkweaveIndex,
         StateFile::HealthFloor,
+        StateFile::WorkspaceState,
         StateFile::OpRecord,
         StateFile::OpLease,
         StateFile::OwnedDigestsClaim,
@@ -79,6 +82,7 @@ impl StateFile {
             StateFile::ProjectLock => crate::manifest::LockFile::FILE_NAME,
             StateFile::WorkweaveIndex => crate::workweave_index::INDEX_FILENAME,
             StateFile::HealthFloor => crate::health_floor::FLOOR_FILE,
+            StateFile::WorkspaceState => crate::alignment::WORKSPACE_STATE_FILE,
             StateFile::OpRecord => crate::op_state::OP_STATE_FILE,
             StateFile::OpLease => crate::op_state::OP_LEASE_FILE,
             StateFile::OwnedDigestsClaim => crate::owned_state::OWNED_DIGESTS_CLAIM_FILE,

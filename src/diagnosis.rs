@@ -50,6 +50,9 @@ pub enum Axis {
     Pin,
     /// A weave branch's record: how it is used and the branch it lands into.
     Target,
+    /// Where a workspace's checkouts sit against where the checked-out
+    /// branch's record says they should.
+    Alignment,
 }
 
 /// An axis's page prose: what it judges, why, and where the rule sits.
@@ -60,7 +63,7 @@ pub struct KindRow {
 }
 
 impl Axis {
-    pub const ALL: [Axis; 8] = [
+    pub const ALL: [Axis; 9] = [
         Self::Edits,
         Self::Checkout,
         Self::PushBranch,
@@ -69,6 +72,7 @@ impl Axis {
         Self::UnparseableProject,
         Self::Pin,
         Self::Target,
+        Self::Alignment,
     ];
 
     pub fn token(self) -> String {
@@ -156,6 +160,24 @@ impl Axis {
                 sits: "[Workweave hierarchy](../explanation/joints/workweave-hierarchy.md); \
                        [Formats](./formats.md).",
             },
+            Self::Alignment => &KindRow {
+                condition: "A member's checkout, or the project repo's, is not where the \
+                            checked-out project branch says it should be: on a branch other \
+                            than the expected one, detached where it should be attached, or \
+                            attached where it should be detached; or the workspace's record \
+                            of what it last aligned for no longer matches the branch.",
+                why: "The checked-out project branch's record, its member entries and its \
+                      lock say which branch each member sits on, and where a member's branch \
+                      is checked out in another workspace, or does not reach the commit the \
+                      lock pins, that it sits detached at the pin. A checkout anywhere else \
+                      builds something other than what the branch describes, and a lock \
+                      written from it would record that. `rwv update` moves the members it \
+                      can without leaving a commit on no ref, and reports the rest with the \
+                      commits that would be left.",
+                sits: "[Clone topology](../explanation/joints/clone-topology.md); \
+                       [Workweave lifecycle](../explanation/joints/workweave-lifecycle.md); \
+                       [Shared refs and drift](../explanation/joints/shared-refs-drift.md).",
+            },
             Self::Pin => &KindRow {
                 condition: "A commit a lock pins is not there to be at: the lock has no entry \
                             for a member, or pins a commit that no ref in the clone reaches; or \
@@ -188,6 +210,15 @@ impl Axis {
             | Self::Publish
             | Self::Pin
             | Self::Target => None,
+            Self::Alignment => Some(Finding::of(
+                crate::check::ViolationKind::Alignment,
+                crate::check::AlignmentKind::ALL.map(|sub_kind| SubKindRow {
+                    token: crate::wire_token::wire_token(&sub_kind),
+                    severity: sub_kind.severity(),
+                    fix: sub_kind.fix_disposition(),
+                    entry: sub_kind.entry(),
+                }),
+            )),
             Self::UnparseableProject => Some(Finding::of(
                 crate::check::ViolationKind::UnparseableProject,
                 crate::check::UnparseableProjectKind::ALL.map(|sub_kind| SubKindRow {
@@ -293,6 +324,16 @@ pub enum State {
     TargetUnreadable,
     TargetCycle,
     TargetGone,
+    AlignmentAligned,
+    AlignmentOnBranch,
+    AlignmentOnBranchWithStrayCommits,
+    AlignmentDetachedElsewhere,
+    AlignmentDetachedUnpushed,
+    AlignmentUnaligned,
+    AlignmentProjectMoved,
+    AlignmentProjectUnaligned,
+    AlignmentProjectDetached,
+    PinNotOnDeclaredBranch,
 }
 
 /// A state's row: its axis and name, the page prose, and the forms it offers,
@@ -310,7 +351,7 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 26] = [
+    pub const ALL: [State; 36] = [
         Self::EditsDirty,
         Self::EditsMidOperation,
         Self::EditsLockFilesUncommitted,
@@ -337,6 +378,16 @@ impl State {
         Self::TargetUnreadable,
         Self::TargetCycle,
         Self::TargetGone,
+        Self::AlignmentAligned,
+        Self::AlignmentOnBranch,
+        Self::AlignmentOnBranchWithStrayCommits,
+        Self::AlignmentDetachedElsewhere,
+        Self::AlignmentDetachedUnpushed,
+        Self::AlignmentUnaligned,
+        Self::AlignmentProjectMoved,
+        Self::AlignmentProjectUnaligned,
+        Self::AlignmentProjectDetached,
+        Self::PinNotOnDeclaredBranch,
     ];
 
     pub fn row(self) -> &'static StateRow {
@@ -602,6 +653,109 @@ impl State {
                              every verb that reads the record of a branch a merge of records \
                              put on one",
                 offers: &[Form::C12Feature, Form::C12Declared],
+                verb_offers: &[],
+            },
+            Self::AlignmentAligned => &StateRow {
+                axis: Axis::Alignment,
+                name: "aligned",
+                means: "the checkout is in its expected state; the state is printed only when \
+                        it carries a fact: `checkout`, the member's branch being checked out \
+                        in another workspace (named), so the member sits detached at its pin \
+                        and nothing moves it",
+                refused_by: "`rwv status` reports it with the fact; `rwv update` reports the \
+                             fact for each member it detaches",
+                offers: &[],
+                verb_offers: &[],
+            },
+            Self::AlignmentOnBranch => &StateRow {
+                axis: Axis::Alignment,
+                name: "on branch",
+                means: "the checkout is on a branch other than the expected one, and no \
+                        commit it holds would be left on no other branch or backup if it \
+                        moved off",
+                refused_by: "`rwv update` reports it for a checkout it did not move, one with \
+                             uncommitted changes or an operation in progress; `rwv status` \
+                             reports it",
+                offers: &[Form::C6],
+                verb_offers: &[],
+            },
+            Self::AlignmentOnBranchWithStrayCommits => &StateRow {
+                axis: Axis::Alignment,
+                name: "on branch with stray commits",
+                means: "the checkout is on a branch other than the expected one, which is \
+                        neither a declared branch nor named after a recorded weave branch, and \
+                        holds the commits listed that no other branch, remote-tracking branch \
+                        or backup reaches",
+                refused_by: "`rwv update` reports it and leaves the checkout; `rwv status` \
+                             reports it",
+                offers: &[Form::C15, Form::C14Keep],
+                verb_offers: &[],
+            },
+            Self::AlignmentDetachedElsewhere => &StateRow {
+                axis: Axis::Alignment,
+                name: "detached",
+                means: "the checkout is detached where it is not expected to be, and no commit \
+                        reaches it that a branch lacks",
+                refused_by: "`rwv update` reports it for a checkout it did not move; `rwv \
+                             status` reports it",
+                offers: &[Form::C6],
+                verb_offers: &[],
+            },
+            Self::AlignmentDetachedUnpushed => &StateRow {
+                axis: Axis::Alignment,
+                name: "detached with unpushed commits",
+                means: "the checkout is detached and holds the commits listed, which no branch \
+                        or remote-tracking branch reaches",
+                refused_by: "`rwv update` reports it and leaves the checkout; `rwv status` \
+                             reports it",
+                offers: &[Form::C14Keep, Form::C15],
+                verb_offers: &[],
+            },
+            Self::AlignmentUnaligned => &StateRow {
+                axis: Axis::Alignment,
+                name: "unaligned",
+                means: "the lock has no entry for the member and its expected branch is found \
+                        nowhere, so it stays where it is and its pin stays out of the lock",
+                refused_by: "`rwv update` and `rwv status` report it",
+                offers: &[Form::C25, Form::C18],
+                verb_offers: &[],
+            },
+            Self::AlignmentProjectMoved => &StateRow {
+                axis: Axis::Alignment,
+                name: "project moved",
+                means: "the project repo is on another branch than the one the workspace last \
+                        aligned its members for, which still exists, named in the subject",
+                refused_by: "nothing refuses at the project level; `rwv status` reports it as \
+                             a fact, and each member not aligned for the checked-out branch \
+                             reports its own line",
+                offers: &[Form::C30Switch, Form::C6],
+                verb_offers: &[],
+            },
+            Self::AlignmentProjectUnaligned => &StateRow {
+                axis: Axis::Alignment,
+                name: "project unaligned",
+                means: "the workspace has no record of the branch it last aligned its members \
+                        for, or that branch is gone",
+                refused_by: "`rwv status` reports it; `rwv update` records it",
+                offers: &[Form::C6],
+                verb_offers: &[],
+            },
+            Self::AlignmentProjectDetached => &StateRow {
+                axis: Axis::Alignment,
+                name: "project detached",
+                means: "the project repo's HEAD is on no branch and the workspace was not made \
+                        detached; the commits it holds that no branch reaches are listed",
+                refused_by: "`rwv update`; `rwv status` reports it",
+                offers: &[Form::C14Keep, Form::C30Switch],
+                verb_offers: &[],
+            },
+            Self::PinNotOnDeclaredBranch => &StateRow {
+                axis: Axis::Pin,
+                name: "not on declared branch",
+                means: "the lock pins a commit that neither the member's declared branch nor \
+                        its upstream reaches, so the checkout sits detached at the pin",
+                refused_by: "`rwv update` and `rwv status` report it",
+                offers: &[Form::C19, Form::C15],
                 verb_offers: &[],
             },
             Self::TargetGone => &StateRow {
@@ -1556,6 +1710,15 @@ pub struct Fact {
     pub about: Option<String>,
 }
 
+/// A fact as a line prints it: its token, then what it is about.
+pub fn fact_text(fact: &Fact) -> String {
+    let token = crate::wire_token::wire_token(&fact.kind);
+    match &fact.about {
+        Some(about) => format!("{token}: {about}"),
+        None => token,
+    }
+}
+
 /// A repo being judged: its state and what the state names, and the values
 /// its choices' placeholders take.
 #[must_use]
@@ -1736,6 +1899,14 @@ impl Judged {
         &self.repo
     }
 
+    pub fn subject(&self) -> Option<&str> {
+        self.subject.as_deref()
+    }
+
+    pub fn listed(&self) -> &[String] {
+        &self.listed
+    }
+
     pub fn state(&self) -> State {
         self.state
     }
@@ -1760,13 +1931,7 @@ impl Judged {
     }
 
     fn details(&self) -> Vec<String> {
-        let facts = self.facts.iter().map(|fact| {
-            let token = crate::wire_token::wire_token(&fact.kind);
-            match &fact.about {
-                Some(about) => format!("{token}: {about}"),
-                None => token,
-            }
-        });
+        let facts = self.facts.iter().map(fact_text);
         facts.chain(self.listed.iter().cloned()).collect()
     }
 

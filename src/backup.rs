@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use schemars::JsonSchema;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::add_remove::find_project;
 use crate::diagnosis::State;
@@ -106,14 +106,14 @@ fn repo_named(
     }
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct HeldCommitOutput {
     pub sha: CommitId,
     pub short: String,
     pub subject: String,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct BackupOutput {
     /// The name `rwv backup drop` takes.
     pub name: String,
@@ -130,7 +130,7 @@ pub struct BackupOutput {
     pub held: Vec<HeldCommitOutput>,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct RepoBackupsOutput {
     /// The repo as `rwv backup drop` names it: its workspace-relative path, or
     /// `projects/<name>` for the project repo.
@@ -167,6 +167,26 @@ fn output_of(listed: &ListedBackup) -> BackupOutput {
 
 fn listing_error(repo: &BackupRepo, e: VcsError) -> anyhow::Error {
     anyhow::Error::new(e).context(format!("{}: could not list its backups", repo.operand))
+}
+
+/// Every backup the project's repos hold, as `rwv status` reports them: the
+/// repos that hold one, with what each backup holds.
+pub(crate) fn held_by_project(ctx: &WorkspaceContext) -> anyhow::Result<Vec<RepoBackupsOutput>> {
+    let (_, repos) = repos_of_project(ctx)?;
+    let mut held = Vec::new();
+    for repo in &repos {
+        let listed = repo
+            .vcs
+            .list_backups(&repo.dir, RemoteTracking::Counted)
+            .map_err(|e| listing_error(repo, e))?;
+        if !listed.is_empty() {
+            held.push(RepoBackupsOutput {
+                path: repo.operand.to_string(),
+                backups: listed.iter().map(output_of).collect(),
+            });
+        }
+    }
+    Ok(held)
 }
 
 /// `rwv backup list`: every backup the project's repos hold.

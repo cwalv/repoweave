@@ -440,17 +440,17 @@ fn sync_moves_a_read_only_reference_member_and_settles_what_it_wrote() {
 }
 
 #[test]
-fn sync_to_settles_the_member_it_lands_in_the_primary() {
+fn sync_to_leaves_the_reference_members_read_only() {
     let tmp = common::tempdir().unwrap();
     let weave = make_weave(tmp.path());
     let seat = weave.create("seat");
-    std::fs::write(seat.join(REF_PATH).join("NEW"), "new\n").unwrap();
-    commit_all(&seat.join(REF_PATH), "seat: new reference file");
+    std::fs::write(seat.join(OWNED_PATH).join("NEW"), "new\n").unwrap();
+    commit_all(&seat.join(OWNED_PATH), "seat: new owned file");
     succeed(&["lock", "--commit"], &seat);
 
     succeed(&["sync-to", &weave.primary.to_string_lossy()], &seat);
 
-    assert!(weave.reference.join("NEW").exists(), "the commit landed");
+    assert!(weave.owned.join("NEW").exists(), "the commit landed");
     assert_read_only(&weave.reference, "the primary's reference after sync-to");
     assert_read_only(
         &seat.join(REF_PATH),

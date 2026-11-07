@@ -199,10 +199,10 @@ sub-kind — the name `rwv explain <token>` serves the finding's entry under. Un
 ```
 
 The `$schema` URL points to the committed schema artifact. Variants are
-discriminated by the `kind` tag — `branch-discipline`, `cargo-patch-shadowing`, `cargo-version-skew`, `clone-topology`, `confusable-siblings`, `dangling-active-project`, `dangling-ref-receipt`, `dangling-reference`, `dead-op-lease`, `head-unreadable`, `incomplete-lock`, `index-drift`, `legacy-manifest-format`, `legacy-workweave-index`, `legacy-workweave-marker`, `lock-pinned-by-name`, `member-permissions`, `merge-driver-config-unreadable`, `missing-canonical-clone`, `missing-merge-driver-config`, `missing-replay-exclusion`, `orphaned-clone`, `orphaned-savepoint`, `phantom-merge-driver`, `pre-flat-ref-receipt`, `projectless-dir`, `projects-dir-unreadable`, `provenance`, `replay-exclusion-unreadable`, `role-disagreement`, `stale-lock`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unknown-segment-clone`, `unnameable-project`, `unparseable-project`, `unreadable-active-project`, `unreadable-owned-state`, `unreadable-workweave-index`, `unrecognized-savepoint-ref`, `unresolvable-lock-entry`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
+discriminated by the `kind` tag — `alignment`, `branch-discipline`, `cargo-patch-shadowing`, `cargo-version-skew`, `clone-topology`, `confusable-siblings`, `dangling-active-project`, `dangling-ref-receipt`, `dangling-reference`, `dead-op-lease`, `head-unreadable`, `incomplete-lock`, `index-drift`, `legacy-manifest-format`, `legacy-workweave-index`, `legacy-workweave-marker`, `lock-pinned-by-name`, `member-permissions`, `merge-driver-config-unreadable`, `missing-canonical-clone`, `missing-merge-driver-config`, `missing-replay-exclusion`, `orphaned-clone`, `orphaned-savepoint`, `phantom-merge-driver`, `pre-flat-ref-receipt`, `projectless-dir`, `projects-dir-unreadable`, `provenance`, `replay-exclusion-unreadable`, `role-disagreement`, `stale-lock`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unknown-segment-clone`, `unnameable-project`, `unparseable-project`, `unreadable-active-project`, `unreadable-owned-state`, `unreadable-workweave-index`, `unrecognized-savepoint-ref`, `unresolvable-lock-entry`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
 Every per-repo variant carries `path` (manifest-relative) and
 `absolute_path` (fully resolved). Variants with subkinds
-(`branch-discipline`, `clone-topology`, `dead-op-lease`, `index-drift`, `member-permissions`, `missing-replay-exclusion`, `orphaned-savepoint`, `provenance`, `stale-worktree-registration`, `uninitialized-submodule`, `unparseable-project`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
+(`alignment`, `branch-discipline`, `clone-topology`, `dead-op-lease`, `index-drift`, `member-permissions`, `missing-replay-exclusion`, `orphaned-savepoint`, `provenance`, `stale-worktree-registration`, `uninitialized-submodule`, `unparseable-project`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
 `workweave-tree-integrity` carries `workweave_dir` and a `sub_kind`
 (`dangling-parent`, `foreign-primary`, `foreign-primary-other-workspace`, `misnamed-dir`, `nested-workweave-dir`, `parent-chain-anomaly`, `stale-registry-entry`, `tracked-index`, `unreadable-marker`, `unregistered-dir`, `unregistered-workweave`).
 
@@ -326,273 +326,58 @@ Schema:
         }
       }
     },
-    "BranchDisciplineKind": {
-      "description": "Discriminator for `CheckViolation::BranchDiscipline` findings.\n\nThree groupings, mirroring the three checks in the spec:\n\n* (a) workweave-branch — a workweave checkout is on the wrong branch, or on a ref of its own namespace that predates the flat naming: `SharedBranch`, `ForeignEphemeral`, `Detached`, `UnmigratedEphemeralBranch`, `UnrecordedEphemeralBranch`, `UnbornCheckout`. * (b) canonical-store attachment — what the canonical store's HEAD is: `CanonicalHoldsLiveWorkweaveRef`, `CanonicalHoldsLeakedRef`, `CanonicalDetached`. * (c) stale-ephemeral-branches — a `<project>--<name>/...` branch exists in a canonical clone but workweave `<name>` no longer exists on disk: `StaleEphemeralBranchSafe`, `StaleEphemeralBranchLive`, or `StaleEphemeralBranchUnowned`. The safe/live split applies the doctrine in `docs/explanation/joints/shared-refs-drift.md` to refs: a tip that is an ancestor of the primary's tracking-branch tip carries no unique work and is safely removable; a tip with commits not reachable from the primary is live work and must be left alone.\n\n# Ownership is by record, never by name shape (R2)\n\nThe (b) grouping and the safe/live/unowned split in (c) both key on whether rwv holds a persisted ownership receipt (`crate::workweave_index::RefRegistry`) for the exact ref in the exact store. A branch that merely *looks* like one of rwv's — a hand-made `<a>--<b>/<c>` — is an operator branch: the canonical-store pass leaves it alone, and `--fix` never deletes it.",
+    "AlignmentKind": {
+      "description": "How a member's checkout stands against where its workspace expects it.",
       "oneOf": [
         {
-          "description": "(a) The workweave checkout is on a non-ephemeral branch (e.g. `main`).\n\nCaused by `git switch main` inside a workweave or by a bare clone that was never moved to an ephemeral branch. The fixture for this sub-kind exercises the bare-main-in-workweave case from the spec's acceptance criteria: the violation must flag from creation, before any commit lands.\n\nReport-only, deliberately — not a missing arm. The state is operator-made (a `git switch` run by hand), unlike the fetch-written detachments whose repairs are native consented arms, and the remediation prints the exact registry-aware `git switch` (it names an existing recorded branch whenever a receipt exists), which is what keeps hand-running it safe. If measured recurrence reopens the question, the native form is a targeted repair naming one checkout, not a bulk consent flag.\n\nA member slot holding a symlink is not scanned: read through the link it is the canonical store, on the canonical store's branch. It is reported as `workweave-drift`.",
-          "type": "object",
-          "required": [
-            "shared-branch"
-          ],
-          "properties": {
-            "shared-branch": {
-              "type": "object",
-              "required": [
-                "actual_branch",
-                "expected_ref"
-              ],
-              "properties": {
-                "actual_branch": {
-                  "description": "The branch currently checked out (e.g. `main`).",
-                  "type": "string"
-                },
-                "expected_ref": {
-                  "description": "The ephemeral ref this workweave mints (`<project>--<workweave>`).",
-                  "type": "string"
-                },
-                "recorded_ref": {
-                  "description": "The ephemeral ref rwv holds a receipt for in this repo's canonical store, when it holds one. Decides the remediation spelling: `git switch <name>` returns to an existing ref, `git switch -c` is only correct when there is none.",
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                }
-              }
-            }
-          },
-          "additionalProperties": false
+          "description": "On a branch other than the expected one, and nothing it holds would be left on no other ref if it moved off.",
+          "type": "string",
+          "enum": [
+            "on-branch"
+          ]
         },
         {
-          "description": "(a) The workweave checkout is on an ephemeral ref rwv **recorded** for a *different* workweave. Report-only.\n\nKeyed on the receipt, not on the name (R2). Before the flat-name cutover this arm fired on any `<a>--<b>/<c>`-shaped name, which meant a hand-made branch was reported as \"another workweave's\" purely because of how it was spelled; now it fires only when some project's registry says the ref really is one rwv minted for another workweave. A look-alike lands in `SharedBranch` instead — both are report-only, so the distinction costs nothing but accuracy, and report-only is deliberate for the same reason as `SharedBranch`'s: the state is operator-made and the printed switch is exact.",
-          "type": "object",
-          "required": [
-            "foreign-ephemeral"
-          ],
-          "properties": {
-            "foreign-ephemeral": {
-              "type": "object",
-              "required": [
-                "actual_branch",
-                "expected_ref"
-              ],
-              "properties": {
-                "actual_branch": {
-                  "description": "The branch currently checked out.",
-                  "type": "string"
-                },
-                "expected_ref": {
-                  "description": "The ephemeral ref this workweave mints (`<project>--<workweave>`).",
-                  "type": "string"
-                },
-                "recorded_ref": {
-                  "description": "See `SharedBranch`'s field of the same name.",
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                }
-              }
-            }
-          },
-          "additionalProperties": false
+          "description": "On a branch other than the expected one, holding commits no other branch, remote-tracking branch or backup reaches.",
+          "type": "string",
+          "enum": [
+            "on-branch-with-stray-commits"
+          ]
         },
         {
-          "description": "(a) The workweave checkout is in detached-HEAD state — HEAD points directly at a commit instead of a named branch. With no branch name there is nothing for the merged-check to ask about and nothing for the workweave's ref namespace to be keyed by, so both invariants lapse for as long as the checkout stays detached.\n\n`--fix --adopt-detached-checkouts` mints the workweave's flat ref **at HEAD** — i.e. at the lock SHA — and, when `legacy_branch` is `Some`, gives that branch's name up to make room for it.",
-          "type": "object",
-          "required": [
+          "description": "Detached where it is not expected to be, holding nothing a branch lacks.",
+          "type": "string",
+          "enum": [
             "detached"
-          ],
-          "properties": {
-            "detached": {
-              "type": "object",
-              "required": [
-                "at_sha",
-                "expected_ref"
-              ],
-              "properties": {
-                "at_sha": {
-                  "description": "The commit HEAD names directly.",
-                  "allOf": [
-                    {
-                      "$ref": "#/definitions/CommitId"
-                    }
-                  ]
-                },
-                "expected_ref": {
-                  "description": "The ephemeral ref this workweave mints (`<project>--<workweave>`).",
-                  "type": "string"
-                },
-                "legacy_branch": {
-                  "description": "A pre-flat branch of this workweave's own namespace, with its tip. **Both** tips are reported, because they are the two things the operator is choosing between.",
-                  "anyOf": [
-                    {
-                      "$ref": "#/definitions/LegacyRefAtTip"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "recorded_ref": {
-                  "description": "See `SharedBranch`'s field of the same name.",
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                }
-              }
-            }
-          },
-          "additionalProperties": false
+          ]
         },
         {
-          "description": "(a) The workweave checkout is attached to a pre-flat `<project>--<workweave>/<segment>` ref of its **own** namespace.\n\nThe common migration case and the fully automatic one: `--fix` records a receipt at the ref's current tip and renames it to the flat name. Nothing is lost — a rename preserves the tip — and the namespace membership is decided against the name this workweave *mints*, never by taking the observed name apart (`LegacyEphemeralRefName`).",
-          "type": "object",
-          "required": [
-            "unmigrated-ephemeral-branch"
-          ],
-          "properties": {
-            "unmigrated-ephemeral-branch": {
-              "type": "object",
-              "required": [
-                "actual_branch",
-                "expected_ref"
-              ],
-              "properties": {
-                "actual_branch": {
-                  "description": "The pre-flat branch currently checked out.",
-                  "type": "string"
-                },
-                "expected_ref": {
-                  "description": "The flat ref it migrates to (`<project>--<workweave>`).",
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "additionalProperties": false
+          "description": "Detached, holding commits no branch or remote-tracking branch reaches.",
+          "type": "string",
+          "enum": [
+            "detached-with-unpushed-commits"
+          ]
         },
         {
-          "description": "(a) Two or more refs share this workweave's namespace in one store, so the flat name cannot be created and no migration arm can run.\n\ngit holds `refs/heads/p--w` and `refs/heads/p--w/x` as a file and a directory of the same name, so the rename the migration would perform is refused whatever order the arms take. `fix_branch_model_migration` skips the pair before any arm, which is why this is reported in place of `UnmigratedEphemeralBranch` rather than beside it: that finding's message promises a rename this state cannot produce.\n\nReport-only, and the repair is an operator's judgment rather than a missing arm — which of the refs is this workweave's branch, and where the others belong, is not derivable from the refs themselves.",
-          "type": "object",
-          "required": [
-            "blocked-ephemeral-namespace"
-          ],
-          "properties": {
-            "blocked-ephemeral-namespace": {
-              "type": "object",
-              "required": [
-                "blocking_refs",
-                "expected_ref"
-              ],
-              "properties": {
-                "blocking_refs": {
-                  "description": "Every pre-flat ref found under that namespace, in listing order.",
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                "expected_ref": {
-                  "description": "The flat ref no arm can create while the namespace is shared (`<project>--<workweave>`).",
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "additionalProperties": false
+          "description": "The lock has no entry for the member and its expected branch is found nowhere.",
+          "type": "string",
+          "enum": [
+            "unaligned"
+          ]
         },
         {
-          "description": "(a) The workweave checkout is in detached-HEAD state AND two or more refs share this workweave's namespace, so `--adopt-detached-checkouts` cannot run.\n\n`fix_branch_model_migration` skips the whole repo before any arm when `legacy_refs.len() > 1` — including the consented detached arm — which is why this is reported in place of `Detached` rather than beside it: that finding's message promises `--adopt-detached-checkouts`, a flag whose arm the guard prevents from running. The principle is consent-tier-independent: a consented remedy that cannot run misleads the operator exactly as an auto remedy does — consent changes who acts, not whether the named action works.\n\nReport-only. The operator must reduce the namespace to at most one ref, then re-run to get the ordinary `Detached` finding with a remedy that will actually run.",
-          "type": "object",
-          "required": [
-            "blocked-detached-namespace"
-          ],
-          "properties": {
-            "blocked-detached-namespace": {
-              "type": "object",
-              "required": [
-                "at_sha",
-                "blocking_refs",
-                "expected_ref"
-              ],
-              "properties": {
-                "at_sha": {
-                  "description": "The commit HEAD names directly.",
-                  "allOf": [
-                    {
-                      "$ref": "#/definitions/CommitId"
-                    }
-                  ]
-                },
-                "blocking_refs": {
-                  "description": "Every pre-flat ref found under that namespace, in listing order.",
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  }
-                },
-                "expected_ref": {
-                  "description": "The flat ref that cannot be created while the namespace is shared (`<project>--<workweave>`).",
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "additionalProperties": false
-        },
+          "description": "The project repo is on no branch, and its workspace was not made detached.",
+          "type": "string",
+          "enum": [
+            "project-detached"
+          ]
+        }
+      ]
+    },
+    "BranchDisciplineKind": {
+      "description": "Discriminator for `CheckViolation::BranchDiscipline` findings: the refs rwv holds an ownership receipt for.\n\n* a workweave's flat ref with no receipt: `UnrecordedEphemeralBranch`. * what a canonical store's HEAD is on: `CanonicalHoldsLiveWorkweaveRef`, `CanonicalHoldsLeakedRef`. * a `<project>--<name>` branch in a canonical clone whose workweave no longer exists on disk: `StaleEphemeralBranchSafe`, `StaleEphemeralBranchLive` or `StaleEphemeralBranchUnowned`. A tip that is an ancestor of the primary's tracking-branch tip carries no unique work and is safely removable; a tip with commits not reachable from the primary is live work and is left alone.\n\nOwnership is by record, never by name shape: a branch that merely *looks* like one of rwv's is an operator branch, and `--fix` never deletes it.",
+      "oneOf": [
         {
-          "description": "(a) The workweave checkout is in detached-HEAD state while its flat ref already exists in the canonical store.\n\nReported in place of `Detached` because that finding's remedy, `--adopt-detached-checkouts`, mints the flat ref and refuses a name that already exists: moving an existing branch to HEAD would be a MOVE no receipt witnesses. The migration's consented arm skips this state for the same reason.\n\nReport-only. The reattach it names is chosen by `ancestry` so that following it strands no commit: `git switch` where the branch carries HEAD, a fast-forward of the branch to HEAD where HEAD carries the branch, and a new branch for HEAD's commits first where they have diverged.",
-          "type": "object",
-          "required": [
-            "detached-off-ephemeral-branch"
-          ],
-          "properties": {
-            "detached-off-ephemeral-branch": {
-              "type": "object",
-              "required": [
-                "ancestry",
-                "at_sha",
-                "branch_tip",
-                "expected_ref"
-              ],
-              "properties": {
-                "ancestry": {
-                  "description": "How HEAD's commit stands against the flat ref's.",
-                  "allOf": [
-                    {
-                      "$ref": "#/definitions/DetachedAncestry"
-                    }
-                  ]
-                },
-                "at_sha": {
-                  "description": "The commit HEAD names directly.",
-                  "allOf": [
-                    {
-                      "$ref": "#/definitions/CommitId"
-                    }
-                  ]
-                },
-                "branch_tip": {
-                  "description": "The commit the flat ref names.",
-                  "allOf": [
-                    {
-                      "$ref": "#/definitions/CommitId"
-                    }
-                  ]
-                },
-                "expected_ref": {
-                  "description": "The flat ref (`<project>--<workweave>`).",
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "additionalProperties": false
-        },
-        {
-          "description": "(a) The workweave's flat ref exists in the canonical store, but rwv holds no receipt for it.\n\nThe state a build that minted flat names before receipts existed leaves behind, and the state a migration crash between the receipt and the rename would leave if the receipt had not been written first. Under R2 the ref is nobody's until adopted, so `workweave delete` cannot clean it up; `--fix` adopts it at its observed tip.",
+          "description": "The workweave's flat ref exists in the canonical store, but rwv holds no receipt for it.\n\nThe state a build that minted flat names before receipts existed leaves behind, and the state a migration crash between the receipt and the rename would leave if the receipt had not been written first. Under R2 the ref is nobody's until adopted, so `workweave delete` cannot clean it up; `--fix` adopts it at its observed tip.",
           "type": "object",
           "required": [
             "unrecorded-ephemeral-branch"
@@ -606,28 +391,6 @@ Schema:
               "properties": {
                 "branch": {
                   "description": "The flat ref (`<project>--<workweave>`).",
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "additionalProperties": false
-        },
-        {
-          "description": "(a) The workweave checkout is on a branch with no commits.\n\nReport-only, and not because a fix is missing: there is no revision to record a receipt against, so there is nothing the migration could own. `rwv lock` is where an unborn HEAD is actionable.",
-          "type": "object",
-          "required": [
-            "unborn-checkout"
-          ],
-          "properties": {
-            "unborn-checkout": {
-              "type": "object",
-              "required": [
-                "branch"
-              ],
-              "properties": {
-                "branch": {
-                  "description": "The branch HEAD points at, which has no commits yet.",
                   "type": "string"
                 }
               }
@@ -683,44 +446,6 @@ Schema:
                 "project": {
                   "description": "The project whose registry holds the receipt.\n\nNot the workweave: rwv does not try to reconstruct which workweave a stray ref belonged to. The receipt records `(store, name, created_at)`, and the workweave is recoverable only while one on disk would mint that name — which is exactly the case this variant is *not*.",
                   "type": "string"
-                }
-              }
-            }
-          },
-          "additionalProperties": false
-        },
-        {
-          "description": "(b) The canonical store — or the project repo — is in detached-HEAD state.\n\nThe project repo is an instance of the branch model, so it is checked here rather than exempted.\n\n`--fix --reattach-checkouts` reattaches when `reattachable` — the tracking declaration's local counterpart exists and its tip equals HEAD. That condition is false for the ordinary post-fetch state (stale counterpart, HEAD at the lock SHA), so the fix repairs the minority; it is not weave-wide reattachment.",
-          "type": "object",
-          "required": [
-            "canonical-detached"
-          ],
-          "properties": {
-            "canonical-detached": {
-              "type": "object",
-              "required": [
-                "at_sha",
-                "reattachable"
-              ],
-              "properties": {
-                "at_sha": {
-                  "description": "The commit HEAD names directly.",
-                  "allOf": [
-                    {
-                      "$ref": "#/definitions/CommitId"
-                    }
-                  ]
-                },
-                "counterpart": {
-                  "description": "The local counterpart of the ref this repo tracks — the manifest's `branch` for a member, the remote's declared default branch for the project repo. `None` when no tracking declaration resolves, in which case there is nothing to name as a reattach target.",
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "reattachable": {
-                  "description": "Whether the reattach condition holds: `counterpart` exists as a local branch **and** its tip equals HEAD.",
-                  "type": "boolean"
                 }
               }
             }
@@ -998,39 +723,6 @@ Schema:
         }
       ]
     },
-    "DetachedAncestry": {
-      "description": "How a detached HEAD stands against its workweave's existing branch, which decides the one reattach that strands no commit.",
-      "oneOf": [
-        {
-          "description": "HEAD is at the branch's tip.",
-          "type": "string",
-          "enum": [
-            "equal"
-          ]
-        },
-        {
-          "description": "The branch carries HEAD and commits HEAD lacks: switching to it strands nothing.",
-          "type": "string",
-          "enum": [
-            "head-behind"
-          ]
-        },
-        {
-          "description": "HEAD carries the branch and commits the branch lacks: only a fast-forward of the branch to HEAD strands nothing.",
-          "type": "string",
-          "enum": [
-            "head-ahead"
-          ]
-        },
-        {
-          "description": "Each carries commits the other lacks, or their ancestry could not be read: switching strands HEAD's, and moving the branch strands its own.",
-          "type": "string",
-          "enum": [
-            "diverged"
-          ]
-        }
-      ]
-    },
     "DriftKind": {
       "oneOf": [
         {
@@ -1164,35 +856,6 @@ Schema:
         },
         "severity": {
           "$ref": "#/definitions/SeverityOutput"
-        }
-      }
-    },
-    "LegacyRefAtTip": {
-      "description": "A pre-flat branch and the commit it reaches. **Both** tips are reported, side by side, because the operator is choosing between them.",
-      "type": "object",
-      "required": [
-        "branch",
-        "strands_commits"
-      ],
-      "properties": {
-        "branch": {
-          "description": "The pre-flat branch name (`<project>--<workweave>/<segment>`).",
-          "type": "string"
-        },
-        "strands_commits": {
-          "description": "Whether that tip carries commits the detached HEAD does not — i.e. whether adopting the checkout would **strand** work. Arm 3 makes the warning mandatory in exactly this case.",
-          "type": "boolean"
-        },
-        "tip_sha": {
-          "description": "Its tip, or `null` where the branch names no commit.",
-          "anyOf": [
-            {
-              "$ref": "#/definitions/CommitId"
-            },
-            {
-              "type": "null"
-            }
-          ]
         }
       }
     },
@@ -2650,7 +2313,7 @@ Schema:
               ]
             },
             "repo_path": {
-              "description": "Absolute path to the repo checkout where the violation was found (workweave checkout for (a), canonical clone for (b)/(c)).",
+              "description": "Absolute path to the canonical clone where the violation was found.",
               "allOf": [
                 {
                   "$ref": "#/definitions/WirePath"
@@ -2664,6 +2327,50 @@ Schema:
                   "$ref": "#/definitions/BranchDisciplineKind"
                 }
               ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "listed",
+            "project",
+            "repo_path",
+            "sub_kind"
+          ],
+          "properties": {
+            "branch": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "alignment"
+              ]
+            },
+            "listed": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "project": {
+              "type": "string"
+            },
+            "repo_path": {
+              "description": "Absolute path to the checkout.",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/WirePath"
+                }
+              ]
+            },
+            "sub_kind": {
+              "$ref": "#/definitions/AlignmentKind"
             }
           }
         },

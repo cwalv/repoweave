@@ -257,7 +257,7 @@ impl Vcs for FakeVcs {
     /// and it takes no [`VcsCall`]. A test that needs two checkouts to share a
     /// store is asserting about the store itself; that wants real repos, or a
     /// declared mapping added here beside the arm that needs it.
-    fn resolve_canonical_store(&self, _workspace: &Path) -> Option<PathBuf> {
+    fn store_of(&self, _workspace: &Path) -> Option<PathBuf> {
         None
     }
 
@@ -603,6 +603,72 @@ impl Vcs for FakeVcs {
         unsupported("branch_tips")
     }
 
+    fn private_dir(&self, _checkout: &Path) -> Result<PathBuf, VcsError> {
+        unsupported("private_dir")
+    }
+
+    fn checkouts_of_branch(
+        &self,
+        _repo: &Path,
+        _branch: &RawRefName,
+    ) -> Result<Vec<PathBuf>, VcsError> {
+        unsupported("checkouts_of_branch")
+    }
+
+    fn upstream_of(
+        &self,
+        _repo: &Path,
+        _branch: &RawRefName,
+    ) -> Result<Option<Upstream>, VcsError> {
+        unsupported("upstream_of")
+    }
+
+    fn remote_copies(
+        &self,
+        _repo: &Path,
+        _branch: &RawRefName,
+    ) -> Result<Vec<RemoteTip>, VcsError> {
+        unsupported("remote_copies")
+    }
+
+    fn set_upstream(
+        &self,
+        _repo: &Path,
+        _branch: &RawRefName,
+        _upstream: &Upstream,
+    ) -> Result<(), VcsError> {
+        unsupported("set_upstream")
+    }
+
+    fn create_branch(
+        &self,
+        _repo: &Path,
+        _name: &RawRefName,
+        _at: &ResolvedRevisionId,
+        _upstream: Option<&Upstream>,
+    ) -> Result<(), VcsError> {
+        unsupported("create_branch")
+    }
+
+    fn stray_commits(
+        &self,
+        _repo: &Path,
+        _tip: &ResolvedRevisionId,
+        _leaving: Option<&RawRefName>,
+        _onto: Option<&ResolvedRevisionId>,
+    ) -> Result<Vec<CommitSummary>, VcsError> {
+        unsupported("stray_commits")
+    }
+
+    fn materialize_worktree_detached(
+        &self,
+        _store: &Path,
+        _dest: &Path,
+        _at: &ResolvedRevisionId,
+    ) -> Result<(), VcsError> {
+        unsupported("materialize_worktree_detached")
+    }
+
     fn records_branch(&self) -> &'static str {
         unsupported("records_branch")
     }
@@ -928,10 +994,6 @@ impl Vcs for FakeVcs {
         unsupported("rename_local_ref")
     }
 
-    fn birth_ref_at_head(&self, _repo: &Path, _name: &RawRefName) -> Result<(), VcsError> {
-        unsupported("birth_ref_at_head")
-    }
-
     fn push_ref(
         &self,
         _repo: &Path,
@@ -965,6 +1027,15 @@ impl WorkspacePopulation for FakeVcs {
     ) -> Result<RefOrigin, VcsError> {
         self.enter(VcsCall::MaterializeUnpopulatedWorktreeOnRef)?;
         Ok(self.author_or_adopt(store, name, start_point))
+    }
+
+    fn materialize_unpopulated_worktree_detached(
+        &self,
+        _store: &Path,
+        _dest: &Path,
+        _at: &ResolvedRevisionId,
+    ) -> Result<(), VcsError> {
+        unsupported("materialize_unpopulated_worktree_detached")
     }
 
     fn tracked_files(&self, _workspace: &Path) -> Result<Vec<TrackedFile>, VcsError> {

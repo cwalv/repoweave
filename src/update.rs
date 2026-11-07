@@ -1,11 +1,11 @@
 //! `rwv update` — clone the members missing on disk, align the rest to the
-//! lock, and report what the lock leaves unpinned.
+//! checked-out branch's record, and report what the lock leaves unpinned.
 //!
 //! The engine here is also what `rwv clone` runs once it has the project
 //! repo: a clone is an update of a weave with nothing in it.
 
 use crate::activate::ActivateOptions;
-use crate::cli::consent::DetachConsent;
+use crate::alignment::{Aligner, Applied, Member, ProjectStanding};
 use crate::diagnosis::JudgedOutput;
 use crate::manifest::{LockEntry, LockFile, Manifest, RepoEntry, RepoPath};
 use crate::member_selection::MemberSelection;
@@ -14,9 +14,7 @@ use crate::placement::PlacementOutput;
 use crate::refusal::RefusalKind;
 use crate::registry;
 use crate::skipped::{SkipReason, SkippedEffect};
-use crate::vcs::{
-    vcs_for, HeadAttachment, PinOutcome, RawRevisionId, ResolvedRevisionId, Vcs, VcsError,
-};
+use crate::vcs::{vcs_for, PinOutcome, RawRevisionId, Vcs};
 use crate::workspace::{
     observe_root, project_dir, Checkout, Resolution, RootObservation, WorkspaceContext,
 };
@@ -46,6 +44,14 @@ pub struct MemberOutcomeOutput {
     /// <token>`. Absent when the failure carries no classified refusal.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refusal: Option<String>,
+    /// The branch the checkout was moved off, when it was neither a declared
+    /// branch nor named after a recorded weave branch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub moved_from: Option<String>,
+    /// What holds for the member in its expected state, such as the branch
+    /// it would sit on being checked out in another workspace.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub facts: Vec<crate::diagnosis::FactOutput>,
 }
 
 /// Status discriminant for [`MemberOutcomeOutput`].
@@ -61,6 +67,7 @@ pub enum MemberOutcomeStatus {
 /// given the envelope of the verb that ran it.
 pub(crate) struct MembersReport {
     outcomes: Vec<MemberOutcomeOutput>,
+    judged: Vec<JudgedOutput>,
     placements: Vec<PlacementOutput>,
     resolution: Option<Resolution>,
     pub(crate) skipped: Vec<SkippedEffect>,
@@ -74,6 +81,10 @@ pub struct UpdateJsonOutput {
     #[serde(rename = "$schema")]
     pub schema: String,
     pub outcomes: Vec<MemberOutcomeOutput>,
+    /// Each member the update left where it was, judged on the `alignment`
+    /// axis (and `edits`, where uncommitted changes kept it), with that
+    /// state's choices. Empty, not absent, when it left none.
+    pub judged: Vec<JudgedOutput>,
     /// How the files of each checkout the update moved or created were placed:
     /// a canonical clone it realigned, and from a workweave each worktree it
     /// created there. Empty, not absent, when it placed none.
@@ -93,6 +104,7 @@ impl MembersReport {
         UpdateJsonOutput {
             schema: UPDATE_SCHEMA_URL.to_owned(),
             outcomes: self.outcomes,
+            judged: self.judged,
             placements: self.placements,
             resolution: self.resolution,
             skipped: self.skipped,
@@ -169,12 +181,11 @@ enum MemberStep {
 pub fn run_update(
     ctx: &WorkspaceContext,
     selection: &MemberSelection,
-    detach_checkouts: Option<DetachConsent>,
     jobs: usize,
     output: OutputMode,
     activation: ActivateOptions,
 ) -> anyhow::Result<()> {
-    let run = update_members(ctx, selection, detach_checkouts, jobs, output, activation)?;
+    let run = update_members(ctx, selection, jobs, output, activation)?;
     if output.is_json() {
         run.envelope.print()?;
     }
@@ -193,7 +204,6 @@ pub(crate) struct UpdateRun {
 pub(crate) fn update_members(
     ctx: &WorkspaceContext,
     selection: &MemberSelection,
-    detach_checkouts: Option<DetachConsent>,
     jobs: usize,
     output: OutputMode,
     activation: ActivateOptions,
@@ -210,6 +220,18 @@ pub(crate) fn update_members(
     };
     let name = ctx.require_active_project_on_disk()?.clone();
     crate::branch::require_recorded(ctx)?;
+    let aligner = Aligner::open(
+        ctx.active_path(),
+        &name,
+        crate::alignment::Accounting::scan(ctx.primary_path()),
+    )?;
+    refuse_detached_project(&aligner, &name)?;
+    if let Some(why) = &aligner.corrupt {
+        eprintln!(
+            "rwv update: the workspace state of {} reads as absent: {why}",
+            crate::workspace::project_rel_path(&name)
+        );
+    }
 
     // Per-workspace state (rwv.toml, rwv.lock) lives under active_path — the
     // workweave when in one, primary otherwise. Mirrors add_remove.rs's
@@ -247,7 +269,6 @@ pub(crate) fn update_members(
         &project_dir,
         workspace_root,
         selection,
-        detach_checkouts,
         jobs,
         output,
         Some(ctx.resolution()),
@@ -284,12 +305,43 @@ pub(crate) fn update_members(
         ),
         Checkout::Primary { .. } => Ok(false),
     };
+    let aligned = match &created {
+        Ok(_) => align_checkouts(ctx, &aligner, &name, &project_dir, selection, jobs, output),
+        Err(_) => Ok(AlignRun::default()),
+    };
+    let aligned = match aligned {
+        Ok(run) => run,
+        Err(error) => {
+            return Ok(UpdateRun {
+                envelope: report.into_update_envelope(),
+                tail: Err(error),
+            });
+        }
+    };
+    report.outcomes_merge(&aligned);
+    report.judged.extend(aligned.judged.iter().cloned());
+    if output.is_json() {
+        for (rp, dir, files) in &aligned.placed {
+            report
+                .placements
+                .push(PlacementOutput::new(rp, dir, *files));
+        }
+    }
+    if aligned.failures.is_empty() && created.is_ok() && selection.names_every_member() {
+        let manifest = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME))?;
+        crate::alignment::store_state(
+            crate::vcs::project_vcs().as_ref(),
+            &project_dir,
+            &aligner.next_state(&manifest),
+        )?;
+    }
     // In a workweave the only clones update changes are canonical clones it
     // created for the primary; only a worktree it created is this workweave's.
-    let checkout_changed = match &ctx.checkout {
-        Checkout::Workweave { .. } => matches!(created, Ok(true)),
-        Checkout::Primary { .. } => moved_or_created,
-    };
+    let checkout_changed = aligned.changed
+        || match &ctx.checkout {
+            Checkout::Workweave { .. } => matches!(created, Ok(true)),
+            Checkout::Primary { .. } => moved_or_created,
+        };
     if let Some(project) = &sole {
         let msg = format!(
             "rwv update: activating project '{project}', the only project in this weave \
@@ -319,9 +371,21 @@ pub(crate) fn update_members(
         skip.report();
         report.skipped.push(skip);
     }
+    let tail = match created {
+        Err(error) => Err(error),
+        Ok(_) if !aligned.failures.is_empty() => Err(crate::refusal::refusal(
+            RefusalKind::PartialRunAborted,
+            format!(
+                "update could not align {} repo(s):\n  {}",
+                aligned.failures.len(),
+                aligned.failures.join("\n  ")
+            ),
+        )),
+        Ok(_) => Ok(()),
+    };
     Ok(UpdateRun {
         envelope: report.into_update_envelope(),
-        tail: created.map(|_| ()),
+        tail,
     })
 }
 
@@ -489,7 +553,6 @@ pub(crate) fn bring_members(
     project_dir: &Path,
     workspace_root: &Path,
     selection: &MemberSelection,
-    detach_checkouts: Option<DetachConsent>,
     jobs: usize,
     output: OutputMode,
     resolution: Option<Resolution>,
@@ -573,7 +636,6 @@ pub(crate) fn bring_members(
                 existing_lock.as_ref(),
                 duty,
                 selection,
-                detach_checkouts,
                 &reporter,
                 output,
             );
@@ -616,6 +678,7 @@ pub(crate) fn bring_members(
     // Records follow work_items order whatever order the workers finished in.
     let mut report = MembersReport {
         outcomes: Vec::new(),
+        judged: Vec::new(),
         placements: Vec::new(),
         resolution,
         skipped: Vec::new(),
@@ -643,6 +706,8 @@ pub(crate) fn bring_members(
                         status: MemberOutcomeStatus::Ok,
                         message: None,
                         refusal: None,
+                        moved_from: None,
+                        facts: Vec::new(),
                     });
                     if let Some(files) = files {
                         report
@@ -659,6 +724,8 @@ pub(crate) fn bring_members(
                         status: MemberOutcomeStatus::Skipped,
                         message: Some(format!("skipped {}", repo_path.as_str())),
                         refusal: None,
+                        moved_from: None,
+                        facts: Vec::new(),
                     });
                 }
             }
@@ -678,6 +745,8 @@ pub(crate) fn bring_members(
                         status: MemberOutcomeStatus::Failed,
                         message: Some(msg.clone()),
                         refusal,
+                        moved_from: None,
+                        facts: Vec::new(),
                     });
                 }
                 errors.push(msg);
@@ -722,129 +791,229 @@ pub(crate) fn bring_members(
     })
 }
 
+impl MembersReport {
+    fn outcomes_merge(&mut self, aligned: &AlignRun) {
+        for (path, moved_from, facts) in &aligned.aligned {
+            if let Some(outcome) = self.outcomes.iter_mut().find(|o| &o.path == path) {
+                outcome.moved_from.clone_from(moved_from);
+                outcome.facts.clone_from(facts);
+            }
+        }
+        for (path, message, refusal) in &aligned.failed {
+            if let Some(outcome) = self.outcomes.iter_mut().find(|o| &o.path == path) {
+                outcome.status = MemberOutcomeStatus::Failed;
+                outcome.message = Some(message.clone());
+                outcome.refusal.clone_from(refusal);
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+struct AlignRun {
+    changed: bool,
+    aligned: Vec<(String, Option<String>, Vec<crate::diagnosis::FactOutput>)>,
+    failed: Vec<(String, String, Option<String>)>,
+    failures: Vec<String>,
+    judged: Vec<JudgedOutput>,
+    placed: Vec<(RepoPath, PathBuf, crate::share::FilePlacement)>,
+}
+
+fn refuse_detached_project(
+    aligner: &Aligner,
+    project: &crate::manifest::ProjectName,
+) -> anyhow::Result<()> {
+    if aligner.standing != ProjectStanding::Detached {
+        return Ok(());
+    }
+    let vcs = crate::vcs::project_vcs();
+    let held = vcs
+        .head_revision(&aligner.project_dir)
+        .ok()
+        .map(|head| vcs.stray_commits(&aligner.project_dir, &head, None, None))
+        .transpose()?
+        .unwrap_or_default();
+    Err(crate::diagnosis::State::AlignmentProjectDetached
+        .of(crate::workspace::project_rel_path(project))
+        .project_repo()
+        .listing(held.iter().map(|c| {
+            format!(
+                "{} {}",
+                crate::vcs::short_revision(c.id.as_str()),
+                c.subject
+            )
+        }))
+        .checkout(&aligner.project_dir)
+        .by_verb("update")
+        .judge(vcs.as_ref())
+        .refused())
+}
+
+/// Put each selected member's checkout where the checked-out branch says,
+/// moving only those the engine may move, and report the rest.
+fn align_checkouts(
+    ctx: &WorkspaceContext,
+    aligner: &Aligner,
+    project: &crate::manifest::ProjectName,
+    project_dir: &Path,
+    selection: &MemberSelection,
+    jobs: usize,
+    output: OutputMode,
+) -> anyhow::Result<AlignRun> {
+    let _ = project;
+    let manifest = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME))?;
+    let lock_path = LockFile::path_in(project_dir);
+    let lock = if lock_path.exists() {
+        Some(LockFile::from_state(&lock_path)?)
+    } else {
+        None
+    };
+    let items: Vec<(RepoPath, RepoEntry, Box<dyn Vcs>, PathBuf)> = manifest
+        .iter_entries()
+        .filter(|(rp, entry)| selection.covers(rp, entry.role))
+        .map(|(rp, entry)| {
+            (
+                rp.clone(),
+                entry.clone(),
+                vcs_for(entry.vcs_type),
+                ctx.active_path().join(rp.as_path()),
+            )
+        })
+        .filter(|(_, _, _, dir)| {
+            dir.exists()
+                && !crate::workweave::is_symlinked_member(dir)
+                && !crate::workweave::is_dangling_link(dir)
+        })
+        .collect();
+    let results = run_in_parallel(&items, jobs, |_idx, (rp, entry, vcs, dir)| {
+        let member = Member {
+            path: rp,
+            entry,
+            dir,
+            vcs: vcs.as_ref(),
+        };
+        let before = vcs.head_revision(dir).ok();
+        let applied = aligner
+            .plan(&member, lock.as_ref())
+            .and_then(|plan| aligner.apply(&member, &plan, rp));
+        let files = match &applied {
+            Ok(Applied::Aligned { .. }) => {
+                crate::settle::settle_moved(vcs.as_ref(), dir, entry.role, before.as_ref())
+                    .map(|settled| settled.files)
+            }
+            _ => Ok(None),
+        };
+        let moved = before != vcs.head_revision(dir).ok();
+        (applied, files, moved)
+    });
+    let mut run = AlignRun::default();
+    let mut left = crate::diagnosis::Report::default();
+    let say = |line: String| {
+        if output == OutputMode::Text {
+            outln!("{line}");
+        } else {
+            eprintln!("{line}");
+        }
+    };
+    for ((rp, _, _, dir), (result, files, moved)) in items.iter().zip(results) {
+        run.changed |= moved;
+        let (result, files) = match files {
+            Ok(files) => (result, files),
+            Err(e) => (Err(e.context(rp.to_string())), None),
+        };
+        if let Some(files) = files {
+            run.placed.push((rp.clone(), dir.clone(), files));
+            if output == OutputMode::Text {
+                outln!("rwv update: {rp}: files {files}");
+            }
+        }
+        match result {
+            Ok(Applied::Aligned {
+                moved_from,
+                facts,
+                notes,
+            }) => {
+                if let Some(from) = &moved_from {
+                    say(format!("rwv update: {rp}: moved from {from}"));
+                }
+                for fact in &facts {
+                    say(format!(
+                        "rwv update: {rp}: {}",
+                        crate::diagnosis::fact_text(fact)
+                    ));
+                }
+                for note in notes {
+                    left.add(note);
+                }
+                run.aligned.push((
+                    rp.to_string(),
+                    moved_from,
+                    facts
+                        .iter()
+                        .map(|fact| crate::diagnosis::FactOutput {
+                            fact: fact.kind,
+                            about: fact.about.clone(),
+                        })
+                        .collect(),
+                ));
+            }
+            Ok(Applied::Left { judged }) => {
+                let refused = judged
+                    .iter()
+                    .any(|line| line.state().axis() == crate::diagnosis::Axis::PushBranch);
+                if refused {
+                    let mut report = crate::diagnosis::Report::default();
+                    for line in judged {
+                        report.add(line);
+                    }
+                    let error = report
+                        .into_result()
+                        .expect_err("a report holding a line refuses");
+                    let message = format!("{rp}: {error:#}");
+                    run.failed.push((
+                        rp.to_string(),
+                        message.clone(),
+                        crate::refusal::kind_of(&error).map(RefusalKind::token),
+                    ));
+                    run.failures.push(message);
+                } else {
+                    for line in judged {
+                        left.add(line);
+                    }
+                }
+            }
+            Err(error) => {
+                let message = format!("{rp}: {error:#}");
+                run.failed.push((
+                    rp.to_string(),
+                    message.clone(),
+                    crate::refusal::kind_of(&error).map(RefusalKind::token),
+                ));
+                run.failures.push(message);
+            }
+        }
+    }
+    if !left.is_empty() {
+        if output == OutputMode::Text {
+            outln!("{}", left.render("update").trim_end_matches('\n'));
+        }
+        run.judged = left.output();
+    }
+    Ok(run)
+}
+
 /// What the clones under a run's store root are to the workspace whose lock
 /// it reads.
 #[derive(Clone, Copy)]
 pub(crate) enum CloneDuty<'a> {
-    /// They are its checkouts: aligned to its lock.
+    /// They are its checkouts: a missing one is cloned, a present one is left
+    /// for alignment.
     Checkouts,
     /// They are the primary's canonical clones, which a workweave's worktrees
     /// share. The workweave's pins are fetched into them and nothing they have
     /// checked out moves; the primary's lock, not the workweave's, says where a
     /// clone not on disk is born.
     SharedStore { primary_lock: Option<&'a LockFile> },
-}
-
-/// Realign a clone that is already on disk to `target`.
-///
-/// The kind of ref write this performs is decided by what HEAD is, and each
-/// kind carries its own precondition:
-///
-/// - **Attached to the tracking declaration's local counterpart** — a MOVE
-///   of that branch, legal when `target` is a fast-forward. A non-fast-forward
-///   (materializing an older lock, or a branch carrying commits origin has
-///   not seen) refuses, naming `--detach-checkouts`.
-/// - **Attached to anything else** — an operator's personal branch. Refuses
-///   naming both refs rather than relocating a ref it cannot relate to the
-///   layer that justifies the move. It refuses even when `target` *would* be
-///   a fast-forward: attachment is operator state, and a fast-forward of a
-///   personal bookmark still silently changes what it means.
-/// - **Detached** — a MOVE of HEAD itself, which stays detached. Subject to
-///   the mid-operation precondition inside [`Vcs::advance_detached_head`]
-///   — `Detached` alone cannot tell "rwv left this at a lock SHA" apart from
-///   "the operator is stopped mid-bisect".
-/// - **Unborn** — refuses. Both exits are unrepresentable rather than
-///   undecided: MOVE semantics on an unborn HEAD are undefined (an
-///   `UnbornRef` cannot be passed to `advance_attached_ref`), and
-///   `detach_head` takes an `AttachedRef`, so no consent token opens the
-///   detaching route either.
-///
-/// A `detach_checkouts` consent converts both refusals into the detach they
-/// name; it never turns a refused MOVE into a performed one, so the branch
-/// ref is left where it is in every case.
-///
-/// Returns the refusal or failure message when the operation must stop.
-fn realign_present_clone(
-    vcs: &dyn Vcs,
-    repo_path: &RepoPath,
-    entry: &RepoEntry,
-    dest: &Path,
-    target: &ResolvedRevisionId,
-    detach_checkouts: Option<DetachConsent>,
-) -> Result<(), String> {
-    let describe = |e: VcsError| format!("{}: {e:#}", repo_path.as_str());
-
-    let attached = match vcs.head_attachment(dest).map_err(describe)? {
-        HeadAttachment::Detached(was) => {
-            if was.at() == target {
-                // The absorbed no-op: a clone already at the pin is not
-                // realigned at all, so nothing is asked of the operator and
-                // nothing is written.
-                return Ok(());
-            }
-            return vcs.advance_detached_head(&was, target).map_err(describe);
-        }
-        HeadAttachment::Unborn(u) => {
-            return Err(format!(
-                "{}: branch '{u}' has no commits yet — rwv update has no way to \
-                 place {} on an unborn branch. Make an initial commit, or check \
-                 out a branch that has one, then re-run.",
-                repo_path.as_str(),
-                target.display_str(),
-            ));
-        }
-        HeadAttachment::Attached(a) => a,
-    };
-
-    let counterpart = entry.branch.local_counterpart();
-
-    if !attached.is_named(&counterpart) {
-        let Some(consent) = detach_checkouts else {
-            return Err(format!(
-                "{}: is on branch '{attached}', not the local counterpart \
-                 ('{counterpart}') of the branch the manifest declares — rwv \
-                 update moves only that branch, so it will not relocate one it \
-                 cannot relate to the lock.\n  \
-                 Switch to '{counterpart}' and re-run, or re-run with \
-                 --detach-checkouts to materialize {} on a detached HEAD \
-                 (your branch is not moved).",
-                repo_path.as_str(),
-                target.display_str(),
-            ));
-        };
-        return vcs
-            .detach_head(&attached, target, consent)
-            .map_err(describe);
-    }
-
-    let head = vcs.head_revision(dest).map_err(describe)?;
-    if &head == target {
-        return Ok(());
-    }
-    // Classify before acting rather than reading a failure back out of git:
-    // `merge --ff-only` also fails on a dirty tree, and the two need
-    // different messages.
-    if vcs.is_ancestor(dest, &head, target).map_err(describe)? {
-        return vcs
-            .advance_attached_ref(&attached, target)
-            .map_err(describe);
-    }
-    let Some(consent) = detach_checkouts else {
-        return Err(format!(
-            "{}: aligning '{attached}' to {} is not a fast-forward — the pin is \
-             not a descendant of the branch tip, which is what materializing an \
-             older lock, or a branch carrying commits its remote has not seen, \
-             looks like.\n  \
-             Reconcile '{attached}' with the pin yourself (ordinary `git rebase` \
-             / `git merge`) and re-run, or re-run with --detach-checkouts to \
-             materialize {} on a detached HEAD (the branch ref is not moved).",
-            repo_path.as_str(),
-            target.display_str(),
-            target.display_str(),
-        ));
-    };
-    vcs.detach_head(&attached, target, consent)
-        .map_err(describe)
 }
 
 /// Per-repo worker of [`bring_members`]: one iteration of its loop body.
@@ -864,7 +1033,6 @@ fn bring_one(
     existing_lock: Option<&LockFile>,
     duty: CloneDuty<'_>,
     selection: &MemberSelection,
-    detach_checkouts: Option<DetachConsent>,
     reporter: &Reporter<'_>,
     output: OutputMode,
 ) -> MemberStep {
@@ -907,38 +1075,14 @@ fn bring_one(
     }
 
     if dest.exists() {
-        let Some(lock_entry) = lock_entry else {
-            emit(&format!(
-                "rwv {verb}: leaving {} where it is: the lock has no entry for it",
-                repo_path.as_str()
-            ));
-            return MemberStep::Ok {
-                pin: PinOutcome::None,
-            };
+        let pin = match lock_entry {
+            None => PinOutcome::None,
+            Some(lock_entry) => match vcs.resolve_revision(&dest, lock_entry.version.as_str()) {
+                Ok(_) => PinOutcome::Reached,
+                Err(_) => PinOutcome::Unreachable,
+            },
         };
-        emit(&format!(
-            "rwv {verb}: aligning {} to {}",
-            repo_path.as_str(),
-            lock_entry.version,
-        ));
-        let resolved = match vcs.resolve_revision(&dest, lock_entry.version.as_str()) {
-            Ok(r) => r,
-            Err(e) => {
-                return MemberStep::Failed(anyhow::Error::from(e).context(format!(
-                    "{}: failed to resolve {}",
-                    repo_path.as_str(),
-                    lock_entry.version,
-                )));
-            }
-        };
-        if let Err(msg) =
-            realign_present_clone(vcs, repo_path, entry, &dest, &resolved, detach_checkouts)
-        {
-            return MemberStep::Failed(anyhow::anyhow!(msg));
-        }
-        return MemberStep::Ok {
-            pin: PinOutcome::Reached,
-        };
+        return MemberStep::Ok { pin };
     }
 
     match clone_member(

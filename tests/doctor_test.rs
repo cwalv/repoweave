@@ -1724,6 +1724,10 @@ mod doctor_json {
         BranchDiscipline {
             repo_path: String,
         },
+        Alignment {
+            repo_path: String,
+            project: String,
+        },
         StaleWorktreeRegistration {
             path: String,
             absolute_path: String,

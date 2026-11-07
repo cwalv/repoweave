@@ -558,11 +558,11 @@ fn an_update_names_materialize_only_when_it_moved_or_created_a_checkout() {
     std::fs::write(member.join("moved.txt"), "moved\n").unwrap();
     common::git_in(&member, &["add", "-A"]);
     common::git_in(&member, &["commit", "-q", "-m", "ahead of the lock"]);
-    common::git_in(&member, &["checkout", "-q", "--detach"]);
+    common::git_in(&member, &["checkout", "-q", "--detach", "HEAD~1"]);
     let run = weave.ok_in(&weave.ws, &["update", "--json", "-j", "1"]);
     assert!(
-        !member.join("moved.txt").exists(),
-        "fixture: update moved the member back to its pin:\n{}",
+        member.join("moved.txt").exists(),
+        "fixture: update returned the detached member to its branch:\n{}",
         run.report()
     );
     assert!(run.stderr.contains(line), "{}", run.report());
