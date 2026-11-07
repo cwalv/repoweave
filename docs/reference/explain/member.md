@@ -89,9 +89,8 @@ When `rwv member add` is invoked from inside a workweave, it also creates a
 `git worktree` for the new repo inside the workweave directory. The
 ephemeral branch follows the standard `{project}--{workweave}` naming
 convention (matching `rwv workweave create`) — flat, with no third component
-derived from the source branch. `add` records an ownership receipt for it, so
-`rwv workweave delete` destroys it along with the rest of the workweave's
-refs. If the canonical clone has no commits yet (from `--new`), the worktree
+derived from the source branch. `rwv workweave delete` deletes it along with the rest of the workweave's
+branches once it has landed. If the canonical clone has no commits yet (from `--new`), the worktree
 creation is skipped; after the first commit, run `rwv member pin <repo> HEAD`
 then `rwv doctor --fix` here to materialize it.
 
@@ -378,9 +377,7 @@ Every guard runs before the manifest is written, so a refused delete leaves
   remote counterpart or with commits ahead of it, and any backup that holds
   commits no branch reaches (`rwv backup list` shows them; `rwv backup drop
   <repo>` drops the ones that are not wanted); in a workweave, a worktree
-  tip the canonical clone does not contain;
-- in the primary, a clone rwv still holds **ownership receipts** for refuses
-  (`store-still-claimed`).
+  tip the canonical clone does not contain.
 
 (See `rwv explain workweave` for the workweave topology model.)
 

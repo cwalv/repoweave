@@ -462,7 +462,7 @@ impl<'a> Rule<'a> {
     /// deletes, and drop the records it leaves without a branch.
     pub fn apply(self) -> anyhow::Result<Outcome> {
         let unconfirmed = self.fetch()?;
-        let pins = crate::backup::live_pins(self.request.primary)?;
+        let pins = crate::pins::live_pins(self.request.primary)?;
         let mut outcome = Outcome::default();
         let mut member_survives = false;
 
@@ -499,7 +499,7 @@ impl<'a> Rule<'a> {
         &self,
         index: usize,
         unconfirmed: &BTreeMap<usize, BTreeMap<String, String>>,
-        pins: &BTreeMap<RepoPath, Vec<crate::backup::LivePin>>,
+        pins: &BTreeMap<RepoPath, Vec<crate::pins::LivePin>>,
         outcome: &mut Outcome,
     ) -> anyhow::Result<bool> {
         let repo = &self.repos[index];
@@ -763,7 +763,7 @@ impl<'a> Rule<'a> {
         repo: &Repo,
         member: &RepoPath,
         tip: &ResolvedRevisionId,
-        pins: &BTreeMap<RepoPath, Vec<crate::backup::LivePin>>,
+        pins: &BTreeMap<RepoPath, Vec<crate::pins::LivePin>>,
     ) -> anyhow::Result<Vec<String>> {
         let Some(live) = pins.get(member) else {
             return Ok(Vec::new());
@@ -820,7 +820,7 @@ impl<'a> Rule<'a> {
                 let by: Vec<&str> = live
                     .iter()
                     .filter(|p| p.commit == pin.commit)
-                    .map(|p| p.held_by())
+                    .map(|p| p.held_by.as_str())
                     .collect();
                 held.push(format!(
                     "{} is pinned by {}",
