@@ -170,6 +170,32 @@ fn fetch_adds_the_url_remote_a_clone_lacks_before_it_fetches() {
 }
 
 #[test]
+fn update_remote_adds_the_url_remote_a_clone_lacks_before_it_advances_from_it() {
+    let weave = Weave::new();
+    let elsewhere = weave.scratch("elsewhere.git");
+    init_bare(&elsewhere);
+    lose_the_url_remote(&weave, "fork", &common::file_url(&elsewhere));
+    let tip = advance(weave.bare(), "main", "news");
+
+    let out = weave.rwv(&["update", "--remote", "--repo", MEMBER]);
+
+    assert!(out.status.success(), "{}", text(&out.stderr));
+    assert_eq!(
+        common::git_in(&weave.member(), &["rev-parse", "HEAD"]),
+        tip,
+        "the member advanced from the remote that has its url"
+    );
+    let wanted = common::file_url(weave.bare());
+    assert!(
+        remotes(&weave.member())
+            .iter()
+            .any(|(_, url)| *url == wanted),
+        "{:?}",
+        remotes(&weave.member())
+    );
+}
+
+#[test]
 fn a_name_another_url_holds_refuses_the_fetch_before_it_adds_or_fetches_anything() {
     let weave = Weave::new();
     let manifest = weave.project().join("rwv.toml");
