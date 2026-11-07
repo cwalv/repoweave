@@ -8989,7 +8989,7 @@ mod tests {
     fn the_findings_entry_is_written_from_its_heading_to_the_next_heading() {
         let stub = findings_page(
             "### `unparseable-project`\n\nhand-written\n\n### `pin`\n\nhand-written\n\n\
-             ### `alignment`\n\nhand-written\n\n",
+             ### `alignment`\n\nhand-written\n\n### `legacy-workweave-index`\n\nhand-written\n\n",
         );
         let spliced = splice_finding_entries(&stub).unwrap();
         assert!(spliced.contains(
@@ -8998,6 +8998,7 @@ mod tests {
         assert!(spliced.contains("#### `malformed`"));
         assert!(spliced.contains("#### `unreachable`"));
         assert!(spliced.contains("#### `on-branch`"));
+        assert!(spliced.contains("#### `old-path`"));
         assert!(!spliced.contains("hand-written"));
         assert!(spliced.ends_with("### `after`\n\nafter\n"));
         assert_eq!(

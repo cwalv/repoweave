@@ -264,7 +264,7 @@ const ALLOWLIST: &[Allowed] = &[
         callers: &[
             ("remove_worktree", 3),
             ("prune_orphan_worktrees_for", 3),
-            ("prune_stale_worktree_registration", 2),
+            ("prune_stale_worktree_registration", 3),
         ],
         justification: "remove_worktree. NOTE the `--force`: git will remove \
             a DIRTY worktree here, so what protects each caller has to be \
@@ -306,9 +306,10 @@ const ALLOWLIST: &[Allowed] = &[
             directory makes git refuse even if those reads were wrong. Its \
             callers are doctor --fix's registration repair, \
             fix_state_hygiene for a stale-worktree-registration finding; \
-            and workweave::materialize_member, which drops the \
+            workweave::materialize_member, which drops the \
             registration of the very slot it is about to give a worktree, \
-            only when nothing stands there.",
+            only when nothing stands there; and workweave::create_workweave, \
+            which does the same for the project checkout's destination.",
     },
     Allowed {
         file: "git.rs",

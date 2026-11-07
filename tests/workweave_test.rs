@@ -2998,9 +2998,9 @@ fn workweave_create_capture_dirty_allows_dirty_primary() {
 /// workweave index with, so create refuses before it changes anything.
 #[test]
 fn workweave_create_refuses_a_project_with_no_clone_before_changing_anything() {
-    // `make_workspace` creates a plain (non-git) project dir.
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "plain-proj");
+    std::fs::remove_dir_all(ws.join("projects/plain-proj/.git")).unwrap();
 
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();

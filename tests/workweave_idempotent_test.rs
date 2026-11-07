@@ -296,6 +296,7 @@ role = "owned"
         repo = common::url_path(&repo_path)
     );
     std::fs::write(project_b_dir.join("rwv.toml"), manifest_b).unwrap();
+    common::make_project_repo(&project_b_dir);
 
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
