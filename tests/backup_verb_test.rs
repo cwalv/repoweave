@@ -60,9 +60,9 @@ fn assert_routes_to(stderr: &str, token: &str) {
     assert_eq!(routes, vec![token], "stderr was:\n{stderr}");
 }
 
-/// A bare repo holding a dependency-free library crate named `name`, and its
-/// `file://` URL.
-fn crate_origin(tmp: &Path, name: &str) -> String {
+/// A bare repo holding a README, no ecosystem files for an integration to act
+/// on, and its `file://` URL.
+fn plain_origin(tmp: &Path, name: &str) -> String {
     let bare = tmp.join("origin").join(format!("{name}.git"));
     std::fs::create_dir_all(bare.parent().unwrap()).unwrap();
     common::git_in(
@@ -81,13 +81,7 @@ fn crate_origin(tmp: &Path, name: &str) -> String {
     );
     common::git_in(&seed, &["config", "user.email", "test@test.com"]);
     common::git_in(&seed, &["config", "user.name", "Test"]);
-    std::fs::create_dir_all(seed.join("src")).unwrap();
-    std::fs::write(
-        seed.join("Cargo.toml"),
-        format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"),
-    )
-    .unwrap();
-    std::fs::write(seed.join("src/lib.rs"), "pub fn f() {}\n").unwrap();
+    std::fs::write(seed.join("README.md"), format!("{name}\n")).unwrap();
     common::git_in(&seed, &["add", "-A"]);
     common::git_in(&seed, &["commit", "-qm", "initial"]);
     common::git_in(&seed, &["push", "-q", "origin", "main"]);
@@ -102,14 +96,14 @@ struct Weave {
 }
 
 impl Weave {
-    /// A weave made by `rwv init demo` holding the owned crate `alpha`, with
+    /// A weave made by `rwv init demo` holding the owned repo `alpha`, with
     /// the project committed and locked.
     fn new() -> Self {
         let tmp = common::tempdir().unwrap();
         let ws = tmp.path().join("ws");
         std::fs::create_dir_all(ws.join("projects")).unwrap();
         succeed(&["init", "demo"], &ws);
-        let alpha_url = crate_origin(tmp.path(), "alpha");
+        let alpha_url = plain_origin(tmp.path(), "alpha");
         succeed(&["member", "add", &alpha_url], &ws);
         let project = ws.join("projects/demo");
         common::git_in(&project, &["config", "user.email", "test@test.com"]);
@@ -259,7 +253,7 @@ fn discard_uncommitted_keeps_the_edits_as_a_backup() {
         &weave.ws,
     );
     let alpha = common::under(weave.workweave_dir("wip"), ALPHA);
-    std::fs::write(alpha.join("src/lib.rs"), "pub fn f() { /* edited */ }\n").unwrap();
+    std::fs::write(alpha.join("README.md"), "edited\n").unwrap();
     std::fs::write(alpha.join("scratch.txt"), "untracked\n").unwrap();
     std::fs::write(alpha.join(".gitignore"), "ignored.txt\n").unwrap();
     std::fs::write(alpha.join("ignored.txt"), "noise\n").unwrap();
@@ -288,8 +282,8 @@ fn discard_uncommitted_keeps_the_edits_as_a_backup() {
     let tip = &kept[0].1;
     let primary = weave.alpha();
     assert_eq!(
-        common::git_in(&primary, &["show", &format!("{tip}:src/lib.rs")]),
-        "pub fn f() { /* edited */ }"
+        common::git_in(&primary, &["show", &format!("{tip}:README.md")]),
+        "edited"
     );
     assert_eq!(
         common::git_in(&primary, &["show", &format!("{tip}:scratch.txt")]),
