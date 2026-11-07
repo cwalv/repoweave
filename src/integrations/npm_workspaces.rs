@@ -358,7 +358,7 @@ mod tests {
         for (path, role) in repos {
             let last = path.split('/').next_back().unwrap();
             manifest_toml.push_str(&format!(
-                "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"https://github.com/test/{last}.git\"\nversion = \"main\"\nrole = \"{}\"\n",
+                "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"https://github.com/test/{last}.git\"\nbranch = \"main\"\nrole = \"{}\"\n",
                 role
             ));
         }

@@ -102,7 +102,7 @@ func Message() string {
     let project_dir = root.join("projects/web-app");
     std::fs::create_dir_all(&project_dir).unwrap();
 
-    let rwv_yaml = "[repositories.\"github/chatly/protocol\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/protocol.git\"\nversion = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/chatly/server\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/server.git\"\nversion = \"main\"\nrole = \"owned\"\n";
+    let rwv_yaml = "[repositories.\"github/chatly/protocol\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/protocol.git\"\nbranch = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/chatly/server\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/server.git\"\nbranch = \"main\"\nrole = \"owned\"\n";
 
     std::fs::write(project_dir.join("rwv.toml"), rwv_yaml).unwrap();
 
@@ -200,7 +200,7 @@ fn go_primary_path_preserves_existing_go_line_no_downgrade() {
     let project_dir = root.join("projects/web-app");
     std::fs::create_dir_all(&project_dir).unwrap();
 
-    let rwv_yaml = "[repositories.\"github/chatly/protocol\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/protocol.git\"\nversion = \"main\"\nrole = \"owned\"\n";
+    let rwv_yaml = "[repositories.\"github/chatly/protocol\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/protocol.git\"\nbranch = \"main\"\nrole = \"owned\"\n";
     std::fs::write(project_dir.join("rwv.toml"), rwv_yaml).unwrap();
 
     // Pre-seed go.work with a go-line ABOVE the max across members
@@ -325,7 +325,7 @@ func Message() string {
     let project_dir = root.join("projects/web-app");
     std::fs::create_dir_all(&project_dir).unwrap();
 
-    let rwv_yaml = "[repositories.\"github/chatly/protocol\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/protocol.git\"\nversion = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/chatly/server\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/server.git\"\nversion = \"main\"\nrole = \"owned\"\n";
+    let rwv_yaml = "[repositories.\"github/chatly/protocol\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/protocol.git\"\nbranch = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/chatly/server\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/server.git\"\nbranch = \"main\"\nrole = \"owned\"\n";
 
     std::fs::write(project_dir.join("rwv.toml"), rwv_yaml).unwrap();
 
@@ -472,7 +472,7 @@ fn go_mod_download_writes_through_the_declared_go_work_sum_link() {
 
     let project_dir = root.join("projects/web-app");
     std::fs::create_dir_all(&project_dir).unwrap();
-    let rwv_toml = "[repositories.\"github/acme/svc\"]\ntype = \"git\"\nurl = \"https://example.invalid/acme/svc.git\"\nversion = \"main\"\nrole = \"owned\"\n";
+    let rwv_toml = "[repositories.\"github/acme/svc\"]\ntype = \"git\"\nurl = \"https://example.invalid/acme/svc.git\"\nbranch = \"main\"\nrole = \"owned\"\n";
     std::fs::write(project_dir.join("rwv.toml"), rwv_toml).unwrap();
 
     std::fs::write(root.join(".rwv-active"), "web-app\n").unwrap();

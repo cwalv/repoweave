@@ -81,7 +81,7 @@ fn make_workspace_with_lock(parent: &Path, project: &str) -> (PathBuf, PathBuf, 
 
     let url = common::file_url(&repo_path);
     let manifest = format!(
-        "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
+        "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"{url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
     write_lock(&project_dir, "github/org/repo", &url, &sha);
@@ -407,7 +407,7 @@ fn make_workspace_with_bare_remote(parent: &Path) -> (PathBuf, PathBuf, PathBuf,
 
     let url = common::file_url(&bare);
     let manifest = format!(
-        "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
+        "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"{url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
     );
     std::fs::write(project_dir.join("rwv.toml"), &manifest).unwrap();
     write_lock(&project_dir, "github/org/repo", &url, &sha);

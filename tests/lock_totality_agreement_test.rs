@@ -86,7 +86,7 @@ fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
     for (repo, role) in repos {
         let name = repo.rsplit('/').next().expect("repo has a final segment");
         toml.push_str(&format!(
-            "[repositories.{repo:?}]\ntype = \"git\"\nurl = \"https://github.com/acme/{name}.git\"\nversion = \"main\"\nrole = \"{role}\"\n"
+            "[repositories.{repo:?}]\ntype = \"git\"\nurl = \"https://github.com/acme/{name}.git\"\nbranch = \"main\"\nrole = \"{role}\"\n"
         ));
     }
     std::fs::write(project_dir.join("rwv.toml"), toml).unwrap();

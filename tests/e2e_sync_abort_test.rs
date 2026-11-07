@@ -39,7 +39,7 @@ fn write_manifest(project_dir: &Path, repos: &[(&str, &str)], integrations: Opti
     let mut manifest_toml = String::from("[repositories]\n");
     for (path, url) in repos {
         manifest_toml.push_str(&format!(
-            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
         ));
     }
     if let Some(int) = integrations {

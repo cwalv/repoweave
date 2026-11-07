@@ -52,7 +52,7 @@ fn weave_with_standalone_member(tmp: &Path) -> Weave {
     std::fs::write(
         project_dir.join("rwv.toml"),
         format!(
-            "[repositories.\"{MEMBER}\"]\ntype = \"git\"\nurl = \"{}\"\nversion = \"main\"\nrole = \"owned\"\n",
+            "[repositories.\"{MEMBER}\"]\ntype = \"git\"\nurl = \"{}\"\nbranch = \"main\"\nrole = \"owned\"\n",
             common::file_url(&canonical)
         ),
     )

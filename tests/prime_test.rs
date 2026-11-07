@@ -55,13 +55,13 @@ fn prime_primary_with_project() {
 [repositories."github/acme/server"]
 type = "git"
 url = "https://github.com/acme/server.git"
-version = "main"
+branch = "main"
 role = "owned"
 
 [repositories."github/acme/client"]
 type = "git"
 url = "https://github.com/acme/client.git"
-version = "develop"
+branch = "develop"
 role = "fork"
 
 [integrations.cargo-workspace]
@@ -126,7 +126,7 @@ fn prime_in_workweave() {
 [repositories."github/acme/server"]
 type = "git"
 url = "https://github.com/acme/server.git"
-version = "main"
+branch = "main"
 role = "owned"
 "#,
     );

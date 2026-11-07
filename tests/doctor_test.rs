@@ -96,7 +96,7 @@ fn write_manifest(project_dir: &Path, repos: &[(&str, &str)]) {
     let mut manifest_toml = String::from("[repositories]\n");
     for (repo_path, url) in repos {
         manifest_toml.push_str(&format!(
-            "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
+            "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"{url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
         ));
     }
     std::fs::write(project_dir.join("rwv.toml"), &manifest_toml).unwrap();
@@ -350,7 +350,7 @@ fn check_integration_hooks_report_warnings() {
         r#"[repositories."{repo_path}"]
 type = "git"
 url = "https://github.com/acme/server.git"
-version = "main"
+branch = "main"
 role = "owned"
 
 [integrations.static-files]
@@ -1046,8 +1046,8 @@ mod doctor_json {
     use super::*;
     use common::doctor_corpus::{case_token, corpus};
     use repoweave::check::{
-        CheckViolation, DriftKind, IndexDriftKind, ReplayExclusionKind, ViolationOutput,
-        WorkingTreeDriftKind, DOCTOR_SCHEMA_URL,
+        CheckViolation, DriftKind, IndexDriftKind, ReplayExclusionKind, UnparseableProjectKind,
+        ViolationOutput, WorkingTreeDriftKind, DOCTOR_SCHEMA_URL,
     };
     use repoweave::manifest::{ProjectName, RepoPath, WorkweaveId, WorkweaveName};
     use repoweave::vcs::ResolvedRevisionId;
@@ -1833,6 +1833,7 @@ mod doctor_json {
             project: ProjectName::new("broken-app").unwrap(),
             manifest_path: std::path::PathBuf::from("/ws/projects/broken-app/rwv.toml"),
             message: "did not find expected key".to_owned(),
+            sub_kind: UnparseableProjectKind::Malformed,
         };
         let json =
             serde_json::to_value(ViolationOutput::from_violation(violation, &ws, &no_ww)).unwrap();
@@ -2174,7 +2175,8 @@ fn check_unparseable_project_reported_as_violation() {
         .failure();
     let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
     assert!(
-        out.contains("[error: unparseable-project]") && out.contains("failed to parse rwv.toml"),
+        out.contains("[error: unparseable-project/malformed]")
+            && out.contains("failed to parse rwv.toml"),
         "expected the parse failure reported at error severity, got stdout: {out}"
     );
     assert!(

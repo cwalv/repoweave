@@ -381,7 +381,7 @@ worktree does not carry: `git worktree add` leaves each submodule directory
 empty. Every path that creates a member checkout — `workweave create`'s member
 loop and `materialize_member` — then calls `populate_submodules` in
 `src/share.rs`, unless the member's manifest entry says
-`submodules = "skip"` (`Submodules` in `src/manifest.rs`). `doctor --fix` calls
+`recurse-submodules = false` (`SubmoduleRecursion` in `src/manifest.rs`). `doctor --fix` calls
 it too, for a member whose submodule directories are empty and whose recorded
 commits are held locally (`uninitialized-submodule` / `fetched`).
 
@@ -393,7 +393,7 @@ workweave and from a workweave for itself. Nothing in this path fetches.
 
 **The network verbs fill the store.** `rwv add` and `rwv fetch` call
 `fetch_submodules` in `src/share.rs` on the canonical clone of every member
-they clone or find present, unless its entry says `submodules = "skip"`. At
+they clone or find present, unless its entry says `recurse-submodules = false`. At
 each level, an empty submodule directory of the canonical clone's own is
 checked out from upstream with everything nested in it
 (`check_out_submodule_from_upstream`; git: `submodule update --init

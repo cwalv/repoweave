@@ -1707,7 +1707,7 @@ fn write_project_manifest(ws: &Path, project_name: &str, repo_path: &str) {
     let project_dir = ws.join("projects").join(project_name);
     std::fs::create_dir_all(&project_dir).unwrap();
     let manifest = format!(
-        "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"https://example.com/{repo_path}.git\"\nversion = \"main\"\nrole = \"owned\"\n"
+        "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"https://example.com/{repo_path}.git\"\nbranch = \"main\"\nrole = \"owned\"\n"
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 }
@@ -4390,7 +4390,7 @@ fn a_sync_to_parked_mid_rebase_draws_no_switch_advice() {
     std::fs::write(
         primary_project.join("rwv.toml"),
         format!(
-            "[repositories.\"{LIB}\"]\ntype = \"git\"\nurl = \"{}\"\nversion = \"main\"\nrole = \"owned\"\n",
+            "[repositories.\"{LIB}\"]\ntype = \"git\"\nurl = \"{}\"\nbranch = \"main\"\nrole = \"owned\"\n",
             common::file_url(&upstream)
         ),
     )

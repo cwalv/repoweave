@@ -66,7 +66,7 @@ impl Weave {
         std::fs::write(
             project.join("rwv.toml"),
             format!(
-                "[repositories.\"{MEMBER}\"]\ntype = \"git\"\nurl = \"https://github.com/acme/server.git\"\nversion = \"main\"\nrole = \"owned\"\n"
+                "[repositories.\"{MEMBER}\"]\ntype = \"git\"\nurl = \"https://github.com/acme/server.git\"\nbranch = \"main\"\nrole = \"owned\"\n"
             ),
         )
         .unwrap();

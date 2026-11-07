@@ -41,7 +41,7 @@ fn init_repo(path: &Path) -> String {
 
 fn write_manifest(project_dir: &Path) {
     let body = format!(
-        "[repositories.\"{SERVER_PATH}\"]\ntype = \"git\"\nurl = \"{SERVER_URL}\"\nversion = \"main\"\nrole = \"owned\"\n"
+        "[repositories.\"{SERVER_PATH}\"]\ntype = \"git\"\nurl = \"{SERVER_URL}\"\nbranch = \"main\"\nrole = \"owned\"\n"
     );
     std::fs::write(project_dir.join("rwv.toml"), body).unwrap();
 }

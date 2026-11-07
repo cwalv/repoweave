@@ -105,13 +105,13 @@ console.log(types.greeting);
         r#"[repositories."github/chatly/shared-types"]
 type = "git"
 url = "https://github.com/chatly/shared-types.git"
-version = "main"
+branch = "main"
 role = "owned"
 
 [repositories."github/chatly/server"]
 type = "git"
 url = "https://github.com/chatly/server.git"
-version = "main"
+branch = "main"
 role = "owned"
 "#,
     )
@@ -275,13 +275,13 @@ console.log(types.greeting);
         r#"[repositories."github/chatly/shared-types"]
 type = "git"
 url = "https://github.com/chatly/shared-types.git"
-version = "main"
+branch = "main"
 role = "owned"
 
 [repositories."github/chatly/server"]
 type = "git"
 url = "https://github.com/chatly/server.git"
-version = "main"
+branch = "main"
 role = "owned"
 "#,
     )

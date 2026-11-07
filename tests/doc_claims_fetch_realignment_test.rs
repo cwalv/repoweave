@@ -130,7 +130,7 @@ fn setup(repo_paths: &[&str]) -> Fixture {
     for repo in &repos {
         let (path, url) = (&repo.path, url_of(&repo.bare));
         manifest.push_str(&format!(
-            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
         ));
     }
     std::fs::write(project_dir.join("rwv.toml"), &manifest).unwrap();

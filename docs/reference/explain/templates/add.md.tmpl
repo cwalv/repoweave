@@ -32,7 +32,7 @@ not) or file at the placement that is not a clone refuses
 ones included, as `rwv fetch` does (see `rwv explain fetch`), so a checkout
 created later, which never reaches the network, can check them out from it. A
 submodule that cannot be fetched is a warning, not a failure. On re-running
-`add` for a member the manifest already names, its `submodules = "skip"` is
+`add` for a member the manifest already names, its `recurse-submodules = false` is
 honored; `--adopt` and `--new` fetch nothing.
 
 ### Workweave-aware worktree materialization

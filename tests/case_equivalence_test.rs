@@ -604,13 +604,13 @@ fn a_confusable_sibling_is_reported_by_doctor() {
         r#"[repositories."github/acme/Server"]
 type = "git"
 url = "https://example.com/acme/Server.git"
-version = "main"
+branch = "main"
 role = "owned"
 
 [repositories."github/acme/server"]
 type = "git"
 url = "https://example.com/acme/server.git"
-version = "main"
+branch = "main"
 role = "owned"
 "#,
     )

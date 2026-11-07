@@ -117,7 +117,7 @@ fn fixture() -> Fixture {
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(
         project_dir.join("rwv.toml"),
-        "[repositories.\"github/acme/server\"]\ntype = \"git\"\nurl = \"https://github.com/acme/server.git\"\nversion = \"main\"\nrole = \"owned\"\n",
+        "[repositories.\"github/acme/server\"]\ntype = \"git\"\nurl = \"https://github.com/acme/server.git\"\nbranch = \"main\"\nrole = \"owned\"\n",
     )
     .unwrap();
     std::fs::write(project_dir.join(".gitignore"), "/Cargo.lock\n").unwrap();

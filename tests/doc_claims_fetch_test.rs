@@ -111,7 +111,7 @@ fn push_manifest_to_bare(bare: &Path, repos: &[(&str, &str)]) {
     let mut manifest_toml = String::from("[repositories]\n");
     for (path, url) in repos {
         manifest_toml.push_str(&format!(
-            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
         ));
     }
     std::fs::write(work.join("rwv.toml"), &manifest_toml).unwrap();
@@ -145,7 +145,7 @@ fn setup_workspace_with_project(
     let mut manifest_toml = String::from("[repositories]\n");
     for (path, url) in repos {
         manifest_toml.push_str(&format!(
-            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
         ));
     }
     std::fs::write(project_dir.join("rwv.toml"), &manifest_toml).unwrap();
@@ -241,7 +241,7 @@ fn remove_delete_does_not_check_other_projects() {
     let project_b_dir = workspace.join("projects").join("project-b");
     std::fs::create_dir_all(&project_b_dir).unwrap();
     let yaml_b = format!(
-        "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"{shared_url}\"\nversion = \"main\"\nrole = \"owned\"\n"
+        "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"{shared_url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
     );
     std::fs::write(project_b_dir.join("rwv.toml"), &yaml_b).unwrap();
 

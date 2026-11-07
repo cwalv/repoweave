@@ -11,6 +11,8 @@ Terminology lookup. For deeper material on each concept, follow the cross-links.
 | **Project** | A directory under `projects/` containing `rwv.toml`, `rwv.lock`, and project-scoped docs. Itself a git repo with normal history. |
 | **Project repo** | The git repo at `projects/<name>/`. Carries the manifest, lock, and cross-cutting docs. Does not contain importable code. |
 | **Member repo** | A repo listed in a project's `rwv.toml`. Lives at `<registry>/<owner>/<repo>/` as a regular clone in the primary weave and as a git worktree in each workweave. |
+| **Member entry** | A repo's table in `rwv.toml`: `type`, `url`, `role`, `branch`, and `recurse-submodules = false` for a member that opts out of populating its submodules. See [formats](./formats.md#repositories-entries). |
+| **Declared branch** | The branch a member entry's `branch` names: the one `rwv update` advances and `rwv fetch` attaches. `rwv.lock` records the commit the member is on, never this name. |
 | **Canonical clone** (or **Canonical store**) | The full git clone at `<primary>/<registry>/<owner>/<repo>/` (or `<primary>/projects/<name>/`) whose `.git` object store backs both the primary weave checkout and every workweave's git worktree. See [clone-topology](../explanation/joints/clone-topology.md). |
 | **Ephemeral branch** | The flat per-workweave git branch (`<project>--<workweave>`, with `/` in scoped project names encoded as `+`) created in each member and project repo when a workweave is created, and deleted when the workweave is deleted or retired. See [workweave-hierarchy](../explanation/joints/workweave-hierarchy.md). |
 | **Manifest** (`rwv.toml`) | Declares which repos belong to a project, their roles, and integration config. See [formats](./formats.md). |

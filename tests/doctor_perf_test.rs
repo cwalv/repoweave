@@ -66,7 +66,7 @@ fn build_large_workspace(parent: &Path, n_repos: usize, n_ww: usize) -> PathBuf 
         common::git_in(&abs, &["commit", "-m", "initial"]);
 
         manifest.push_str(&format!(
-            "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"file://{}\"\nversion = \"main\"\nrole = \"owned\"\n",
+            "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"file://{}\"\nbranch = \"main\"\nrole = \"owned\"\n",
             common::url_path(&abs)
         ));
     }

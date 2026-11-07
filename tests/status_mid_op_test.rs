@@ -65,7 +65,7 @@ fn status_text_and_json_spell_every_mid_operation_alike() {
             _ => {}
         }
         manifest.push_str(&format!(
-            "[repositories.\"github/org/{arm}\"]\ntype = \"git\"\nurl = \"{}\"\nversion = \"main\"\nrole = \"owned\"\n",
+            "[repositories.\"github/org/{arm}\"]\ntype = \"git\"\nurl = \"{}\"\nbranch = \"main\"\nrole = \"owned\"\n",
             common::file_url(&repo)
         ));
     }

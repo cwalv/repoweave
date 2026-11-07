@@ -158,7 +158,7 @@
           ]
         },
         "branch": {
-          "description": "Branch name from the manifest `version:` field.",
+          "description": "Branch name from the manifest `branch` field.",
           "type": "string"
         },
         "error": {

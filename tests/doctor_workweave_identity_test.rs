@@ -52,7 +52,7 @@ fn two_projects_with_a_workweave_named_alike() -> Weave {
         std::fs::write(
             dir.join("rwv.toml"),
             format!(
-                "[repositories.\"{member}\"]\ntype = \"git\"\nurl = \"{}\"\nversion = \"main\"\n\
+                "[repositories.\"{member}\"]\ntype = \"git\"\nurl = \"{}\"\nbranch = \"main\"\n\
                  role = \"owned\"\n",
                 common::file_url(&bare)
             ),

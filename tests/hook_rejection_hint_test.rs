@@ -26,7 +26,7 @@ fn write_manifest(project_dir: &Path, repo_path: &Path) {
         project_dir.join("rwv.toml"),
         format!(
             "[repositories.\"github/org/repo\"]\ntype = \"git\"\n\
-             url = \"file://{}\"\nversion = \"main\"\nrole = \"owned\"\n",
+             url = \"file://{}\"\nbranch = \"main\"\nrole = \"owned\"\n",
             common::url_path(repo_path)
         ),
     )

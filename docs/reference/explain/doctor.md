@@ -202,7 +202,7 @@ The `$schema` URL points to the committed schema artifact. Variants are
 discriminated by the `kind` tag — `branch-discipline`, `cargo-patch-shadowing`, `cargo-version-skew`, `clone-topology`, `confusable-siblings`, `dangling-active-project`, `dangling-ref-receipt`, `dangling-reference`, `dead-op-lease`, `head-unreadable`, `incomplete-lock`, `index-drift`, `legacy-manifest-format`, `legacy-workweave-index`, `legacy-workweave-marker`, `lock-pinned-by-name`, `member-permissions`, `merge-driver-config-unreadable`, `missing-canonical-clone`, `missing-merge-driver-config`, `missing-replay-exclusion`, `orphaned-clone`, `orphaned-savepoint`, `phantom-merge-driver`, `pre-flat-ref-receipt`, `projectless-dir`, `projects-dir-unreadable`, `provenance`, `replay-exclusion-unreadable`, `role-disagreement`, `stale-lock`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unknown-segment-clone`, `unnameable-project`, `unparseable-project`, `unreadable-active-project`, `unreadable-owned-state`, `unreadable-workweave-index`, `unrecognized-savepoint-ref`, `unresolvable-lock-entry`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
 Every per-repo variant carries `path` (manifest-relative) and
 `absolute_path` (fully resolved). Variants with subkinds
-(`branch-discipline`, `clone-topology`, `dead-op-lease`, `index-drift`, `member-permissions`, `missing-replay-exclusion`, `orphaned-savepoint`, `provenance`, `stale-worktree-registration`, `uninitialized-submodule`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
+(`branch-discipline`, `clone-topology`, `dead-op-lease`, `index-drift`, `member-permissions`, `missing-replay-exclusion`, `orphaned-savepoint`, `provenance`, `stale-worktree-registration`, `uninitialized-submodule`, `unparseable-project`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
 `workweave-tree-integrity` carries `workweave_dir` and a `sub_kind`
 (`dangling-parent`, `foreign-primary`, `foreign-primary-other-workspace`, `misnamed-dir`, `nested-workweave-dir`, `parent-chain-anomaly`, `stale-registry-entry`, `tracked-index`, `unreadable-marker`, `unregistered-dir`, `unregistered-workweave`).
 
@@ -712,7 +712,7 @@ Schema:
                   ]
                 },
                 "counterpart": {
-                  "description": "The local counterpart of the ref this repo tracks — the manifest's `version:` for a member, the remote's declared default branch for the project repo. `None` when no tracking declaration resolves, in which case there is nothing to name as a reattach target.",
+                  "description": "The local counterpart of the ref this repo tracks — the manifest's `branch` for a member, the remote's declared default branch for the project repo. `None` when no tracking declaration resolves, in which case there is nothing to name as a reattach target.",
                   "type": [
                     "string",
                     "null"
@@ -1718,6 +1718,25 @@ Schema:
         }
       ]
     },
+    "UnparseableProjectKind": {
+      "description": "Why a project directory did not load, controlling `--fix` policy.",
+      "oneOf": [
+        {
+          "description": "`rwv.toml` names member-entry keys an earlier release wrote. `--fix` renames them in place and commits only that rewrite.",
+          "type": "string",
+          "enum": [
+            "pre-schema"
+          ]
+        },
+        {
+          "description": "Anything else: a file that is not TOML, a key or value the schema does not take, or a lock that is not JSON. The file is the operator's to edit, or the lock's to regenerate.",
+          "type": "string",
+          "enum": [
+            "malformed"
+          ]
+        }
+      ]
+    },
     "ViolationOutput": {
       "description": "One violation as it appears in `rwv doctor --json` output.",
       "oneOf": [
@@ -2480,7 +2499,8 @@ Schema:
             "kind",
             "manifest_path",
             "message",
-            "project"
+            "project",
+            "sub_kind"
           ],
           "properties": {
             "kind": {
@@ -2498,6 +2518,9 @@ Schema:
             },
             "project": {
               "type": "string"
+            },
+            "sub_kind": {
+              "$ref": "#/definitions/UnparseableProjectKind"
             }
           }
         },

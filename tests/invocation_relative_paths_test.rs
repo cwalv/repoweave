@@ -28,7 +28,7 @@ fn weave_with_member(tmp: &Path) -> PathBuf {
     std::fs::write(
         project_dir.join("rwv.toml"),
         format!(
-            "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"file://{}\"\nversion = \"main\"\nrole = \"owned\"\n",
+            "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"file://{}\"\nbranch = \"main\"\nrole = \"owned\"\n",
             common::url_path(&repo)
         ),
     )

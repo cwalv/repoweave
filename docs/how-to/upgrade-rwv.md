@@ -11,7 +11,7 @@ rwv doctor --fix --all
 rwv doctor --all                    # a clean run records the health floor
 
 # 2. After installing the new binaries (from the primary weave root):
-rwv doctor --fix                    # migrate .rwv-workweave markers and reference worktrees
+rwv doctor --fix                    # migrate .rwv-workweave markers, reference worktrees and rwv.toml member keys
 rwv lock                            # regenerate rwv.lock in the current JSON format
 rwv materialize --remove-undeclared-links   # optional: unlink retired go.sum root symlink
 ```
@@ -25,6 +25,7 @@ For resting state on disk, installing a newer `rwv` does not touch existing file
 | `.rwv-op` / `.rwv-op-lease` | In-flight sync state | Finish or run `rwv abort` on the **old** binary before upgrading |
 | `.rwv-workweave` & member slots | Written by `rwv` itself | `rwv doctor --fix` from the primary weave migrates them |
 | `rwv.yaml` → `rwv.toml` | Hand-authored by you | Rewrite as `rwv.toml` and delete `rwv.yaml` (no `--fix` arm) |
+| `version` and `submodules` keys in `rwv.toml` | Hand-authored by you | `rwv doctor --fix` renames them to `branch` and `recurse-submodules` and commits only that rename |
 | `rwv.lock` | Generated output | `rwv lock` regenerates it |
 
 ## Install the new binaries
@@ -81,12 +82,30 @@ A `rwv.yaml` with no `rwv.toml` beside it is refused at error severity, and ther
 
 Rewrite the manifest by hand (see [File formats reference — `rwv.toml`](../reference/formats.md#rwvtoml--project-manifest) for the schema) and delete `rwv.yaml`.
 
-## Step 3 — a stale-format lock
+## Step 3 — member-entry keys an earlier release wrote
+
+An `rwv.toml` whose member entries name `version` for the tracked branch, or `submodules` for the submodule setting, does not load. Every verb that reads the manifest at the checked-out tip refuses with `unparseable-project`, and `rwv doctor` reports it as [`unparseable-project`](../reference/doctor-findings.md#unparseable-project) / `pre-schema`:
+
+```text
+[error: unparseable-project/pre-schema] core: <project>: failed to parse rwv.toml at <dir>/rwv.toml: rwv.toml names member-entry keys an earlier release wrote: `version` is now `branch` in <member>; `rwv doctor --fix` rewrites them and commits only that rewrite: TOML parse error at line 4, column 1
+```
+
+Run the repair from the project's checkout:
+
+```bash
+rwv doctor --fix
+```
+
+It renames `version` to `branch` and `submodules = "skip"` to `recurse-submodules = false`, and drops `submodules = "local"`, which is what an absent `recurse-submodules` means. Comments and key order stay. It makes one commit holding only that rename, and leaves every other uncommitted edit, to `rwv.toml` and to other files, where it was. It declines, changing nothing, while another file is staged or a rebase, merge or cherry-pick is in progress in the project repo; deal with that, then run it again.
+
+A commit other than the checked-out one that still names the old keys declares nothing to the commands that read it, such as `rwv sync` reading the other workspace's `rwv.toml`. Its `rwv.lock`, whose format did not change, is still read, so its pins still count.
+
+## Step 4 — a stale-format lock
 
 With the manifest loading, a `rwv.lock` left in its pre-JSON shape fails to parse. `rwv doctor` reports:
 
 ```text
-[error: unparseable-project] core: <project>: failed to parse rwv.lock at <dir>/rwv.lock: rwv.lock could not be parsed; it is a generated file — run `rwv lock` to regenerate it: expected value at line 1 column 1
+[error: unparseable-project/malformed] core: <project>: failed to parse rwv.lock at <dir>/rwv.lock: rwv.lock could not be parsed; it is a generated file — run `rwv lock` to regenerate it: expected value at line 1 column 1
 ```
 
 Regenerate it from the current checkouts:
@@ -97,7 +116,7 @@ rwv lock
 
 `rwv doctor` (or `rwv status`) will now report the workspace clean.
 
-## Step 4 — a leftover `go.sum` link on a Go weave
+## Step 5 — a leftover `go.sum` link on a Go weave
 
 Earlier versions declared `go.sum` at the weave root of a Go weave instead of `go.work.sum`. After upgrading, `rwv doctor` reports the old `go.sum` symlink as a weave-root link at a name the project no longer declares. Remove the symlink with:
 

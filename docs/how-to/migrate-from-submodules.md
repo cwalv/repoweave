@@ -49,7 +49,7 @@ rwv add https://github.com/chatly/client.git --role owned
 rwv add https://github.com/vendor/codec.git --role dependency
 ```
 
-`rwv add` records the remote's default branch as `version`. For a submodule whose `submodule.<name>.branch` names another branch, follow [Track a non-default branch](./add-a-repo.md#track-a-non-default-branch) after this step.
+`rwv add` records the remote's default branch as `branch`. For a submodule whose `submodule.<name>.branch` names another branch, follow [Track a non-default branch](./add-a-repo.md#track-a-non-default-branch) after this step.
 
 If the old superproject itself also contains application code (not just submodule gitlinks), add the superproject repository as an `owned` member too, then remove its submodule gitlinks in Step 6.
 
@@ -102,7 +102,7 @@ A `git-repo` manifest repository (`manifests/default.xml`) already separates the
 1. **Initialize the project:** Run `rwv init <project>` in a new weave root (or `rwv init <manifest-repository-url> --adopt` if you are converting the existing manifest repository in place).
 2. **Add each `<project>` element from `default.xml`:** Construct the full remote URL from `<remote fetch="..."/>` + `<project name="..."/>` and run `rwv add <url> --role <owned|fork|dependency>`. If `<project revision="..."/>` names a non-default branch, follow [Track a non-default branch](./add-a-repo.md#track-a-non-default-branch).
 3. **Replace `<copyfile>` / `<linkfile>` entries:** Configure the [`static-files` integration](../reference/integrations/static-files.md) in `projects/<project>/rwv.toml` to surface shared build files (`Makefile`, `justfile`, `.editorconfig`) at the weave root.
-4. **Lock, commit, and publish:** Run `rwv lock --commit`, commit the remaining project files, and publish the project repo as in Steps 4 and 5 above. `rwv status` shows the branch each member repo is on; compare it with `version` in `rwv.toml`, because `rwv doctor` does not report a clone on a branch other than the one `rwv.toml` declares.
+4. **Lock, commit, and publish:** Run `rwv lock --commit`, commit the remaining project files, and publish the project repo as in Steps 4 and 5 above. `rwv status` shows the branch each member repo is on; compare it with `branch` in `rwv.toml`, because `rwv doctor` does not report a clone on a branch other than the one `rwv.toml` declares.
 
 ## Related
 

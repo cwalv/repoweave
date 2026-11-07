@@ -104,8 +104,8 @@ fn leaving_rwv_by_the_documented_steps_leaves_only_the_two_named_traces() {
     std::fs::write(
         project.join("rwv.toml"),
         format!(
-            "[repositories.\"{LIB}\"]\ntype = \"git\"\nurl = \"{lib_url}\"\nversion = \"main\"\nrole = \"owned\"\n\
-             [repositories.\"{DOCS}\"]\ntype = \"git\"\nurl = \"{docs_url}\"\nversion = \"main\"\nrole = \"reference\"\n"
+            "[repositories.\"{LIB}\"]\ntype = \"git\"\nurl = \"{lib_url}\"\nbranch = \"main\"\nrole = \"owned\"\n\
+             [repositories.\"{DOCS}\"]\ntype = \"git\"\nurl = \"{docs_url}\"\nbranch = \"main\"\nrole = \"reference\"\n"
         ),
     )
     .unwrap();

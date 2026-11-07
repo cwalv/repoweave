@@ -63,7 +63,7 @@ fn write_manifest(dir: &Path, repos: &[(&str, &str)]) {
     let mut manifest_toml = String::from("[repositories]\n");
     for (path, url) in repos {
         manifest_toml.push_str(&format!(
-            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
         ));
     }
     std::fs::write(dir.join("rwv.toml"), &manifest_toml).unwrap();
@@ -1111,7 +1111,7 @@ fn write_manifest_with_roles(dir: &Path, repos: &[(&str, &str, &str)]) {
     let mut manifest_toml = String::from("[repositories]\n");
     for (path, url, role) in repos {
         manifest_toml.push_str(&format!(
-            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"{role}\"\n"
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nbranch = \"main\"\nrole = \"{role}\"\n"
         ));
     }
     std::fs::write(dir.join("rwv.toml"), &manifest_toml).unwrap();

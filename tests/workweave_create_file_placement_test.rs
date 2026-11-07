@@ -40,7 +40,7 @@ fn weave(tmp: &Path, endings: LineEndings) -> PathBuf {
         endings.pin(&clone);
         manifest.push_str(&format!(
             "[repositories.\"{repo}\"]\ntype = \"git\"\nurl = \"https://example.com/{repo}.git\"\n\
-             version = \"main\"\nrole = \"{role}\"\n\n"
+             branch = \"main\"\nrole = \"{role}\"\n\n"
         ));
     }
     let project = ws.join("projects/web-app");

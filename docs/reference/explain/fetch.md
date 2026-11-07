@@ -63,7 +63,7 @@ the lock covers it:
 - **The lock has an entry for the repo.** `fetch` realigns the clone: it
   resolves the locked revision *in that clone's own object store* and moves
   the checkout onto it, **without changing what HEAD is attached to**. When
-  the clone is on the local counterpart of the branch `version:` declares,
+  the clone is on the local counterpart of the branch the manifest's `branch` declares,
   that branch is fast-forwarded to the pin and the clone stays on it. When
   the pin is not a fast-forward of that branch, or the clone is on some
   other branch, `fetch` refuses — see below. A clone already at the pin is
@@ -94,7 +94,7 @@ what the member's checkouts record for their submodules, from upstream: a
 submodule whose directory in the canonical clone is empty is checked out there,
 nested ones included, and a commit a checkout records that the canonical
 clone's copy lacks is fetched into that copy without moving its checkout. A
-member whose manifest entry says `submodules = "skip"` is left alone, and so
+member whose manifest entry says `recurse-submodules = false` is left alone, and so
 is a submodule git's `submodule.<name>.update = none` declines. A submodule
 that cannot be fetched is a warning, not a failure.
 
@@ -114,7 +114,7 @@ relate that branch to the lock, and only in the direction the lock justifies:
   commits `origin` has never seen. Taking the pin would either rewind the
   branch or abandon it, so `fetch` refuses.
 - **On some other branch.** The checkout is on a branch that is not the local
-  counterpart of `version:` — an operator's personal branch. `fetch` names
+  counterpart of `branch` — an operator's personal branch. `fetch` names
   both refs and refuses; it does not relocate a branch it cannot relate to
   the lock, even when doing so would be a fast-forward. Your bookmark is
   yours.

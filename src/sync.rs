@@ -1733,7 +1733,7 @@ fn pre_op_manifest(ctx: &OpContext<'_>) -> anyhow::Result<Manifest> {
                 savepoint.id().short()
             )
         })?;
-    Manifest::from_toml_str(&content).with_context(|| {
+    Manifest::from_other_commit(&content).with_context(|| {
         format!(
             "the {} at the op's savepoint {} does not parse",
             Manifest::FILE_NAME,
@@ -1773,7 +1773,7 @@ fn materialize_missing_repo(
                 name.require(dir.as_path(), project)?,
                 repo_path,
                 entry.role,
-                entry.submodules,
+                entry.recurse_submodules,
                 start,
                 crate::workweave::ReceiptedBranch::Attach,
             )?
@@ -5196,7 +5196,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             continue;
         };
         // Born where replay will aim it, so the new checkout needs no move.
-        let declared = entry.version.local_counterpart();
+        let declared = entry.branch.local_counterpart();
         let start = snapshot
             .pull_tips
             .get(repo_path)
@@ -5614,7 +5614,7 @@ fn pin_source_snapshot(
                     source_project_dir.display()
                 )
             })?;
-        Manifest::from_toml_str(&content).with_context(|| {
+        Manifest::from_other_commit(&content).with_context(|| {
             format!(
                 "failed to parse source manifest at revision {} in {}",
                 source_project_tip,
@@ -5860,7 +5860,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                         name,
                         repo_path,
                         entry.role,
-                        entry.submodules,
+                        entry.recurse_submodules,
                         cwd_tip.id().as_str(),
                         crate::workweave::ReceiptedBranch::Attach,
                     )
@@ -8836,9 +8836,9 @@ mod tests {
         let entry = crate::manifest::RepoEntry {
             vcs_type: crate::manifest::VcsType::Git,
             url: "https://example.com/server.git".parse().unwrap(),
-            version: crate::vcs::TrackingRef::parse(crate::vcs::RawRefName::new("main")).unwrap(),
+            branch: crate::vcs::TrackingRef::parse(crate::vcs::RawRefName::new("main")).unwrap(),
             role: crate::manifest::Role::Owned,
-            submodules: crate::manifest::Submodules::Local,
+            recurse_submodules: crate::manifest::SubmoduleRecursion::Recurse,
         };
         (ctx, canonical, ProjectName::new("web-app").unwrap(), entry)
     }

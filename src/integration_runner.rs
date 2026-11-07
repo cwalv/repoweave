@@ -501,9 +501,9 @@ mod tests {
             RepoEntry {
                 vcs_type: crate::manifest::VcsType::Git,
                 url: "https://github.com/acme/server.git".parse().unwrap(),
-                version: TrackingRef::parse(RawRefName::new("main")).unwrap(),
+                branch: TrackingRef::parse(RawRefName::new("main")).unwrap(),
                 role: crate::manifest::Role::Owned,
-                submodules: crate::manifest::Submodules::Local,
+                recurse_submodules: crate::manifest::SubmoduleRecursion::Recurse,
             },
         );
         Manifest {

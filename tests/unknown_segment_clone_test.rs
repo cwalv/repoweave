@@ -256,7 +256,7 @@ fn a_stray_clone_in_a_partially_known_segment_is_orphaned_not_unknown() {
     let manifest_path = ws.join("projects").join("demo").join("rwv.toml");
     let mut manifest = std::fs::read_to_string(&manifest_path).unwrap();
     manifest.push_str(&format!(
-        "\n[repositories.\"codeberg.org/acme/lib\"]\ntype = \"git\"\nurl = \"{}\"\nversion = \"main\"\nrole = \"owned\"\n",
+        "\n[repositories.\"codeberg.org/acme/lib\"]\ntype = \"git\"\nurl = \"{}\"\nbranch = \"main\"\nrole = \"owned\"\n",
         common::file_url(&declared_origin)
     ));
     std::fs::write(&manifest_path, manifest).unwrap();
@@ -306,7 +306,7 @@ fn an_unknown_segment_clone_is_reported_from_inside_a_workweave() {
     std::fs::write(
         project_dir.join("rwv.toml"),
         format!(
-            "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"{}\"\nversion = \"main\"\nrole = \"owned\"\n",
+            "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"{}\"\nbranch = \"main\"\nrole = \"owned\"\n",
             common::file_url(&member_path)
         ),
     )

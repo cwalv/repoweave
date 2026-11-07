@@ -1,6 +1,6 @@
 //! A member checkout rwv creates has its submodules checked out from the
 //! copies of their repositories the canonical clone already holds, never from
-//! the network, unless its manifest entry says `submodules = "skip"`.
+//! the network, unless its manifest entry says `recurse-submodules = false`.
 //!
 //! Every fixture cuts the network off: the upstream repositories are deleted
 //! once the canonical clone has its submodules, and every URL that could
@@ -297,7 +297,7 @@ fn configured_weave(
         project_dir.join("rwv.toml"),
         format!(
             "[repositories.\"{MEMBER}\"]\ntype = \"git\"\nurl = \"file://{}\"\n\
-             version = \"main\"\nrole = \"{role}\"\n{extra_entry_line}\n",
+             branch = \"main\"\nrole = \"{role}\"\n{extra_entry_line}\n",
             common::url_path(&canonical)
         ),
     )
@@ -525,7 +525,7 @@ fn doctor_fix_checks_out_the_empty_submodules_of_an_existing_member() {
 
 #[test]
 fn a_member_that_skips_submodules_keeps_them_empty_and_unreported() {
-    let weave = weave("owned", "submodules = \"skip\"", Store::Complete);
+    let weave = weave("owned", "recurse-submodules = false", Store::Complete);
     let (seat, _) = weave.seat("one");
     let member = seat.join(MEMBER);
 
@@ -735,7 +735,7 @@ fn create_leaves_a_repo_without_submodules_alone() {
         project_dir.join("rwv.toml"),
         format!(
             "[repositories.\"{MEMBER}\"]\ntype = \"git\"\nurl = \"file://{}\"\n\
-             version = \"main\"\nrole = \"owned\"\n",
+             branch = \"main\"\nrole = \"owned\"\n",
             common::url_path(&canonical)
         ),
     )

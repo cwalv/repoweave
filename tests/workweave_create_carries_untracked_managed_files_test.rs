@@ -91,7 +91,7 @@ fn fixture(tmp: &Path) -> (PathBuf, PathBuf) {
     std::fs::write(
         project_dir.join("rwv.toml"),
         "[repositories.\"github/acme/rust-lib\"]\ntype = \"git\"\n\
-         url = \"https://github.com/acme/rust-lib.git\"\nversion = \"main\"\nrole = \"owned\"\n\n\
+         url = \"https://github.com/acme/rust-lib.git\"\nbranch = \"main\"\nrole = \"owned\"\n\n\
          [integrations.cargo-workspace]\nrustc-wrapper = \"sccache\"\n",
     )
     .unwrap();
@@ -243,7 +243,7 @@ fn workweave_create_does_not_overwrite_a_tracked_wrapper_config() {
     std::fs::write(
         project_dir.join("rwv.toml"),
         "[repositories.\"github/acme/rust-lib\"]\ntype = \"git\"\n\
-         url = \"https://github.com/acme/rust-lib.git\"\nversion = \"main\"\nrole = \"owned\"\n\n\
+         url = \"https://github.com/acme/rust-lib.git\"\nbranch = \"main\"\nrole = \"owned\"\n\n\
          [integrations.cargo-workspace]\nrustc-wrapper = \"sccache\"\n",
     )
     .unwrap();

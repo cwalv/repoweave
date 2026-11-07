@@ -20,7 +20,7 @@ out the tip by revision. Which branch it is willing to move depends on where
 you are:
 
 - **In the canonical clone**, it moves only the local counterpart of the
-  branch `version:` declares. On any other branch — an operator's personal
+  branch the manifest's `branch` declares. On any other branch — an operator's personal
   branch — it names both refs and refuses, rather than relocating a bookmark
   it cannot relate to the tracking declaration.
 - **Inside a workweave**, it moves that workweave's own branch. When the tip
@@ -115,7 +115,7 @@ Under `--json`, output is the envelope, whatever `-j` is:
 Each record carries:
 - `path` — manifest-relative repo path.
 - `absolute_path` — fully resolved on-disk path.
-- `branch` — branch name from the manifest `version:` field.
+- `branch` — branch name from the manifest `branch` field.
 - `kind` — `updated` (old_sha ≠ new_sha), `up-to-date` (already at HEAD),
   or `failed`.
 - `old_sha` — SHA before the advance (omitted if unreadable).
@@ -167,7 +167,7 @@ rwv update --project web-app
   cloned on disk; run `rwv fetch` (no SOURCE) from the workspace to
   re-materialize missing manifest members, then re-run `rwv update`.
 - *could not resolve branch on the remote* — the branch named
-  in the manifest's `version:` field doesn't exist on the upstream remote;
+  in the manifest's `branch` field doesn't exist on the upstream remote;
   verify the branch name and remote configuration.
 - *git fetch failed* — network error or remote authentication problem;
   inspect the git output for details.

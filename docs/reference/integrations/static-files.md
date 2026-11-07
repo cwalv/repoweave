@@ -57,19 +57,19 @@ A project using Turborepo for build caching alongside npm workspaces:
 [repositories."github/chatly/protocol"]
 type = "git"
 url = "git@github.com:chatly/protocol.git"
-version = "main"
+branch = "main"
 role = "owned"
 
 [repositories."github/chatly/server"]
 type = "git"
 url = "git@github.com:chatly/server.git"
-version = "main"
+branch = "main"
 role = "owned"
 
 [repositories."github/chatly/web"]
 type = "git"
 url = "git@github.com:chatly/web.git"
-version = "main"
+branch = "main"
 role = "owned"
 
 [integrations.static-files]

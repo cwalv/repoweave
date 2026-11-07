@@ -77,7 +77,7 @@ impl Axis {
                             already holds it, or it reads as a revision where a branch belongs.",
                 why: "A workweave name maps to one workweave; recording a second would make \
                       every later address ambiguous, and a delete would remove whichever was \
-                      found first. A member entry's `version` declares a branch to track while \
+                      found first. A member entry's `branch` declares the branch to track while \
                       the lock records where you are, so a commit id or release tag there leaves \
                       nothing to track.",
                 sits: "[Workweave hierarchy](../explanation/joints/workweave-hierarchy.md); \

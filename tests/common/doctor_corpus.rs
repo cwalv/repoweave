@@ -26,8 +26,8 @@ use repoweave::check::{
     BranchDisciplineKind, CheckViolation, CloneTopologyKind, DeadOpLeaseKind, DetachedAncestry,
     DriftKind, IndexDriftKind, LegacyRefAtTip, OrphanedSavepointKind, PermissionsKind,
     PlacementConvergence, ProvenanceKind, RegistrationDirectoryKind, ReplayExclusionKind,
-    SubmoduleCommitKind, WeaveRootIdentityConflictKind, WorkingTreeDriftKind,
-    WorkweaveTreeIntegrityKind,
+    SubmoduleCommitKind, UnparseableProjectKind, WeaveRootIdentityConflictKind,
+    WorkingTreeDriftKind, WorkweaveTreeIntegrityKind,
 };
 use repoweave::integration::{Issue, IssueKind, IssueSource, Severity};
 use repoweave::integration::{MemberIncompatibility, Observed};
@@ -174,7 +174,10 @@ pub fn case_token(v: &CheckViolation) -> String {
         CheckViolation::LegacyWorkweaveIndex { .. } => "legacy-workweave-index".into(),
         CheckViolation::UnreadableOwnedState { .. } => "unreadable-owned-state".into(),
         CheckViolation::UnreadableWorkweaveIndex { .. } => "unreadable-workweave-index".into(),
-        CheckViolation::UnparseableProject { .. } => "unparseable-project".into(),
+        CheckViolation::UnparseableProject { sub_kind, .. } => match sub_kind {
+            UnparseableProjectKind::PreSchema => "unparseable-project/pre-schema".into(),
+            UnparseableProjectKind::Malformed => "unparseable-project/malformed".into(),
+        },
         CheckViolation::WorkweaveTreeIntegrity { sub_kind, .. } => {
             let tail = match sub_kind {
                 WorkweaveTreeIntegrityKind::DanglingParent { .. } => "dangling-parent",
@@ -499,6 +502,13 @@ pub fn corpus() -> Vec<CheckViolation> {
             project: project(),
             manifest_path: path("/ws/projects/proj/rwv.toml"),
             message: "bad yaml".into(),
+            sub_kind: UnparseableProjectKind::Malformed,
+        },
+        CheckViolation::UnparseableProject {
+            project: project(),
+            manifest_path: path("/ws/projects/proj/rwv.toml"),
+            message: "names keys an earlier release wrote".into(),
+            sub_kind: UnparseableProjectKind::PreSchema,
         },
         CheckViolation::WorkweaveTreeIntegrity {
             workweave_dir: path("/ws/.workweaves/proj--feat-a"),

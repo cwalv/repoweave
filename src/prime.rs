@@ -161,7 +161,7 @@ fn render_repo_table(out: &mut String, manifest: &Manifest) {
             "| `{}` | {} | {} | {} |\n",
             rp.as_str(),
             entry.role,
-            entry.version,
+            entry.branch,
             entry.url
         ));
     }
@@ -318,13 +318,13 @@ mod tests {
 [repositories."github/acme/server"]
 type = "git"
 url = "https://github.com/acme/server.git"
-version = "main"
+branch = "main"
 role = "owned"
 
 [repositories."github/acme/client"]
 type = "git"
 url = "https://github.com/acme/client.git"
-version = "develop"
+branch = "develop"
 role = "fork"
 
 [integrations.cargo-workspace]
@@ -458,7 +458,7 @@ enabled = true
 [repositories."github/acme/server"]
 type = "git"
 url = "https://github.com/acme/server.git"
-version = "main"
+branch = "main"
 role = "owned"
 "#,
         );

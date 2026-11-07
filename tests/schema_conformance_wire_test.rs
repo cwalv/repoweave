@@ -131,7 +131,7 @@ fn weave() -> Weave {
         project.join("rwv.toml"),
         format!(
             "[repositories]\n[repositories.\"{MEMBER}\"]\ntype = \"git\"\nurl = \"{url}\"\n\
-             version = \"main\"\nrole = \"owned\"\n"
+             branch = \"main\"\nrole = \"owned\"\n"
         ),
     )
     .unwrap();
@@ -404,9 +404,9 @@ fn fetch_json_wire_output_conforms_on_partial_failure() {
         format!(
             "[repositories]\n\
              [repositories.\"{MEMBER}\"]\n\
-             type = \"git\"\nurl = \"{member_url}\"\nversion = \"main\"\nrole = \"owned\"\n\
+             type = \"git\"\nurl = \"{member_url}\"\nbranch = \"main\"\nrole = \"owned\"\n\
              [repositories.\"github/example/missing\"]\n\
-             type = \"git\"\nurl = \"{bad_url}\"\nversion = \"main\"\nrole = \"owned\"\n"
+             type = \"git\"\nurl = \"{bad_url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
         ),
     )
     .unwrap();
@@ -439,7 +439,7 @@ fn update_json_wire_output_conforms_on_failure() {
         weave.project().join("rwv.toml"),
         format!(
             "[repositories]\n[repositories.\"{MEMBER}\"]\ntype = \"git\"\nurl = \"{member_url}\"\n\
-             version = \"does-not-exist\"\nrole = \"owned\"\n"
+             branch = \"does-not-exist\"\nrole = \"owned\"\n"
         ),
     )
     .unwrap();

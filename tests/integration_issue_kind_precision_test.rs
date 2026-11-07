@@ -156,9 +156,9 @@ fn nested_workspace_reaches_json_as_config_rejected() {
 
     let manifest = Manifest::from_toml_str(
         "[repositories.\"github/acme/plain\"]\ntype = \"git\"\n\
-         url = \"https://github.com/acme/plain.git\"\nversion = \"main\"\nrole = \"owned\"\n\
+         url = \"https://github.com/acme/plain.git\"\nbranch = \"main\"\nrole = \"owned\"\n\
          [repositories.\"github/acme/forked\"]\ntype = \"git\"\n\
-         url = \"https://github.com/acme/forked.git\"\nversion = \"main\"\nrole = \"fork\"\n",
+         url = \"https://github.com/acme/forked.git\"\nbranch = \"main\"\nrole = \"fork\"\n",
     )
     .unwrap();
 
@@ -185,7 +185,7 @@ fn static_files_name_collision_reaches_json_as_config_rejected() {
 
     let mut manifest = Manifest::from_toml_str(
         "[repositories.\"github/acme/plain\"]\ntype = \"git\"\n\
-         url = \"https://github.com/acme/plain.git\"\nversion = \"main\"\nrole = \"owned\"\n\
+         url = \"https://github.com/acme/plain.git\"\nbranch = \"main\"\nrole = \"owned\"\n\
          [integrations.static-files]\nenabled = true\nfiles = [\"NOTES.md\"]\n\
          [workweave]\nlink = [\"NOTES.md\"]\n",
     )
@@ -227,7 +227,7 @@ fn malformed_settings_reach_json_under_their_own_kind() {
 
     let manifest = Manifest::from_toml_str(
         "[repositories.\"github/acme/plain\"]\ntype = \"git\"\n\
-         url = \"https://github.com/acme/plain.git\"\nversion = \"main\"\nrole = \"owned\"\n\
+         url = \"https://github.com/acme/plain.git\"\nbranch = \"main\"\nrole = \"owned\"\n\
          [integrations.cargo-workspace]\nexclude = \"not-a-list\"\n",
     )
     .unwrap();
@@ -261,7 +261,7 @@ fn malformed_settings_reach_the_same_kind_from_activate_as_from_doctor() {
 
     let manifest = Manifest::from_toml_str(
         "[repositories.\"github/acme/plain\"]\ntype = \"git\"\n\
-         url = \"https://github.com/acme/plain.git\"\nversion = \"main\"\nrole = \"owned\"\n\
+         url = \"https://github.com/acme/plain.git\"\nbranch = \"main\"\nrole = \"owned\"\n\
          [integrations.cargo-workspace]\nexclude = \"not-a-list\"\n",
     )
     .unwrap();
@@ -302,7 +302,7 @@ fn malformed_settings_carry_their_kind_out_of_every_hook_that_reads_them() {
 
     let static_files = Manifest::from_toml_str(
         "[repositories.\"github/acme/plain\"]\ntype = \"git\"\n\
-         url = \"https://github.com/acme/plain.git\"\nversion = \"main\"\nrole = \"owned\"\n\
+         url = \"https://github.com/acme/plain.git\"\nbranch = \"main\"\nrole = \"owned\"\n\
          [integrations.static-files]\nenabled = true\nfiles = \"NOTES.md\"\n",
     )
     .unwrap();
@@ -319,7 +319,7 @@ fn malformed_settings_carry_their_kind_out_of_every_hook_that_reads_them() {
 
     let vscode = Manifest::from_toml_str(
         "[repositories.\"github/acme/plain\"]\ntype = \"git\"\n\
-         url = \"https://github.com/acme/plain.git\"\nversion = \"main\"\nrole = \"owned\"\n\
+         url = \"https://github.com/acme/plain.git\"\nbranch = \"main\"\nrole = \"owned\"\n\
          [integrations.vscode-workspace]\nhide-dotfiles = \"yes\"\n",
     )
     .unwrap();
@@ -353,7 +353,7 @@ fn a_hook_error_does_reach_json_as_integration_failed() {
 
     let manifest = Manifest::from_toml_str(
         "[repositories.\"github/acme/plain\"]\ntype = \"git\"\n\
-         url = \"https://github.com/acme/plain.git\"\nversion = \"main\"\nrole = \"owned\"\n",
+         url = \"https://github.com/acme/plain.git\"\nbranch = \"main\"\nrole = \"owned\"\n",
     )
     .unwrap();
 

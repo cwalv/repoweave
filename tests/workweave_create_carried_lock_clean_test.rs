@@ -81,7 +81,7 @@ impl Weave {
             project.join("rwv.toml"),
             format!(
                 "[repositories.\"github/acme/lib\"]\ntype = \"git\"\nurl = \"{url}\"\n\
-                 version = \"main\"\nrole = \"owned\"\n\n\
+                 branch = \"main\"\nrole = \"owned\"\n\n\
                  [integrations.vscode-workspace]\nenabled = false\n"
             ),
         )

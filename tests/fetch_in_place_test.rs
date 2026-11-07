@@ -109,7 +109,7 @@ fn setup_workspace_with_locked_project(repo_paths: &[&str]) -> Setup {
     for (rp, bare, _, _) in &repos {
         let url = common::file_url(bare);
         manifest.push_str(&format!(
-            "[repositories.\"{rp}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
+            "[repositories.\"{rp}\"]\ntype = \"git\"\nurl = \"{url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
         ));
     }
     std::fs::write(project_dir.join("rwv.toml"), &manifest).unwrap();
@@ -624,7 +624,7 @@ fn in_place_fetch_missing_repo_no_lock_entry_clones_at_default_branch() {
     let url_a = common::file_url(&bare_a);
     let url_b = common::file_url(&bare_b);
     let manifest = format!(
-        "[repositories.\"github/acme/a\"]\ntype = \"git\"\nurl = \"{url_a}\"\nversion = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/acme/b\"]\ntype = \"git\"\nurl = \"{url_b}\"\nversion = \"main\"\nrole = \"owned\"\n"
+        "[repositories.\"github/acme/a\"]\ntype = \"git\"\nurl = \"{url_a}\"\nbranch = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/acme/b\"]\ntype = \"git\"\nurl = \"{url_b}\"\nbranch = \"main\"\nrole = \"owned\"\n"
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
@@ -937,7 +937,7 @@ fn add_second_project(s: &Setup) -> std::path::PathBuf {
     std::fs::write(
         project_dir.join("rwv.toml"),
         format!(
-            "[repositories]\n[repositories.\"github/acme/b\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
+            "[repositories]\n[repositories.\"github/acme/b\"]\ntype = \"git\"\nurl = \"{url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
         ),
     )
     .unwrap();

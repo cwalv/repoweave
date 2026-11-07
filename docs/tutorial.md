@@ -75,7 +75,7 @@ The result:
 rwv update
 ```
 
-**`rwv update` is the verb that gets the latest.** It advances each member repo to the branch HEAD configured in `rwv.toml` (`version = "main"`) on the remote, and re-snapshots `rwv.lock`. Equivalent in spirit to `cargo update` or `npm update` — pull the new world, re-pin.
+**`rwv update` is the verb that gets the latest.** It advances each member repo to the branch HEAD configured in `rwv.toml` (`branch = "main"`) on the remote, and re-snapshots `rwv.lock`. Equivalent in spirit to `cargo update` or `npm update` — pull the new world, re-pin.
 
 Compare:
 
@@ -98,7 +98,7 @@ git add -A
 git commit -m "server: add welcome message"
 ```
 
-> **Tip — isolated feature branches:** Keep canonical clones in the primary weave on their tracked branch (`version` in `rwv.toml`). When you want an isolated branch across one or more repos, create a workweave (`rwv workweave web-app create welcome-message`) and land it back with `rwv sync-to --retire` — see [create a feature workweave](./how-to/create-feature-workweave.md).
+> **Tip — isolated feature branches:** Keep canonical clones in the primary weave on their tracked branch (`branch` in `rwv.toml`). When you want an isolated branch across one or more repos, create a workweave (`rwv workweave web-app create welcome-message`) and land it back with `rwv sync-to --retire` — see [create a feature workweave](./how-to/create-feature-workweave.md).
 
 Ecosystem workspace wiring means a change in `github/chatly/protocol` is immediately visible to `github/chatly/server` without a publish step:
 

@@ -31,8 +31,8 @@
 //!     alone passes against a stale artifact the runtime still happens to fit.
 
 use repoweave::check::{
-    CheckViolation, DriftKind, IndexDriftKind, WeaveRootIdentityConflictKind, WorkingTreeDriftKind,
-    DOCTOR_SCHEMA_URL,
+    CheckViolation, DriftKind, IndexDriftKind, UnparseableProjectKind,
+    WeaveRootIdentityConflictKind, WorkingTreeDriftKind, DOCTOR_SCHEMA_URL,
 };
 use repoweave::integration::{Issue, IssueKind, IssueSource, Severity};
 use repoweave::integration::{MemberIncompatibility, Observed};
@@ -125,6 +125,7 @@ fn corpus() -> Vec<CheckViolation> {
             project: project(),
             manifest_path: PathBuf::from("/ws/projects/proj/rwv.toml"),
             message: "bad yaml".into(),
+            sub_kind: UnparseableProjectKind::Malformed,
         },
     ]
 }

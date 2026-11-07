@@ -86,7 +86,7 @@ fn entry(path: &str, url: &str) -> String {
 
 fn entry_as(path: &str, url: &str, role: &str) -> String {
     format!(
-        "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\n\
+        "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nbranch = \"main\"\n\
          role = \"{role}\"\n"
     )
 }

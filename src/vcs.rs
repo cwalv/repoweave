@@ -1026,7 +1026,7 @@ pub use crate::naming::RefNameError;
 /// Width at which an all-hex name stops reading as a branch name and
 /// starts reading as an abbreviated commit id.
 ///
-/// git's default `core.abbrev` floor is 7, so a 7-hex `version:` is
+/// git's default `core.abbrev` floor is 7, so a 7-hex `branch` is
 /// overwhelmingly a pin someone tried to smuggle through the tracking
 /// field. Below that, hex-looking names (`cafe`, `beef`, `dad`) are
 /// ordinary words and are accepted.
@@ -1040,7 +1040,7 @@ fn is_sha_shaped(s: &str) -> bool {
 /// True for release-shape names (e.g. `v1.2.3`, `v0.3.4-rc1`).
 ///
 /// Two callers, deliberately sharing one definition: [`TrackingRef::parse`]
-/// rejects names of this shape (`version:` is a declaration, not a pin), and
+/// rejects names of this shape (`branch` is a declaration, not a pin), and
 /// git's [`Vcs::tag_at_head`] uses it as a tiebreaker so a release
 /// tag wins over an arbitrary lightweight tag. Both are asking
 /// "does this read as a release tag"; one answer.
@@ -1060,7 +1060,7 @@ pub(crate) fn is_release_shape_name(s: &str) -> bool {
 }
 
 /// Notion (1): the branch a manifest entry **declares** it tracks
-/// (`version:`).
+/// (`branch`).
 ///
 /// A `TrackingRef` is a statement of intent about a *remote* channel. It is
 /// not a claim that any local ref of that name exists, and it is not a
@@ -1108,7 +1108,7 @@ pub(crate) fn is_release_shape_name(s: &str) -> bool {
 pub struct TrackingRef(String);
 
 impl TrackingRef {
-    /// Parse a manifest-declared `version:` scalar.
+    /// Parse a manifest-declared `branch` scalar.
     ///
     /// Rejects commit-id-shaped and release-tag-shaped values, and anything
     /// that is not a usable ref name. Deserializing and every `TryFrom` impl
@@ -1714,7 +1714,7 @@ impl fmt::Display for RemoteDefaultBranch {
 /// An opaque wrapper whose constructors are visible only inside this crate
 /// and whose *use* is confined to one decision site in `push.rs`'s publish
 /// gate. Whether a member's publish ref is the attached ref or the
-/// manifest's declared tracking branch, and whether `version:` is a
+/// manifest's declared tracking branch, and whether `branch` is a
 /// constraint or a default, is **open** — and this type is where the
 /// deferral is visible: a deferred
 /// decision with a producer, rather than a placeholder without one. The
@@ -2436,6 +2436,14 @@ pub trait Vcs: Send + Sync {
     /// For git: runs
     /// `git add -- <paths>`.
     fn stage_paths(&self, repo: &Path, paths: &[&str]) -> Result<(), VcsError>;
+
+    /// Mark `content` as the next commit's version of `path` (relative to
+    /// `repo`) without reading or writing the file on disk, so the commit
+    /// records `content` while the working copy keeps whatever edits it holds.
+    ///
+    /// For git: writes the blob with `git hash-object -w --stdin` and points
+    /// the index at it with `git update-index --add --cacheinfo`.
+    fn stage_content(&self, repo: &Path, path: &Path, content: &[u8]) -> Result<(), VcsError>;
 
     /// Return `paths` in the index to their committed state, leaving the work
     /// tree alone: what undoes [`Vcs::stage_paths`] when the commit it was

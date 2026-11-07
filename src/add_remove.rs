@@ -3,8 +3,8 @@
 use crate::activate::{activate_intent_for, ActivateOptions, ActivationFailure, RestorePoint};
 use crate::integration_runner::missing_active_members;
 use crate::manifest::{
-    BelowError, LockFile, Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role, Submodules,
-    UnspellableLocation, VcsType,
+    BelowError, LockFile, Manifest, ProjectName, RepoEntry, RepoPath, RepoUrl, Role,
+    SubmoduleRecursion, UnspellableLocation, VcsType,
 };
 use crate::path_spelling::{file_url_suggestion, CanonicalPath};
 use crate::refusal::{refusal, RefusalKind};
@@ -65,7 +65,7 @@ fn create_worktree_in_workweave(
     project: &ProjectName,
     workweave_name: &crate::manifest::WorkweaveName,
     role: Role,
-    submodules: Submodules,
+    recurse_submodules: SubmoduleRecursion,
 ) -> anyhow::Result<()> {
     let dest = workweave_dir.join(repo_path.as_path());
     if !crate::workweave::is_symlinked_member(&dest) && dest.exists() {
@@ -94,7 +94,7 @@ fn create_worktree_in_workweave(
         workweave_name,
         repo_path,
         role,
-        submodules,
+        recurse_submodules,
         start.id().as_str(),
         crate::workweave::ReceiptedBranch::Attach,
     )
@@ -113,7 +113,7 @@ fn create_worktree_in_workweave(
 
 /// Give the workspace `ctx` resolves to the member whose canonical clone is
 /// `canonical`, settled for `role`: in a workweave, its worktree, with its
-/// submodules as `submodules` asks; at primary, the canonical clone itself.
+/// submodules as `recurse_submodules` asks; at primary, the canonical clone itself.
 /// Nothing to do while the canonical clone is not on disk.
 fn place_member(
     vcs: &dyn Vcs,
@@ -121,7 +121,7 @@ fn place_member(
     canonical: &Path,
     repo_path: &RepoPath,
     role: Role,
-    submodules: Submodules,
+    recurse_submodules: SubmoduleRecursion,
 ) -> anyhow::Result<()> {
     if !canonical.exists() {
         return Ok(());
@@ -138,7 +138,7 @@ fn place_member(
             project,
             name.require(dir.as_path(), project)?,
             role,
-            submodules,
+            recurse_submodules,
         ),
         Checkout::Primary { .. } => crate::settle::settle(vcs, canonical, role).map(|_| ()),
     }
@@ -340,7 +340,7 @@ pub fn run_add(
             &dest,
             &repo_path,
             existing.role,
-            existing.submodules,
+            existing.recurse_submodules,
             "rwv add: ",
         );
         place_member(
@@ -349,7 +349,7 @@ pub fn run_add(
             &dest,
             &repo_path,
             existing.role,
-            existing.submodules,
+            existing.recurse_submodules,
         )?;
         return settle_manifest(ctx, &project, None, &[], opts);
     }
@@ -388,7 +388,7 @@ pub fn run_add(
                 url
             );
         };
-        let version = declared_branch(
+        let branch = declared_branch(
             TrackingRef::try_from(&remote_default),
             vcs.as_ref(),
             &repo_path,
@@ -403,9 +403,9 @@ pub fn run_add(
         let entry = RepoEntry {
             vcs_type,
             url: parsed_url,
-            version,
+            branch,
             role,
-            submodules: crate::manifest::Submodules::Local,
+            recurse_submodules: crate::manifest::SubmoduleRecursion::Recurse,
         };
         manifest.insert_repo(repo_path.clone(), entry);
         crate::workweave::fetch_member_submodules(
@@ -413,7 +413,7 @@ pub fn run_add(
             &dest,
             &repo_path,
             role,
-            Submodules::Local,
+            SubmoduleRecursion::Recurse,
             "rwv add: ",
         );
 
@@ -684,7 +684,14 @@ fn place_member_noting(
 ) -> anyhow::Result<()> {
     let checkout = ctx.active_path().join(repo_path.as_path());
     let fresh = matches!(ctx.checkout, Checkout::Workweave { .. }) && !checkout.exists();
-    let placed = place_member(vcs, ctx, canonical, repo_path, role, Submodules::Local);
+    let placed = place_member(
+        vcs,
+        ctx,
+        canonical,
+        repo_path,
+        role,
+        SubmoduleRecursion::Recurse,
+    );
     if fresh && checkout.exists() {
         left.worktree = Some(checkout);
     }
@@ -814,7 +821,7 @@ fn declared_branch(
 
 fn untrackable_remote_default(repo_path: &RepoPath, clone: &Path) -> String {
     format!(
-        "rwv add: '{}' at {}: the remote's default branch cannot be its `version`",
+        "rwv add: '{}' at {}: the remote's default branch cannot be its declared `branch`",
         repo_path.as_str(),
         clone.display(),
     )
@@ -911,7 +918,7 @@ fn run_add_from_local_path(
             adopted.display()
         );
     };
-    let version = declared_branch(
+    let branch = declared_branch(
         TrackingRef::try_from(&remote_default),
         vcs,
         repo_path,
@@ -925,9 +932,9 @@ fn run_add_from_local_path(
     let entry = RepoEntry {
         vcs_type,
         url: RepoUrl::from(&recorded),
-        version,
+        branch,
         role,
-        submodules: crate::manifest::Submodules::Local,
+        recurse_submodules: crate::manifest::SubmoduleRecursion::Recurse,
     };
     manifest.insert_repo(repo_path.clone(), entry);
     Ok(Some((manifest, recorded)))
@@ -1411,7 +1418,7 @@ pub fn run_add_new(
                 &dest,
                 &repo_path,
                 existing.role,
-                existing.submodules,
+                existing.recurse_submodules,
             )?;
             return settle_manifest(ctx, &project, None, &[], opts);
         }
@@ -1529,7 +1536,7 @@ pub fn run_add_new(
             },
         };
 
-        let version = declared_branch(
+        let branch = declared_branch(
             created_on,
             vcs.as_ref(),
             &repo_path,
@@ -1537,7 +1544,7 @@ pub fn run_add_new(
             || {
                 format!(
                     "rwv add: '{}' at {}: the branch the repo was created on cannot be its \
-                     `version`",
+                     declared `branch`",
                     repo_path.as_str(),
                     dest.display(),
                 )
@@ -1547,9 +1554,9 @@ pub fn run_add_new(
         let entry = RepoEntry {
             vcs_type,
             url,
-            version,
+            branch,
             role,
-            submodules: crate::manifest::Submodules::Local,
+            recurse_submodules: crate::manifest::SubmoduleRecursion::Recurse,
         };
         manifest.insert_repo(repo_path.clone(), entry);
 

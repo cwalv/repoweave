@@ -216,7 +216,7 @@ fn advance_all_and_relock(ws: &common::PushWorkspace, repos: &[(&str, &str)]) {
         let sha = common::git_in(&local, &["rev-parse", "HEAD"]);
         let bare_url = common::file_url(bare);
         manifest_yaml.push_str(&format!(
-            "[repositories.\"{rp}\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nversion = \"main\"\nrole = \"{role}\"\n"
+            "[repositories.\"{rp}\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nbranch = \"main\"\nrole = \"{role}\"\n"
         ));
         lock_entries.push(((*rp).to_string(), bare_url, sha));
     }

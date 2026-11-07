@@ -138,7 +138,7 @@ fn write_manifest(dir: &Path, repos: &[(&str, &str)]) {
     let mut manifest_toml = String::from("[repositories]\n");
     for (path, url) in repos {
         manifest_toml.push_str(&format!(
-            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
         ));
     }
     std::fs::write(dir.join("rwv.toml"), manifest_toml).unwrap();
@@ -612,7 +612,7 @@ const LIB_SUBCRATES: &[&str] = &["core", "cli", "legacy"];
 /// `org/lib` is declared but has no root `Cargo.toml`, so it is invisible to
 /// `detect_repos_with_manifest` — the `members:` block is the only reason
 /// cargo-workspace considers this project to have active cargo work.
-const CARGO_MEMBERS_MANIFEST: &str = "[repositories.\"org/lib\"]\ntype = \"git\"\nurl = \"https://example.com/lib.git\"\nversion = \"main\"\nrole = \"owned\"\n\n[integrations.cargo-workspace.members.\"org/lib\"]\ninclude = [\"crates/core\", \"crates/cli\"]\n";
+const CARGO_MEMBERS_MANIFEST: &str = "[repositories.\"org/lib\"]\ntype = \"git\"\nurl = \"https://example.com/lib.git\"\nbranch = \"main\"\nrole = \"owned\"\n\n[integrations.cargo-workspace.members.\"org/lib\"]\ninclude = [\"crates/core\", \"crates/cli\"]\n";
 
 /// A bare project repo carrying [`CARGO_MEMBERS_MANIFEST`] and a committed
 /// root `Cargo.toml`, ready to be adopted.

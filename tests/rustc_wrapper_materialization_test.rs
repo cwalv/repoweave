@@ -70,7 +70,7 @@ fn weave(tmp: &Path, url: &str) -> PathBuf {
         ws.join("projects/app/rwv.toml"),
         format!(
             "[repositories.\"github/acme/lib\"]\ntype = \"git\"\nurl = \"{url}\"\n\
-             version = \"main\"\nrole = \"owned\"\n\n\
+             branch = \"main\"\nrole = \"owned\"\n\n\
              [integrations.cargo-workspace]\nrustc-wrapper = \"sccache\"\n\n\
              [integrations.vscode-workspace]\nenabled = false\n"
         ),

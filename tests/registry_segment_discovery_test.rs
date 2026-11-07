@@ -158,7 +158,7 @@ fn a_host_derived_segment_is_walked_for_both_verdicts() {
     let manifest_path = ws.join("projects").join("demo").join("rwv.toml");
     let mut manifest = std::fs::read_to_string(&manifest_path).unwrap();
     manifest.push_str(&format!(
-        "\n[repositories.\"codeberg.org/acme/lib\"]\ntype = \"git\"\nurl = \"{}\"\nversion = \"main\"\nrole = \"owned\"\n",
+        "\n[repositories.\"codeberg.org/acme/lib\"]\ntype = \"git\"\nurl = \"{}\"\nbranch = \"main\"\nrole = \"owned\"\n",
         common::file_url(&declared_origin)
     ));
     std::fs::write(&manifest_path, manifest).unwrap();

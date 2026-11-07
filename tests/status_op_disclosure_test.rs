@@ -73,7 +73,7 @@ fn make_primary(tmp: &Path) -> PrimaryWorkspace {
     init_repo(&project_dir);
 
     let manifest = format!(
-        "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
+        "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nbranch = \"main\"\nrole = \"owned\"\n",
         path = REPO_PATH,
         repo = common::url_path(&repo)
     );

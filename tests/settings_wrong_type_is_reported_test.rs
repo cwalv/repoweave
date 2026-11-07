@@ -170,7 +170,7 @@ fn a_go_work_whose_settings_do_not_parse_authors_nothing() {
         "[repositories.\"github/acme/svc\"]\n\
          type = \"git\"\n\
          url = \"https://github.com/acme/svc.git\"\n\
-         version = \"main\"\n\
+         branch = \"main\"\n\
          role = \"owned\"\n\
          \n[integrations.go-work]\n\
          go-version = 122\n",

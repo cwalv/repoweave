@@ -92,7 +92,7 @@ fn status_text_and_json_spell_every_reachable_relation_alike() {
         let path = format!("github/org/{token}");
         let url = common::file_url(repo);
         manifest.push_str(&format!(
-            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
         ));
         if let Some(sha) = lock {
             locked.push((path, url, sha.to_string()));

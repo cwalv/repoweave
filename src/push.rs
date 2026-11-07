@@ -399,12 +399,12 @@ pub fn run_push(
                 continue;
             }
         };
-        if !attached.is_named(&entry.version.local_counterpart()) {
+        if !attached.is_named(&entry.branch.local_counterpart()) {
             eprintln!(
                 "rwv push: warning: {} is on branch '{}', manifest declares '{}'",
                 repo_path.as_str(),
                 attached,
-                entry.version,
+                entry.branch,
             );
         }
         plan.push(PushPlanItem {

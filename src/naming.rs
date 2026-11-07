@@ -104,7 +104,7 @@ pub fn spells_segment_escape(s: &str) -> bool {
 pub enum RefNameError {
     /// The name is empty.
     Empty,
-    /// The name is commit-id shaped. `version:` declares what to TRACK;
+    /// The name is commit-id shaped. `branch` declares what to TRACK;
     /// the lock records where you ARE — a pin needs a different
     /// field, not an overloaded one.
     ShaShaped(String),
@@ -126,12 +126,12 @@ impl fmt::Display for RefNameError {
             Self::Empty => f.write_str("ref name is empty"),
             Self::ShaShaped(s) => write!(
                 f,
-                "'{s}' is commit-id shaped; `version` declares a branch to \
+                "'{s}' is commit-id shaped; `branch` declares a branch to \
                  track, not a revision to pin"
             ),
             Self::TagShaped(s) => write!(
                 f,
-                "'{s}' is tag shaped; `version` declares a branch to track, \
+                "'{s}' is tag shaped; `branch` declares a branch to track, \
                  not a revision to pin"
             ),
             Self::Malformed { name, reason } => {

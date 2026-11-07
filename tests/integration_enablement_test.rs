@@ -71,7 +71,7 @@ fn weave_with_gita_newly_enabled(root: &Path) -> PathBuf {
     let manifest = "[repositories.\"github/acme/lib\"]\n\
                     type = \"git\"\n\
                     url = \"https://github.com/acme/lib.git\"\n\
-                    version = \"main\"\n\
+                    branch = \"main\"\n\
                     role = \"owned\"\n";
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
     git_init_with_commit(&project_dir);

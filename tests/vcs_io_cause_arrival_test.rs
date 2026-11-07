@@ -39,7 +39,7 @@ fn workspace_with_unreadable_gitattributes(root: &Path) {
         project_dir.join("rwv.toml"),
         format!(
             "[repositories]\n[repositories.\"{repo_path}\"]\ntype = \"git\"\n\
-             url = \"https://github.com/acme/server.git\"\nversion = \"main\"\nrole = \"owned\"\n"
+             url = \"https://github.com/acme/server.git\"\nbranch = \"main\"\nrole = \"owned\"\n"
         ),
     )
     .unwrap();

@@ -12,7 +12,7 @@ in [workweave-hierarchy](./workweave-hierarchy.md). The focus here is
 the observable lifecycle: what exists, when, and how to move it forward.
 
 Feature work happens in workweaves. Canonical clones in the primary weave
-stay on the branch `rwv.toml` declares for each member (`version`, which
+stay on the branch `rwv.toml` declares for each member (`branch`, which
 `rwv add` records from the remote's default branch); a workweave puts every
 member on a branch of its own and lands back with `rwv sync-to --retire`.
 

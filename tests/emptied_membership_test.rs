@@ -66,7 +66,7 @@ fn write_manifest(root: &Path, members: &[&str]) {
     let mut manifest_toml = String::from("[repositories]\n");
     for member in members {
         manifest_toml.push_str(&format!(
-            "[repositories.\"{member}\"]\ntype = \"git\"\nurl = \"https://example.com/{member}.git\"\nversion = \"main\"\nrole = \"owned\"\n"
+            "[repositories.\"{member}\"]\ntype = \"git\"\nurl = \"https://example.com/{member}.git\"\nbranch = \"main\"\nrole = \"owned\"\n"
         ));
     }
     // vscode-workspace detects every repo rather than a manifest file, so it

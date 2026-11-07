@@ -35,7 +35,7 @@ fn init_repo(path: &Path, file: &str) -> String {
 
 fn manifest_entry(path: &str, url: &Path, role: &str) -> String {
     format!(
-        "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{url}\"\nversion = \"main\"\nrole = \"{role}\"\n",
+        "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{url}\"\nbranch = \"main\"\nrole = \"{role}\"\n",
         url = common::url_path(url),
     )
 }

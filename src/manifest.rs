@@ -627,38 +627,246 @@ pub enum VcsType {
 
 /// A single repo entry in an `rwv.toml` manifest.
 ///
-/// `deny_unknown_fields` for the reason [`Manifest`] has it: `submodules` is
-/// an opt-out, and a misspelling of it read as absent would populate what the
-/// operator declined.
+/// `deny_unknown_fields` for the reason [`Manifest`] has it: `recurse-submodules`
+/// is an opt-out, and a misspelling of it read as absent would populate what
+/// the operator declined.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RepoEntry {
     #[serde(rename = "type")]
     pub vcs_type: VcsType,
     pub url: RepoUrl,
-    pub version: TrackingRef,
+    pub branch: TrackingRef,
     pub role: Role,
-    #[serde(default, skip_serializing_if = "Submodules::is_local")]
-    pub submodules: Submodules,
+    #[serde(
+        default,
+        rename = "recurse-submodules",
+        skip_serializing_if = "SubmoduleRecursion::is_recurse"
+    )]
+    pub recurse_submodules: SubmoduleRecursion,
 }
 
-/// Where a new checkout of a member gets the content of the submodules it
-/// records.
+/// Whether a new checkout of a member populates the submodules it records;
+/// `recurse-submodules` in `rwv.toml`, a boolean, `true` when absent.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum Submodules {
+#[serde(from = "bool", into = "bool")]
+pub enum SubmoduleRecursion {
     /// From the module data the canonical clone already holds, never the
     /// network; a submodule whose commit is not there stays uninitialized.
     #[default]
-    Local,
+    Recurse,
     /// Left uninitialized.
     Skip,
 }
 
-impl Submodules {
-    fn is_local(&self) -> bool {
-        *self == Submodules::Local
+impl SubmoduleRecursion {
+    fn is_recurse(&self) -> bool {
+        *self == SubmoduleRecursion::Recurse
     }
+}
+
+impl From<bool> for SubmoduleRecursion {
+    fn from(recurse: bool) -> Self {
+        if recurse {
+            SubmoduleRecursion::Recurse
+        } else {
+            SubmoduleRecursion::Skip
+        }
+    }
+}
+
+impl From<SubmoduleRecursion> for bool {
+    fn from(recursion: SubmoduleRecursion) -> Self {
+        recursion == SubmoduleRecursion::Recurse
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Pre-schema member-entry keys
+// ---------------------------------------------------------------------------
+
+/// A member-entry key an earlier release wrote, and the key that replaced it.
+const PRE_SCHEMA_KEYS: [(&str, &str); 2] =
+    [("version", "branch"), ("submodules", "recurse-submodules")];
+
+/// One member entry naming a key an earlier release wrote.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreSchemaKey {
+    pub member: String,
+    pub key: &'static str,
+    pub replacement: &'static str,
+}
+
+/// `rwv.toml` names member-entry keys an earlier release wrote.
+///
+/// It is the one parse failure `rwv doctor --fix` repairs, and a commit other
+/// than the checked-out tip holding one declares nothing.
+#[derive(Debug)]
+pub struct PreSchemaManifest {
+    pub keys: Vec<PreSchemaKey>,
+    cause: toml::de::Error,
+}
+
+impl fmt::Display for PreSchemaManifest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&format!(
+            "{} names member-entry keys an earlier release wrote: ",
+            Manifest::FILE_NAME
+        ))?;
+        let renamed: Vec<String> = PRE_SCHEMA_KEYS
+            .iter()
+            .filter_map(|(key, replacement)| {
+                let members: Vec<&str> = self
+                    .keys
+                    .iter()
+                    .filter(|k| k.key == *key)
+                    .map(|k| k.member.as_str())
+                    .collect();
+                (!members.is_empty())
+                    .then(|| format!("`{key}` is now `{replacement}` in {}", members.join(", ")))
+            })
+            .collect();
+        write!(
+            f,
+            "{}; `rwv doctor --fix` rewrites them and commits only that rewrite",
+            renamed.join("; ")
+        )
+    }
+}
+
+impl std::error::Error for PreSchemaManifest {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.cause)
+    }
+}
+
+/// The member entries of `content` that name a key an earlier release wrote,
+/// in member order; empty when `content` is not TOML at all.
+pub fn pre_schema_keys(content: &str) -> Vec<PreSchemaKey> {
+    let Ok(document) = content.parse::<toml::Table>() else {
+        return Vec::new();
+    };
+    let Some(members) = document.get("repositories").and_then(toml::Value::as_table) else {
+        return Vec::new();
+    };
+    members
+        .iter()
+        .filter_map(|(member, entry)| Some((member, entry.as_table()?)))
+        .flat_map(|(member, entry)| {
+            PRE_SCHEMA_KEYS
+                .iter()
+                .filter(|(key, _)| entry.contains_key(*key))
+                .map(|(key, replacement)| PreSchemaKey {
+                    member: member.clone(),
+                    key,
+                    replacement,
+                })
+        })
+        .collect()
+}
+
+/// Why a pre-schema `rwv.toml` cannot be rewritten mechanically.
+#[derive(Debug, PartialEq, Eq)]
+pub enum PreSchemaRewriteError {
+    NotToml(String),
+    BothSpellings { member: String, key: &'static str },
+    UnknownValue { member: String, value: String },
+}
+
+impl fmt::Display for PreSchemaRewriteError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotToml(cause) => write!(f, "{} is not TOML: {cause}", Manifest::FILE_NAME),
+            Self::BothSpellings { member, key } => write!(
+                f,
+                "{member} names both `{key}` and its replacement; keep the one you mean"
+            ),
+            Self::UnknownValue { member, value } => write!(
+                f,
+                "{member}: `submodules = {value}` is neither \"local\" nor \"skip\""
+            ),
+        }
+    }
+}
+
+impl std::error::Error for PreSchemaRewriteError {}
+
+/// `content` with every pre-schema member-entry key rewritten in place, its
+/// comments and order kept: `version` becomes `branch`, `submodules = "skip"`
+/// becomes `recurse-submodules = false`, and `submodules = "local"`, which is
+/// what an absent `recurse-submodules` means, is dropped. `None` when it names
+/// none.
+pub fn rewrite_pre_schema_keys(content: &str) -> Result<Option<String>, PreSchemaRewriteError> {
+    use toml_edit::{DocumentMut, Item, Key, Value};
+
+    let mut document: DocumentMut = content
+        .parse()
+        .map_err(|e: toml_edit::TomlError| PreSchemaRewriteError::NotToml(format!("{e:#}")))?;
+    let Some(members) = document
+        .get_mut("repositories")
+        .and_then(Item::as_table_like_mut)
+    else {
+        return Ok(None);
+    };
+    let mut rewrote = false;
+    for (member, entry) in members.iter_mut() {
+        let Some(entry) = entry.as_table_like_mut() else {
+            continue;
+        };
+        let member = member.get().to_owned();
+        let names: Vec<String> = entry.iter().map(|(name, _)| name.to_owned()).collect();
+        if !names
+            .iter()
+            .any(|name| PRE_SCHEMA_KEYS.iter().any(|(old, _)| old == name))
+        {
+            continue;
+        }
+        for (old, new) in PRE_SCHEMA_KEYS {
+            if names.iter().any(|n| n == old) && names.iter().any(|n| n == new) {
+                return Err(PreSchemaRewriteError::BothSpellings { member, key: old });
+            }
+        }
+        let mut kept: Vec<(Key, Item)> = Vec::with_capacity(names.len());
+        for name in &names {
+            let (key, item) = entry
+                .get_key_value(name)
+                .map(|(key, item)| (key.clone(), item.clone()))
+                .expect("a name just listed from the table is in it");
+            kept.push((key, item));
+        }
+        entry.clear();
+        for (key, item) in kept {
+            match key.get() {
+                "version" => {
+                    let renamed = Key::new("branch").with_leaf_decor(key.leaf_decor().clone());
+                    entry.entry_format(&renamed).or_insert(item);
+                }
+                "submodules" => match item.as_str() {
+                    Some("local") => {}
+                    Some("skip") => {
+                        let mut value = Value::from(false);
+                        if let Some(old) = item.as_value() {
+                            *value.decor_mut() = old.decor().clone();
+                        }
+                        let renamed = Key::new("recurse-submodules")
+                            .with_leaf_decor(key.leaf_decor().clone());
+                        entry.entry_format(&renamed).or_insert(Item::Value(value));
+                    }
+                    _ => {
+                        return Err(PreSchemaRewriteError::UnknownValue {
+                            member,
+                            value: item.to_string().trim().to_owned(),
+                        })
+                    }
+                },
+                _ => {
+                    entry.entry_format(&key).or_insert(item);
+                }
+            }
+        }
+        rewrote = true;
+    }
+    Ok(rewrote.then(|| document.to_string()))
 }
 
 // ---------------------------------------------------------------------------
@@ -1653,9 +1861,15 @@ impl Manifest {
     /// the nearest accepted spelling.
     /// Any failure carries [`Self::unparseable_hint`] as its context, with the
     /// parser's own error kept as the source — the remedy is the same however
-    /// the file broke, but only the parser can say where.
+    /// the file broke, but only the parser can say where. A file naming
+    /// member-entry keys an earlier release wrote fails as
+    /// [`PreSchemaManifest`] instead, whose remedy is `rwv doctor --fix`.
     pub fn from_toml_str(content: &str) -> anyhow::Result<Self> {
         toml::from_str(content).map_err(|e| {
+            let keys = pre_schema_keys(content);
+            if !keys.is_empty() {
+                return anyhow::Error::new(PreSchemaManifest { keys, cause: e });
+            }
             let msg = format!("{e:#}");
             // When the error is an unknown top-level field, append a
             // "did you mean?" hint.  The TOML error already names the key and
@@ -1684,6 +1898,25 @@ impl Manifest {
             };
             annotated.context(Self::unparseable_hint())
         })
+    }
+
+    /// Parse `rwv.toml` as read at a commit other than the checked-out tip.
+    ///
+    /// A file naming keys an earlier release wrote declares nothing: no
+    /// member, no integration, no setting. Nothing of it is interpreted.
+    pub fn from_other_commit(content: &str) -> anyhow::Result<Self> {
+        match Self::from_toml_str(content) {
+            Err(e) if e.is::<PreSchemaManifest>() => Ok(Self::declaring_nothing()),
+            read => read,
+        }
+    }
+
+    fn declaring_nothing() -> Self {
+        Self {
+            repositories: BTreeMap::new(),
+            integrations: BTreeMap::new(),
+            workweave: None,
+        }
     }
 
     /// Serialize to TOML and write to `path`.
@@ -2339,13 +2572,13 @@ mod tests {
 [repositories."github/acme/server"]
 type = "git"
 url = "https://github.com/acme/server.git"
-version = "main"
+branch = "main"
 role = "owned"
 
 [repositories."github/acme/client"]
 type = "git"
 url = "https://github.com/acme/client.git"
-version = "develop"
+branch = "develop"
 role = "fork"
 
 [integrations.cargo-workspace]
@@ -2356,7 +2589,7 @@ enabled = true
 [repositories."github/acme/server"]
 type = "git"
 url = "https://github.com/acme/server.git"
-version = "main"
+branch = "main"
 role = "owned"
 "#;
 
@@ -2470,7 +2703,7 @@ role = "owned"
 [repositories.foo]
 type = "git"
 url = "https://example.com"
-version = "main"
+branch = "main"
 role = "nonexistent_role"
 "#,
         )
@@ -2489,7 +2722,7 @@ role = "nonexistent_role"
             r#"
 [repositories.foo]
 type = "git"
-version = "main"
+branch = "main"
 role = "owned"
 "#,
         )
@@ -2601,7 +2834,7 @@ role = "owned"
             let rest = &restored.repositories[key];
             assert_eq!(orig.vcs_type, rest.vcs_type);
             assert_eq!(orig.url.to_string(), rest.url.to_string());
-            assert_eq!(orig.version, rest.version);
+            assert_eq!(orig.branch, rest.branch);
             assert_eq!(orig.role, rest.role);
         }
     }
@@ -2655,7 +2888,7 @@ role = "owned"
 [repositories."github/acme/lib"]
 type = "git"
 url = "https://example.com/acme/lib.git"
-version = "main"
+branch = "main"
 role = "primary"
 "#;
         let err = Manifest::from_toml_str(text).unwrap_err();
@@ -2764,7 +2997,7 @@ role = "primary"
 [repositories."github\\acme\\server"]
 type = "git"
 url = "https://github.com/acme/server.git"
-version = "main"
+branch = "main"
 role = "owned"
 "#;
         let result = Manifest::from_toml_str(text);
@@ -3462,7 +3695,7 @@ role = "owned"
 [repositories."github/acme/server"]
 type = "git"
 url = "https://github.com/acme/server.git"
-version = "main"
+branch = "main"
 role = "owned"
 
 [workweave]
@@ -3556,7 +3789,7 @@ copy = [".env"]
         let entry = entry.unwrap();
         assert_eq!(entry.role, Role::Owned);
         assert_eq!(
-            entry.version,
+            entry.branch,
             TrackingRef::parse(crate::vcs::RawRefName::new("main")).unwrap()
         );
     }
@@ -3623,7 +3856,7 @@ copy = [".env"]
                 .expect("get_entry must find iter_entries path");
             // Compare a stable field to confirm it's the same entry.
             assert_eq!(entry.role, looked_up.role);
-            assert_eq!(entry.version, looked_up.version);
+            assert_eq!(entry.branch, looked_up.branch);
         }
     }
 
@@ -3736,7 +3969,7 @@ copy = [".env"]
 [repositories."github/acme/server"]
 type = "git"
 url = "https://github.com/acme/server.git"
-version = "main"
+branch = "main"
 role = "owned"
 
 [integrations.cargo-workspace]

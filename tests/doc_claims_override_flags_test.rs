@@ -59,7 +59,7 @@ fn make_workspace(tmp: &Path, project: &str) -> std::path::PathBuf {
         r#"[repositories."github/org/repo"]
 type = "git"
 url = "file://{repo}"
-version = "main"
+branch = "main"
 role = "owned"
 "#,
         repo = common::url_path(&repo_path)
@@ -404,7 +404,7 @@ fn build_push_fixture() -> PushFixture {
     std::fs::write(
         project_dir.join("rwv.toml"),
         format!(
-            "[repositories.\"local/org/repo\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nversion = \"main\"\nrole = \"owned\"\n"
+            "[repositories.\"local/org/repo\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
         ),
     )
     .unwrap();

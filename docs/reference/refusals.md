@@ -104,7 +104,7 @@ print `error:` and exit 2, where a refusal exits 1.
 
 **Condition.** A name the verb would record cannot be used: another workweave already holds it, or it reads as a revision where a branch belongs.
 
-**Why.** A workweave name maps to one workweave; recording a second would make every later address ambiguous, and a delete would remove whichever was found first. A member entry's `version` declares a branch to track while the lock records where you are, so a commit id or release tag there leaves nothing to track.
+**Why.** A workweave name maps to one workweave; recording a second would make every later address ambiguous, and a delete would remove whichever was found first. A member entry's `branch` declares the branch to track while the lock records where you are, so a commit id or release tag there leaves nothing to track.
 
 **States.** A refused verb prints `rwv <verb>: <repo>: name <state>` for each repo it judged in one of these, with what the state lists beneath it.
 
@@ -600,7 +600,7 @@ be in flight, it completed or was already aborted.
 ### `no-remote-default-branch`
 
 **Condition.** A repo records no default branch for its remote (`origin/HEAD`
-is unset, for git). `rwv add` reads it to fill `version`, and `rwv push` reads
+is unset, for git). `rwv add` reads it to fill `branch`, and `rwv push` reads
 it for the project repo, whose canonical branch it is.
 
 **Why.** rwv records what to track and what to publish rather than guessing

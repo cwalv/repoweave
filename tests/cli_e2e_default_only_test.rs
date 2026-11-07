@@ -711,7 +711,7 @@ mod cargo {
         add_cargo_trigger(&ws, repo_path, "crate-b");
 
         // Write the manifest referencing two repos.
-        let manifest = "[repositories.\"github/acme/crate-a\"]\ntype = \"git\"\nurl = \"https://github.com/acme/crate-a.git\"\nversion = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/acme/crate-b\"]\ntype = \"git\"\nurl = \"https://github.com/acme/crate-b.git\"\nversion = \"main\"\nrole = \"owned\"\n";
+        let manifest = "[repositories.\"github/acme/crate-a\"]\ntype = \"git\"\nurl = \"https://github.com/acme/crate-a.git\"\nbranch = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/acme/crate-b\"]\ntype = \"git\"\nurl = \"https://github.com/acme/crate-b.git\"\nbranch = \"main\"\nrole = \"owned\"\n";
         std::fs::write(proj_dir.join("rwv.toml"), manifest).unwrap();
 
         // Also put crate-a on disk with a Cargo.toml so the integration detects it.
@@ -947,7 +947,7 @@ mod go_work {
         std::fs::write(&int_file, hand_authored).unwrap();
 
         // Update manifest to include module-a before add.
-        let manifest = "[repositories.\"github/org/module-a\"]\ntype = \"git\"\nurl = \"https://github.com/org/module-a.git\"\nversion = \"main\"\nrole = \"owned\"\n";
+        let manifest = "[repositories.\"github/org/module-a\"]\ntype = \"git\"\nurl = \"https://github.com/org/module-a.git\"\nbranch = \"main\"\nrole = \"owned\"\n";
         std::fs::write(proj_dir.join("rwv.toml"), manifest).unwrap();
 
         // Add second repo: triggers re-activation.

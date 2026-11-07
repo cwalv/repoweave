@@ -151,7 +151,7 @@ fn fixture() -> Fixture {
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(
         project_dir.join("rwv.toml"),
-        "[repositories.\"github/chatly/protocol\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/protocol.git\"\nversion = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/chatly/server\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/server.git\"\nversion = \"main\"\nrole = \"owned\"\n",
+        "[repositories.\"github/chatly/protocol\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/protocol.git\"\nbranch = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/chatly/server\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/server.git\"\nbranch = \"main\"\nrole = \"owned\"\n",
     )
     .unwrap();
     // The generated lock is regenerable, so it is not committed.

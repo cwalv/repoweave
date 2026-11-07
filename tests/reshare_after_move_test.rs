@@ -39,7 +39,7 @@ fn weave_and_seat(parent: &Path, endings: LineEndings) -> (PathBuf, PathBuf, Pat
         project_dir.join("rwv.toml"),
         format!(
             "[repositories.\"{MEMBER}\"]\ntype = \"git\"\nurl = \"file://{}\"\n\
-             version = \"main\"\nrole = \"reference\"\n",
+             branch = \"main\"\nrole = \"reference\"\n",
             common::url_path(&member)
         ),
     )

@@ -72,7 +72,7 @@ fn weave_with_findings(parent: &Path) -> PathBuf {
     std::fs::write(
         project.join("rwv.toml"),
         "[repositories.\"github/acme/server\"]\ntype = \"git\"\n\
-         url = \"https://github.com/acme/server.git\"\nversion = \"main\"\nrole = \"owned\"\n\n\
+         url = \"https://github.com/acme/server.git\"\nbranch = \"main\"\nrole = \"owned\"\n\n\
          [integrations.static-files]\nenabled = true\nfiles = [\"turbo.json\"]\n",
     )
     .unwrap();

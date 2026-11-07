@@ -44,7 +44,7 @@ fn primary(parent: &Path) -> PathBuf {
         let sha = init_repo(&clone);
         manifest.push_str(&format!(
             "[repositories.\"{repo}\"]\ntype = \"git\"\nurl = \"file://{}\"\n\
-             version = \"main\"\nrole = \"{role}\"\n\n",
+             branch = \"main\"\nrole = \"{role}\"\n\n",
             common::url_path(&clone)
         ));
         pins.push((repo, common::file_url(&clone), sha));

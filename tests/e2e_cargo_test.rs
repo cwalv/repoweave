@@ -100,7 +100,7 @@ fn setup_weave(tmp: &Path) {
     }
 
     // ---- rwv.toml manifest ----
-    let manifest = "[repositories.\"github/chatly/protocol\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/protocol.git\"\nversion = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/chatly/server\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/server.git\"\nversion = \"main\"\nrole = \"owned\"\n";
+    let manifest = "[repositories.\"github/chatly/protocol\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/protocol.git\"\nbranch = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/chatly/server\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/server.git\"\nbranch = \"main\"\nrole = \"owned\"\n";
     std::fs::write(tmp.join("projects/web-app/rwv.toml"), manifest).unwrap();
 
     // ---- .rwv-active ----
@@ -539,7 +539,7 @@ fn e2e_cargo_config_surface_reaches_nested_workspace_opt_out() {
     assert!(status.success());
 
     // ---- Extend manifest with grok-build + config-surface opt-in ----
-    let manifest = "[repositories.\"github/chatly/protocol\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/protocol.git\"\nversion = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/chatly/server\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/server.git\"\nversion = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/xai-org/grok-build\"]\ntype = \"git\"\nurl = \"https://github.com/xai-org/grok-build.git\"\nversion = \"main\"\nrole = \"owned\"\n\n[integrations.cargo-workspace]\npatch = \"derived\"\npatch-surface = \"cargo-config\"\nexclude = [\"github/xai-org/grok-build\"]\n";
+    let manifest = "[repositories.\"github/chatly/protocol\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/protocol.git\"\nbranch = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/chatly/server\"]\ntype = \"git\"\nurl = \"https://github.com/chatly/server.git\"\nbranch = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/xai-org/grok-build\"]\ntype = \"git\"\nurl = \"https://github.com/xai-org/grok-build.git\"\nbranch = \"main\"\nrole = \"owned\"\n\n[integrations.cargo-workspace]\npatch = \"derived\"\npatch-surface = \"cargo-config\"\nexclude = [\"github/xai-org/grok-build\"]\n";
     std::fs::write(root.join("projects/web-app/rwv.toml"), manifest).unwrap();
 
     // The base setup_weave writes chatly-server with a committed `path=`

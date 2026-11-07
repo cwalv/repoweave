@@ -363,7 +363,7 @@ fn fetch_of_a_manifest_url_that_is_a_plain_path_clears_once_it_is_spelled_file()
     std::fs::write(
         &manifest,
         format!(
-            "[repositories.\"local/remotes/lib\"]\ntype = \"git\"\nurl = '{}'\nversion = \"main\"\nrole = \"owned\"\n",
+            "[repositories.\"local/remotes/lib\"]\ntype = \"git\"\nurl = '{}'\nbranch = \"main\"\nrole = \"owned\"\n",
             bare.display()
         ),
     )

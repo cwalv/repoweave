@@ -203,7 +203,7 @@ fn make_primary(tmp: &Path, declare: bool) -> Workspace {
         &project_dir,
         "rwv.toml",
         &format!(
-            "[repositories.\"{MANAGED_REPO}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
+            "[repositories.\"{MANAGED_REPO}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nbranch = \"main\"\nrole = \"owned\"\n",
             repo = common::url_path(&managed_repo)
         ),
     );

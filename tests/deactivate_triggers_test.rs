@@ -53,7 +53,7 @@ fn weave(root: &Path) -> PathBuf {
 
     std::fs::write(
         ws.join("projects/app/rwv.toml"),
-        "[repositories.\"github/acme/lib\"]\ntype = \"git\"\nurl = \"https://github.com/acme/lib.git\"\nversion = \"main\"\nrole = \"owned\"\n",
+        "[repositories.\"github/acme/lib\"]\ntype = \"git\"\nurl = \"https://github.com/acme/lib.git\"\nbranch = \"main\"\nrole = \"owned\"\n",
     )
     .unwrap();
     git_init_with_commit(&ws.join("projects/app"));
@@ -218,7 +218,7 @@ fn switching_projects_leaves_the_outgoing_project_intact() {
     std::fs::create_dir_all(ws.join("projects/other")).unwrap();
     std::fs::write(
         ws.join("projects/other/rwv.toml"),
-        "[repositories.\"github/acme/lib\"]\ntype = \"git\"\nurl = \"https://github.com/acme/lib.git\"\nversion = \"main\"\nrole = \"owned\"\n",
+        "[repositories.\"github/acme/lib\"]\ntype = \"git\"\nurl = \"https://github.com/acme/lib.git\"\nbranch = \"main\"\nrole = \"owned\"\n",
     )
     .unwrap();
     git_init_with_commit(&ws.join("projects/other"));

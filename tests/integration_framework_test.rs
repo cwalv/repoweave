@@ -34,9 +34,9 @@ fn make_repo_entry(role: Role) -> RepoEntry {
     RepoEntry {
         vcs_type: VcsType::Git,
         url: "https://example.com/repo.git".parse().unwrap(),
-        version: TrackingRef::parse(RawRefName::new("main")).unwrap(),
+        branch: TrackingRef::parse(RawRefName::new("main")).unwrap(),
         role,
-        submodules: repoweave::manifest::Submodules::Local,
+        recurse_submodules: repoweave::manifest::SubmoduleRecursion::Recurse,
     }
 }
 

@@ -74,7 +74,7 @@ fn make_main_workspace(tmp: &Path) -> MainWorkspace {
     .unwrap();
 
     let manifest = format!(
-        "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
+        "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nbranch = \"main\"\nrole = \"owned\"\n",
         path = MANIFEST_REPO_PATH,
         repo = common::url_path(&manifest_repo)
     );

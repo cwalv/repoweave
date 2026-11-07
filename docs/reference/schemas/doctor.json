@@ -477,7 +477,7 @@
                   ]
                 },
                 "counterpart": {
-                  "description": "The local counterpart of the ref this repo tracks — the manifest's `version:` for a member, the remote's declared default branch for the project repo. `None` when no tracking declaration resolves, in which case there is nothing to name as a reattach target.",
+                  "description": "The local counterpart of the ref this repo tracks — the manifest's `branch` for a member, the remote's declared default branch for the project repo. `None` when no tracking declaration resolves, in which case there is nothing to name as a reattach target.",
                   "type": [
                     "string",
                     "null"
@@ -1483,6 +1483,25 @@
         }
       ]
     },
+    "UnparseableProjectKind": {
+      "description": "Why a project directory did not load, controlling `--fix` policy.",
+      "oneOf": [
+        {
+          "description": "`rwv.toml` names member-entry keys an earlier release wrote. `--fix` renames them in place and commits only that rewrite.",
+          "type": "string",
+          "enum": [
+            "pre-schema"
+          ]
+        },
+        {
+          "description": "Anything else: a file that is not TOML, a key or value the schema does not take, or a lock that is not JSON. The file is the operator's to edit, or the lock's to regenerate.",
+          "type": "string",
+          "enum": [
+            "malformed"
+          ]
+        }
+      ]
+    },
     "ViolationOutput": {
       "description": "One violation as it appears in `rwv doctor --json` output.",
       "oneOf": [
@@ -2245,7 +2264,8 @@
             "kind",
             "manifest_path",
             "message",
-            "project"
+            "project",
+            "sub_kind"
           ],
           "properties": {
             "kind": {
@@ -2263,6 +2283,9 @@
             },
             "project": {
               "type": "string"
+            },
+            "sub_kind": {
+              "$ref": "#/definitions/UnparseableProjectKind"
             }
           }
         },

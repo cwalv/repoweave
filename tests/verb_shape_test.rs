@@ -73,7 +73,7 @@ fn bootstrap_via_fetch(tmp: &Path) -> (PathBuf, PathBuf, PathBuf, String) {
 
     let dep_url = common::file_url(&dep_bare);
     let manifest_toml = format!(
-        "[repositories.\"local/team/dep\"]\ntype = \"git\"\nurl = \"{dep_url}\"\nversion = \"main\"\nrole = \"owned\"\n"
+        "[repositories.\"local/team/dep\"]\ntype = \"git\"\nurl = \"{dep_url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
     );
     std::fs::write(work.join("rwv.toml"), &manifest_toml).unwrap();
     common::git_in(&work, &["add", "rwv.toml"]);
@@ -237,7 +237,7 @@ fn lock_does_not_write_ecosystem_files() {
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(
         project_dir.join("rwv.toml"),
-        "[repositories.\"github/acme/server\"]\ntype = \"git\"\nurl = \"https://github.com/acme/server.git\"\nversion = \"main\"\nrole = \"owned\"\n",
+        "[repositories.\"github/acme/server\"]\ntype = \"git\"\nurl = \"https://github.com/acme/server.git\"\nbranch = \"main\"\nrole = \"owned\"\n",
     )
     .unwrap();
     std::fs::write(workspace.join(".rwv-active"), "app\n").unwrap();

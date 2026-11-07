@@ -55,7 +55,7 @@ fn manifest_toml(repos: &[(&str, &str)]) -> String {
         .iter()
         .map(|(path, url)| {
             format!(
-                "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
+                "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
             )
         })
         .collect()

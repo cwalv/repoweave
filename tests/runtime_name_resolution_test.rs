@@ -49,7 +49,7 @@ fn make_workspace(tmp: &Path) -> PathBuf {
     std::fs::write(
         project_dir.join("rwv.toml"),
         format!(
-            "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
+            "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nbranch = \"main\"\nrole = \"owned\"\n",
             repo = common::url_path(&repo_path)
         ),
     )

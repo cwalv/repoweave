@@ -55,7 +55,7 @@ fn make_project(
     let mut manifest_toml = String::from("[repositories]\n");
     for (path, role, manifest_files) in repos {
         manifest_toml.push_str(&format!(
-            "[repositories.\"{}\"]\ntype = \"git\"\nurl = \"https://github.com/test/{}.git\"\nversion = \"main\"\nrole = \"{}\"\n",
+            "[repositories.\"{}\"]\ntype = \"git\"\nurl = \"https://github.com/test/{}.git\"\nbranch = \"main\"\nrole = \"{}\"\n",
             path,
             path.split('/').next_back().unwrap(),
             role,
@@ -641,7 +641,7 @@ fn deactivate_descends_into_nondir_registry_subtrees() {
     // in the owned set; we don't care about their actual content here.
     std::fs::write(
         project_dir.join("rwv.toml"),
-        "[repositories.\"github/acme/server\"]\ntype = \"git\"\nurl = \"https://github.com/test/server.git\"\nversion = \"main\"\nrole = \"owned\"\n\n[integrations.gita]\nenabled = true\n",
+        "[repositories.\"github/acme/server\"]\ntype = \"git\"\nurl = \"https://github.com/test/server.git\"\nbranch = \"main\"\nrole = \"owned\"\n\n[integrations.gita]\nenabled = true\n",
     )
     .unwrap();
     std::fs::create_dir_all(ws.join("github/acme/server")).unwrap();
@@ -834,7 +834,7 @@ fn activate_different_project_from_workweave_is_rejected() {
 fn activate_intent_from_a_workweave_checkout_authors_at_primary() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
-    let gita_manifest = "[repositories.\"github/acme/server\"]\ntype = \"git\"\nurl = \"https://github.com/test/server.git\"\nversion = \"main\"\nrole = \"owned\"\n\n[integrations.gita]\nenabled = true\n";
+    let gita_manifest = "[repositories.\"github/acme/server\"]\ntype = \"git\"\nurl = \"https://github.com/test/server.git\"\nbranch = \"main\"\nrole = \"owned\"\n\n[integrations.gita]\nenabled = true\n";
 
     let primary_project_dir = ws.join("projects/web-app");
     std::fs::create_dir_all(&primary_project_dir).unwrap();

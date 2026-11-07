@@ -497,8 +497,8 @@ and register rules:
   cleanly against a disposable weave, `toml` snippets must parse under
   `rwv.toml`'s schema (or mark elided fields with `# …`), generated-file
   samples must match the exact headers/markers emitted by `src/integrations/`, and
-  prose referring to `rwv.toml` keys must use TOML syntax (`version = "main"`,
-  not YAML `version: main`).
+  prose referring to `rwv.toml` keys must use TOML syntax (`branch = "main"`,
+  not YAML `branch: main`).
 
 ### Diátaxis and persuasive surfaces (`README.md` and `docs/SUMMARY.md`)
 

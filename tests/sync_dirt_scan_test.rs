@@ -119,7 +119,7 @@ fn fixture() -> Fixture {
     .unwrap();
     let url = common::file_url(&primary_repo);
     let manifest = format!(
-        "[repositories.\"{REPO_PATH}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
+        "[repositories.\"{REPO_PATH}\"]\ntype = \"git\"\nurl = \"{url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
     );
     std::fs::write(primary_project.join("rwv.toml"), manifest).unwrap();
     common::fixture_lock(&primary_project, &[(REPO_PATH, &url, &initial_sha)]);

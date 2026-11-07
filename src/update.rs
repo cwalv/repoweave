@@ -52,7 +52,7 @@ pub struct RepoUpdateRecord {
     pub path: String,
     /// Fully resolved absolute path.
     pub absolute_path: crate::path_spelling::WirePath,
-    /// Branch name from the manifest `version:` field.
+    /// Branch name from the manifest `branch` field.
     pub branch: String,
     /// Outcome discriminant.
     pub kind: UpdateKind,
@@ -91,7 +91,7 @@ pub struct UpdateJsonOutput {
 ///
 /// For each repo in the active project's manifest:
 /// 1. `git fetch` the remote.
-/// 2. Resolve the branch (`version:` in the manifest) on the remote — this
+/// 2. Resolve the branch (`branch` in the manifest) on the remote — this
 ///    is the canonical "HEAD of the upstream branch" value.
 /// 3. Checkout that revision in the local clone.
 ///
@@ -268,7 +268,7 @@ fn update_for_project(
     let mut placements: Vec<PlacementOutput> = Vec::new();
 
     for (item, outcome) in work_items.iter().zip(outcomes) {
-        let branch = item.entry.version.to_string();
+        let branch = item.entry.branch.to_string();
         let abs_str = crate::path_spelling::WirePath::of(item.checkout.path());
 
         let old_sha = item.old.as_ref().map(|r| r.display_str().to_owned());
@@ -484,7 +484,7 @@ fn advance_one(
         ));
     }
 
-    let branch = entry.version.on_remote();
+    let branch = entry.branch.on_remote();
 
     // git fetch the remote(s). Run from the repo dir so default remote
     // selection applies.
@@ -540,9 +540,9 @@ fn advance_one(
         Err(_) => {
             return Err(format!(
                 "{repo}: branch '{branch}' does not resolve on the remote \
-                 — renamed or deleted upstream, or `version:` was never a \
+                 — renamed or deleted upstream, or `branch` was never a \
                  branch (it tracks a branch only; it cannot pin a tag or \
-                 SHA). To fix: update rwv.toml's `version:` field to the \
+                 SHA). To fix: update rwv.toml's `branch` field to the \
                  current branch name.",
                 repo = repo_path.as_str(),
                 branch = branch.branch(),
@@ -652,7 +652,7 @@ fn advance_checkout(
         ));
     }
 
-    let counterpart = entry.version.local_counterpart();
+    let counterpart = entry.branch.local_counterpart();
 
     if !attached.is_named(&counterpart) {
         let Some(consent) = detach_checkouts else {
@@ -692,7 +692,7 @@ fn advance_checkout(
             repo_path.as_str(),
             target.display_str(),
             target.display_str(),
-            declared = entry.version,
+            declared = entry.branch,
         ));
     };
     vcs.detach_head(&attached, target, consent)

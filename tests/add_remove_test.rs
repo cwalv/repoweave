@@ -114,7 +114,7 @@ fn write_manifest(dir: &Path, repos: &[(&str, &str)]) {
     let mut manifest_toml = String::from("[repositories]\n");
     for (path, url) in repos {
         manifest_toml.push_str(&format!(
-            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
         ));
     }
     std::fs::write(dir.join("rwv.toml"), &manifest_toml).unwrap();
@@ -837,7 +837,7 @@ fn add_url_resolves_a_non_main_remote_default_branch() {
         .get_entry(&RepoPath::new("local/acme/masterrepo").unwrap())
         .expect("expected local/acme/masterrepo in the manifest");
     assert_eq!(
-        entry.version.to_string(),
+        entry.branch.to_string(),
         "master",
         "the remote's real default branch is `master`; the manifest must record \
          that (read from origin/HEAD), not a fabricated `main`"
@@ -980,7 +980,7 @@ fn add_adopt_of_a_clone_whose_remote_has_no_branch_names_the_first_push() {
     let entry = manifest
         .get_entry(&RepoPath::new(repo_path).unwrap())
         .expect("the re-run adopt lists the repo");
-    assert_eq!(entry.version.to_string(), branch);
+    assert_eq!(entry.branch.to_string(), branch);
 }
 
 /// `rwv add <url>` refused for the default its fresh clone lacks, run in
@@ -1014,7 +1014,7 @@ fn assert_added_tracking(workspace: &Path, url: &str, repo_path: &str, clone: &P
     let entry = manifest
         .get_entry(&RepoPath::new(repo_path).unwrap())
         .expect("the re-run add lists the repo");
-    assert_eq!(entry.version.to_string(), branch);
+    assert_eq!(entry.branch.to_string(), branch);
     common::assert_on_branch(clone, branch);
 }
 
@@ -1354,7 +1354,7 @@ fn add_new_records_the_branch_git_init_actually_created() {
     let actual_branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
     assert_eq!(
-        entry.version.to_string(),
+        entry.branch.to_string(),
         actual_branch,
         "the manifest's version: must match the repo's real HEAD branch, not a guess"
     );
@@ -2450,7 +2450,7 @@ fn setup_two_project_workspace(
     let mut manifest_a = String::from("[repositories]\n");
     for (path, url, role) in project_a_repos {
         manifest_a.push_str(&format!(
-            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"{role}\"\n"
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nbranch = \"main\"\nrole = \"{role}\"\n"
         ));
     }
     std::fs::write(project_a_dir.join("rwv.toml"), &manifest_a).unwrap();

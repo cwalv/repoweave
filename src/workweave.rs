@@ -32,7 +32,7 @@ use crate::cli::consent::{
     DiscardUncommittedConsent, DiscardUnmergedConsent, ReplaceExistingConsent,
 };
 use crate::manifest::{
-    LockFile, Manifest, ProjectName, RepoKey, RepoPath, Role, Submodules, WorkweaveId,
+    LockFile, Manifest, ProjectName, RepoKey, RepoPath, Role, SubmoduleRecursion, WorkweaveId,
     WorkweaveName,
 };
 use crate::path_spelling::{resolve, CanonicalPath};
@@ -939,17 +939,17 @@ pub fn preflight_check_heads(
 }
 
 /// [`crate::share::populate_submodules`] for a member whose manifest entry
-/// asks for `submodules`, reporting each under `prefix`; the count left
+/// asks for `recurse-submodules`, reporting each under `prefix`; the count left
 /// uninitialized.
 pub(crate) fn populate_member_submodules(
     vcs: &dyn Vcs,
     member: &Path,
     repo_path: &RepoPath,
     role: Role,
-    submodules: Submodules,
+    recurse_submodules: SubmoduleRecursion,
     prefix: &str,
 ) -> usize {
-    if submodules == Submodules::Skip {
+    if recurse_submodules == SubmoduleRecursion::Skip {
         return 0;
     }
     let populated = crate::share::populate_submodules(vcs, member, role, &Filesystem);
@@ -958,16 +958,16 @@ pub(crate) fn populate_member_submodules(
 }
 
 /// [`crate::share::fetch_submodules`] for the canonical clone of a member
-/// whose manifest entry asks for `submodules`, reporting each under `prefix`.
+/// whose manifest entry asks for `recurse-submodules`, reporting each under `prefix`.
 pub(crate) fn fetch_member_submodules(
     vcs: &dyn Vcs,
     canonical: &Path,
     repo_path: &RepoPath,
     role: Role,
-    submodules: Submodules,
+    recurse_submodules: SubmoduleRecursion,
     prefix: &str,
 ) {
-    if submodules == Submodules::Skip {
+    if recurse_submodules == SubmoduleRecursion::Skip {
         return;
     }
     crate::share::fetch_submodules(vcs, canonical, role).report(prefix, repo_path);
@@ -1183,7 +1183,7 @@ pub(crate) fn materialize_member(
     workweave: &WorkweaveName,
     repo_path: &RepoPath,
     role: Role,
-    submodules: Submodules,
+    recurse_submodules: SubmoduleRecursion,
     start: &str,
     receipted: ReceiptedBranch,
 ) -> anyhow::Result<Materialized> {
@@ -1286,7 +1286,7 @@ pub(crate) fn materialize_member(
         files
     };
     crate::settle::settle(vcs, &dest, role)?;
-    populate_member_submodules(vcs, &dest, repo_path, role, submodules, "rwv: ");
+    populate_member_submodules(vcs, &dest, repo_path, role, recurse_submodules, "rwv: ");
     Ok(Materialized {
         at,
         files,
@@ -1360,7 +1360,7 @@ pub(crate) fn replace_standalone_member(
     workweave: &WorkweaveName,
     repo_path: &RepoPath,
     role: Role,
-    submodules: Submodules,
+    recurse_submodules: SubmoduleRecursion,
 ) -> anyhow::Result<Materialized> {
     let slot = workweave_dir.join(repo_path.as_path());
     let canonical = primary_root.join(repo_path.as_path());
@@ -1393,7 +1393,7 @@ pub(crate) fn replace_standalone_member(
                 workweave,
                 repo_path,
                 role,
-                submodules,
+                recurse_submodules,
                 at.id().as_str(),
                 ReceiptedBranch::Replace,
             )
@@ -2189,7 +2189,7 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
                     &worktree_dest,
                     repo_path,
                     entry.role,
-                    entry.submodules,
+                    entry.recurse_submodules,
                     "rwv workweave create: ",
                 ) > 0
                 {
@@ -4686,7 +4686,7 @@ mod tests {
             &WorkweaveName::new("ww").unwrap(),
             &RepoPath::new("github/org/absent").unwrap(),
             Role::Owned,
-            Submodules::Local,
+            SubmoduleRecursion::Recurse,
             "main",
             ReceiptedBranch::Attach,
         )

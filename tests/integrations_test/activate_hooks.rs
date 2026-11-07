@@ -174,7 +174,7 @@ fn cargo_activate_hook_failure_names_exclude_and_members_hints() {
     std::fs::write(
         ws.join("projects/app/rwv.toml"),
         "[repositories.\"github/acme/server\"]\ntype = \"git\"\n\
-             url = \"https://github.com/acme/server.git\"\nversion = \"main\"\n\
+             url = \"https://github.com/acme/server.git\"\nbranch = \"main\"\n\
              role = \"owned\"\n",
     )
     .unwrap();
@@ -266,7 +266,7 @@ fn cargo_activate_hook_whose_tool_replaces_the_link_has_its_lock_adopted() {
     std::fs::write(
         ws.join("projects/app/rwv.toml"),
         "[repositories.\"github/acme/server\"]\ntype = \"git\"\n\
-             url = \"https://github.com/acme/server.git\"\nversion = \"main\"\n\
+             url = \"https://github.com/acme/server.git\"\nbranch = \"main\"\n\
              role = \"owned\"\n",
     )
     .unwrap();
@@ -483,9 +483,9 @@ fn hook_whose_tool_is_missing_warns_and_the_other_hooks_still_run() {
         &ws,
         "projects/app/rwv.toml",
         "[repositories.\"github/acme/web\"]\ntype = \"git\"\n\
-         url = \"https://github.com/acme/web.git\"\nversion = \"main\"\nrole = \"owned\"\n\
+         url = \"https://github.com/acme/web.git\"\nbranch = \"main\"\nrole = \"owned\"\n\
          [repositories.\"github/acme/server\"]\ntype = \"git\"\n\
-         url = \"https://github.com/acme/server.git\"\nversion = \"main\"\nrole = \"owned\"\n\
+         url = \"https://github.com/acme/server.git\"\nbranch = \"main\"\nrole = \"owned\"\n\
          [integrations.pnpm-workspaces]\nenabled = true\n\
          [integrations.npm-workspaces]\nenabled = false\n\
          [integrations.vscode-workspace]\nenabled = false\n",

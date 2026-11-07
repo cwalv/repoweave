@@ -93,7 +93,7 @@ fn make_primary(parent: &Path) -> Primary {
     )
     .unwrap();
     let manifest = format!(
-        "[repositories.\"{OWNED_PATH}\"]\ntype = \"git\"\nurl = \"file://{owned}\"\nversion = \"main\"\nrole = \"owned\"\n\n[repositories.\"{REF_PATH}\"]\ntype = \"git\"\nurl = \"file://{reference}\"\nversion = \"main\"\nrole = \"reference\"\n",
+        "[repositories.\"{OWNED_PATH}\"]\ntype = \"git\"\nurl = \"file://{owned}\"\nbranch = \"main\"\nrole = \"owned\"\n\n[repositories.\"{REF_PATH}\"]\ntype = \"git\"\nurl = \"file://{reference}\"\nbranch = \"main\"\nrole = \"reference\"\n",
         owned = common::url_path(&owned),
         reference = common::url_path(&reference),
     );

@@ -59,13 +59,13 @@ fn setup_two_repo_workspace() -> (tempfile::TempDir, std::path::PathBuf, std::pa
         r#"[repositories."github/org/primary"]
 type = "git"
 url = "file://{r1}"
-version = "main"
+branch = "main"
 role = "owned"
 
 [repositories."github/org/fork"]
 type = "git"
 url = "file://{r2}"
-version = "main"
+branch = "main"
 role = "fork"
 "#,
         r1 = common::url_path(&repo_primary),

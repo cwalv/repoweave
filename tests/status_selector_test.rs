@@ -29,7 +29,7 @@ fn make_workspace(parent: &Path) -> PathBuf {
         init_repo_with_commit(&repo);
         let url = common::file_url(&repo);
         manifest.push_str(&format!(
-            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"{role}\"\n\n"
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nbranch = \"main\"\nrole = \"{role}\"\n\n"
         ));
     }
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();

@@ -57,7 +57,7 @@ impl Weave {
                 common::git_in(&member, &["commit", "-q", "--allow-empty", "-m", "init"]);
             }
             manifest.push_str(&format!(
-                "[repositories.\"github/org/{name}\"]\ntype = \"git\"\nurl = \"{}\"\nversion = \"main\"\nrole = \"owned\"\n\n",
+                "[repositories.\"github/org/{name}\"]\ntype = \"git\"\nurl = \"{}\"\nbranch = \"main\"\nrole = \"owned\"\n\n",
                 common::file_url(&origin)
             ));
         }

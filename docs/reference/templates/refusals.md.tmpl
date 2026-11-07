@@ -514,7 +514,7 @@ be in flight, it completed or was already aborted.
 ### `no-remote-default-branch`
 
 **Condition.** A repo records no default branch for its remote (`origin/HEAD`
-is unset, for git). `rwv add` reads it to fill `version`, and `rwv push` reads
+is unset, for git). `rwv add` reads it to fill `branch`, and `rwv push` reads
 it for the project repo, whose canonical branch it is.
 
 **Why.** rwv records what to track and what to publish rather than guessing

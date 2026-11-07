@@ -115,7 +115,7 @@ fn make_primary(tmp: &Path) -> PrimaryWorkspace {
     .unwrap();
 
     let manifest = format!(
-        "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
+        "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nbranch = \"main\"\nrole = \"owned\"\n",
         path = MANIFEST_REPO_PATH,
         repo = common::url_path(&manifest_repo)
     );
@@ -404,7 +404,7 @@ fn sync_rebase_without_gitattributes_bails_cleanly() {
     // Intentionally omit `.gitattributes` — this is the bug scenario.
 
     let manifest = format!(
-        "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
+        "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nbranch = \"main\"\nrole = \"owned\"\n",
         path = MANIFEST_REPO_PATH,
         repo = common::url_path(&manifest_repo)
     );
@@ -706,7 +706,7 @@ fn sync_rebase_with_legacy_needle_bails_pointing_at_doctor_fix() {
     std::fs::write(project_dir.join(".gitattributes"), "rwv.lock merge=ours\n").unwrap();
 
     let manifest = format!(
-        "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
+        "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nbranch = \"main\"\nrole = \"owned\"\n",
         path = MANIFEST_REPO_PATH,
         repo = common::url_path(&manifest_repo)
     );
@@ -808,7 +808,7 @@ fn sync_rebase_with_both_lines_bails_naming_both_and_doctor_fix_recovers() {
     .unwrap();
 
     let manifest = format!(
-        "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
+        "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nbranch = \"main\"\nrole = \"owned\"\n",
         path = MANIFEST_REPO_PATH,
         repo = common::url_path(&manifest_repo)
     );

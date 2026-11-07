@@ -49,7 +49,7 @@ fn make_workspace_with_git_repo(parent: &Path, project: &str) -> (PathBuf, PathB
     std::fs::create_dir_all(&project_dir).unwrap();
 
     let manifest = format!(
-        "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
+        "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nbranch = \"main\"\nrole = \"owned\"\n",
         repo = common::url_path(&repo_path)
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
@@ -157,7 +157,7 @@ fn check_missing_role_field() {
     let bad_manifest = r#"[repositories."github/org/repo"]
 type = "git"
 url = "https://github.com/org/repo.git"
-version = "main"
+branch = "main"
 "#;
     std::fs::write(ws.join("projects/my-project/rwv.toml"), bad_manifest).unwrap();
 
@@ -283,7 +283,7 @@ fn activate_symlinks_cargo_toml_and_lock() {
     // Write a Cargo.lock next to the Cargo.toml (simulates a real project).
     std::fs::write(repo_dir.join("Cargo.lock"), "# generated\n").unwrap();
 
-    let manifest = "[repositories.\"github/org/mylib\"]\ntype = \"git\"\nurl = \"https://github.com/org/mylib.git\"\nversion = \"main\"\nrole = \"owned\"\n";
+    let manifest = "[repositories.\"github/org/mylib\"]\ntype = \"git\"\nurl = \"https://github.com/org/mylib.git\"\nbranch = \"main\"\nrole = \"owned\"\n";
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
     // Under the trigger-model split, `rwv activate` is a context
@@ -561,7 +561,7 @@ fn make_npm_workspace(ws_root: &Path, repo: &str) {
     .unwrap();
 
     let manifest = format!(
-        "[repositories.\"github/org/{repo}\"]\ntype = \"git\"\nurl = \"https://github.com/org/{repo}.git\"\nversion = \"main\"\nrole = \"owned\"\n"
+        "[repositories.\"github/org/{repo}\"]\ntype = \"git\"\nurl = \"https://github.com/org/{repo}.git\"\nbranch = \"main\"\nrole = \"owned\"\n"
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 

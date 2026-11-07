@@ -486,7 +486,7 @@ fn read_branch_site(
                 (
                     Repo::from_member_key(&key.to_string()),
                     Declaration {
-                        branch: entry.version.to_string(),
+                        branch: entry.branch.to_string(),
                         role: entry.role,
                     },
                 )

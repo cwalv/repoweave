@@ -300,7 +300,7 @@ fn csv_escaping_roundtrips_path_with_comma() {
     // Use a repo path whose basename contains a comma. The manifest helper
     // only sets the `url` from the last path segment, so we synthesize the
     // manifest YAML directly to include an unusual path key.
-    let yaml = "[repositories.\"github/owner/with,comma\"]\ntype = \"git\"\nurl = \"https://github.com/owner/withcomma.git\"\nversion = \"main\"\nrole = \"owned\"\n";
+    let yaml = "[repositories.\"github/owner/with,comma\"]\ntype = \"git\"\nurl = \"https://github.com/owner/withcomma.git\"\nbranch = \"main\"\nrole = \"owned\"\n";
     let manifest = repoweave::manifest::Manifest::from_toml_str(yaml).unwrap();
     let project = repoweave::manifest::ProjectName::new("test-project").unwrap();
     let config = repoweave::manifest::IntegrationConfig::default();

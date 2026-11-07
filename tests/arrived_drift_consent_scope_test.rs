@@ -196,7 +196,7 @@ fn fixture_impl(npm_in_lib: bool) -> Fixture {
         }
         let sha = common::git_in(&canonical, &["rev-parse", "HEAD"]);
         manifest.push_str(&format!(
-            "[repositories.\"github/acme/{name}\"]\ntype = \"git\"\nurl = \"{}\"\nversion = \"main\"\nrole = \"owned\"\n",
+            "[repositories.\"github/acme/{name}\"]\ntype = \"git\"\nurl = \"{}\"\nbranch = \"main\"\nrole = \"owned\"\n",
             common::file_url(&bare)
         ));
         lock_entries.push(format!(

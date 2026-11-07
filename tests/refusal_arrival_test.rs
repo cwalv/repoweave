@@ -233,7 +233,7 @@ fn a_repo_path_of_project_routes_to_reserved_repo_path() {
     std::fs::write(
         ws.join("projects/web-app/rwv.toml"),
         "[repositories.\"(project)\"]\ntype = \"git\"\n\
-         url = \"https://github.com/example/server\"\nversion = \"main\"\nrole = \"owned\"\n",
+         url = \"https://github.com/example/server\"\nbranch = \"main\"\nrole = \"owned\"\n",
     )
     .unwrap();
     let stderr = refusal_stderr(&["lock"], &ws);
@@ -1072,7 +1072,7 @@ fn the_frozen_lock_gates_route_to_their_tokens() {
         partial.join("projects/web-app/rwv.toml"),
         format!(
             "[repositories.\"{SERVER_PATH}\"]\ntype = \"git\"\nurl = \"{SERVER_URL}\"\n\
-             version = \"main\"\nrole = \"owned\"\n"
+             branch = \"main\"\nrole = \"owned\"\n"
         ),
     )
     .unwrap();
@@ -1110,7 +1110,7 @@ fn a_run_that_withheld_its_artifact_routes_to_a_token() {
     std::fs::write(
         ws.join("projects/web-app/rwv.toml"),
         "[repositories.\"github/example/absent\"]\ntype = \"git\"\n\
-         url = \"file:///nonexistent/absent\"\nversion = \"main\"\nrole = \"owned\"\n",
+         url = \"file:///nonexistent/absent\"\nbranch = \"main\"\nrole = \"owned\"\n",
     )
     .unwrap();
 
@@ -1260,7 +1260,7 @@ fn primary_and_workweave(parent: &Path) -> (PathBuf, PathBuf) {
         project_dir.join("rwv.toml"),
         format!(
             "[repositories.\"{SERVER_PATH}\"]\ntype = \"git\"\nurl = \"{SERVER_URL}\"\n\
-             version = \"main\"\nrole = \"owned\"\n"
+             branch = \"main\"\nrole = \"owned\"\n"
         ),
     )
     .unwrap();

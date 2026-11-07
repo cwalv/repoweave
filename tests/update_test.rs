@@ -86,7 +86,7 @@ fn build_workspace(project_name: &str, repos: &[(&str, &str)]) -> UpdateWorkspac
         manifest_bares.push(((*repo_path).to_string(), bare.clone()));
         let bare_url = common::file_url(&bare);
         manifest_yaml.push_str(&format!(
-            "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nversion = \"main\"\nrole = \"{role}\"\n"
+            "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nbranch = \"main\"\nrole = \"{role}\"\n"
         ));
     }
 
@@ -393,7 +393,7 @@ fn update_missing_clone_names_rwv_fetch_repair_verb() {
     let bare_url = common::file_url(&ws.manifest_bares[0].1);
     let mut manifest = std::fs::read_to_string(project_dir.join("rwv.toml")).unwrap();
     manifest.push_str(&format!(
-        "[repositories.\"local/acme/absent\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nversion = \"main\"\nrole = \"owned\"\n"
+        "[repositories.\"local/acme/absent\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
     ));
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 

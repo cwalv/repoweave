@@ -131,7 +131,7 @@ fn weave(root: &Path) -> PathBuf {
 
     std::fs::write(
         project_dir.join("rwv.toml"),
-        "[repositories.\"github/acme/lib\"]\ntype = \"git\"\nurl = \"https://github.com/acme/lib.git\"\nversion = \"main\"\nrole = \"owned\"\n",
+        "[repositories.\"github/acme/lib\"]\ntype = \"git\"\nurl = \"https://github.com/acme/lib.git\"\nbranch = \"main\"\nrole = \"owned\"\n",
     )
     .unwrap();
     common::fixture_lock(&project_dir, &[]);
@@ -181,7 +181,7 @@ fn weave_with_nothing_to_generate(root: &Path) -> PathBuf {
 
     std::fs::write(
         project_dir.join("rwv.toml"),
-        "[repositories.\"github/acme/notes\"]\ntype = \"git\"\nurl = \"https://github.com/acme/notes.git\"\nversion = \"main\"\nrole = \"owned\"\n",
+        "[repositories.\"github/acme/notes\"]\ntype = \"git\"\nurl = \"https://github.com/acme/notes.git\"\nbranch = \"main\"\nrole = \"owned\"\n",
     )
     .unwrap();
     common::fixture_lock(&project_dir, &[]);

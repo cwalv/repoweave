@@ -89,7 +89,7 @@ fn write_manifest(ws: &Path, name: &str, entries: &[(&str, &str, &str)]) {
     content.push_str("[repositories]\n");
     for (repo_path, url, role) in entries {
         content.push_str(&format!(
-            "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"{role}\"\n"
+            "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"{url}\"\nbranch = \"main\"\nrole = \"{role}\"\n"
         ));
     }
     std::fs::write(project_dir.join("rwv.toml"), content).unwrap();

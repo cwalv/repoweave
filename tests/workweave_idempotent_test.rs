@@ -44,7 +44,7 @@ fn make_workspace(tmp: &Path, project: &str) -> std::path::PathBuf {
         r#"[repositories."github/org/repo"]
 type = "git"
 url = "file://{repo}"
-version = "main"
+branch = "main"
 role = "owned"
 "#,
         repo = common::url_path(&repo_path)
@@ -289,7 +289,7 @@ fn workweave_same_name_different_projects_coexist() {
         r#"[repositories."github/org/repo"]
 type = "git"
 url = "file://{repo}"
-version = "main"
+branch = "main"
 role = "owned"
 "#,
         repo = common::url_path(&repo_path)

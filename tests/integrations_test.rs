@@ -32,7 +32,7 @@ fn make_manifest(repos: Vec<(&str, Role)>) -> Manifest {
     for (path, role) in &repos {
         let last = path.split('/').next_back().unwrap();
         yaml.push_str(&format!(
-            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"https://github.com/test/{last}.git\"\nversion = \"main\"\nrole = \"{}\"\n",
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"https://github.com/test/{last}.git\"\nbranch = \"main\"\nrole = \"{}\"\n",
             role
         ));
     }
@@ -116,7 +116,7 @@ fn write_exit_code_shim(bin_dir: &Path, name: &str, exit_code: i32) {
 fn one_integration_rwv_toml(integration: &str) -> String {
     let mut toml = String::from(
         "[repositories.\"github/acme/server\"]\ntype = \"git\"\n\
-         url = \"https://github.com/acme/server.git\"\nversion = \"main\"\n\
+         url = \"https://github.com/acme/server.git\"\nbranch = \"main\"\n\
          role = \"owned\"\n",
     );
     for name in [

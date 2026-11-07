@@ -10,25 +10,25 @@ The source of truth for which repos belong to a project. Committed in the projec
 [repositories."github/chatly/server"]
 type = "git"
 url = "https://github.com/chatly/server.git"
-version = "main"
+branch = "main"
 role = "owned"
 
 [repositories."github/chatly/web"]
 type = "git"
 url = "https://github.com/chatly/web.git"
-version = "main"
+branch = "main"
 role = "owned"
 
 [repositories."github/chatly/protocol"]
 type = "git"
 url = "https://github.com/chatly/protocol.git"
-version = "main"
+branch = "main"
 role = "owned"
 
 [repositories."github/socketio/engine.io"]
 type = "git"
 url = "https://github.com/chatly/engine.io.git"
-version = "main"
+branch = "main"
 role = "fork"
 
 [integrations.npm-workspaces]
@@ -56,19 +56,19 @@ Keyed by canonical local path (`<registry>/<owner>/<repo>`). Each entry:
 |---|---|---|
 | `type` | yes | VCS type. Currently `git`. |
 | `url` | yes | Clone source: a URL (`https://…`, `git@…`, `file://` for a local remote) or registry shorthand (`github/owner/repo`), as `rwv add` was given it. Every clone resolves shorthand through the built-in registries, so `rwv fetch` on another machine clones the same remote. |
-| `version` | yes | Tracked branch name (manifest); 40-character commit SHA (lock). |
+| `branch` | yes | The branch the member tracks. |
 | `role` | yes | One of `owned`, `fork`, `dependency`, `reference`. |
-| `submodules` | no | `"local"` (the default) or `"skip"`. See [Submodules](#submodules). |
+| `recurse-submodules` | no | `true` (the default, and not written when rwv writes the file) or `false`. See [Submodules](#submodules). |
 
-Any other key in an entry is rejected, naming it.
+Any other key in an entry is rejected, naming it. `version` and `submodules`, the keys an earlier release wrote for what `branch` and `recurse-submodules` now say, are rejected too: a project whose entries name one does not load, and `rwv doctor` reports it as [`unparseable-project`](./doctor-findings.md#unparseable-project) / `pre-schema`. `rwv doctor --fix` renames the keys in place and commits only that rename; see [Upgrade rwv](../how-to/upgrade-rwv.md).
 
-`version` in `rwv.toml` is branch-only by design: the manifest declares which branch to *track*, while `rwv.lock` records the exact commit SHA you *are* on. Specifically:
+`branch` is branch-only by design: the manifest declares which branch to *track*, while `rwv.lock` records the exact commit SHA you *are* on. Specifically:
 
-- **`rwv add <url>`** populates `version` from the remote's default branch (`origin/HEAD`), and `rwv add --new` from the branch the new repo is on.
-- A `version` that reads as a commit id (seven or more hex digits) or a release tag (`v2.0`, `v0.3.4-rc1`) fails to parse, naming the value and its line, and `rwv add` refuses with [`name`](./refusals.md#name) `a revision` rather than record such a branch.
-- **`rwv update`** reads `version` to know which remote branch tip to advance each repo to before re-snapshotting `rwv.lock`.
-- **`rwv fetch`** checks a new clone out on the local counterpart of the branch `version` names, and refuses to move a present checkout attached to any other branch. **`rwv doctor --fix --reattach-checkouts`** reattaches a detached canonical clone to that same branch.
-- **`rwv fetch`** and **`rwv sync`** align checkouts to the 40-character commit SHA in `rwv.lock` (falling back to `version` only on `rwv fetch` without `--frozen` when a newly added repo has no lock entry yet).
+- **`rwv add <url>`** populates `branch` from the remote's default branch (`origin/HEAD`), and `rwv add --new` from the branch the new repo is on.
+- A `branch` that reads as a commit id (seven or more hex digits) or a release tag (`v2.0`, `v0.3.4-rc1`) fails to parse, naming the value and its line, and `rwv add` refuses with [`name`](./refusals.md#name) `a revision` rather than record such a branch.
+- **`rwv update`** reads `branch` to know which remote branch tip to advance each repo to before re-snapshotting `rwv.lock`.
+- **`rwv fetch`** checks a new clone out on the local counterpart of the branch `branch` names, and refuses to move a present checkout attached to any other branch. **`rwv doctor --fix --reattach-checkouts`** reattaches a detached canonical clone to that same branch.
+- **`rwv fetch`** and **`rwv sync`** align checkouts to the 40-character commit SHA in `rwv.lock` (falling back to `branch` only on `rwv fetch` without `--frozen` when a newly added repo has no lock entry yet).
 
 The role for your own code is spelled `role = "owned"`; a manifest spelling it `primary` fails to parse. See [reference/roles — Migrating from `role: primary`](./roles.md#migrating-from-role-primary).
 
@@ -80,7 +80,7 @@ The canonical clone gets that copy from the network verbs. When `rwv add` or `rw
 
 A submodule whose recorded commit the canonical clone does not hold stays empty, and `rwv doctor` reports it as [`uninitialized-submodule`](./doctor-findings.md#uninitialized-submodule) / `unfetched`. `rwv fetch --repo <path>` run in that workweave fetches it and checks it out.
 
-`submodules = "skip"` leaves a member's submodules empty in the canonical clone and in every checkout rwv creates, and doctor does not report them. So does git's own `submodule.<name>.update = none`, from `.gitmodules` or the repository's config, for that one submodule.
+`recurse-submodules = false` leaves a member's submodules empty in the canonical clone and in every checkout rwv creates, and doctor does not report them. So does git's own `submodule.<name>.update = none`, from `.gitmodules` or the repository's config, for that one submodule.
 
 The repo set is modeled on vcstool's `.repos` format, extended with `role` and optional `integrations` and `workweave` tables.
 
@@ -135,7 +135,7 @@ Both lists default to empty and only apply to gitignored artifacts (secrets, loc
 
 ## `rwv.lock` — pinned revisions
 
-Generated by `rwv lock` or `rwv update`. Same repository shape as `rwv.toml` but JSON, and `version` holds each repo's commit id — never a tag or branch name, even when a tag points at HEAD. A name can be moved or deleted after the lock is written; a commit id cannot.
+Generated by `rwv lock` or `rwv update`. Same repository table as `rwv.toml` but JSON, with `type`, `url` and a `version` that holds each repo's commit id — never a tag or branch name, even when a tag points at HEAD. A name can be moved or deleted after the lock is written; a commit id cannot.
 
 ```json
 {

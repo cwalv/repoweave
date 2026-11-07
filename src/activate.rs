@@ -3888,7 +3888,7 @@ mod tests {
             "[repositories.\"github/acme/server\"]\n\
              type = \"git\"\n\
              url = \"https://example.com/server.git\"\n\
-             version = \"main\"\n\
+             branch = \"main\"\n\
              role = \"owned\"\n\
              \n\
              [integrations.vscode-workspace]\n\

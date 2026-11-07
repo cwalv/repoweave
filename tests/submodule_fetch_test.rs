@@ -111,7 +111,7 @@ impl Weave {
         assert!(text.contains(&entry), "{text}");
         std::fs::write(
             &path,
-            text.replace(&entry, &format!("{entry}submodules = \"skip\"\n")),
+            text.replace(&entry, &format!("{entry}recurse-submodules = false\n")),
         )
         .unwrap();
         git(&self.project_dir(), &["add", "-A"]);

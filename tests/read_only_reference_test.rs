@@ -101,7 +101,7 @@ fn upstream(tmp: &Path, name: &str, files: &[(&str, &str)], link: Option<&Path>)
 
 fn manifest_entry(path: &str, url: &Path, role: &str) -> String {
     format!(
-        "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{url}\"\nversion = \"main\"\nrole = \"{role}\"\n",
+        "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{url}\"\nbranch = \"main\"\nrole = \"{role}\"\n",
         url = common::url_path(url),
     )
 }

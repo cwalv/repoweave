@@ -75,7 +75,7 @@ fn weave(root: &Path) -> PathBuf {
         "[repositories.\"github/acme/lib\"]\n\
          type = \"git\"\n\
          url = \"https://github.com/acme/lib.git\"\n\
-         version = \"main\"\n\
+         branch = \"main\"\n\
          role = \"owned\"\n\
          \n[integrations.gita]\n\
          enabled = true\n\

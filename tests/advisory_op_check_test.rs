@@ -95,7 +95,7 @@ fn weave_with_a_generator(root: &Path) -> PathBuf {
 
     std::fs::write(
         project_dir.join("rwv.toml"),
-        "[repositories.\"github/acme/lib\"]\ntype = \"git\"\nurl = \"https://github.com/acme/lib.git\"\nversion = \"main\"\nrole = \"owned\"\n",
+        "[repositories.\"github/acme/lib\"]\ntype = \"git\"\nurl = \"https://github.com/acme/lib.git\"\nbranch = \"main\"\nrole = \"owned\"\n",
     )
     .unwrap();
     common::fixture_lock(&project_dir, &[]);

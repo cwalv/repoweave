@@ -46,7 +46,7 @@ fn manifest(members: &[(&str, &Path, &str)]) -> String {
         .iter()
         .map(|(path, url, role)| {
             format!(
-                "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{url}\"\nversion = \"main\"\nrole = \"{role}\"\n",
+                "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{url}\"\nbranch = \"main\"\nrole = \"{role}\"\n",
                 url = common::url_path(url),
             )
         })

@@ -61,7 +61,7 @@ fn manifest(members: &[(&str, &str)]) -> String {
     for (path, url) in members {
         toml.push_str(&format!(
             "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\n\
-             version = \"main\"\nrole = \"owned\"\n\n"
+             branch = \"main\"\nrole = \"owned\"\n\n"
         ));
     }
     toml.push_str(

@@ -38,7 +38,7 @@ const LEGACY_ROLE_MANIFEST: &str = "\
 [repositories.\"github/acme/lib\"]
 type = \"git\"
 url = \"https://example.com/acme/lib.git\"
-version = \"main\"
+branch = \"main\"
 role = \"primary\"
 ";
 

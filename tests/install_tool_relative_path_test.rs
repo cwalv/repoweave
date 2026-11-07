@@ -31,7 +31,7 @@ fn weave(root: &Path) -> PathBuf {
     std::fs::write(
         project_dir.join("rwv.toml"),
         "[repositories.\"github/org/m\"]\ntype = \"git\"\nurl = \"https://github.com/org/m.git\"\n\
-         version = \"main\"\nrole = \"owned\"\n",
+         branch = \"main\"\nrole = \"owned\"\n",
     )
     .unwrap();
 

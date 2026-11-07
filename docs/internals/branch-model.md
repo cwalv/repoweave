@@ -110,7 +110,7 @@ only whether one exists. The observation surface is `Vcs::head_attachment`
 derives nothing from observation at all (§3.5). `add_remove.rs` reached zero
 too and has since come back to one, for a different purpose: `rwv add --new`
 reads `head_attachment` to learn what branch `git init` actually chose, and
-writes that into `version:` (the read at `add_remove.rs:693-703`, the write
+writes that into `branch` (the read at `add_remove.rs:693-703`, the write
 at `:709`) `[V]`. That is an observation feeding a *tracking declaration*,
 not an ephemeral name — §6.2's `"main"` fabrication replaced by a real read.
 
@@ -179,28 +179,28 @@ now produces a finding, pinned by
 
 ### 1.3 L2 — the canonical member store (`<weave>/<repo_path>`): a branch is a tracking declaration
 
-A member repo's `version:` field in `rwv.toml` is typed `TrackingRef`
-(`RepoEntry.version`, `src/manifest.rs`), parsed when the manifest loads, and
+A member repo's `branch` field in `rwv.toml` is typed `TrackingRef`
+(`RepoEntry.branch`, `src/manifest.rs`), parsed when the manifest loads, and
 is **branch-only by design**. This is a settled decision, restated here so it
 need not be looked up:
 
 > The manifest declares what to TRACK; the lock records where you ARE.
 
-A tag or SHA in `version:` conflates the two layers — genuine pinning needs a
+A tag or SHA in `branch` conflates the two layers — genuine pinning needs a
 differently-named field. `rwv update` means "advance to the tip of the branch
 you declared", and that verb is meaningless without a per-repo branch name.
 The field deserializes through `TrackingRef::parse`, so a SHA- or tag-shaped
-`version:` fails to load at its line, and no consumer re-parses what it reads:
+`branch` fails to load at its line, and no consumer re-parses what it reads:
 each picks a projection (`local_counterpart`, `on_remote`) off the value the
 manifest already holds.
 
-Note precisely what `version:` names: a branch **on the remote**. `rwv update`
+Note precisely what `branch` names: a branch **on the remote**. `rwv update`
 resolves it through `Vcs::resolve_branch_on_remote`, which explicitly refuses
 a bare-branch fallback so callers "don't silently advance to the local branch
 tip" (`vcs.rs:1895-1911`) `[V]`. That trait method's doc comment once claimed
 `upstream/<branch>` for the fork role while no implementor routed by role at
 all — drift recorded here, and since resolved by deleting the parameter that
-carried the role rather than by making the claim true. The manifest's `version:` and any local branch of
+carried the role rather than by making the claim true. The manifest's `branch` and any local branch of
 the same name are different objects in different namespaces that happen to
 share a spelling; `TrackingRef::local_counterpart` (`vcs.rs:876-878`) is now
 the one named function where that projection is made, per §4.2.
@@ -272,7 +272,7 @@ name" — both directing consumers to read parentage from the marker `[V]`.
 | Layer | The branch is | Who depends on it |
 |---|---|---|
 | L1 project repo | a **channel** — it carries a lock | `rwv fetch`, which aligns members to the checked-out branch's lock; `rwv push`'s gate |
-| L2 canonical member | a **tracking declaration** — what to advance toward | `rwv update`; `version:` |
+| L2 canonical member | a **tracking declaration** — what to advance toward | `rwv update`; `branch` |
 | L3 workweave checkout | a **commit target**, disjoint per workspace | git's one-worktree-per-branch rule; I3's merged-check soundness |
 
 Nothing else in rwv needs a branch. Sync, lock, retire, delete's merged-check,
@@ -289,7 +289,7 @@ the list records what became of the single type they shared.
 
 The surface carried **four unreconciled notions of "the member branch"**:
 
-1. **`version:`** — declared in the manifest, names a branch on a remote.
+1. **`branch`** — declared in the manifest, names a branch on a remote.
 2. **The ephemeral branch** — `{project}--{workweave}/{segment}`, minted by
    rwv, three different ways (below).
 3. **Whatever is currently checked out** — read via `current_ref`.
@@ -300,7 +300,7 @@ assumed (1) or (2).
 
 All four were the same Rust type. `pub struct RefName(String)`, a bare
 newtype with a `pub fn new(impl Into<String>)` constructor and no validation,
-was used for the manifest's `version:`, for minted ephemeral names, for
+was used for the manifest's `branch`, for minted ephemeral names, for
 whatever `current_ref` returned, for the deletion argument, and for the
 `default_branch` fallback.
 Nothing in the type system distinguished them, so mixing them was invisible.
@@ -314,7 +314,7 @@ fallback lived in — has been deleted from `GitVcs` and from the trait. A name
 read from the VCS that none of the four notions claims stays a `RawRefName`:
 the tag `tag_at_head` reports, and the listed local branch the two prune
 predicates (`branch_has_remote_counterpart`, `count_commits_ahead_of_remote`)
-are asked about. The manifest's `version:` field is a `TrackingRef` parsed at
+are asked about. The manifest's `branch` field is a `TrackingRef` parsed at
 load (§1.3), and
 `rwv add` writes it through `TrackingRef::try_from` an observed
 `RemoteDefaultBranch` or `AttachedRef` (or `TrackingRef::parse` of an
@@ -348,7 +348,7 @@ the test is what keeps it from coming back.
   rather than non-`Err` outcomes (`update.rs:277-279`, with an in-code comment
   stating why: "a repo that was already at the target was visited successfully
   but advanced nothing"), but its `branch` JSON field still echoes
-  `entry.version` verbatim (`update.rs:272`) `[V]`.
+  `entry.branch` verbatim (`update.rs:272`) `[V]`.
 
 - **`rwv doctor` had no arm for the state its own verbs produced most often.**
   The canonical-store scan reported only on `Ok(Some(branch))`; `Ok(None)` —
@@ -412,7 +412,7 @@ the test is what keeps it from coming back.
   `workweave.rs` used the *fork source's* `current_ref` (recursive when
   forking a workweave), with a `detached-<12sha>` fallback; `add_remove.rs`
   used the *canonical's* `current_ref` in an inlined copy with its own
-  truncation; `sync.rs` used the *manifest's `version:`* while its comment
+  truncation; `sync.rs` used the *manifest's `branch`* while its comment
   claimed it "mirror[s] create_workweave's naming" `[V]`. The recursive
   derivation produced unbounded nesting — `p--gc/p--child/p--feat/main` — with
   glob and parser both working at depth 9-180 and failing at ~181 with a raw
@@ -829,7 +829,7 @@ the section's end.
 | Type | Notion | Sole way to obtain one | Shipped at |
 |---|---|---|---|
 | `RawRefName` | the parse boundary | `Deserialize`; `RawRefName::new(&str)`; VCS porcelain listings | `vcs.rs:625` |
-| `TrackingRef` | (1) `version:`, declared | `TrackingRef::parse(RawRefName)` | `vcs.rs:834` |
+| `TrackingRef` | (1) `branch`, declared | `TrackingRef::parse(RawRefName)` | `vcs.rs:834` |
 | `EphemeralRefName` | (2a) an ephemeral name **requested** | `EphemeralRefName::mint(&ProjectName, &WorkweaveName)` | `vcs.rs:956` |
 | `OwnedRef` | (2b) an ephemeral ref **rwv holds a receipt for** | `RefRegistry::record_created(...)` or `RefRegistry::lookup(...)` | `vcs.rs:1058` |
 | `AttachedRef` | (3) what a checkout is on | `Vcs::head_attachment(repo)` only | `vcs.rs:1178` |
@@ -876,12 +876,12 @@ signatures below — `parse` at `vcs.rs:843`, `on_remote` at `:861`,
 and `RefRegistry`'s pair at `workweave_index.rs:665` / `:749` `[V]`:
 
 ```rust
-// Rejects SHA-shaped and tag-shaped values: `version:` is a tracking
+// Rejects SHA-shaped and tag-shaped values: `branch` is a tracking
 // declaration, not a pin. Rejects anything that is not a valid ref name
 // component.
 impl TrackingRef { pub fn parse(raw: RawRefName) -> Result<Self, RefNameError>; }
 
-// The remote branch `version:` actually names. Already existed in spirit as
+// The remote branch `branch` actually names. Already existed in spirit as
 // Vcs::resolve_branch_on_remote (vcs.rs:1879-1895) — "in spirit" is load-
 // bearing: the remote it resolves against is the backend's to name, so the
 // projection stops at the branch (§1.3).
@@ -944,7 +944,7 @@ record. Two rows have since closed:
 |---|---|---|
 | `BranchAlreadyExists { branch }` (`vcs.rs:295`) | still `RefName` `[V]` | `RawRefName` — an error reports an observed name |
 | `tag_at_head` (`vcs.rs:1947`) | still `Option<RefName>` `[V]` | `Option<RawRefName>` — a tag is not a branch; it never enters the branch model |
-| `default_branch` | **deleted from `GitVcs` and from the trait** `[V]` | `Option<RemoteDefaultBranch>` — see below. Resolved not by retyping the method but by removing it, so the fabricating shape cannot be reintroduced by a future implementor. `Vcs::remote_default_branch` (`vcs.rs:3037`, impl `git.rs:2122-2137`) is now the only producer, and `rwv push`'s gate (`push.rs:179`), doctor's canonical pass (`check.rs:3736`), and two of `rwv add`'s three `version:` writes (`add_remove.rs:295-296`, `:394`) all read it. The third, `rwv add --new`, has no origin to read and resolves from `head_attachment` instead (`:693-703`) `[V]` — §6.2 |
+| `default_branch` | **deleted from `GitVcs` and from the trait** `[V]` | `Option<RemoteDefaultBranch>` — see below. Resolved not by retyping the method but by removing it, so the fabricating shape cannot be reintroduced by a future implementor. `Vcs::remote_default_branch` (`vcs.rs:3037`, impl `git.rs:2122-2137`) is now the only producer, and `rwv push`'s gate (`push.rs:179`), doctor's canonical pass (`check.rs:3736`), and two of `rwv add`'s three `branch` writes (`add_remove.rs:295-296`, `:394`) all read it. The third, `rwv add --new`, has no origin to read and resolves from `head_attachment` instead (`:693-703`) `[V]` — §6.2 |
 | `branch_has_remote_counterpart` (`vcs.rs:2298`) | still `&RefName` `[V]` | `&RawRefName` — the prune predicate inspects observed names |
 | `count_commits_ahead_of_remote` (`vcs.rs:2318`) | still `&RefName` `[V]` | `&RawRefName` — same predicate |
 | `list_local_branches` | **deleted from `GitVcs` and from the trait** `[V]` | `Vec<RawRefName>` — resolved the same way as `default_branch`: not by retyping the qualified listing but by removing it, so a caller cannot reach a qualified name to hand-strip. `list_local_branch_names` (`vcs.rs:3205`, impl `git.rs:2259-2275`) is now the only local-branch listing, and its production caller, `prune_dropped_repo` (`sync.rs:1425`), takes the `RawRefName`s it returns and wraps each bare into a `RefName` — no `refs/heads/` prefix left to strip. Pinned by `tests/refs_heads_hand_strip_test.rs`, which fails if any file outside `git.rs` hand-strips that prefix |
@@ -968,7 +968,7 @@ weave with no `origin/HEAD` refuses instead of being told its branch is
 value. **The rest of the wiring has since shipped too**, which is what this
 paragraph used to list as outstanding: `default_branch` — the method that
 fabricated `"main"` on any failure and on a malformed symref — no longer
-exists, and `rwv add`'s three `version:`-writing sites read
+exists, and `rwv add`'s three `branch`-writing sites read
 `remote_default_branch` (refusing by name when it is `None`) or, on the
 `--new` path that has no origin, `head_attachment` `[V]`. §6.2.
 
@@ -1466,7 +1466,7 @@ done:
 - `rwv lock`'s detached-HEAD warning says which of unborn / detached it saw
   instead of inferring from `.ok().flatten()`: it matches all three arms
   (`lock.rs:113-119`, warning at `:139-147`), takes the SHA from the
-  `DetachedHead` witness rather than from `version`, deliberately says nothing
+  `DetachedHead` witness rather than from `branch`, deliberately says nothing
   on `Unborn` (deferring to `head_revision`'s named refusal), and turns the
   read error into a hard refusal naming the repo rather than silence `[V]`.
 - Doctor's remediation string stopped being wrong: with a registry lookup it
@@ -1536,7 +1536,7 @@ compiler enforces the MOVE's target, not the function's argument order.
 ```rust
 // the shape this section objected to — and the site of push's two
 // contradictory policies
-if branch.as_str() != entry.version.as_str() {
+if branch.as_str() != entry.branch.as_str() {
     eprintln!("rwv push: warning: {} is on branch '{}', manifest declares '{}'", ...);
 }
 ```
@@ -1553,7 +1553,7 @@ not typecheck either:
 error[E0277]: can't compare `AttachedRef` with `TrackingRef`
    --> src/push.rs
     |
-    |     if branch != entry.version {
+    |     if branch != entry.branch {
     |               ^^ no implementation for `AttachedRef == TrackingRef`
     |
     = note: `TrackingRef` names a branch on a remote; `AttachedRef` names a
@@ -1562,7 +1562,7 @@ error[E0277]: can't compare `AttachedRef` with `TrackingRef`
             publish-ref decision.
 ```
 
-The author must write `entry.version.local_counterpart()` and, in doing so,
+The author must write `entry.branch.local_counterpart()` and, in doing so,
 state the assumption that the local branch of the same name is the tracking
 branch's counterpart. That is Q6 becoming visible at one line instead of being
 implicit at three.
@@ -1706,7 +1706,7 @@ error[E0061]: this function takes 2 arguments but 3 arguments were supplied
 
 The disagreement was not resolved; it was deleted. **`ephemeral_branch_name`
 did not lose a parameter — the function is gone**, and the inlined copy in
-`add_remove.rs` and the `version:`-based variant in `sync.rs` collapsed into
+`add_remove.rs` and the `branch`-based variant in `sync.rs` collapsed into
 one call to `mint` (`workweave.rs:1439`, `add_remove.rs:94`, `sync.rs:1276`)
 `[V]`. Two compile-fail probes hold it: `:380` (arity) and `:398` (no observed
 input can be an argument).
@@ -1716,7 +1716,7 @@ input can be an argument).
 Ship the split with `compile_fail` enforcement on the type-level docs,
 mirroring `vcs.rs:149-157` `[V]` — one per illegal comparison, one per illegal
 construction, and one for the `as_str()`-laundered comparison
-(`branch.as_str() != entry.version.as_str()`), which must fail with `E0599`
+(`branch.as_str() != entry.branch.as_str()`), which must fail with `E0599`
 once those types are `Display`-only. `compile_fail` is the only form of this
 enforcement that survives a refactor, because it fails in CI when someone
 re-adds the `PartialEq` or the `From` impl to "make it easier".
@@ -1868,7 +1868,7 @@ flag's spelling is refused with a message saying it was removed.
 **Decided: `fetch` and `update` MOVE only the tracking declaration's local
 counterpart. Shipped** — `fetch.rs:763-776` and `update.rs:687` are the two
 guards `[V]`. When a checkout is attached to
-`entry.version.local_counterpart()`, the verbs advance it as their rows
+`entry.branch.local_counterpart()`, the verbs advance it as their rows
 state. When it is attached to anything else — an operator's personal
 branch — they refuse, naming both the attached ref and the expected
 counterpart, with `--detach-checkouts` as the exit. They never relocate a
@@ -2081,7 +2081,7 @@ not wait for this design:
 
 - **Fixed since the previous citation base.** `default_branch` fabricated
   `"main"` on any failure *and* on a malformed symref, and its return value
-  was written into `rwv.toml` verbatim as `version:` by three `rwv add` call
+  was written into `rwv.toml` verbatim as `branch` by three `rwv add` call
   sites, where `update` then resolved `origin/main` and failed forever. The
   method has been **deleted from `GitVcs` and from the `Vcs` trait**, so the
   fabricating shape cannot be reintroduced by a future implementor `[V]`. The
@@ -2098,7 +2098,7 @@ not wait for this design:
   rather than non-`Err` outcomes (`update.rs:271-308`, `UpToDate` vs
   `Updated` at `:280-285`, with an in-code comment at `:277-279` stating the
   distinction rather than pointing here) `[V]`.
-  Its `branch` JSON field still echoes `entry.version` verbatim
+  Its `branch` JSON field still echoes `entry.branch` verbatim
   (`update.rs:272`) `[V]` — harmless now that `update` no longer detaches, but
   still a field that reports the declaration rather than the observation.
 - Comment and doc falsehoods on branch-touching paths — **all now resolved**:
@@ -2386,7 +2386,7 @@ pure content-addressed materialization, so detached is *right* and `fetch` /
 It is coherent — it is what the engine actually implements today — and it is
 rejected for three reasons:
 
-1. It contradicts the settled meaning of `version:`. If the on-disk state is
+1. It contradicts the settled meaning of `branch`. If the on-disk state is
    content-addressed, "the manifest declares what to TRACK" has no on-disk
    consequence and `rwv update` has nothing to advance.
 2. It requires rewriting three shipped surfaces to agree with it: I3's
@@ -2403,7 +2403,7 @@ rejected for three reasons:
 The adopted answer is Q1 option (c): a member's on-disk ref is a **working-set
 handle**. Its only structural requirement is I3-disjointness; its attachment is
 **operator state that rwv must not silently change**. That is consistent with
-`version:` being a tracking declaration and with the lock being the record of
+`branch` being a tracking declaration and with the lock being the record of
 where you are.
 
 ### 8.4 Ownership by name shape
@@ -2470,10 +2470,10 @@ because §7.1's adopt-at-HEAD consents to stranding a tip rather than to
 changing an attachment, and R1's "named for the consequence" rule
 (§4.4) forbids spelling those two the same way.
 
-### 8.8 `version:` accepting a tag or a SHA
+### 8.8 `branch` accepting a tag or a SHA
 
 **Rejected**, already. A tag conflates the declaration layer with the record
-layer: `version:` declares what to TRACK, the lock records where you ARE.
+layer: `branch` declares what to TRACK, the lock records where you ARE.
 Genuine pinning needs a differently-named field, not an overloaded one. This
 is why `TrackingRef::parse` **rejects** SHA-shaped and tag-shaped input rather
 than accepting and resolving it.
@@ -2489,9 +2489,9 @@ them.
 the fabrication sub-clause is closed.**
 `push_with_role` used to run `git push origin <current_ref>`, publishing
 whatever branch the checkout happened to be on from inside the VCS impl. `rwv
-push` warned when that differed from `entry.version` and then pushed anyway.
+push` warned when that differed from `entry.branch` and then pushed anyway.
 So: is the publish ref the attached ref, or the manifest's declared tracking
-branch? Is `version:` a *constraint* on publishing or a *default*?
+branch? Is `branch` a *constraint* on publishing or a *default*?
 **That is the one place a per-repo branch is genuinely semantic, and this
 model still does not decide it.** What the model contributed, and has
 shipped: `Vcs::push_ref` takes the ref as a parameter (`vcs.rs:3027`), so the
@@ -2512,7 +2512,7 @@ invents it any more. `default_branch`, the method that fabricated, has been
 deleted from `GitVcs` and from the trait, so no reader and no *writer* can
 reach the fallback: the publish gate refuses when `origin/HEAD` is unset
 (`push.rs:181-187`), doctor's canonical pass reads the same honest `Option`
-(`check.rs:3736`), and `rwv add`'s three `version:`-writing sites either
+(`check.rs:3736`), and `rwv add`'s three `branch`-writing sites either
 refuse by name or read the repo's own HEAD (`add_remove.rs:295-308`,
 `:397-410`, `:693-703`) `[V]`. A repo whose real default is `master` now
 gets `master` recorded. **What remains open is the other half, unchanged:

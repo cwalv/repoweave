@@ -27,7 +27,7 @@ const MANIFEST_WITH_ABSENT_CLONE: &str = r#"
 [repositories."github/acme/server"]
 type = "git"
 url = "https://github.com/acme/server.git"
-version = "main"
+branch = "main"
 role = "owned"
 "#;
 

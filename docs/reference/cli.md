@@ -91,8 +91,8 @@ How `rwv fetch` handles each manifest repository:
 
 | Clone & lock state | `rwv fetch` behavior |
 |---|---|
-| Absent on disk | Clones from remote and attaches the declared `version` branch at the locked SHA (or remote tip if unlocked) |
-| Present, locked SHA is a fast-forward of the declared `version` branch | Fast-forwards the local branch to the locked SHA and leaves HEAD attached (local object store only; no network fetch) |
+| Absent on disk | Clones from remote and attaches the declared `branch` at the locked SHA (or remote tip if unlocked) |
+| Present, locked SHA is a fast-forward of the declared `branch` | Fast-forwards the local branch to the locked SHA and leaves HEAD attached (local object store only; no network fetch) |
 | Present, locked SHA is missing from the local object store | Errors (`fetch` does not contact the remote for an already-present clone; run `git -C <repo> fetch` first) |
 | Present, locked SHA is not a fast-forward or checkout is on another branch | Fails that repo, unless `--detach-checkouts` is passed to materialize the pin on a detached HEAD (use `git checkout <branch>` later before running `rwv sync-to`). The other repos still align, and the run exits 1 with `partial-run-aborted` |
 | Present, no lock entry (or no `rwv.lock`) | Leaves the clone at its current HEAD and records that SHA in `rwv.lock` (unless `--frozen` is passed) |
@@ -119,7 +119,7 @@ every repo is done, with `outcomes` sorted by repo path, whatever `-j` is. See
 
 **The verb that gets the latest.** Advance each member repo to its branch HEAD on the remote, then re-snapshot `rwv.lock`. Maps semantically to `cargo update` / `npm update`.
 
-The advance is a **fast-forward of the branch the checkout is on**, not a checkout of the tip: on the canonical, that branch must be the local counterpart of the one `version` declares, and `update` refuses when the checkout is on any other branch. It also refuses when the tip is not a fast-forward — reconcile the branch with its tracking tip yourself (ordinary `git rebase` / `git merge`) and re-run, or pass `--detach-checkouts` to materialize the tip on a detached HEAD without moving your branch. Inside a workweave the same fast-forward rule applies to the workweave's own branch, and a divergence points at `rwv sync` rather than at a flag. An already-detached member stays detached, unless the repo is stopped mid-rebase / mid-merge / mid-bisect, which refuses.
+The advance is a **fast-forward of the branch the checkout is on**, not a checkout of the tip: on the canonical, that branch must be the local counterpart of the one `branch` declares, and `update` refuses when the checkout is on any other branch. It also refuses when the tip is not a fast-forward — reconcile the branch with its tracking tip yourself (ordinary `git rebase` / `git merge`) and re-run, or pass `--detach-checkouts` to materialize the tip on a detached HEAD without moving your branch. Inside a workweave the same fast-forward rule applies to the workweave's own branch, and a divergence points at `rwv sync` rather than at a flag. An already-detached member stays detached, unless the repo is stopped mid-rebase / mid-merge / mid-bisect, which refuses.
 
 `advanced N repo(s)` counts repos whose SHA actually changed.
 

@@ -54,7 +54,7 @@ fn make_workspace(tmp: &Path, project: &str) -> std::path::PathBuf {
         r#"[repositories."github/org/repo"]
 type = "git"
 url = "file://{repo}"
-version = "main"
+branch = "main"
 role = "owned"
 "#,
         repo = common::url_path(&repo_path)
@@ -79,13 +79,13 @@ fn make_workspace_two_repos(tmp: &Path, project: &str) -> std::path::PathBuf {
         r#"[repositories."github/org/alpha"]
 type = "git"
 url = "file://{r1}"
-version = "main"
+branch = "main"
 role = "owned"
 
 [repositories."github/org/beta"]
 type = "git"
 url = "file://{r2}"
-version = "main"
+branch = "main"
 role = "owned"
 "#,
         r1 = common::url_path(&repo1),

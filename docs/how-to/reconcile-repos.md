@@ -48,7 +48,7 @@ rwv doctor --locked
 
 In-place `rwv fetch`:
 
-- Clones any missing member repository from its `url` in `rwv.toml`, attached to the branch declared in `version = "..."` and positioned at the revision in `rwv.lock`.
+- Clones any missing member repository from its `url` in `rwv.toml`, attached to the branch declared in `branch = "..."` and positioned at the revision in `rwv.lock`.
 - Inside a workweave, also creates the missing member's worktree, on the workweave's `<project>--<workweave>` branch at that revision.
 - Fast-forwards existing checkouts that are `behind` the lock without changing their branch attachment (refusing if the move is not a fast-forward or the checkout is on a different branch, unless `--detach-checkouts` is passed).
 - Contacts the network only to clone a missing member repository; it does not fetch into an existing checkout.

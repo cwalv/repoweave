@@ -16,25 +16,25 @@ const FULL_MANIFEST: &str = r#"
 [repositories."github/acme/server"]
 type = "git"
 url = "https://github.com/acme/server.git"
-version = "main"
+branch = "main"
 role = "owned"
 
 [repositories."github/acme/client"]
 type = "git"
 url = "https://github.com/acme/client.git"
-version = "develop"
+branch = "develop"
 role = "fork"
 
 [repositories."github/lib/openssl"]
 type = "git"
 url = "https://github.com/lib/openssl.git"
-version = "openssl-3.1"
+branch = "openssl-3.1"
 role = "dependency"
 
 [repositories."github/docs/rfc"]
 type = "git"
 url = "https://github.com/docs/rfc.git"
-version = "main"
+branch = "main"
 role = "reference"
 
 [integrations.cargo-workspace]
@@ -48,7 +48,7 @@ const MINIMAL_MANIFEST: &str = r#"
 [repositories."github/acme/server"]
 type = "git"
 url = "https://github.com/acme/server.git"
-version = "main"
+branch = "main"
 role = "owned"
 "#;
 
@@ -111,33 +111,33 @@ fn manifest_repo_entry_fields() {
     assert_eq!(server.vcs_type, VcsType::Git);
     assert_eq!(server.url.to_string(), "https://github.com/acme/server.git");
     assert_eq!(
-        server.version,
+        server.branch,
         TrackingRef::parse(RawRefName::new("main")).unwrap()
     );
     assert_eq!(server.role, Role::Owned);
 }
 
-fn one_entry_tracking(version: &str) -> String {
+fn one_entry_tracking(branch: &str) -> String {
     format!(
         "[repositories.\"github/acme/server\"]\n\
          type = \"git\"\n\
          url = \"https://github.com/acme/server.git\"\n\
-         version = \"{version}\"\n\
+         branch = \"{branch}\"\n\
          role = \"owned\"\n"
     )
 }
 
 #[test]
-fn a_version_that_reads_as_a_revision_is_refused_at_load() {
-    for (version, shape) in [
+fn a_branch_that_reads_as_a_revision_is_refused_at_load() {
+    for (branch, shape) in [
         ("v2.0", "tag shaped"),
         ("0123456789abcdef", "commit-id shaped"),
     ] {
-        let err = Manifest::from_toml_str(&one_entry_tracking(version))
-            .expect_err("a version that reads as a revision must not load");
+        let err = Manifest::from_toml_str(&one_entry_tracking(branch))
+            .expect_err("a branch that reads as a revision must not load");
         let msg = format!("{err:#}");
         assert!(
-            msg.contains(&format!("'{version}' is {shape}")) && msg.contains("line 4"),
+            msg.contains(&format!("'{branch}' is {shape}")) && msg.contains("line 4"),
             "the refusal names the value, its shape and its line:\n{msg}"
         );
     }
@@ -257,7 +257,7 @@ fn manifest_round_trip() {
         let de_entry = deserialized.get_entry(key).unwrap();
         assert_eq!(orig_entry.vcs_type, de_entry.vcs_type);
         assert_eq!(orig_entry.url.to_string(), de_entry.url.to_string());
-        assert_eq!(orig_entry.version, de_entry.version);
+        assert_eq!(orig_entry.branch, de_entry.branch);
         assert_eq!(orig_entry.role, de_entry.role);
     }
     assert_eq!(original.integrations.len(), deserialized.integrations.len());

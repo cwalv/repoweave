@@ -348,9 +348,9 @@ pub enum CheckViolation {
     ///
     /// Reported as an `Error`-severity violation so the operator is not
     /// left with zero violations (i.e. an apparent "clean" result) for a
-    /// project rwv cannot see into. `--fix` has no arm for it, and the
-    /// remedy differs between the two files, so `message` carries the one
-    /// the failing loader minted rather than this variant naming either.
+    /// project rwv cannot see into. The remedy differs between the two files,
+    /// so `message` carries the one the failing loader minted rather than this
+    /// variant naming either.
     UnparseableProject {
         /// Relative project path (e.g. `my-app`, `org/repo`).
         project: ProjectName,
@@ -361,6 +361,8 @@ pub enum CheckViolation {
         /// Rendered error chain, remedy included. Free-form: no structured
         /// parse-error type survives to this boundary.
         message: String,
+        /// Whether the file failed for keys an earlier release wrote.
+        sub_kind: UnparseableProjectKind,
     },
 
     /// A `.rwv-workweave` marker tree anomaly: dangling parent, chain anomaly,
@@ -667,7 +669,7 @@ pub enum CheckViolation {
     },
 
     /// A member checkout in a workweave whose manifest entry does not opt
-    /// out with `submodules = "skip"` has a `.gitmodules` file, and one or
+    /// out with `recurse-submodules = false` has a `.gitmodules` file, and one or
     /// more of its listed submodule paths that git does not decline are
     /// empty directories (or absent).
     ///
@@ -737,7 +739,6 @@ impl CheckViolation {
             | CheckViolation::RoleDisagreement { .. }
             | CheckViolation::StaleLock { .. }
             | CheckViolation::IncompleteLock { .. }
-            | CheckViolation::UnparseableProject { .. }
             | CheckViolation::LegacyManifestFormat { .. }
             | CheckViolation::StaleOpState { .. }
             | CheckViolation::CargoVersionSkew { .. }
@@ -765,6 +766,10 @@ impl CheckViolation {
             | CheckViolation::DeadOpLease { .. }
             | CheckViolation::MemberPermissions { .. } => Auto,
 
+            CheckViolation::UnparseableProject { sub_kind, .. } => match sub_kind {
+                UnparseableProjectKind::PreSchema => Auto,
+                UnparseableProjectKind::Malformed => ReportOnly,
+            },
             CheckViolation::MissingReplayExclusion { sub_kind, .. } => match sub_kind {
                 ReplayExclusionKind::Absent
                 | ReplayExclusionKind::LegacySpelling
@@ -1120,6 +1125,32 @@ pub enum OrphanedSavepointKind {
     /// on the FORBIDDEN tripwire list, same rationale: don't cut the
     /// last recovery path.
     Live,
+}
+
+/// Why a project directory did not load, controlling `--fix` policy.
+#[derive(Debug, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum UnparseableProjectKind {
+    /// `rwv.toml` names member-entry keys an earlier release wrote. `--fix`
+    /// renames them in place and commits only that rewrite.
+    PreSchema,
+    /// Anything else: a file that is not TOML, a key or value the schema does
+    /// not take, or a lock that is not JSON. The file is the operator's to
+    /// edit, or the lock's to regenerate.
+    Malformed,
+}
+
+impl UnparseableProjectKind {
+    fn of(failure: &anyhow::Error) -> Self {
+        if failure
+            .chain()
+            .any(|link| link.is::<crate::manifest::PreSchemaManifest>())
+        {
+            Self::PreSchema
+        } else {
+            Self::Malformed
+        }
+    }
 }
 
 /// Discriminator for [`CheckViolation::DeadOpLease`] findings. Both shapes
@@ -2035,7 +2066,7 @@ pub enum BranchDisciplineKind {
         /// The commit HEAD names directly.
         at_sha: CommitId,
         /// The local counterpart of the ref this repo tracks — the
-        /// manifest's `version:` for a member, the remote's declared
+        /// manifest's `branch` for a member, the remote's declared
         /// default branch for the project repo. `None` when no tracking
         /// declaration resolves, in which case there is nothing to name as
         /// a reattach target.
@@ -2344,6 +2375,8 @@ pub enum ViolationOutput {
         /// Free-form display string of the parse error. Named `message`
         /// (not `error`) to signal this is display text, not a typed discriminant.
         message: String,
+        #[serde(rename = "sub_kind")]
+        sub_kind: UnparseableProjectKind,
     },
     WorkweaveTreeIntegrity {
         /// Absolute path to the workweave directory (or its marker file for
@@ -2813,10 +2846,12 @@ impl ViolationOutput {
                 project,
                 manifest_path,
                 message,
+                sub_kind,
             } => Self::UnparseableProject {
                 project: project.clone(),
                 manifest_path: WirePath::of(&manifest_path),
                 message,
+                sub_kind,
             },
             CheckViolation::WorkweaveTreeIntegrity {
                 workweave_dir,
@@ -3464,6 +3499,90 @@ pub(crate) fn commit_replay_exclusion_migration(
     )
     .with_context(|| format!("failed to commit in {}", project_dir.display()))?;
     Ok(CommitOutcome::Committed)
+}
+
+// ---------------------------------------------------------------------------
+// Pre-schema member-entry keys
+// ---------------------------------------------------------------------------
+
+/// What `--fix` did with a project's pre-schema `rwv.toml`.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum PreSchemaFix {
+    /// The working file was rewritten; `committed` is whether HEAD's file was
+    /// too, in a commit holding nothing else.
+    Rewritten { committed: bool },
+    /// Nothing was touched, for the reason given.
+    Withheld(String),
+}
+
+/// Rename the pre-schema member-entry keys of the project's `rwv.toml`, in the
+/// working file and in HEAD's, and commit only HEAD's rewrite.
+///
+/// HEAD's rewrite is staged as content rather than from the working file, so
+/// the commit holds the rename and nothing else the working file carries, and
+/// the working file is then rewritten with its other edits in place.
+/// Withheld, with nothing touched, while an operation is in progress in the
+/// project repo or anything but `rwv.toml` is staged: a commit would carry it.
+pub(crate) fn fix_pre_schema_manifest(
+    vcs: &dyn crate::vcs::Vcs,
+    manifest_path: &Path,
+) -> anyhow::Result<PreSchemaFix> {
+    let file = Path::new(Manifest::FILE_NAME);
+    let project_dir = manifest_path
+        .parent()
+        .with_context(|| format!("{} has no directory", manifest_path.display()))?;
+    let working = std::fs::read_to_string(manifest_path)
+        .with_context(|| format!("failed to read {}", manifest_path.display()))?;
+    let Some(working_rewritten) = crate::manifest::rewrite_pre_schema_keys(&working)? else {
+        return Ok(PreSchemaFix::Withheld(format!(
+            "{} names no key an earlier release wrote",
+            Manifest::FILE_NAME
+        )));
+    };
+    let committed = vcs
+        .head_revision(project_dir)
+        .ok()
+        .and_then(|head| vcs.read_file_at_revision(project_dir, &head, file).ok());
+    let committed_rewritten = match committed {
+        Some(text) => crate::manifest::rewrite_pre_schema_keys(&text)?,
+        None => None,
+    };
+    if let Some(committed_rewritten) = &committed_rewritten {
+        if let Some(op) = vcs.mid_operation(project_dir) {
+            return Ok(PreSchemaFix::Withheld(format!(
+                "a {} is in progress in the project repo; finish or abort it first",
+                op.operation()
+            )));
+        }
+        let staged = vcs
+            .staged_paths(project_dir)
+            .with_context(|| format!("failed to read staged paths in {}", project_dir.display()))?;
+        if staged.iter().any(|path| path != Manifest::FILE_NAME) {
+            return Ok(PreSchemaFix::Withheld(
+                "the project repo has staged changes to other files, which the commit would \
+                 carry; commit or unstage them first"
+                    .to_owned(),
+            ));
+        }
+        vcs.stage_content(project_dir, file, committed_rewritten.as_bytes())
+            .with_context(|| {
+                format!(
+                    "failed to stage {} in {}",
+                    file.display(),
+                    project_dir.display()
+                )
+            })?;
+        vcs.commit(
+            project_dir,
+            "chore: rename rwv.toml member keys to branch and recurse-submodules (rwv doctor --fix)",
+        )
+        .with_context(|| format!("failed to commit in {}", project_dir.display()))?;
+    }
+    crate::durable_file::replace(manifest_path, working_rewritten.as_bytes())
+        .with_context(|| format!("failed to write {}", manifest_path.display()))?;
+    Ok(PreSchemaFix::Rewritten {
+        committed: committed_rewritten.is_some(),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -5391,12 +5510,12 @@ fn legacy_ref_at_tip(
 /// Where a canonical store's tracking declaration comes from.
 ///
 /// The two flavors mirror the two publish gates in `push.rs`: a manifest
-/// member's counterpart is the local projection of its declared `version:`,
+/// member's counterpart is the local projection of its declared `branch`,
 /// the project repo's is the local projection of the remote's declared
 /// default branch. The project repo *is* an instance of the branch model, so
 /// it gets an arm here rather than an exemption.
 enum TrackingSource {
-    /// A manifest member with exactly one declared `version:` across the
+    /// A manifest member with exactly one declared `branch` across the
     /// projects that reference it.
     Declared(crate::vcs::TrackingRef),
     /// The project repo. Its counterpart is observed, not declared: what a
@@ -5404,7 +5523,7 @@ enum TrackingSource {
     /// answers "which branch is this repo's trunk" without deciding it.
     RemoteDefault,
     /// No declaration resolves — the repo is on disk but in no manifest, or
-    /// two projects declare different `version:` values for it. Nothing can
+    /// two projects declare different `branch` values for it. Nothing can
     /// be named as a reattach target, so the Detached arm reports only.
     Unresolvable,
 }
@@ -5462,7 +5581,7 @@ fn canonical_stores(
             declared
                 .entry(repo_path.clone())
                 .or_default()
-                .insert(&entry.version);
+                .insert(&entry.branch);
         }
     }
 
@@ -5949,7 +6068,7 @@ fn scan_pre_flat_receipts(
 /// Scan the member checkouts of every workweave [`workweaves_in_scope`]
 /// names for uninitialized submodules.
 ///
-/// A member whose manifest entry says `submodules = "skip"` is left out, and
+/// A member whose manifest entry says `recurse-submodules = false` is left out, and
 /// so is a submodule its repository's own configuration declines: their
 /// empty directories are what the operator asked for. Each checkout yields
 /// up to two findings, one per [`SubmoduleCommitKind`].
@@ -5964,7 +6083,7 @@ fn scan_uninitialized_submodules_in_workweaves(
 
     for (workweave, workweave_dir, loaded) in workweaves_in_scope(ctx, project_scope) {
         for (repo_path, entry) in loaded.manifest.iter_entries() {
-            if entry.submodules == crate::manifest::Submodules::Skip {
+            if entry.recurse_submodules == crate::manifest::SubmoduleRecursion::Skip {
                 continue;
             }
             let worktree = workweave_dir.join(repo_path.as_path());
@@ -6043,7 +6162,7 @@ fn repair_uninitialized_submodules(
     for (workweave, workweave_dir, loaded) in workweaves_in_scope(ctx, project_scope) {
         for (repo, entry) in loaded.manifest.iter_entries() {
             let member = workweave_dir.join(repo.as_path());
-            if entry.submodules == crate::manifest::Submodules::Skip
+            if entry.recurse_submodules == crate::manifest::SubmoduleRecursion::Skip
                 || crate::workweave::is_symlinked_member(&member)
                 || !member.is_dir()
                 || crate::workweave::scan_uninitialized_submodules(&member).is_empty()
@@ -6289,7 +6408,7 @@ struct MemberGap {
     repo: RepoPath,
     vcs_type: crate::manifest::VcsType,
     role: Role,
-    submodules: crate::manifest::Submodules,
+    recurse_submodules: crate::manifest::SubmoduleRecursion,
     slot: GapSlot,
     /// The revision a worktree created afresh starts at.
     revision: Option<String>,
@@ -6380,7 +6499,7 @@ fn scan_member_gaps(
                 repo: repo.clone(),
                 vcs_type: entry.vcs_type,
                 role: entry.role,
-                submodules: entry.submodules,
+                recurse_submodules: entry.recurse_submodules,
                 slot,
                 revision,
                 local,
@@ -6491,7 +6610,7 @@ fn repair_member_gaps(
             &gap.workweave.name,
             &gap.repo,
             gap.role,
-            gap.submodules,
+            gap.recurse_submodules,
             revision,
             crate::workweave::ReceiptedBranch::Attach,
         ) {
@@ -6562,7 +6681,7 @@ fn repair_standalone_members(
                 &workweave.name,
                 repo,
                 entry.role,
-                entry.submodules,
+                entry.recurse_submodules,
             ) {
                 Ok(born) => outln!(
                     "[fixed] core: replaced the full clone of {repo} in workweave {workweave} \
@@ -10325,6 +10444,33 @@ fn apply_finding_repairs(
                 }
             },
 
+            CheckViolation::UnparseableProject {
+                project,
+                manifest_path,
+                sub_kind: UnparseableProjectKind::PreSchema,
+                ..
+            } => {
+                match fix_pre_schema_manifest(world.project_vcs.as_ref(), manifest_path) {
+                    Ok(PreSchemaFix::Rewritten { committed }) => {
+                        let note = if committed {
+                            ", committing only that rewrite"
+                        } else {
+                            "; HEAD holds none, so there is nothing to commit"
+                        };
+                        outln!("[fixed] core: {project}: rewrote the member-entry keys in rwv.toml{note}");
+                        true
+                    }
+                    Ok(PreSchemaFix::Withheld(reason)) => {
+                        fix_errors.push(format!("{project}: rwv.toml not rewritten: {reason}"));
+                        false
+                    }
+                    Err(e) => {
+                        fix_errors.push(format!("{project}: rwv.toml not rewritten: {e:#}"));
+                        false
+                    }
+                }
+            }
+
             _ => false,
         };
         if !repaired {
@@ -11079,7 +11225,7 @@ struct DoctorWorld {
     active_project: Option<crate::manifest::ProjectName>,
     scope: Scope,
     input: CheckInput,
-    unparseable_projects: Vec<(crate::manifest::ProjectName, PathBuf, String)>,
+    unparseable_projects: Vec<UnparseableProject>,
     head_read_failures: Vec<(RepoPath, String)>,
     lock_resolve_failures: Vec<(crate::manifest::ProjectName, RepoPath)>,
     /// `Some((path, error))` when `projects/` exists but could not be listed.
@@ -11103,6 +11249,28 @@ impl DoctorWorld {
         match self.scope {
             Scope::Weave => None,
             Scope::ActiveProject => self.active_project.as_ref(),
+        }
+    }
+}
+
+struct UnparseableProject {
+    project: crate::manifest::ProjectName,
+    manifest_path: PathBuf,
+    message: String,
+    sub_kind: UnparseableProjectKind,
+}
+
+impl UnparseableProject {
+    fn new(
+        project: &crate::manifest::ProjectName,
+        manifest_path: PathBuf,
+        failure: &anyhow::Error,
+    ) -> Self {
+        Self {
+            project: project.clone(),
+            manifest_path,
+            message: format!("{failure:#}"),
+            sub_kind: UnparseableProjectKind::of(failure),
         }
     }
 }
@@ -11144,7 +11312,7 @@ fn load_doctor_world(
     let mut projects = Vec::new();
     let mut known_repos = BTreeSet::new();
     let mut lock_resolve_failures: Vec<(crate::manifest::ProjectName, RepoPath)> = Vec::new();
-    let mut unparseable_projects: Vec<(crate::manifest::ProjectName, PathBuf, String)> = Vec::new();
+    let mut unparseable_projects: Vec<UnparseableProject> = Vec::new();
     let mut resolved_locks: std::collections::HashMap<
         crate::manifest::ProjectName,
         crate::manifest::ResolvedLockFile,
@@ -11160,7 +11328,7 @@ fn load_doctor_world(
             if let Some(ref active) = active_project {
                 if name != active {
                     if let Err(e) = Manifest::from_path(&manifest_path) {
-                        unparseable_projects.push((name.clone(), manifest_path, format!("{e:#}")));
+                        unparseable_projects.push(UnparseableProject::new(name, manifest_path, &e));
                     }
                     continue;
                 }
@@ -11198,8 +11366,7 @@ fn load_doctor_world(
                 // layer naming which one failed is minted by the loader
                 // that failed — so an outermost-only or innermost-only
                 // render drops either the remedy or the file it applies to.
-                let cause = format!("{e:#}");
-                unparseable_projects.push((name.clone(), manifest_path, cause));
+                unparseable_projects.push(UnparseableProject::new(name, manifest_path, &e));
             }
         }
     }
@@ -11427,11 +11594,12 @@ fn collect_doctor_violations(
         ctx.active_path(),
     ));
 
-    for (project, manifest_path, message) in &world.unparseable_projects {
+    for unparseable in &world.unparseable_projects {
         violations.push(CheckViolation::UnparseableProject {
-            project: project.clone(),
-            manifest_path: manifest_path.clone(),
-            message: message.clone(),
+            project: unparseable.project.clone(),
+            manifest_path: unparseable.manifest_path.clone(),
+            message: unparseable.message.clone(),
+            sub_kind: unparseable.sub_kind,
         });
     }
 

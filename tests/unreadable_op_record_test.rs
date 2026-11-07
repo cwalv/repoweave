@@ -107,7 +107,7 @@ fn park() -> Parked {
     std::fs::write(
         primary.project.join("rwv.toml"),
         format!(
-            "[repositories.\"{LIB}\"]\ntype = \"git\"\nurl = \"{}\"\nversion = \"main\"\nrole = \"owned\"\n",
+            "[repositories.\"{LIB}\"]\ntype = \"git\"\nurl = \"{}\"\nbranch = \"main\"\nrole = \"owned\"\n",
             common::file_url(&upstream)
         ),
     )

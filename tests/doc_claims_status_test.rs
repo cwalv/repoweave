@@ -48,7 +48,7 @@ fn make_workspace(parent: &Path, project: &str) -> (PathBuf, PathBuf, String) {
 
     let url = common::file_url(&repo_path);
     let manifest = format!(
-        "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
+        "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"{url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 

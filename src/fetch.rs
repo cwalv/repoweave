@@ -526,7 +526,7 @@ fn materialize_workweave_members(
                 &slot,
                 repo_path,
                 entry.role,
-                entry.submodules,
+                entry.recurse_submodules,
                 "rwv fetch: ",
             );
             continue;
@@ -554,7 +554,7 @@ fn materialize_workweave_members(
             workweave,
             repo_path,
             entry.role,
-            entry.submodules,
+            entry.recurse_submodules,
             &start,
             crate::workweave::ReceiptedBranch::Attach,
         ) {
@@ -728,7 +728,7 @@ fn fetch_project_repos(
                     &member,
                     repo_path,
                     entry.role,
-                    entry.submodules,
+                    entry.recurse_submodules,
                     "rwv fetch: ",
                 );
             }
@@ -1042,7 +1042,7 @@ fn realign_present_clone(
         HeadAttachment::Attached(a) => a,
     };
 
-    let counterpart = entry.version.local_counterpart();
+    let counterpart = entry.branch.local_counterpart();
 
     if !attached.is_named(&counterpart) {
         let Some(consent) = detach_checkouts else {
@@ -1251,7 +1251,7 @@ fn clone_member(
     // to the pin would leave the member detached, which is not a state a
     // fetch is entitled to put an operator's checkout in.
     if let Some(birth) = birth {
-        let counterpart = entry.version.local_counterpart();
+        let counterpart = entry.branch.local_counterpart();
         emit(&format!(
             "rwv fetch: cloning {} onto {counterpart} at {}",
             repo_path.as_str(),
@@ -1362,9 +1362,9 @@ mod tests {
         crate::manifest::RepoEntry {
             vcs_type: crate::manifest::VcsType::Git,
             url: "https://example.com/repo.git".parse().unwrap(),
-            version: crate::vcs::TrackingRef::parse(crate::vcs::RawRefName::new("main")).unwrap(),
+            branch: crate::vcs::TrackingRef::parse(crate::vcs::RawRefName::new("main")).unwrap(),
             role,
-            submodules: crate::manifest::Submodules::Local,
+            recurse_submodules: crate::manifest::SubmoduleRecursion::Recurse,
         }
     }
 

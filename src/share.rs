@@ -947,7 +947,7 @@ mod tests {
                 project.join(Manifest::FILE_NAME),
                 format!(
                     "[repositories.\"{REPO}\"]\ntype = \"git\"\n\
-                     url = \"https://example.com/{REPO}.git\"\nversion = \"main\"\n\
+                     url = \"https://example.com/{REPO}.git\"\nbranch = \"main\"\n\
                      role = \"{role}\"\n"
                 ),
             )

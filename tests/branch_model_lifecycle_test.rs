@@ -65,7 +65,7 @@ fn make_workspace(tmp: &Path) -> PathBuf {
     std::fs::write(
         project_dir.join("rwv.toml"),
         format!(
-            "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
+            "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nbranch = \"main\"\nrole = \"owned\"\n",
             repo = common::url_path(&repo_path)
         ),
     )
@@ -207,7 +207,7 @@ fn delete_reports_the_branches_it_will_not_touch() {
     let manifest = ws.join("projects/web-app/rwv.toml");
     let mut text = std::fs::read_to_string(&manifest).unwrap();
     text.push_str(&format!(
-        "[repositories.\"github/org/other\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
+        "[repositories.\"github/org/other\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nbranch = \"main\"\nrole = \"owned\"\n",
         repo = common::url_path(&repo2)
     ));
     std::fs::write(&manifest, text).unwrap();
@@ -278,7 +278,7 @@ fn delete_reports_a_flat_leftover_it_holds_no_receipt_for() {
     let manifest = ws.join("projects/web-app/rwv.toml");
     let mut text = std::fs::read_to_string(&manifest).unwrap();
     text.push_str(&format!(
-        "[repositories.\"github/org/other\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nversion = \"main\"\nrole = \"owned\"\n",
+        "[repositories.\"github/org/other\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nbranch = \"main\"\nrole = \"owned\"\n",
         repo = common::url_path(&repo2)
     ));
     std::fs::write(&manifest, text).unwrap();

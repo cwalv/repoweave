@@ -60,7 +60,7 @@ fn make_manifest(repos: &[(&str, Role)]) -> Manifest {
     for (path, role) in repos {
         let last = path.split('/').next_back().unwrap();
         toml.push_str(&format!(
-            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"https://github.com/test/{last}.git\"\nversion = \"main\"\nrole = \"{}\"\n",
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"https://github.com/test/{last}.git\"\nbranch = \"main\"\nrole = \"{}\"\n",
             role
         ));
     }
@@ -208,7 +208,7 @@ fn activate_on_a_path_without(manifest: &str, body: &str) -> (bool, String) {
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(
         project_dir.join("rwv.toml"),
-        "[repositories.\"github/acme/server\"]\ntype = \"git\"\nurl = \"https://github.com/acme/server.git\"\nversion = \"main\"\nrole = \"owned\"\n",
+        "[repositories.\"github/acme/server\"]\ntype = \"git\"\nurl = \"https://github.com/acme/server.git\"\nbranch = \"main\"\nrole = \"owned\"\n",
     )
     .unwrap();
     git_init_with_commit(&project_dir);
@@ -661,7 +661,7 @@ fn doctor_fix_for_an_unrelated_finding_leaves_a_pin_byte_identical() {
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(
         project_dir.join("rwv.toml"),
-        "[repositories.\"github/acme/server\"]\ntype = \"git\"\nurl = \"https://github.com/acme/server.git\"\nversion = \"main\"\nrole = \"owned\"\n",
+        "[repositories.\"github/acme/server\"]\ntype = \"git\"\nurl = \"https://github.com/acme/server.git\"\nbranch = \"main\"\nrole = \"owned\"\n",
     )
     .unwrap();
     std::fs::write(project_dir.join(".gitignore"), "/Cargo.lock\n").unwrap();
@@ -750,7 +750,7 @@ fn materialize_leaves_a_pin_byte_identical() {
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(
         project_dir.join("rwv.toml"),
-        "[repositories.\"github/acme/server\"]\ntype = \"git\"\nurl = \"https://github.com/acme/server.git\"\nversion = \"main\"\nrole = \"owned\"\n",
+        "[repositories.\"github/acme/server\"]\ntype = \"git\"\nurl = \"https://github.com/acme/server.git\"\nbranch = \"main\"\nrole = \"owned\"\n",
     )
     .unwrap();
     git_init_with_commit(&project_dir);
@@ -868,7 +868,7 @@ fn a_hooked_activation_runs_only_materializing_commands() {
 
     std::fs::write(
         ws.join("projects/app/rwv.toml"),
-        "[repositories.\"github/acme/everything\"]\ntype = \"git\"\nurl = \"https://github.com/acme/everything.git\"\nversion = \"main\"\nrole = \"owned\"\n\n\
+        "[repositories.\"github/acme/everything\"]\ntype = \"git\"\nurl = \"https://github.com/acme/everything.git\"\nbranch = \"main\"\nrole = \"owned\"\n\n\
          [integrations.pnpm-workspaces]\nenabled = true\n\n[integrations.gita]\nenabled = true\n",
     )
     .unwrap();

@@ -37,10 +37,10 @@ rwv doctor --json | jq -r '.issues[] |
     (if (.kind | type) == "string" then .kind else (.kind | keys[0]) end)'
 ```
 
-Fourteen kinds carry a `sub_kind` — `branch-discipline`, `clone-topology`,
+Fifteen kinds carry a `sub_kind` — `branch-discipline`, `clone-topology`,
 `dead-op-lease`, `index-drift`, `member-permissions`,
 `missing-replay-exclusion`, `orphaned-savepoint`, `provenance`,
-`stale-worktree-registration`, `uninitialized-submodule`,
+`stale-worktree-registration`, `unparseable-project`, `uninitialized-submodule`,
 `weave-root-identity-conflict`,
 `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`. Where the
 sub-kind decides the disposition the entry has a sub-heading per `sub_kind`;
@@ -65,7 +65,8 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`orphaned-clone`](#orphaned-clone) | Error | Report-only |
 | [`unknown-segment-clone`](#unknown-segment-clone) | Error | Report-only |
 | [`dangling-reference`](#dangling-reference) | Error | Report-only |
-| [`unparseable-project`](#unparseable-project) | Error | Report-only |
+| [`unparseable-project`](#unparseable-project) / `pre-schema` | Error | Auto-fixable |
+| [`unparseable-project`](#unparseable-project) / `malformed` | Error | Report-only |
 | [`legacy-manifest-format`](#legacy-manifest-format) | Error | Report-only |
 | [`stale-lock`](#stale-lock) | Error | Report-only |
 | [`incomplete-lock`](#incomplete-lock) | Error | Report-only |
@@ -264,24 +265,50 @@ clone the URL a second time at the recorded path.
 
 ### `unparseable-project`
 
-**Error. Report-only.** A project directory exists but does not load: either
-its `rwv.toml` or its `rwv.lock` failed to parse. It is reported at error
-severity specifically so a project rwv cannot see into does not read as a
-clean project with zero findings.
+A project directory exists but does not load: either its `rwv.toml` or its
+`rwv.lock` failed to parse. It is reported at error severity specifically so a
+project rwv cannot see into does not read as a clean project with zero
+findings. The `message` names which of the two files failed and carries that
+file's remedy, and `manifest_path` always names the manifest, because it locates
+the project rather than the failure.
 
-**What to do:** the message names which of the two files failed, and carries
-that file's remedy — the manifest is yours to edit, at the line the parser
-names; the lock is generated, so `rwv lock` rewrites it. A repository entry
-with no `role`, an unknown top-level key, an unknown `[integrations.<name>]`
-table, an unknown key in one, and an `enabled` that is not `true` or `false`
-are all parse failures of this kind, each naming the line and what was
-expected. Note that the
-`manifest_path` field always names the manifest, because it locates the
-project rather than the failure.
+#### `pre-schema`
 
-`--fix` has no arm for either. Rewriting a manifest rwv could not
-parse would be guesswork, and regenerating a lock re-pins the workspace to
-whatever the working tips happen to be — a decision about state, not a repair.
+**Error. Auto-fixable.** The project's `rwv.toml` names member-entry keys an
+earlier release wrote: `version` where `branch` is now expected, or
+`submodules` where `recurse-submodules` is. Every verb that reads the manifest
+at the checked-out tip refuses with this kind, and `rwv explain
+unparseable-project` is its route line.
+
+**What to do:** `rwv doctor --fix`, run in the project's checkout. It renames the
+keys in place — `version` to `branch`, `submodules = "skip"` to
+`recurse-submodules = false`, and drops `submodules = "local"`, which is what an
+absent `recurse-submodules` means — keeping the file's comments and key order.
+It writes the rename into the working file and into the project's HEAD commit
+and commits only that, in one commit: any other edit to `rwv.toml`, and any edit
+to another file, stays uncommitted where it was. It declines, changing nothing,
+while another file is staged or a rebase, merge or cherry-pick is in progress in
+the project repo, and says so; run it again once that is dealt with. A value of
+`submodules` other than `"local"` or `"skip"`, or an entry that names both a key
+and its replacement, is not guessed at: the repair names it and leaves the file.
+
+A commit other than the checked-out one that names the old keys is not
+reported and is not refused. It declares nothing to the verbs that read it, and
+its `rwv.lock` is read as any lock is.
+
+#### `malformed`
+
+**Error. Report-only.** Any other reason the project did not load. The message
+names which file failed and carries that file's remedy — the manifest is yours
+to edit, at the line the parser names; the lock is generated, so `rwv lock`
+rewrites it. A repository entry with no `role`, an unknown top-level key, an
+unknown `[integrations.<name>]` table, an unknown key in one, and an `enabled`
+that is not `true` or `false` are all parse failures of this kind, each naming
+the line and what was expected.
+
+`--fix` has no arm for it. Rewriting a manifest rwv could not parse would be
+guesswork, and regenerating a lock re-pins the workspace to whatever the
+working tips happen to be — a decision about state, not a repair.
 
 ### `legacy-manifest-format`
 
@@ -293,7 +320,7 @@ silence.
 
 **What to do:** rewrite it as `rwv.toml` by hand and delete the `rwv.yaml`.
 `--fix` has no arm here, for the same reason as
-`unparseable-project` above and one more: the manifest is hand-authored, and
+`unparseable-project` / `malformed` above and one more: the manifest is hand-authored, and
 the comments and key order you wrote have no mechanical translation between
 the two formats. A conversion that guessed at them would be worse than the
 refusal. See [Formats](./formats.md) for the shape to write.
@@ -1112,7 +1139,7 @@ it.
 
 A member checkout in a workweave has a `.gitmodules` file, but one or more of
 its listed submodule paths are empty. A member whose manifest entry says
-`submodules = "skip"` is not reported, nor is a submodule git's own
+`recurse-submodules = false` is not reported, nor is a submodule git's own
 `submodule.<name>.update = none` declines. Detection reads only local data.
 Doctor reports it from the primary weave for every workweave, and from inside
 a workweave for that one. See [Submodules](./formats.md#submodules) for how

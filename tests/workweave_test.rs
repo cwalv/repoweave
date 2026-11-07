@@ -47,7 +47,7 @@ fn make_workspace(tmp: &Path, project: &str) -> std::path::PathBuf {
         r#"[repositories."github/org/repo"]
 type = "git"
 url = "file://{repo}"
-version = "main"
+branch = "main"
 role = "owned"
 "#,
         repo = common::url_path(&repo_path)
@@ -76,7 +76,7 @@ fn make_workspace_with_project_repo(tmp: &Path, project: &str) -> std::path::Pat
         r#"[repositories."github/org/repo"]
 type = "git"
 url = "file://{repo}"
-version = "main"
+branch = "main"
 role = "owned"
 "#,
         repo = common::url_path(&repo_path)
@@ -336,7 +336,7 @@ fn create_workweave_processes_copy_entries() {
         r#"[repositories."github/org/repo"]
 type = "git"
 url = "file://{repo}"
-version = "main"
+branch = "main"
 role = "owned"
 
 [workweave]
@@ -394,7 +394,7 @@ fn create_workweave_processes_link_entries() {
         r#"[repositories."github/org/repo"]
 type = "git"
 url = "file://{repo}"
-version = "main"
+branch = "main"
 role = "owned"
 
 [workweave]
@@ -724,13 +724,13 @@ fn workweave_with_multiple_repos_creates_all_worktrees() {
         r#"[repositories."github/org/server"]
 type = "git"
 url = "file://{server}"
-version = "main"
+branch = "main"
 role = "owned"
 
 [repositories."github/org/client"]
 type = "git"
 url = "file://{client}"
-version = "main"
+branch = "main"
 role = "fork"
 "#,
         server = common::url_path(&repo1),
@@ -992,7 +992,7 @@ fn make_workspace_with_cargo_repo(tmp: &Path, project: &str) -> std::path::PathB
         r#"[repositories."github/org/cargo-crate"]
 type = "git"
 url = "file://{repo}"
-version = "main"
+branch = "main"
 role = "owned"
 "#,
         repo = common::url_path(&repo_path)
@@ -1929,7 +1929,7 @@ fn list_workweaves_is_scoped_by_project() {
         r#"[repositories."github/org/repo"]
 type = "git"
 url = "file://{repo}"
-version = "main"
+branch = "main"
 role = "owned"
 "#,
         repo = common::url_path(&repo_path)
@@ -2097,7 +2097,7 @@ fn create_workweave_cleans_up_on_bail() {
     let bad_manifest = r#"[repositories."github/org/missing"]
 type = "git"
 url = "file:///nonexistent/repo"
-version = "main"
+branch = "main"
 role = "owned"
 "#;
     std::fs::write(project_dir.join("rwv.toml"), bad_manifest).unwrap();
@@ -2181,13 +2181,13 @@ fn make_workspace_two_repos(tmp: &std::path::Path, project: &str) -> std::path::
         r#"[repositories."github/org/repo1"]
 type = "git"
 url = "file://{repo1}"
-version = "main"
+branch = "main"
 role = "owned"
 
 [repositories."github/org/repo2"]
 type = "git"
 url = "file://{repo2_path}"
-version = "main"
+branch = "main"
 role = "owned"
 "#,
         repo1 = common::url_path(&repo1),
@@ -2272,19 +2272,19 @@ fn make_workspace_three_repos(tmp: &std::path::Path, project: &str) -> std::path
         r#"[repositories."github/org/repo1"]
 type = "git"
 url = "file://{repo1}"
-version = "main"
+branch = "main"
 role = "owned"
 
 [repositories."github/org/repo2"]
 type = "git"
 url = "file:///nonexistent/repo2"
-version = "main"
+branch = "main"
 role = "owned"
 
 [repositories."github/org/repo3"]
 type = "git"
 url = "file://{repo3}"
-version = "main"
+branch = "main"
 role = "owned"
 "#,
         repo1 = common::url_path(&repo1),
@@ -2354,13 +2354,13 @@ fn create_workweave_clean_retry_after_failure_succeeds() {
         r#"[repositories."github/org/repo1"]
 type = "git"
 url = "file://{repo1}"
-version = "main"
+branch = "main"
 role = "owned"
 
 [repositories."github/org/missing"]
 type = "git"
 url = "file:///nonexistent/missing"
-version = "main"
+branch = "main"
 role = "owned"
 "#,
         repo1 = common::url_path(&repo1),
@@ -2378,7 +2378,7 @@ role = "owned"
         r#"[repositories."github/org/repo1"]
 type = "git"
 url = "file://{repo1}"
-version = "main"
+branch = "main"
 role = "owned"
 "#,
         repo1 = common::url_path(&repo1),
@@ -3027,7 +3027,7 @@ fn make_workspace_with_uncommitted_project(tmp: &Path, project: &str) -> std::pa
         r#"[repositories."github/org/repo"]
 type = "git"
 url = "file://{repo}"
-version = "main"
+branch = "main"
 role = "owned"
 "#,
         repo = common::url_path(&repo_path)
@@ -3075,13 +3075,13 @@ fn make_workspace_with_uncommitted_manifest_repo(tmp: &Path, project: &str) -> s
         r#"[repositories."github/org/good"]
 type = "git"
 url = "file://{good}"
-version = "main"
+branch = "main"
 role = "owned"
 
 [repositories."github/org/empty"]
 type = "git"
 url = "file://{bad}"
-version = "main"
+branch = "main"
 role = "owned"
 "#,
         good = common::url_path(&good_repo),
@@ -3354,13 +3354,13 @@ fn partial_create_failure_rolls_back_branches_of_earlier_repos() {
         r#"[repositories."github/org/repo1"]
 type = "git"
 url = "file://{r1}"
-version = "main"
+branch = "main"
 role = "owned"
 
 [repositories."github/org/repo2"]
 type = "git"
 url = "file://{r2}"
-version = "main"
+branch = "main"
 role = "owned"
 "#,
         r1 = common::url_path(&repo1),
@@ -3449,13 +3449,13 @@ fn cleanup_failure_preserves_original_error_with_manual_note() {
         r#"[repositories."github/org/repo1"]
 type = "git"
 url = "file://{r1}"
-version = "main"
+branch = "main"
 role = "owned"
 
 [repositories."github/org/repo2"]
 type = "git"
 url = "file:///nonexistent/repo2"
-version = "main"
+branch = "main"
 role = "owned"
 "#,
         r1 = common::url_path(&repo1),

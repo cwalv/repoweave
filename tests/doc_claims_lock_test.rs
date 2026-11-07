@@ -49,7 +49,7 @@ fn make_workspace_with_repo(tmp: &Path) -> (std::path::PathBuf, std::path::PathB
     std::fs::create_dir_all(&project_dir).unwrap();
     std::fs::write(
         project_dir.join("rwv.toml"),
-        "[repositories.\"github/acme/server\"]\ntype = \"git\"\nurl = \"https://github.com/acme/server.git\"\nversion = \"main\"\nrole = \"owned\"\n",
+        "[repositories.\"github/acme/server\"]\ntype = \"git\"\nurl = \"https://github.com/acme/server.git\"\nbranch = \"main\"\nrole = \"owned\"\n",
     )
     .unwrap();
     std::fs::write(root.join(".rwv-active"), "my-app\n").unwrap();
@@ -224,7 +224,7 @@ fn lock_records_local_head_not_remote_tip() {
     std::fs::write(
         project_dir.join("rwv.toml"),
         format!(
-            "[repositories.\"github/acme/server\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nversion = \"main\"\nrole = \"owned\"\n"
+            "[repositories.\"github/acme/server\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
         ),
     )
     .unwrap();

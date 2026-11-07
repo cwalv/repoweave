@@ -75,7 +75,7 @@ fn make_workspace(tmp: &Path, project: &str) -> PathBuf {
     std::fs::write(
         project_dir.join("rwv.toml"),
         format!(
-            "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"file://{}\"\nversion = \"main\"\nrole = \"owned\"\n",
+            "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"file://{}\"\nbranch = \"main\"\nrole = \"owned\"\n",
             common::url_path(&repo_path)
         ),
     )
@@ -122,7 +122,7 @@ fn make_workspace_with_remote_and_project_repo(tmp: &Path, project: &str) -> (Pa
     std::fs::write(
         project_dir.join("rwv.toml"),
         format!(
-            "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"file://{}\"\nversion = \"main\"\nrole = \"owned\"\n",
+            "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"file://{}\"\nbranch = \"main\"\nrole = \"owned\"\n",
             common::url_path(&upstream)
         ),
     )
@@ -545,7 +545,7 @@ fn doctor_fix_ignores_a_conflicted_root_of_another_workspace() {
     std::fs::write(
         proj_b.join("rwv.toml"),
         format!(
-            "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"file://{}\"\nversion = \"main\"\nrole = \"owned\"\n",
+            "[repositories.\"github/org/repo\"]\ntype = \"git\"\nurl = \"file://{}\"\nbranch = \"main\"\nrole = \"owned\"\n",
             common::url_path(&repo_b)
         ),
     )

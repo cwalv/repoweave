@@ -12,7 +12,7 @@ pub const IDENTITY: &[(&str, &str)] = &[
 
 /// The key a member entry declares its branch under. The seed and every hand
 /// edit of an entry spell it from here.
-pub const DECLARED_BRANCH_KEY: &str = "version";
+pub const DECLARED_BRANCH_KEY: &str = "branch";
 
 /// The `.gitattributes` line every seeded weave branch commits for its lock.
 pub const LOCK_MERGE_ATTRIBUTE: &str = "rwv.lock merge=rwv-ours";

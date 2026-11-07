@@ -1466,6 +1466,10 @@ fn repair_bindings() -> Vec<(&'static str, Binding)> {
         ),
         // --- apply_finding_repairs -------------------------------------
         (
+            "rewrote the member-entry keys in rwv.toml",
+            Findings(&["unparseable-project/pre-schema"]),
+        ),
+        (
             "deleted safe-class stale ephemeral branch",
             Findings(&["branch-discipline/stale-ephemeral-branch-safe"]),
         ),

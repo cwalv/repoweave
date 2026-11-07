@@ -66,7 +66,7 @@ fn weave(root: &Path) -> PathBuf {
             "[repositories.\"github/acme/{crate_name}\"]\n\
              type = \"git\"\n\
              url = \"https://github.com/acme/{crate_name}.git\"\n\
-             version = \"main\"\n\
+             branch = \"main\"\n\
              role = \"owned\"\n\n"
         ));
     }

@@ -391,6 +391,10 @@ impl Vcs for FakeVcs {
         unsupported("stage_paths")
     }
 
+    fn stage_content(&self, _repo: &Path, _path: &Path, _content: &[u8]) -> Result<(), VcsError> {
+        unsupported("stage_content")
+    }
+
     fn unstage_paths(&self, _repo: &Path, _paths: &[&str]) -> Result<(), VcsError> {
         unsupported("unstage_paths")
     }

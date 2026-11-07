@@ -41,7 +41,7 @@ impl Weave {
                 common::git_in(&dir, &["commit", "-q", "--allow-empty", "-m", "init"]);
             }
             manifest.push_str(&format!(
-                "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{}\"\nversion = \"main\"\nrole = \"{role}\"\n\n",
+                "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{}\"\nbranch = \"main\"\nrole = \"{role}\"\n\n",
                 common::file_url(&dir)
             ));
         }

@@ -63,7 +63,7 @@ fn clone_canonical(upstream: &Path, canonical: &Path) {
 
 fn manifest_entry(path: &str, url: &Path) -> String {
     format!(
-        "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{url}\"\nversion = \"main\"\nrole = \"owned\"\n",
+        "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"file://{url}\"\nbranch = \"main\"\nrole = \"owned\"\n",
         url = common::url_path(url),
     )
 }

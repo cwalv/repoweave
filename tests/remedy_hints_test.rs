@@ -66,7 +66,7 @@ impl Weave {
             common::git_in(&clone, &["config", "user.name", "Test"]);
             manifest.push_str(&format!(
                 "[repositories.\"github/acme/{name}\"]\ntype = \"git\"\nurl = \"{url}\"\n\
-                 version = \"main\"\nrole = \"owned\"\n\n"
+                 branch = \"main\"\nrole = \"owned\"\n\n"
             ));
         }
         let (ok, report) = rwv(&ws, &["init", "app"]);
@@ -148,7 +148,7 @@ impl Weave {
             &manifest_path,
             format!(
                 "{manifest}\n[repositories.\"github/acme/{name}\"]\ntype = \"git\"\n\
-                 url = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
+                 url = \"{url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
             ),
         )
         .unwrap();

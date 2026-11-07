@@ -48,7 +48,7 @@ fn status_json_absolute_path_arrives_in_the_wire_spelling_on_every_arm() {
     .iter()
     .map(|(path, url)| {
         format!(
-            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
         )
     })
     .collect();

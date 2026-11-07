@@ -1432,7 +1432,7 @@ fn is_transient_tag(tag: &str) -> bool {
 /// The rule itself lives at the seam
 /// ([`crate::vcs::is_release_shape_name`]) because `TrackingRef::parse`
 /// asks the same question for the opposite purpose — rejecting a
-/// `version:` that names a release rather than a channel. One definition,
+/// `branch` that names a release rather than a channel. One definition,
 /// two callers.
 fn is_release_shape_tag(tag: &str) -> bool {
     crate::vcs::is_release_shape_name(tag)
@@ -1618,6 +1618,16 @@ impl Vcs for GitVcs {
         let mut args: Vec<&str> = vec!["add", "--"];
         args.extend_from_slice(paths);
         Self::run(&args, repo).map(|_| ())
+    }
+    fn stage_content(&self, repo: &Path, path: &Path, content: &[u8]) -> Result<(), VcsError> {
+        let path = GitArg::from_path(path, "path")?;
+        let blob = Self::run_with_stdin(["hash-object", "-w", "--stdin"], repo, content)?;
+        let entry = format!("100644,{},{}", blob.trim(), path.as_str());
+        Self::run(
+            ["update-index", "--add", "--cacheinfo", entry.as_str()],
+            repo,
+        )
+        .map(|_| ())
     }
     fn unstage_paths(&self, repo: &Path, paths: &[&str]) -> Result<(), VcsError> {
         let mut args: Vec<&str> = vec!["reset", "-q", "--"];
@@ -4876,7 +4886,7 @@ mod branch_model_tests {
         // and no colliding path proves nothing here — those are exactly the
         // conditions under which git does something other than refuse — so
         // the fixture has all three, and each name is one a manifest
-        // `version:` could plausibly declare.
+        // `branch` could plausibly declare.
         let origin = repo();
         git(origin.path(), &["branch", "feature"]);
         let (_home, work) = clone_of(origin.path());

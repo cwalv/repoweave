@@ -73,7 +73,7 @@ fn smudging_weave(tmp: &Path) -> (PathBuf, PathBuf) {
     std::fs::write(
         app.join("rwv.toml"),
         format!(
-            "[repositories.\"github/org/lib\"]\ntype = \"git\"\nurl = \"file://{}\"\nversion = \"main\"\nrole = \"owned\"\n",
+            "[repositories.\"github/org/lib\"]\ntype = \"git\"\nurl = \"file://{}\"\nbranch = \"main\"\nrole = \"owned\"\n",
             common::url_path(&lib)
         ),
     )

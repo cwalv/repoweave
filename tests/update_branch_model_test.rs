@@ -120,7 +120,7 @@ fn build_workspace() -> Fixture {
     std::fs::write(
         project_dir.join("rwv.toml"),
         format!(
-            "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nversion = \"main\"\nrole = \"owned\"\n"
+            "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
         ),
     )
     .unwrap();

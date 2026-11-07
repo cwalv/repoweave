@@ -42,7 +42,7 @@ fn make_manifest(repos: Vec<(&str, Role)>) -> Manifest {
     for (path, role) in &repos {
         let last = path.split('/').next_back().unwrap();
         manifest_toml.push_str(&format!(
-            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"https://github.com/test/{last}.git\"\nversion = \"main\"\nrole = \"{}\"\n",
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"https://github.com/test/{last}.git\"\nbranch = \"main\"\nrole = \"{}\"\n",
             role
         ));
     }
@@ -1308,7 +1308,7 @@ fn doctor_scoped_to_an_inactive_project_reads_that_projects_weave_level_patches(
         &root,
         "projects/b/rwv.toml",
         &format!(
-            "[repositories.\"github/acme/foo\"]\ntype = \"git\"\nurl = \"{}\"\nversion = \"main\"\nrole = \"owned\"\n",
+            "[repositories.\"github/acme/foo\"]\ntype = \"git\"\nurl = \"{}\"\nbranch = \"main\"\nrole = \"owned\"\n",
             common::file_url(&member)
         ),
     );

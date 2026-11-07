@@ -52,7 +52,7 @@ fn healable_workspace(parent: &Path) -> PathBuf {
     std::fs::write(
         project_dir.join("rwv.toml"),
         "[repositories.\"github/acme/server\"]\ntype = \"git\"\n\
-         url = \"https://github.com/acme/server.git\"\nversion = \"main\"\nrole = \"owned\"\n",
+         url = \"https://github.com/acme/server.git\"\nbranch = \"main\"\nrole = \"owned\"\n",
     )
     .unwrap();
     root

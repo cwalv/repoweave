@@ -48,7 +48,7 @@ fn init_repo_with_commit(path: &Path) {
 
 /// Write an `rwv.toml` with a single owned repo `github/acme/widget`.
 fn write_manifest(ws: &Path) {
-    let manifest_toml = "[repositories.\"github/acme/widget\"]\ntype = \"git\"\nurl = \"https://example.test/acme/widget.git\"\nversion = \"main\"\nrole = \"owned\"\n";
+    let manifest_toml = "[repositories.\"github/acme/widget\"]\ntype = \"git\"\nurl = \"https://example.test/acme/widget.git\"\nbranch = \"main\"\nrole = \"owned\"\n";
     std::fs::write(ws.join("projects/app/rwv.toml"), manifest_toml).unwrap();
 }
 

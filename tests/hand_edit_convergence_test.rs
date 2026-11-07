@@ -121,7 +121,7 @@ fn generated_members(workspace: &Path) -> String {
 fn hand_add(workspace: &Path, path: &str, url: &str) {
     let mut text = std::fs::read_to_string(manifest(workspace)).unwrap();
     text.push_str(&format!(
-        "\n[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nversion = \"main\"\nrole = \"owned\"\n"
+        "\n[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
     ));
     std::fs::write(manifest(workspace), text).unwrap();
 }
@@ -526,7 +526,7 @@ fn remove_refuses_a_path_whose_clone_another_project_lists() {
     std::fs::write(
         other.join("rwv.toml"),
         format!(
-            "[repositories.\"{beta}\"]\ntype = \"git\"\nurl = \"{beta_url}\"\nversion = \"main\"\nrole = \"owned\"\n"
+            "[repositories.\"{beta}\"]\ntype = \"git\"\nurl = \"{beta_url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
         ),
     )
     .unwrap();

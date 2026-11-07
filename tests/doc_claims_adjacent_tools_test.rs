@@ -72,7 +72,7 @@ fn setup_ci_shaped_workspace(tmp: &Path) -> (std::path::PathBuf, String) {
 
     let project_bare = tmp.join("web-app.git");
     let manifest_toml = format!(
-        "[repositories.\"local/org/dep\"]\ntype = \"git\"\nurl = \"{dep_url}\"\nversion = \"main\"\nrole = \"owned\"\n"
+        "[repositories.\"local/org/dep\"]\ntype = \"git\"\nurl = \"{dep_url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
     );
     let lock = common::fixture_lock_bytes(&[("local/org/dep", dep_url.as_str(), dep_sha.as_str())]);
     init_bare_repo_with_commit(
@@ -184,7 +184,7 @@ fn shipped_recipe_without_nesting_fails() {
 
     let project_bare = tmp.path().join("web-app.git");
     let manifest_toml = format!(
-        "[repositories.\"local/org/dep\"]\ntype = \"git\"\nurl = \"{dep_url}\"\nversion = \"main\"\nrole = \"owned\"\n"
+        "[repositories.\"local/org/dep\"]\ntype = \"git\"\nurl = \"{dep_url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
     );
     init_bare_repo_with_commit(&project_bare, &[("rwv.toml", &manifest_toml)]);
 

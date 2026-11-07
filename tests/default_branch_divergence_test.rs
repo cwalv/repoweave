@@ -62,7 +62,7 @@ fn make_workspace(tmp: &Path) -> PathBuf {
             r#"[repositories."github/org/repo"]
 type = "git"
 url = "file://{repo}"
-version = "trunk"
+branch = "trunk"
 role = "owned"
 "#,
             repo = common::url_path(&repo_path)

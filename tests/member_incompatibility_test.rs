@@ -166,7 +166,7 @@ fn make_doctor_workspace(
     common::git_in(&member_dir, &["commit", "-m", "initial"]);
 
     let manifest = format!(
-        "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"https://github.com/org/module-a.git\"\nversion = \"main\"\nrole = \"owned\"\n"
+        "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"https://github.com/org/module-a.git\"\nbranch = \"main\"\nrole = \"owned\"\n"
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
@@ -381,7 +381,7 @@ fn build_update_fixture(
     std::fs::write(
         project_dir.join("rwv.toml"),
         format!(
-            "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nversion = \"main\"\nrole = \"owned\"\n"
+            "[repositories.\"{repo_path}\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nbranch = \"main\"\nrole = \"owned\"\n"
         ),
     )
     .unwrap();
