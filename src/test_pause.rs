@@ -36,7 +36,7 @@ mod armed {
         let dir = Path::new(dir);
         let paused = dir.join("paused");
         std::fs::write(&paused, std::process::id().to_string())
-            .unwrap_or_else(|e| panic!("cannot write {}: {e}", paused.display()));
+            .unwrap_or_else(|e| panic!("cannot write {}: {e:#}", paused.display()));
         let release = dir.join("release");
         let deadline = Instant::now() + RELEASE_DEADLINE;
         while !release.exists() {
