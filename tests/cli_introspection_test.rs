@@ -17,6 +17,7 @@ fn cli_command_tree_contains_known_subcommands() {
 
     for expected in &[
         "status",
+        "log",
         "sync",
         "sync-to",
         "workweave",
@@ -49,7 +50,7 @@ fn cli_workweave_has_expected_actions() {
 
     let actions: Vec<&str> = ww.get_subcommands().map(|sc| sc.get_name()).collect();
 
-    for expected in &["create", "delete", "list", "log"] {
+    for expected in &["create", "delete", "list"] {
         assert!(
             actions.contains(expected),
             "expected workweave action {:?} not found; got: {:?}",

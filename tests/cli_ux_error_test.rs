@@ -34,7 +34,6 @@ fn bare_workweave_shows_the_subcommands() {
             .and(predicate::str::contains("create"))
             .and(predicate::str::contains("delete"))
             .and(predicate::str::contains("list"))
-            .and(predicate::str::contains("log"))
             .and(predicate::str::contains("set-default-create-basedir")),
     );
 }

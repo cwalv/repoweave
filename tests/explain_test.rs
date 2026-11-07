@@ -238,9 +238,9 @@ fn explain_close_typo_suggests_sync_to() {
 /// own tool.
 #[test]
 fn a_short_token_does_not_answer_for_an_unrelated_input() {
-    rwv().args(["explain", "foo"]).assert().failure().stderr(
+    rwv().args(["explain", "xyo"]).assert().failure().stderr(
         predicate::str::contains("external command")
-            .and(predicate::str::contains("rwv foo --help"))
+            .and(predicate::str::contains("rwv xyo --help"))
             .and(predicate::str::contains("did you mean").not()),
     );
 }

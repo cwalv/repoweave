@@ -64,6 +64,7 @@ src/integrations/static_files.rs	(untokened:integration-channel)	-	1
 src/integrations/uv_workspace.rs	(untokened:integration-channel)	-	4
 src/lock.rs	(untokened:environment-passthrough)	-	2
 src/lock.rs	edits dirty	tests/refusal_arrival_test.rs	2
+src/log.rs	name no-such-branch	tests/refusal_arrival_test.rs	2
 src/manifest.rs	legacy-manifest-format	tests/refusal_arrival_test.rs	1
 src/member_settings.rs	edits dirty	tests/refusal_arrival_test.rs	1
 src/member_settings.rs	repo-not-in-manifest	tests/role_verb_test.rs	2
@@ -152,7 +153,6 @@ src/workweave.rs	unowned-branch-in-namespace	-	3
 src/workweave.rs	unreadable-status	-	1
 src/workweave.rs	unregistered-workweave	-	1
 src/workweave.rs	workweave-drift	tests/symlinked_member_migration_test.rs	2
-src/workweave.rs	wrong-checkout-kind	-	1
 src/workweave_index.rs	legacy-workweave-index	-	1
 src/workweave_index.rs	project-dir-missing	-	2
 src/workweave_index.rs	receipt-revision-uncanonical	-	1

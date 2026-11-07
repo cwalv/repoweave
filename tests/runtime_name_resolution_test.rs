@@ -57,6 +57,13 @@ fn make_workspace(tmp: &Path) -> PathBuf {
     ws
 }
 
+/// A repo `rwv member add` can add, as the url it is added by.
+fn a_member_to_add(base: &Path) -> String {
+    let second = base.join("org").join("second");
+    init_repo_with_commit(&second);
+    common::file_url(&second)
+}
+
 fn index_path(ws: &Path) -> PathBuf {
     ws.join("projects/web-app/.rwv-workweave-index")
 }
@@ -276,33 +283,24 @@ fn unregistered_workweave_refuses_an_identity_consuming_verb() {
     let dir = make_registered_workweave(&ws);
     deregister(&ws, "feat");
 
-    let second = tmp.path().join("org").join("second");
-    init_repo_with_commit(&second);
-    let second_url = common::file_url(&second);
-    let add_second = vec!["member", "add", second_url.as_str()];
-    for verb in [vec!["workweave", "log"], add_second] {
-        let out = rwv()
-            .args(&verb)
-            .current_dir(&dir)
-            .output()
-            .expect("verb should run");
-        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-        assert!(
-            !out.status.success(),
-            "`rwv {}` must refuse an unregistered workweave: {stderr}",
-            verb.join(" ")
-        );
-        assert!(
-            stderr.contains("no entry in that project's workweave index records this directory"),
-            "`rwv {}` must name the state: {stderr}",
-            verb.join(" ")
-        );
-        assert!(
-            stderr.ends_with("\n\nrwv explain unregistered-workweave\n"),
-            "`rwv {}` must route to the condition: {stderr}",
-            verb.join(" ")
-        );
-    }
+    let out = rwv()
+        .args(["member", "add", &a_member_to_add(tmp.path())])
+        .current_dir(&dir)
+        .output()
+        .expect("verb should run");
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(
+        !out.status.success(),
+        "`rwv member add` must refuse an unregistered workweave: {stderr}"
+    );
+    assert!(
+        stderr.contains("no entry in that project's workweave index records this directory"),
+        "`rwv member add` must name the state: {stderr}"
+    );
+    assert!(
+        stderr.ends_with("\n\nrwv explain unregistered-workweave\n"),
+        "`rwv member add` must route to the condition: {stderr}"
+    );
 }
 
 /// The diagnostic exemption: the verbs an operator reaches for to understand
@@ -379,7 +377,7 @@ fn doctor_fix_restores_the_recorded_name_the_refusals_named() {
         .and_then(|v| v.as_str())
         .expect("the fix must restore a recorded identity");
     rwv()
-        .args(["workweave", "log"])
+        .args(["member", "add", &a_member_to_add(tmp.path())])
         .current_dir(&dir)
         .assert()
         .success();
@@ -417,7 +415,7 @@ fn a_dir_placed_workweave_still_refuses_and_routes_to_the_condition() {
     );
 
     let out = rwv()
-        .args(["workweave", "log"])
+        .args(["member", "add", &a_member_to_add(tmp.path())])
         .current_dir(&dir)
         .output()
         .expect("verb should run");

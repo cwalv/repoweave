@@ -40,6 +40,7 @@ Commands:
   doctor       Convention enforcement and lock-freshness checking
   lock         Snapshot repo versions (pure git SHA snapshot — no integration hooks fire). Run `rwv materialize` after lock changes the workspace membership to refresh node_modules / .venv / etc
   status       Show per-repo state of the CWD workspace
+  log          Show the VCS's log in every repo of the workspace, or with `--against` the commits beyond what a weave branch pins
   abort        Roll an in-flight sync or sync-to back to its savepoints in every workspace it touched, run from any of them
   sync         Bring another workspace's committed state into this one (pull/align; use `rwv sync-to` to land work upward)
   sync-to      Advance target workspace to CWD's tip (3-step orchestration: rebase CWD against target, auto-relock, then fast-forward target to CWD's converged tip). CWD's unique commits land on top of target's prior history; target absorbs CWD's state with CWD as the newest contribution

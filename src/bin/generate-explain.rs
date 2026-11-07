@@ -968,7 +968,7 @@ fn render_index(verbs: &[Verb]) -> String {
 }
 
 /// Walk the clap command tree and collect every subcommand path as a
-/// space-separated string (e.g. `"workweave log"`, `"setup claude"`).
+/// space-separated string (e.g. `"workweave delete"`, `"setup claude"`).
 ///
 /// Top-level commands with no subcommands of their own produce a single-token
 /// path (e.g. `"fetch"`). Commands that exist only as umbrella containers
@@ -1010,7 +1010,7 @@ fn collect_subcommand_paths_inner(cmd: &clap::Command, prefix: &str, out: &mut V
 ///
 /// - `<check>` is `cli-md` or `registry`
 /// - `<surface-path>` is the full subcommand path as in the rwv CLI tree
-///   (e.g. `workweave log`, `setup`)
+///   (e.g. `workweave delete`, `setup`)
 /// - `# <reason>` is required prose explaining the omission
 ///
 /// The format is intentionally machine-readable for the checks below but
@@ -1091,8 +1091,8 @@ fn load_coverage_allowlist(
 ///
 /// The span is tokenized on whitespace. The first token must be `rwv`. Then
 /// each path component must be the next token, in order. Any other token where
-/// a component is expected fails the match (so `workweave log` does not match
-/// `` `rwv workweave list` `` or a hypothetical `` `rwv workweave log-extra` ``,
+/// a component is expected fails the match (so `workweave delete` does not match
+/// `` `rwv workweave list` `` or a hypothetical `` `rwv workweave delete-extra` ``,
 /// and a positional written between components documents an invocation clap
 /// does not accept). Tokens after the last matched component (flags, further
 /// args) are ignored.
@@ -1139,7 +1139,7 @@ fn heading_covers_path(line: &str, components: &[&str]) -> bool {
 ///
 /// # Match rule
 ///
-/// A subcommand path (e.g. `workweave log`) is "covered" iff the cli.md
+/// A subcommand path (e.g. `workweave delete`) is "covered" iff the cli.md
 /// content contains at least one heading line (a line whose first
 /// non-whitespace character is `#`) with a backtick-quoted span that starts
 /// with `rwv` and contains the path's literal components in order, allowing
@@ -1147,8 +1147,8 @@ fn heading_covers_path(line: &str, components: &[&str]) -> bool {
 /// [`span_covers_path`] for the token-level rule. Examples:
 ///
 /// - `` `rwv fetch <source> [...]` `` covers `fetch`
-/// - `` `rwv workweave log [--diff] [--json]` `` covers `workweave log`
-/// - `` `rwv workweave list` `` does NOT cover `workweave log`
+/// - `` `rwv workweave delete <name>` `` covers `workweave delete`
+/// - `` `rwv workweave list` `` does NOT cover `workweave delete`
 ///
 /// Restricting the match to headings avoids false positives from incidental
 /// body-text mentions (the word "log" alone would match dozens of lines).
@@ -1305,12 +1305,12 @@ fn registry_inventory(cli_top_level: &[String], plugin_dirs: &[&str]) -> Vec<Str
 ///
 /// # Match rules (documented here as the canonical reference)
 ///
-/// **cli.md check**: a subcommand path (e.g. `workweave log`) is covered iff
+/// **cli.md check**: a subcommand path (e.g. `workweave delete`) is covered iff
 /// `docs/reference/cli.md` contains a heading line (a line whose first
 /// non-whitespace character is `#`) with a backtick-quoted invocation span
 /// that starts with `rwv` and contains the path's literal components in
-/// order, each the next token after the one before it (so `` `rwv workweave log
-/// [--diff]` `` covers `workweave log`). Restricting to headings avoids false
+/// order, each the next token after the one before it (so `` `rwv workweave delete
+/// <name>` `` covers `workweave delete`). Restricting to headings avoids false
 /// positives from incidental body text. See [`span_covers_path`] for the token-level rule.
 ///
 /// **Registry check**: a top-level verb, or a bundled plugin's verb, is
@@ -5232,9 +5232,9 @@ mod tests {
     /// A cli.md that covers all paths passes the cli-md check.
     #[test]
     fn cli_md_coverage_passes_when_all_present() {
-        let paths = vec!["fetch".to_owned(), "workweave log".to_owned()];
+        let paths = vec!["fetch".to_owned(), "workweave delete".to_owned()];
         let cli_md =
-            "### `rwv fetch [...]`\n\nSome text.\n\n### `rwv workweave log`\n\nMore text.\n";
+            "### `rwv fetch [...]`\n\nSome text.\n\n### `rwv workweave delete`\n\nMore text.\n";
         let allow: HashSet<String> = HashSet::new();
         let errors = check_cli_md_coverage(&paths, cli_md, &allow);
         assert!(
@@ -5251,18 +5251,18 @@ mod tests {
     /// check that never fires is indistinguishable from a correct check.
     #[test]
     fn cli_md_coverage_fails_when_entry_removed() {
-        let paths = vec!["fetch".to_owned(), "workweave log".to_owned()];
-        // cli.md only mentions `fetch` — `workweave log` heading was removed.
+        let paths = vec!["fetch".to_owned(), "workweave delete".to_owned()];
+        // cli.md only mentions `fetch` — `workweave delete` heading was removed.
         let cli_md = "### `rwv fetch [...]`\n\nSome text.\n";
         let allow: HashSet<String> = HashSet::new();
         let errors = check_cli_md_coverage(&paths, cli_md, &allow);
         assert!(
             !errors.is_empty(),
-            "expected error when `rwv workweave log` is absent from cli.md"
+            "expected error when `rwv workweave delete` is absent from cli.md"
         );
         let combined = errors.join("\n");
         assert!(
-            combined.contains("workweave log"),
+            combined.contains("workweave delete"),
             "error should name the missing subcommand, got:\n{combined}"
         );
         assert!(
@@ -5290,14 +5290,14 @@ mod tests {
     #[test]
     fn cli_md_coverage_matches_headings_with_trailing_arguments() {
         let paths = vec![
-            "workweave log".to_owned(),
+            "workweave delete".to_owned(),
             "workweave create".to_owned(),
             "workweave list".to_owned(),
         ];
         let cli_md = "\
 ### `rwv workweave create <name>`\n\n\
 ### `rwv workweave list`\n\n\
-### `rwv workweave log [--diff] [--json]`\n";
+### `rwv workweave delete <name>`\n";
         let allow: HashSet<String> = HashSet::new();
         let errors = check_cli_md_coverage(&paths, cli_md, &allow);
         assert!(
@@ -5308,26 +5308,26 @@ mod tests {
     }
 
     /// A literal token where a path component is expected fails the span
-    /// match: `` `rwv workweave list` `` must NOT cover `workweave log`, a
+    /// match: `` `rwv workweave list` `` must NOT cover `workweave delete`, a
     /// hyphen-extended token is not a prefix match, and a positional written
     /// between the components covers nothing.
     #[test]
     fn cli_md_coverage_does_not_overmatch() {
-        let paths = vec!["workweave log".to_owned()];
+        let paths = vec!["workweave delete".to_owned()];
         // Headings for OTHER workweave actions only — `log` is absent.
         let cli_md = concat!(
             "### `rwv workweave create <name>`\n\n",
             "### `rwv workweave list`\n\n",
             // rwv-advice: not-an-invocation
-            "### `rwv workweave log-extra`\n",
+            "### `rwv workweave delete-extra`\n",
             // rwv-advice: not-an-invocation
-            "### `rwv workweave <project> log`\n",
+            "### `rwv workweave <project> delete`\n",
         );
         let allow: HashSet<String> = HashSet::new();
         let errors = check_cli_md_coverage(&paths, cli_md, &allow);
         assert!(
             !errors.is_empty(),
-            "`workweave log` must not be covered by list/create/log-extra headings"
+            "`workweave delete` must not be covered by list/create/delete-extra headings"
         );
     }
 
@@ -5555,11 +5555,11 @@ mod tests {
         let path = tmp.path().join("allowlist.txt");
         fs::write(
             &path,
-            "# comment\n\ncli-md:workweave log  # needs template\nregistry:resolve  # utility verb\n",
+            "# comment\n\ncli-md:workweave delete  # needs template\nregistry:resolve  # utility verb\n",
         )
         .unwrap();
         let (cli_md, registry) = load_coverage_allowlist(&path).expect("parse should succeed");
-        assert!(cli_md.contains("workweave log"), "cli-md entry missing");
+        assert!(cli_md.contains("workweave delete"), "cli-md entry missing");
         assert!(registry.contains("resolve"), "registry entry missing");
     }
 
