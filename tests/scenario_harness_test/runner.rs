@@ -741,14 +741,13 @@ impl Run<'_> {
                     Err(why) => (false, why),
                 }
             }
-            Action::Release(handle) => {
-                let held = self
-                    .held
-                    .remove(handle)
-                    .unwrap_or_else(|| panic!("nothing is held as {handle}"));
-                let out = held.release();
-                (out.status.success(), rendered(&out))
-            }
+            Action::Release(handle) => match self.held.remove(handle) {
+                Some(held) => {
+                    let out = held.release();
+                    (out.status.success(), rendered(&out))
+                }
+                None => (false, format!("nothing is held as {handle}")),
+            },
             Action::Unreachable(remote) => {
                 assert!(
                     !self.offline.contains_key(remote),
