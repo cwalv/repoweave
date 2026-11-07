@@ -834,6 +834,149 @@ fn update_repo_filter_limits_materialization() {
     assert_eq!(head_a, *first_a, "materialized clone must be at LOCKED SHA");
 }
 
+fn setup_workspace_with_locked_roles(members: &[(&str, &str)]) -> Setup {
+    let paths: Vec<&str> = members.iter().map(|(path, _)| *path).collect();
+    let s = setup_workspace_with_locked_project(&paths);
+    let mut manifest = String::new();
+    for ((path, bare, _, _), (_, role)) in s.repos.iter().zip(members) {
+        let url = common::file_url(bare);
+        manifest.push_str(&format!(
+            "[repositories.\"{path}\"]\ntype = \"git\"\nurl = \"{url}\"\nbranch = \"main\"\nrole = \"{role}\"\n"
+        ));
+    }
+    std::fs::write(s.workspace.join("projects/my-app/rwv.toml"), manifest).unwrap();
+    s
+}
+
+fn materialized(s: &Setup, path: &str) -> bool {
+    s.workspace.join(path).join(".git").exists()
+}
+
+#[test]
+fn update_role_filter_materializes_only_that_role() {
+    let s = setup_workspace_with_locked_roles(&[
+        ("local/org/p", "owned"),
+        ("local/org/d", "dependency"),
+    ]);
+
+    rwv()
+        .args(["update", "--role", "owned"])
+        .current_dir(&s.workspace)
+        .assert()
+        .success();
+
+    assert!(
+        materialized(&s, "local/org/p"),
+        "the owned member is cloned"
+    );
+    assert!(
+        !materialized(&s, "local/org/d"),
+        "the dependency is not cloned under --role owned"
+    );
+}
+
+#[test]
+fn update_repo_glob_filter_materializes_matching_paths() {
+    let s = setup_workspace_with_locked_roles(&[
+        ("local/org/a", "owned"),
+        ("local/org/b", "owned"),
+        ("local/other/c", "owned"),
+    ]);
+
+    rwv()
+        .args(["update", "--repo", "glob:local/org/*"])
+        .current_dir(&s.workspace)
+        .assert()
+        .success();
+
+    assert!(materialized(&s, "local/org/a"));
+    assert!(materialized(&s, "local/org/b"));
+    assert!(
+        !materialized(&s, "local/other/c"),
+        "glob:local/org/* does not match local/other/c"
+    );
+}
+
+#[test]
+fn update_repo_regex_filter_materializes_matching_paths() {
+    let s = setup_workspace_with_locked_roles(&[
+        ("local/cwalv/a", "owned"),
+        ("local/cwalv/b", "owned"),
+        ("local/other/c", "owned"),
+    ]);
+
+    rwv()
+        .args(["update", "--repo", "re:^local/cwalv/"])
+        .current_dir(&s.workspace)
+        .assert()
+        .success();
+
+    assert!(materialized(&s, "local/cwalv/a"));
+    assert!(materialized(&s, "local/cwalv/b"));
+    assert!(!materialized(&s, "local/other/c"));
+}
+
+#[test]
+fn update_role_and_repo_selectors_union() {
+    let s = setup_workspace_with_locked_roles(&[
+        ("local/me/p", "owned"),
+        ("local/external/dep", "dependency"),
+        ("local/external/other", "dependency"),
+    ]);
+
+    rwv()
+        .args(["update", "--role", "owned", "--repo", "local/external/dep"])
+        .current_dir(&s.workspace)
+        .assert()
+        .success();
+
+    assert!(materialized(&s, "local/me/p"), "owned, by --role");
+    assert!(materialized(&s, "local/external/dep"), "named by --repo");
+    assert!(
+        !materialized(&s, "local/external/other"),
+        "matched by neither selector"
+    );
+}
+
+#[test]
+fn update_filter_aligns_only_the_selected_present_members() {
+    let s =
+        setup_workspace_with_locked_roles(&[("local/org/a", "owned"), ("local/other/b", "owned")]);
+    let mut pins = Vec::new();
+    let mut dests = Vec::new();
+    for (path, bare, first, second) in &s.repos {
+        dests.push(materialize_repo_on_branch_at(
+            &s.workspace,
+            path,
+            bare,
+            first,
+        ));
+        pins.push((path.clone(), common::file_url(bare), second.clone()));
+    }
+    let entries: Vec<(&str, &str, &str)> = pins
+        .iter()
+        .map(|(p, u, sha)| (p.as_str(), u.as_str(), sha.as_str()))
+        .collect();
+    common::fixture_lock(&s.workspace.join("projects/my-app"), &entries);
+
+    rwv()
+        .args(["update", "--repo", "glob:local/org/*"])
+        .current_dir(&s.workspace)
+        .assert()
+        .success();
+
+    assert_eq!(
+        common::git_in(&dests[0], &["rev-parse", "HEAD"]),
+        s.repos[0].3,
+        "the selected member is aligned to its pin"
+    );
+    assert_eq!(
+        common::git_in(&dests[1], &["rev-parse", "HEAD"]),
+        s.repos[1].2,
+        "the member the selector leaves out stays where it was"
+    );
+}
+
 // ============================================================================
 // End-to-end: doctor dangling → update → doctor clean
 // ============================================================================

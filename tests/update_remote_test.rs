@@ -182,7 +182,7 @@ fn update_help_lists_role_and_repo_flags() {
 // ============================================================================
 
 #[test]
-fn update_role_filter_only_advances_matching_role() {
+fn update_remote_role_filter_only_advances_matching_role() {
     let ws = build_workspace(
         "alpha",
         &[("local/org/p", "owned"), ("local/org/d", "dependency")],
@@ -229,7 +229,7 @@ fn update_role_filter_only_advances_matching_role() {
 // ============================================================================
 
 #[test]
-fn update_repo_exact_filter_advances_only_that_path() {
+fn update_remote_repo_exact_filter_advances_only_that_path() {
     let ws = build_workspace(
         "alpha",
         &[("local/org/a", "owned"), ("local/org/b", "owned")],
@@ -264,7 +264,7 @@ fn update_repo_exact_filter_advances_only_that_path() {
 // ============================================================================
 
 #[test]
-fn update_repo_glob_filter_advances_matching() {
+fn update_remote_repo_glob_filter_advances_matching() {
     let ws = build_workspace(
         "alpha",
         &[
@@ -307,7 +307,7 @@ fn update_repo_glob_filter_advances_matching() {
 // ============================================================================
 
 #[test]
-fn update_repo_regex_filter_advances_matching() {
+fn update_remote_repo_regex_filter_advances_matching() {
     let ws = build_workspace(
         "alpha",
         &[
@@ -349,7 +349,7 @@ fn update_repo_regex_filter_advances_matching() {
 // ============================================================================
 
 #[test]
-fn update_union_role_and_repo_selectors() {
+fn update_remote_role_and_repo_selectors_union() {
     let ws = build_workspace(
         "alpha",
         &[
