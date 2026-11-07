@@ -39,7 +39,9 @@ rwv pull [--project <name>] [--role <role>]...
 - `--role` / `--repo` — limit the update of step 3 to a subset of the manifest.
   Repeat for union. The fetch of step 1 covers every repo.
 - `--project <name>` — operate on this project instead of the active project.
-  Does not change `.rwv-active`.
+  Does not change `.rwv-active`. A member `<name>` shares with the active
+  project that is not aligned for `<name>` refuses the update of step 3, as for
+  `rwv update`.
 - `-j <N>` — run up to `N` per-repo workers in parallel. Default:
   `min(nproc, 8)`.
 - `--json` — emit machine-readable output (see Output below).

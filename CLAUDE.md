@@ -554,7 +554,8 @@ repo** (not "manifest repo" or "constituent repo") for an `rwv.toml`
 parallel workspace; and distinguish **materialize** (populating member
 checkouts and ecosystem state via `rwv materialize`, `rwv sync`, or `rwv
 workweave create`) from **activate** (switching `.rwv-active` and root-level
-ecosystem symlinks via `rwv activate`).
+ecosystem symlinks via `rwv activate`, which moves no checkout: `--update` is the
+spelling that aligns members first).
 
 ### American spelling
 

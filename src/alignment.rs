@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
-use crate::diagnosis::{Fact, FactKind, Judged, State};
+use crate::diagnosis::{Fact, FactKind, Judged, Judging, State};
 use crate::manifest::{LockFile, Manifest, ProjectName, RepoEntry, RepoPath, Role};
 use crate::records::{BranchName, Lookup, Record, Store};
 use crate::state_file::StateFile;
@@ -390,6 +390,7 @@ pub struct Aligner {
     pub corrupt: Option<String>,
     pub accounting: Accounting,
     checked_out: Option<String>,
+    outgoing: Option<Box<Aligner>>,
 }
 
 impl Aligner {
@@ -461,7 +462,15 @@ impl Aligner {
             corrupt: reading.corrupt,
             accounting,
             checked_out,
+            outgoing: None,
         })
+    }
+
+    /// Count a member aligned for `outgoing`'s branch as one that may be left,
+    /// as a switch of the presented project does.
+    pub fn leaving(mut self, outgoing: Aligner) -> Self {
+        self.outgoing = Some(Box::new(outgoing));
+        self
     }
 
     /// The aligned branch as a choice spells it: its name, or `detached`.
@@ -653,6 +662,14 @@ impl Aligner {
     }
 
     fn aligned_for_aligned_branch(&self, m: &Member<'_>, branch: &str) -> bool {
+        self.held_by_aligned_branch(m, branch)
+            || self
+                .outgoing
+                .as_ref()
+                .is_some_and(|outgoing| outgoing.aligned_for_aligned_branch(m, branch))
+    }
+
+    fn held_by_aligned_branch(&self, m: &Member<'_>, branch: &str) -> bool {
         let Some(Aligned::Branch(aligned)) = &self.state.aligned else {
             return false;
         };
@@ -878,6 +895,16 @@ impl Aligner {
         repo: &dyn std::fmt::Display,
         facts: &[Fact],
     ) -> Judged {
+        self.judging_off(m, off, repo, facts).judge(m.vcs)
+    }
+
+    fn judging_off(
+        &self,
+        m: &Member<'_>,
+        off: &Off,
+        repo: &dyn std::fmt::Display,
+        facts: &[Fact],
+    ) -> Judging {
         let (state, listing, subject) = match off {
             Off::OnBranch { branch, stray } => (
                 if stray.is_empty() {
@@ -925,7 +952,33 @@ impl Aligner {
         for fact in facts {
             judging = judging.fact(fact.clone());
         }
-        judging.judge(m.vcs)
+        judging
+    }
+
+    /// The line for a member that is not in its expected state, judged as an
+    /// activation of this project would: `None` when it is, or when there is no
+    /// expected state to put it in.
+    pub fn activation_line(
+        &self,
+        m: &Member<'_>,
+        lock: Option<&LockFile>,
+        repo: &dyn std::fmt::Display,
+    ) -> anyhow::Result<Option<Judged>> {
+        let plan = self.plan(m, lock)?;
+        if self.is_aligned(m, &plan)? {
+            return Ok(None);
+        }
+        let facts: Vec<Fact> = match &plan.target {
+            Target::Detached { why, .. } => why.fact().into_iter().collect(),
+            _ => Vec::new(),
+        };
+        let off = self.standing_of(m, &plan)?;
+        Ok(Some(
+            self.judging_off(m, &off, repo, &facts)
+                .by_verb(crate::diagnosis::ACTIVATE)
+                .bind("<project>", &self.project)
+                .judge(m.vcs),
+        ))
     }
 
     /// The lines `rwv status` reports for the member: its alignment, when it

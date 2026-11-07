@@ -253,3 +253,40 @@ fn a_verb_named_for_its_own_forms_is_in_the_cli() {
         "no state names a verb; the walk holds over nothing"
     );
 }
+
+/// A line judged for an activation sends the operator to the spelling that
+/// aligns before it activates, wherever the table would print `rwv update`:
+/// as the choice, and as the step after keeping work on a branch. A run in
+/// place keeps `rwv update`.
+#[test]
+fn an_alignment_line_judged_for_activation_never_prints_rwv_update() {
+    let states = [
+        State::AlignmentOnBranch,
+        State::AlignmentOnBranchWithStrayCommits,
+        State::AlignmentDetachedElsewhere,
+        State::AlignmentDetachedUnpushed,
+    ];
+    let mut aligning = 0usize;
+    for state in states {
+        let activation = printed_rwv_lines(state, Some("activate"));
+        let in_place = printed_rwv_lines(state, None);
+        assert!(
+            !activation.iter().any(|line| line == "rwv update"),
+            "{state:?} judged for activation prints rwv update: {activation:?}"
+        );
+        for line in activation.iter().filter(|line| line.contains("--update")) {
+            aligning += 1;
+            assert_eq!(line, "rwv activate proj --update", "{state:?}");
+            assert_eq!(parse_failure(line), None, "{state:?}");
+        }
+        assert!(
+            in_place.iter().all(|line| !line.contains("--update")),
+            "{state:?} judged in place prints the activation spelling: {in_place:?}"
+        );
+    }
+    assert!(
+        aligning >= states.len(),
+        "only {aligning} activation spellings were read over {} states; the walk reaches nothing",
+        states.len()
+    );
+}

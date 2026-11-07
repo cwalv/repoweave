@@ -338,7 +338,7 @@ to do, read only by the invariants:
   for a verb whose distinct status is the thing under test), and any number of
   claims about the state afterward: marks reachable from a ref, a pin
   containing a mark, a workweave gone, the step's output holding a text, a
-  checkout on a branch, a machine's entry on the records branch (`RecordIs`), and `LocalStateUnchanged`, which compares every
+  checkout on a branch, the project a weave root presents (`Presents`), a machine's entry on the records branch (`RecordIs`), and `LocalStateUnchanged`, which compares every
   checkout at a place — HEAD, branches, uncommitted changes and the project's
   lock — before and after the step.
 - Its remote writes say which refs of which remotes the step may change, and

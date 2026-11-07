@@ -160,8 +160,10 @@ A member on its branch behind the pin is fast-forwarded to it; one ahead of it s
 | `--role` / `--repo` | Selector filters (see [Selector grammar](#selector-grammar)). A run with a filter does not record the branch the workspace aligned for |
 | `-j N` | Parallel per-repo workers (default: `min(nproc, 8)`; `-j 1` for serial execution) |
 | `--json` | Structured output: one JSON envelope, whatever `-j` is |
-| `--project <name>` | Update this project instead of the active one (does not change `.rwv-active`) |
+| `--project <name>` | Update this project instead of the active one (does not change `.rwv-active`). A project the weave root does not present moves none of the members it shares with the one it does, as set out below |
 | `--no-materialize` | Skip the install hooks of the activation an update performs when it selects the weave's only project; `.rwv-active` and the weave-root links are still written. With a project already active, an update activates nothing and the flag has no effect |
+
+A member the project and the project the weave root presents both list has one checkout. Given `--project` for a project the weave root does not present, `update` refuses the run, before anything moves, over a shared member that is not aligned for that project: as `alignment`, offering `rwv activate <project> --update`, or as `edits` when the member holds uncommitted changes or an operation in progress. Members only the named project lists align as usual, and so does a shared member already aligned for it. `rwv pull --project` and `rwv update --remote --project` refuse the same way.
 
 `--json` emits the envelope `{ "$schema": "...", "outcomes": [...], "judged": [...] }` once every repo is done, with `outcomes` sorted by repo path, whatever `-j` is; each outcome carries `moved_from` and `facts` where they apply, and `judged` carries the members left where they were. See [JSON envelope convention](#--json-envelope-convention) and `rwv explain update`.
 
@@ -183,7 +185,7 @@ The advance is a **fast-forward of the branch the checkout is on**, not a checko
 | `--commit` | Commit `rwv.lock` together with the integration files regenerated against the new tips, and with `rwv.toml` when it has uncommitted changes. Other uncommitted changes in the project repo refuse (`edits`) before anything moves. Needs `--remote` |
 | `-m` / `--message <msg>` | The commit message for `--commit`, in place of the generated summary. Without `--commit` it is a usage error (exit 2) |
 | `--no-materialize` | Skip the install hooks of the regeneration `update --remote` runs at primary; `rwv materialize` runs them later. Inside a workweave `update --remote` runs no hooks either way |
-| `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
+| `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`). A selected member it shares with the active project that is not aligned for it refuses the run, as for [`rwv update`](#rwv-update-) |
 
 A repo that fails to advance fails the run: the repos that did advance stay where they moved, the lock is not written, and the run exits 1 with `partial-run-aborted`.
 
@@ -212,7 +214,10 @@ Switch the active project in the primary weave. `rwv activate <project>` is proj
 
 | Flag | Effect |
 |---|---|
+| `--update` | Align the project's members as `rwv update` does, then activate. A shared member with uncommitted changes still refuses, before anything moves; one the alignment leaves where it is refuses the activation afterward |
 | `--no-materialize` | Skip integration install hooks for a fast context-switch; `rwv materialize` runs them later |
+
+`rwv activate` moves no checkout. A member the project and the project the weave root presents both list has one checkout, and the incoming project's install hooks run against it, so `rwv activate` refuses, before changing anything, while such a member holds uncommitted changes or an operation in progress (`edits`) or is not where the incoming project's checked-out branch puts it (`alignment`). The `edits` refusal offers committing the changes or setting them aside; the `alignment` refusal offers `rwv activate <project> --update`. A project already presented is never refused over its own members.
 
 An install hook whose tool is not on `PATH` does not fail the verb: it prints ``[warning] <integration>: <tool> is not on PATH, so this integration's install hook did not run; install <tool>, then run `rwv materialize` `` (finding kind `tool-missing`) and the other hooks still run. This holds for every verb that runs install hooks. Every line a verb prints for a side effect it skipped is listed under [Skipped side effects](#skipped-side-effects). A hook whose tool runs and fails is an error: the verb exits 1, and `activate` leaves `.rwv-active` unwritten.
 

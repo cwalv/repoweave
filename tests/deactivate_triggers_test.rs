@@ -224,6 +224,7 @@ fn switching_projects_leaves_the_outgoing_project_intact() {
     )
     .unwrap();
     git_init_with_commit(&ws.join("projects/other"));
+    common::record_trunk(&ws.join("projects/other"));
 
     let outgoing = ws.join("projects/app");
     let before = std::fs::read_to_string(outgoing.join("Cargo.toml")).unwrap();

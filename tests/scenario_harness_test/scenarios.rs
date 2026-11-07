@@ -1009,3 +1009,162 @@ pub fn status_operator_branches() -> Scenario {
         ],
     )
 }
+
+pub fn activate_no_checkout() -> Scenario {
+    let refused_with = |step: Step| {
+        step.expect(Exit::Fails)
+            .claim(Claim::LocalStateUnchanged(a()))
+            .claim(Claim::Presents {
+                at: a(),
+                project: Repo::Proj,
+            })
+    };
+    Scenario {
+        name: "activate moves no checkout",
+        seed: Seed::default().second_project(SecondProject { branch: "dev" }),
+        steps: vec![
+            Step::clone_project(Machine::A, Repo::Proj2).expect(Exit::Succeeds),
+            refused_with(Step::rwv(&a(), &["activate", "proj2"]))
+                .claim(Claim::OutputContains(
+                    "local/remotes/lib: alignment on branch (main)",
+                ))
+                .claim(Claim::OutputContains("rwv activate proj2 --update"))
+                .claim(Claim::OutputLacks("rwv update"))
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::Lib,
+                    branch: "main",
+                }),
+            Step::hand_edit(&a(), Repo::Lib, "README", "lib\n", "lib edited\n"),
+            refused_with(Step::rwv(&a(), &["activate", "proj2"]))
+                .claim(Claim::OutputContains("local/remotes/lib: edits dirty"))
+                .claim(Claim::OutputContains("README"))
+                .claim(Claim::OutputContains("stash push"))
+                .claim(Claim::OutputLacks("--update"))
+                .claim(Claim::OutputLacks("alignment")),
+            refused_with(Step::rwv(&a(), &["activate", "proj2", "--update"]))
+                .claim(Claim::OutputContains("local/remotes/lib: edits dirty"))
+                .claim(Claim::OutputLacks("alignment")),
+            Step::git(&a(), Repo::Lib, &["checkout", "--", "README"]),
+            Step::rwv(&a(), &["activate", "proj2", "--update"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::Lib,
+                    branch: "dev",
+                })
+                .claim(Claim::Presents {
+                    at: a(),
+                    project: Repo::Proj2,
+                }),
+        ],
+    }
+}
+
+pub fn activate_leaves_what_the_outgoing_project_holds() -> Scenario {
+    let hand_declared = |from: &str, to: &str| {
+        Step::hand_edit(
+            &a(),
+            Repo::Proj,
+            "rwv.toml",
+            &declared_branch_text(Repo::Lib, from),
+            &declared_branch_text(Repo::Lib, to),
+        )
+    };
+    Scenario {
+        name: "activate --update moves a member the outgoing project is aligned on",
+        seed: Seed::default().second_project(SecondProject { branch: "dev" }),
+        steps: vec![
+            Step::clone_project(Machine::A, Repo::Proj2).expect(Exit::Succeeds),
+            Step::git(&a(), Repo::Lib, &["switch", "-c", "wip"]),
+            Step::commit(&a(), Repo::Lib, "wip-one"),
+            hand_declared("main", "wip"),
+            Step::rwv(&a(), &["update"]).expect(Exit::Succeeds),
+            hand_declared("wip", "main"),
+            Step::rwv(&a(), &["activate", "proj2"])
+                .expect(Exit::Fails)
+                .claim(Claim::LocalStateUnchanged(a()))
+                .claim(Claim::OutputContains(
+                    "local/remotes/lib: alignment on branch with stray commits (wip)",
+                ))
+                .claim(Claim::OutputContains("wip-one"))
+                .claim(Claim::OutputContains("rwv activate proj2 --update")),
+            Step::rwv(&a(), &["activate", "proj2", "--update"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::Lib,
+                    branch: "dev",
+                })
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::Lib,
+                    rev: "wip",
+                    mark: "wip-one",
+                })
+                .claim(Claim::Presents {
+                    at: a(),
+                    project: Repo::Proj2,
+                }),
+        ],
+    }
+}
+
+pub fn activate_over_aligned_shared_member() -> Scenario {
+    Scenario {
+        name: "activate over a shared member aligned for the project",
+        seed: Seed::default().second_project(SecondProject { branch: "main" }),
+        steps: vec![
+            Step::clone_project(Machine::A, Repo::Proj2).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["update", "--project", "proj2"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv(&a(), &["activate", "proj2"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::LocalStateUnchanged(a()))
+                .claim(Claim::Presents {
+                    at: a(),
+                    project: Repo::Proj2,
+                }),
+        ],
+    }
+}
+
+pub fn inactive_project_moves_no_shared_checkout() -> Scenario {
+    let refused = |args: &[&str]| {
+        Step::rwv(&a(), args)
+            .expect(Exit::Fails)
+            .claim(Claim::LocalStateUnchanged(a()))
+            .claim(Claim::Presents {
+                at: a(),
+                project: Repo::Proj,
+            })
+    };
+    Scenario {
+        name: "a verb for an inactive project moves no shared checkout",
+        seed: Seed::default().second_project(SecondProject { branch: "dev" }),
+        steps: vec![
+            Step::clone_project(Machine::A, Repo::Proj2).expect(Exit::Succeeds),
+            refused(&["update", "--project", "proj2"])
+                .claim(Claim::OutputContains(
+                    "local/remotes/lib: alignment on branch (main)",
+                ))
+                .claim(Claim::OutputContains("rwv activate proj2 --update"))
+                .claim(Claim::OutputLacks("\n    rwv update\n")),
+            refused(&["update", "--remote", "--project", "proj2"])
+                .claim(Claim::OutputContains(
+                    "local/remotes/lib: alignment on branch (main)",
+                ))
+                .claim(Claim::OutputContains("rwv activate proj2 --update")),
+            refused(&["pull", "--project", "proj2"])
+                .claim(Claim::OutputContains(
+                    "local/remotes/lib: alignment on branch (main)",
+                ))
+                .claim(Claim::OutputContains("rwv activate proj2 --update")),
+            Step::hand_edit(&a(), Repo::Lib, "README", "lib\n", "lib edited\n"),
+            refused(&["update", "--project", "proj2"])
+                .claim(Claim::OutputContains("local/remotes/lib: edits dirty"))
+                .claim(Claim::OutputLacks("--update")),
+        ],
+    }
+}

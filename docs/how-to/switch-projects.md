@@ -13,6 +13,36 @@ rwv activate mobile-app
 3. Runs integration install hooks (`npm install`, `uv sync`, `cargo fetch`, etc.) so shared tool state (`node_modules/`, `.venv/`, `target/`) matches the newly active project.
 4. Updates `.rwv-active` to `mobile-app`.
 
+## When projects share a member
+
+A member two projects list has one checkout. `rwv activate` leaves it where it is, and the incoming project's install hooks run against it, so the switch refuses while that member holds uncommitted changes or sits where the incoming project's branch does not put it. For a member on another branch:
+
+```text
+rwv activate: github/acme/lib: alignment on branch (main)
+choices:
+  align members for the checked-out branch
+    rwv activate mobile-app --update
+```
+
+`--update` aligns `mobile-app`'s members as `rwv update` does, moving the ones whose commits stay on some branch, and then activates:
+
+```bash
+rwv activate mobile-app --update
+```
+
+For a member with uncommitted changes the refusal offers committing them or setting them aside, and `--update` refuses it too, before anything moves:
+
+```text
+rwv activate: github/acme/lib: edits dirty
+    src/lib.rs
+choices:
+  commit your edits, or set them aside
+    git -C /work/weave/github/acme/lib commit
+    git -C /work/weave/github/acme/lib stash push
+```
+
+A member `--update` leaves in place, because it holds commits no other branch reaches, refuses the switch after the others have moved; the refusal lists the commits and the choices that keep them.
+
 To switch the active project and weave-root symlinks without running install hooks:
 
 ```bash
@@ -36,6 +66,8 @@ To run a single command against another project without changing `.rwv-active`:
 ```bash
 rwv lock --project mobile-app
 ```
+
+`rwv update`, `rwv pull` and `rwv update --remote` given `--project` for a project the weave root does not present move no member the two projects share: one that is not aligned for that project refuses the run and names `rwv activate <name> --update`.
 
 An authoring verb (`member add`, `member remove`, `member set-role`, `member set-recurse-submodules`, `update --remote`) given `--project` for a project the weave root does not present regenerates that project's files and stops there, saying so:
 

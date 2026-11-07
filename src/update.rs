@@ -200,6 +200,17 @@ pub(crate) struct UpdateRun {
     pub(crate) tail: anyhow::Result<()>,
 }
 
+/// What a run for a project that the weave root does not present does about the
+/// members that project shares with the one it does.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SharedMembers {
+    /// A member the run would move refuses the run: the project has no claim on
+    /// a checkout the presented project sits on.
+    Refuse,
+    /// The run aligns them: the project is about to be presented.
+    Align,
+}
+
 /// [`run_update`] without the printing of its envelope.
 pub(crate) fn update_members(
     ctx: &WorkspaceContext,
@@ -207,6 +218,42 @@ pub(crate) fn update_members(
     jobs: usize,
     output: OutputMode,
     activation: ActivateOptions,
+) -> anyhow::Result<UpdateRun> {
+    update_members_for(
+        ctx,
+        selection,
+        jobs,
+        output,
+        activation,
+        SharedMembers::Refuse,
+    )
+}
+
+/// The alignment half of `rwv activate --update`: every member of the project
+/// `ctx` is bound to, cloned where missing and aligned as `rwv update` aligns
+/// them, the ones it shares with the presented project included.
+pub(crate) fn align_for_activation(
+    ctx: &WorkspaceContext,
+    activation: ActivateOptions,
+) -> anyhow::Result<()> {
+    update_members_for(
+        ctx,
+        &MemberSelection::new(crate::selector::RepoFilter::parse(&[], &[])?, false),
+        crate::parallel::resolve_jobs(None),
+        OutputMode::Text,
+        activation,
+        SharedMembers::Align,
+    )?
+    .tail
+}
+
+fn update_members_for(
+    ctx: &WorkspaceContext,
+    selection: &MemberSelection,
+    jobs: usize,
+    output: OutputMode,
+    activation: ActivateOptions,
+    shared: SharedMembers,
 ) -> anyhow::Result<UpdateRun> {
     let invocation = ctx;
     let sole = sole_unselected_project(invocation);
@@ -226,6 +273,25 @@ pub(crate) fn update_members(
         crate::alignment::Accounting::scan(ctx.primary_path()),
     )?;
     refuse_detached_project(&aligner, &name)?;
+    let aligner = match (&ctx.checkout, shared) {
+        (Checkout::Primary { .. }, SharedMembers::Refuse) => {
+            crate::shared_members::refuse_moving(ctx.primary_path(), &name, &|path, role| {
+                selection.covers(path, role)
+            })?;
+            aligner
+        }
+        (Checkout::Primary { .. }, SharedMembers::Align) => {
+            match crate::shared_members::outgoing(ctx.primary_path(), &name) {
+                Some(outgoing) => aligner.leaving(Aligner::open(
+                    ctx.primary_path(),
+                    &outgoing,
+                    crate::alignment::Accounting::default(),
+                )?),
+                None => aligner,
+            }
+        }
+        (Checkout::Workweave { .. }, _) => aligner,
+    };
     if let Some(why) = &aligner.corrupt {
         eprintln!(
             "rwv update: the workspace state of {} reads as absent: {why}",
@@ -357,7 +423,7 @@ pub(crate) fn update_members(
             .extend(crate::activate::activate_with_options(
                 project, invocation, activation,
             )?);
-    } else if checkout_changed {
+    } else if checkout_changed && shared == SharedMembers::Refuse {
         let presented = observe_root(ctx.active_path())
             .as_ref()
             .and_then(RootObservation::presented_project)

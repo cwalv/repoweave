@@ -617,16 +617,19 @@ pub fn run() -> anyhow::Result<()> {
         }
         Some(Commands::Activate {
             project,
+            update,
             no_materialize,
         }) => {
             // Unbound: activation replaces the pointer and never reads it, so
             // it is also the repair for one that does not hold a project name.
             let ctx = WorkspaceContext::resolve_unbound(origin_dir)?;
-            activate::activate_with_options(
-                &ProjectName::new(project)?,
-                &ctx,
-                activate::ActivateOptions { no_materialize },
-            )?;
+            let project = ProjectName::new(project)?;
+            let opts = activate::ActivateOptions { no_materialize };
+            if update {
+                activate::activate_aligning(&project, &ctx, opts)?;
+            } else {
+                activate::activate_with_options(&project, &ctx, opts)?;
+            }
         }
         Some(Commands::Materialize {
             regenerate_drifted,

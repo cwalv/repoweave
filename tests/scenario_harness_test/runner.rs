@@ -234,6 +234,11 @@ pub enum Claim {
     /// No branch, HEAD, working-tree change or `rwv.lock` of any checkout at
     /// `at` differs from what it was before the step.
     LocalStateUnchanged(Place),
+    /// The weave root at `at` presents `project`: its `.rwv-active` names it.
+    Presents {
+        at: Place,
+        project: Repo,
+    },
 }
 
 /// The outcome a step is expected to have. A step whose outcome the adopted
@@ -1144,6 +1149,20 @@ impl Run<'_> {
                     Err(format!(
                         "{} at {at:?} is on {head:?}, not {branch:?}",
                         repo.name()
+                    ))
+                }
+            }
+            Claim::Presents { at, project } => {
+                let pointer = sb.place_root(at).join(".rwv-active");
+                let named = std::fs::read_to_string(&pointer)
+                    .map_err(|e| format!("no pointer at {}: {e}", pointer.display()))?;
+                if named.trim() == project.name() {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "{at:?} presents {:?}, not {}",
+                        named.trim(),
+                        project.name()
                     ))
                 }
             }

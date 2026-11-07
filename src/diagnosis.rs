@@ -27,6 +27,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::vcs::{Vcs, VcsAction};
 
+/// The verb whose refusals name `rwv activate <project> --update` where other
+/// refusals name `rwv update`: a line judged for it is one that switching to
+/// the project would have to clear.
+pub const ACTIVATE: &str = "activate";
+
 /// What a refusal judged a repo on. Its token is the kind `rwv explain`
 /// serves; the order here is the order a repo's lines print in.
 #[derive(
@@ -87,7 +92,10 @@ impl Axis {
                 why: "Moving or removing a checkout over uncommitted changes would lose them or \
                       tangle them into a half-applied result, and recording its tip would \
                       describe something other than what is on disk. An operation in progress \
-                      holds a partial result that only the tool which started it can finish.",
+                      holds a partial result that only the tool which started it can finish. \
+                      A project that shares a checkout with the project the weave root \
+                      presents runs its install hooks against it on activation, and would build \
+                      against edits made under the other project.",
                 sits: "[Destructive operations](../explanation/destructive-operations.md); \
                        [Sync semantics](../explanation/joints/sync-semantics.md).",
             },
@@ -173,7 +181,10 @@ impl Axis {
                       builds something other than what the branch describes, and a lock \
                       written from it would record that. `rwv update` moves the members it \
                       can without leaving a commit on no ref, and reports the rest with the \
-                      commits that would be left.",
+                      commits that would be left. A member two projects list has one checkout: \
+                      activating a project leaves it where it is, so `rwv activate` refuses one \
+                      that is not aligned for the incoming project and names `--update`, which \
+                      aligns it first.",
                 sits: "[Clone topology](../explanation/joints/clone-topology.md); \
                        [Workweave lifecycle](../explanation/joints/workweave-lifecycle.md); \
                        [Shared refs and drift](../explanation/joints/shared-refs-drift.md).",
@@ -403,7 +414,11 @@ impl State {
                              `rwv.toml`; `rwv push`, for the project repo; `rwv member \
                              set-role <repo> reference`; `rwv member remove --delete` and \
                              replay's prune of a dropped member; `rwv workweave delete` and \
-                             `rwv sync-to --retire`, for every checkout in the workweave",
+                             `rwv sync-to --retire`, for every checkout in the workweave; \
+                             `rwv activate`, for a member the project shares with the project \
+                             the weave root presents; `rwv update` and `rwv pull`, for such a \
+                             member that is not aligned for a project the weave root does not \
+                             present",
                 offers: &[Form::C13],
                 verb_offers: &[("workweave delete", Form::C13WorkweaveDelete)],
             },
@@ -412,7 +427,8 @@ impl State {
                 name: "mid-operation",
                 means: "a rebase, merge, cherry-pick or bisect is in progress, named",
                 refused_by: "`rwv sync` and `rwv sync-to`, for a repo they would rebase or \
-                             fast-forward",
+                             fast-forward; `rwv activate`, `rwv update` and `rwv pull`, for a \
+                             shared member as `dirty` is",
                 offers: &[Form::C32],
                 verb_offers: &[],
             },
@@ -675,9 +691,11 @@ impl State {
                         moved off",
                 refused_by: "`rwv update` reports it for a checkout it did not move, one with \
                              uncommitted changes or an operation in progress; `rwv status` \
-                             reports it",
+                             reports it; `rwv activate` refuses it for a member shared with \
+                             the project the weave root presents, and `rwv update` and `rwv \
+                             pull` for one of a project the weave root does not present",
                 offers: &[Form::C6],
-                verb_offers: &[],
+                verb_offers: &[(ACTIVATE, Form::C6Activate)],
             },
             Self::AlignmentOnBranchWithStrayCommits => &StateRow {
                 axis: Axis::Alignment,
@@ -687,7 +705,8 @@ impl State {
                         holds the commits listed that no other branch, remote-tracking branch \
                         or backup reaches",
                 refused_by: "`rwv update` reports it and leaves the checkout; `rwv status` \
-                             reports it",
+                             reports it; `rwv activate`, `rwv update` and `rwv pull` refuse it \
+                             as `on branch` is refused",
                 offers: &[Form::C15, Form::C14Keep],
                 verb_offers: &[],
             },
@@ -697,9 +716,10 @@ impl State {
                 means: "the checkout is detached where it is not expected to be, and no commit \
                         reaches it that a branch lacks",
                 refused_by: "`rwv update` reports it for a checkout it did not move; `rwv \
-                             status` reports it",
+                             status` reports it; `rwv activate`, `rwv update` and `rwv pull` \
+                             refuse it as `on branch` is refused",
                 offers: &[Form::C6],
-                verb_offers: &[],
+                verb_offers: &[(ACTIVATE, Form::C6Activate)],
             },
             Self::AlignmentDetachedUnpushed => &StateRow {
                 axis: Axis::Alignment,
@@ -707,7 +727,8 @@ impl State {
                 means: "the checkout is detached and holds the commits listed, which no branch \
                         or remote-tracking branch reaches",
                 refused_by: "`rwv update` reports it and leaves the checkout; `rwv status` \
-                             reports it",
+                             reports it; `rwv activate`, `rwv update` and `rwv pull` refuse it \
+                             as `on branch` is refused",
                 offers: &[Form::C14Keep, Form::C15],
                 verb_offers: &[],
             },
@@ -1113,6 +1134,7 @@ pub enum Form {
     C5Lock,
     C5LockRepo,
     C6,
+    C6Activate,
     C7Push,
     C7PushRepo,
     C7PushBranch,
@@ -1177,7 +1199,7 @@ pub struct FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 62] = [
+    pub const ALL: [Form; 63] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C2Pull,
@@ -1187,6 +1209,7 @@ impl Form {
         Self::C5Lock,
         Self::C5LockRepo,
         Self::C6,
+        Self::C6Activate,
         Self::C7Push,
         Self::C7PushRepo,
         Self::C7PushBranch,
@@ -1299,6 +1322,12 @@ impl Form {
             Self::C6 => &FormRow {
                 choice: C::C6,
                 steps: &[Rwv("rwv update")],
+                at: W::Here,
+                shipped: true,
+            },
+            Self::C6Activate => &FormRow {
+                choice: C::C6,
+                steps: &[Rwv("rwv activate <project> --update")],
                 at: W::Here,
                 shipped: true,
             },
@@ -1667,14 +1696,24 @@ impl Form {
             .collect()
     }
 
-    fn lines(self, vcs: &dyn Vcs) -> Vec<String> {
+    /// The form a refusal judged for `verb` prints where the table lists
+    /// this one: the way back to alignment that a switch of project offers is
+    /// not the one a run in place offers.
+    fn for_verb(self, verb: Option<&str>) -> Self {
+        match (self, verb) {
+            (Self::C6, Some(ACTIVATE)) => Self::C6Activate,
+            _ => self,
+        }
+    }
+
+    fn lines(self, vcs: &dyn Vcs, verb: Option<&str>) -> Vec<String> {
         self.row()
             .steps
             .iter()
             .flat_map(|step| match step {
                 Step::Rwv(command) => vec![(*command).to_owned()],
                 Step::Vcs(action) => vec![vcs.hint(*action).to_owned()],
-                Step::Then(next) => next.lines(vcs),
+                Step::Then(next) => next.for_verb(verb).lines(vcs, verb),
                 Step::Rerun(flag) => vec![format!("rerun with {flag}")],
             })
             .collect()
@@ -1821,10 +1860,19 @@ impl Judging {
             .iter()
             .filter(|(verb, _)| Some(*verb) == self.verb)
             .map(|(_, form)| form);
-        let choices = row
+        let mut forms: Vec<Form> = Vec::new();
+        for form in row
             .offers
             .iter()
-            .chain(verb_offers)
+            .map(|form| form.for_verb(self.verb))
+            .chain(verb_offers.copied())
+        {
+            if !forms.contains(&form) {
+                forms.push(form);
+            }
+        }
+        let choices = forms
+            .iter()
             .filter(|form| form.printable())
             .filter(|form| match (self.scope, form.scope()) {
                 (Some(want), Some(have)) => want == have,
@@ -1834,7 +1882,7 @@ impl Judging {
                 choice: form.row().choice,
                 at: form.row().at.at(&self.places),
                 run: form
-                    .lines(vcs)
+                    .lines(vcs, self.verb)
                     .iter()
                     .map(|line| fill(line, &self.bindings))
                     .collect(),

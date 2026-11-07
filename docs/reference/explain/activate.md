@@ -12,6 +12,10 @@ they never move a version an existing lock file pins.
 weave root already presents, and reports the integration files it leaves the
 same way.
 
+`activate` **moves no checkout**. A member that the project and the project
+the weave root presents both list has one checkout, which activation leaves
+where it is; see [Members shared with the presented project](#members-shared-with-the-presented-project).
+
 `activate` **never authors integration content**: it surfaces the files
 already committed in the project directory and wires up the workspace for
 use. Regeneration belongs to the verbs that change what those files are
@@ -33,6 +37,28 @@ from inside a different project's `projects/<name>/`, naming `--project`.
 integration hooks have succeeded. If any integration hook fails (severity
 `Error`), `.rwv-active` is not written and the workspace is left in the
 previous state.
+
+### Members shared with the presented project
+
+A member listed by both the project being activated and the project the weave
+root presents has one checkout, and the incoming project's install hooks run
+against it. `activate` refuses, before it changes anything, while such a member
+
+- has uncommitted changes, or an operation in progress (`edits`). The
+  refusal offers committing the changes or setting them aside; it does not
+  offer `--update`, which also refuses a member with changes.
+- is not where the incoming project's checked-out branch puts it
+  (`alignment`). The refusal offers `rwv activate <project> --update`.
+
+`--update` aligns the incoming project's members as `rwv update` does — cloning
+the ones missing and moving the ones whose commits stay on some branch — and
+then activates. A shared member with uncommitted changes refuses first, before
+anything moves. A shared member the alignment leaves where it is, because it
+holds commits no other branch or backup reaches, refuses the activation
+afterward, with the commits listed and the choices that keep them.
+
+A project the weave root presents is not refused over its own members, and a
+weave root that presents no project has nothing shared.
 
 ### Integration file generation and ownership
 
@@ -103,11 +129,14 @@ weave-root symlinks. Switch projects only from the primary weave.
 ## Invocation
 
 ```
-rwv activate <project> [--no-materialize]
+rwv activate <project> [--update] [--no-materialize]
 ```
 
 - `<project>` — project name to activate. Must have a corresponding directory
   at `projects/<project>/` with a valid `rwv.toml`.
+- `--update` — align the project's members as `rwv update` does before
+  activating, instead of refusing over a shared member that is not aligned for
+  the project. A shared member with uncommitted changes still refuses.
 - `--no-materialize` — skip integration install hooks (`npm install`, `uv sync`,
   etc.) for a fast context-switch. Useful when you are only switching to a
   different project's editors and tools, and the install state is already
@@ -164,6 +193,13 @@ Activate without running install hooks (fast switch):
 rwv activate web-app --no-materialize
 ```
 
+Activate a project that shares a member with the active one, aligning the
+member first:
+
+```
+rwv activate web-app --update
+```
+
 Check what is currently active:
 
 ```
@@ -183,6 +219,10 @@ cat .rwv-active
   workweave, use `rwv doctor --fix` instead — it re-runs the surfacing
   primitive scoped to the workweave directory without re-selecting the
   project.
+- *edits dirty* or *alignment on branch* for a member the project shares with
+  the active project — the refusal described under
+  [Members shared with the presented project](#members-shared-with-the-presented-project).
+  Commit or set aside the changes, or rerun with `--update`.
 - *project directory not found* — `projects/<project>/` does not exist or
   has no valid `rwv.toml`. Verify the project name.
 - *integration activate-hook error* — an install command (`npm install`,

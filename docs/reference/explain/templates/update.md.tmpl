@@ -34,6 +34,14 @@ exactly one project, `update` updates that project and then activates it, as
 `rwv activate` would; with zero or several projects it refuses
 (`no-active-project`) and names `--project`.
 
+A member the project and the project the weave root presents both list has one
+checkout. `update --project <name>` for a project the weave root does not
+present moves none of those: one that is not aligned for `<name>` refuses the
+run before anything moves — as `alignment` with the choice `rwv activate <name>
+--update`, or as `edits` when it holds uncommitted changes — and members only
+`<name>` lists align as usual. The same holds for `rwv pull --project <name>`
+and `rwv update --remote --project <name>`.
+
 Run in a workweave, `update` treats the canonical clones in the primary as the
 store the workweave's worktrees share, not as checkouts to align. Where a
 canonical clone lacks a revision the workweave's `rwv.lock` pins, it fetches
@@ -199,7 +207,8 @@ rwv update --remote [--dirty] [--commit [-m <MSG>]]
   manifest. Repeat for union. Bare strings match exactly; `re:<pat>` is regex;
   `glob:<pat>` is glob.
 - `--project <name>` — operate on this project instead of the active project.
-  Does not change `.rwv-active`.
+  Does not change `.rwv-active`. A member `<name>` shares with the active
+  project that is not aligned for `<name>` refuses the run.
 - `--json` emits machine-readable output (see Output below).
 - `-j N` runs per-repo work in parallel. Default: `min(nproc, 8)`.
 - `--no-materialize` — skip the integration install hooks (`npm install`,

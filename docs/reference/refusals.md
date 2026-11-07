@@ -68,14 +68,14 @@ The others follow.
 
 **Condition.** A checkout the verb must move, rewrite, record or remove holds uncommitted changes, or is stopped in the middle of a VCS operation.
 
-**Why.** Moving or removing a checkout over uncommitted changes would lose them or tangle them into a half-applied result, and recording its tip would describe something other than what is on disk. An operation in progress holds a partial result that only the tool which started it can finish.
+**Why.** Moving or removing a checkout over uncommitted changes would lose them or tangle them into a half-applied result, and recording its tip would describe something other than what is on disk. An operation in progress holds a partial result that only the tool which started it can finish. A project that shares a checkout with the project the weave root presents runs its install hooks against it on activation, and would build against edits made under the other project.
 
 **States.** A verb that judges a repo in one of these prints `rwv <verb>: <repo>: edits <state>`, with what the state lists beneath it, and refuses unless its row below says it completes.
 
 | State | Means | Refused by |
 |---|---|---|
-| `dirty` | the checkout has uncommitted changes, listed by file | `rwv sync` and `rwv sync-to`, for a repo they would rebase or fast-forward (tracked changes only); `rwv lock` without `--dirty`, for a member (tracked changes only); `rwv lock --commit` and `rwv update --commit`, for project-repo changes outside `rwv.lock` and `rwv.toml`; `rwv push`, for the project repo; `rwv member set-role <repo> reference`; `rwv member remove --delete` and replay's prune of a dropped member; `rwv workweave delete` and `rwv sync-to --retire`, for every checkout in the workweave |
-| `mid-operation` | a rebase, merge, cherry-pick or bisect is in progress, named | `rwv sync` and `rwv sync-to`, for a repo they would rebase or fast-forward |
+| `dirty` | the checkout has uncommitted changes, listed by file | `rwv sync` and `rwv sync-to`, for a repo they would rebase or fast-forward (tracked changes only); `rwv lock` without `--dirty`, for a member (tracked changes only); `rwv lock --commit` and `rwv update --commit`, for project-repo changes outside `rwv.lock` and `rwv.toml`; `rwv push`, for the project repo; `rwv member set-role <repo> reference`; `rwv member remove --delete` and replay's prune of a dropped member; `rwv workweave delete` and `rwv sync-to --retire`, for every checkout in the workweave; `rwv activate`, for a member the project shares with the project the weave root presents; `rwv update` and `rwv pull`, for such a member that is not aligned for a project the weave root does not present |
+| `mid-operation` | a rebase, merge, cherry-pick or bisect is in progress, named | `rwv sync` and `rwv sync-to`, for a repo they would rebase or fast-forward; `rwv activate`, `rwv update` and `rwv pull`, for a shared member as `dirty` is |
 | `rwv.toml or rwv.lock uncommitted` | the project repo's only uncommitted changes are to `rwv.toml` or `rwv.lock`, or either is not yet tracked | `rwv push` |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.

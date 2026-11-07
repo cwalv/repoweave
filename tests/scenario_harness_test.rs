@@ -227,6 +227,28 @@ fn status_lists_each_operator_branch_nothing_accounts_for_and_no_other() {
     runner::run(scenarios::status_operator_branches()).assert_fully_decided_green();
 }
 
+#[test]
+fn activate_moves_no_checkout_and_update_is_the_spelling_that_does() {
+    runner::run(scenarios::activate_no_checkout()).assert_fully_decided_green();
+}
+
+#[test]
+fn activate_update_moves_a_member_the_outgoing_project_is_aligned_on() {
+    runner::run(scenarios::activate_leaves_what_the_outgoing_project_holds())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn activate_over_a_shared_member_aligned_for_the_project_moves_nothing() {
+    runner::run(scenarios::activate_over_aligned_shared_member()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_verb_for_an_inactive_project_refuses_instead_of_moving_a_shared_checkout() {
+    runner::run(scenarios::inactive_project_moves_no_shared_checkout())
+        .assert_fully_decided_green();
+}
+
 macro_rules! pending_on {
     ($($name:ident => $verb:ident),* $(,)?) => {
         $(

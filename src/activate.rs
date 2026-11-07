@@ -618,6 +618,39 @@ impl ActivateOptions {
 
 /// Run activate with options. Public so the CLI can pass `--no-materialize`.
 ///
+/// Moves no checkout: a member the project shares with the project the root
+/// presents that holds edits, or is not aligned for the project, refuses the
+/// activation, because the project's install hooks would build against it.
+pub fn activate_with_options(
+    project: &ProjectName,
+    ctx: &WorkspaceContext,
+    opts: ActivateOptions,
+) -> anyhow::Result<Vec<SkippedEffect>> {
+    let primary = require_primary(ctx)?;
+    crate::shared_members::refuse_for_activation(ctx.primary_path(), project)?;
+    present(project, ctx, primary, opts)
+}
+
+/// Activate `project` after aligning its members as `rwv update` does, the
+/// members it shares with the project the root presents included. The ones
+/// holding edits refuse before anything moves, and one the alignment leaves
+/// unaligned refuses the activation after.
+pub fn activate_aligning(
+    project: &ProjectName,
+    ctx: &WorkspaceContext,
+    opts: ActivateOptions,
+) -> anyhow::Result<Vec<SkippedEffect>> {
+    let primary = require_primary(ctx)?;
+    let root = ctx.primary_path();
+    crate::shared_members::refuse_edits(root, project)?;
+    crate::update::align_for_activation(
+        &WorkspaceContext::resolve_for_project(root, project)?,
+        opts,
+    )?;
+    crate::shared_members::refuse_for_activation(root, project)?;
+    present(project, ctx, primary, opts)
+}
+
 /// The witness lookup is the workweave guard. Activate has no meaning inside
 /// a workweave — the project is fixed at creation time (`rwv workweave
 /// create <name>`), so there is no switch to make, and silently
@@ -625,11 +658,7 @@ impl ActivateOptions {
 /// mutated primary's `.rwv-active` and weave-root symlinks as a side effect
 /// of a command run from an unrelated workweave. A workweave has no witness,
 /// so the two questions are one lookup.
-pub fn activate_with_options(
-    project: &ProjectName,
-    ctx: &WorkspaceContext,
-    opts: ActivateOptions,
-) -> anyhow::Result<Vec<SkippedEffect>> {
+fn require_primary(ctx: &WorkspaceContext) -> anyhow::Result<&crate::workspace::PrimaryIdentity> {
     // Named for the act, not for a verb: `init` and `fetch` activate in-process
     // too, and a refusal naming `activate` would name a verb its reader did not
     // run.
@@ -640,16 +669,23 @@ pub fn activate_with_options(
          take one of the exits it names",
     )?;
 
-    let primary = match ctx.primary_identity() {
-        Some(identity) => identity,
+    match ctx.primary_identity() {
+        Some(identity) => Ok(identity),
         None => crate::refuse!(
             RefusalKind::WrongCheckoutKind,
             "rwv activate has no effect in a workweave (project is fixed at creation). \
              cd to primary ({}) and rerun.",
             ctx.primary_path().display()
         ),
-    };
+    }
+}
 
+fn present(
+    project: &ProjectName,
+    ctx: &WorkspaceContext,
+    primary: &crate::workspace::PrimaryIdentity,
+    opts: ActivateOptions,
+) -> anyhow::Result<Vec<SkippedEffect>> {
     let skipped = activate_at(
         ctx.primary_path(),
         project,

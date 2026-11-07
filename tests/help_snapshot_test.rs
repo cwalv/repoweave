@@ -29,7 +29,7 @@ A cross-repo workspace manager
 Usage: rwv [OPTIONS] [COMMAND]
 
 Commands:
-  activate     Activate a project (switch `.rwv-active`, surface weave-root symlinks, then run integration install hooks like `npm install` / `uv sync` / `cargo fetch`)
+  activate     Activate a project (switch `.rwv-active`, surface weave-root symlinks, then run integration install hooks like `npm install` / `uv sync` / `cargo fetch`). Moves no checkout: a member the project shares with the active project that holds edits or is not aligned for it refuses the activation; `--update` aligns first
   materialize  Settle drift, clean up disabled integrations, repair missing weave-root symlinks, and run integration install hooks for the project this checkout already presents, without selecting anything. Hooks materialize; they never move a pin
   prime        Print structured workspace context for agent system prompts
   resolve      Print weave root path

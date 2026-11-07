@@ -95,10 +95,13 @@ pub fn noun_spellings_of(verb: &str) -> Vec<String> {
 #[derive(Subcommand)]
 pub enum Commands {
     // ── Workspace context ─────────────────────────────────────────────────────
-    /// Activate a project (switch `.rwv-active`, surface weave-root symlinks, then run integration install hooks like `npm install` / `uv sync` / `cargo fetch`)
+    /// Activate a project (switch `.rwv-active`, surface weave-root symlinks, then run integration install hooks like `npm install` / `uv sync` / `cargo fetch`). Moves no checkout: a member the project shares with the active project that holds edits or is not aligned for it refuses the activation; `--update` aligns first
     Activate {
         /// Project name
         project: String,
+        /// Align the project's members as `rwv update` does before activating, instead of refusing over a shared member that is not aligned for it. A shared member holding edits still refuses
+        #[arg(long)]
+        update: bool,
         /// Skip integration install hooks (e.g., `npm install`, `uv sync`) for fast context-switch; `rwv materialize` runs them later
         #[arg(long)]
         no_materialize: bool,
