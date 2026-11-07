@@ -74,10 +74,10 @@ fn stub_bin_dir() -> tempfile::TempDir {
     dir
 }
 
-/// A fresh git repo with the three artifact directories the drift stage
-/// diffs, each holding one committed placeholder — isolated from the real
-/// repoweave checkout, so a test that induces drift never touches a tracked
-/// file this suite did not create.
+/// A fresh git repo with the artifact directories the drift stage diffs,
+/// each holding one committed placeholder, and the generated refusals page —
+/// isolated from the real repoweave checkout, so a test that induces drift
+/// never touches a tracked file this suite did not create.
 fn fixture_repo() -> tempfile::TempDir {
     let dir = common::tempdir().expect("tempdir");
     let root = dir.path();
@@ -89,6 +89,7 @@ fn fixture_repo() -> tempfile::TempDir {
         std::fs::create_dir_all(root.join(sub)).unwrap();
         std::fs::write(root.join(sub).join("placeholder.txt"), "generated\n").unwrap();
     }
+    std::fs::write(root.join("docs/reference/refusals.md"), "generated\n").unwrap();
     common::git_in(root, &["init", "-q", "--initial-branch=main"]);
     common::git_in(root, &["config", "user.email", "test@test.com"]);
     common::git_in(root, &["config", "user.name", "Test"]);
@@ -411,8 +412,32 @@ fn drift_stage_exits_non_zero_and_names_the_remedy_on_real_drift() {
         stdout_of(&out)
     );
     assert!(stderr_of(&out).contains(
-        "explain artifacts changed by regeneration — commit them (this check compares the regenerated docs/reference/explain, docs/reference/schemas, and docs/reference/prime against the index; it does not inspect files the generator does not write)"
+        "explain artifacts changed by regeneration — commit them (this check compares the regenerated docs/reference/explain, docs/reference/schemas, docs/reference/prime and docs/reference/refusals.md against the index; it does not inspect files the generator does not write)"
     ));
+}
+
+/// The refusals page is generated too, so a regeneration that changes it is
+/// drift the stage reports.
+#[test]
+fn drift_stage_reports_a_regenerated_refusals_page() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let drift_target = fixture.path().join("docs/reference/refusals.md");
+    let out = run_ci_local(
+        fixture.path(),
+        stub.path(),
+        &["--stages=drift"],
+        &[(
+            "CI_LOCAL_TEST_DRIFT_FILE",
+            drift_target.to_str().expect("utf8 fixture path"),
+        )],
+    );
+    assert!(
+        !out.status.success(),
+        "a regenerated refusals page should fail the stage, got: {}",
+        stdout_of(&out)
+    );
+    assert!(stderr_of(&out).contains("explain artifacts changed by regeneration"));
 }
 
 #[test]

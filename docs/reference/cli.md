@@ -677,10 +677,10 @@ The `sync` and `sync-to` envelopes also carry `complete`: `true` when the op ran
 A refusal that judged repo states carries them as records, one per repo and axis:
 
 ```json
-{ "repo": "github/acme/lib", "axis": "edits", "state": "dirty", "subject": "…", "listed": ["src/lib.rs"], "facts": [], "choices": [ { "id": "C13", "phrase": "commit your edits, or set them aside", "where": null, "run": ["git -C /work/github/acme/lib commit", "git -C /work/github/acme/lib stash push"] } ] }
+{ "path": "github/acme/lib", "axis": "edits", "state": "dirty", "listed": ["src/lib.rs"], "facts": [], "choices": [ { "id": "C13", "phrase": "commit your edits, or set them aside", "where": null, "run": ["git -C /work/github/acme/lib commit", "git -C /work/github/acme/lib stash push"] } ] }
 ```
 
-- `axis` is the kind `rwv explain <axis>` serves; `state` is named as that page names it, and `choices` are the ones it lists for the state, in its order, with the commands spelled out under `run`. `where` is the directory a choice runs in when that is not where the verb ran, else `null`; `subject` is absent when the state names nothing.
+- `axis` is the kind `rwv explain <axis>` serves; `state` is named as that page names it, and `choices` are the ones it lists for the state, in its order, with the commands spelled out under `run`. `where` is the directory a choice runs in when that is not where the verb ran, else `null`. `path` is the repo's manifest path, `projects/<name>` for the project repo; `workspace`, present only when the repo was judged in another workspace than the verb's (a landing's target), is that workspace; `subject`, absent when the state names nothing, is what it names (the operation in progress, the name taken).
 - `rwv push --json` and `rwv sync`'s and `rwv sync-to`'s envelopes carry them in `refused`, empty when nothing was refused on a repo's state; a `prune-refused` member record carries the checkout's in its own `refused`.
 - A verb that refused on repo states before printing anything prints the refusal envelope instead, `{ "$schema": "<url>", "refused": [...] }`, schema at `docs/reference/schemas/refusal.json`.
 

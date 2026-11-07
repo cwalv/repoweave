@@ -494,9 +494,9 @@ fn headline_and_causes(err: &anyhow::Error) -> String {
 
 /// [`render`], to stderr; and, for a `--json` invocation refused on the
 /// repos it judged before it printed anything, those repos to stdout.
-pub fn report(err: &anyhow::Error, verb: &str, json: bool) {
+pub fn report(err: &anyhow::Error, verb: &str, output: crate::parallel::OutputMode) {
     if let Some(report) = crate::diagnosis::report_of(err) {
-        if json && !crate::stdout::written() {
+        if output.is_json() && !crate::stdout::written() {
             let envelope = crate::diagnosis::RefusalJsonOutput {
                 schema: crate::diagnosis::REFUSAL_SCHEMA_URL.to_owned(),
                 refused: report.output(),

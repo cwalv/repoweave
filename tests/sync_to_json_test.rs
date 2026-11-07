@@ -476,7 +476,7 @@ fn sync_to_json_retired_false_when_the_retire_check_refuses() {
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
 
     assert!(
-        stderr.contains("--retire: workweave has uncommitted changes"),
+        stderr.contains("--retire: the landing is done and the workweave was not deleted"),
         "the fixture must reach retire and be refused there; got stderr:\n{stderr}"
     );
     // The landing itself happened, so the envelope below describes an op that

@@ -391,20 +391,20 @@ pub fn run_and_report() -> std::process::ExitCode {
     match run() {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(err) => {
-            let (verb, json) = invocation();
-            crate::refusal::report(&err, &verb, json);
+            let (verb, output) = invocation();
+            crate::refusal::report(&err, &verb, output);
             std::process::ExitCode::FAILURE
         }
     }
 }
 
 /// The subcommand path this process was invoked with — `workweave delete` for
-/// `rwv workweave <project> delete <name>` — and whether it asked for `--json`,
+/// `rwv workweave <project> delete <name>` — and the output mode it asked for,
 /// read again from argv: `run` takes none, and a parse it already passed
 /// passes here the same way.
-fn invocation() -> (String, bool) {
+fn invocation() -> (String, OutputMode) {
     let Ok(matches) = Cli::command().try_get_matches_from(std::env::args_os()) else {
-        return (String::new(), false);
+        return (String::new(), OutputMode::Text);
     };
     let mut path: Vec<String> = Vec::new();
     let mut at = &matches;
@@ -413,7 +413,7 @@ fn invocation() -> (String, bool) {
         at = sub;
     }
     let json = matches!(at.try_get_one::<bool>("json"), Ok(Some(true)));
-    (path.join(" "), json)
+    (path.join(" "), OutputMode::from_flag(json))
 }
 
 /// Parse `argv` and run the requested verb. The whole of `rwv`'s behavior

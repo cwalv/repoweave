@@ -623,7 +623,7 @@ fn update_commit_still_refuses_unrelated_dirt() {
         .assert()
         .failure()
         .stderr(predicates::str::contains(
-            "uncommitted changes outside rwv.lock",
+            "rwv update: projects/alpha: edits dirty\n    notes.md\n",
         ));
 }
 
@@ -650,7 +650,7 @@ fn update_commit_refuses_a_rename_onto_an_authored_path() {
         .assert()
         .failure()
         .stderr(predicates::str::contains(
-            "uncommitted changes outside rwv.lock",
+            "rwv update: projects/alpha: edits dirty\n    notes.md\n",
         ));
     assert!(
         files_in_head_commit(&project_dir).contains(&"notes.md".to_string()),

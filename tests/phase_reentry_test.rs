@@ -955,7 +955,7 @@ fn retire_refuses_when_workweave_has_uncommitted_changes_after_convergence() {
 
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("--retire: workweave has uncommitted changes after sync-to"),
+        stderr.contains("--retire: the landing is done and the workweave was not deleted"),
         "the refusal must name itself as the retire dirty-check; stderr:\n{stderr}"
     );
     assert!(

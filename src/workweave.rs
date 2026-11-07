@@ -2767,7 +2767,7 @@ pub fn collect_dirty_paths(
             };
             match dirty.files {
                 Ok(_) => label,
-                Err(e) => format!("{label}: status check failed: {e}"),
+                Err(why) => format!("{label}: status check failed: {why}"),
             }
         })
         .collect()
@@ -2786,7 +2786,7 @@ pub fn judge_dirty_checkouts(
         let vcs = dirty.vcs.as_deref().unwrap_or(project_vcs);
         let listed = match dirty.files {
             Ok(files) => files,
-            Err(e) => vec![format!("(status check failed: {e})")],
+            Err(why) => vec![format!("(status check failed: {why})")],
         };
         let mut judging = crate::diagnosis::State::EditsDirty
             .of(&dirty.repo)
@@ -3730,8 +3730,12 @@ fn delete_workweave_inner_at(
     // Safety checks: each refusal has its own waiver. Skipped when the
     // workweave directory doesn't exist (nothing to lose).
     if discard_uncommitted.is_none() && workweave_dir.exists() {
-        judge_dirty_checkouts(project_vcs.as_ref(), &workweave_dir, project, &manifest)
-            .into_result()?;
+        let mut dirty =
+            judge_dirty_checkouts(project_vcs.as_ref(), &workweave_dir, project, &manifest);
+        dirty.note(
+            "`--discard-uncommitted` deletes the workweave with these uncommitted changes in it",
+        );
+        dirty.into_result()?;
     }
     // The baselines the per-ref `Merged` warrants are measured against, read
     // while the workweave's marker still exists (it names the parent). Work

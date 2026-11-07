@@ -247,8 +247,7 @@ fn sync_dirty_tracked_manifest_repo_refuses_before_mutation() {
 
     // Must name the dirty repo and the kind of dirt.
     assert!(
-        stderr.contains("sync precondition failed")
-            && stderr.contains("uncommitted tracked changes"),
+        stderr.contains("rwv sync: ") && stderr.contains(": edits dirty\n"),
         "refusal must name the sync precondition and kind of dirt; got:\n{stderr}"
     );
     assert!(
@@ -343,12 +342,11 @@ fn sync_dirty_tracked_project_repo_refuses_before_mutation() {
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
 
     assert!(
-        stderr.contains("sync precondition failed")
-            && stderr.contains("uncommitted tracked changes"),
+        stderr.contains("rwv sync: ") && stderr.contains(": edits dirty\n"),
         "refusal must name the sync precondition and kind of dirt; got:\n{stderr}"
     );
     assert!(
-        stderr.contains("(project)") && stderr.contains("rwv.toml"),
+        stderr.contains(&format!("projects/{PROJECT}: edits dirty")) && stderr.contains("rwv.toml"),
         "refusal must name the project repo and the dirty file; got:\n{stderr}"
     );
 
@@ -393,7 +391,7 @@ fn sync_multiple_dirty_repos_all_named_in_one_refusal() {
         "refusal must name the dirty manifest repo; got:\n{stderr}"
     );
     assert!(
-        stderr.contains("(project)"),
+        stderr.contains(&format!("projects/{PROJECT}: edits dirty")),
         "refusal must name the dirty project repo; got:\n{stderr}"
     );
 
@@ -501,12 +499,11 @@ fn sync_dirty_lock_in_destination_project_refuses() {
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
 
     assert!(
-        stderr.contains("sync precondition failed")
-            && stderr.contains("uncommitted tracked changes"),
+        stderr.contains("rwv sync: ") && stderr.contains(": edits dirty\n"),
         "dirty rwv.lock must trigger the sync dirt refusal; got:\n{stderr}"
     );
     assert!(
-        stderr.contains("(project)") && stderr.contains("rwv.lock"),
+        stderr.contains(&format!("projects/{PROJECT}: edits dirty")) && stderr.contains("rwv.lock"),
         "refusal must name the project repo and the dirty file; got:\n{stderr}"
     );
     assert!(
@@ -578,7 +575,7 @@ fn sync_staged_tracked_change_in_destination_refuses() {
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
 
     assert!(
-        stderr.contains("sync precondition failed"),
+        stderr.contains(": edits dirty\n"),
         "staged tracked change must refuse the sync; got:\n{stderr}"
     );
     assert!(
@@ -685,7 +682,7 @@ fn sync_attributable_drift_excluded_from_refusal_mixed_with_user_dirt() {
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
 
     assert!(
-        stderr.contains("(project)") && stderr.contains("rwv.toml"),
+        stderr.contains(&format!("projects/{PROJECT}: edits dirty")) && stderr.contains("rwv.toml"),
         "refusal must name the genuine user dirt; got:\n{stderr}"
     );
     assert!(

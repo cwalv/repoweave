@@ -179,9 +179,14 @@ fn delete_refuses_over_untracked_work_in_a_checkout_no_member_covers() {
         "edits",
         &format!("rwv workweave delete: {EXTRA}: edits dirty {OUTSIDE}\n    scratch.txt\n"),
     );
+    let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        String::from_utf8_lossy(&out.stderr).contains("commit your edits, or set them aside"),
+        stderr.contains("commit your edits, or set them aside"),
         "the refusal must print the state's choice"
+    );
+    assert!(
+        stderr.contains("--discard-uncommitted"),
+        "the refusal must name the flag that waives the loss"
     );
 }
 

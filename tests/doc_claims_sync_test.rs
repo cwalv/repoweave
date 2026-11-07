@@ -443,7 +443,7 @@ fn sync_discard_local_commits_refuses_when_cwd_project_dirty() {
         .failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
     assert!(
-        stderr.contains("uncommitted"),
+        stderr.contains("rwv sync: projects/web-app: edits dirty\n    README.md\n"),
         "sync --discard-local-commits must name the dirty-project precondition; got:\n{stderr}"
     );
     assert!(

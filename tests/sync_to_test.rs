@@ -665,12 +665,17 @@ fn sync_to_refuses_when_target_has_uncommitted_changes() {
         .get_output()
         .clone();
     let stderr = String::from_utf8_lossy(&err_output.stderr);
+    let target = primary.root.display();
     assert!(
-        stderr.contains("uncommitted tracked changes"),
+        stderr.contains(&format!(
+            "rwv sync-to: {SERVER_PATH} in {target}: edits dirty\n"
+        )),
         "refusal must name the dirty-target precondition; got:\n{stderr}"
     );
     assert!(
-        stderr.contains(SERVER_PATH) && stderr.contains("(project)"),
+        stderr.contains(&format!(
+            "rwv sync-to: projects/web-app in {target}: edits dirty\n"
+        )),
         "refusal must list the dirty repos; got:\n{stderr}"
     );
 
@@ -1318,7 +1323,7 @@ fn a_retire_that_refuses_leaves_no_completion_claim_behind() {
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
 
     assert!(
-        stderr.contains("--retire: workweave has uncommitted changes"),
+        stderr.contains("--retire: the landing is done and the workweave was not deleted"),
         "the fixture must reach retire and be refused there; got stderr:\n{stderr}"
     );
     // The phases below retire DID their work — so the absent claim is absent

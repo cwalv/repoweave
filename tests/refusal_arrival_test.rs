@@ -925,7 +925,7 @@ fn a_rejected_member_push_routes_to_publish() {
     assert_eq!(envelope["refused"][0]["axis"], "publish", "{envelope:#}");
     assert_eq!(envelope["refused"][0]["state"], "withheld", "{envelope:#}");
     assert_eq!(
-        envelope["refused"][0]["repo"], "local/org/a",
+        envelope["refused"][0]["path"], "local/org/a",
         "{envelope:#}"
     );
     assert_eq!(envelope["outcomes"][0]["kind"], "failed", "{envelope:#}");
@@ -986,7 +986,7 @@ fn a_judged_refusal_before_any_output_prints_the_refusal_envelope() {
         "{envelope:#}"
     );
     assert_eq!(
-        envelope["refused"][0]["repo"], "projects/web-app",
+        envelope["refused"][0]["path"], "projects/web-app",
         "{envelope:#}"
     );
     assert_eq!(envelope["refused"][0]["axis"], "edits", "{envelope:#}");

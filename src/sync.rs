@@ -1844,7 +1844,7 @@ fn judge_store_checkouts(
                 .listing([checkout.display()])
                 .bind("<project>", &workweave.project)
                 .bind("<ww>", &workweave.name)
-                .bind("<other>", dir.as_path().display()),
+                .bind_place("<other>", dir.as_path()),
             None => State::CheckoutInRawWorktree
                 .of(repo_path)
                 .listing([checkout.display()])
@@ -4251,11 +4251,7 @@ fn judge_edits_in(
     elsewhere: Option<&Path>,
     report: &mut Report,
 ) {
-    let repo = match elsewhere {
-        Some(workspace) => format!("{repo} in {}", workspace.display()),
-        None => repo.to_string(),
-    };
-    if let Some(judged) = crate::diagnosis::judge_edits(vcs, repo, dir, dirty) {
+    if let Some(judged) = crate::diagnosis::judge_edits(vcs, repo, dir, dirty, elsewhere) {
         report.add(judged);
     }
 }

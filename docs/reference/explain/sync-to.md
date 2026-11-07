@@ -393,9 +393,13 @@ Schema:
         },
         "where": {
           "description": "The directory it must run in; null where it runs here or names its own directory.",
-          "type": [
-            "string",
-            "null"
+          "anyOf": [
+            {
+              "$ref": "#/definitions/WirePath"
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       }
@@ -645,7 +649,7 @@ Schema:
         "choices",
         "facts",
         "listed",
-        "repo",
+        "path",
         "state"
       ],
       "properties": {
@@ -677,7 +681,7 @@ Schema:
             "type": "string"
           }
         },
-        "repo": {
+        "path": {
           "description": "The repo's path, `projects/<name>` for the project repo.",
           "type": "string"
         },
@@ -690,6 +694,17 @@ Schema:
           "type": [
             "string",
             "null"
+          ]
+        },
+        "workspace": {
+          "description": "The workspace the repo was judged in, when that is not the one the verb ran in.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/WirePath"
+            },
+            {
+              "type": "null"
+            }
           ]
         }
       }

@@ -904,7 +904,7 @@ fn sync_to_retire_with_dirty_worktree_refuses_to_delete() {
         .failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
     assert!(
-        stderr.contains("uncommitted tracked changes"),
+        stderr.contains("edits dirty\n    README.md\n"),
         "expected source-cleanliness preflight to surface the dirty-state refusal, \
          got stderr: {stderr}"
     );

@@ -796,7 +796,8 @@ fn sync_outcomes(with_step3: bool) -> Vec<SyncOutcomeOutput> {
 /// record is on the wire.
 fn judged(axis: Axis, state: &str, run: &str) -> JudgedOutput {
     JudgedOutput {
-        repo: REPO.to_owned(),
+        path: REPO.to_owned(),
+        workspace: Some(wire(ABS)),
         axis,
         state: state.to_owned(),
         subject: Some("subject".to_owned()),
@@ -808,7 +809,7 @@ fn judged(axis: Axis, state: &str, run: &str) -> JudgedOutput {
         choices: vec![ChoiceOutput {
             id: Some("C7".to_owned()),
             phrase: "publish it (again)".to_owned(),
-            at: Some(ABS.to_owned()),
+            at: Some(wire(ABS)),
             run: vec![run.to_owned()],
         }],
     }
@@ -835,6 +836,7 @@ fn judged_on_every_axis() -> Vec<JudgedOutput> {
         .map(|fact| FactOutput { fact, about: None })
         .collect();
     out[0].subject = None;
+    out[0].workspace = None;
     out[0].choices[0].id = None;
     out[0].choices[0].at = None;
     out

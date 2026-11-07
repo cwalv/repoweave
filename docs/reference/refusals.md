@@ -16,7 +16,7 @@ each state can run, the commands spelled out, and names the directory to run a
 choice in where that is not the one the verb ran in. Then one route line per
 distinct kind. The kinds are the first entries below; each lists its states and
 every choice a state prints. Under `--json`, the verb's envelope carries the
-same repos in its `refused` array, each with its `repo`, `axis`, `state`,
+same repos in its `refused` array, each with its `path`, `axis`, `state`,
 `subject`, `listed`, `facts` and `choices`; a verb that refused before printing
 anything prints `{"$schema": "<url>", "refused": [...]}` instead.
 

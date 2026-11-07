@@ -14,7 +14,7 @@
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -214,7 +214,9 @@ impl State {
             subject: None,
             listed: Vec::new(),
             facts: Vec::new(),
+            workspace: None,
             bindings: BTreeMap::new(),
+            places: BTreeMap::new(),
         }
     }
 
@@ -497,13 +499,13 @@ impl Where {
 
     /// The directory a printed form names because it does not run here, or
     /// `None` where it runs here or locates itself.
-    fn at(self, bindings: &BTreeMap<&'static str, String>) -> Option<String> {
+    fn at(self, places: &BTreeMap<&'static str, PathBuf>) -> Option<PathBuf> {
         let placeholder = match self {
             Self::Primary => "<primary>",
             Self::OtherCheckout => "<other>",
             _ => return None,
         };
-        bindings.get(placeholder).cloned()
+        places.get(placeholder).cloned()
     }
 }
 
@@ -1109,7 +1111,9 @@ pub struct Judging {
     subject: Option<String>,
     listed: Vec<String>,
     facts: Vec<Fact>,
+    workspace: Option<PathBuf>,
     bindings: BTreeMap<&'static str, String>,
+    places: BTreeMap<&'static str, PathBuf>,
 }
 
 impl Judging {
@@ -1144,6 +1148,19 @@ impl Judging {
         self.bind("<checkout>", dir.display())
     }
 
+    /// The directory `placeholder` names, where a choice that runs there is
+    /// printed as running.
+    pub fn bind_place(mut self, placeholder: &'static str, dir: &Path) -> Self {
+        self.places.insert(placeholder, dir.to_path_buf());
+        self.bind(placeholder, dir.display())
+    }
+
+    /// The repo was judged in `workspace`, not the one the verb runs in.
+    pub fn elsewhere(mut self, workspace: &Path) -> Self {
+        self.workspace = Some(workspace.to_path_buf());
+        self
+    }
+
     /// Name `primary` as where its choices run, unless that is `here`, where
     /// the verb runs.
     pub fn in_primary(self, primary: &Path, here: &Path) -> Self {
@@ -1152,7 +1169,7 @@ impl Judging {
         {
             self
         } else {
-            self.bind("<primary>", primary.display())
+            self.bind_place("<primary>", primary)
         }
     }
 
@@ -1166,7 +1183,7 @@ impl Judging {
             .filter(|form| form.printable())
             .map(|form| Offered {
                 choice: form.row().choice,
-                at: form.row().at.at(&self.bindings),
+                at: form.row().at.at(&self.places),
                 run: form
                     .lines(vcs)
                     .iter()
@@ -1176,6 +1193,7 @@ impl Judging {
             .collect();
         Judged {
             repo: self.repo,
+            workspace: self.workspace,
             state: self.state,
             subject: self.subject,
             listed: self.listed,
@@ -1204,6 +1222,7 @@ fn fill(template: &str, bindings: &BTreeMap<&'static str, String>) -> String {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Judged {
     repo: String,
+    workspace: Option<PathBuf>,
     state: State,
     subject: Option<String>,
     listed: Vec<String>,
@@ -1215,7 +1234,7 @@ pub struct Judged {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Offered {
     choice: ChoiceId,
-    at: Option<String>,
+    at: Option<PathBuf>,
     run: Vec<String>,
 }
 
@@ -1236,12 +1255,15 @@ impl Judged {
     }
 
     fn headline(&self) -> String {
-        let mut line = format!(
-            "{}: {} {}",
-            self.repo,
+        let mut line = self.repo.clone();
+        if let Some(workspace) = &self.workspace {
+            line.push_str(&format!(" in {}", workspace.display()));
+        }
+        line.push_str(&format!(
+            ": {} {}",
             self.state.axis().token(),
             self.state.name()
-        );
+        ));
         if let Some(subject) = &self.subject {
             line.push_str(&format!(" ({subject})"));
         }
@@ -1261,7 +1283,11 @@ impl Judged {
 
     pub fn output(&self) -> JudgedOutput {
         JudgedOutput {
-            repo: self.repo.clone(),
+            path: self.repo.clone(),
+            workspace: self
+                .workspace
+                .as_deref()
+                .map(crate::path_spelling::WirePath::of),
             axis: self.state.axis(),
             state: self.state.name().to_owned(),
             subject: self.subject.clone(),
@@ -1282,7 +1308,10 @@ impl Judged {
                     ChoiceOutput {
                         id: row.id.map(str::to_owned),
                         phrase: row.phrase.to_owned(),
-                        at: offered.at.clone(),
+                        at: offered
+                            .at
+                            .as_deref()
+                            .map(crate::path_spelling::WirePath::of),
                         run: offered.run.clone(),
                     }
                 })
@@ -1357,8 +1386,8 @@ impl Report {
 
     /// The choices of every line, phrase and place once each, their lines in
     /// the order the judged lines offered them.
-    fn choices(&self) -> Vec<(&'static str, Option<String>, Vec<String>)> {
-        let mut out: Vec<(&'static str, Option<String>, Vec<String>)> = Vec::new();
+    fn choices(&self) -> Vec<(&'static str, Option<PathBuf>, Vec<String>)> {
+        let mut out: Vec<(&'static str, Option<PathBuf>, Vec<String>)> = Vec::new();
         for judged in self.ordered() {
             for offered in &judged.choices {
                 let phrase = offered.choice.row().phrase;
@@ -1396,7 +1425,7 @@ impl Report {
             out.push_str("choices:\n");
             for (phrase, at, lines) in choices {
                 match at {
-                    Some(at) => out.push_str(&format!("  {phrase}, in {at}\n")),
+                    Some(at) => out.push_str(&format!("  {phrase}, in {}\n", at.display())),
                     None => out.push_str(&format!("  {phrase}\n")),
                 }
                 for line in lines {
@@ -1430,18 +1459,23 @@ impl Report {
 
 /// `dir`'s edits, judged: an operation in progress is the state whether or
 /// not it left files dirty, since only its own continue or abort ends it;
-/// otherwise `dirty`'s files, when there are any.
+/// otherwise `dirty`'s files, when there are any. `elsewhere` is the
+/// workspace `dir` is in when the verb runs in another.
 pub fn judge_edits(
     vcs: &dyn Vcs,
     repo: impl fmt::Display,
     dir: &Path,
     dirty: Vec<String>,
+    elsewhere: Option<&Path>,
 ) -> Option<Judged> {
-    let judging = match vcs.mid_operation(dir) {
+    let mut judging = match vcs.mid_operation(dir) {
         Some(op) => State::EditsMidOperation.of(repo).subject(op.operation()),
         None if dirty.is_empty() => return None,
         None => State::EditsDirty.of(repo).listing(dirty),
     };
+    if let Some(workspace) = elsewhere {
+        judging = judging.elsewhere(workspace);
+    }
     Some(judging.checkout(dir).judge(vcs))
 }
 
@@ -1496,7 +1530,11 @@ pub struct RefusalJsonOutput {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct JudgedOutput {
     /// The repo's path, `projects/<name>` for the project repo.
-    pub repo: String,
+    pub path: String,
+    /// The workspace the repo was judged in, when that is not the one the
+    /// verb ran in.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<crate::path_spelling::WirePath>,
     /// What it was judged on; `rwv explain <axis>` serves the axis's page.
     pub axis: Axis,
     /// The state it was judged in, as that page names it.
@@ -1526,7 +1564,7 @@ pub struct ChoiceOutput {
     /// The directory it must run in; null where it runs here or names its
     /// own directory.
     #[serde(rename = "where")]
-    pub at: Option<String>,
+    pub at: Option<crate::path_spelling::WirePath>,
     /// The commands, one per line, as the terminal prints them.
     pub run: Vec<String>,
 }
@@ -1550,6 +1588,7 @@ pub fn kind_entries_markdown(vcs_type: crate::manifest::VcsType) -> String {
         out.push_str(&format!("**Condition.** {}\n\n", kind.condition));
         out.push_str(&format!("**Why.** {}\n\n", kind.why));
         out.push_str(&format!(
+            // rwv-advice: not-an-invocation
             "**States.** A refused verb prints `rwv <verb>: <repo>: {} <state>` for each repo it \
              judged in one of these, with what the state lists beneath it.\n\n",
             axis.token()
@@ -1720,14 +1759,17 @@ mod tests {
             .subject("seat")
             .bind("<project>", "proj")
             .bind("<ww>", "seat")
-            .bind("<primary>", "/my weave")
+            .bind_place("<primary>", Path::new("/my weave"))
             .judge(vcs.as_ref());
         let out = judged.output();
         assert_eq!(out.axis, Axis::Name);
         assert_eq!(out.state, "taken");
         let ids: Vec<Option<&str>> = out.choices.iter().map(|c| c.id.as_deref()).collect();
         assert_eq!(ids, [None, Some("C9")]);
-        assert_eq!(out.choices[1].at.as_deref(), Some("/my weave"));
+        assert_eq!(
+            out.choices[1].at,
+            Some(crate::path_spelling::WirePath::of(Path::new("/my weave")))
+        );
         assert_eq!(out.choices[1].run, ["rwv workweave proj delete seat"]);
         assert_eq!(
             fill("cd <dir>", &BTreeMap::from([("<dir>", "a b".into())])),

@@ -1439,7 +1439,9 @@ fn dirty_source_tracked_change_refuses_and_names_repo() {
         .failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
     assert!(
-        stderr.contains("uncommitted tracked changes") && stderr.contains(MANIFEST_REPO_PATH),
+        stderr.contains(&format!(
+            "rwv sync-to: {MANIFEST_REPO_PATH}: edits dirty\n    README.md\n"
+        )),
         "tracked dirt must refuse up front naming the repo; got:\n{stderr}"
     );
 }
@@ -1745,9 +1747,7 @@ fn dirty_source_non_lock_project_change_refuses() {
         .failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
     assert!(
-        stderr.contains("uncommitted tracked changes")
-            && stderr.contains("(project)")
-            && stderr.contains("rwv.toml"),
+        stderr.contains("rwv sync-to: projects/app: edits dirty\n    rwv.toml\n"),
         "a tracked non-lock project change must refuse and name the file; got:\n{stderr}"
     );
 }

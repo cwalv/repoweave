@@ -334,7 +334,8 @@ fn create_refuses_a_name_the_index_already_records() {
         .failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
     assert!(
-        stderr.contains("already records a workweave named `dup`"),
+        stderr.contains("rwv workweave create: projects/web-app: name taken (dup)\n")
+            && stderr.contains("recorded at "),
         "the refusal must name the recorded duplicate; got:\n{stderr}"
     );
     assert!(
@@ -391,16 +392,15 @@ fn remove_delete_refuses_a_claimed_store_and_succeeds_after_the_claim_is_gone() 
         .failure();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
     assert!(
-        stderr.contains("the store is still claimed"),
-        "R4 refusal expected; got:\n{stderr}"
+        stderr.contains(
+            "rwv remove: github/org/repo: checkout in another workspace (web-app--live)\n"
+        ),
+        "R4 refusal expected, naming the live workweave whose checkout claims the store; \
+         got:\n{stderr}"
     );
     assert!(
-        stderr.contains("live worktree registered"),
-        "the refusal must name the live worktree claim; got:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("ownership receipt for branch web-app--live"),
-        "the refusal must name the standing receipt; got:\n{stderr}"
+        stderr.contains("  free the other checkout\n    rwv workweave web-app delete live\n"),
+        "the refusal must offer the delete that retracts the workweave's claims; got:\n{stderr}"
     );
     assert!(
         repo.exists() && ww_checkout.exists(),
