@@ -4206,8 +4206,9 @@ pub trait Vcs: Send + Sync {
 
     /// A commit with `message` on top of `parents` (none: a commit with no
     /// history), referenced by nothing, whose tree is the first parent's
-    /// (empty where there is none) with `changes` applied. The author is the
-    /// configured one, else rwv.
+    /// (empty where there is none) with `changes` applied in order. The author
+    /// is the configured one, else rwv. A caller that removes a name and adds
+    /// one below it lists the removal first, for a backend that cannot hold both.
     fn write_commit(
         &self,
         repo: &Path,

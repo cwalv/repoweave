@@ -823,6 +823,22 @@ mod tests {
         BranchName(text.to_owned())
     }
 
+    #[test]
+    fn a_commit_lists_the_removal_of_a_name_before_the_addition_below_it() {
+        let from = snapshot(&[("a", b"declared".to_vec())]);
+        let to = snapshot(&[("a/b", b"declared".to_vec())]);
+
+        let paths: Vec<(String, bool)> = changes_between(&from, &to)
+            .into_iter()
+            .map(|c| (c.path, c.content.is_some()))
+            .collect();
+
+        assert_eq!(
+            paths,
+            vec![("a".to_owned(), false), ("a/b".to_owned(), true)]
+        );
+    }
+
     fn feature(target: &str, as_mode: Mode) -> Record {
         Record::Feature {
             target: name(target),

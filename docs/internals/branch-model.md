@@ -799,8 +799,9 @@ tip the last fetch saw.
 from every remote as last fetched, with no workspace aligned for it, is dropped
 in the write that follows (`Store::write_dropping`). A remote's drop is undone
 for a branch that exists here, and an entry brought in by a merge is not
-dropped. Removals are ordered before additions within a commit because an entry
-is a file at its branch's name: a stale `a` would block recording `a/b`.
+dropped. An entry is a file at its branch's name, so a stale `a` and a new `a/b` cannot
+stand together: a commit lists the removal before the addition, and git's
+index replaces the one with the other either way.
 
 **No receipts.** Nothing records that rwv created a ref. The workweave index
 keeps a `receipts` list, always empty, so that an index written before the field

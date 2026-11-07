@@ -856,6 +856,20 @@ fn deleting_a_branch_drops_its_record_so_a_name_below_it_can_be_recorded() {
 }
 
 #[test]
+fn a_name_below_a_stale_entry_is_recorded_whatever_deleted_the_branch() {
+    let weave = Weave::new();
+    weave.branch("a");
+    succeed(&["branch", "set-mode", "a", "declared"], &weave.ws);
+    common::git_in(weave.project(), &["branch", "-D", "a"]);
+    assert!(weave.has_entry("a"), "a raw delete leaves the entry");
+
+    weave.branch("a/b");
+    succeed(&["branch", "set-mode", "a/b", "declared"], &weave.ws);
+
+    assert_eq!(weave.entry("a/b"), DECLARED.trim_end());
+}
+
+#[test]
 fn a_stale_entry_goes_with_the_next_deletion_whatever_branch_it_names() {
     let weave = Weave::new();
     weave.branch("stale");
