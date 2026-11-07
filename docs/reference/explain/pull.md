@@ -468,6 +468,7 @@ Schema:
         "absolute_path",
         "moved",
         "path",
+        "pins_off_remote",
         "status"
       ],
       "properties": {
@@ -491,6 +492,13 @@ Schema:
         "path": {
           "description": "The repo's path: a member's manifest path, or `projects/<name>` for the project repo.",
           "type": "string"
+        },
+        "pins_off_remote": {
+          "description": "Each commit some live lock pins that no remote-tracking branch of this repo reaches after the fetch (`pin` off remote), with the locks that hold it and the choices that apply in this workspace.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/JudgedOutput"
+          }
         },
         "refusal": {
           "description": "The refusal token of an `unconfirmed` repo whose cause is a refusal, resolvable with `rwv explain <token>`.",

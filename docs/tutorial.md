@@ -26,7 +26,6 @@ for repo in protocol server web; do
   rwv member add "file:///tmp/chatly-remotes/${repo}.git"
 done
 git -C projects/web-app add -A && git -C projects/web-app commit -m "initial project"
-rwv lock --commit
 git -C projects/web-app push -u origin main
 rm -rf /tmp/chatly-seed
 ```
@@ -67,7 +66,7 @@ The result:
 └── .rwv-active                       # "web-app"
 ```
 
-`rwv clone` places each member at the commit `rwv.lock` pins and lists any member it cannot place — one the lock has no entry for, or whose pinned commit no ref in the clone reaches. Such a member is cloned at the tip of its declared branch, and `rwv clone` exits with status 3 instead of 0. It never advances a pin to an upstream branch tip, and it writes no `rwv.lock`; `rwv lock` records a member the lock does not cover. To advance existing repos to their remote branch tips: `rwv update --remote`.
+`rwv clone` places each member at the commit `rwv.lock` pins and lists any member it cannot place — one the lock has no entry for, or whose pinned commit no ref in the clone reaches. Such a member is cloned at the tip of its declared branch, and `rwv clone` exits with status 3 instead of 0. It never advances a pin to an upstream branch tip, and it writes no `rwv.lock`; `rwv member pin` or `rwv update --remote` gives a member the lock does not cover its first pin. To advance existing repos to their remote branch tips: `rwv update --remote`.
 
 ## 2. Get the latest
 
@@ -82,8 +81,8 @@ Compare:
 | Verb | What it does | Mutates lock? |
 |---|---|---|
 | `rwv update` | Clone members missing on disk, align each present member to its pinned SHA | No — never advances a pin, and a member the lock does not cover is left where it is |
-| `rwv update --remote` | Advance to tracked branch HEADs, re-snapshot lock | Yes |
-| `rwv lock` | Snapshot current local HEADs, no network | Yes |
+| `rwv update --remote` | Advance to tracked branch HEADs, record the advanced tips in the lock | Yes |
+| `rwv lock` | Record current local HEADs over their pins, no network | Yes |
 
 `rwv fetch` downloads every remote's new commits and moves no branch, checkout, or lock. When a teammate pushes a new `rwv.lock`, `rwv pull` takes in the project branch and then runs `rwv update`, so your members land on their new pins.
 
@@ -120,7 +119,7 @@ cd ~/work
 rwv lock --commit
 ```
 
-`rwv lock` reads the current 40-character commit SHA from each member repo's `HEAD` and writes `projects/web-app/rwv.lock`. `--commit` commits it in `projects/web-app/` in the same step, together with `rwv.toml` when that has uncommitted changes; without `--commit`, run `rwv lock` and then `git -C projects/web-app commit`. Every lock entry records the 40-character commit SHA `HEAD` points to — never a branch or tag name.
+`rwv lock` reads the current 40-character commit SHA from each member repo's `HEAD` and writes `projects/web-app/rwv.lock`, moving each pin forward only. `--commit` commits it in `projects/web-app/` in the same step, together with `rwv.toml` when that has uncommitted changes; without `--commit`, run `rwv lock` and then `git -C projects/web-app commit`. Every lock entry records the 40-character commit SHA `HEAD` points to — never a branch or tag name.
 
 Now push the member repo commits and the updated project lock together:
 

@@ -40,6 +40,18 @@ commits a rewrite dropped from the remote, so work built on them stays
 reachable. A branch the remote deleted is `pruned`, and a prune supersedes
 nothing.
 
+### A pin no remote-tracking branch reaches
+
+After the fetch, a member that has a remote reports each commit that some
+project's live lock pins that no remote-tracking branch of the member reaches:
+`pin` `off remote`, listing the locks that hold it. A lock is live when it is
+at the tip of a local or remote-tracking branch of any project's repo. Choices
+print only in a workspace whose checked-out branch's lock holds the pin:
+publishing it, for a feature's; pinning another commit, for a declared
+branch's. Elsewhere the report offers waiting and nothing else. It is a report
+only: it changes no branch and does not change the exit status. `--json`
+carries it as `pins_off_remote` on the member's record.
+
 ## Invocation
 
 ```

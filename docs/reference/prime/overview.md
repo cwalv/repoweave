@@ -6,7 +6,7 @@ CWD is not inside a weave or workweave. Below is a compact overview of how `rwv`
 
 - **Weave**: A top-level workspace directory containing `projects/<name>/` (each project's git repo) alongside canonical member clones at `<registry>/<owner>/<repo>/` (e.g., `github/org/service/`).
   - `projects/<name>/rwv.toml` is the hand-authored project manifest declaring member repositories (`type`, `url`, `branch`, `role`) and optional `[integrations.<name>]` settings.
-  - `projects/<name>/rwv.lock` is the derived revision snapshot pinning every member repo to a 40-hex commit SHA.
+  - `projects/<name>/rwv.lock` is the derived revision record pinning every member repo to a 40-hex commit SHA.
   - Ecosystem workspace files (`Cargo.toml`, `package.json`, `go.work`, `pyproject.toml`, `<name>.code-workspace`) live in `projects/<name>/`. **Authoring verbs** (`rwv member add`, `rwv member remove`, `rwv member set-role`, `rwv update --remote`) and `rwv doctor --fix` author or regenerate the rwv-owned regions of those files; **`rwv activate`** never authors or overwrites file content — it switches `.rwv-active`, surfaces weave-root symlinks (`Cargo.toml` -> `projects/<active>/Cargo.toml`, etc.), and runs install hooks. **`rwv materialize`** settles attested generated-file drift, cleans up disabled integration artifacts, repairs missing weave-root symlinks, and runs install hooks for the project this checkout already presents.
   - Each member repo has a `role` (`owned`, `fork`, `dependency`, `reference`): `owned` and `fork` are read-write and included in `rwv push`; `dependency` is included in ecosystem workspace files and workweave branches but skipped by `rwv push`; `reference` is excluded from ecosystem workspace files and checked out with read-only tracked regular files (write bits removed).
 
@@ -15,7 +15,7 @@ CWD is not inside a weave or workweave. Below is a compact overview of how `rwv`
   - Carries a `.rwv-workweave` marker recording `{primary, project, parent}` (mutually exclusive with `.rwv-active`, which is primary-only).
 
 - **Lock & sync**: `rwv.lock` pins every member repo to a commit SHA (never a tag or branch name).
-  - `rwv lock` snapshots local HEAD SHAs into `rwv.lock` (`rwv lock --commit` commits `rwv.lock`, with `rwv.toml` when it has uncommitted changes; `rwv push` refuses while either is uncommitted); `rwv update --remote` fetches from remotes, fast-forwards checkouts, and updates `rwv.lock`; `rwv update` clones the members missing on disk and aligns the rest to `rwv.lock` without advancing pins or writing the lock; `rwv clone` brings up a project at the commits its `rwv.lock` pins; `rwv fetch` downloads and moves no branch, checkout or lock; `rwv pull` fetches, fast-forwards the project branch to its upstream, then runs `rwv update`.
+  - `rwv lock` records local HEAD SHAs over their pins in `rwv.lock`, moving a pin forward only: a member with no pin keeps none, and one behind or diverged from its pin is refused unless `--repo` names it; `rwv member add`, `rwv member pin` and `rwv update --remote` give a member its first pin (`rwv lock --commit` commits `rwv.lock`, with `rwv.toml` when it has uncommitted changes; `rwv push` refuses while either is uncommitted); `rwv update --remote` fetches from remotes, fast-forwards checkouts, and records the advanced tips in `rwv.lock`; `rwv update` clones the members missing on disk and aligns the rest to `rwv.lock` without advancing pins or writing the lock; `rwv clone` brings up a project at the commits its `rwv.lock` pins; `rwv fetch` downloads and moves no branch, checkout or lock; `rwv pull` fetches, fast-forwards the project branch to its upstream, then runs `rwv update`.
   - `rwv sync <source>` pulls another workspace's committed state into CWD and regenerates CWD's `rwv.lock` after replay completes; `rwv sync-to` lands CWD's work into its target workspace (auto-relocking CWD at op start when repo tips have moved past `rwv.lock`, rebasing CWD onto target, and fast-forwarding target).
 
 ## Common pitfalls
@@ -60,10 +60,11 @@ rwv push
 | `rwv pull` | Fetch, fast-forward the project branch to its upstream, then `rwv update` |
 | `rwv update` | Clone missing members and align present ones to `rwv.lock`; never advances a pin or writes the lock |
 | `rwv update --remote` | Fetch remote branches, fast-forward checkouts, and re-snapshot `rwv.lock` |
-| `rwv member add URL` | Clone a repo, register in `rwv.toml`, and regenerate integration files |
+| `rwv member add URL` | Clone a repo, register in `rwv.toml`, regenerate integration files, and commit them with the repo's first pin |
+| `rwv member pin PATH REV` | Pin a repo at a commit you choose, in either direction |
 | `rwv member remove PATH` | Unregister a repo from `rwv.toml` and regenerate integration files |
 | `rwv member set-role PATH ROLE` | Change a repo's role (`owned`, `fork`, `dependency`, `reference`) and settle files |
-| `rwv lock` | Snapshot current repo HEAD SHAs into `rwv.lock` (`--commit` to commit) |
+| `rwv lock` | Record current repo HEAD SHAs as `rwv.lock` pins, forward only (`--commit` to commit) |
 | `rwv push` | Push member repos then the project repo from the primary weave |
 | `rwv workweave create NAME` | Create an isolated workweave on branch `PROJECT--NAME` and run its install hooks |
 | `rwv workweave list` | List active workweaves for a project |

@@ -1,24 +1,26 @@
 # Lock as derived state
 
-`rwv.lock` is derived state. Its contents are fully determined by
-running `rwv lock` against the current member-repo tips on disk. That
-single property has outsized consequences for the rest of the design,
-and this joint pulls them together.
+`rwv.lock` is derived state. Every pin in it is read from a member repo
+on disk: by `rwv lock`, which records where each checkout is, and by the
+verbs that name a commit, `rwv member add` for the commit it cloned,
+`rwv member pin` for the commit you choose and `rwv update --remote` for
+the upstream tip. That single property has outsized consequences for the
+rest of the design, and this joint pulls them together.
 
 ## What "derived" means here
 
 A piece of state is derived when there is a function from other state
 to it and the function is the source of truth. The lock entries' values
 are not opinions; they are reads of `git rev-parse HEAD` (one per
-member repo) baked into a file. Re-running the function on the same
-inputs always yields the same lock.
+member repo) baked into a file. Re-running `rwv lock` on the same
+checkouts and the same previous lock yields the same lock.
 
 Useful frame for what this implies:
 
 | Question | Single-repo analog | repoweave analog |
 |---|---|---|
 | Where does new state come from? | `git commit` on a working tree | `git commit` in each member repo |
-| What captures cross-repo state? | n/a — single repo | `rwv lock` snapshots the member repo tips |
+| What captures cross-repo state? | n/a — single repo | `rwv lock` records the member repo tips |
 | Is the snapshot meaningful before commit? | No — uncommitted edits don't have SHAs | No — uncommitted edits in member repos don't have SHAs |
 | Can two operators produce identical snapshots? | Yes, given the same commits | Yes, given the same commit set per repo |
 
@@ -26,28 +28,34 @@ The lock is to a project what `git commit` is to a working tree: a
 cheap, content-addressed checkpoint of state that exists elsewhere on
 disk. It is not a coordinator, not a config, not a constraint.
 
-## `rwv lock` is a pure git snapshot
+## `rwv lock` records where the checkouts are
 
-`rwv lock` reads each member repo's current HEAD and writes the
-resulting set of SHAs (plus a small amount of bookkeeping) into
-`rwv.lock`. It does not:
+`rwv lock` reads each member repo's current HEAD and writes it into
+`rwv.lock` as that member's pin. It does not:
 
 - Fetch anything from the network.
 - Run integration installs.
 - Mutate any member repo's working tree.
-- Read the previous lock.
+- Give a member a pin it does not have.
 
-The last point matters: `rwv lock` does not respect or honor or
-"update" the prior lock. It overwrites with whatever HEAD says. The
-previous file is replaced by the current snapshot.
+It does read the previous lock, for one purpose: a pin moves forward
+only. A member whose checkout is ahead of its pin takes the checkout's
+commit. A member with no pin keeps none, because the commit a first pin
+names is a choice a verb makes by name (`rwv member add`, `rwv member
+pin`, `rwv update --remote`). A member whose checkout is behind its pin
+or has diverged from it, or whose pin no ref here reaches, is refused
+unless `--repo` names it: moving a pin backward is something you say.
 
 Integration install hooks belong to `rwv activate` and `rwv materialize`,
-which prepare the workspace on disk. `rwv lock` is a pure git snapshot.
+which prepare the workspace on disk. `rwv lock` records commits and
+nothing else.
 
 The other "advancement" verbs — `rwv update --remote` and `rwv sync` — emit
 fresh locks internally as part of their own work, but the locks they
-emit are still derived: each one is the output of running the same
-snapshot operation against the manifest tips at the moment of capture.
+emit are still derived: each one records the manifest tips at the moment
+of capture. `rwv update --remote` records the members it advanced, a
+member with no pin taking its upstream tip, and refuses before any member
+moves a tip that would move a pin backward.
 
 ## `rwv.lock` is never a merge input
 
@@ -102,7 +110,9 @@ points at `HEAD`). Detailed schema lives in
 here is that *every* field in the file is a function of state recorded
 elsewhere.
 
-Hand-edits don't compound; they vanish on the next snapshot.
+A hand edit does not compound: the next `rwv lock` reads it as the
+previous pin and moves it forward to where the checkout is, or refuses to
+move it backward.
 
 ## Related joints
 

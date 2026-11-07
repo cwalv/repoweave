@@ -58,8 +58,6 @@ pub enum RefusalKind {
     HeadNotOnBranch,
     /// The project repo is attached to a non-canonical branch.
     ProjectRepoOffCanonicalBranch,
-    /// Manifest repos disagree with the committed lock.
-    LockStateMismatch,
     /// Repos in the push plan are not on a pushable branch.
     UnpushableRepoBranch,
     /// Preflight: tips are not in the fast-forward relation the strategy needs.

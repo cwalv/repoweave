@@ -10,8 +10,8 @@ Two forms of one verb:
   entries say, at the commit `rwv.lock` pins. It never advances a pin and never
   writes the lock.
 - **`rwv update --remote`** advances each repo to the latest HEAD of its branch
-  on the remote and re-snapshots `rwv.lock` (network bump). It is
-  semantically analogous to `cargo update` / `npm update` — the form that
+  on the remote and records the advanced tips in `rwv.lock` (network bump). It
+  is semantically analogous to `cargo update` / `npm update` — the form that
   mutates the lock by pulling fresh tips from the network.
 
 Run `update` to reproduce a recorded state, or to repair a weave after members
@@ -127,8 +127,8 @@ At the primary, alignment is a *local* operation: nothing of the member's own
 history is fetched over the network for a clone that is already present (its
 submodules are another matter; see below). A locked revision no ref in that
 clone reaches leaves the member where it is, reported as `pin` `unreachable`;
-run `rwv fetch` and rerun, or re-lock to a reachable revision (see the
-reconcile-repos how-to).
+run `rwv fetch` and rerun, or pin a reachable revision with `rwv member pin`
+(see the reconcile-repos how-to).
 
 ### Submodules
 
@@ -151,7 +151,19 @@ names for `uninitialized-submodule` / `unfetched`, run in that workweave.
 For each repo in the active project's manifest it runs the pruning fetch of the
 repo's object store (the one `rwv fetch` runs, under the store's fetch claim),
 resolves the manifest's `branch` on the remote, advances the checkout onto it,
-and then re-snapshots `rwv.lock` from the new tips.
+and then records the new tips in `rwv.lock`.
+
+### What the lock records
+
+The lock records the members the run advanced (every member, or those `--role`
+and `--repo` select) and leaves every other pin as it was. A member with no pin
+takes its upstream's tip as its first pin. A tip that does not descend from the
+pin the lock holds, or a pin no ref here reaches, would move the pin backward:
+the run refuses (`pin` `backwards`) once every member is fetched and before any
+moves, whatever `--repo` names, since only a verb that names the member
+(`rwv member pin`, `rwv lock --repo`) moves a pin backward. A member not where
+the checked-out branch's record puts it keeps its pin, reported on the
+`alignment` axis. A detached workspace or project repo refuses.
 
 ### What "advance" does to the checkout's branch
 
@@ -192,8 +204,8 @@ rwv update --remote [--dirty] [--commit [-m <MSG>]]
 ```
 
 - `--remote` — advance each repo to its branch HEAD on the remote and
-  re-snapshot the lock, instead of aligning to the lock.
-- `--dirty` — with `--remote`: allow the lock re-snapshot with uncommitted
+  record the advanced tips in the lock, instead of aligning to the lock.
+- `--dirty` — with `--remote`: allow recording the lock with uncommitted
   changes in repos.
 - `--commit` — with `--remote`: commit the new `rwv.lock` in the project repo,
   together with the integration files regenerated against the new tips and with
@@ -902,8 +914,9 @@ Schema:
 Default text output: a fetch-progress line per repo (prefixed with `[<repo>]`
 under `-j > 1`), followed by a summary line of the form `rwv update --remote:
 advanced N repo(s)` — `N` counts the repos whose SHA actually changed, not the
-repos the run visited. The subsequent lock re-snapshot emits `Wrote <path>` on
-stderr. Unchanged entries are not individually reported.
+repos the run visited. The lock write emits `Wrote <path>` on stderr, and a
+line `pinned at <commit>; it had no pin` for each member that took a first
+pin. Unchanged entries are not individually reported.
 
 An unfiltered `--remote` also re-authors the enabled integrations' managed
 content against the advanced tree, and then reports any **member

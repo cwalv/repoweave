@@ -118,7 +118,8 @@ pub fn render_context(ctx: &WorkspaceContext) -> String {
     );
     out.push_str("| `rwv member add URL [--role ROLE]` | Add a repo to the active project |\n");
     out.push_str("| `rwv member remove PATH` | Remove a repo from the active project |\n");
-    out.push_str("| `rwv lock` | Snapshot repo versions to rwv.lock |\n");
+    out.push_str("| `rwv lock` | Record where each repo is as rwv.lock's pins, moving a pin forward only |\n");
+    out.push_str("| `rwv member pin PATH REV` | Pin a repo at a commit you choose |\n");
     out.push_str("| `rwv doctor` | Run convention enforcement |\n");
     out.push_str("| `rwv clone SOURCE` | Clone a project and its repos |\n");
 

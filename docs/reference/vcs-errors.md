@@ -205,10 +205,11 @@ was written.
 case. `rwv update` does not contact the remote for a clone already on disk, so
 it does not resolve this; it re-clones only a checkout that is missing. If the
 revision still does not resolve, it is gone rather than absent, and the lock
-has to move — `rwv lock` re-snapshots from the working tips.
+has to move — `rwv member pin <repo> <rev>` pins a reachable revision, and `rwv lock
+--repo <repo>` records the working tip, by name.
 
 **Where this sits.** [Lock as derived](../explanation/joints/lock-as-derived.md)
-covers why the lock is re-snapshotted rather than repaired.
+covers why the lock is recorded afresh rather than repaired.
 
 ### `stale-ref-witness`
 

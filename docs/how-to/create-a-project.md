@@ -8,10 +8,9 @@ rwv init web-app
 rwv member add https://github.com/chatly/server.git
 rwv member add https://github.com/chatly/client.git
 rwv member add https://github.com/chatly/shared-types.git --role dependency
-rwv lock --commit
 ```
 
-`rwv init web-app` creates `projects/web-app/` as a git repository containing `rwv.toml`, `.gitattributes` (with `rwv.lock merge=rwv-ours`) and `web-app.code-workspace`, configures the local `merge.rwv-ours` git driver, and activates `web-app` by writing `.rwv-active`. Each `rwv member add` clones the repo, records it in `rwv.toml`, and regenerates the integration files; `rwv lock --commit` then writes `rwv.lock` and commits it together with `rwv.toml`.
+`rwv init web-app` creates `projects/web-app/` as a git repository containing `rwv.toml`, `.gitattributes` (with `rwv.lock merge=rwv-ours`) and `web-app.code-workspace`, configures the local `merge.rwv-ours` git driver, and activates `web-app` by writing `.rwv-active`. Each `rwv member add` clones the repo, records it in `rwv.toml`, regenerates the integration files, and commits them together with `rwv.lock`, which pins the commit it cloned.
 
 ## Enable ecosystem integrations
 
@@ -40,7 +39,7 @@ rwv materialize
 
 ## Commit and publish the project repository
 
-`projects/web-app/` is an ordinary git repository. `rwv lock --commit` commits `rwv.lock`, plus `rwv.toml` when it has uncommitted changes, and nothing else, so commit the rest with git: `.gitattributes` and the generated workspace files. Teammates get `rwv.lock merge=rwv-ours` only from a committed `.gitattributes`, and `rwv push` does not refuse while `.gitattributes` is untracked. Then push to a remote and set its `HEAD`, which `rwv push` requires before it publishes the project repo:
+`projects/web-app/` is an ordinary git repository. `rwv member add` commits `rwv.lock`, `rwv.toml` and the integration files it regenerates, and nothing else, so commit the rest with git: `.gitattributes` and the generated workspace files. Teammates get `rwv.lock merge=rwv-ours` only from a committed `.gitattributes`, and `rwv push` does not refuse while `.gitattributes` is untracked. Then push to a remote and set its `HEAD`, which `rwv push` requires before it publishes the project repo:
 
 ```bash
 git -C projects/web-app add -A
@@ -77,7 +76,6 @@ rwv member add https://github.com/chatly/shared-types.git --role dependency
 rwv member add https://github.com/chatly/billing.git
 git -C projects/billing-service add -A
 git -C projects/billing-service commit -m "Initialize billing-service project"
-rwv lock --commit
 ```
 
 `rwv init billing-service` makes `billing-service` the active project, so the `rwv member add` commands that follow write to its `rwv.toml`. Because `github/chatly/shared-types/` is already cloned in the weave, `rwv member add` reuses the existing canonical clone without re-downloading it, and warns that the clone is now shared between two projects. Switch between projects at the weave root with [`rwv activate`](./switch-projects.md) or open both simultaneously in separate [workweaves](./create-feature-workweave.md).

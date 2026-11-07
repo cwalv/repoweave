@@ -14,7 +14,7 @@ Before pushing any remote, and under `--dry-run` too, `rwv push` refuses unless 
 - **Canonical branch in the project repo:** `projects/<project>/` must be on its tracked branch; a detached or unborn `HEAD` refuses with `head-not-on-branch`, and any other branch with `project-repo-off-canonical-branch`.
 - **The remote's default branch recorded:** the project repo must know the default branch of the remote it publishes to (`no-remote-default-branch`). A clone made by `rwv clone` has it; after creating the remote yourself, run the `git remote set-head <remote> -a` the refusal names, to record the branch the remote reports as its default.
 - **Committed project repo:** `projects/<project>/` must have no uncommitted changes to tracked files and no untracked `rwv.toml` or `rwv.lock` (`edits`), because push publishes the project repo's last commit. When only `rwv.toml` or `rwv.lock` is uncommitted, the refusal offers `rwv lock --commit`; otherwise commit or stash with the commands it prints.
-- **Lock agreement:** Every member repository's `HEAD` must match the revision pinned in `rwv.lock` (`lock-state-mismatch`).
+- **Pins:** Every member repository is judged against the revision pinned in `rwv.lock`. A member with no pin (`pin` `none`), a pin no ref reaches (`unreachable`), a `HEAD` behind the pin (`behind`) or diverged from it (`diverged`), or commits beyond the pin that nothing else holds (`unpinned`) refuses, and the refusal prints the choice that clears it.
 - **Attached member branches:** every member repository in scope must be on a branch, not a detached `HEAD` (`unpushable-repo-branch`).
 
 By default, `rwv push` pushes member repositories with `role = "owned"` and `role = "fork"` (`fork` URLs must point to your writable fork; see [Roles reference](../reference/roles.md#fork)) and skips `dependency` and `reference` repositories. The project repository (`projects/<project>/`) is pushed last, only after every in-scope member push succeeds, so collaborators never fetch a `rwv.lock` that references unpushed member commits.
@@ -38,20 +38,21 @@ rwv push -j 4                               # push up to 4 member repos in paral
 
 Even with `-j <N>`, the project repository is pushed serially at the end after all member pushes succeed.
 
-## Recover from a lock-state mismatch
+## Recover from an unpinned commit
 
-If a member repository's `HEAD` differs from `rwv.lock`, `rwv push` refuses before touching the network:
+If a member repository holds commits beyond its pin that nothing else holds, `rwv push` refuses before touching the network:
 
 ```text
-rwv push: 1 repo(s) disagree with /home/user/work/projects/web-app/rwv.lock:
-  - github/chatly/server: HEAD abc1234def56 differs from lock e1f2a3b4c5d6
-Hint: run `rwv lock --commit` to record each listed repo's HEAD in the lock, or move the repo's branch to its lock commit without detaching it: `git reset --keep <lock commit>` in the repo (after `git branch <name>` to keep the commits it moves off).
-Error: lock-state mismatch — refusing to push before clone state and lock agree
+rwv push: github/chatly/server: pin unpinned (HEAD abc1234def56 is 1 commit beyond the pin e1f2a3b4c5d6)
+    abc1234def56 fix the handshake
+choices:
+  record it: the lock, and `rwv.toml` as it stands
+    rwv lock --commit
 
-rwv explain lock-state-mismatch
+rwv explain pin
 ```
 
-- **To publish the new local commits:** Snapshot and commit the updated lock, then push:
+- **To publish the new local commits:** Record the updated lock and commit it, then push:
   ```bash
   rwv lock --commit
   rwv push
@@ -63,6 +64,8 @@ rwv explain lock-state-mismatch
   rwv push
   ```
   `rwv update` does not do this: it moves a branch forward to the lock, never backward. A detached checkout at the locked revision (`git checkout <lock-sha>`) does not either: `rwv push` refuses a detached member (`unpushable-repo-branch`).
+
+A member the lock has no pin for refuses as `pin` `none`, naming `rwv member pin <member> <rev> --commit`; `rwv lock` gives it none, since it records a pin forward only.
 
 ## Related
 

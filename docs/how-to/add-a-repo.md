@@ -6,26 +6,30 @@ Clone a repository into the weave, register it in the active workspace's `rwv.to
 rwv member add https://github.com/example/some-lib.git --role dependency
 ```
 
-`rwv member add` clones the repository to its canonical path under the weave root (`github/example/some-lib/`), populates `branch = "<branch>"` from the remote's default branch, writes the entry to the active workspace's `rwv.toml`, regenerates managed ecosystem files (`Cargo.toml`, `package.json`, `go.work`, `pyproject.toml`), and runs integration install hooks in the primary weave. When invoked from inside a workweave, it writes to that workweave's `rwv.toml` and creates the member worktree there.
+`rwv member add` clones the repository to its canonical path under the weave root (`github/example/some-lib/`), populates `branch = "<branch>"` from the remote's default branch, writes the entry to the active workspace's `rwv.toml`, regenerates managed ecosystem files (`Cargo.toml`, `package.json`, `go.work`, `pyproject.toml`), and runs integration install hooks in the primary weave. It then commits the entry, the regenerated files and `rwv.lock` together, with the commit it cloned as the member's first pin. When invoked from inside a workweave, it writes to that workweave's `rwv.toml` and creates the member worktree there.
 
-If you already added the entry to `rwv.toml` by hand, running `rwv member add <url>` with the matching URL finishes the setup: it clones the repository if missing, creates the worktree when run inside a workweave, and regenerates integration files.
+If you already added the entry to `rwv.toml` by hand, running `rwv member add <url>` with the matching URL finishes the setup: it clones the repository if missing, creates the worktree when run inside a workweave, regenerates integration files, and gives the member the pin it lacks in a commit with the entry.
 
 The argument is a URL or a registry shorthand (`github/example/some-lib`), and `rwv.toml` records it as you wrote it; every later clone, on any machine, resolves the shorthand through the same registry. To clone from a repository on local disk, spell it as a `file://` URL (`rwv member add file:///srv/repos/some-lib.git`); a plain path refuses with `unresolvable-repo-source`, and the message names both the `file://` spelling and `--adopt`.
 
-## Record the change
+## The commit an add makes
 
-`rwv member add` changes `rwv.toml` and the regenerated integration files but adds no `rwv.lock` entry. `rwv lock --commit` writes the entry and commits `rwv.lock` with `rwv.toml`:
+`rwv member add` commits what it did, so there is nothing left to record: `rwv.toml` with the new entry, the regenerated integration files and `rwv.lock` with the member's first pin land in one commit. The pin is the commit the clone is at, the tip of the declared branch just cloned. It refuses before changing anything while another tracked file in `projects/<project>/` has uncommitted changes.
+
+A member with no pin is reported as `pin` `none`, and the report names the verbs that give one: `rwv member pin <path> <rev> --commit`, or `rwv update --remote --repo <path> --commit` for its upstream's tip. `rwv lock` gives none, since it only moves a pin forward.
+
+A role change or a removal is recorded with `rwv lock --commit`, which commits `rwv.lock` with `rwv.toml`:
 
 ```bash
 rwv lock --commit
 ```
 
-It refuses while another tracked file in `projects/<project>/` has uncommitted changes, such as a `package.json` the add regenerated. Then write the lock and commit the project repo with git:
+It refuses while another tracked file in `projects/<project>/` has uncommitted changes, such as a `package.json` the change regenerated. Then write the lock and commit the project repo with git:
 
 ```bash
 rwv lock
 git -C projects/<project> add -A
-git -C projects/<project> commit -m "Add some-lib"
+git -C projects/<project> commit -m "Change some-lib"
 ```
 
 ## Set the repository role
@@ -56,7 +60,7 @@ rwv member set-role github/example/some-lib reference
 rwv member set-role github/example/some-lib owned
 ```
 
-It edits `rwv.toml`, regenerates the ecosystem workspace files (a `reference` repository is left out of every build graph), and sets the checkout's file permissions for the new role. A change to `reference` refuses while the repository has uncommitted changes to tracked files; commit, stash or discard them first. Record the change as you record an addition (see [Record the change](#record-the-change)). See `rwv explain member` for the full behavior.
+It edits `rwv.toml`, regenerates the ecosystem workspace files (a `reference` repository is left out of every build graph), and sets the checkout's file permissions for the new role. A change to `reference` refuses while the repository has uncommitted changes to tracked files; commit, stash or discard them first. Record the change with `rwv lock --commit` (see [The commit an add makes](#the-commit-an-add-makes)). See `rwv explain member` for the full behavior.
 
 ## Track a non-default branch
 
@@ -86,7 +90,7 @@ rwv member add local/chatly/auth --new --param root=/srv/repos
 - **Hosted registries (`github`, `gitlab`, `bitbucket`):** `rwv` initializes the repository at `github/chatly/auth/` and adds a remote with the minted URL without contacting the network. Create the remote repository on the forge when you are ready to push.
 - **`local` registry:** Requires `--param root=<dir>` naming an existing directory outside the weave. A relative `<dir>` resolves against the directory you run `rwv` in (or the `-C`/`-w` directory), and the manifest records the absolute path. `rwv` initializes a bare repository at `<root>/<owner>/<repo>` and clones the member from it so `git push -u origin` works immediately. Parameters can also be passed as one JSON object, with the bare registry name as the address: `rwv member add local --new --params-json '{"root":"/srv/repos","owner":"chatly","repo":"auth"}'`. Each parameter may come from only one place, so the address shorthand, `--param`, and `--params-json` cannot name the same one.
 
-In both cases, `rwv member add --new` populates `branch = "<branch>"` from the new repository's initial `HEAD` branch (for example, `"main"`), defaults `role` to `"owned"`, and updates ecosystem workspace files. The new repository has no commits yet: until you make its first commit, `rwv lock` refuses (its message ends "make an initial commit, then re-run rwv lock") and `rwv doctor` reports an error for it.
+In both cases, `rwv member add --new` populates `branch = "<branch>"` from the new repository's initial `HEAD` branch (for example, `"main"`), defaults `role` to `"owned"`, and updates ecosystem workspace files. The new repository has no commits yet, so it has no pin, and `rwv doctor` reports an error for it until it has one. Make its first commit, then pin it: `rwv member pin github/chatly/auth HEAD --commit`.
 
 ## Adopt an existing clone or project
 
@@ -98,7 +102,7 @@ mv ~/some-other-place/some-lib github/example/some-lib
 rwv member add --adopt github/example/some-lib --role dependency
 ```
 
-A relative path resolves against the directory you run `rwv` in, so from `github/example/` the same clone is `rwv member add --adopt some-lib`; the member path recorded is always its position under the weave root. `rwv member add --adopt` skips the network clone, reads `origin` and its default branch to populate `url` and `branch`, and updates `rwv.toml` and integration files. With no clone at that path it refuses with `no-clone-to-adopt`.
+A relative path resolves against the directory you run `rwv` in, so from `github/example/` the same clone is `rwv member add --adopt some-lib`; the member path recorded is always its position under the weave root. `rwv member add --adopt` skips the network clone, reads `origin` and its default branch to populate `url` and `branch`, updates `rwv.toml` and integration files, and commits them with the member's first pin: the clone's HEAD where it sits on the declared branch or that branch's upstream reaches it. A clone holding commits only it has is added without a pin, reported as `pin` `none`. With no clone at that path it refuses with `no-clone-to-adopt`.
 
 Passing the URL instead also skips the clone when the clone at the placement already has a remote with that URL. When none of its remotes names that repository, `rwv member add <url>` refuses with `foreign-clone-at-placement` and writes nothing; the message names `rwv member add --adopt <path>` to register the clone under the URL it records. A directory or file at the placement that is not a clone refuses with `non-clone-at-placement`; move it aside and re-run.
 
@@ -123,7 +127,7 @@ rwv member remove github/example/some-lib --delete
 
 `--delete` refuses if the checkout has uncommitted changes, commits unreachable from any other clone, or (in the primary weave) live workweave worktrees or references from another project's `rwv.toml` (pass `--delete-shared-clone` to override the shared-project check). If you already removed the entry from `rwv.toml` by hand, running `rwv member remove <path> [--delete]` finishes regenerating integration files and deleting the leftover checkout.
 
-Record a removal as you record an addition (see [Record the change](#record-the-change)). When the project repo tracks its `.code-workspace` file, a removal changes that file, so `rwv lock --commit` refuses and the `rwv lock` plus `git commit` route applies.
+Record a removal with `rwv lock --commit` (see [The commit an add makes](#the-commit-an-add-makes)). When the project repo tracks its `.code-workspace` file, a removal changes that file, so `rwv lock --commit` refuses and the `rwv lock` plus `git commit` route applies.
 
 ## Related
 

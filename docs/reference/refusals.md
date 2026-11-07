@@ -577,24 +577,6 @@ message names which one was broken.
 **Where this sits.** [Formats](./formats.md) lists the characters rwv's own
 naming rules exclude on top of git's.
 
-### `lock-state-mismatch`
-
-**Condition.** Member repos disagree with the committed lock, at push time.
-
-**Why.** The project repo carries the lock that pins manifest SHAs. Publishing
-it while the clones say something else would hand collaborators a lock
-describing a tree that does not exist anywhere.
-
-**Exits.** `rwv lock --commit` to record each listed repo's HEAD in the lock
-and commit it (a bare `rwv lock` leaves `rwv.lock` uncommitted, which push
-refuses as `edits`), or move the repo's branch back to its lock
-commit without detaching it: `git branch <name>` to keep the commits it moves
-off, then `git reset --keep <lock commit>`. A checkout of the lock commit
-detaches HEAD, which push refuses as `unpushable-repo-branch`. Which exit is
-right depends on whether the tree or the lock is the state you meant.
-
-**Where this sits.** [Lock as derived](../explanation/joints/lock-as-derived.md).
-
 ### `malformed-provider`
 
 **Condition.** `--provider` is not `registry/owner`.

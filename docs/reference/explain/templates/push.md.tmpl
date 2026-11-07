@@ -14,12 +14,16 @@ publishes the project repo's last commit, so the lock it checks has to be the
 lock it publishes. The refusal judges the project repo on the `edits` kind:
 `rwv.toml or rwv.lock uncommitted` when those are all that is, offering `rwv
 lock --commit`, else `dirty`, offering the VCS's commit or stash. Untracked
-files other than those two do not refuse. Refuses if any member repo's HEAD disagrees
-with its lock entry (lock-precondition check). Use `rwv lock --commit` to
-record each repo's HEAD in the lock, or move the repo's branch to its lock
-commit without detaching it: `git reset --keep <lock commit>` (after
-`git branch <name>` to keep the commits it moves off). A `git checkout` of the
-lock commit detaches HEAD, which push refuses.
+files other than those two do not refuse. Judges every member repo's HEAD
+against its lock entry on the `pin` axis (the pin check), and refuses a member
+with no pin (`none`), a pin no ref reaches (`unreachable`), a HEAD behind the
+pin (`behind`) or diverged from it (`diverged`), or commits beyond the pin that
+no remote-tracking branch and no live lock reaches (`unpinned`, listed). Each
+refusal prints the choice that clears it: `rwv lock --commit` records unpinned
+commits, `rwv member pin` gives a member a pin, `rwv update` moves a checkout
+that is behind its pin. Commits beyond the pin that are pushed, or pinned by
+another project's live lock, are reported as `ahead` with the fact `pinned-by`
+naming the lock, and the push goes on.
 
 **Default scope:** bare `rwv push` (no `--role` / `--repo` selectors) pushes
 only `owned` and `fork` repos — the roles the operator controls. `dependency`
@@ -68,8 +72,8 @@ rwv push [--json] [-j <N>] [--dry-run] [--force] [--role <role>] [--repo <select
   and override the default `[owned, fork]` scope. When either flag is
   present, the caller's selectors are used verbatim — pass `--role owned
   --role fork` to reproduce the bare default explicitly. The
-  lock-precondition check always runs against the full manifest regardless
-  of these filters.
+  pin check always runs against the full manifest regardless of these
+  filters.
 - `--project <name>` operates on the named project without changing
   `.rwv-active`.
 
@@ -151,11 +155,13 @@ rwv push -j 4
   beneath it (configure its push remote, or add the remote).
 - *`push-branch diverged`* — the branch and its push branch each hold commits
   the other lacks, and the branch's own are listed. Take theirs in first.
-- *lock-state mismatch* — one or more member repos' HEAD differs from the
-  recorded lock SHA. Run `rwv lock --commit` to record each repo's HEAD in
-  the lock, or move the repo's branch to its lock commit without detaching
-  it: `git branch <name>` to keep the commits it moves off, then
-  `git reset --keep <lock commit>`.
+- *`<member>: pin unpinned`* — the member holds the commits listed beyond its
+  pin, which nothing else holds. Run `rwv lock --commit` to record them.
+- *`<member>: pin none`* — the lock has no entry for the member. `rwv member pin
+  <member> <rev> --commit` gives it one.
+- *`<member>: pin behind`* or *`pin diverged`* — the checkout is behind its pin,
+  or has gone its own way. `rwv update` moves a checkout behind its pin;
+  `rwv lock --repo <member> --commit` records the checkout, by name.
 - *refusing to push from workweave* — run `rwv sync-to primary` (or
   `rwv sync-to`) to land changes on primary, then push from there.
 - *project repo not on canonical branch* — check out the canonical branch

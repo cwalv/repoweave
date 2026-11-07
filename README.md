@@ -83,7 +83,7 @@ cd github/chatly/server
 # ... make changes and commit ...
 npm test --workspaces             # from weave root — tests span all repos
 
-rwv lock --commit -m "lock: update after payment feature"   # snapshot repo SHAs into projects/web-app/rwv.lock and commit
+rwv lock --commit -m "lock: update after payment feature"   # record repo SHAs over their pins in projects/web-app/rwv.lock and commit
 ```
 
 **Starting a new project from scratch (Day 0)** — see [create a project](docs/how-to/create-a-project.md) for the full walkthrough:
@@ -92,8 +92,7 @@ rwv lock --commit -m "lock: update after payment feature"   # snapshot repo SHAs
 mkdir my-workspace && cd my-workspace
 rwv init web-app
 rwv member add https://github.com/chatly/server.git
-rwv member add https://github.com/chatly/shared-types.git --role dependency
-rwv lock --commit -m "lock: initial project snapshot"
+rwv member add https://github.com/chatly/shared-types.git --role dependency   # commits the entry with the member's first pin
 ```
 
 **Working in an isolated workweave (parallel features, PR review, or agent sandboxes):**
@@ -119,11 +118,12 @@ rwv sync-to --retire                     # rebase onto parent, auto-relock, fast
 | `rwv init <project>` | Create a new project with empty `rwv.toml`. Optional `--provider registry/owner` sets up the remote |
 | `rwv activate <project>` | Set the active project — update `.rwv-active`, verify integration files, surface symlinks at the weave root, and run install hooks (`--no-materialize` to skip hooks). Moves no checkout: a member the project shares with the active project that holds edits or is not aligned for it refuses the switch, and `--update` aligns first |
 | `rwv materialize` | Run integration install hooks, clean up disabled-integration artifacts, and settle drifted attested files (`--regenerate-drifted`, `--adopt-drifted`, `--remove-undeclared-links`) without switching projects |
-| `rwv member add <url>` | Clone a repo, add to `rwv.toml`, re-run integrations. `<url>` is a URL (`file://` for a local remote) or registry shorthand; `--adopt <path>` registers a clone already under the weave root; `--role` sets the role, `--new` for `git init`, `--no-recurse-submodules` leaves the member's submodules uninitialized in new checkouts |
+| `rwv member add <url>` | Clone a repo, add to `rwv.toml`, re-run integrations, and commit the change with the repo's first pin. `<url>` is a URL (`file://` for a local remote) or registry shorthand; `--adopt <path>` registers a clone already under the weave root; `--role` sets the role, `--new` for `git init`, `--no-recurse-submodules` leaves the member's submodules uninitialized in new checkouts |
 | `rwv member remove <path>` | Remove from `rwv.toml`, re-run integrations. `--delete` removes this workspace's checkout |
+| `rwv member pin <repo> <rev>` | Pin a repo at a commit you choose, in either direction, and align it to the pin. Gives a repo its first pin when `member add` could not (`--commit` commits the lock) |
 | `rwv member set-role <repo> <role>` | Change a repo's role in `rwv.toml`, update ecosystem workspace files, and settle file permissions |
 | `rwv member set-recurse-submodules <repo> <true\|false>` | Say whether new checkouts of a repo populate its submodules, and update ecosystem workspace files |
-| `rwv lock` | Snapshot repo HEADs into `rwv.lock`. Errors on uncommitted changes (`--dirty` to bypass). `--commit` commits the lock, with `rwv.toml` when it has uncommitted changes (`-m` sets the message) |
+| `rwv lock` | Record repo HEADs as `rwv.lock`'s pins, moving a pin forward only: a repo with no pin keeps none, and one behind or diverged from its pin is refused unless `--repo` names it. Errors on uncommitted changes (`--dirty` to bypass). `--commit` commits the lock, with `rwv.toml` when it has uncommitted changes (`-m` sets the message) |
 | `rwv doctor` | Convention enforcement: orphans, dangling refs, stale locks, integration checks. `--locked` for scriptable lock-freshness check |
 | `rwv status` | Show per-repo state: branch, tip, lock entry, relation, mid-op state. `--json` for machine-readable output |
 | `rwv log [<range>] [--against <W>]` | Run the VCS's log in every repo for a range in its own syntax. `--against <W>` lists the commits HEAD holds beyond weave branch `<W>`'s pins, per repo, with `--diff` for the diff; `--json` for machine-readable output |

@@ -4,12 +4,14 @@
 
 Change which repos the active project's `rwv.toml` lists, or how it lists
 one: `member add` clones a repo and registers it, `member remove` takes it out,
-`member set-role` changes its `role`, and `member set-recurse-submodules`
-changes whether new checkouts of it populate its submodules.
+`member set-role` changes its `role`, `member set-recurse-submodules`
+changes whether new checkouts of it populate its submodules, and `member pin`
+pins it at a commit you choose.
 
-Each is an **authoring verb**: it mutates the manifest and regenerates
-integration-managed content (Cargo workspace, npm workspace, etc.) so the
-resulting files can be committed alongside the `rwv.toml` change.
+Each but `member pin` is an **authoring verb**: it mutates the manifest and
+regenerates integration-managed content (Cargo workspace, npm workspace, etc.)
+so the resulting files can be committed alongside the `rwv.toml` change.
+`member add` commits its own change with the member's first pin.
 
 ## Invocation
 
@@ -20,6 +22,7 @@ rwv member add <creation-address> --new [--param <name>=<value>]... [--params-js
 rwv member remove <path> [--delete] [--delete-shared-clone] [--project <name>] [--no-materialize]
 rwv member set-role <repo> <role> [--project <name>] [--no-materialize]
 rwv member set-recurse-submodules <repo> <true|false> [--project <name>] [--no-materialize]
+rwv member pin <repo> <rev> [--commit] [--project <name>]
 ```
 
 Every form takes `--project <name>` to operate on that project rather than the
@@ -37,6 +40,21 @@ Run `rwv member --help` for the full clap surface.
 Clone a repo and register it in the active project's `rwv.toml`, then
 re-run integration activation so ecosystem files (Cargo workspace, npm
 workspace, etc.) are updated to include the new member.
+
+#### The commit and the first pin
+
+`add` then commits the entry, the regenerated integration files and
+`rwv.lock` in one commit, and records the member's **first pin** in the lock:
+the commit it cloned. With `--adopt` the pin is the clone's HEAD where HEAD
+sits on the declared branch or that branch's upstream reaches it. A clone
+holding commits only it has, and a repo `--new` created with no commits, are
+added without a pin and reported as `pin` `none`, with the verbs that give one
+(`rwv member pin <repo> <rev> --commit`, `rwv update --remote --repo <repo>
+--commit`). Re-running `add` over an entry written by hand gives the member
+the pin it lacks, in a commit that carries the entry. The add refuses before
+it changes anything over uncommitted changes to tracked files of the project
+repo outside `rwv.toml`, `rwv.lock` and the files it regenerates, and when the
+project directory is not a repository.
 
 #### Clone placement
 
@@ -74,8 +92,8 @@ convention (matching `rwv workweave create`) — flat, with no third component
 derived from the source branch. `add` records an ownership receipt for it, so
 `rwv workweave delete` destroys it along with the rest of the workweave's
 refs. If the canonical clone has no commits yet (from `--new`), the worktree
-creation is skipped; after the first commit, run `rwv lock` then
-`rwv doctor --fix` here to materialize it.
+creation is skipped; after the first commit, run `rwv member pin <repo> HEAD`
+then `rwv doctor --fix` here to materialize it.
 
 #### Adopting an existing clone (`--adopt`)
 
@@ -166,6 +184,8 @@ registry and supplies parameters, never a layout.
 Progress messages to stderr:
 
 - `Added '<repo-path>' to manifest` — repo was registered.
+- `Pinned '<repo-path>' at <commit>` — the commit that went into the lock as
+  its first pin; without one, the `pin` `none` report in its place.
 - `Repository already exists in manifest at '<repo-path>'; re-running its
   activation` — the manifest is left as it is, and activation runs again, so a
   weave an earlier run left short (a surfaced link gone missing, install hooks
@@ -568,4 +588,64 @@ Populate them again:
 
 ```
 rwv member set-recurse-submodules github/myorg/vendored-lib true
+```
+
+## `rwv member pin`
+
+### Purpose
+
+Pin one member at a commit of your choosing, in either direction, and align
+the member to it. It is the verb that gives a member its first pin when
+`member add` could not, and the one that moves a pin backward.
+
+### Arguments
+
+- `<repo>` — manifest-relative path of the member (as listed in `rwv.toml`).
+- `<rev>` — a commit id, or a name that resolves to one in the member's clone.
+  Where the member follows a declared branch (every member of a declared
+  workspace; a `dependency` or `reference` member of a feature), the branch or
+  its upstream must reach the commit, or the verb refuses with `pin` `not on
+  declared branch`. A name the clone does not resolve refuses with `name`
+  `no-such-branch`.
+- `--commit` — commit `rwv.lock` after writing it, together with `rwv.toml`
+  when it has uncommitted changes. Other uncommitted changes in the project
+  repo refuse.
+
+### What it does
+
+Every refusal is reported before the lock is written or the member moves.
+Then, in order:
+
+1. A member left detached with commits no branch holds is backed up first.
+2. `rwv.lock` takes the pin; the verb says what it replaced, and reports
+   `re-pinned` when the new commit does not descend from the old pin.
+3. The member is aligned to the pin as `rwv update` aligns it. A `<rev>` behind
+   the tip of the branch the member is on leaves the checkout at that tip, and
+   the verb reports where it stands against the pin: `pin` `ahead`, or `unpinned`
+   when nothing else holds the commits beyond it. The next `rwv lock` records
+   the tip again.
+4. With `--commit`, the lock is committed.
+
+A workspace that holds no checkout of the member gets the pin only; `rwv
+update` creates the checkout at it. A detached workspace refuses.
+
+### Exit codes
+
+- `0` — the pin was written (and committed with `--commit`).
+- non-zero — the member is not in the manifest, `<rev>` does not resolve or is
+  not on the declared branch, the member cannot move (uncommitted changes, an
+  operation in progress), or the commit refused.
+
+### Examples
+
+Give a member the first pin it lacks, at its checkout:
+
+```
+rwv member pin github/myorg/lib HEAD --commit
+```
+
+Move a pin backward, by name:
+
+```
+rwv member pin github/myorg/lib v1.4.0
 ```

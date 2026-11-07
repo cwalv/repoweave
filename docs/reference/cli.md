@@ -111,6 +111,8 @@ A member's clone that lacks its url remote (the remote that has the member's `ur
 
 A repo's fetch holds the claim on its object store, so fetches into one store run one at a time and parallel seats wait on each other instead of failing on a ref lock. A remote-tracking branch that moved to a tip not descending from the old one is `rewritten`, and its old tip is kept as a superseded tip under `refs/rwv/superseded/`. A branch the remote deleted is `pruned`, which supersedes nothing. A member not on disk is reported `skipped`; `rwv update` clones it. A repo whose remote could not be completed is `unconfirmed`, the cause named, and the run exits 1 with `partial-run-aborted` after trying every repo.
 
+A member with a remote also reports each commit that some project's live lock pins, on any local or remote-tracking branch of the project repo, that no remote-tracking branch of the member reaches after the fetch: `pin` `off remote`, listing the locks that pin it. Choices print only in a workspace whose checked-out branch's lock holds the pin: publishing it for a feature's, pinning another commit for a declared branch's. A pin held elsewhere is reported with the choice to wait. The report changes nothing and does not change the exit status.
+
 | Flag | Effect |
 |---|---|
 | `--no-reference` | Skip repositories with `role = "reference"` |
@@ -119,7 +121,7 @@ A repo's fetch holds the claim on its object store, so fetches into one store ru
 | `--json` | Structured output: one JSON envelope, whatever `-j` is |
 | `--project <name>` | Fetch this project instead of the active one (does not change `.rwv-active`) |
 
-`--json` emits the envelope `{ "$schema": "...", "repos": [...] }` once every repo is done, with `repos` listing the project repo first and then the members by path, each with `status` (`fetched` / `unconfirmed` / `skipped`) and `moved`. See `rwv explain fetch`.
+`--json` emits the envelope `{ "$schema": "...", "repos": [...] }` once every repo is done, with `repos` listing the project repo first and then the members by path, each with `status` (`fetched` / `unconfirmed` / `skipped`), `moved` and `pins_off_remote`. See `rwv explain fetch`.
 
 ### `rwv pull [...]`
 
@@ -169,23 +171,25 @@ A member the project and the project the weave root presents both list has one c
 
 ### `rwv update --remote [...]`
 
-**The form that gets the latest.** Advance each member repo to its branch HEAD on the remote, then re-snapshot `rwv.lock`. Maps semantically to `cargo update` / `npm update`. The pruning fetch it runs first is the one `rwv fetch` runs.
+**The form that gets the latest.** Advance each member repo to its branch HEAD on the remote, then record the advanced tips in `rwv.lock`. Maps semantically to `cargo update` / `npm update`. The pruning fetch it runs first is the one `rwv fetch` runs.
 
 The advance is a **fast-forward of the branch the checkout is on**, not a checkout of the tip: on the canonical, that branch must be the local counterpart of the one `branch` declares, and `update --remote` refuses when the checkout is on any other branch, naming `rwv update`. It also refuses when the tip is not a fast-forward — reconcile the branch with its tracking tip yourself (ordinary `git rebase` / `git merge`) and re-run. Inside a workweave the same fast-forward rule applies to the workweave's own branch, and a divergence points at `rwv sync` rather than at a flag. An already-detached member stays detached, unless the repo is stopped mid-rebase / mid-merge / mid-bisect, which refuses.
+
+The lock records the members the run advanced and no others, every other pin as it was. A member with no pin takes its upstream's tip as its first pin. A tip that does not descend from the pin the lock holds, or a pin no ref here reaches, would move the pin backward: the run refuses (`pin` `backwards`) after the fetch and before any member moves, whatever `--repo` names; `rwv member pin` is the verb that moves a pin backward by name.
 
 `advanced N repo(s)` counts repos whose SHA actually changed.
 
 | Flag | Effect |
 |---|---|
 | `--remote` | Selects this form |
-| `--role` / `--repo` | Selector filters |
+| `--role` / `--repo` | Selector filters; they select the members advanced and recorded |
 | `-j N` | Parallel per-repo workers (default: min(nproc, 8)) |
 | `--json` | Structured output: one JSON envelope, whatever `-j` is |
 | `--dirty` | Allow update with uncommitted changes in repos when relocking. Needs `--remote` |
 | `--commit` | Commit `rwv.lock` together with the integration files regenerated against the new tips, and with `rwv.toml` when it has uncommitted changes. Other uncommitted changes in the project repo refuse (`edits`) before anything moves. Needs `--remote` |
 | `-m` / `--message <msg>` | The commit message for `--commit`, in place of the generated summary. Without `--commit` it is a usage error (exit 2) |
 | `--no-materialize` | Skip the install hooks of the regeneration `update --remote` runs at primary; `rwv materialize` runs them later. Inside a workweave `update --remote` runs no hooks either way |
-| `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`). A selected member it shares with the active project that is not aligned for it refuses the run, as for [`rwv update`](#rwv-update-) |
+| `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
 A repo that fails to advance fails the run: the repos that did advance stay where they moved, the lock is not written, and the run exits 1 with `partial-run-aborted`.
 
@@ -193,20 +197,31 @@ A repo that fails to advance fails the run: the repos that did advance stay wher
 
 ### `rwv lock`
 
-Checkpoint current local state into `rwv.lock`. No network access.
+Record where the member checkouts are as `rwv.lock`'s pins. No network access.
 
-Reads HEAD from each repo and records its resolved 40-character hex commit SHA in `rwv.lock` (never a tag or branch name, even when a tag points at HEAD). Errors on uncommitted changes to tracked files; untracked files are fine (use `--dirty` to bypass).
+Reads HEAD from each member the run acts on and records its resolved 40-character hex commit SHA in `rwv.lock` (never a tag or branch name, even when a tag points at HEAD), moving a pin **forward only**. Every other pin stays as it was.
+
+- A member with no pin **keeps none**, reported as `pin` `none` with the verbs that give a first pin: `rwv member pin`, `rwv update --remote` (and `rwv member add`, which pins what it clones). An unborn member and a lock that does not parse (it pins nothing, and is written afresh) are the same.
+- A member whose HEAD is behind its pin, has diverged from it, or whose pin no ref here reaches is refused as `pin` `backwards`, unless `--repo` names it. The pin then moves, and the run reports `re-pinned`.
+- A member not where the checked-out branch's record puts it is refused on the `alignment` axis, `rwv update` being the choice that aligns it. A member the record leaves where it was found, with no pin to place it, keeps its pin.
+- A detached workspace, or a detached project repo, refuses (`alignment` `project detached`): there is no branch to record the pins on.
+- Uncommitted changes to tracked files in a member refuse (`edits` `dirty`); use `--dirty` to bypass. Untracked files are fine.
+
+Every member is judged before `rwv.lock` is written, the project repo's unrelated edits under `--commit` included, and all refusals are reported together.
+
+A forward move over commits no remote-tracking branch reaches reports them when another project's lock for the member does not pin them: the other project's own `rwv status` then lists the member as `pin` `ahead`, with the fact `pinned by` naming this project's lock.
 
 | Flag | Effect |
 |---|---|
 | `--dirty` | Allow locking repos with uncommitted changes to tracked files |
+| `--repo <selector>` | Record only the members matching the selector (exact path, `glob:<pat>` or `re:<pat>`; repeat for union), and let each of them move its pin backward. A selector matching no member refuses (`repo-not-in-manifest`). There is no `--role` |
 | `--commit` | Commit `rwv.lock` after writing it, together with `rwv.toml` when it is modified or has never been committed. Other uncommitted changes in the project repo refuse (`edits`) |
 | `-m` / `--message <msg>` | The commit message for `--commit`, in place of the generated summary. Without `--commit` it is a usage error (exit 2) |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
 The generated commit message names what the commit holds: `lock: refresh N repo(s)` (followed by the per-repo list) when pins moved, `lock: drop <repo>` (or `drop N repos`) when repos left the manifest, `lock: record rwv.toml` when only `rwv.toml` changed, each joined when several apply, and `lock: no changes` otherwise. `--commit` prints `Committed rwv.lock` or `Committed rwv.lock, rwv.toml`, or `Lock unchanged, nothing to commit.`
 
-Pure git SHA snapshot — no integration hooks fire. To refresh ecosystem lockfiles (`node_modules`, `.venv`, etc.) after membership changes, run `rwv materialize` (or `rwv activate <project>` when switching the active project).
+No integration hooks fire. To refresh ecosystem lockfiles (`node_modules`, `.venv`, etc.) after membership changes, run `rwv materialize` (or `rwv activate <project>` when switching the active project).
 
 ### `rwv activate <project>`
 
@@ -268,7 +283,7 @@ Add a repo to the active project, remove one, or change how the manifest lists o
 
 ### `rwv member add <url> [...]`
 
-Clone a repo (if not present), register it in the target project's `rwv.toml`, settle write permissions for the role, regenerate integration-managed workspace files, and run integration install hooks. If the repo entry was already added to `rwv.toml` by hand, `rwv member add` converges the on-disk clone, permissions, and integration files to match.
+Clone a repo (if not present), register it in the target project's `rwv.toml`, settle write permissions for the role, regenerate integration-managed workspace files, and run integration install hooks. It then commits the entry, the regenerated files and `rwv.lock` in one commit, with the member's **first pin** in the lock: the commit it cloned. With `--adopt`, the pin is the clone's HEAD where HEAD sits on the declared branch or that branch's upstream reaches it; a clone holding commits only it has, and a repo `--new` made with no commits, have none, reported as `pin` `none` with the verbs that give one. If the repo entry was already added to `rwv.toml` by hand, `rwv member add` converges the on-disk clone, permissions, and integration files to match, and gives the member the pin it lacks in a commit that carries the entry. The add refuses before it changes anything over uncommitted changes to tracked files of the project repo outside `rwv.toml`, `rwv.lock` and the files it regenerates, and when the project directory is not a repository.
 
 The positional argument has one spelling per meaning:
 
@@ -305,6 +320,19 @@ Remove the repository from `rwv.toml`, regenerate integration-managed workspace 
 | `--delete` | Also delete this workspace's checkout of the repo: the canonical clone at primary, the workweave's worktree inside a workweave, along with the branch the workweave holds in the canonical clone. Refuses over uncommitted changes or commits nothing else reaches, a [backup](#rwv-backup) holding such commits included (`dropped-repo-has-unique-commits`) |
 | `--delete-shared-clone` | Requires `--delete`. At primary, removes the clone even if other projects still reference it. Without it, a clone another project lists refuses (`shared-clone-referenced`); the check runs only at primary, since a workweave's worktree is that workweave's own |
 | `--no-materialize` | Skip the install hooks; regeneration still runs, and `rwv materialize` runs the hooks later |
+| `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
+
+### `rwv member pin <path> <rev> [--commit]`
+
+Pin a member at `<rev>`, a commit id or a name that resolves to one in the member's clone, in either direction, and align the member to the pin. This is the verb that gives a member its first pin when `member add` could not, and the one that moves a pin backward; it reports `re-pinned` when it does.
+
+Where the member follows a declared branch (every member of a declared workspace, and a `dependency` or `reference` member of a feature), `<rev>` must be a commit that branch or its upstream reaches, or the verb refuses (`pin` `not on declared branch`). A `<rev>` the clone does not resolve refuses (`name` `no-such-branch`). A member left detached with commits no branch holds is backed up first. A `<rev>` behind the branch's tip leaves the checkout at the tip, and the verb reports where it stands against the pin (`pin` `ahead` or `unpinned`); the next plain `rwv lock` records the tip again. A workspace that holds no checkout of the member gets the pin only, and `rwv update` creates the checkout.
+
+Every refusal is reported before the lock is written or the member moves. A detached workspace refuses (`alignment` `project detached`).
+
+| Flag | Effect |
+|---|---|
+| `--commit` | Commit `rwv.lock` after writing it, together with `rwv.toml` when it has uncommitted changes. Other uncommitted changes in the project repo refuse (`edits`) |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
 ### `rwv member set-role <path> <role>`
@@ -395,7 +423,7 @@ Coordinated cross-repo push from the primary weave. Default scope: `owned` and `
 - **Primary weave only** — refused inside a workweave (`push-from-workweave`); land work into primary with `rwv sync-to` first.
 - **Project repo branch** — `projects/<project>` must be on the branch that the remote it publishes to declares as default, whatever that branch is called. With that remote's `HEAD` unset push refuses rather than guess (`no-remote-default-branch`, naming the `git remote set-head` that records it); a detached or unborn HEAD refuses with `head-not-on-branch`, and any other branch with `project-repo-off-canonical-branch`.
 - **Committed project state** — the project repo has no staged or unstaged change to a tracked file, and `rwv.toml` and `rwv.lock` are tracked (`edits`). Push publishes the project repo's last commit, so commit first: `rwv lock --commit` when only those two files are uncommitted. Other untracked files pass.
-- **Lock agreement** — every member repo's HEAD must match the committed `rwv.lock` entry (`lock-state-mismatch`).
+- **Pins** — every member repo is judged against the committed `rwv.lock` entry, on the whole manifest whatever `--role` and `--repo` select. A member with no pin (`pin` `none`), a pin no ref reaches (`unreachable`), a HEAD behind the pin (`behind`) or diverged from it (`diverged`), or commits beyond the pin that no remote-tracking branch and no live lock reaches (`unpinned`, listing them) refuses, with the choice that clears it. Commits beyond the pin that are pushed or pinned by another project's live lock (`ahead`, the fact `pinned by` naming the lock) are reported and the push goes on.
 - **Pushable member branches** — every repo in the plan must be on a branch (`unpushable-repo-branch`).
 - **Where each branch publishes** — every branch goes to its push target, found in git's order: the branch's `pushRemote`, `remote.pushDefault`, the remote the branch takes in from, and last the repo's url remote (a member's, the remote that has its `url`; the project repo's, the one it was created with, else its only remote). A branch with none has no push target, and one that takes in from a branch of another name has a foreign upstream; either refuses as `push-branch` (`no push target`, `foreign upstream`) with the choice to configure where it pushes, and so does a branch that has diverged from its push branch while holding commits of its own (`push-branch` `diverged`, the commits listed). Every refusal is reported before anything is pushed. `--force` waives the divergence refusal and the `behind` skip below, as a force-push always has.
 
@@ -404,7 +432,7 @@ Two states complete instead of refusing, and `push` prints each under its repo a
 | Flag | Effect |
 |---|---|
 | `--role` / `--repo` | Selector filters |
-| `--force` | Force-push every repo in the operation (member repos and the project repo). Default deny. The lock-precondition check still runs unconditionally |
+| `--force` | Force-push every repo in the operation (member repos and the project repo). Default deny. The pin check still runs unconditionally |
 | `-j N` | Parallel push (up to N concurrent for member repos; project repo always last and serial). Default: 1, because every push authenticates and runs the repo's pre-push hook: concurrent pushes would contend for one terminal's credential prompts and run those hooks side by side. The default push set is already narrowed to writable roles, so there is less to parallelize than in a fetch |
 | `--json` | Structured output: one JSON envelope, whatever `-j` is |
 | `--dry-run` | Print the push plan without executing |
@@ -496,6 +524,7 @@ Below the table, `status` prints:
 
 - the branch each project's workspace last aligned its members for (`<project> aligned for <branch>`, `aligned detached`, or `aligned for no branch`);
 - one `alignment` line for each member that is not in its expected state, with the commits that a move off its branch would leave, and one for a member carrying the fact `checkout` (its branch is checked out in another workspace, so it sits detached at its pin); for the project repo, `project moved`, `project unaligned` or `project detached` against the aligned branch;
+- one `pin` line for each member whose HEAD is not at the commit the lock pins for it: `none` (the lock has no entry), `unreachable`, `behind`, `diverged`, `unpinned` (commits beyond the pin that nothing else holds, listed) or `ahead` (commits beyond it that are pushed or pinned by another project's live lock, with the fact `pinned by`);
 - one `push-branch` line for each member whose checked-out branch needs attention: `behind` (take it in with `rwv update --remote --repo <m>`), `diverged`, `gone`, `foreign upstream` and `no push target`. A branch that is `ahead` of its push branch is the ordinary state of work in progress and has no line. A `gone` line appears only while the branch holds commits no remote-tracking branch reaches, and lists them: a branch whose upstream was deleted after its work landed is not marked;
 - one `operator branch` line for each local branch of a member that holds unpushed commits nothing else accounts for: it is checked out nowhere, is named after no recorded weave branch of any project here, and is no declared branch of that member. The line gives the member, the branch and its count of unpushed commits, and notes a gone upstream; it prints no choice, because such a branch is legal;
 - the backups each repo holds (`backup <repo> <name> <tip>`), the listing `rwv backup list` gives.

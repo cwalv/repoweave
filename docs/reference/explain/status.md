@@ -55,6 +55,12 @@ fetched:
   the project repo, `project moved`, `project unaligned` or `project detached`
   against the aligned branch. A workspace state file that cannot be read is
   said so, and reads as absent.
+- One `pin` line for each member whose HEAD is not at the commit the lock pins
+  for it, with that state's choices: `none` (the lock has no entry for it),
+  `unreachable`, `behind`, `diverged`, `unpinned` (commits beyond the pin that
+  nothing else holds, listed) or `ahead` (commits beyond it that are pushed or
+  pinned by another project's live lock, with the fact `pinned-by` naming the
+  lock).
 - One `push-branch` line for each member whose checked-out branch needs
   attention, with that state's choices: `behind`, `diverged`, `gone`, `foreign
   upstream` or `no push target`. A branch `ahead` of its push branch is the
@@ -96,7 +102,7 @@ aligned for (absent where none is recorded or the workspace is detached),
 `detached`, and `unreadable` with the reason when the state file could not be
 read.
 
-`judged` carries the `alignment` and `push-branch` lines above as the table's
+`judged` carries the `alignment`, `pin` and `push-branch` lines above as the table's
 generated choices: each element has the repo's `path`, the `axis` and `state`
 it was judged on, its `facts` and its `choices`. Empty, not absent, when no
 member stands apart.

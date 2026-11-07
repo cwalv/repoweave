@@ -260,7 +260,7 @@ When a clone of the entry's URL stands at the path that URL places it at, and
 no entry of the project names that path, the checkout was moved there ahead of
 the re-key [`placement-disagreement`](#placement-disagreement) asks for. The
 record's `clone_at_placement` names that path, and the message names the
-repair: re-key the entry in `rwv.toml` to it and run `rwv lock`. That clone is
+repair: re-key the entry in `rwv.toml` to it, run `rwv lock`, and pin it with `rwv member pin <path> <rev> --commit`. That clone is
 not reported as an [`orphaned-clone`](#orphaned-clone). `rwv update` there would
 clone the URL a second time at the recorded path.
 
@@ -295,9 +295,9 @@ A commit other than the checked-out one that names the old keys is not reported 
 
 #### `malformed`
 
-**Error. Report-only.** Any other reason the project did not load. The message names which file failed and carries that file's remedy — the manifest is yours to edit, at the line the parser names; the lock is generated, so `rwv lock` rewrites it. A repository entry with no `role`, an unknown top-level key, an unknown `[integrations.<name>]` table, an unknown key in one, and an `enabled` that is not `true` or `false` are all parse failures of this kind, each naming the line and what was expected. `rwv sync` and `rwv sync-to` refuse with it when the project does not load after the project repo is replayed, and `rwv abort` rolls that operation back.
+**Error. Report-only.** Any other reason the project did not load. The message names which file failed and carries that file's remedy — the manifest is yours to edit, at the line the parser names; the lock is restored from version control, or written afresh by `rwv lock`, which then pins nothing until `rwv member pin` or `rwv update --remote` gives each member its pin. A repository entry with no `role`, an unknown top-level key, an unknown `[integrations.<name>]` table, an unknown key in one, and an `enabled` that is not `true` or `false` are all parse failures of this kind, each naming the line and what was expected. `rwv sync` and `rwv sync-to` refuse with it when the project does not load after the project repo is replayed, and `rwv abort` rolls that operation back.
 
-`--fix` has no arm for it. Rewriting a manifest rwv could not parse would be guesswork, and regenerating a lock re-pins the workspace to whatever the working tips happen to be — a decision about state, not a repair.
+`--fix` has no arm for it. Rewriting a manifest rwv could not parse would be guesswork, and choosing the commits a lock pins is a decision about state, not a repair.
 
 ### `legacy-manifest-format`
 
@@ -317,30 +317,38 @@ refusal. See [Formats](./formats.md) for the shape to write.
 ### `stale-lock`
 
 **Error. Report-only.** A repo's HEAD does not match the SHA `rwv.lock` pins.
+This is the `pin` axis's `ahead`, `behind` and `diverged` states, found by
+`rwv doctor` instead of reported by a verb; `rwv explain pin` has the page.
 
-**What to do:** `rwv lock` to re-pin `rwv.lock` from the current working tips,
-or `rwv update` to realign the local checkouts to the revisions recorded in
-`rwv.lock`. Which you want depends on whether the working
-tree or the lock is the state you meant. The lock is a derived artifact, not a
-source of truth — see [Lock-as-derived](../explanation/joints/lock-as-derived.md).
+**What to do:** for a checkout ahead of its pin, `rwv lock` records where the
+checkout is. For one behind its pin or diverged from it, `rwv lock` refuses to
+move the pin backward: `rwv lock --repo <repo>` records the checkout by name,
+or `rwv update` moves the checkout to the pin. Which you want depends on
+whether the working tree or the lock is the state you meant. The lock is a
+derived artifact, not a source of truth — see
+[Lock-as-derived](../explanation/joints/lock-as-derived.md).
 
 ### `incomplete-lock`
 
 **Error. Report-only.** A manifest entry with no `rwv.lock` entry at all — a
-coverage gap rather than a freshness one. Only raised for a project that has a
-lock file; a project with no lock yet is a separate, unlocked state.
+coverage gap rather than a freshness one, the `pin` axis's `none`. Only raised
+for a project that has a lock file; a project with no lock yet is a separate,
+unlocked state.
 
-**What to do:** `rwv lock` to write the missing entry.
+**What to do:** `rwv member pin <repo> <rev> --commit` to give the member its
+pin, or `rwv update --remote --repo <repo> --commit` for its upstream's tip.
+`rwv lock` gives a member no first pin.
 
 ### `unresolvable-lock-entry`
 
 **Error. Report-only.** An `rwv.lock` entry names a revision this clone cannot
-resolve — a lock written against history that was never fetched here. The
-entry is kept as a finding rather than dropped: dropping it would leave the
-repo with no locked revision to compare against, which reads as healthy.
+resolve — a lock written against history that was never fetched here, the
+`pin` axis's `unreachable`. The entry is kept as a finding rather than
+dropped: dropping it would leave the repo with no locked revision to compare
+against, which reads as healthy.
 
-**What to do:** `rwv fetch` to bring in the missing history, or `rwv lock` to
-re-pin from the working tips if the lock is the stale side.
+**What to do:** `rwv fetch` to bring in the missing history, or `rwv member pin
+<repo> <rev>` to pin a reachable revision if the lock is the stale side.
 
 ### `lock-pinned-by-name`
 
@@ -1200,8 +1208,8 @@ is on disk; when none is, this is the only finding for the entry, with no
 object store.
 
 **What to do:** run `rwv fetch --repo <repo>` to pull the missing object from
-the remote (or `rwv lock` to re-pin from local tips if the lock is the stale
-side). `rwv update` does not contact the network for an already-present clone.
+the remote (or `rwv member pin <repo> <rev>` to pin a reachable revision if the
+lock is the stale side). `rwv update` does not contact the network for an already-present clone.
 
 #### `placement-disagreement`
 
@@ -1223,8 +1231,9 @@ is an expected layout and raises no finding.
 
 **What to do:** the message names both paths. Move the checkout to the
 derived path unless it is already there, re-key the entry in `rwv.toml` from
-the recorded path to the derived one, and run `rwv lock`, which re-keys
-`rwv.lock` to match. Moving the checkout alone leaves this finding and adds a
+the recorded path to the derived one, run `rwv lock`, which drops the old
+key's entry from `rwv.lock`, and give the new key its pin with `rwv member pin
+<path> <rev> --commit`. Moving the checkout alone leaves this finding and adds a
 [`dangling-reference`](#dangling-reference) at the recorded path; re-keying
 alone, with the checkout elsewhere, leaves a `dangling-reference` at the
 derived path.

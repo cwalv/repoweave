@@ -162,7 +162,7 @@ pub enum Commands {
         #[arg(long, requires = "adopt")]
         no_materialize: bool,
     },
-    /// Add a repo to the active project, remove one, or change a member's role or submodule setting
+    /// Add a repo to the active project, remove one, pin one at a commit, or change a member's role or submodule setting
     Member {
         #[command(subcommand)]
         action: MemberAction,
@@ -452,9 +452,9 @@ pub enum Commands {
         #[arg(long)]
         no_materialize: bool,
     },
-    /// Clone the members missing on disk and align the rest to rwv.lock, without writing it. With --remote, advance each repo to its branch HEAD on the remote and re-snapshot the lock (network bump; analogous to `cargo update` / `npm update`).
+    /// Clone the members missing on disk and align the rest to rwv.lock, without writing it. With --remote, advance each repo to its branch HEAD on the remote and record the advanced tips in the lock (network bump; analogous to `cargo update` / `npm update`).
     Update {
-        /// Advance each repo to its branch HEAD on the remote and re-snapshot the lock
+        /// Advance each repo to its branch HEAD on the remote and record the advanced tips in the lock
         #[arg(long)]
         remote: bool,
         /// Allow update with uncommitted changes in repos when relocking

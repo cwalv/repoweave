@@ -8,7 +8,6 @@ rwv init web-app
 rwv member add https://github.com/chatly/server.git --role owned
 rwv member add https://github.com/chatly/client.git --role owned
 rwv member add https://github.com/vendor/codec.git --role dependency
-rwv lock --commit
 git -C projects/web-app add -A && git -C projects/web-app commit -m "Initialize web-app project"
 git -C projects/web-app remote add origin https://github.com/chatly/web-app.git
 git -C projects/web-app push -u origin main
@@ -67,7 +66,7 @@ git -C projects/web-app add -A && git -C projects/web-app commit -m "Initialize 
 
 `rwv lock --commit` commits `rwv.lock` and `rwv.toml`; the `git` commit carries `.gitattributes` and the generated workspace files.
 
-To start from the exact commits the superproject's gitlinks pinned rather than from branch tips, check out each pinned commit in its canonical clone (`git -C github/chatly/server checkout --detach <gitlink-sha>`) and run `rwv lock --commit`. While a member is detached, `rwv lock` warns, `rwv doctor` reports it, `rwv push` refuses to push it, and a teammate's `rwv clone` puts the member on the branch `rwv.toml` declares, at the pinned commit. When ready, re-attach with `git -C github/chatly/server switch main` and run `rwv lock --commit` again.
+To start from the exact commits the superproject's gitlinks pinned rather than from branch tips, pin each member at its gitlink commit: `rwv member pin github/chatly/server <gitlink-sha> --commit`. The commit must be one the member's declared branch or its upstream reaches, or the verb refuses (`pin` `not on declared branch`). The member is aligned to the pin, and a teammate's `rwv clone` puts the member at it. While the branch tip is past the pin, `rwv status` reports the member as `pin` `ahead`; when ready, `rwv lock --commit` records the tip.
 
 ### 5. Publish the project repository
 
@@ -102,7 +101,7 @@ A `git-repo` manifest repository (`manifests/default.xml`) already separates the
 1. **Initialize the project:** Run `rwv init <project>` in a new weave root (or `rwv init <manifest-repository-url> --adopt` if you are converting the existing manifest repository in place).
 2. **Add each `<project>` element from `default.xml`:** Construct the full remote URL from `<remote fetch="..."/>` + `<project name="..."/>` and run `rwv member add <url> --role <owned|fork|dependency>`. If `<project revision="..."/>` names a non-default branch, follow [Track a non-default branch](./add-a-repo.md#track-a-non-default-branch).
 3. **Replace `<copyfile>` / `<linkfile>` entries:** Configure the [`static-files` integration](../reference/integrations/static-files.md) in `projects/<project>/rwv.toml` to surface shared build files (`Makefile`, `justfile`, `.editorconfig`) at the weave root.
-4. **Lock, commit, and publish:** Run `rwv lock --commit`, commit the remaining project files, and publish the project repo as in Steps 4 and 5 above. `rwv status` shows the branch each member repo is on; compare it with `branch` in `rwv.toml`, because `rwv doctor` does not report a clone on a branch other than the one `rwv.toml` declares.
+4. **Commit and publish:** Commit the remaining project files, and publish the project repo as in Steps 4 and 5 above. `rwv status` shows the branch each member repo is on; compare it with `branch` in `rwv.toml`, because `rwv doctor` does not report a clone on a branch other than the one `rwv.toml` declares.
 
 ## Related
 

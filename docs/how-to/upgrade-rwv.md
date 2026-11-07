@@ -12,7 +12,7 @@ rwv doctor --all                    # a clean run records the health floor
 
 # 2. After installing the new binaries (from the primary weave root):
 rwv doctor --fix                    # migrate .rwv-workweave markers, reference worktrees and rwv.toml member keys
-rwv lock                            # regenerate rwv.lock in the current JSON format
+rwv lock                            # only if rwv.lock is in an old format: it is written afresh, pinning nothing (Step 4)
 rwv branch set-mode main declared   # record the trunk; each workweave's branch is recorded from inside it (Step 6)
 rwv update                          # record what this workspace aligns its members for; run it once in every workweave too (Step 7)
 rwv materialize --remove-undeclared-links   # optional: unlink retired go.sum root symlink
@@ -28,7 +28,7 @@ For resting state on disk, installing a newer `rwv` does not touch existing file
 | `.rwv-workweave` & member slots | Written by `rwv` itself | `rwv doctor --fix` from the primary weave migrates them |
 | `rwv.yaml` → `rwv.toml` | Hand-authored by you | Rewrite as `rwv.toml` and delete `rwv.yaml` (no `--fix` arm) |
 | `version` and `submodules` keys in `rwv.toml` | Hand-authored by you | `rwv doctor --fix` renames them to `branch` and `recurse-submodules` and commits only that rename |
-| `rwv.lock` | Generated output | `rwv lock` regenerates it |
+| `rwv.lock` | Generated output | `rwv lock` writes a file that does not parse afresh, pinning nothing; `rwv member pin` gives each member its pin again |
 | What a workspace last aligned its members for | Written by `rwv` itself | `rwv update`, once in the weave root and once in each workweave |
 | A weave branch with no record | Written by `rwv` itself | `rwv branch set-mode main declared` records the trunk; `rwv branch set-mode <project>--<name> feature --target main` records a workweave's branch |
 
@@ -121,13 +121,14 @@ A commit other than the checked-out one that still names the old keys declares n
 With the manifest loading, a `rwv.lock` left in its pre-JSON shape fails to parse. `rwv doctor` reports:
 
 ```text
-[error: unparseable-project/malformed] core: <project>: failed to parse rwv.lock at <dir>/rwv.lock: rwv.lock could not be parsed; it is a generated file — run `rwv lock` to regenerate it: expected value at line 1 column 1
+[error: unparseable-project/malformed] core: <project>: failed to parse rwv.lock at <dir>/rwv.lock: rwv.lock could not be parsed; restore it from version control, or run `rwv lock` to write it afresh — a lock that does not parse pins nothing, so each member then needs its pin back from `rwv member pin` or `rwv update --remote`: expected value at line 1 column 1
 ```
 
-Regenerate it from the current checkouts:
+Write a fresh file, then pin each member at the commit its checkout is at. A lock that does not parse pins nothing, so `rwv lock` alone leaves every member without a pin:
 
 ```bash
 rwv lock
+rwv member pin <repo> HEAD    # once per member
 ```
 
 `rwv doctor` (or `rwv status`) will now report the workspace clean.
