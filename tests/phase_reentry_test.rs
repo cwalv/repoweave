@@ -718,45 +718,33 @@ fn write_sync_to_retire_record(
     std::fs::write(owner.join(".rwv-op"), body).unwrap();
 }
 
-/// Test: merged-check failure keeps phase=retire record and target lease.
+/// Test: a retire refusal keeps the phase=retire record and the target lease.
 ///
-/// Setup: ww and primary share tips (advance-target ran clean). Inject a
-/// commit into ww's server repo AFTER planting the retire record so the
-/// merged-check (ww-tip != primary-tip) fails. Verify:
+/// Setup: ww and primary share tips (advance-target ran clean) and an
+/// untracked file sits in ww's server repo, which the retire's dirty check
+/// refuses. Verify:
 ///   - rwv sync-to --continue fails.
 ///   - owner record still present at ww, still at phase=retire.
 ///   - target lease still present at primary.
+///   - the error names `--continue` and `rwv abort`.
 #[test]
-fn retire_merged_check_failure_leaves_phase_retire_and_lease() {
+fn retire_refusal_leaves_phase_retire_and_lease() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _sha) = make_retire_workspaces(tmp.path());
 
-    let op_id = "retire-merged-check-fail";
+    let op_id = "retire-refusal";
 
-    // Plant the retire owner record at ww, lease at primary. (No abort in
-    // this test, so converged_tips are irrelevant.)
     write_sync_to_retire_record(&ww.root, &ww.root, &primary.root, op_id, &[]);
     write_lease_with_id(&primary.root, &ww.root, op_id);
 
-    // CWD savepoints use op_id; target savepoints use "<op_id>-target".
     let target_op_id = format!("{op_id}-target");
     create_savepoint(&ww.project_dir, op_id);
     create_savepoint(&ww.server_dir, op_id);
-    // Savepoints for primary (target-side) — now created by guard_and_mark.
     create_savepoint(&primary.project_dir, &target_op_id);
     create_savepoint(&primary.server_dir, &target_op_id);
 
-    // Inject divergence: commit into ww's server repo AFTER the advance-target
-    // "completed". The merged-check compares ww and primary tips, so this
-    // divergence makes the check fail.
-    std::fs::write(ww.server_dir.join("post-advance.txt"), "ww divergence\n").unwrap();
-    common::git_in(&ww.server_dir, &["add", "post-advance.txt"]);
-    common::git_in(
-        &ww.server_dir,
-        &["commit", "-m", "ww: post-advance divergence"],
-    );
+    std::fs::write(ww.server_dir.join("stray.txt"), "not committed\n").unwrap();
 
-    // --continue must fail (merged-check fails).
     let out = rwv()
         .args(["sync-to", "--continue"])
         .current_dir(&ww.root)
@@ -764,28 +752,24 @@ fn retire_merged_check_failure_leaves_phase_retire_and_lease() {
         .expect("rwv command failed to run");
     assert!(
         !out.status.success(),
-        "sync-to --continue must fail when merged-check fails; stderr:\n{}",
+        "sync-to --continue must fail when the retire refuses; stderr:\n{}",
         String::from_utf8_lossy(&out.stderr)
     );
 
-    // Owner record must survive at ww, still at phase=retire.
     assert!(
         ww.root.join(".rwv-op").exists(),
-        "owner record must survive a merged-check failure"
+        "owner record must survive a retire refusal"
     );
     let record_json = std::fs::read_to_string(ww.root.join(".rwv-op")).expect("read owner record");
     assert!(
         record_json.contains("\"phase\": \"retire\""),
-        "owner record must remain at phase=retire after merged-check failure; got:\n{record_json}"
+        "owner record must remain at phase=retire after a retire refusal; got:\n{record_json}"
     );
-
-    // Target lease must survive at primary.
     assert!(
         primary.root.join(".rwv-op-lease").exists(),
-        "target lease must survive a merged-check failure"
+        "target lease must survive a retire refusal"
     );
 
-    // Error message must mention --continue and abort.
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("--continue") || stderr.contains("sync-to --continue"),
@@ -795,55 +779,24 @@ fn retire_merged_check_failure_leaves_phase_retire_and_lease() {
         stderr.contains("rwv abort"),
         "error must mention rwv abort for rollback; stderr:\n{stderr}"
     );
-    // Pin the specific refusal, not just its generic resumability hints: a
-    // different bail sharing "--continue"/"rwv abort" would pass the two
-    // checks above without this one firing at all.
-    assert!(
-        stderr.contains("--retire: workweave's member repos differ from target after sync-to"),
-        "the merged-check failure must name itself as the retire divergence refusal; \
-         stderr:\n{stderr}"
-    );
-    assert!(
-        stderr.contains(SERVER_PATH),
-        "the refusal must name which repo diverged; stderr:\n{stderr}"
-    );
-    // The gate is equality-only on purpose — the right conservatism for a
-    // delete. What the operator still needs is which way to reconcile, and
-    // only the per-repo verdict says it. Here CWD contains the target, so the
-    // reconcile runs toward the target; a line that stopped at the two SHAs
-    // leaves the operator to work that out with git plumbing.
-    assert!(
-        stderr.contains("CWD is strictly ahead of the target by 1 commit (contains it)"),
-        "the per-repo line must state the reconcile direction, not just the two \
-         tips; stderr:\n{stderr}"
-    );
-    assert!(
-        !stderr.contains("diverged"),
-        "a target CWD provably contains is not a divergence; stderr:\n{stderr}"
-    );
-
-    // Nothing destructive happened: the workweave must still be on disk.
     assert!(
         ww.root.exists(),
         "a refused retire must leave the workweave in place"
     );
 }
 
-/// Test: --continue completes retire after the operator reconciles.
+/// Test: --continue completes retire after the operator cleans up.
 ///
-/// Setup: same as the failure test, but after injecting the divergence we
-/// also fast-forward primary's server to match (simulating reconciliation).
-/// Then --continue should succeed: merged-check passes, workweave is deleted,
-/// lease is cleared.
+/// Setup: same as the refusal test. After the first --continue is refused for
+/// the untracked file, the operator removes it; --continue then deletes the
+/// workweave and clears the lease.
 #[test]
-fn retire_continue_completes_after_reconciliation() {
+fn retire_continue_completes_after_the_operator_cleans_up() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _sha) = make_retire_workspaces(tmp.path());
 
-    let op_id = "retire-continue-reconciled";
+    let op_id = "retire-continue-cleaned";
 
-    // Plant the retire owner record at ww, lease at primary. (No abort in
-    // this test, so converged_tips are irrelevant.)
     write_sync_to_retire_record(&ww.root, &ww.root, &primary.root, op_id, &[]);
     write_lease_with_id(&primary.root, &ww.root, op_id);
 
@@ -856,16 +809,9 @@ fn retire_continue_completes_after_reconciliation() {
     create_savepoint(&primary.project_dir, &target_op_id);
     create_savepoint(&primary.server_dir, &target_op_id);
 
-    // Inject a divergence (same as failure test).
-    std::fs::write(ww.server_dir.join("post-advance.txt"), "ww divergence\n").unwrap();
-    common::git_in(&ww.server_dir, &["add", "post-advance.txt"]);
-    common::git_in(
-        &ww.server_dir,
-        &["commit", "-m", "ww: post-advance divergence"],
-    );
-    let ww_server_tip = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
+    let stray = ww.server_dir.join("stray.txt");
+    std::fs::write(&stray, "not committed\n").unwrap();
 
-    // Verify the failure state first (the merged-check actually fires).
     let out = rwv()
         .args(["sync-to", "--continue"])
         .current_dir(&ww.root)
@@ -877,34 +823,18 @@ fn retire_continue_completes_after_reconciliation() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    // Reconcile: fast-forward primary's server to match ww.
-    // (Simulates the operator running `git fetch` / `git merge` in the target.)
-    common::git_in(
-        &primary.server_dir,
-        &["fetch", &ww.server_dir.to_string_lossy(), "HEAD"],
-    );
-    let fetch_head = common::git_in(&primary.server_dir, &["rev-parse", "FETCH_HEAD"]);
-    common::git_in(&primary.server_dir, &["reset", "--hard", &fetch_head]);
-    let primary_server_tip_after = common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]);
-    assert_eq!(
-        primary_server_tip_after, ww_server_tip,
-        "test setup: reconciliation must bring primary's server to ww's tip"
-    );
+    std::fs::remove_file(&stray).unwrap();
 
-    // Now --continue should succeed.
     rwv()
         .args(["sync-to", "--continue"])
         .current_dir(&ww.root)
         .assert()
         .success();
 
-    // Owner workspace (workweave) must be deleted.
     assert!(
         !ww.root.exists(),
         "workweave directory must be deleted after successful retire"
     );
-
-    // Target lease must be cleared.
     assert!(
         !primary.root.join(".rwv-op-lease").exists(),
         "target lease must be cleared after successful retire"

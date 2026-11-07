@@ -151,7 +151,7 @@ fn every_finding_prints_a_token_explain_serves() {
         tokens.push(token);
     }
     assert!(
-        tokens.len() > 100
+        tokens.len() > 90
             && tokens.iter().any(|t| t == "index-drift/safe-to-fix")
             && tokens.iter().any(|t| t == "working-tree-drift/safe-to-fix"),
         "the corpus walk read {} findings: it has stopped reading the corpus",

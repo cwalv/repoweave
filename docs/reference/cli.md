@@ -514,7 +514,7 @@ Delete `<W>` and the branches that belong to it, by the deletion rule: the proje
 
 Refused before anything changes: a `<W>` checked out in any workspace (`checkout`) and a `<W>` other branches' records land into (`target` `dependents`, one line each). The rule fetches only the remotes the branches have an upstream or a push branch on; a branch on a remote that could not be fetched is kept (`unconfirmed`) and nothing on it is deleted remotely, and a branch never published is judged on local refs. Remote deletes are leased to the tip the last fetch saw. A record whose branch is gone locally and from every remote, with no workspace of this machine aligned for it, is dropped in the same write.
 
-`--json` emits the envelope `{"$schema": "...", "branch": "...", "target": "...", "deleted": [...], "survivors": [...], "records_dropped": [...]}`. Each `deleted` record has `repo`, `branch`, `site` (`local` or `remote <name>`), `because` and `backup` when one was kept first; each survivor has `repo`, `branch`, `reason` and `detail`. See [JSON envelope convention](#--json-envelope-convention).
+`--json` emits the envelope `{"$schema": "...", "branch": "...", "landed_on": "...", "deleted": [...], "survivors": [...], "records_dropped": [...]}`. Each `deleted` record has `path`, `branch`, `site` (`local` or `remote <name>`), `because` and `backup` when one was kept first; each survivor has `path`, `branch`, `reason` and `detail`. See [JSON envelope convention](#--json-envelope-convention).
 
 ### `rwv status [--json] [...]`
 
@@ -624,7 +624,7 @@ Neither discard flag discards for good: each keeps what it consents to losing as
 
 Both refusals cover every checkout under the workweave, not only the members the project's manifest names: a member replay could not prune, one the workweave added that has not landed, or a clone put there by hand. Such a checkout is listed with the suffix `(not a manifest member)`. `create --replace-existing` weighs the same set.
 
-`--json` emits the envelope `{"$schema": "...", "project": "...", "discarded": {"edits": [...], "detached_commits": [...], "unlanded_branches": [...]}, "deleted": [...], "survivors": [...], "records_dropped": [...]}`; the last three are the deletion rule's, as `rwv branch delete` emits them, and are absent when the workweave's aligned branch is not a feature.
+`--json` emits the envelope `{"$schema": "...", "project": "...", "discarded": {"edits": [...], "detached_commits": [...], "unlanded_branches": [...]}, "deleted": [...], "survivors": [...], "records_dropped": [...]}`; the last three are the deletion rule's, as `rwv branch delete` emits them, and are empty when the workweave's aligned branch is not a feature.
 
 ### `rwv workweave list`
 

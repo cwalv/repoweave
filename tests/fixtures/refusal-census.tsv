@@ -47,6 +47,7 @@ src/branch.rs	name no-such-branch	tests/refusal_arrival_test.rs	1
 src/branch.rs	name reserved	tests/refusal_arrival_test.rs	1
 src/branch.rs	target conflict	tests/branch_gate_test.rs	1
 src/branch.rs	target cycle	tests/branch_gate_test.rs	1
+src/branch.rs	target no target	tests/branch_gate_test.rs	1
 src/branch.rs	target unreadable	tests/branch_gate_test.rs	1
 src/branch.rs	target unrecorded	tests/branch_gate_test.rs	1
 src/check.rs	alignment detached	-	2
@@ -55,7 +56,7 @@ src/check.rs	alignment on branch	-	2
 src/check.rs	alignment on branch with stray commits	-	2
 src/check.rs	alignment project detached	-	1
 src/check.rs	alignment unaligned	-	2
-src/check.rs	repair-target-changed	-	2
+src/check.rs	repair-target-changed	-	1
 src/check.rs	unknown-finding-kind	-	1
 src/cli/dispatch.rs	(untokened:argv-shim)	-	1
 src/cli/dispatch.rs	ambiguous-workweave-address	-	1
@@ -167,11 +168,7 @@ src/sync.rs	no-such-workweave	-	1
 src/sync.rs	not-fast-forwardable	-	2
 src/sync.rs	op-parked	-	7
 src/sync.rs	resume-contradicts-record	-	3
-src/sync.rs	retire-not-converged	-	1
-src/sync.rs	retire-unpruned-checkout	tests/sync_prune_direction_test.rs	1
 src/sync.rs	stale-lock	tests/refusal_arrival_test.rs	4
-src/sync.rs	store-claims-unreadable	-	2
-src/sync.rs	store-still-claimed	-	1
 src/sync.rs	target-diverged-mid-op	-	1
 src/sync.rs	target-lock-behind	-	1
 src/sync.rs	unparseable-project malformed	tests/e2e_sync_abort_test.rs	1
@@ -197,26 +194,27 @@ src/workweave.rs	(untokened:UNCLASSIFIED)	-	1
 src/workweave.rs	(untokened:environment-passthrough)	-	1
 src/workweave.rs	(untokened:hook-input)	-	2
 src/workweave.rs	(untokened:tally)	-	2
+src/workweave.rs	alignment detached with unpushed commits	-	1
 src/workweave.rs	dirty-project-dir	-	1
 src/workweave.rs	edits dirty	tests/refusal_arrival_test.rs	1
 src/workweave.rs	health-floor-too-low	-	1
 src/workweave.rs	missing-canonical-clone	-	1
+src/workweave.rs	name exists	tests/refusal_arrival_test.rs	1
 src/workweave.rs	name taken	tests/refusal_arrival_test.rs	1
 src/workweave.rs	no-active-project	tests/project_and_source_spelling_test.rs	1
 src/workweave.rs	no-such-workweave	-	1
-src/workweave.rs	owned-branch-moved	-	1
 src/workweave.rs	registry-path-disagreement	-	1
 src/workweave.rs	replace-target-holds-work	-	2
 src/workweave.rs	repo-without-commits	-	1
 src/workweave.rs	stale-registry-entry	-	5
-src/workweave.rs	standalone-in-workweave	-	2
+src/workweave.rs	standalone-in-workweave	-	3
 src/workweave.rs	target-dir-occupied	-	2
-src/workweave.rs	unmerged-commits	-	1
-src/workweave.rs	unowned-branch-in-namespace	-	3
 src/workweave.rs	unreadable-status	-	1
 src/workweave.rs	unregistered-workweave	-	1
 src/workweave.rs	workweave-drift	tests/symlinked_member_migration_test.rs	2
 src/workweave_index.rs	legacy-workweave-index	-	1
 src/workweave_index.rs	project-dir-missing	-	2
-src/workweave_index.rs	receipt-revision-uncanonical	-	1
 src/workweave_index.rs	state-claim-held	-	1
+src/deletion.rs	inapplicable-flag	-	3
+src/deletion.rs	name no-such-branch	tests/refusal_arrival_test.rs	1
+src/deletion.rs	target dependents	tests/branch_gate_test.rs	1

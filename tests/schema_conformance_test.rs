@@ -69,10 +69,12 @@ use repoweave::backup::{
     BackupJsonOutput, BackupOutput, HeldCommitOutput, RepoBackupsOutput, BACKUP_SCHEMA_URL,
 };
 use repoweave::branch::{
-    BranchListJsonOutput, ListedBranch, RecordOutput, ValueOutput, BRANCH_SCHEMA_URL,
+    BranchDeleteJsonOutput, BranchListJsonOutput, ListedBranch, RecordOutput, ValueOutput,
+    BRANCH_DELETE_SCHEMA_URL, BRANCH_SCHEMA_URL,
 };
 use repoweave::check::{CheckViolation, PlacementConvergence, ProvenanceKind, DOCTOR_SCHEMA_URL};
 use repoweave::clone::{CloneJsonOutput, CLONE_SCHEMA_URL};
+use repoweave::deletion::{Deleted, Outcome, Reason, Survivor};
 use repoweave::diagnosis::{
     Axis, ChoiceOutput, FactKind, FactOutput, JudgedOutput, RefusalJsonOutput, REFUSAL_SCHEMA_URL,
 };
@@ -113,6 +115,9 @@ use repoweave::update_remote::{
 use repoweave::vcs::BackupMark;
 use repoweave::vcs::{ConflictOp, MidOperation, VcsErrorOutput};
 use repoweave::workspace::{AdvisoryKindOutput, AdvisoryOutput, Resolution};
+use repoweave::workweave::{
+    DiscardedOutput, KeptWork, UnlandedBranch, WorkweaveDeleteJsonOutput, WORKWEAVE_SCHEMA_URL,
+};
 use serde_json::{json, Value};
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
@@ -149,6 +154,11 @@ fn cases() -> Vec<VerbCase> {
             verb: "branch",
             schema_url: BRANCH_SCHEMA_URL,
             corpus: branch_corpus,
+        },
+        VerbCase {
+            verb: "branch-delete",
+            schema_url: BRANCH_DELETE_SCHEMA_URL,
+            corpus: branch_delete_corpus,
         },
         VerbCase {
             verb: "doctor",
@@ -214,6 +224,11 @@ fn cases() -> Vec<VerbCase> {
             verb: "each",
             schema_url: each_schema_url::EACH_SCHEMA_URL,
             corpus: each_corpus,
+        },
+        VerbCase {
+            verb: "workweave",
+            schema_url: WORKWEAVE_SCHEMA_URL,
+            corpus: workweave_corpus,
         },
     ]
 }
@@ -1601,6 +1616,115 @@ fn sync_corpus() -> Vec<(&'static str, Value)> {
     ]
 }
 
+fn survivors_of_every_reason() -> Vec<Survivor> {
+    [
+        Reason::Unlanded,
+        Reason::Pinned,
+        Reason::OpenHead,
+        Reason::Members,
+        Reason::Unconfirmed,
+    ]
+    .into_iter()
+    .map(|reason| Survivor {
+        path: REPO.to_owned(),
+        branch: "proj--feat-a".to_owned(),
+        reason,
+        detail: vec!["what the reason rests on".to_owned()],
+    })
+    .collect()
+}
+
+fn deleted_by_every_ground() -> Vec<Deleted> {
+    vec![
+        Deleted {
+            path: REPO.to_owned(),
+            branch: "proj--feat-a".to_owned(),
+            site: "local".to_owned(),
+            because: format!("landed on {}", sha('a')),
+            backup: None,
+        },
+        Deleted {
+            path: "projects/proj".to_owned(),
+            branch: "proj--feat-a".to_owned(),
+            site: "remote origin".to_owned(),
+            because: "kept as backup proj--feat-a/aaaaaaaaaaaa".to_owned(),
+            backup: Some("proj--feat-a/aaaaaaaaaaaa".to_owned()),
+        },
+    ]
+}
+
+fn branch_delete_corpus() -> Vec<(&'static str, Value)> {
+    vec![
+        (
+            "deleted-and-survived",
+            value(BranchDeleteJsonOutput {
+                schema_url: BRANCH_DELETE_SCHEMA_URL.to_owned(),
+                branch: "proj--feat-a".to_owned(),
+                landed_on: "main".to_owned(),
+                outcome: Outcome {
+                    deleted: deleted_by_every_ground(),
+                    survivors: survivors_of_every_reason(),
+                    records_dropped: vec!["proj--feat-a".to_owned()],
+                },
+            }),
+        ),
+        (
+            "nothing-to-delete",
+            value(BranchDeleteJsonOutput {
+                schema_url: BRANCH_DELETE_SCHEMA_URL.to_owned(),
+                branch: "proj--feat-a".to_owned(),
+                landed_on: "main".to_owned(),
+                outcome: Outcome::default(),
+            }),
+        ),
+    ]
+}
+
+fn workweave_corpus() -> Vec<(&'static str, Value)> {
+    vec![
+        (
+            "everything-discarded-and-survived",
+            value(WorkweaveDeleteJsonOutput {
+                schema_url: WORKWEAVE_SCHEMA_URL.to_owned(),
+                project: "proj".to_owned(),
+                discarded: DiscardedOutput {
+                    edits: vec![KeptWork {
+                        path: REPO.to_owned(),
+                        backup: "proj--feat-a/aaaaaaaaaaaa".to_owned(),
+                    }],
+                    detached_commits: vec![KeptWork {
+                        path: REPO.to_owned(),
+                        backup: "HEAD/bbbbbbbbbbbb".to_owned(),
+                    }],
+                    unlanded_branches: vec![UnlandedBranch {
+                        path: REPO.to_owned(),
+                        branch: "proj--feat-a".to_owned(),
+                        backup: "proj--feat-a/cccccccccccc".to_owned(),
+                    }],
+                },
+                outcome: Outcome {
+                    deleted: deleted_by_every_ground(),
+                    survivors: survivors_of_every_reason(),
+                    records_dropped: vec!["proj--feat-a".to_owned()],
+                },
+            }),
+        ),
+        (
+            "no-feature-branch",
+            value(WorkweaveDeleteJsonOutput {
+                schema_url: WORKWEAVE_SCHEMA_URL.to_owned(),
+                project: "proj".to_owned(),
+                discarded: DiscardedOutput {
+                    edits: Vec::new(),
+                    detached_commits: Vec::new(),
+                    unlanded_branches: Vec::new(),
+                },
+                outcome: Outcome::default(),
+            }),
+        ),
+    ]
+}
+
 fn sync_to_corpus() -> Vec<(&'static str, Value)> {
     vec![
         (
@@ -1610,7 +1734,7 @@ fn sync_to_corpus() -> Vec<(&'static str, Value)> {
                 source_workweave: Some("feat-a".to_owned()),
                 target: repoweave::path_spelling::WirePath::of(std::path::Path::new("/ws")),
                 retired: true,
-                survivors: Vec::new(),
+                survivors: survivors_of_every_reason(),
                 // Fresh run: the absent shape of the `resumed` disclosure.
                 resumed: None,
                 outcomes: sync_outcomes(true),
@@ -2022,6 +2146,7 @@ fn records_key(verb: &str) -> &'static str {
         "refusal" => "refused",
         "backup" => "repos",
         "branch" => "branches",
+        "branch-delete" | "workweave" => "deleted",
         _ => "outcomes",
     }
 }
@@ -2109,48 +2234,6 @@ fn a_dropped_field_inside_a_record_is_reported_for_every_verb() {
             case.verb
         );
     }
-}
-
-/// A commit a doctor finding names is a commit id, so the empty string that
-/// once stood for "none" is reported, as is an abbreviation.
-#[test]
-fn a_doctor_commit_field_holds_a_full_commit_id_or_null() {
-    let schema = json_schema::committed_schema("doctor");
-    let case = cases()
-        .into_iter()
-        .find(|c| c.verb == "doctor")
-        .expect("registered above");
-    let doc = first_doc(&case);
-    let with = |edit: &dyn Fn(&mut Value)| {
-        let mut doc = doc.clone();
-        let finding = doc["violations"]
-            .as_array_mut()
-            .expect("violations is an array")
-            .iter_mut()
-            .find_map(|v| {
-                v.get_mut("sub_kind")?
-                    .get_mut("stale-ephemeral-branch-live")
-            })
-            .expect("the corpus carries a stale-ephemeral-branch-live finding");
-        edit(finding);
-        json_schema::conform(&doc, &schema).0
-    };
-
-    let unedited = with(&|_| {});
-    assert!(
-        unedited.is_empty(),
-        "the corpus document conforms: {unedited:?}"
-    );
-    for not_an_id in ["", "aaaaaaaaaaaa", "not-a-commit"] {
-        assert!(
-            !with(&|d| d["tip_sha"] = json!(not_an_id)).is_empty(),
-            "tip_sha {not_an_id:?} was not reported"
-        );
-    }
-    assert!(
-        !with(&|d| d["tip_sha"] = Value::Null).is_empty(),
-        "a stale branch's tip always names a commit, so tip_sha is never null"
-    );
 }
 
 /// `commits_ahead` is the only place a numeric width reaches these artifacts,

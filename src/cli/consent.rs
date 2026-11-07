@@ -42,9 +42,8 @@
 
 use crate::manifest::{ProjectName, RepoKey, RepoOperand};
 
-/// Proof that the operator consented to discarding commits that are
-/// not merged into the baseline. Minted from
-/// `--discard-unmerged-commits`.
+/// Proof that the operator consented to deleting a branch whose commits have
+/// not landed, after a backup. Minted from `--discard-unlanded`.
 ///
 /// `Copy`: see [`DiscardUnlandedConsent`]'s doc comment.
 #[derive(Debug, Clone, Copy)]
@@ -58,7 +57,7 @@ impl DiscardUnlandedConsent {
         Self(())
     }
 
-    /// Mint from the parsed `--discard-unmerged-commits` value: `Some`
+    /// Mint from the parsed `--discard-unlanded` value: `Some`
     /// iff the operator passed it. `pub(in crate::cli)`: see
     /// [`DiscardUnlandedConsent::from_flag`]'s doc comment.
     pub(in crate::cli) fn from_flag(discard_unlanded: bool) -> Option<Self> {

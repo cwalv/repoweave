@@ -2,18 +2,19 @@
 //!
 //! What these tests are for, stated once:
 //!
-//!   1. **Ownership is by record, never by name shape.** The shipped
-//!      code decided "is this branch rwv's?" by parsing the name, so a
-//!      hand-made `my--feature/wip` was rwv's property. The tests below fix
-//!      the inverse: a branch rwv holds no receipt for survives every verb
-//!      that used to glob for it, and the ones rwv *did* record are gone.
+//!   1. **What is deleted is what belongs to the deleted branch, never what
+//!      merely looks like it.** The shipped code decided "is this branch
+//!      rwv's?" by parsing the name, so a hand-made `my--feature/wip` was rwv's
+//!      property. The tests below fix the inverse: a branch that is not the
+//!      workweave's own survives every verb that used to glob for it, and the
+//!      workweave's own, once landed, is gone.
 //!   2. **Break-the-guard, not happy-path.** Each test's fixture contains
 //!      the thing that used to be destroyed, at a name and tip that make the
 //!      destruction observable. Restore the prefix glob, or the create-retry
 //!      force-delete, and these fail.
-//!   3. **Refuse rather than destroy.** Where no warrant is constructible the
-//!      verb must stop and say so; "left it alone and reported" is the
-//!      assertion, not "succeeded".
+//!   3. **Refuse rather than destroy.** Where no proof is constructible the
+//!      verb must stop or leave the branch and say so; "left it alone and
+//!      reported" is the assertion, not "succeeded".
 
 use assert_cmd::Command;
 use std::path::{Path, PathBuf};
@@ -73,6 +74,20 @@ fn make_workspace(tmp: &Path) -> PathBuf {
     ws
 }
 
+/// `make_workspace`, with the project directory a repo whose trunk is
+/// recorded, so a workweave has a branch whose record the deletion rule reads.
+fn make_workspace_with_project_repo(tmp: &Path) -> PathBuf {
+    let ws = make_workspace(tmp);
+    let project_dir = ws.join("projects/web-app");
+    common::git_in(&project_dir, &["init", "--initial-branch=main"]);
+    common::git_in(&project_dir, &["config", "user.email", "test@test.com"]);
+    common::git_in(&project_dir, &["config", "user.name", "Test"]);
+    common::git_in(&project_dir, &["add", "rwv.toml"]);
+    common::git_in(&project_dir, &["commit", "-m", "add manifest"]);
+    common::record_trunk(&project_dir);
+    ws
+}
+
 /// Create a branch at HEAD carrying a commit reachable from nowhere else,
 /// and return that commit's SHA. This is what makes a destroy *observable*:
 /// deleting the branch strands the commit.
@@ -88,11 +103,11 @@ fn hand_made_branch_with_unique_commit(repo: &Path, name: &str, file: &str) -> S
 }
 
 // ---------------------------------------------------------------------------
-// R2 — a ref that merely LOOKS like rwv's is not rwv's
+// R2 — a branch that merely LOOKS like the workweave's is not the workweave's
 // ---------------------------------------------------------------------------
 
-/// The §2.1 `[S]` scenario, inverted: `workweave delete` destroys exactly the
-/// ref it recorded creating, and nothing that merely resembles it.
+/// `workweave delete` deletes the branch the workweave was aligned for and what
+/// belongs to it, and nothing that merely resembles it.
 ///
 /// The shipped delete globbed the prefix `{project}--{workweave}` and
 /// force-deleted everything it returned. A prefix is not a namespace: for
@@ -101,38 +116,21 @@ fn hand_made_branch_with_unique_commit(repo: &Path, name: &str, file: &str) -> S
 /// restore the glob-and-destroy and this test fails on it, with the commit
 /// only that branch reached left dangling.
 ///
-/// `my--feature/wip` and `dependabot--npm/lodash` are the two names §2.1
-/// records by hand. They sit outside this workweave's prefix, so delete never
-/// had a route to them; they are here because the `<a>--<b>/<c>` shape is what
-/// the *doctor* side reads as ownership, and this is the fixture that pass
-/// will be extended over.
-///
-/// **What this does NOT yet pin.** `rwv doctor --fix` runs in the middle of
-/// this flow and leaves all three standing — but for its own reason, not the
-/// one this file is about: `check.rs` still decides ownership by parsing the
-/// name, and spares these only because each carries a commit that is not an
-/// ancestor of primary, which makes them live-class. §4.6(4) says that parser
-/// can be deleted outright once deletion goes through the registry; doing so
-/// is the check.rs cutover. Until then a *safe-class* lookalike — same
-/// shape, no unique commit — is still deleted by `doctor --fix`, and adding
-/// that case here belongs with the change that fixes it.
+/// `my--feature/wip` and `dependabot--npm/lodash` sit outside this workweave's
+/// prefix, so delete never had a route to them.
 #[test]
-fn delete_destroys_only_the_ref_it_recorded() {
+fn delete_destroys_only_what_belongs_to_the_workweaves_branch() {
     let tmp = common::tempdir().unwrap();
-    let ws = make_workspace(tmp.path());
+    let ws = make_workspace_with_project_repo(tmp.path());
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
     let repo = ws.join("github/org/repo");
 
-    // Inside the shipped prefix glob for workweave `real`, and not rwv's.
     let sibling_sha =
         hand_made_branch_with_unique_commit(&repo, "web-app--really-mine", "sibling.txt");
-    // The two names §2.1 records.
     let feature_sha = hand_made_branch_with_unique_commit(&repo, "my--feature/wip", "wip.txt");
     let bot_sha = hand_made_branch_with_unique_commit(&repo, "dependabot--npm/lodash", "bump.txt");
 
-    // A real workweave, so there IS a recorded ref for the verbs to find and
-    // destroy — otherwise "nothing was deleted" would prove nothing.
     rwv()
         .args(["workweave", "create", "--project", "web-app", "real"])
         .current_dir(&ws)
@@ -140,26 +138,29 @@ fn delete_destroys_only_the_ref_it_recorded() {
         .success();
     assert!(
         branch_names(&repo).iter().any(|b| b == "web-app--real"),
-        "precondition: the create must have recorded and written its own ref"
+        "precondition: the create must have written its own branch"
     );
 
-    let _ = rwv().args(["doctor", "--fix"]).current_dir(&ws).assert();
-
     rwv()
-        .args(["workweave", "delete", "--project", "web-app", "real"])
+        .args([
+            "workweave",
+            "delete",
+            "--project",
+            "web-app",
+            "real",
+            "--discard-uncommitted",
+        ])
         .current_dir(&ws)
         .assert()
         .success();
 
     let after = branch_names(&repo);
 
-    // The recorded ref is gone — the verb did run and did destroy.
     assert!(
         !after.iter().any(|b| b == "web-app--real"),
-        "the RECORDED ref should have been destroyed; branches: {after:?}"
+        "the workweave's own branch should have been deleted; branches: {after:?}"
     );
 
-    // Everything else is untouched, tips included.
     for (name, sha) in [
         ("web-app--really-mine", &sibling_sha),
         ("my--feature/wip", &feature_sha),
@@ -167,7 +168,7 @@ fn delete_destroys_only_the_ref_it_recorded() {
     ] {
         assert!(
             after.iter().any(|b| b == name),
-            "branch {name} is not rwv's and must survive; branches: {after:?}"
+            "branch {name} is not the workweave's and must survive; branches: {after:?}"
         );
         assert_eq!(
             &common::git_in(&repo, &["rev-parse", name]),
@@ -177,19 +178,19 @@ fn delete_destroys_only_the_ref_it_recorded() {
     }
 }
 
-/// The report side of the same rule: delete says what it left behind, so
-/// "not rwv's" is visible rather than merely silent.
+/// A branch under the workweave's name, in a member the workweave never
+/// materialized, is not the workweave's branch: the delete neither touches it
+/// nor reports it.
 ///
-/// The leftover lives in a repo the workweave never materialized — added to
-/// the manifest after the create, which is how a store ends up inside a
-/// workweave's scope with no ref of rwv's in it. That is not fixture
-/// convenience: git cannot hold `refs/heads/p--ww` and `refs/heads/p--ww/x`
-/// at the same time, so in a store where rwv's flat ref stands, a lookalike
-/// under it cannot exist to be reported.
+/// The member is declared after the create, which is how a store ends up
+/// inside a workweave's scope with no branch of the workweave's in it. Git
+/// cannot hold `refs/heads/p--ww` and `refs/heads/p--ww/x` at the same time, so
+/// in a store where the workweave's branch stands, a lookalike under it cannot
+/// exist to be left alone.
 #[test]
-fn delete_reports_the_branches_it_will_not_touch() {
+fn delete_leaves_a_lookalike_under_the_workweaves_name_alone() {
     let tmp = common::tempdir().unwrap();
-    let ws = make_workspace(tmp.path());
+    let ws = make_workspace_with_project_repo(tmp.path());
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
@@ -199,9 +200,6 @@ fn delete_reports_the_branches_it_will_not_touch() {
         .assert()
         .success();
 
-    // A second repo, declared after the create, carrying a branch inside the
-    // workweave's namespace that rwv did not write. This is the one the
-    // prefix glob would have taken.
     let repo2 = ws.join("github/org/other");
     init_repo_with_commit(&repo2);
     let manifest = ws.join("projects/web-app/rwv.toml");
@@ -215,94 +213,27 @@ fn delete_reports_the_branches_it_will_not_touch() {
         hand_made_branch_with_unique_commit(&repo2, "web-app--reported/mine", "mine.txt");
 
     let assert = rwv()
-        .args(["workweave", "delete", "--project", "web-app", "reported"])
+        .args([
+            "workweave",
+            "delete",
+            "--project",
+            "web-app",
+            "reported",
+            "--discard-uncommitted",
+        ])
         .current_dir(&ws)
         .assert()
         .success();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
 
     assert!(
-        stderr.contains("web-app--reported/mine") && stderr.contains("not recorded as rwv's"),
-        "delete must report the leftover it is not allowed to touch; got:\n{stderr}"
-    );
-    assert!(
-        branch_names(&repo2)
-            .iter()
-            .any(|b| b == "web-app--reported/mine"),
-        "the reported leftover must still exist"
+        !stderr.contains("web-app--reported/mine"),
+        "a branch that is not the workweave's is not reported; got:\n{stderr}"
     );
     assert_eq!(
         common::git_in(&repo2, &["rev-parse", "web-app--reported/mine"]),
         leftover_sha,
-        "the reported leftover must still point at the operator's commit"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// §3.5 — name uniqueness is checked against the index, not the directory
-// ---------------------------------------------------------------------------
-
-/// `--dir` walks past the directory-existence check, and the index insert is
-/// last-writer-wins, so two workweaves of one project could take the same
-/// name — and under flat ephemeral names they would then mint the *same*
-/// branch in the same store.
-/// The **flat** leftover: the workweave's own ephemeral name standing in a
-/// store with no receipt behind it — the §7.1 arm 2 population, before the
-/// migration adopts it.
-///
-/// `is_this_workweaves_namespace` has to claim the flat name itself, not just
-/// what sits under it. Drop the `==` half and this branch stops being
-/// reported at all: delete says nothing, and the operator is left with a ref
-/// no rwv verb will ever mention again. Nothing else in the suite reaches
-/// that half — every other leftover fixture is spelled `{flat}/<segment>`,
-/// which the prefix half claims on its own.
-#[test]
-fn delete_reports_a_flat_leftover_it_holds_no_receipt_for() {
-    let tmp = common::tempdir().unwrap();
-    let ws = make_workspace(tmp.path());
-    let weaveroot = tmp.path().join(".workweaves");
-    std::fs::create_dir_all(&weaveroot).unwrap();
-
-    rwv()
-        .args(["workweave", "create", "--project", "web-app", "unowned"])
-        .current_dir(&ws)
-        .assert()
-        .success();
-
-    // Same shape as `delete_reports_the_branches_it_will_not_touch`: a second
-    // repo declared after the create, so the store is in the workweave's
-    // scope with no ref of rwv's in it. Here the leftover carries the flat
-    // name the workweave itself mints.
-    let repo2 = ws.join("github/org/other");
-    init_repo_with_commit(&repo2);
-    let manifest = ws.join("projects/web-app/rwv.toml");
-    let mut text = std::fs::read_to_string(&manifest).unwrap();
-    text.push_str(&format!(
-        "[repositories.\"github/org/other\"]\ntype = \"git\"\nurl = \"file://{repo}\"\nbranch = \"main\"\nrole = \"owned\"\n",
-        repo = common::url_path(&repo2)
-    ));
-    std::fs::write(&manifest, text).unwrap();
-    let leftover_sha = hand_made_branch_with_unique_commit(&repo2, "web-app--unowned", "mine.txt");
-
-    let assert = rwv()
-        .args(["workweave", "delete", "--project", "web-app", "unowned"])
-        .current_dir(&ws)
-        .assert()
-        .success();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).to_string();
-
-    assert!(
-        stderr.contains("web-app--unowned") && stderr.contains("not recorded as rwv's"),
-        "delete must report the flat leftover it is not allowed to touch; got:\n{stderr}"
-    );
-    assert!(
-        branch_names(&repo2).iter().any(|b| b == "web-app--unowned"),
-        "the flat leftover must still exist"
-    );
-    assert_eq!(
-        common::git_in(&repo2, &["rev-parse", "web-app--unowned"]),
-        leftover_sha,
-        "and it must still point at the operator's commit"
+        "the lookalike must still point at the operator's commit"
     );
 }
 
@@ -360,14 +291,14 @@ fn create_refuses_a_name_the_index_already_records() {
 /// `rwv member remove --delete` used to `remove_dir_all` the canonical store while a
 /// workweave's live worktree was still linked into it: the workweave's `.git`
 /// files point *inside* the directory being removed, so the whole workweave
-/// is gutted. R4 refuses while any worktree is registered or any receipt
-/// stands, and the same command succeeds once the workweave is deleted (which
-/// removes the worktree and retracts the receipt) — the delete-then-prune
-/// ordering §5's `prune_dropped_repo` row describes.
+/// is gutted. R4 refuses while any worktree is registered, and the same command
+/// succeeds once the workweave is deleted (which removes the worktree and the
+/// branch it was on) — the delete-then-prune ordering §5's `prune_dropped_repo`
+/// row describes.
 #[test]
 fn remove_delete_refuses_a_claimed_store_and_succeeds_after_the_claim_is_gone() {
     let tmp = common::tempdir().unwrap();
-    let ws = make_workspace(tmp.path());
+    let ws = make_workspace_with_project_repo(tmp.path());
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
     let repo = ws.join("github/org/repo");
@@ -413,7 +344,14 @@ fn remove_delete_refuses_a_claimed_store_and_succeeds_after_the_claim_is_gone() 
 
     // Retire the claims in the order R4 requires, then the store may go.
     rwv()
-        .args(["workweave", "delete", "--project", "web-app", "live"])
+        .args([
+            "workweave",
+            "delete",
+            "--project",
+            "web-app",
+            "live",
+            "--discard-uncommitted",
+        ])
         .current_dir(&ws)
         .assert()
         .success();

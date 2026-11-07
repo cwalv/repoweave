@@ -77,8 +77,19 @@ historical: the consent flags `--detach-checkouts` (on `update`,
 carve-out for a `reference` member, which is now a worktree like any other and
 is detached at its pin, as a `dependency` member is; and the migration passes
 of §7, whose pre-flat shape now refuses as `health-floor-too-low` naming the
-bridge version. In force are the type split (§4), the receipts and warrants
-(R2, R3), the flat ephemeral name (§3.5), and the backups (§4.4.1).
+bridge version. In force are the type split (§4), the flat ephemeral name
+(§3.5), and the backups (§4.4.1).
+
+**Superseded by the deletion rule.** Ownership by receipt is gone. There is no
+`OwnedRef`, `BornRef`, `DeletionWarrant` or `RefRegistry` record and lookup;
+`Vcs::delete_owned_ref` and `retire_recorded_refs` do not exist; `doctor --fix`
+deletes no branch, and the `branch-discipline`, `dangling-ref-receipt` and
+`pre-flat-ref-receipt` findings are removed. A branch is destroyed by
+`Vcs::delete_branch`, which takes a `DestroyProof` (§4.4), and which branches
+are destroyed is decided by the deletion rule (§3.7). R2, R3 and R4 (§3.3) are
+restated in those terms. Wherever §§1.4, 2, 4.2, 5, 6, 7 and 8.4 still speak of
+receipts, warrants or `OwnedRef` they describe the model before that change and
+are historical.
 
 **If this document and the tree diverge again, re-run the full sweep and
 update this paragraph's commit hash — do not patch individual citations one
@@ -545,19 +556,17 @@ inspecting the writes the operation performs:
 |---|---|---|
 | **MOVE** | Changes the *value* of `ref(W)` and nothing about `HEAD`'s symbolic-ness or target. | The verb's own preconditions. A MOVE that is not a fast-forward (a rewind) additionally requires a savepoint under `refs/rwv/pre-op/*` and a `DiscardWarrant` (§4.4). A MOVE of an already-detached HEAD is subject to the mid-operation precondition (§3.6). |
 | **ATTACH** | Changes whether `HEAD` is symbolic, or which branch it points at. | Birth, or a named override. |
-| **DESTROY** | Removes a ref under `refs/heads/`. | An ownership receipt *and* a warrant. |
-| **DESTROY-STORE** | Removes an entire ref store and its object database (`remove_dir_all` of a repo). | R4: no live worktree registered against the store, every receipt keyed to the store retracted, and the verb's own named preconditions. |
+| **DESTROY** | Removes a ref under `refs/heads/`, or a push branch on a remote. | A `DestroyProof` (§4.4): the deletion rule's verdict (§3.7). |
+| **DESTROY-STORE** | Removes an entire ref store and its object database (`remove_dir_all` of a repo). | R4: no live worktree registered against the store, and the verb's own named preconditions. |
 
 DESTROY-STORE exists because a store-level destroy deletes every ref and
 every object at once, so no ref-level rule can gate it (Q11 first recorded
 this) — and therefore no §5 row may rely on ref-level reasoning to permit
-one. rwv performs store-level destroys in three places, and all three are now
+one. rwv performs store-level destroys in three places, and all three are
 R4-gated: `prune_dropped_repo` and `rwv member remove --delete`, which share
-`plan_checkout_removal` (`judge_store_checkouts` and
-`refuse_standing_receipts` in `sync.rs`, before the destroy) `[V]`, and
-`workweave delete`
-(`workweave.rs:2848-2851`, call at `:2850`, reached only after
-`retire_recorded_refs` has run the store's receipts dry) `[V]`.
+`plan_checkout_removal` (`judge_store_checkouts` in `sync.rs`, before the
+destroy) `[V]`, and `workweave delete`, which refuses a checkout that is itself
+a store other worktrees link into (`standalone-in-workweave`) `[V]`.
 
 Anything else — reading refs, writing `refs/rwv/*`, moving remote-tracking
 refs — is not a branch-model operation and this rule does not govern it.
@@ -575,51 +584,41 @@ for `fetch`, the resolved start point for `workweave create` and `add` — and
 **Changing which ref a checkout is attached to, including attached →
 detached and detached → attached, requires a named override.**
 
-**R2 — rwv may only DESTROY a ref it recorded creating.**
+**R2 — rwv destroys a branch only when the deletion rule says it belongs.**
 
-Ownership is by **record**, not by name shape. A ref is rwv's to delete iff
-rwv holds a persisted receipt for that exact name in that exact store. A ref
-that merely *looks* like rwv's is not rwv's.
+Belonging is decided from the branch records and the refs themselves (§3.7),
+never from a record that rwv created the ref and never from the shape of its
+name. A branch that merely *looks* like one of rwv's — a hand-made
+`<project>--<workweave>` — is destroyed only if it is the project branch, or a
+listed member's branch, of the name being deleted.
 
-**R3 — a DESTROY additionally requires a warrant.**
+**R3 — a DESTROY carries a proof.**
 
-The receipt says "this is mine". The warrant says "and it is safe to lose
-now". Three warrants, and no others:
+The rule's verdict becomes a `DestroyProof`, which has two grounds and no
+others:
 
-- **Unmoved** — the ref's tip is exactly the tip rwv recorded. Nothing has
-  happened to it since rwv created it. (This was written for
-  `create_worktree`'s retry, which no longer exists — §4.6(3). Its shipped
-  consumer is workweave-create rollback, which deletes only a ref this create
-  authored and only if nothing has landed on it since:
-  `undo_ref_births`, `workweave.rs:679`, via `DeletionWarrant::unmoved`
-  `vcs.rs:1678`) `[V]`.
-- **Merged** — the ref's tip is an ancestor of a named baseline (the recorded
-  parent workweave's tip, or the primary weave's tip). This is what
-  `workweave delete`'s diverged-paths check computes via `is_ancestor`
-  (`collect_diverged_paths`, `workweave.rs:1989-2092`) `[V]`; `sync-to
-  --retire` runs it too, by calling into the same delete path after its own
-  separate, exact-SHA-equality convergence precondition (`run_retire`,
-  `sync.rs:4232-4251` → `retire_workweave_after_sync_to`, `:4366-4453`) `[V]`.
-  **Shipped**: `DeletionWarrant::merged` (`vcs.rs:1688`) is the constructor,
-  and `retire_recorded_refs` (`workweave.rs:2421-2503`) establishes one per
-  recorded ref against `baseline_tips_in_store` (`:2286-2302`) before any
-  delete `[V]`.
-- **BackedUp** — the operator passed `--discard-unmerged-commits`, which
-  consents to this specific loss, *and* the ref's tip has been kept as a
-  backup (`refs/rwv/backup/<ref>/<id>`). `DeletionWarrant::operator_discarded`
-  takes the consent, the receipt and the `Vcs`, writes the backup through
-  `Vcs::create_backup` and holds the `BackupWitness` it returns, so a discard
-  with no backup behind it is unrepresentable. The loss the flag consents to is
-  the ref name; the commits stay reachable until `rwv backup drop`.
+- **Landed** — every commit on the branch is reached by a ref that outlives it:
+  the tip is an ancestor of the branch the deleted branch lands into, local or
+  remote-tracking. `DestroyProof::landed` runs the ancestry check; it is not a
+  flag a caller sets.
+- **Backed up** — the operator passed `--discard-unlanded`, which consents to
+  this specific loss, *and* the branch's tip has been kept as a backup
+  (`refs/rwv/backup/<ref>/<id>`). `DestroyProof::backed_up` takes the consent,
+  writes the backup through `Vcs::create_backup` and holds the `BackupWitness`
+  it returns, so a discard with no backup behind it is unrepresentable. The loss
+  the flag consents to is the ref name; the commits stay reachable until
+  `rwv backup drop`.
+
+The proof names the store, the branch and the tip it was proved about, and
+`Vcs::delete_branch` deletes only at that tip: a branch that moved since is left
+(`update-ref -d` with the old value for a local branch, `--force-with-lease` for
+a remote one).
 
 **R4 — a DESTROY-STORE requires the store to be unclaimed.**
 
-No live worktree may be registered against the store, and every receipt
-keyed to the store must first have been retracted — each retraction via its
-own DESTROY, with receipt and warrant — before the store itself may be
-destroyed. The verb's own named preconditions (dirty state, unpushed work)
-apply on top. A DESTROY-STORE never substitutes for the per-ref DESTROY
-discipline; it is what becomes legal after that discipline has run dry.
+No live worktree may be registered against the store. The verb's own named
+preconditions (dirty state, unpushed work) apply on top. A DESTROY-STORE never
+substitutes for the per-ref DESTROY discipline.
 
 ### 3.4 Deriving answers from the rule
 
@@ -647,8 +646,8 @@ procedure is total:
   discipline R3 generalizes: `verified_restore_savepoint` classifies the
   tip and refuses on `ForeignTip` (`vcs.rs:539-587`, `:2223-2266`) `[V]`.
 - **A hypothetical `rwv workweave rename`** — would change a ref's name, which
-  is a DESTROY of the old name plus a birth of the new. → needs a receipt for
-  the old name. Derivable without amending anything.
+  is a DESTROY of the old name plus a birth of the new. → needs a `DestroyProof`
+  for the old name. Derivable without amending anything.
 - **`git commit` run by the operator inside a workweave** — not an rwv
   operation. Out of scope; the rule governs rwv's writes.
 
@@ -748,6 +747,65 @@ consults only the older `mid_op`, a `ConflictOp`-returning wrapper over
 (`git.rs:1408-1415`) `[V]`. So a bisect is seen by the MOVE primitive and not
 by sync's own preflight. Whether that gap matters is Q13.
 
+### 3.7 The deletion rule
+
+Which branches a verb destroys is one question, asked by `rwv branch delete
+<W>`, by `rwv workweave delete` (for the branch the workweave is aligned for,
+when its record is a feature) and by `rwv sync-to --retire`. All three run
+`deletion::Rule` (`src/deletion.rs`); none decides a deletion itself.
+
+**What belongs to `W`.** The project branch `W`, and in each member `W`'s
+`rwv.toml` lists, the branch named `W` that no live weave branch declares for
+that member. A declared branch never belongs, so `main` and a release line's
+member branches are never touched. A branch standing only on a remote, as last
+fetched, belongs the same way.
+
+**When a branch that belongs is deleted.** Members are judged first, then the
+project branch:
+
+1. **Landed.** Every commit on it is reached by the branch `W` lands into: the
+   record's target (`--target` names one for a branch that is not a feature).
+   In the project repo that is the target branch; in a member, its branch for
+   that target, or any branch the target's history declared for it. Local and
+   remote-tracking branches both count. `--discard-unlanded` lifts this clause
+   and no other: the tip is kept as a backup first, and the proof rests on the
+   backup (R3).
+2. **Not pinned.** No live lock outside `W`'s own lock pins a commit that only
+   this branch reaches.
+3. **Not held open.** For the project branch: no published copy holds commits
+   the target does not reach (a pull request may be open against it), and no
+   member branch that belongs survives.
+
+Other branches whose records land into `W` are not a clause: they refuse, before
+anything changes, as `target` `dependents`. A `W` checked out in any workspace
+refuses as `checkout`, except a workspace the verb itself removes first.
+
+**Survivors.** A branch the rule keeps survives with its record and is
+reported as a `Survivor` with a `Reason` (`unlanded`, `pinned`, `open-head`,
+`members`, `unconfirmed`). The verb has then finished all it could, so it ends
+with `COMPLETED_WITH_REMAINDER` (status 3, `src/exit_status.rs`) and its
+`--json` envelope lists each survivor and why.
+
+**Remotes.** The rule starts with a pruning fetch of only the remotes a
+belonging branch has an upstream or a push branch on. A remote that could not
+be fetched leaves its branches `unconfirmed`, and nothing on it is deleted. A
+branch never published is judged on local refs, offline too. A push branch is
+destroyed only by `--delete-remote` (each that landed) or
+`--delete-remote-unlanded <repo>` (that repo's, after a backup, needing
+`--discard-unlanded`); each is a `DestroyProof` at `Site::Remote`, leased to the
+tip the last fetch saw.
+
+**Records.** An entry on the records branch whose branch is gone locally and
+from every remote as last fetched, with no workspace aligned for it, is dropped
+in the write that follows (`Store::write_dropping`). A remote's drop is undone
+for a branch that exists here, and an entry brought in by a merge is not
+dropped. Removals are ordered before additions within a commit because an entry
+is a file at its branch's name: a stale `a` would block recording `a/b`.
+
+**No receipts.** Nothing records that rwv created a ref. The workweave index
+keeps a `receipts` list, always empty, so that an index written before the field
+existed stays distinguishable (`legacy-workweave-index`).
+
 ---
 
 ## 4. The type split that enforces it
@@ -755,7 +813,7 @@ by sync's own preflight. Whether that gap matters is Q13.
 **Status: shipped.** This section was written as a proposal, and the tense
 below has been corrected to match what landed. Everything it specifies exists:
 the five core types, the six supporting types, the `Vcs` trait surface (§4.3),
-the consent tokens and warrants (§4.4), the `HeadAttachment` split (§4.5), and
+the consent tokens and destroy proofs (§4.4), the `HeadAttachment` split (§4.5), and
 the mid-operation refusal (§3.6). The strangler sequencing this section once
 described — new surface added alongside the old, called by nothing — is over:
 the old surface was **removed**, and every production verb was restated in
@@ -852,7 +910,7 @@ the section's end.
 | `RawRefName` | the parse boundary | `Deserialize`; `RawRefName::new(&str)`; VCS porcelain listings | `vcs.rs:625` |
 | `TrackingRef` | (1) `branch`, declared | `TrackingRef::parse(RawRefName)` | `vcs.rs:834` |
 | `EphemeralRefName` | (2a) an ephemeral name **requested** | `EphemeralRefName::mint(&ProjectName, &WorkweaveName)` | `vcs.rs:956` |
-| `OwnedRef` | (2b) an ephemeral ref **rwv holds a receipt for** | `RefRegistry::record_created(...)` or `RefRegistry::lookup(...)` | `vcs.rs:1058` |
+| `FoundBranch` | (2b) a branch **found** in a store, with the revision a birth starts it at | `FoundBranch::minted(...)` | `vcs.rs` |
 | `AttachedRef` | (3) what a checkout is on | `Vcs::head_attachment(repo)` only | `vcs.rs:1178` |
 
 `TrackingRef::parse` is where the §8.8 decision became executable: it runs the
@@ -868,10 +926,10 @@ Notion (4) — "nothing" — is not a type. It is the absence of an `AttachedRef
 and it is expressed by the enum in §4.5.
 
 **Cross-type comparison is not implemented, in any direction.** No
-`PartialEq<TrackingRef> for AttachedRef`, no `From<AttachedRef> for OwnedRef`,
+`PartialEq<TrackingRef> for AttachedRef`, no `From<AttachedRef> for FoundBranch`,
 no `Into<RawRefName>` for anything that would launder a value back to the
 parse boundary. And critically: **`AttachedRef`, `TrackingRef`, and
-`OwnedRef` expose no `as_str()`** — `Display` only. `RemoteDefaultBranch`
+`FoundBranch` expose no `as_str()`** — `Display` only. `RemoteDefaultBranch`
 turned out to need the same treatment and got it `[V]`. This was
 load-bearing, not stylistic: both comparison sites in `push.rs` were written
 with `.as_str()` on both sides, so if these types carried `as_str()` both
@@ -888,13 +946,10 @@ which is exactly what §4.6(2) predicted the error would force.
 
 `RawRefName` keeps `as_str()`: it is the parse boundary, and raw porcelain
 output must stay inspectable. Each removal is enforced by a `compile_fail`
-probe per §4.7 — four of them, one per type.
+probe per §4.7 — one per type.
 
 The legal conversions are these, and only these. Each is a named function
-whose body is the place a policy decision lives. All four shipped with the
-signatures below — `parse` at `vcs.rs:843`, `on_remote` at `:861`,
-`local_counterpart` at `:876`, `mint` at `:962`, `is_attached_by` at `:1113`,
-and `RefRegistry`'s pair at `workweave_index.rs:665` / `:749` `[V]`:
+whose body is the place a policy decision lives:
 
 ```rust
 // Rejects SHA-shaped and tag-shaped values: `branch` is a tracking
@@ -902,10 +957,8 @@ and `RefRegistry`'s pair at `workweave_index.rs:665` / `:749` `[V]`:
 // component.
 impl TrackingRef { pub fn parse(raw: RawRefName) -> Result<Self, RefNameError>; }
 
-// The remote branch `branch` actually names. Already existed in spirit as
-// Vcs::resolve_branch_on_remote (vcs.rs:1879-1895) — "in spirit" is load-
-// bearing: the remote it resolves against is the backend's to name, so the
-// projection stops at the branch (§1.3).
+// The remote branch `branch` actually names. The remote it resolves against
+// is the backend's to name, so the projection stops at the branch (§1.3).
 impl TrackingRef { pub fn on_remote(&self) -> RemoteRef; }
 
 // "The local branch of the same name." NOT an identity — a projection across
@@ -915,20 +968,13 @@ impl TrackingRef { pub fn local_counterpart(&self) -> LocalRefName; }
 // Total. No third input, no failure, no `current_ref` read.
 impl EphemeralRefName { pub fn mint(p: &ProjectName, w: &WorkweaveName) -> Self; }
 
-// Intent -> receipt -> birth. record_created durably persists the receipt
-// FIRST and returns the OwnedRef; create_worktree_on (§4.3) then performs
-// the birth against it. Receipts are keyed by (canonical store, ref name)
-// and always written BEFORE the ref they describe (§7.1): a crash leaves a
-// dangling receipt (benign; doctor retracts a receipt whose ref never
-// appeared), never an unreceipted ref (permanently disowned under R2).
-impl RefRegistry {
-    pub fn record_created(&mut self, store: &RepoPath, name: EphemeralRefName,
-                          created_at: ResolvedRevisionId) -> OwnedRef;
-    pub fn lookup(&self, store: &RepoPath, name: &RawRefName) -> Option<OwnedRef>;
+// The branch a birth puts a worktree on: the store it lives in, its name, and
+// the revision it is created at when the store lacks it. A birth derives its
+// target from this value, so it cannot name a store and a branch separately.
+impl FoundBranch {
+    pub fn minted(store: PathBuf, name: &EphemeralRefName,
+                  start: ResolvedRevisionId) -> Self;
 }
-
-// Named predicate, not an operator. Returns bool; does not yield a witness.
-impl OwnedRef { pub fn is_attached_by(&self, a: &AttachedRef) -> bool; }
 ```
 
 `AttachedRef` has **no** conversion out. It is a *witness*: a value whose
@@ -993,34 +1039,27 @@ exists, and `rwv member add`'s three `branch`-writing sites read
 `remote_default_branch` (refusing by name when it is `None`) or, on the
 `--new` path that has no origin, `head_attachment` `[V]`. §6.2.
 
-**`BornRef`** is proof of authorship: `create_worktree_on` returns one iff
-*this call created* the ref (an adopted pre-existing ref yields none), and
-its only consumer is rollback. §6.1's fix depends on exactly this: rollback
-deletes only refs it holds a `BornRef` for, so it can no longer delete a
-branch the create merely adopted. The receipt itself is written *before*
-the birth by `RefRegistry::record_created` (above), so `BornRef` carries no
-registry duty — it separates "authored" from "adopted", nothing more.
-**Shipped**: `create_worktree_on` (`vcs.rs:2763-2779`) returns
-`Option<BornRef>` from the adopt/author classification in
-`materialize_worktree_on_ref` (`git.rs:1927-1935`), and `workweave.rs:1111`
-turns it into a `RefBirth::{Authored, Adopted}` that rollback keys on
-(`undo_ref_births`, `workweave.rs:656-735`) `[V]`.
+**`RefOrigin`** is the proof of authorship a birth returns:
+`create_worktree_on` reports `Authored` iff *this call created* the branch and
+`Adopted` when a branch of that name already stood there. Rollback destroys only
+an `Authored` branch, and then only with a landed proof against the start point
+the birth recorded (`DestroyProof::landed`), so it can no longer delete a branch
+the create merely adopted, nor one with work on it. Whether an `Adopted` branch
+at a different tip may be taken is the birth's `BranchPolicy`: a create refuses
+it (`name` `exists`), and only a restore of the workweave's own member takes it
+where it stands.
 
 The honest inventory, then: **five core types** (`RawRefName`,
-`TrackingRef`, `EphemeralRefName`, `OwnedRef`, `AttachedRef`), **six
-supporting types** (`RemoteRef` `vcs.rs:892`, `LocalRefName` `:923`,
-`DetachedHead` `:1266`, `UnbornRef` `:1239`, `BornRef` `:1302`,
-`RemoteDefaultBranch` `:1351`), one wrapper whose *policy* is deferred
-(`PublishRef` `:1399`, §4.3, Q6), the consent tokens and warrants of §4.4, and
-the `RefRegistry` (`workweave_index.rs:611`) — all present `[V]`. Not "five
-types replace `RefName`" — five notions become five types, and the rest of the
-trait surface is typed to match.
+`TrackingRef`, `EphemeralRefName`, `FoundBranch`, `AttachedRef`), **six
+supporting types** (`RemoteRef`, `LocalRefName`, `DetachedHead`, `UnbornRef`,
+`RefOrigin`, `RemoteDefaultBranch`), one wrapper whose *policy* is deferred
+(`PublishRef`, §4.3, Q6), and the consent tokens and `DestroyProof` of §4.4 —
+all present `[V]`. Not "five types replace `RefName`" — five notions become five
+types, and the rest of the trait surface is typed to match.
 
-Implementation added four types this section did not anticipate, each earning
-its place: `HeadObservation` (`vcs.rs:1448`, the VCS-specific half of
-`head_attachment`), `LegacyEphemeralRefName` (`:1010`, so §7.1 arm 1 can name
-the pre-flat shape without re-admitting a parser), `RefNameError` (`:652`), and
-`SavepointRef` (`:1587`, the `DiscardWarrant`'s payload) `[V]`.
+Implementation added types this section did not anticipate, each earning its
+place: `HeadObservation` (the VCS-specific half of `head_attachment`),
+`RefNameError`, and `SavepointRef` (the `DiscardWarrant`'s payload) `[V]`.
 
 ### 4.3 The `Vcs` signatures
 
@@ -1078,12 +1117,11 @@ fn advance_detached_head(&self, was: &DetachedHead,
 
 // ---- ATTACH ------------------------------------------------------------
 // Birth: no consent token, because there was no prior attachment to lose.
-// Takes the receipt (already persisted by RefRegistry::record_created,
-// §4.2 — receipt-first ordering); the store, name, and start point all
-// come from it. Returns Some(BornRef) iff this call authored the ref,
-// None when it adopted a pre-existing one (§6.1's rollback keys on this).
-fn create_worktree_on(&self, owned: &OwnedRef, dest: &Path)
-    -> Result<Option<BornRef>, VcsError>;                                   // :2763
+// The store, name, and start point all come from the FoundBranch. Returns
+// Authored iff this call created the ref, Adopted when it put the worktree on
+// one that was already there (§6.1's rollback keys on this).
+fn create_worktree_on(&self, found: &FoundBranch, dest: &Path)
+    -> Result<RefOrigin, VcsError>;
 // Post-birth attachment change. Both take a consent token minted from the
 // corresponding named flag (see §4.4 for where the tokens live).
 fn detach_head(&self, from: &AttachedRef,
@@ -1094,9 +1132,10 @@ fn reattach_head(&self, from: HeadAttachment,
     -> Result<(), VcsError>;                                                // :2849
 
 // ---- DESTROY -----------------------------------------------------------
-// Receipt (OwnedRef) + warrant. No overload takes a name.
-fn delete_owned_ref(&self, repo: &Path, branch: &OwnedRef,
-                    warrant: DeletionWarrant) -> Result<(), VcsError>;      // :2898
+// A proof, and nothing else: the proof names the site (local, or a remote),
+// the store, the branch and the tip it was proved about. No overload takes a
+// name, so "delete this branch I recognized" is not expressible.
+fn delete_branch(&self, proof: DestroyProof) -> Result<(), VcsError>;
 
 // ---- publish -----------------------------------------------------------
 // The ref is now a parameter. Policy leaves the VCS impl (see §9, Q6).
@@ -1110,8 +1149,8 @@ fn push_ref(&self, repo: &Path, r: &PublishRef, force: bool)
     -> Result<(), VcsError>;                                                // :3027
 
 // ---- listing -----------------------------------------------------------
-// Returns raw observed names. Report-only by type: a RawRefName is not an
-// OwnedRef, so nothing here can be deleted without a registry lookup.
+// Returns raw observed names. Report-only by type: a RawRefName is not a
+// DestroyProof, so nothing here can be deleted without the rule's verdict.
 // Named list_branch_names_with_prefix, to leave no spelling that resolves
 // to the deleted method.
 fn list_branch_names_with_prefix(&self, repo: &Path, prefix: &str)
@@ -1119,16 +1158,16 @@ fn list_branch_names_with_prefix(&self, repo: &Path, prefix: &str)
 ```
 
 Implementation added several more members in the same shape, each because a
-verb needed to say something the list above could not: `verify_attachment`
-(`:2639`), `resolve_local_branch_tip` (`:2658`), `materialize_worktree_on_ref`
-(`:2791`, the VCS-specific half of `create_worktree_on`), `clone_attached_at`
-(`:2815`, birth-at-the-lock-revision for `fetch`), `destroy_local_ref`
-(`:2912`), `rename_owned_ref` / `rename_local_ref` (`:2938`, `:2968`, §7.1 arm
-1), `adopt_detached_checkout` (`:2990`, §7.1 arms 3/5), and `birth_ref_at_head`
-(`:3017`) `[V]`.
+verb needed to say something the list above could not: `verify_attachment`,
+`resolve_local_branch_tip`, `materialize_worktree_on_ref` (the VCS-specific half
+of `create_worktree_on`), `clone_attached_at` (birth-at-the-lock-revision for
+`fetch`), `remote_copies` and `push_target_of` (what the deletion rule asks of a
+remote), and `file_versions` (what the records drop rule asks of a branch's
+history) `[V]`.
 
-**`Vcs::checkout` and `Vcs::delete_branch` were removed, not deprecated — and
-that has now happened.** So were `current_ref`, `restore_savepoint`,
+**`Vcs::checkout` and the name-taking `Vcs::delete_branch` were removed, not
+deprecated — and that has now happened.** `Vcs::delete_branch` is back, taking
+a `DestroyProof` and nothing else. So were `current_ref`, `restore_savepoint`,
 `create_worktree`, `push_with_role`, and `list_branches_with_prefix`. Every one
 of their call sites had to state which replacement it meant, and that
 restatement was the audit. The trait says so itself, at `vcs.rs:2586-2594`:
@@ -1143,7 +1182,7 @@ same pass. The three it contrasted against — `checkout`, `delete_branch`,
 `current_ref`, then at 3, 5, and 15 call sites — went too, once each of those
 sites had an answer.
 
-### 4.4 The consent and warrant tokens — **shipped**
+### 4.4 The consent tokens and the destroy proof — **shipped**
 
 > **Citation base for this section: `af405e1`, not the document's `bd443d7`.**
 > The passages below were written after that base and cite
@@ -1154,9 +1193,8 @@ sites had an answer.
 
 Homes, as specified: the two ATTACH consents live in the CLI flag module
 (`cli::consent`, `src/cli/consent.rs` — `DetachConsent` at `:50`,
-`ReattachConsent` at `:81`), and the warrants live in `vcs.rs`
-(`DiscardWarrant` `:1620`, `DeletionWarrant` `:1657` with the private
-`WarrantKind` at `:1661`) `[V]`.
+`ReattachConsent` at `:81`), and the warrant and the proof live in `vcs.rs`
+(`DiscardWarrant`, and `DestroyProof` with the private `Ground`) `[V]`.
 
 The "no minting caller yet" gap this section used to carry is closed, and
 closed harder than this section asked for. The ask was that one module be the
@@ -1299,8 +1337,8 @@ the binary and the integration tests link against; `AdoptDetachedConsent`
 lost its `granted()` outright, because no fixture needed one `[V]`.
 
 Two consent types shipped beyond this list, both needed by §7: 
-`DiscardUnmergedConsent` (`src/cli/consent.rs:105`, the `workweave delete`
-override R3's `BackedUp` warrant is minted from) and
+`DiscardUnlandedConsent` (`src/cli/consent.rs`, the `--discard-unlanded`
+override R3's backed-up proof is minted from) and
 `AdoptDetachedConsent` (`src/cli/consent.rs:140`, §7.1 arms 3/5). A third,
 `DiscardLocalCommitsConsent`, lived in `vcs.rs` with a `pub(crate)` mint in
 `sync.rs`, because `sync --continue` must re-mint it from the persisted owner
@@ -1333,27 +1371,27 @@ pub struct ReattachConsent(());
 /// unrepresentable. This is the token §3.2's MOVE row requires.
 pub struct DiscardWarrant { savepoint: SavepointRef }
 
-/// Why this ref is safe to destroy now. An opaque struct over a PRIVATE
-/// enum: a `pub enum`'s variant constructors cannot be made private in
-/// Rust, so the §3.3 warrants are minted exclusively by `pub fn` checkers
-/// that RUN the check they certify.
-pub struct DeletionWarrant(WarrantKind);            // field private
-enum WarrantKind {
-    Unmoved { recorded_tip: ResolvedRevisionId },
-    Merged { baseline: ResolvedRevisionId },
+/// Why this branch may be destroyed now: every commit on it is reached by a
+/// ref that outlives it (landed), or a backup of it was made first. An opaque
+/// struct over a PRIVATE enum: a `pub enum`'s variant constructors cannot be
+/// made private in Rust, so the proof is minted exclusively by `pub fn`
+/// checkers that RUN the check they certify. It names the site, the store, the
+/// branch and the tip it was proved about.
+pub struct DestroyProof { site: Site, store: PathBuf, branch: RawRefName,
+                          tip: ResolvedRevisionId, ground: Ground }   // fields private
+enum Ground {
+    Landed { onto: ResolvedRevisionId },
     BackedUp { backup: BackupWitness },
-    OperatorAdopted,
 }
-impl DeletionWarrant {
-    /// Some(_) iff the ref's current tip equals the receipt's recorded tip.
-    pub fn unmoved(vcs: &dyn Vcs, r: &OwnedRef) -> Option<Self>;
-    /// Some(_) iff the ref's tip is an ancestor of `baseline`.
-    pub fn merged(vcs: &dyn Vcs, r: &OwnedRef,
-                  baseline: &ResolvedRevisionId) -> Option<Self>;
-    /// The operator passed --discard-unmerged-commits: the ref's tip is
-    /// kept as a backup first, and the warrant rests on that backup.
-    pub fn operator_discarded(vcs: &dyn Vcs, r: &OwnedRef,
-                              consent: DiscardUnmergedConsent) -> Result<Self, VcsError>;
+impl DestroyProof {
+    /// Some(_) iff the branch exists at `site` and its tip is an ancestor of
+    /// one of `onto`.
+    pub fn landed(vcs: &dyn Vcs, store: &Path, site: Site, branch: &RawRefName,
+                  onto: &[ResolvedRevisionId]) -> Result<Option<Self>, VcsError>;
+    /// The operator passed --discard-unlanded: the branch's tip is kept as a
+    /// backup first, and the proof rests on that backup.
+    pub fn backed_up(vcs: &dyn Vcs, store: &Path, site: Site, branch: &RawRefName,
+                     consent: DiscardUnlandedConsent) -> Result<Self, VcsError>;
 }
 
 /// Proof that a backup ref has been written. Its fields are private to
@@ -1368,9 +1406,9 @@ A note on direction, replacing a miscited precedent from an earlier draft:
 copied here. It is only ever a *return* type (`vcs.rs:2260`,
 `git.rs:1324-1405`, `sync.rs:4981`) `[V]` — the fencing it describes lives
 *inside* `verified_restore_savepoint`, and nothing consumes it as
-authorization. `DeletionWarrant` deliberately **inverts** that direction:
-it is caller-supplied proof, because the destroy site (`delete_owned_ref`)
-and the check sites (the registry, the merged-check) are different code.
+authorization. `DestroyProof` deliberately **inverts** that direction:
+it is caller-supplied proof, because the destroy site (`delete_branch`)
+and the check sites (the deletion rule, the rollback) are different code.
 That inversion is exactly why constructibility is load-bearing here when
 it is not there — and why the private-enum shape above is a requirement,
 not a style choice.
@@ -1381,7 +1419,7 @@ precondition they waive, never a bare `--force`**. `--detach-checkouts` and
 losing the name your commits hang off, versus moving which name they hang off
 — and so are two flags, not one `--change-attachment`. This is the same split
 already decided for `workweave delete --force` → `--discard-uncommitted` +
-`--discard-unmerged-commits`.
+`--discard-unlanded`.
 
 **Where each flag attaches to a verb — decided, and built as decided.**
 `--detach-checkouts` names its verbs directly in §5's table (`fetch`,
@@ -1421,8 +1459,8 @@ tip rather than to an attachment, which is why it is not a spelling of
 A **backup** is a ref an rwv verb makes before any step that would leave a
 commit or an uncommitted edit reached by no branch, no remote-tracking branch
 and no other backup. It is the third kind of proof a destroy or a rewind can
-rest on, beside "landed" (`Merged`) and "unmoved": the operator's consent
-buys the loss of a *name*, and the backup keeps the *commits*.
+rest on, beside "landed": the operator's consent buys the loss of a *name*, and the
+backup keeps the *commits*.
 
 The seam (`vcs.rs`) owns the shape and the backend owns every spelling:
 
@@ -1438,7 +1476,7 @@ The seam (`vcs.rs`) owns the shape and the backend owns every spelling:
 - `Vcs::create_backup` is *provided* and is the only producer of a
   `BackupWitness`: it calls `write_backup`, then mints the witness in `vcs.rs`,
   where its fields are visible. A value of the type is proof the ref exists, not
-  a plan to write one. `DeletionWarrant::operator_discarded` runs the backup
+  a plan to write one. `DestroyProof::backed_up` runs the backup
   itself; `verified_restore_savepoint` under `ForeignTipPolicy::Abandon` makes
   one before its `reset --hard` and returns the witness in
   `VerifiedRestoreOutcome::AbandonedForeignTip`.
@@ -1542,12 +1580,6 @@ done:
   `DetachedHead` witness rather than from `branch`, deliberately says nothing
   on `Unborn` (deferring to `head_revision`'s named refusal), and turns the
   read error into a hard refusal naming the repo rather than silence `[V]`.
-- Doctor's remediation string stopped being wrong: with a registry lookup it
-  knows whether the recorded ref exists, so `reattach_advice`
-  (`check.rs:5477-5490`) emits `git switch <branch>` when it does and reserves
-  `git switch -c <branch>` for when it does not `[V]`. The receipt reaches it
-  as a `recorded_ref: Option<String>` on the finding (`check.rs:881`, `:900`,
-  `:915`).
 
 ### 4.6 Wrong lines that became compile errors
 
@@ -1617,7 +1649,7 @@ if branch.as_str() != entry.branch.as_str() {
 Both shipped lines compared through `.as_str()` on both sides — that one, and
 its project-repo sibling `project_current.as_str() != project_canonical.as_str()`.
 That is why §4.2 removes `as_str()` from `AttachedRef`, `TrackingRef`, and
-`OwnedRef` entirely: with it, **both lines would have compiled verbatim after
+`FoundBranch` entirely: with it, **both lines would have compiled verbatim after
 the split** and this section's error would never have fired. Without it, the
 `.as_str()` calls are `E0599` (no such method), and the direct comparison does
 not typecheck either:
@@ -1659,38 +1691,34 @@ choosing it later is a one-line change at one place `[V]`.
 let deleted = Self::run(&["branch", "-D", branch], repo).is_ok();
 ```
 
-That line no longer exists anywhere in the tree `[V]`. Expressed through the
-trait it would have been `delete_branch(repo, &branch)` where `branch:
-&EphemeralRefName` (the name this create *requested*):
+That line no longer exists anywhere in the tree `[V]`. The seam's only destroy
+is `Vcs::delete_branch(proof: DestroyProof)`; expressed with a name instead of
+a proof it is a type error:
 
 ```
 error[E0308]: mismatched types
-   --> src/git.rs
-    |
-    |     self.delete_owned_ref(repo, branch, warrant)?;
-    |                                 ^^^^^^ expected `&OwnedRef`,
-    |                                        found `&EphemeralRefName`
-    |
-    = note: an `EphemeralRefName` is a name this operation asked for; an
-            `OwnedRef` is a receipt rwv persisted. Obtain one with
-            `RefRegistry::lookup`.
+    |     vcs.delete_branch(&branch)
+    |                       ^^^^^^^ expected `DestroyProof`,
+    |                               found `&EphemeralRefName`
 ```
 
-And even with a receipt, the second argument is still missing:
+A proof is built only by `DestroyProof::landed`, which runs the ancestry check
+against the branches the deleted branch lands into, or by
+`DestroyProof::backed_up`, which needs a `DiscardUnlandedConsent` and makes the
+backup itself. Neither takes a boolean for the check it certifies, and the
+struct's fields and its variants are private, so the destroy cannot be reached
+by writing the proof by hand: `a_destroy_proof_cannot_be_written_by_literal`,
+`a_destroy_proof_has_no_readable_fields`,
+`a_destroy_proof_cannot_be_written_by_variant`,
+`the_one_way_to_a_landed_proof_runs_the_check`,
+`a_backup_proof_needs_the_operators_consent` and
+`a_backup_proof_does_not_take_a_bool_for_consent` hold each route shut.
 
-```
-error[E0061]: this method takes 4 arguments but 3 arguments were supplied
-    = note: argument #4 of type `DeletionWarrant` is missing
-```
-
-The retry could only proceed by looking the name up in the registry *and*
-obtaining a warrant from `DeletionWarrant::unmoved` (§4.4), which returns
-`Some` only when the tip equals the recorded tip. **The outcome went one step
-further than this section asked**: rather than gate the destructive retry, the
-successor `materialize_worktree_on_ref` (`git.rs:1908-1945`) classifies first
-and **adopts** the colliding ref (`:1927-1935`), returning `None` so the caller
-learns it did not author it. The false audit claim — "deletes a **stale**
-ephemeral branch left by a previous failed create" — was not made true; it was
+**The outcome went one step further than the retry asked**: rather than gate
+the destructive retry, `materialize_worktree_on_ref` classifies first and
+**adopts** the colliding ref, returning `RefOrigin::Adopted` so the caller learns
+it did not author it. The false audit claim — "deletes a **stale** ephemeral
+branch left by a previous failed create" — was not made true; it was
 **retired**, and the audit entry says so (§2.2) `[V]`.
 
 **(4) Deleting a whole prefix.** `workweave delete`'s cleanup used to read:
@@ -1708,27 +1736,20 @@ for b in vcs.list_branches_with_prefix(&repo, &prefix)? {
 
 ```
 error[E0308]: mismatched types
-    |     let _ = vcs.delete_owned_ref(&repo, &b, warrant);
-    |                                          ^^ expected `&OwnedRef`,
-    |                                             found `&RawRefName`
+    |     let _ = vcs.delete_branch(&b);
+    |                               ^^ expected `DestroyProof`,
+    |                                  found `&RawRefName`
 ```
 
-**Shipped as `retire_recorded_refs`** (`workweave.rs:2421-2503`): it ranges
-over `RefRegistry::lookup` hits (`:2432`), requires a `DeletionWarrant::merged`
-or `operator_discarded` for each (`:2444-2449`), refuses by name when neither
-holds (`:2468-2472`), retracts the receipt only after the ref is gone
-(`:2452-2454`), and **reports** everything else in the namespace via
-`list_branch_names_with_prefix` (`:2485-2500`) `[V]`. `RefRegistry::lookup`
-returns `None` for a hand-made branch, so `my--feature/wip` and
-`dependabot--npm/lodash` stopped being rwv's property; the compile-fail probes
-at `tests/branch_model_compile_fail_test.rs:332`, `:348`, and `:362` hold the
-three routes (a listed name, a requested name, a receipt without a warrant)
-shut. `parse_ephemeral_branch_name` — the function that made name shape into
-ownership — was deleted outright, exactly as this paragraph proposed; its
-successor `looks_like_a_pre_flat_ref` (`check.rs:3218-3228`) returns a `bool`
-and feeds one report-only finding, never a delete `[V]`. The same argument
-applied to `doctor --fix`'s safe-class deletions, which now re-resolve through
-the registry (`fix_stale_ephemeral_branches`, `check.rs:4619-4713`) `[V]`.
+**Shipped as `deletion::Rule`** (§3.7): it ranges over the branches that belong
+to the deleted branch, builds a proof for each that lands or that the operator
+backed up, and reports the rest as survivors. A hand-made
+`dependabot--npm/lodash` is no branch's member and so is nobody's to delete.
+`parse_ephemeral_branch_name` — the function that made name shape into
+ownership — was deleted outright. The probes
+`a_listed_name_cannot_be_deleted`, `a_requested_name_cannot_be_deleted`,
+`a_delete_without_a_proof_does_not_compile` and
+`there_is_no_destroy_that_takes_a_name` hold the routes shut.
 
 **(5) Silently detaching in `fetch` / `update`.** Both used to read:
 
@@ -1794,33 +1815,28 @@ once those types are `Display`-only. `compile_fail` is the only form of this
 enforcement that survives a refactor, because it fails in CI when someone
 re-adds the `PartialEq` or the `From` impl to "make it easier".
 
-**Shipped, in two layers.** Seven `compile_fail` doctests live on the ref
-types themselves — `vcs.rs:149` (`RawRevisionId`, the §4.1 precedent), `:813`
-and `:826` (`TrackingRef`: cross-type `==`, and `as_str` laundering), `:1156`
-and `:1171` (`AttachedRef`: field forgery, and `as_str`), plus
-`workweave_index.rs:583` (a `RawRefName` cannot be `record_created`) and
-`:602` (a `WorkweaveIndex` cannot be struct-literal-forged around
-`RefRegistry`) `[V]`. Two more now sit on the *name* types `mint` consumes —
-`manifest.rs:125` and `:207`, holding that `ProjectName::new` /
-`WorkweaveName::new` cannot be treated as infallible `[V]`; those arrived with
-Q12's answer (§9) and are the reason `mint`'s totality is now a property
-rather than an assertion.
+**Shipped, in two layers.** `compile_fail` doctests live on the ref types
+themselves — `RawRevisionId` (the §4.1 precedent), `TrackingRef` (cross-type
+`==`, and `as_str` laundering), `AttachedRef` (field forgery, and `as_str`), and
+`workweave_index.rs` (a `RawRefName` cannot be a registry key) `[V]`. Two more
+sit on the *name* types `mint` consumes — `manifest.rs`, holding that
+`ProjectName::new` / `WorkweaveName::new` cannot be treated as infallible `[V]`;
+those arrived with Q12's answer (§9) and are the reason `mint`'s totality is now
+a property rather than an assertion.
 
-Above them sits a dedicated harness, `tests/branch_model_compile_fail_test.rs`
-(580 lines), which shells out to `rustc` against the built rlib and asserts
-the *specific* error code: **23 probes plus one sanity check** that a legal
-snippet still compiles — the check that keeps the other 23 from passing
-vacuously `[V]`. The probes cover cross-type comparison (`:142`), the four
-`as_str()` removals (`:162`, `:180`, `:219`, `:233`), laundering (`:198`),
-witness/receipt/warrant forgery (`:253`, `:268`, `:287`), a MOVE on an
-`UnbornRef` (`:311`), the three deletion routes (`:332`, `:348`, `:362`),
-`mint`'s arity and its refusal of observed input (`:380`, `:398`),
-consent-required detach (`:417`), the unreachability of the consent *mint*
-from outside `crate::cli` (`:437` — added when §4.4's second construction
-route was sealed), **four** consent tuple-literal forgeries (`:474`, `:488`,
-`:502`, `:516` — the last being `AdoptDetachedConsent`, the twenty-third
-probe, added after the previous citation base), the warrant argument on a
-rewind (`:533`), and the cross-repo witness (`:551`).
+Above them sits a dedicated harness, `tests/branch_model_compile_fail_test.rs`,
+which shells out to `rustc` against the built rlib and asserts the *specific*
+error code, with one sanity check that a legal snippet still compiles — the
+check that keeps the others from passing vacuously `[V]`. The probes cover
+cross-type comparison, the `as_str()` removals and their laundering, forgery of
+an `AttachedRef` and of a `DestroyProof` (by struct literal, by variant, and by
+field read), the one way to a landed proof and the consent a backup proof needs,
+a MOVE on an `UnbornRef`, the routes to a deletion with no proof (a listed name,
+a requested name, none, and a name-taking destroy), a birth that takes a
+`FoundBranch` and not a name, `mint`'s arity and its refusal of observed input,
+the departure proof a detach needs, the unreachability of the consent *mint*
+from outside `crate::cli`, tuple-literal forgery of the consents, the warrant
+argument on a rewind, and the cross-repo witness.
 
 Also add the assertion shape the suite is missing. **Partly done, and the
 remainder is worth stating precisely.**
@@ -1851,7 +1867,7 @@ one names where.
 
 | Verb | Ref writes | Kind | Outcome |
 |---|---|---|---|
-| `workweave create` | mints `{project}--{workweave}`, attaches worktree | birth | Legal, unchanged in spirit. Name lost `<segment>`. Name uniqueness is checked against the workweave index before the directory check (`workweave.rs:1215-1243`) `[V]`; the receipt is written before the ref, and `birth_ephemeral_worktree` (`:1029-1132`) classifies the four `(receipt, ref)` states rather than force-deleting on collision (`:1055-1104`) `[V]`. Test: `tests/branch_model_lifecycle_test.rs:359`. |
+| `workweave create` | mints `{project}--{workweave}`, attaches worktree | birth | Name uniqueness is checked against the workweave index before the directory check. `birth_ephemeral_worktree` takes the branch §2.1 found (`FoundBranch`) and applies its `BranchPolicy`: a branch standing at the start point is the create's own partial result and is taken; one anywhere else refuses as `name` `exists`. Nothing is recorded about the birth beyond the branch itself. |
 | `sync` (ff / rebase) | advances the ref the CWD checkout is on (`apply_strategy`, `sync.rs:722-778`) `[V]` | MOVE | Legal, unchanged. |
 | `sync --discard-local-commits` | rewinds the current ref | MOVE | **Now typed.** `hard_reset` has zero call sites in `sync.rs`; `rewind_project_repo` (`sync.rs:4484-4521`) mints a `DiscardWarrant` from the savepoint (`:4485`, `:4495`) and calls `reset_attached_ref` (`:4502`) or `advance_detached_head` (`:4512`), bailing on `Unborn` `[V]`. The savepoint-plus-named-loss shape §3.2 requires of every rewinding MOVE is now a property of the kind, not of this verb. |
 | `sync-to` (landing) | advances the *target's* ref (`ff_advance_repo`, `sync.rs:5458-5554`) `[V]` | MOVE | **Shipped.** `62af89f` added the runtime refusal; this model replaced it with the witness (`:5477-5506`), closing the "landed onto nothing, then deleted the only ref" chain by construction — see §4.6(1) for the one residual (the function's own argument list). |
@@ -1863,12 +1879,12 @@ one names where.
 | `lock` | none (reads HEAD) | — | **Shipped.** Matches all three `HeadAttachment` arms (`lock.rs:113-119`), warns from the `DetachedHead` witness (`:139-147`), and refuses by name on an unreadable ref database instead of falling silent `[V]`. |
 | `push` (project repo) | none (reads) | — | **Shipped.** The gate survives; the non-repo case reports `NotARepo` (§4.5), the canonical branch comes from `remote_default_branch` rather than a fabricated `"main"` (`push.rs:179`), and the mismatch test is `AttachedRef::is_named` (`:204`) `[V]`. |
 | `push` (member repo) | none (reads) | — | **Shipped.** The publish ref is an explicit `&PublishRef` argument to `Vcs::push_ref` (`vcs.rs:3027`, impl `git.rs:2104-2119`) instead of an implicit `current_ref` read inside the impl `[V]`. Test: `git.rs:3029 push_ref_publishes_the_ref_it_was_given_not_the_one_head_is_on`. **Q6 stays open** — the split relocated the decision, it did not make it, and `PublishRef::from_attached` is the shipped choice. |
-| `workweave delete` / `sync-to --retire` | `retire_recorded_refs` (`workweave.rs:2421-2503`) `[V]` | DESTROY | **Shipped.** Deletes recorded refs with a `Merged` (or `BackedUp`) warrant (`:2444-2449`); **reports** everything else in the namespace (`:2485-2500`). The set/singleton mismatch is gone because both the check and the deletion range over the recorded set. Tests: `tests/branch_model_lifecycle_test.rs:161`, `:231`, `:305`. |
-| `doctor --fix` (stale ephemerals) | `fix_stale_ephemeral_branches` (`check.rs:4619-4713`) `[V]` | DESTROY | **Shipped.** Recorded refs only, re-resolved through the registry and re-warranted at fix time (`:4657-4690`); hand-made look-alikes survive. Tests: `tests/branch_discipline_test.rs:1028`, `:1080`. |
-| `prune_dropped_repo` | removes the worktree; on `Checkout::Primary`, removes the entire store (`sync.rs:1392-1534`) `[V]` | DESTROY-STORE | **Unchanged at the ref level, gated at the store level.** The local-only refusal (`sync.rs:1478-1519`) is unchanged, and recorded rwv refs were deliberately *not* excluded from it: **unblocking prune is not a payoff of R2.** What changed is that the refusal is no longer the only thing standing between a live workweave's backing and `remove_dir_all` — `judge_store_checkouts` and `refuse_standing_receipts` (`sync.rs`) implement R4 directly. In a workweave the removal is `workweave::release_checkout`, the release `workweave delete` runs per member: it unregisters the worktree and retires the workweave's recorded ref with a `Merged` warrant against the parent's and the primary's checkouts, so the receipts that would hold the primary's store claimed run dry with the checkout. Tests: `sync.rs:5734`, `:5745`, `:5773`, `:5808`, `:5860`, `:5874`, `:5904`, `:5945`; `tests/sync_prune_direction_test.rs` for the release. |
-| `remove --delete` | `remove_dir_all` on the whole store (`CheckoutRemoval::perform`, `src/sync.rs`) `[V]` | DESTROY-STORE | **Shipped.** `plan_checkout_removal` (`src/sync.rs`), the guards `prune_dropped_repo` holds too, judges the clone's uncommitted changes and every live checkout derived from the store together and refuses with both, then refuses while any receipt for the store stands — across all projects on disk — and refuses rather than guesses when a registration is unreadable. It runs *before* the manifest write, so a refused destroy leaves the manifest as it found it. Unpushed work refuses in the same pre-flight. |
-| `add` (inside a workweave) | mints an ephemeral name (`add_remove.rs:94`) `[V]` | birth | **Shipped.** Uses `EphemeralRefName::mint`; the inlined derivation and its private truncation are deleted (`add_remove.rs:41-48` records the removal). Emits a receipt first (`:93`), so `workweave delete` visits it. |
-| `doctor` I3 scan | none | — | **Shipped.** Attachment is checked against the **receipt** (`OwnedRef::is_attached_by`, used at `check.rs:3632` and `:3887`), never against a name shape; detached is a finding at the canonical too (§4.5); scope extends to `projects/<project>/` (§5.1). |
+| `workweave delete` / `sync-to --retire` | `deletion::Rule::apply` over the branch the workweave is aligned for, when its record is a feature | DESTROY | The rule of §3.7: what belongs is deleted on a landed proof (or a backup made first under `--discard-unlanded`), the rest survives with a reason and the verb exits 3. The workweave's own directory and worktrees are removed whatever the rule keeps; a checkout holding uncommitted changes or a detached HEAD with unreached commits refuses first. |
+| `branch delete` | `deletion::Rule::apply` over `W`, then `Store::write_dropping` | DESTROY | The same rule, asked directly: `W` checked out anywhere refuses (`checkout`), dependents refuse (`target` `dependents`), push branches are destroyed only with `--delete-remote` or `--delete-remote-unlanded <repo>`. |
+| `prune_dropped_repo` | removes the worktree; on `Checkout::Primary`, removes the entire store | DESTROY-STORE | **Gated at the store level.** The local-only refusal refuses a store holding commits no other clone reaches, and `judge_store_checkouts` (`sync.rs`) implements R4 directly: a live workweave's backing is never the only thing between a store and `remove_dir_all`. In a workweave the removal is `workweave::release_checkout`, which unregisters the worktree. |
+| `remove --delete` | `remove_dir_all` on the whole store (`CheckoutRemoval::perform`, `src/sync.rs`) | DESTROY-STORE | `plan_checkout_removal` (`src/sync.rs`), the guards `prune_dropped_repo` holds too, judges the clone's uncommitted changes and every live checkout derived from the store together and refuses with both, and refuses rather than guesses when a registration is unreadable. It runs *before* the manifest write, so a refused destroy leaves the manifest as it found it. Unpushed work refuses in the same pre-flight. |
+| `add` (inside a workweave) | mints an ephemeral name | birth | Uses `EphemeralRefName::mint`; the inlined derivation and its private truncation are deleted. |
+| `doctor` I3 scan | none | — | Attachment is reported by `alignment` against the branch the checked-out project branch's record and lock say each member should be on, never against a name shape; detached is a finding at the canonical too (§4.5); scope extends to `projects/<project>/` (§5.1). |
 
 ### 5.1 Q5: is the project repo an instance of the model?
 
@@ -1894,13 +1910,10 @@ Two things follow immediately, and both shipped:
 - **Delete's project-repo arm stopped being conditional.** It used to be
   nested inside *both* `dot_git.is_file()` and the `Ok`/`else` of
   `remove_worktree`, while the member-repo prefix-delete loop ran
-  unconditionally and `remove_dir_all` ran regardless. Now the
-  `dot_git.is_file()` block contains only `remove_worktree` and
-  `worktree_prune` (`workweave.rs:2808-2831`), and `retire_recorded_refs`
-  runs for the project repo unconditionally outside both (`:2837-2845`); the
-  member arm also falls through to the ref pass when `remove_worktree` fails
-  (`:2783-2791`) `[V]`. Under R2 both arms are the same operation over the
-  same receipt set, and the asymmetry has nowhere left to live.
+  unconditionally and `remove_dir_all` ran regardless. Now the worktree removal
+  and prune are the only things the `dot_git.is_file()` block holds, and the
+  deletion rule (§3.7) runs for the project repo and each member outside it, so
+  the two arms are the same operation and the asymmetry has nowhere left to live.
 
 ### 5.2 The reference-repo carve-out (removed)
 
@@ -1932,7 +1945,7 @@ The two properties the carve-out existed to keep hold without it. Sync
 moves only a workweave's own ephemeral branch, never the canonical clone's
 shared branch, for a `reference` member as for any other, because every
 member is a worktree on that branch. And nothing keys on `role`: a
-`reference` member gets a receipt like any other worktree repo. There is no
+`reference` member gets a worktree like any other repo. There is no
 `ReferenceAlias` checkout kind and no `--worktree-references` flag; the
 flag's spelling is refused with a message saying it was removed.
 
@@ -2017,42 +2030,18 @@ landed — plus a seventh the implementation exposed.
    `:14-36`); overrides are narrow and informed (rule 2, `:38-73`); discards
    stay recoverable via `refs/rwv/pre-op/<op-id>` (rule 3, `:75-93`) `[R]`.
 
-5. **The receipt registry's home — decided, and built there.** It lives in
-   `projects/<project>/.rwv-workweave-index` in the **primary**
-   (`INDEX_FILENAME` `workweave_index.rs:99`, `index_path` `:194-200`) `[V]`,
-   keyed by **(canonical store, ref name)** — because the refs outlive the
-   workweave directory. It could not live in the `.rwv-workweave` marker: that
-   file sits *inside* the workweave (`workspace.rs:1097`) `[V]`, and
-   `workweave delete` still ends in `remove_dir_all` on the directory
-   (`workweave.rs:2848-2851`) `[V]` — a marker-homed receipt would die with
-   the directory, and §7.2's "recorded as belonging to a deleted workweave"
-   arm could never fire. The marker is accordingly still
-   `{primary, project, parent}` and nothing else (`workspace.rs:1079-1083`)
-   `[V]`; no receipt field was added to it.
-   The shipped shape: `RefReceipt { store, name, created_at }`
-   (`workweave_index.rs:179-192`) in a private `receipts` field on
-   `WorkweaveIndex` (`:130`), reached through `RefRegistry` (`:611`) —
-   `record_created` `:665`, `lookup` `:749`, `retract` `:793`,
-   `adopt_legacy` `:694`, `migrate_legacy_index` `:823`. The store key is
-   `std::fs::canonicalize` (`:921-923`), so `record_created` fails rather than
-   records an unresolvable key. Writes go through one durable path
-   (`durable_file::replace`: fsync file, rename, fsync dir), and the whole
-   read-modify-write around each of them is held under a cross-process claim
-   (`IndexClaim`, `workweave_index.rs:308-389`) that `write` takes as a
-   parameter, so a second `rwv` cannot publish a snapshot that drops a receipt
-   this one recorded `[V]`.
-   Legacy markers and indexes migrate along the path that already existed:
-   "Markers written before `parent` was introduced (legacy markers) must be
-   migrated with `rwv doctor --fix` before the workweave can be used" is the
-   rationale stated on `WorkweaveMarker` itself (`workspace/marker.rs`)
-   `[V]` — the migration logic it names lives in `check.rs`, not
-   `workspace.rs`: detection in `scan_for_legacy_workweave_markers`
-   (`check.rs:1825-1874`) and the fix in `fix_legacy_workweave_marker`
-   (`:1900-1925`) `[V]`. The index half is separate and runs first
-   (`registry.migrate_legacy_index()` at `check.rs:7436`; the report-only
-   variant is `LegacyWorkweaveIndex` at `:7459`) `[V]`. (Receipt lifecycle
-   beyond the home — invalidation, retraction on store destroy, reclamation —
-   is Q14, §9, still open.)
+5. **The receipt registry's home — historical.** Receipts lived in
+   `projects/<project>/.rwv-workweave-index` in the **primary**, keyed by
+   (canonical store, ref name), because the refs outlive the workweave
+   directory and a marker-homed receipt would die with `remove_dir_all`. The
+   receipts are gone (§3.7): the index keeps a `receipts` list, always empty, so
+   that an index written before the field existed stays distinguishable, and
+   `rwv doctor --fix` adds the field to one that lacks it
+   (`legacy-workweave-index`). Writes still go through one durable path
+   (`durable_file::replace`) with the read-modify-write held under a
+   cross-process claim (`IndexClaim`), which the workweave registry still needs.
+   The marker is still `{primary, project, parent}` and nothing else. Legacy
+   markers migrate with `rwv doctor --fix` (`legacy-workweave-marker`).
 
 6. **`docs/explanation/joints/shared-refs-drift.md` was rewritten without
    the tracing this item asks for.** The two sentences this item quoted —
@@ -2124,13 +2113,11 @@ half of the third, a later fix the rest.
   `create_worktree` **adopted** a pre-existing branch, rollback force-deleted a
   branch that create did not author — and it re-read `current_ref` a second
   time, so a HEAD move between reads made rollback delete the wrong branch.
-  **Fixed as specified.** `record_ref_attempt(owned, birth)`
-  (`workweave.rs:527`) records the outcome `birth_ephemeral_worktree` returned
-  (`:1112-1127`), and `undo_ref_births` (`:656-735`) skips
-  `RefBirth::Adopted` (`:665-675`), requires `DeletionWarrant::unmoved`
-  (`:679`), and reads the tip from the birth's own record (`:718-721`) — so
-  there is no second HEAD read left to race `[V]`. Tests at
-  `workweave.rs:3549-3654`.
+  **Fixed as specified.** The rollback guard records the `RefOrigin` that
+  `birth_ephemeral_worktree` returned and its start point, and on rollback skips
+  an `Adopted` branch and deletes an `Authored` one only with a landed
+  `DestroyProof` against that start point — so a branch with work on it is left,
+  and there is no second HEAD read left to race `[V]`. Tests in `workweave.rs`.
 - The `WorktreeRemove` hook passed `force: true` unconditionally and
   `.unwrap_or(dir_name)` fabricated a workweave name from a basename with no
   `--` — the one path where dirty *and* diverged workweaves were destroyed
@@ -2206,7 +2193,13 @@ not wait for this design:
 
 ---
 
-## 7. Migration — **shipped**
+## 7. Migration — **shipped, then removed**
+
+**Historical.** The passes below ran once, wrote receipts as they went, and were
+deleted with the receipts (§3.7): `rwv doctor --fix` no longer migrates a
+branch, and the only migration left is adding the empty `receipts` field to a
+workweave index that lacks it. The section is kept for the write-ordering
+argument and the pass-level rules, not as a description of the tree.
 
 rwv is alpha. **No back-compat shims.** No dual-read of old and new names, no
 "accept either shape" fallback, no legacy-tolerant doctor arm that survives
@@ -2488,17 +2481,14 @@ class; it does not change the kind of claim being made, and it re-couples
 branch names to directory names, which used to be load-bearing in the wrong
 direction — a directory basename derived from a branch name `[V]`.
 
-**The status quo is now the model.** Ownership is the receipt
-(`OwnedRef::is_attached_by`, `check.rs:3632`, `:3887`), and the one surviving
-name-shaped predicate, `looks_like_a_pre_flat_ref` (`check.rs:3218-3228`),
-returns a `bool` that feeds a report and nothing else `[V]`. The
-name-to-directory coupling also reversed: `branch_discipline_in_scope` takes
-the *project* from the workweave directory's own `.rwv-workweave` marker, and
-no directory name is derived from a branch name anywhere `[V]`. Tests holding the rejection:
-`tests/branch_discipline_test.rs:1028 handmade_lookalike_branch_survives_doctor_fix`
-and `:1080 flat_lookalike_branch_survives_doctor_fix` — note the second, which
-covers a hand-made branch that matches the *new* flat shape exactly, the case
-name-shape ownership would get wrong most often now.
+**The status quo is not the model.** Ownership is neither a name shape nor a
+record: what a verb may destroy is what belongs to the branch it was asked to
+delete (§3.7) — the project branch and the listed members' branches of that
+name that no live weave branch declares — and it is destroyed only on a proof
+that it landed or was backed up first. No name-shaped predicate feeds a
+deletion. The name-to-directory coupling also reversed: the project comes from
+the workweave directory's own `.rwv-workweave` marker, and no directory name is
+derived from a branch name anywhere `[V]`.
 
 ### 8.5 Making the branch name authoritative for lineage
 
@@ -2613,14 +2603,12 @@ narrowed.** The container scan still exists, now split in two:
 `list_workweave_dirs` (`workweave.rs:2941-2968`) assembles the containers and
 `doctor_scan_container` (`:2979-3022`) walks them, documented there as "the
 ONLY surviving on-disk scan" `[V]`. Workweaves placed with `--dir` (advertised
-at `cli.rs:466-474`) are still not enumerated by a directory walk. R2 removed
-the *deletion* consequence — an unrecorded ref is never destroyed, and a
-recorded one is looked up by receipt rather than by container membership — and
-the implementation removed the *misclassification* consequence too:
-`live_workweave_names` (`check.rs:3490-3514`) consults the workweave index as
-well as the markers, and the canonical pass skips a receipt whose workweave is
-live (`:3951-3953`, with a comment naming `--dir` explicitly) `[V]`, so a
-`--dir` workweave's live branches no longer classify as stale. What remains is
+at `cli.rs:466-474`) are still not enumerated by a directory walk. The deletion rule
+removed the *deletion* consequence — a branch is destroyed by what belongs to
+the deleted branch (§3.7), not by container membership — and the
+implementation removed the *misclassification* consequence too: a `--dir`
+workweave's live branches are never read as stale, because no verb destroys a
+branch by asking whether its workweave is on disk. What remains is
 the *reporting* hole this question named: which of index and directory is
 authoritative for "does this workweave exist" is still undecided, and
 registry-versus-scan remains a separate decision with its own blast radius.
@@ -2634,13 +2622,11 @@ every recorded ref lives in. No ref-level rule can defend against that — it is
 a store-level operation. **DESTROY-STORE (§3.2) and R4 classify it and state
 its consent shape**, and R4 is now enforced: `plan_checkout_removal` judges
 every live checkout derived from the store as a `checkout` state and refuses
-on any standing receipt — across all projects on disk for `remove --delete`
-— before the manifest write, so a refusal is retryable `[V]`.
+before the manifest write, so a refusal is retryable `[V]`.
 `prune_dropped_repo` runs the same gate.
 What stays open is exactly what this entry said: the verb-level
 named-precondition set (dirty state, unpushed work — the set `workweave
-delete` has), which this model scopes but does not specify, and which
-`plan_checkout_removal`'s receipt check defers to this question.
+delete` has), which this model scopes but does not specify.
 
 **Q12 — What is the legal grammar for project and workweave names? —
 ANSWERED, at the parse boundary.** The grammar exists, is stated in the type,
@@ -2702,24 +2688,11 @@ so the protection is uneven *within* the tree, not just absent from the model.
 The general principle — does the model protect positions, or only attachments?
 — is undecided, and `refs/bisect/*` is not consulted by anything.
 
-**Q14 — What is a receipt's lifecycle beyond its home? — STILL OPEN.**
-§6 item 5 picks the home and the key, and both shipped. Still open: what
-invalidates a receipt; whether R4's retraction step on a store destroy is a
-per-ref DESTROY needing its own warrant each time or a bulk operation with its
-own consent — the shipped `refuse_standing_receipts` sidesteps this by
-*refusing* while any receipt stands rather than retracting them (`src/sync.rs`)
-`[V]`, which is the conservative reading and not a decision; what a receipt
-pointing into a store that no longer exists means for doctor — partially
-answered by `scan_dangling_receipts` (`check.rs:4096-4230`), which reports and
-`--fix`-retracts a receipt whose *ref* never appeared, but not one whose
-*store* is gone; and whether receipts are ever reclaimed. On that last
-question: no dedicated verb exists or is planned while inflow stays at its
-recorded floor — doctor's per-class count lines are the instrument, and a
-class's count regrowing past its recorded post-sweep baseline is the
-structural trigger that reopens the verb question (a count against a
-recorded floor; triggers stay structural — ancestry, named-ref
-reachability, counts — never wall-clock). The shelved verb design is
-`docs/sync-state-space/rwv-gc-verb.md` in the project docs.
+**Q14 — What is a receipt's lifecycle beyond its home? — MOOT.** There are no
+receipts (§3.7): nothing records that rwv created a ref, so nothing needs
+invalidating, retracting on a store destroy or reclaiming. The question existed
+because ownership was a record that could outlive or precede its ref; the
+deletion rule decides from the refs and the branch records themselves.
 
 **Q15 — What is the validity window of a witness? — STILL OPEN.**
 §4.2 binds `AttachedRef` to its repo, which closes the cross-repo pass, and
@@ -2767,7 +2740,9 @@ drift-producing path has not been traced by anyone.
 
 - **Q1** — a member's on-disk ref is a **working-set handle** (option c).
   Attachment is operator state; rwv must not silently change it.
-- **Q2** — ownership is by **record**, not by name shape.
+- **Q2** — ownership is by **belonging** (§3.7), never by name shape. (It was
+  decided as ownership by record, a receipt per ref; the receipts were removed
+  and the deletion rule took their place.)
 - **Q3** — `<segment>` is deleted. Ephemeral names are
   `{project}--{workweave}`.
 - **Q4** — landing names the ref the target is **attached** to, and refuses
@@ -2789,8 +2764,6 @@ drift-producing path has not been traced by anyone.
   tracking declaration's local counterpart; any other attachment refuses.
 - **Birth targets** (R1, §5) — a birth attaches at the revision the verb is
   materializing; a birth is never followed by a MOVE.
-- **The receipt home** (§6 item 5) — the primary's workweave index, keyed
-  by (canonical store, ref name), receipt-written-before-ref (§7.1).
 - **`default_branch`** (§4.2) — typed as observed remote state
   (`RemoteDefaultBranch`, `Option`-explicit, no `"main"` fabrication); an
   input to the publish gate, not a fifth notion.
@@ -2814,7 +2787,7 @@ and where a non-default channel's identity is recorded — its
 `"main"`-fabrication clause is closed, see above), Q7 (operator branches in a
 workweave), Q10 (`--dir` workweave liveness), Q11 (verb-level preconditions
 for store destroys — narrowed), Q13 (detached positions as operator state),
-Q14 (receipt lifecycle), Q15 (witness validity window), the merge-strategy
+Q15 (witness validity window), the merge-strategy
 rationale, and the `shared-refs-drift` mechanism. §9 records, per question,
 what the tree changed *around* it without answering it.
 
@@ -2845,7 +2818,7 @@ the ref types, 2 more on the name types `mint` consumes, and 23 probes in
 
 - `docs/explanation/joints/clone-topology.md` — I1/I2/I3; the reference-repo
   carve-out; the `git-common-dir` mapping. I3's ephemeral-branch clause is
-  restated by this model as an ownership-by-receipt clause; its *purpose*
+  restated by this model as a belonging clause (§3.7); its *purpose*
   (merged-check soundness via ref disjointness) is unchanged. It used to
   contradict the shipped code on the name shape; **it no longer does** — `:88`,
   `:180`, and `:212` all give the flat `<project>--<workweave>` `[V]`.

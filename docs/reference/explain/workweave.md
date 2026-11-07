@@ -286,8 +286,11 @@ Schema:
   "type": "object",
   "required": [
     "$schema",
+    "deleted",
     "discarded",
-    "project"
+    "project",
+    "records_dropped",
+    "survivors"
   ],
   "properties": {
     "$schema": {
@@ -326,7 +329,7 @@ Schema:
       "required": [
         "because",
         "branch",
-        "repo",
+        "path",
         "site"
       ],
       "properties": {
@@ -344,7 +347,7 @@ Schema:
         "branch": {
           "type": "string"
         },
-        "repo": {
+        "path": {
           "description": "The repo, as `rwv backup drop` names it.",
           "type": "string"
         },
@@ -388,14 +391,14 @@ Schema:
       "type": "object",
       "required": [
         "backup",
-        "repo"
+        "path"
       ],
       "properties": {
         "backup": {
           "description": "The name `rwv backup drop` takes.",
           "type": "string"
         },
-        "repo": {
+        "path": {
           "type": "string"
         }
       }
@@ -446,8 +449,8 @@ Schema:
       "required": [
         "branch",
         "detail",
-        "reason",
-        "repo"
+        "path",
+        "reason"
       ],
       "properties": {
         "branch": {
@@ -460,11 +463,11 @@ Schema:
             "type": "string"
           }
         },
+        "path": {
+          "type": "string"
+        },
         "reason": {
           "$ref": "#/definitions/Reason"
-        },
-        "repo": {
-          "type": "string"
         }
       }
     },
@@ -473,7 +476,7 @@ Schema:
       "required": [
         "backup",
         "branch",
-        "repo"
+        "path"
       ],
       "properties": {
         "backup": {
@@ -482,7 +485,7 @@ Schema:
         "branch": {
           "type": "string"
         },
-        "repo": {
+        "path": {
           "type": "string"
         }
       }

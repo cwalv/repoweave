@@ -1067,8 +1067,8 @@ Schema:
       "required": [
         "branch",
         "detail",
-        "reason",
-        "repo"
+        "path",
+        "reason"
       ],
       "properties": {
         "branch": {
@@ -1081,11 +1081,11 @@ Schema:
             "type": "string"
           }
         },
+        "path": {
+          "type": "string"
+        },
         "reason": {
           "$ref": "#/definitions/Reason"
-        },
-        "repo": {
-          "type": "string"
         }
       }
     },

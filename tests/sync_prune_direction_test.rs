@@ -570,7 +570,7 @@ fn pruning_a_member_only_the_seat_added_releases_the_primarys_clone() {
 
 /// The seat's branch holds a commit no baseline contains while its checkout
 /// sits detached on the clone's tip: the prune removes the checkout, but the
-/// branch and its receipt stay, and the warning names the branch.
+/// branch stays, and the warning names the branch.
 #[test]
 fn pruning_keeps_a_seat_branch_that_holds_commits_nothing_else_has() {
     let weave = weave();
@@ -593,17 +593,16 @@ fn pruning_keeps_a_seat_branch_that_holds_commits_nothing_else_has() {
     );
     assert!(
         stderr.contains(&format!(
-            "  warning: {EXTRA}: branch {SEAT_BRANCH} is rwv's but holds commits no baseline \
-             contains; left in place."
-        )) && !stderr.contains("is not recorded as rwv's"),
+            "  left: {EXTRA}: branch {SEAT_BRANCH} holds commits no baseline contains; left in \
+             place"
+        )),
         "{stderr}"
     );
     let out = run(&weave.root, &["member", "remove", EXTRA, "--delete"]);
     assert!(
         !out.status.success()
-            && String::from_utf8_lossy(&out.stderr)
-                .contains(&format!("ownership receipt for branch {SEAT_BRANCH}")),
-        "the receipt still claims the clone:\n{}",
+            && String::from_utf8_lossy(&out.stderr).contains("local-only commits"),
+        "the branch still holds commits only the clone has:\n{}",
         String::from_utf8_lossy(&out.stderr)
     );
 }
@@ -773,9 +772,9 @@ fn assert_routes_to(stderr: &str, token: &str) {
     );
 }
 
-/// Retire refused over the checkout replay could not prune: the workweave,
-/// the checkout and the work in it are intact, and the op is parked at retire
-/// in both workspaces.
+/// Retire refused over the edits in the checkout replay could not prune: the
+/// workweave, the checkout and the work in it are intact, and the op is parked
+/// at retire in both workspaces.
 fn assert_retire_refused_with_the_work_intact(out: &Output, weave: &Weave, s1: &Path) {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(
@@ -785,11 +784,10 @@ fn assert_retire_refused_with_the_work_intact(out: &Output, weave: &Weave, s1: &
     );
     assert!(s1.join("projects").join(PROJECT).join("rwv.toml").is_file());
     assert!(!out.status.success(), "retire must refuse:\n{stderr}");
-    assert_routes_to(&stderr, "retire-unpruned-checkout");
+    assert_routes_to(&stderr, "edits");
     for expected in [
-        "--retire: replay could not prune 1 member checkout the manifest no longer names"
-            .to_owned(),
-        format!(":\n  {EXTRA}\n"),
+        format!("{EXTRA}: edits dirty (not a manifest member)"),
+        "--retire: the landing is done and the workweave was not deleted".to_owned(),
         "rwv sync-to --continue".to_owned(),
         "`rwv abort`".to_owned(),
     ] {
@@ -805,7 +803,7 @@ fn assert_retire_refused_with_the_work_intact(out: &Output, weave: &Weave, s1: &
 }
 
 #[test]
-fn a_retire_refuses_while_a_checkout_replay_could_not_prune_is_on_disk() {
+fn a_retire_refuses_over_the_edits_in_a_checkout_replay_could_not_prune() {
     let weave = weave();
     let s1 = seat_with_an_unprunable_drop(&weave);
 
@@ -818,7 +816,7 @@ fn a_retire_refuses_while_a_checkout_replay_could_not_prune_is_on_disk() {
 }
 
 #[test]
-fn a_continued_retire_refuses_until_the_checkout_is_gone_then_retires() {
+fn a_continued_retire_refuses_until_the_edits_are_gone_then_retires() {
     let weave = weave();
     let s1 = seat_with_an_unprunable_drop(&weave);
     let parked = run(&s1, &["sync-to", "--retire"]);

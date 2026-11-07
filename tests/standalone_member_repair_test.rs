@@ -29,8 +29,8 @@ struct Weave {
 
 /// A workweave created by `rwv workweave create` whose member was then
 /// deleted and cloned afresh from the canonical clone, so the canonical
-/// clone still holds the workweave's branch, its receipt and a worktree
-/// registration for the slot.
+/// clone still holds the workweave's branch and a worktree registration for
+/// the slot.
 fn weave_with_standalone_member(tmp: &Path) -> Weave {
     let primary = tmp.join("primary");
     let canonical = primary.join(MEMBER);
@@ -618,7 +618,7 @@ fn a_birth_that_refuses_moves_the_clone_back() {
         )),
         "{out}"
     );
-    assert!(out.contains("has moved since rwv created it"), "{out}");
+    assert!(out.contains("name exists (app--seat)"), "{out}");
     assert!(
         weave.clone.join(".git").is_dir(),
         "the clone must be back at the slot, not stranded or gone:\n{out}"

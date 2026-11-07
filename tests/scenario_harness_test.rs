@@ -208,7 +208,7 @@ fn shared_member_pinned_behind() {
     runner::run(scenarios::shared_member_pinned_behind()).assert_green();
 }
 
-/// `workweave delete --discard-unmerged-commits` consents to losing the
+/// `workweave delete --discard-unlanded` consents to losing the
 /// branch, not the commits: a backup is made first, so no commit is stranded,
 /// and `backup list` shows it.
 #[test]

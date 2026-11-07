@@ -488,8 +488,8 @@ enum RefBirth {
 }
 
 impl From<RefOrigin> for RefBirth {
-    fn from(origin: RefOrigin) -> Self {
-        match origin {
+    fn from(authorship: RefOrigin) -> Self {
+        match authorship {
             RefOrigin::Authored => Self::Authored,
             RefOrigin::Adopted => Self::Adopted,
         }
@@ -1244,6 +1244,38 @@ pub(crate) fn is_own_store(store: &Path, checkout: &Path) -> bool {
     CanonicalPath::of(store) == CanonicalPath::of(&crate::git::store_path_in(checkout))
 }
 
+/// Delete the workweave's branch in `canonical`'s store when everything on it
+/// is reached by `start`, so the worktree that replaces a standalone clone is
+/// born on a branch at the commit the clone had checked out. A branch holding
+/// anything `start` lacks stays, and the birth refuses it.
+fn release_branch_the_clone_reaches(
+    vcs: &dyn Vcs,
+    canonical: &Path,
+    project: &ProjectName,
+    workweave: &WorkweaveName,
+    start: &ResolvedRevisionId,
+) -> anyhow::Result<()> {
+    let store = store_behind(vcs, canonical);
+    let branch = EphemeralRefName::mint(
+        &WorkweaveId {
+            project: project.clone(),
+            name: workweave.clone(),
+        }
+        .flat(),
+    )
+    .to_raw();
+    if let Some(proof) = DestroyProof::landed(
+        vcs,
+        &store,
+        Site::Local,
+        &branch,
+        std::slice::from_ref(start),
+    )? {
+        vcs.delete_branch(proof)?;
+    }
+    Ok(())
+}
+
 /// Replace the full clone at `repo_path` in the workweave at `workweave_dir`
 /// with the worktree [`materialize_member`] gives a member the workweave
 /// lacks, born at the revision the clone has checked out so the files on disk
@@ -1286,6 +1318,7 @@ pub(crate) fn replace_standalone_member(
         .worktree_prune(&canonical)
         .map_err(anyhow::Error::from)
         .and_then(|()| {
+            release_branch_the_clone_reaches(vcs, &canonical, project, workweave, &at)?;
             materialize_member(
                 vcs,
                 primary_root,
@@ -1549,7 +1582,7 @@ pub(crate) fn birth_ephemeral_worktree(
         Err(e) => (None, Some(e)),
     };
     let (birth, failure) = match populated.created {
-        Ok(origin) => (RefBirth::from(origin), filling_failed),
+        Ok(authorship) => (RefBirth::from(authorship), filling_failed),
         Err(e) => (RefBirth::AuthoredOrAbsent, Some(e.into())),
     };
     Ok(BirthOutcome {
@@ -1855,7 +1888,7 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
                      refusing to replace it:\n  {}\n\
                      Commit/merge that work, or delete it explicitly with \
                      `rwv workweave delete {} --project {} --discard-uncommitted \
-                     --discard-unmerged-commits`.",
+                     --discard-unlanded`.",
                     name.as_str(),
                     at_risk.join("\n  "),
                     name.as_str(),
@@ -3090,6 +3123,7 @@ fn refuse_if_checkouts_host_foreign_worktrees(
     manifest: &Manifest,
 ) -> anyhow::Result<()> {
     let mut hazards: Vec<String> = Vec::new();
+    let mut stranded: Vec<String> = Vec::new();
 
     let mut check = |vcs: &dyn Vcs, checkout: &Path, label: String| {
         if !checkout.exists() {
@@ -3135,6 +3169,21 @@ fn refuse_if_checkouts_host_foreign_worktrees(
                 lines.push(format!("    - {}", wt.display()));
             }
             hazards.push(lines.join("\n"));
+            return;
+        }
+        let holding = match vcs.list_local_branch_names(checkout) {
+            Ok(branches) => branches
+                .iter()
+                .filter_map(|branch| match vcs.unpushed_commits(checkout, branch) {
+                    Ok(commits) if commits.is_empty() => None,
+                    Ok(commits) => Some(format!("{branch} ({} commit(s))", commits.len())),
+                    Err(_) => Some(format!("{branch} (could not be read)")),
+                })
+                .collect::<Vec<_>>(),
+            Err(_) => vec!["its branches could not be listed".to_owned()],
+        };
+        if !holding.is_empty() {
+            stranded.push(format!("{label}: {}", holding.join(", ")));
         }
     };
 
@@ -3150,27 +3199,41 @@ fn refuse_if_checkouts_host_foreign_worktrees(
         );
     }
 
-    if hazards.is_empty() {
-        return Ok(());
-    }
+    let workweave_label = workweave_dir
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| workweave_dir.display().to_string());
 
-    crate::refuse!(
-        RefusalKind::StandaloneInWorkweave,
-        "rwv workweave delete: refusing — inverted clone topology detected.\n\
-         The following checkout(s) inside workweave {} are themselves canonical \
-         stores that other worktrees link into; deleting this workweave would orphan \
-         those dependents:\n  {}\n\n\
-         Run `rwv doctor` for a full topology audit and remediation guidance. \
-         This refusal is NOT bypassable with --discard-uncommitted or \
-         --discard-unmerged-commits: those consent to losing this workweave's work, \
-         not to corrupting unrelated worktrees whose object store we happen to be \
-         hosting.",
-        workweave_dir
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| workweave_dir.display().to_string()),
-        hazards.join("\n  "),
-    )
+    if !hazards.is_empty() {
+        crate::refuse!(
+            RefusalKind::StandaloneInWorkweave,
+            "rwv workweave delete: refusing — inverted clone topology detected.\n\
+             The following checkout(s) inside workweave {} are themselves canonical \
+             stores that other worktrees link into; deleting this workweave would orphan \
+             those dependents:\n  {}\n\n\
+             Run `rwv doctor` for a full topology audit and remediation guidance. \
+             This refusal is NOT bypassable with --discard-uncommitted or \
+             --discard-unlanded: those consent to losing this workweave's work, \
+             not to corrupting unrelated worktrees whose object store we happen to be \
+             hosting.",
+            workweave_label,
+            hazards.join("\n  "),
+        )
+    }
+    if !stranded.is_empty() {
+        crate::refuse!(
+            RefusalKind::StandaloneInWorkweave,
+            "rwv workweave delete: refusing — the following checkout(s) inside workweave {} \
+             are themselves canonical stores holding commits no remote has, and a backup \
+             written there would go with them:\n  {}\n\n\
+             Push those commits, or move the clone out of the workweave, then delete. \
+             `rwv doctor` reports the clone as `standalone-in-workweave`. \
+             --discard-uncommitted and --discard-unlanded do not waive this refusal.",
+            workweave_label,
+            stranded.join("\n  "),
+        )
+    }
+    Ok(())
 }
 
 /// Resolve the parent that children of the workweave at `retiree_dir` should
@@ -3428,7 +3491,7 @@ pub struct Discarded {
 
 #[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
 pub struct KeptWork {
-    pub repo: String,
+    pub path: String,
     /// The name `rwv backup drop` takes.
     pub backup: String,
 }
@@ -3460,20 +3523,20 @@ impl WorkweaveDeletion {
         for kept in &self.discarded.edits {
             eprintln!(
                 "discarded edits: {} kept as backup {} (`rwv backup list`)",
-                kept.repo, kept.backup
+                kept.path, kept.backup
             );
         }
         for kept in &self.discarded.detached_commits {
             eprintln!(
                 "discarded detached commits: {} kept as backup {} (`rwv backup list`)",
-                kept.repo, kept.backup
+                kept.path, kept.backup
             );
         }
         if let Some(rule) = &self.rule {
             for deleted in self.unlanded_branches() {
                 eprintln!(
                     "discarded unlanded branch: {} {} kept as backup {} (`rwv backup list`)",
-                    deleted.repo,
+                    deleted.path,
                     deleted.branch,
                     deleted.backup.as_deref().unwrap_or_default()
                 );
@@ -3599,7 +3662,7 @@ fn keep_work_before_discarding(
                 format!("{label}: its uncommitted edits could not be kept as a backup")
             })? {
                 discarded.edits.push(KeptWork {
-                    repo: label.clone(),
+                    path: label.clone(),
                     backup: witness.backup().name.to_string(),
                 });
             }
@@ -3611,7 +3674,7 @@ fn keep_work_before_discarding(
                 )
             })? {
                 discarded.detached_commits.push(KeptWork {
-                    repo: label.clone(),
+                    path: label.clone(),
                     backup: witness.backup().name.to_string(),
                 });
             }
@@ -3630,7 +3693,7 @@ fn judge_detached_commits(
 ) -> anyhow::Result<crate::diagnosis::Report> {
     let mut report = crate::diagnosis::Report::default();
     let mut judge = |vcs: &dyn Vcs, label: String, worktree: PathBuf| -> anyhow::Result<()> {
-        if !worktree.exists() {
+        if !worktree.exists() || !vcs.is_repo(&worktree) {
             return Ok(());
         }
         let crate::vcs::HeadObservation::Detached { at } = vcs.observe_head(&worktree)? else {
@@ -3720,10 +3783,10 @@ pub struct WorkweaveDeleteJsonOutput {
     pub schema_url: String,
     pub project: String,
     pub discarded: DiscardedOutput,
-    /// The deletion rule's outcome; absent when the workweave's aligned
+    /// The deletion rule's outcome; empty when the workweave's aligned
     /// branch is not a feature.
     #[serde(flatten)]
-    pub rule: Option<crate::deletion::Outcome>,
+    pub outcome: crate::deletion::Outcome,
 }
 
 /// What a workweave delete discarded, by kind.
@@ -3737,7 +3800,7 @@ pub struct DiscardedOutput {
 
 #[derive(Debug, serde::Serialize, schemars::JsonSchema)]
 pub struct UnlandedBranch {
-    pub repo: String,
+    pub path: String,
     pub branch: String,
     pub backup: String,
 }
@@ -3762,13 +3825,13 @@ pub fn report_deletion(
                     .unlanded_branches()
                     .into_iter()
                     .map(|d| UnlandedBranch {
-                        repo: d.repo.clone(),
+                        path: d.path.clone(),
                         branch: d.branch.clone(),
                         backup: d.backup.clone().unwrap_or_default(),
                     })
                     .collect(),
             },
-            rule: deletion.rule.clone(),
+            outcome: deletion.rule.clone().unwrap_or_default(),
         };
         outln!("{}", serde_json::to_string_pretty(&envelope)?);
     } else {

@@ -19,7 +19,7 @@ use std::process::Output;
 
 mod common;
 
-const BOTH_WAIVERS: &[&str] = &["--discard-uncommitted", "--discard-unmerged-commits"];
+const BOTH_WAIVERS: &[&str] = &["--discard-uncommitted", "--discard-unlanded"];
 
 fn delete(ws: &Path, name: &str, flags: &[&str]) -> Output {
     common::rwv()
@@ -364,25 +364,12 @@ fn delete_proceeds_when_canonical_checkout_has_no_foreign_dependents() {
     common::assert_on_branch(&primary_slot, "main");
 }
 
-/// Under inverted topology, the merged-check that gates delete must run
-/// in the workweave checkout's RESOLVED canonical store — not the
-/// `<ws_root>/<repo_path>` slot, which under inverted topology is a
-/// disconnected DAG that knows nothing about the workweave's commits.
-///
-/// Asking `is_ancestor` in the wrong DAG silently lies: it may green-light
-/// deletion of work the operator wanted (false-merged) or refuse a
-/// genuinely merged retire (false-unmerged). Both failure modes pin to
-/// the same fix.
-///
-/// This test pins the **false-merged** failure mode: a workweave whose
-/// canonical store is the disconnected primary slot (the "bad" inverted
-/// case) advances both clones to the SAME tip — so the original code
-/// silently vouches via SHA equality on `wt_head == c`, missing the fact
-/// that the comparison crossed DAGs. The post-fix code refuses to vouch
-/// across distinct canonical stores and treats the workweave as having
-/// commits not merged into the baseline.
+/// Under inverted topology the workweave's member checkout links into a store
+/// disconnected from the primary's. A delete that cannot tell which branch it
+/// is meant to judge deletes none: the member's branch, with the commit only
+/// that store holds, is still there afterwards.
 #[test]
-fn merged_check_refuses_vouch_across_distinct_canonical_stores() {
+fn delete_keeps_the_commits_of_a_store_it_cannot_judge() {
     let tmp = common::tempdir().unwrap();
     let (ws, primary_slot) = make_workspace(tmp.path(), "web-app");
 
@@ -428,28 +415,20 @@ fn merged_check_refuses_vouch_across_distinct_canonical_stores() {
     );
     write_marker(&ww_dir, &ws, "web-app");
 
-    // Without the unmerged waiver, delete should refuse because the workweave carries
-    // commits that the baseline (primary slot, disconnected DAG) cannot
-    // reach. The pre-fix code asked `is_ancestor` in the WORKWEAVE
-    // checkout (real_canonical DAG, which DOES contain both refs) and
-    // would have answered "false" (not ancestral — diverged) here as
-    // well, so this assertion holds for both pre- and post-fix code.
-    // The post-fix code reaches the same conclusion via the cleaner
-    // canonical-store-equality path: real_canonical != primary_slot, so
-    // the baseline cannot vouch.
     let out = delete(&ws, "diverged", &["--discard-uncommitted"]);
     let msg = stderr_of(&out);
     assert!(
-        !out.status.success(),
-        "delete should refuse when workweave carries unmerged work:\n{msg}"
+        out.status.success(),
+        "delete should remove the workweave:\n{msg}"
     );
-    assert!(
-        msg.contains("commits not merged"),
-        "refusal must cite the unmerged-commits precondition. got:\n{msg}"
-    );
-    assert!(
-        ww_dir.exists(),
-        "workweave dir must be preserved by refusal"
+    assert!(!ww_dir.exists(), "workweave dir should be removed");
+    assert_eq!(
+        common::git_in(
+            &real_canonical,
+            &["log", "-1", "--format=%s", "web-app--diverged"]
+        ),
+        "real-canonical unique",
+        "the branch holding the commit only that store has must survive"
     );
 }
 

@@ -94,8 +94,7 @@ use regex::Regex;
 use schemars::schema_for;
 
 use repoweave::backup::BackupJsonOutput;
-use repoweave::branch::BranchJsonOutput;
-use repoweave::workweave::WorkweaveDeleteJsonOutput;
+use repoweave::branch::{BranchDeleteJsonOutput, BranchListJsonOutput};
 use repoweave::check::DoctorJsonOutput;
 use repoweave::cli::Cli;
 use repoweave::clone::CloneJsonOutput;
@@ -115,6 +114,7 @@ use repoweave::sync::{
 use repoweave::update::{UpdateJsonOutput, UPDATE_SCHEMA_URL};
 use repoweave::update_remote::{UpdateRemoteJsonOutput, UPDATE_REMOTE_SCHEMA_URL};
 use repoweave::workspace::Resolution;
+use repoweave::workweave::WorkweaveDeleteJsonOutput;
 
 // The bundled plugin's wire types and schema URLs, compiled into this binary
 // so their schemas are generated and their URLs checked like a core verb's.
@@ -422,8 +422,13 @@ fn schema_backup() -> String {
 }
 
 fn schema_branch() -> String {
-    let schema = schema_for!(BranchJsonOutput);
+    let schema = schema_for!(BranchListJsonOutput);
     serde_json::to_string_pretty(&schema).expect("branch schema serializes")
+}
+
+fn schema_branch_delete() -> String {
+    let schema = schema_for!(BranchDeleteJsonOutput);
+    serde_json::to_string_pretty(&schema).expect("branch delete schema serializes")
 }
 
 fn schema_workweave() -> String {
@@ -1006,6 +1011,14 @@ fn build_msg_registry() -> MsgRegistry {
         format!(
             "```json\n{}\n```",
             flatten_rustdoc_links(&schema_update_remote())
+        ),
+    );
+
+    m.insert(
+        "branch_delete_schema",
+        format!(
+            "```json\n{}\n```",
+            flatten_rustdoc_links(&schema_branch_delete())
         ),
     );
 
@@ -4726,6 +4739,14 @@ fn main() -> anyhow::Result<()> {
         write_if_changed(&schemas_dir.join("update-remote.json"), &schema)?;
     }
 
+    // `rwv branch delete` shares the `branch` page, as `update --remote` shares
+    // `update`'s.
+    {
+        let mut schema = schema_branch_delete();
+        schema.push('\n');
+        write_if_changed(&schemas_dir.join("branch-delete.json"), &schema)?;
+    }
+
     // Sanity-check schema URLs the binary embeds match the artifact paths we
     // just wrote. If a URL drifts (e.g. someone changes the crate version
     // path), this surfaces immediately.
@@ -4776,6 +4797,11 @@ fn main() -> anyhow::Result<()> {
     assert!(
         repoweave::backup::BACKUP_SCHEMA_URL.ends_with("/docs/reference/schemas/backup.json"),
         "BACKUP_SCHEMA_URL no longer points at the committed artifact"
+    );
+    assert!(
+        repoweave::branch::BRANCH_DELETE_SCHEMA_URL
+            .ends_with("/docs/reference/schemas/branch-delete.json"),
+        "BRANCH_DELETE_SCHEMA_URL no longer points at the committed artifact"
     );
     assert!(
         repoweave::branch::BRANCH_SCHEMA_URL.ends_with("/docs/reference/schemas/branch.json"),
@@ -8577,7 +8603,7 @@ mod tests {
             | Present, locked SHA is not a fast-forward or checkout is on another branch | Refuses (`fetch-realign-refused`), unless `--detach-checkouts` is passed to materialize the pin on a detached HEAD (use `git checkout <branch>` later before running `rwv sync-to`) |\n\
             | 2. Drift settlement | Re-derives generated files whose inputs changed (`derived-state-stale`) and drops attestations for files no enabled integration generates. If an attested file's bytes differ from the accepted generation (`integration-file-drifted`), refuses unless `--regenerate-drifted` or `--adopt-drifted` is passed |\n\
             \n\
-            1. `rwv doctor` reports [`branch-discipline`](../../reference/doctor-findings.md#branch-discipline) (`canonical-wrong-branch`).\n\
+            1. `rwv doctor` reports [`alignment`](../../reference/doctor-findings.md#alignment) (`canonical-wrong-branch`).\n\
             \n",
             // rwv-advice: not-an-invocation
             "`rwv doctor` and context verbs (`rwv activate`, `rwv fetch`, `rwv workweave add`) verify `gita/repos.csv` and `gita/groups.csv`:\n",
@@ -8593,7 +8619,7 @@ mod tests {
                 "docs/page.md:6: `patch-shadowed` is not a token",
                 "docs/page.md:8: `fetch-realign-refused` is not a token",
                 "docs/page.md:9: `integration-file-drifted` is not a token",
-                "docs/page.md:11: `canonical-wrong-branch` is not a sub-kind of `branch-discipline`",
+                "docs/page.md:11: `canonical-wrong-branch` is not a sub-kind of `alignment`",
                 // rwv-advice: not-an-invocation
                 "docs/page.md:13: `rwv workweave add` is not a command",
             ],

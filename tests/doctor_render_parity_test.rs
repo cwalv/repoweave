@@ -198,8 +198,7 @@ fn the_corpus_covers_every_kind_and_is_not_empty() {
         "duplicate sample tokens hide a missing case: {tokens:?}"
     );
     for expected in [
-        "pre-flat-ref-receipt",
-        "dangling-ref-receipt",
+        "legacy-workweave-index",
         "index-drift/safe-to-fix",
         "workweave-tree-integrity/foreign-primary-other-workspace",
     ] {

@@ -830,8 +830,8 @@
       "required": [
         "branch",
         "detail",
-        "reason",
-        "repo"
+        "path",
+        "reason"
       ],
       "properties": {
         "branch": {
@@ -844,11 +844,11 @@
             "type": "string"
           }
         },
+        "path": {
+          "type": "string"
+        },
         "reason": {
           "$ref": "#/definitions/Reason"
-        },
-        "repo": {
-          "type": "string"
         }
       }
     },

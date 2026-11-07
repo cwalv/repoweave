@@ -138,122 +138,32 @@ survivor is `left: <repo> <branch>: <reason>` on stderr, with what the reason
 rests on beneath it.
 
 `rwv branch list --json` and `rwv branch delete --json` each emit one envelope.
-A delete's carries `branch`, `target`, `deleted` (`repo`, `branch`, `site`,
-`because` and the `backup` kept first, when there was one), `survivors` (`repo`,
-`branch`, `reason`, `detail`) and `records_dropped`:
+The list's:
 
 Schema:
 
 ```json
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "BranchJsonOutput",
-  "description": "Every envelope `rwv branch` prints under `--json`.",
-  "anyOf": [
-    {
-      "$ref": "#/definitions/BranchListJsonOutput"
-    },
-    {
-      "$ref": "#/definitions/BranchDeleteJsonOutput"
-    }
+  "title": "BranchListJsonOutput",
+  "description": "The envelope `rwv branch list --json` prints.",
+  "type": "object",
+  "required": [
+    "$schema",
+    "branches"
   ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "branches": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/ListedBranch"
+      }
+    }
+  },
   "definitions": {
-    "BranchDeleteJsonOutput": {
-      "description": "The envelope `rwv branch delete --json` prints.",
-      "type": "object",
-      "required": [
-        "$schema",
-        "branch",
-        "deleted",
-        "records_dropped",
-        "survivors",
-        "target"
-      ],
-      "properties": {
-        "$schema": {
-          "type": "string"
-        },
-        "branch": {
-          "type": "string"
-        },
-        "deleted": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/Deleted"
-          }
-        },
-        "records_dropped": {
-          "description": "Branches whose records the drop rule removed.",
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "survivors": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/Survivor"
-          }
-        },
-        "target": {
-          "description": "The branch the deleted branches were judged landed against.",
-          "type": "string"
-        }
-      }
-    },
-    "BranchListJsonOutput": {
-      "description": "The envelope `rwv branch list --json` prints.",
-      "type": "object",
-      "required": [
-        "$schema",
-        "branches"
-      ],
-      "properties": {
-        "$schema": {
-          "type": "string"
-        },
-        "branches": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/ListedBranch"
-          }
-        }
-      }
-    },
-    "Deleted": {
-      "description": "A branch the rule deleted.",
-      "type": "object",
-      "required": [
-        "because",
-        "branch",
-        "repo",
-        "site"
-      ],
-      "properties": {
-        "backup": {
-          "description": "The backup kept first, when the branch had not landed.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "because": {
-          "description": "What licensed it: the branch it landed on, or the backup kept first.",
-          "type": "string"
-        },
-        "branch": {
-          "type": "string"
-        },
-        "repo": {
-          "description": "The repo, as `rwv backup drop` names it.",
-          "type": "string"
-        },
-        "site": {
-          "description": "`local`, or `remote <name>` for a push branch.",
-          "type": "string"
-        }
-      }
-    },
     "ListedBranch": {
       "type": "object",
       "required": [
@@ -306,46 +216,6 @@ Schema:
           "type": "string",
           "enum": [
             "declared"
-          ]
-        }
-      ]
-    },
-    "Reason": {
-      "description": "Why a branch that belongs survived the rule.",
-      "oneOf": [
-        {
-          "description": "It holds commits the branch it lands into does not reach.",
-          "type": "string",
-          "enum": [
-            "unlanded"
-          ]
-        },
-        {
-          "description": "A live lock pins a commit that only it reaches.",
-          "type": "string",
-          "enum": [
-            "pinned"
-          ]
-        },
-        {
-          "description": "Its published copy holds commits the branch it lands into does not reach: a pull request may be open against it.",
-          "type": "string",
-          "enum": [
-            "open-head"
-          ]
-        },
-        {
-          "description": "A member branch that belongs to it survives.",
-          "type": "string",
-          "enum": [
-            "members"
-          ]
-        },
-        {
-          "description": "A remote it has a copy on could not be fetched.",
-          "type": "string",
-          "enum": [
-            "unconfirmed"
           ]
         }
       ]
@@ -470,34 +340,6 @@ Schema:
         }
       ]
     },
-    "Survivor": {
-      "description": "A branch the rule kept.",
-      "type": "object",
-      "required": [
-        "branch",
-        "detail",
-        "reason",
-        "repo"
-      ],
-      "properties": {
-        "branch": {
-          "type": "string"
-        },
-        "detail": {
-          "description": "What the reason rests on: the commits, the locks, the remote's cause.",
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "reason": {
-          "$ref": "#/definitions/Reason"
-        },
-        "repo": {
-          "type": "string"
-        }
-      }
-    },
     "ValueOutput": {
       "type": "object",
       "required": [
@@ -522,6 +364,162 @@ Schema:
             "string",
             "null"
           ]
+        }
+      }
+    }
+  }
+}
+```
+
+The delete's carries `branch`, `landed_on`, `deleted` (`path`, `branch`, `site`,
+`because` and the `backup` kept first, when there was one), `survivors` (`path`,
+`branch`, `reason`, `detail`) and `records_dropped`:
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BranchDeleteJsonOutput",
+  "description": "The envelope `rwv branch delete --json` prints.",
+  "type": "object",
+  "required": [
+    "$schema",
+    "branch",
+    "deleted",
+    "landed_on",
+    "records_dropped",
+    "survivors"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "branch": {
+      "type": "string"
+    },
+    "deleted": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Deleted"
+      }
+    },
+    "landed_on": {
+      "description": "The branch the deleted branches were judged landed against.",
+      "type": "string"
+    },
+    "records_dropped": {
+      "description": "Branches whose records the drop rule removed.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "survivors": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Survivor"
+      }
+    }
+  },
+  "definitions": {
+    "Deleted": {
+      "description": "A branch the rule deleted.",
+      "type": "object",
+      "required": [
+        "because",
+        "branch",
+        "path",
+        "site"
+      ],
+      "properties": {
+        "backup": {
+          "description": "The backup kept first, when the branch had not landed.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "because": {
+          "description": "What licensed it: the branch it landed on, or the backup kept first.",
+          "type": "string"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "path": {
+          "description": "The repo, as `rwv backup drop` names it.",
+          "type": "string"
+        },
+        "site": {
+          "description": "`local`, or `remote <name>` for a push branch.",
+          "type": "string"
+        }
+      }
+    },
+    "Reason": {
+      "description": "Why a branch that belongs survived the rule.",
+      "oneOf": [
+        {
+          "description": "It holds commits the branch it lands into does not reach.",
+          "type": "string",
+          "enum": [
+            "unlanded"
+          ]
+        },
+        {
+          "description": "A live lock pins a commit that only it reaches.",
+          "type": "string",
+          "enum": [
+            "pinned"
+          ]
+        },
+        {
+          "description": "Its published copy holds commits the branch it lands into does not reach: a pull request may be open against it.",
+          "type": "string",
+          "enum": [
+            "open-head"
+          ]
+        },
+        {
+          "description": "A member branch that belongs to it survives.",
+          "type": "string",
+          "enum": [
+            "members"
+          ]
+        },
+        {
+          "description": "A remote it has a copy on could not be fetched.",
+          "type": "string",
+          "enum": [
+            "unconfirmed"
+          ]
+        }
+      ]
+    },
+    "Survivor": {
+      "description": "A branch the rule kept.",
+      "type": "object",
+      "required": [
+        "branch",
+        "detail",
+        "path",
+        "reason"
+      ],
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "detail": {
+          "description": "What the reason rests on: the commits, the locks, the remote's cause.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "path": {
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/definitions/Reason"
         }
       }
     }

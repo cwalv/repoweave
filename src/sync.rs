@@ -7663,6 +7663,22 @@ mod tests {
     }
 
     #[test]
+    fn containment_declines_a_pair_the_store_cannot_resolve() {
+        let tmp = crate::tempdir().unwrap();
+        let first = tmp.path().join("first");
+        let second = tmp.path().join("second");
+        init_repo(&first);
+        init_repo(&second);
+        let vcs = git_vcs();
+        let in_first = commit(&first, "only in first");
+        let in_second = commit(&second, "only in second");
+        assert_eq!(
+            Containment::observe(vcs.as_ref(), &first, &in_first, &in_second),
+            None
+        );
+    }
+
+    #[test]
     fn every_verdict_renders_in_one_vocabulary() {
         // `Equal` and `Behind` reach no refusal site today; they are rendered
         // here so the words a later consumer inherits are pinned rather than

@@ -279,7 +279,7 @@ func Greeting() string {
             "web-app",
             "agent-1",
             "--discard-uncommitted",
-            "--discard-unmerged-commits",
+            "--discard-unlanded",
         ])
         .current_dir(&ws)
         .assert()

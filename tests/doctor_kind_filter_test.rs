@@ -265,7 +265,7 @@ fn kind_filter_refuses_an_unknown_kind_naming_the_valid_set() {
         "the refusal names the offending value; got:\n{stderr}"
     );
     assert!(
-        stderr.contains("orphaned-savepoint") && stderr.contains("branch-discipline"),
+        stderr.contains("orphaned-savepoint") && stderr.contains("alignment"),
         "the refusal lists the valid set the operator can pick from; \
          got:\n{stderr}"
     );

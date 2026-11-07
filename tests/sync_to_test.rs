@@ -1225,45 +1225,45 @@ fn nested_workweave_naked_sync_to_retire_lands_in_parent() {
     );
 }
 
+/// Unsynced child work is not a refusal: the delete removes the workweave and
+/// the deletion rule keeps the branches that hold it, naming the branch the
+/// work has not landed on.
 #[test]
-fn nested_workweave_delete_refuses_only_on_truly_unmerged_work() {
+fn nested_workweave_delete_keeps_the_branches_of_unlanded_work() {
     let tmp = common::tempdir().unwrap();
     let (primary, _weaveroot, _parent_ww, child_ww, _initial_sha) =
         make_nested_workweaves(tmp.path());
+    let c2 = child_work_ready_to_retire(&child_ww);
 
-    let c2 = make_commit(
-        &child_ww.join(SERVER_PATH),
-        "feature.txt",
-        "child work\n",
-        "child: feature",
-    );
-    let child_project = child_ww.join("projects/web-app");
-    common::fixture_lock(&child_project, &[(SERVER_PATH, SERVER_URL, &c2)]);
-    common::git_in(&child_project, &["add", "rwv.lock"]);
-    common::git_in(&child_project, &["commit", "-m", "lock: child advance"]);
-
-    // Unsynced child work: plain delete must refuse and name what it
-    // compared against.
-    let err_output = rwv()
+    let out = rwv()
         .args(["workweave", "delete", "--project", "web-app", "child"])
         .current_dir(&primary.root)
-        .assert()
-        .failure()
-        .get_output()
-        .clone();
-    let stderr = String::from_utf8_lossy(&err_output.stderr);
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(3), "{stderr}");
     assert!(
-        stderr.contains("not merged") && stderr.contains(SERVER_PATH),
-        "delete must refuse on truly unmerged child work; got:\n{stderr}"
+        stderr.contains(&format!("left: {SERVER_PATH} web-app--child: unlanded"))
+            && stderr.contains("web-app--parent's corresponding branch"),
+        "delete must name the branch the work has not landed on; got:\n{stderr}"
     );
+    assert!(!child_ww.exists());
     assert_eq!(
-        common::git_in(child_ww.join(SERVER_PATH), &["rev-parse", "HEAD"]),
+        common::git_in(&primary.server_dir, &["rev-parse", "web-app--child"]),
         c2,
-        "child must be untouched after the refusal"
+        "the branch keeps the child's work"
     );
+}
 
-    // Land the work in the parent (naked sync-to, no retire); plain delete
-    // then succeeds without --force.
+/// Work landed in the parent (naked `sync-to`, no retire) is landed: the
+/// delete that follows deletes the branches and exits 0.
+#[test]
+fn nested_workweave_delete_after_landing_in_the_parent_deletes_the_branches() {
+    let tmp = common::tempdir().unwrap();
+    let (primary, _weaveroot, _parent_ww, child_ww, _initial_sha) =
+        make_nested_workweaves(tmp.path());
+    child_work_ready_to_retire(&child_ww);
+
     rwv()
         .args(["sync-to"])
         .current_dir(&child_ww)

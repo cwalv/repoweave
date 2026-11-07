@@ -6,7 +6,7 @@
 //! member covers goes with it: a member replay dropped but could not prune, or
 //! one the workweave added that the primary has not taken. Its uncommitted
 //! work is waived by `--discard-uncommitted` and its unmerged commits by
-//! `--discard-unmerged-commits`, exactly as a member's are. Delete refuses
+//! `--discard-unlanded`, exactly as a member's are. Delete refuses
 //! when one hosts another tree's worktree, unregisters it from the clone it
 //! links into, and retires the seat's branch there, as it does for a member;
 //! `sync-to --retire` weighs it the same way before deleting the seat.
@@ -236,10 +236,12 @@ fn replace_existing_refuses_over_untracked_work_in_a_checkout_no_member_covers()
     );
 }
 
-/// The seat adds a member the primary has never had and commits in it: those
-/// commits are in no baseline, so they count as unmerged.
+/// The seat adds a member the primary has never had and commits in it: the
+/// branch holding those commits has not landed, so the delete removes the
+/// workweave and keeps the branch, and `branch delete --discard-unlanded` is the
+/// consent that backs it up and deletes it.
 #[test]
-fn delete_refuses_over_commits_in_a_member_only_the_workweave_names() {
+fn delete_keeps_the_branch_of_a_member_only_the_workweave_names() {
     let weave = weave();
     let s1 = weave.seat("s1");
     succeed(
@@ -256,30 +258,35 @@ fn delete_refuses_over_commits_in_a_member_only_the_workweave_names() {
 
     let out = delete(&weave, &[]);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success(), "{stderr}");
+    assert_eq!(out.status.code(), Some(3), "{stderr}");
     assert!(
-        stderr.contains("\n\nrwv explain unmerged-commits\n")
-            && stderr.contains(&format!("  {ADDED} {OUTSIDE}")),
+        stderr.contains(&format!("left: {ADDED} app--s1: unlanded")),
         "{stderr}"
     );
-    assert_eq!(common::git_in(&added, &["rev-parse", "HEAD"]), work);
-
-    let out = delete(&weave, &["--discard-unmerged-commits"]);
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
     assert!(!s1.exists());
+    let clone = common::under(&weave.root, ADDED);
+    assert_eq!(common::git_in(&clone, &["rev-parse", "app--s1"]), work);
+
+    succeed(
+        &weave.root,
+        &[
+            "branch",
+            "delete",
+            "app--s1",
+            "--project",
+            PROJECT,
+            "--discard-unlanded",
+        ],
+    );
     assert!(
-        !branch_exists(&common::under(&weave.root, ADDED), "app--s1"),
-        "the waiver consents to losing the commits the branch holds"
+        !branch_exists(&clone, "app--s1"),
+        "the discard consents to losing the commits the branch holds"
     );
 }
 
-/// A clone placed in the workweave by hand, with a commit of its own: no
-/// baseline holds that repo, so nothing vouches that the commit lives
-/// anywhere else.
+/// A clone placed in the workweave by hand, with a commit of its own: it is its
+/// own store and no remote has the commit, so no backup written there could
+/// keep it, and no waiver consents to losing it.
 #[test]
 fn delete_refuses_over_a_commit_in_a_clone_no_baseline_holds() {
     let weave = weave();
@@ -293,15 +300,20 @@ fn delete_refuses_over_a_commit_in_a_clone_no_baseline_holds() {
     common::git_in(&stray, &["add", "only-here.txt"]);
     common::git_in(&stray, &["commit", "-m", "only here"]);
 
-    let out = delete(&weave, &[]);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stray.join("only-here.txt").is_file(), "{stderr}");
-    assert!(!out.status.success(), "{stderr}");
-    assert!(
-        stderr.contains("\n\nrwv explain unmerged-commits\n")
-            && stderr.contains(&format!("  local/owner/stray {OUTSIDE}")),
-        "{stderr}"
-    );
+    for flags in [
+        &[][..],
+        &["--discard-uncommitted", "--discard-unlanded"][..],
+    ] {
+        let out = delete(&weave, flags);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stray.join("only-here.txt").is_file(), "{stderr}");
+        assert!(!out.status.success(), "{stderr}");
+        assert!(
+            stderr.contains("\n\nrwv explain standalone-in-workweave\n")
+                && stderr.contains(&format!("local/owner/stray {OUTSIDE}: main (1 commit(s))")),
+            "{stderr}"
+        );
+    }
 }
 
 /// Control: what is outside the manifest and holds nothing does not block.
@@ -389,10 +401,7 @@ fn delete_refuses_when_an_unlisted_checkout_hosts_a_foreign_worktree_even_with_w
         ],
     );
 
-    let out = delete(
-        &weave,
-        &["--discard-uncommitted", "--discard-unmerged-commits"],
-    );
+    let out = delete(&weave, &["--discard-uncommitted", "--discard-unlanded"]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(!out.status.success(), "{stderr}");
     assert!(
@@ -436,8 +445,8 @@ fn delete_unregisters_a_dropped_members_checkout_and_retires_its_branch() {
 }
 
 /// A member only the seat added has its clone in the primary. Deleting the
-/// seat retires the branch, which holds nothing the clone lacks, and its
-/// receipt there, so the primary can then remove the clone.
+/// seat with `--discard-unlanded` deletes the branch, which holds nothing the
+/// clone lacks, so the primary can then remove the clone.
 #[test]
 fn delete_releases_the_primary_clone_of_a_member_only_the_workweave_added() {
     let weave = weave();
@@ -446,6 +455,8 @@ fn delete_releases_the_primary_clone_of_a_member_only_the_workweave_added() {
         &s1,
         &["member", "add", &weave.url("added"), "--role", "owned"],
     );
+    succeed(&s1, &["lock"]);
+    commit_all(&s1, "add added");
     let clone = common::under(&weave.root, ADDED);
     assert!(registers(&clone, &common::under(&s1, ADDED)));
 
@@ -458,7 +469,7 @@ fn delete_releases_the_primary_clone_of_a_member_only_the_workweave_added() {
             PROJECT,
             "s1",
             "--discard-uncommitted",
-            "--discard-unmerged-commits",
+            "--discard-unlanded",
         ],
     );
 

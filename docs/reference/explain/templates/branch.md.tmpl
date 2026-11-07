@@ -138,13 +138,17 @@ survivor is `left: <repo> <branch>: <reason>` on stderr, with what the reason
 rests on beneath it.
 
 `rwv branch list --json` and `rwv branch delete --json` each emit one envelope.
-A delete's carries `branch`, `target`, `deleted` (`repo`, `branch`, `site`,
-`because` and the `backup` kept first, when there was one), `survivors` (`repo`,
-`branch`, `reason`, `detail`) and `records_dropped`:
+The list's:
 
 Schema:
 
 {{SCHEMA}}
+
+The delete's carries `branch`, `landed_on`, `deleted` (`path`, `branch`, `site`,
+`because` and the `backup` kept first, when there was one), `survivors` (`path`,
+`branch`, `reason`, `detail`) and `records_dropped`:
+
+{{MSG:branch_delete_schema}}
 
 ## Exit codes
 

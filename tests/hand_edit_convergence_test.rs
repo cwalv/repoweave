@@ -723,9 +723,9 @@ fn a_refused_url_add_in_a_workweave_names_its_worktree_and_its_clone() {
     );
 }
 
-/// The branch a workweave's `remove --delete` retires is one holding nothing
+/// The branch a workweave's `remove --delete` deletes is one holding nothing
 /// the workweave's parent or the primary weave lacks: a commit made on it and
-/// then left by the worktree keeps the branch, and its receipt, in place.
+/// then left by the worktree keeps the branch in place.
 #[test]
 fn remove_delete_in_a_workweave_keeps_its_branch_when_it_holds_commits() {
     let weave = Weave::new();
@@ -746,17 +746,15 @@ fn remove_delete_in_a_workweave_keeps_its_branch_when_it_holds_commits() {
     assert!(!worktree.exists());
     let stderr = stderr_of(&out);
     assert!(
-        stderr.contains("branch demo--feat is rwv's but holds commits no baseline contains")
-            && !stderr.contains("is not recorded as rwv's"),
+        stderr.contains("branch demo--feat holds commits no baseline contains"),
         "{}",
         describe(&out)
     );
     assert_eq!(common::git_in(&clone, &["rev-parse", "demo--feat"]), kept);
     let out = run(&["member", "remove", &beta, "--delete"], &weave.ws);
     assert!(
-        !out.status.success()
-            && stderr_of(&out).contains("ownership receipt for branch demo--feat"),
-        "the receipt still claims the clone; {}",
+        !out.status.success() && stderr_of(&out).contains("clone has local-only commits"),
+        "the branch still holds commits only the clone has; {}",
         describe(&out)
     );
     assert!(clone.join(".git").is_dir());

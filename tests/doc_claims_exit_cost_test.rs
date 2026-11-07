@@ -158,7 +158,7 @@ fn leaving_rwv_by_the_documented_steps_leaves_only_the_two_named_traces() {
             "--project",
             PROJECT,
             "s2",
-            "--discard-unmerged-commits",
+            "--discard-unlanded",
         ],
     );
 

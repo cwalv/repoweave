@@ -5,8 +5,11 @@
   "type": "object",
   "required": [
     "$schema",
+    "deleted",
     "discarded",
-    "project"
+    "project",
+    "records_dropped",
+    "survivors"
   ],
   "properties": {
     "$schema": {
@@ -45,7 +48,7 @@
       "required": [
         "because",
         "branch",
-        "repo",
+        "path",
         "site"
       ],
       "properties": {
@@ -63,7 +66,7 @@
         "branch": {
           "type": "string"
         },
-        "repo": {
+        "path": {
           "description": "The repo, as `rwv backup drop` names it.",
           "type": "string"
         },
@@ -107,14 +110,14 @@
       "type": "object",
       "required": [
         "backup",
-        "repo"
+        "path"
       ],
       "properties": {
         "backup": {
           "description": "The name `rwv backup drop` takes.",
           "type": "string"
         },
-        "repo": {
+        "path": {
           "type": "string"
         }
       }
@@ -165,8 +168,8 @@
       "required": [
         "branch",
         "detail",
-        "reason",
-        "repo"
+        "path",
+        "reason"
       ],
       "properties": {
         "branch": {
@@ -179,11 +182,11 @@
             "type": "string"
           }
         },
+        "path": {
+          "type": "string"
+        },
         "reason": {
           "$ref": "#/definitions/Reason"
-        },
-        "repo": {
-          "type": "string"
         }
       }
     },
@@ -192,7 +195,7 @@
       "required": [
         "backup",
         "branch",
-        "repo"
+        "path"
       ],
       "properties": {
         "backup": {
@@ -201,7 +204,7 @@
         "branch": {
           "type": "string"
         },
-        "repo": {
+        "path": {
           "type": "string"
         }
       }

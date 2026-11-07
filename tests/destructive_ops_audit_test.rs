@@ -36,7 +36,7 @@ struct Allowed {
     count: usize,
     /// Wrappers whose callers the justification below ENUMERATES, with the
     /// number of call sites that enumeration accounts for. Empty where the
-    /// justification rests on a type gate instead — a receipt parameter or a
+    /// justification rests on a type gate instead — a proof parameter or a
     /// sealed constructor binds a new caller exactly as it binds an old one,
     /// so such an entry survives one; a prose enumeration does not.
     callers: &'static [(&'static str, usize)],
@@ -64,7 +64,7 @@ const TRACKED: &[&str] = &[
 /// `-M` is here because the branch model has one rename
 /// ([`Vcs::rename_local_ref`]) and the uppercase form would let it rename
 /// *over* an existing branch — destroying
-/// that branch's ref with neither receipt nor warrant, and doing it silently,
+/// that branch's ref with no proof, and doing it silently,
 /// since git stops refusing. The lowercase `-m` refuses, which is what makes
 /// a leftover in the way a reported obstacle instead of a casualty.
 const FORBIDDEN: &[&str] = &[
@@ -117,12 +117,11 @@ const ALLOWLIST: &[Allowed] = &[
             the object database and the worktree administration of every \
             live workweave checkout of that repo with it. Behind the \
             local-only-branch scan AND, in FRONT of the delete, R4 via \
-            judge_store_checkouts and refuse_standing_receipts — no \
-            worktree still registered against the store, no ownership \
-            receipt still keyed to it. The \
+            judge_store_checkouts — no worktree still registered against \
+            the store. The \
             local-only refusal is NOT relaxed in exchange: it is \
             incidentally what has been keeping this call off a live \
-            workweave's store, so recorded rwv refs stay inside its \
+            workweave's store, so a workweave's branch stays inside its \
             predicate (§5, prune_dropped_repo row). That scan is now \
             fail-CLOSED throughout: an unreadable branch list refuses, an \
             absent remote counterpart refuses, and a count git could not \
@@ -163,11 +162,11 @@ const ALLOWLIST: &[Allowed] = &[
             double-rollback. (3) create --replace-existing raw replace: \
             behind the dirty-scan refusal. (4) delete_workweave: behind the \
             dirty refusal unless --discard-uncommitted, and behind the \
-            unmerged-commits refusal unless the caller holds a \
+            detached-commits refusal unless the caller holds a \
             DiscardUnlandedConsent — the token minted only from \
-            --discard-unmerged-commits at CLI dispatch. \
-            Both list what is lost first. The per-ref DESTROYs inside \
-            the same verb each additionally hold their own warrant (R3); \
+            --discard-unlanded at CLI dispatch. \
+            Both list what is lost first. The branch deletions inside \
+            the same verb each additionally hold their own DestroyProof (R3); \
             this entry covers the directory removal only. \
             (4) runs through remove_tree_outlasting_child_handles, whose \
             other caller is replace_standalone_member, the `doctor --fix` \
@@ -260,39 +259,12 @@ const ALLOWLIST: &[Allowed] = &[
     },
     Allowed {
         file: "git.rs",
-        pattern: "\"-D\"",
-        count: 1,
-        callers: &[],
-        justification: "destroy_local_ref, and nothing else — the two \
-            unguarded sites this entry used to cover are gone. \
-            create_worktree's force-delete-and-retry (whose \"deletes a STALE \
-            branch\" claim was measured FALSE) and delete_branch \
-            (which independently lost its last caller) were both DELETED \
-            along with the rest of the old Vcs surface. The \
-            force-delete of a ref rwv holds no receipt for is now \
-            unreachable because the code that could do it does not exist. \
-            destroy_local_ref: the branch-model DESTROY \
-            primitive. Reachable only through \
-            Vcs::delete_owned_ref, which takes a persisted receipt \
-            (OwnedRef — R2, ownership by record, never by name shape) AND a \
-            DeletionWarrant (R3), which is an opaque struct over a private \
-            enum whose only constructors RUN the check they certify: \
-            unmoved (tip still equals the recorded tip), merged (tip is an \
-            ancestor of a named baseline), operator_discarded \
-            (--discard-unmerged-commits). The receipt carries the store, so \
-            it cannot authorize a delete in a different refdb. Force \
-            semantics are correct here: the warrant already established the \
-            safety `-d` would re-derive, and `-d` would additionally refuse \
-            the operator_discarded case the flag exists to permit.",
-    },
-    Allowed {
-        file: "git.rs",
         pattern: "\"worktree\", \"remove\"",
         count: 2,
         callers: &[
-            ("remove_worktree", 4),
+            ("remove_worktree", 3),
             ("prune_orphan_worktrees_for", 3),
-            ("prune_stale_worktree_registration", 3),
+            ("prune_stale_worktree_registration", 2),
         ],
         justification: "remove_worktree. NOTE the `--force`: git will remove \
             a DIRTY worktree here, so what protects each caller has to be \
@@ -302,7 +274,7 @@ const ALLOWLIST: &[Allowed] = &[
             (1) workweave::release_checkout, the one release of a \
             workweave's member checkout, reached two ways. From \
             delete_workweave's member loop: behind the dirty refusal unless \
-            --discard-uncommitted and the unmerged refusal unless \
+            --discard-uncommitted and the detached-commits refusal unless \
             DiscardUnlandedConsent (see the workweave.rs/remove_dir_all \
             entry), after resolving each worktree's actual canonical-store \
             parent (Vcs::store_of) and refusing when that \
@@ -332,10 +304,9 @@ const ALLOWLIST: &[Allowed] = &[
             unlocked and found nothing at its path, so git drops the \
             administrative entry alone; a locked registration or a standing \
             directory makes git refuse even if those reads were wrong. Its \
-            callers are doctor --fix's two registration repairs: \
-            fix_state_hygiene for a stale-worktree-registration finding, and \
-            prune_gone_registrations ahead of the stale ephemeral branch \
-            delete; and workweave::materialize_member, which drops the \
+            callers are doctor --fix's registration repair, \
+            fix_state_hygiene for a stale-worktree-registration finding; \
+            and workweave::materialize_member, which drops the \
             registration of the very slot it is about to give a worktree, \
             only when nothing stands there.",
     },
@@ -451,7 +422,7 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git.rs",
         pattern: "\"update-ref\"",
-        count: 4,
+        count: 6,
         callers: &[],
         justification: "(1) savepoint create, (2) savepoint drop, both \
             namespaced under refs/rwv/pre-op/<op-id> (relocated from \
@@ -464,8 +435,20 @@ const ALLOWLIST: &[Allowed] = &[
             old one, names the old tip under refs/rwv/superseded/<remote>/ \
             <branch>/<old tip>. The ref's name ends in the commit it points \
             at, so the call only adds a name for a commit the fetch had \
-            just dropped one; it moves and deletes nothing. None touch \
-            user refs.",
+            just dropped one; it moves and deletes nothing. None of (1)-(4) \
+            touch user refs. (5) delete_branch: `update-ref -d <ref> \
+            <tip>`, where the old value is a compare-and-swap, so a branch \
+            that moved since the proof was made is left. Reachable only \
+            through Vcs::delete_branch, whose single parameter is a \
+            DestroyProof (R3): an opaque struct over a private enum whose \
+            constructors RUN the check they certify, landed (the tip is an \
+            ancestor of a branch that outlives it) or backed_up (the tip \
+            was kept as a backup first, under DiscardUnlandedConsent, \
+            minted only from --discard-unlanded). The proof names the \
+            store, so it cannot authorize a delete in a different refdb. \
+            It refuses a branch checked out in any worktree before it \
+            deletes. (6) the same command spelled in the argument list of \
+            the error that refusal returns; it is not a call.",
     },
     Allowed {
         file: "git/backup.rs",

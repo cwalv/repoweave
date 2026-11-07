@@ -159,7 +159,7 @@ impl Weave {
                 "--project",
                 "demo",
                 name,
-                "--discard-unmerged-commits",
+                "--discard-unlanded",
             ],
             &self.ws,
         );
@@ -297,7 +297,7 @@ fn discard_uncommitted_keeps_the_edits_as_a_backup() {
 }
 
 /// Commits a detached HEAD holds that no branch reaches are lost with the
-/// worktree, so `--discard-unmerged-commits` keeps them too, under `HEAD/`.
+/// worktree, so `--discard-unlanded` keeps them too, under `HEAD/`.
 ///
 /// Dropping the `backup_unpreserved_head` call from
 /// `keep_work_before_discarding` leaves them reached by nothing and reddens
@@ -329,7 +329,7 @@ fn a_detached_head_with_commits_no_branch_reaches_is_kept_as_a_backup() {
         &["workweave", "delete", "--project", "demo", "peek"],
         &weave.ws,
     );
-    assert!(refusal.contains("--discard-unmerged-commits"), "{refusal}");
+    assert!(refusal.contains("--discard-unlanded"), "{refusal}");
     assert_eq!(weave.backups_of(ALPHA), vec![], "a refusal keeps nothing");
 
     weave.give_up("peek");

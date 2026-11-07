@@ -377,11 +377,12 @@ fn the_page_check_reports_a_mark_that_drifted_from_the_code() {
         gaps.join("\n  ")
     );
 
-    let dropped = PAGE.replace("### `dangling-ref-receipt`", "### `not-a-finding`");
+    let dropped = PAGE.replace("### `legacy-workweave-index`", "### `not-a-finding`");
     assert_ne!(dropped, PAGE, "the seeded edit matched nothing");
     let gaps = page_gaps(&dropped, &register);
     assert!(
-        gaps.iter().any(|g| g.starts_with("dangling-ref-receipt:")),
+        gaps.iter()
+            .any(|g| g.starts_with("legacy-workweave-index:")),
         "a finding the page stops documenting must be reported; got:\n  {}",
         gaps.join("\n  ")
     );
@@ -899,15 +900,13 @@ fn the_sub_kind_list_agrees_with_the_schema() {
 
 #[test]
 fn the_sub_kind_list_check_reports_a_drifted_entry() {
-    let dropped = PAGE.replacen("`branch-discipline`, ", "", 1);
+    let dropped = PAGE.replacen("`alignment`, ", "", 1);
     assert_ne!(dropped, PAGE, "the seeded edit matched nothing");
     let page_set: BTreeSet<String> = page_sub_kind_list(&dropped).into_iter().collect();
     let schema_set = kinds_carrying_sub_kind();
     assert!(
-        schema_set
-            .difference(&page_set)
-            .any(|k| k == "branch-discipline"),
-        "dropping `branch-discipline` from the sentence must leave it missing from the \
+        schema_set.difference(&page_set).any(|k| k == "alignment"),
+        "dropping `alignment` from the sentence must leave it missing from the \
          parsed set"
     );
 }
@@ -1426,21 +1425,8 @@ fn repair_bindings() -> Vec<(&'static str, Binding)> {
             Findings(&["weave-root-identity-conflict/registered-workweave"]),
         ),
         (
-            "retracted dangling ownership receipt",
-            Findings(&["dangling-ref-receipt"]),
-        ),
-        (
-            "retracted the ownership receipt",
-            Findings(&["pre-flat-ref-receipt"]),
-        ),
-        (
-            "added the ref-ownership registry",
+            "added the `receipts` key to",
             Findings(&["legacy-workweave-index"]),
-        ),
-        // The adoption of a flat ref announces through one relayed message.
-        (
-            "core: {msg}",
-            Findings(&["branch-discipline/unrecorded-ephemeral-branch"]),
         ),
         // One message family for the two legacy-spelling migrations (with
         // and without a commit), matched by their shared prefix.
@@ -1463,14 +1449,6 @@ fn repair_bindings() -> Vec<(&'static str, Binding)> {
         (
             "rewrote the member-entry keys in rwv.toml",
             Findings(&["unparseable-project/pre-schema"]),
-        ),
-        (
-            "deleted safe-class stale ephemeral branch",
-            Findings(&["branch-discipline/stale-ephemeral-branch-safe"]),
-        ),
-        (
-            "pruned the registration of removed worktree",
-            Findings(&["branch-discipline/stale-ephemeral-branch-safe"]),
         ),
         (
             "re-pointed dangling parent",
@@ -1723,11 +1701,12 @@ fn the_repair_walk_reports_a_dead_arm_and_a_report_only_binding() {
     // A repair arm added in the pre-collection pass with no binding: the
     // shape this instrument exists for. Seeded by injecting an announcement
     // into `apply_workspace_repairs`' source text.
-    let anchor = "    let (retracted, retract_errs) = fix_dangling_receipts";
-    let seeded = CHECK_RS.replace(
+    let anchor = "    for project in crate::workspace::discover_projects(ctx.primary_path()) {\n        if let Some(active) = project_scope {";
+    let seeded = CHECK_RS.replacen(
         anchor,
         "    println!(\"[fixed] core: refreshed the stale lock\");\n\
-         \x20   let (retracted, retract_errs) = fix_dangling_receipts",
+         \x20   for project in crate::workspace::discover_projects(ctx.primary_path()) {\n        if let Some(active) = project_scope {",
+        1,
     );
     assert_ne!(seeded, CHECK_RS, "the seeded edit matched nothing");
     let gaps = repair_arm_gaps(&seeded, &bindings, &register);

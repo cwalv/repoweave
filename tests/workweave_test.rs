@@ -1308,12 +1308,11 @@ fn branches_with_prefix(repo: &Path, prefix: &str) -> Vec<String> {
 #[test]
 fn delete_workweave_cleans_up_ephemeral_branches() {
     let tmp = common::tempdir().unwrap();
-    let ws = make_workspace(tmp.path(), "web-app");
+    let ws = make_workspace_with_project_repo(tmp.path(), "web-app");
 
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
-    // Create a workweave — this creates ephemeral branch "web-app--cleanup" in the repo.
     rwv()
         .args(["workweave", "create", "--project", "web-app", "cleanup"])
         .current_dir(&ws)
@@ -1322,28 +1321,30 @@ fn delete_workweave_cleans_up_ephemeral_branches() {
 
     let primary_repo = ws.join("github/org/repo");
 
-    // Confirm the ephemeral branch exists before deletion. Flat (§3.5), so it
-    // is the exact name — not a `web-app--cleanup/*` sub-namespace.
     let before = branch_names(&primary_repo);
     assert!(
         before.iter().any(|b| b == "web-app--cleanup"),
         "ephemeral branch web-app--cleanup should exist before delete, got: {before:?}"
     );
 
-    // Delete the workweave.
     rwv()
-        .args(["workweave", "delete", "--project", "web-app", "cleanup"])
+        .args([
+            "workweave",
+            "delete",
+            "--project",
+            "web-app",
+            "cleanup",
+            "--discard-uncommitted",
+        ])
         .current_dir(&ws)
         .assert()
         .success();
 
-    // The ephemeral branch should be gone — destroyed over the RECORDED set,
-    // with a Merged warrant against primary's tip (R2 + R3).
     let after = branch_names(&primary_repo);
     assert!(
         !after.iter().any(|b| b == "web-app--cleanup"),
-        "delete_workweave should destroy the recorded ephemeral branch \
-         'web-app--cleanup', remaining: {after:?}"
+        "delete_workweave should delete the branch the workweave's record lands \
+         into main, remaining: {after:?}"
     );
 }
 

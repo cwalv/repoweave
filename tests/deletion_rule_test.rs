@@ -62,10 +62,7 @@ fn minted(name: &str) -> String {
 
 fn create_workweave(ws: &Path, name: &str) -> PathBuf {
     succeed(&["workweave", "create", "--project", PROJECT, name], ws);
-    ws.parent()
-        .unwrap()
-        .join(".workweaves")
-        .join(minted(name))
+    ws.parent().unwrap().join(".workweaves").join(minted(name))
 }
 
 fn commit_in(dir: &Path, file: &str) -> String {
@@ -115,7 +112,7 @@ fn survivor<'a>(doc: &'a serde_json::Value, repo: &str) -> &'a serde_json::Value
         .as_array()
         .unwrap()
         .iter()
-        .find(|s| s["repo"] == repo)
+        .find(|s| s["path"] == repo)
         .unwrap_or_else(|| panic!("no survivor for {repo} in {doc}"))
 }
 
@@ -215,7 +212,13 @@ fn discard_unlanded_keeps_a_backup_first_and_deletes_the_branch() {
     let work = commit_in(&ww.join(LIB), "unlanded.txt");
 
     let out = run(
-        &["workweave", "delete", "feat", "--discard-unlanded", "--json"],
+        &[
+            "workweave",
+            "delete",
+            "feat",
+            "--discard-unlanded",
+            "--json",
+        ],
         &w.workspace,
     );
 
@@ -228,7 +231,7 @@ fn discard_unlanded_keeps_a_backup_first_and_deletes_the_branch() {
     );
     let doc = json(&out);
     let discarded = &doc["discarded"]["unlanded_branches"];
-    assert_eq!(discarded[0]["repo"], LIB);
+    assert_eq!(discarded[0]["path"], LIB);
     assert_eq!(discarded[0]["branch"], branch);
     assert!(doc["survivors"].as_array().unwrap().is_empty());
     assert!(!recorded(&w.workspace, &branch));
@@ -261,8 +264,8 @@ fn a_report_by_kind_lists_edits_and_detached_commits_the_discard_flags_kept() {
     );
     assert!(out.status.success(), "{}", describe(&out));
     let doc = json(&out);
-    assert_eq!(doc["discarded"]["edits"][0]["repo"], LIB);
-    assert_eq!(doc["discarded"]["detached_commits"][0]["repo"], APP);
+    assert_eq!(doc["discarded"]["edits"][0]["path"], LIB);
+    assert_eq!(doc["discarded"]["detached_commits"][0]["path"], APP);
     assert!(!ww.exists());
 }
 
@@ -274,6 +277,7 @@ fn delete_remote_deletes_the_landed_push_branches_and_leaves_an_unlanded_one() {
     commit_in(&ww.join(LIB), "unlanded.txt");
     common::git_in(ww.join(LIB), &["push", "-q", "origin", &branch]);
     common::git_in(ww.join(APP), &["push", "-q", "origin", &branch]);
+    common::git_in(project_dir(&w.workspace), &["push", "-q", "origin", "main"]);
     common::git_in(
         project_dir(&w.workspace),
         &["push", "-q", "origin", &branch],
@@ -301,7 +305,8 @@ fn delete_remote_deletes_the_landed_push_branches_and_leaves_an_unlanded_one() {
     );
     assert!(
         !bare_has(&w.project_bare, &branch),
-        "the project's push branch landed too"
+        "the project's push branch landed too; {}",
+        describe(&out)
     );
     assert!(
         bare_has(lib_bare, &branch),
@@ -354,7 +359,13 @@ fn delete_remote_unlanded_without_discard_unlanded_is_a_usage_error() {
     create_workweave(&w.workspace, "feat");
 
     let out = run(
-        &["workweave", "delete", "feat", "--delete-remote-unlanded", LIB],
+        &[
+            "workweave",
+            "delete",
+            "feat",
+            "--delete-remote-unlanded",
+            LIB,
+        ],
         &w.workspace,
     );
 
@@ -626,6 +637,10 @@ fn a_recreated_feature_branch_draws_no_doctor_finding() {
 #[test]
 fn sync_to_retire_deletes_what_landed_and_keeps_what_the_record_does_not_see_landed() {
     let w = weave(&[LIB]);
+    let project = project_dir(&w.workspace);
+    std::fs::write(project.join(".gitattributes"), "rwv.lock merge=rwv-ours\n").unwrap();
+    common::git_in(&project, &["add", ".gitattributes"]);
+    common::git_in(&project, &["commit", "-qm", "replay exclusion"]);
     let ww = create_workweave(&w.workspace, "feat");
     let branch = minted("feat");
     commit_in(&ww.join(LIB), "work.txt");
@@ -642,9 +657,19 @@ fn sync_to_retire_deletes_what_landed_and_keeps_what_the_record_does_not_see_lan
     let later = minted("later");
     common::git_in(w.workspace.join(LIB), &["branch", "elsewhere", "main"]);
     common::git_in(project_dir(&w.workspace), &["branch", "elsewhere", "main"]);
-    succeed(&["branch", "set-mode", "elsewhere", "declared"], &w.workspace);
     succeed(
-        &["branch", "set-mode", &later, "feature", "--target", "elsewhere"],
+        &["branch", "set-mode", "elsewhere", "declared"],
+        &w.workspace,
+    );
+    succeed(
+        &[
+            "branch",
+            "set-mode",
+            &later,
+            "feature",
+            "--target",
+            "elsewhere",
+        ],
         &ww,
     );
     commit_in(&ww.join(LIB), "more.txt");
@@ -655,9 +680,17 @@ fn sync_to_retire_deletes_what_landed_and_keeps_what_the_record_does_not_see_lan
     let doc = json(&out);
     assert_eq!(doc["retired"], true);
     assert_eq!(
-        survivor(&doc, LIB)["reason"],
+        survivor(&doc, "projects/p")["reason"],
         "unlanded",
         "judged against the record's target, not against where the work went"
+    );
+    assert!(
+        doc["survivors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|s| s["path"] != LIB),
+        "the member's work reached the branch the target declares for it: {doc}"
     );
     assert!(!ww.exists());
 }

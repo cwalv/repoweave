@@ -58,7 +58,7 @@ impl Reason {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct Deleted {
     /// The repo, as `rwv backup drop` names it.
-    pub repo: String,
+    pub path: String,
     pub branch: String,
     /// `local`, or `remote <name>` for a push branch.
     pub site: String,
@@ -72,7 +72,7 @@ pub struct Deleted {
 /// A branch the rule kept.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct Survivor {
-    pub repo: String,
+    pub path: String,
     pub branch: String,
     pub reason: Reason,
     /// What the reason rests on: the commits, the locks, the remote's cause.
@@ -98,12 +98,12 @@ impl Outcome {
             if let Some(backup) = &deleted.backup {
                 eprintln!(
                     "backup: {}: {} kept as {backup} (`rwv backup list`)",
-                    deleted.repo, deleted.branch
+                    deleted.path, deleted.branch
                 );
             }
             outln!(
                 "deleted {} {} ({}): {}",
-                deleted.repo,
+                deleted.path,
                 deleted.branch,
                 deleted.site,
                 deleted.because
@@ -112,7 +112,7 @@ impl Outcome {
         for survivor in &self.survivors {
             eprintln!(
                 "left: {} {}: {}",
-                survivor.repo,
+                survivor.path,
                 survivor.branch,
                 survivor.reason.token()
             );
@@ -411,7 +411,7 @@ impl<'a> Rule<'a> {
                 }
                 report.add(crate::sync::judge_checkout(
                     repo.vcs.as_ref(),
-                    &repo.label(),
+                    repo.label(),
                     &checkout,
                     &repo.dir,
                     &recorded,
@@ -603,7 +603,7 @@ impl<'a> Rule<'a> {
 
     fn survives(&self, repo: &Repo, reason: Reason, detail: Vec<String>, outcome: &mut Outcome) {
         outcome.survivors.push(Survivor {
-            repo: repo.label(),
+            path: repo.label(),
             branch: self.branch_name.to_string(),
             reason,
             detail,
@@ -623,7 +623,7 @@ impl<'a> Rule<'a> {
             .delete_branch(proof)
             .with_context(|| format!("{}: could not delete {}", repo.label(), self.branch_name))?;
         outcome.deleted.push(Deleted {
-            repo: repo.label(),
+            path: repo.label(),
             branch: self.branch_name.to_string(),
             site: match site {
                 Site::Local => "local".to_owned(),
@@ -786,7 +786,7 @@ impl<'a> Rule<'a> {
                 b.label != self.branch_name.as_str()
                     && !b.label.ends_with(&format!("/{}", self.branch_name))
             })
-            .map(|b| ResolvedRevisionId::from(b.tip))
+            .map(|b| b.tip)
             .chain(
                 repo.vcs
                     .list_backups(&repo.dir, crate::vcs::RemoteTracking::Counted)?
@@ -854,7 +854,7 @@ fn declared_branches(primary: &Path) -> BTreeMap<String, BTreeSet<String>> {
             continue;
         };
         for branch in tips {
-            let tip = ResolvedRevisionId::from(branch.tip);
+            let tip = branch.tip;
             let Some(manifest) = manifest_at(vcs.as_ref(), &dir, &tip) else {
                 continue;
             };

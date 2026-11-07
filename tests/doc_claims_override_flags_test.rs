@@ -5,7 +5,7 @@
 //! `workweave delete --force` used to gate two independent refusals (dirty
 //! worktree, unmerged commits) behind one name that only described the
 //! first. The rename split it into `--discard-uncommitted` and
-//! `--discard-unmerged-commits`. A happy-path test per flag would have
+//! `--discard-unlanded`. A happy-path test per flag would have
 //! passed even under the old bug, since each scenario only ever constructed
 //! the one precondition its flag was meant to waive. The tests below
 //! construct BOTH preconditions at once and pass only one flag, so a flag
@@ -66,6 +66,18 @@ role = "owned"
     );
     std::fs::write(project_dir.join("rwv.toml"), manifest).unwrap();
 
+    ws
+}
+
+fn make_workspace_with_project_repo(tmp: &Path, project: &str) -> std::path::PathBuf {
+    let ws = make_workspace(tmp, project);
+    let project_dir = ws.join("projects").join(project);
+    common::git_in(&project_dir, &["init", "--initial-branch=main"]);
+    common::git_in(&project_dir, &["config", "user.email", "test@test.com"]);
+    common::git_in(&project_dir, &["config", "user.name", "Test"]);
+    common::git_in(&project_dir, &["add", "rwv.toml"]);
+    common::git_in(&project_dir, &["commit", "-m", "add manifest"]);
+    common::record_trunk(&project_dir);
     ws
 }
 
@@ -165,7 +177,7 @@ fn fetch_allow_non_empty_dir_waives_only_the_nonempty_dir_refusal() {
 }
 
 // ============================================================================
-// workweave delete --discard-uncommitted / --discard-unmerged-commits
+// workweave delete --discard-uncommitted / --discard-unlanded
 // ============================================================================
 
 /// A workweave holding BOTH an uncommitted edit and a commit on the
@@ -177,7 +189,7 @@ fn make_workweave_with_dirty_and_unmerged_commit(
     project: &str,
     name: &str,
 ) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
-    let ws = make_workspace(tmp, project);
+    let ws = make_workspace_with_project_repo(tmp, project);
     let weaveroot = tmp.join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
@@ -201,10 +213,11 @@ fn make_workweave_with_dirty_and_unmerged_commit(
     (ws, weaveroot, ww_dir)
 }
 
-/// `--discard-uncommitted` alone must still refuse on the unmerged commit:
-/// it waives the dirty-worktree refusal, not the diverged-history one.
+/// `--discard-uncommitted` alone clears the dirty refusal and nothing more:
+/// the unlanded commit is not a refusal, so the workweave goes, the branch that
+/// holds the commit survives, and the verb ends with status 3 saying so.
 #[test]
-fn workweave_delete_discard_uncommitted_does_not_waive_unmerged_commits() {
+fn workweave_delete_discard_uncommitted_leaves_the_unlanded_branch() {
     let tmp = common::tempdir().unwrap();
     let (ws, _weaveroot, ww_dir) =
         make_workweave_with_dirty_and_unmerged_commit(tmp.path(), "web-app", "both-a");
@@ -223,31 +236,25 @@ fn workweave_delete_discard_uncommitted_does_not_waive_unmerged_commits() {
         .current_dir(&ws)
         .output()
         .expect("rwv workweave delete should run");
-    assert!(
-        !output.status.success(),
-        "--discard-uncommitted alone must not clear an unmerged-commit refusal"
-    );
     let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(3), "{stderr}");
+    assert!(!ww_dir.exists(), "the workweave is removed: {stderr}");
     assert!(
-        stderr.contains("not merged") && stderr.contains("--discard-unmerged-commits"),
-        "refusal must still name the unmerged-commits waiver; got: {stderr}"
+        stderr.contains("left: github/org/repo web-app--both-a: unlanded"),
+        "the survivor is named with its reason; got: {stderr}"
     );
-    assert!(
-        ww_dir.exists(),
-        "refused delete must leave the workweave intact"
-    );
+    common::assert_on_branch(&ws.join("github/org/repo"), "main");
     assert_eq!(
-        head_sha(&weave_repo),
+        common::git_in(
+            ws.join("github/org/repo"),
+            &["rev-parse", "web-app--both-a"]
+        ),
         head_before,
-        "refused delete must not touch the worktree"
-    );
-    assert!(
-        weave_repo.join("scratch.txt").exists(),
-        "the uncommitted file --discard-uncommitted was meant to cover must survive too"
+        "the branch still holds the commit"
     );
 }
 
-/// `--discard-unmerged-commits` alone must still refuse on the dirty
+/// `--discard-unlanded` alone must still refuse on the dirty
 /// worktree: it waives the diverged-history refusal, not the uncommitted one.
 #[test]
 fn workweave_delete_discard_unlanded_does_not_waive_uncommitted() {
@@ -264,14 +271,14 @@ fn workweave_delete_discard_unlanded_does_not_waive_uncommitted() {
             "--project",
             "web-app",
             "both-b",
-            "--discard-unmerged-commits",
+            "--discard-unlanded",
         ])
         .current_dir(&ws)
         .output()
         .expect("rwv workweave delete should run");
     assert!(
         !output.status.success(),
-        "--discard-unmerged-commits alone must not clear an uncommitted-changes refusal"
+        "--discard-unlanded alone must not clear an uncommitted-changes refusal"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -298,13 +305,15 @@ fn workweave_delete_discard_unlanded_does_not_waive_uncommitted() {
     );
 }
 
-/// Both flags together clear both preconditions — the `git branch -D`
-/// contract the doc update describes.
+/// Both flags together clear the dirty refusal and lift the landed clause: the
+/// branch is deleted, and its tip is kept as a backup first.
 #[test]
 fn workweave_delete_both_discard_flags_clear_both_preconditions() {
     let tmp = common::tempdir().unwrap();
     let (ws, _weaveroot, ww_dir) =
         make_workweave_with_dirty_and_unmerged_commit(tmp.path(), "web-app", "both-c");
+
+    let feature = common::git_in(ww_dir.join("github/org/repo"), &["rev-parse", "HEAD"]);
 
     rwv()
         .args([
@@ -314,7 +323,7 @@ fn workweave_delete_both_discard_flags_clear_both_preconditions() {
             "web-app",
             "both-c",
             "--discard-uncommitted",
-            "--discard-unmerged-commits",
+            "--discard-unlanded",
         ])
         .current_dir(&ws)
         .assert()
@@ -322,6 +331,19 @@ fn workweave_delete_both_discard_flags_clear_both_preconditions() {
     assert!(
         !ww_dir.exists(),
         "both waivers together must remove the workweave"
+    );
+    let primary_repo = ws.join("github/org/repo");
+    assert!(
+        common::git_in(&primary_repo, &["branch", "--list", "web-app--both-c"]).is_empty(),
+        "the unlanded branch is deleted"
+    );
+    let backups = common::git_in(
+        &primary_repo,
+        &["for-each-ref", "--format=%(objectname)", "refs/rwv/backup/"],
+    );
+    assert!(
+        backups.lines().any(|tip| tip == feature),
+        "the branch's tip is kept as a backup first; backups: {backups}"
     );
 }
 

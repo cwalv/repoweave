@@ -110,7 +110,7 @@ fn every_entry_is_reachable_through_some_spelling() {
         .filter(|e| e.page == "doctor-findings.md" && e.kind.is_some())
         .count();
     assert!(
-        entries.len() > 150 && sub_kind_entries > 50,
+        entries.len() > 150 && sub_kind_entries > 40,
         "the page walk read {} entries, {sub_kind_entries} of them sub-kinds: it has \
          stopped reading the pages",
         entries.len()

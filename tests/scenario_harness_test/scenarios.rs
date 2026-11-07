@@ -132,7 +132,7 @@ pub fn workweave_without_b_given_up_before_publishing() -> Scenario {
                     "--project",
                     "proj",
                     "anon",
-                    "--discard-unmerged-commits",
+                    "--discard-unlanded",
                 ],
             )
             .expect(Exit::Succeeds)
@@ -165,7 +165,7 @@ pub fn dc10_store_destroy() -> Scenario {
                     "--project",
                     "proj",
                     "anon",
-                    "--discard-unmerged-commits",
+                    "--discard-unlanded",
                 ],
             )
             .expect(Exit::Succeeds)

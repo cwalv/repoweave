@@ -88,6 +88,7 @@ fn force_on_a_verb_without_it_gets_the_generic_refusal() {
             "--replace-existing",
             "--discard-uncommitted",
             "--discard-unmerged-commits",
+            "--discard-unlanded",
             "has been renamed",
             "has been split",
         ] {

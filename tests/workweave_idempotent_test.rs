@@ -640,14 +640,21 @@ fn workweave_create_succeeds_after_rm_rf_leaves_stale_git_registration() {
     );
 }
 
-/// `workweave delete` without `--discard-unmerged-commits` must refuse when the
-/// workweave's
-/// worktrees hold commits not merged into the primary repos — the
-/// ephemeral-branch cleanup would force-delete the only ref to them.
+/// A branch whose commits have not landed is not a refusal: the workweave goes,
+/// the deletion rule keeps the branch with its commits and says so with status
+/// 3, and `branch delete --discard-unlanded` is the consent that backs it up and
+/// deletes it.
 #[test]
-fn workweave_delete_refuses_on_unmerged_commits() {
+fn workweave_delete_keeps_a_branch_whose_commits_have_not_landed() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
+    let project_dir = ws.join("projects/web-app");
+    common::git_in(&project_dir, &["init", "--initial-branch=main"]);
+    common::git_in(&project_dir, &["config", "user.email", "test@test.com"]);
+    common::git_in(&project_dir, &["config", "user.name", "Test"]);
+    common::git_in(&project_dir, &["add", "rwv.toml"]);
+    common::git_in(&project_dir, &["commit", "-m", "add manifest"]);
+    common::record_trunk(&project_dir);
     let weaveroot = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&weaveroot).unwrap();
 
@@ -660,46 +667,51 @@ fn workweave_delete_refuses_on_unmerged_commits() {
     let ww_dir = weaveroot.join("web-app--committed");
     let weave_repo = ww_dir.join("github/org/repo");
 
-    // Commit work on the ephemeral branch: the worktree is clean, but the
-    // commit is reachable only from the ephemeral branch.
     std::fs::write(weave_repo.join("feature.txt"), "committed work\n").unwrap();
     common::git_in(&weave_repo, &["add", "feature.txt"]);
     common::git_in(&weave_repo, &["commit", "-m", "ww: feature"]);
     let feature_sha = head_sha(&weave_repo);
 
-    let err_output = rwv()
-        .args(["workweave", "delete", "--project", "web-app", "committed"])
-        .current_dir(&ws)
-        .assert()
-        .failure()
-        .get_output()
-        .clone();
-    let stderr = String::from_utf8_lossy(&err_output.stderr);
-    assert!(
-        stderr.contains("not merged") && stderr.contains("github/org/repo"),
-        "delete must refuse on unmerged commits and list the repo; got:\n{stderr}"
-    );
-    assert_eq!(
-        head_sha(&weave_repo),
-        feature_sha,
-        "workweave must be untouched after the refusal"
-    );
-
-    // --discard-unmerged-commits is the explicit consent path.
-    rwv()
+    let out = rwv()
         .args([
             "workweave",
             "delete",
             "--project",
             "web-app",
             "committed",
-            "--discard-unmerged-commits",
+            "--discard-uncommitted",
+        ])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(3), "{stderr}");
+    assert!(!ww_dir.exists(), "the workweave is removed");
+    assert!(
+        stderr.contains("left: github/org/repo web-app--committed: unlanded"),
+        "the survivor is named with its reason; got:\n{stderr}"
+    );
+    let primary_repo = ws.join("github/org/repo");
+    assert_eq!(
+        common::git_in(&primary_repo, &["rev-parse", "web-app--committed"]),
+        feature_sha,
+        "the branch still holds the commits"
+    );
+
+    rwv()
+        .args([
+            "branch",
+            "delete",
+            "web-app--committed",
+            "--project",
+            "web-app",
+            "--discard-unlanded",
         ])
         .current_dir(&ws)
         .assert()
         .success();
     assert!(
-        !ww_dir.exists(),
-        "--discard-unmerged-commits delete removes the workweave"
+        common::git_in(&primary_repo, &["branch", "--list", "web-app--committed"]).is_empty(),
+        "--discard-unlanded deletes the branch"
     );
 }

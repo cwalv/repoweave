@@ -843,7 +843,10 @@ fn deleting_a_branch_drops_its_record_so_a_name_below_it_can_be_recorded() {
     assert!(weave.has_entry("a"));
 
     succeed(&["branch", "delete", "a", "--target", "main"], &weave.ws);
-    assert!(!weave.has_entry("a"), "the deleted branch's entry is dropped");
+    assert!(
+        !weave.has_entry("a"),
+        "the deleted branch's entry is dropped"
+    );
 
     // An entry is a file at the branch's name, so a stale `a` would make `a/b`
     // a file inside a file.
@@ -866,7 +869,10 @@ fn a_stale_entry_goes_with_the_next_deletion_whatever_branch_it_names() {
 
     assert!(!weave.has_entry("gone"));
     assert!(!weave.has_entry("stale"));
-    assert!(weave.has_entry("main"), "an entry whose branch exists stays");
+    assert!(
+        weave.has_entry("main"),
+        "an entry whose branch exists stays"
+    );
 }
 
 #[test]
@@ -880,13 +886,19 @@ fn an_entry_a_merge_brought_in_is_kept_by_that_merge_and_dropped_by_the_next() {
     let base = weave.records_tip().unwrap();
     weave.remote_records("origin", Some(&base), &[("ghost", DECLARED)]);
 
-    succeed(&["branch", "delete", "first", "--target", "main"], &weave.ws);
+    succeed(
+        &["branch", "delete", "first", "--target", "main"],
+        &weave.ws,
+    );
     assert!(
         weave.has_entry("ghost"),
         "a record that reached a remote just before its branch is not lost in the gap"
     );
 
-    succeed(&["branch", "delete", "second", "--target", "main"], &weave.ws);
+    succeed(
+        &["branch", "delete", "second", "--target", "main"],
+        &weave.ws,
+    );
     assert!(
         !weave.has_entry("ghost"),
         "once this machine holds the entry and no branch has the name, it goes"
@@ -977,7 +989,10 @@ fn an_entry_for_a_branch_a_workspace_is_aligned_for_is_kept() {
     common::git_in(&project, &["switch", "-q", "main"]);
     common::git_in(&project, &["branch", "-D", "wip"]);
 
-    succeed(&["branch", "delete", "other", "--target", "main"], &weave.ws);
+    succeed(
+        &["branch", "delete", "other", "--target", "main"],
+        &weave.ws,
+    );
 
     assert!(
         weave.has_entry("wip"),

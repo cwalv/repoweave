@@ -576,13 +576,13 @@ fn a_pin_lost_with_the_deleted_clone_is_given_up_under_consent_keeping_the_files
 }
 
 // ---------------------------------------------------------------------------
-// A create over a receipted branch that moved refuses; following its
-// `git branch -m` exit keeps the commits under the new name and lets the
-// create through.
+// A create over a branch that stands elsewhere than the create would start it
+// refuses, naming it; once the operator renames that branch the commits stay
+// under the new name and the create goes through.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn a_create_over_a_moved_branch_succeeds_after_its_branch_m_advice_and_keeps_the_commits() {
+fn a_create_over_a_moved_branch_refuses_and_succeeds_once_it_is_renamed() {
     let w = Weave::new();
     let unlanded = w.commit_unlanded();
     std::fs::remove_dir_all(&w.workweave).unwrap();
@@ -595,22 +595,11 @@ fn a_create_over_a_moved_branch_succeeds_after_its_branch_m_advice_and_keeps_the
         .unwrap();
     let refusal = text(&out);
     assert!(!out.status.success(), "{refusal}");
-    let advised = refusal
-        .split('`')
-        .find(|span| span.starts_with("git -C ") && span.contains(" branch -m "))
-        .unwrap_or_else(|| panic!("no `git -C … branch -m` exit: {refusal}"));
-    let words: Vec<String> = advised
-        .replace("<new-name>", "keep-feat")
-        .split_whitespace()
-        .map(str::to_owned)
-        .collect();
-    assert_eq!(words[..2], ["git", "-C"]);
-    let out = common::git()
-        .args(&words[1..])
-        .current_dir(&w.primary)
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "{}", text(&out));
+    assert!(
+        refusal.contains("name exists (demo--feat)"),
+        "the refusal names the branch in the way: {refusal}"
+    );
+    common::git_in(w.canonical(), &["branch", "-m", "demo--feat", "keep-feat"]);
 
     rwv(
         &w.primary,

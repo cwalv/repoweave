@@ -131,6 +131,25 @@ fn create_workweave(main: &MainWorkspace, name: &str, from: Option<&Path>) -> Wo
     }
 }
 
+/// Point `branch`'s record at `target`: the delete of the workweave a branch
+/// lands into refuses until each dependent is rebound.
+fn rebind(main: &MainWorkspace, branch: &str, target: &str) {
+    rwv()
+        .args([
+            "branch",
+            "set-mode",
+            "--project",
+            PROJECT,
+            branch,
+            "feature",
+            "--target",
+            target,
+        ])
+        .current_dir(&main.root)
+        .assert()
+        .success();
+}
+
 /// Read the recorded parent from a workweave's `.rwv-workweave` marker.
 fn recorded_parent(ww_root: &Path) -> String {
     let content = std::fs::read_to_string(ww_root.join(".rwv-workweave")).unwrap();
@@ -259,7 +278,7 @@ fn delete_waivers_do_not_bypass_op_mutex() {
             PROJECT,
             &ww.name,
             "--discard-uncommitted",
-            "--discard-unmerged-commits",
+            "--discard-unlanded",
         ])
         .current_dir(&main.root)
         .output()
@@ -295,6 +314,7 @@ fn delete_with_one_child_adopts_to_grandparent_primary() {
     assert_eq!(recorded_parent(&wwb.root), canon(&wwa.root));
 
     // Delete wwa. wwb should be adopted by wwa's parent = primary.
+    rebind(&main, &format!("{PROJECT}--wwb"), "main");
     let out = rwv()
         .args(["workweave", "delete", "--project", PROJECT, &wwa.name])
         .current_dir(&main.root)
@@ -338,6 +358,11 @@ fn delete_middle_adopts_to_grandparent_workweave() {
 
     // Delete wwb (middle). wwc should be adopted by wwb's parent = wwa (a
     // workweave, NOT primary — the grandparent path, not the primary fallback).
+    rebind(
+        &main,
+        &format!("{PROJECT}--wwc"),
+        &format!("{PROJECT}--wwa"),
+    );
     let out = rwv()
         .args(["workweave", "delete", "--project", PROJECT, &wwb.name])
         .current_dir(&main.root)
@@ -375,6 +400,9 @@ fn delete_with_n_children_adopts_all() {
     let c2 = create_workweave(&main, "child2", Some(&wwa.root));
     let c3 = create_workweave(&main, "child3", Some(&wwa.root));
 
+    for child in ["child1", "child2", "child3"] {
+        rebind(&main, &format!("{PROJECT}--{child}"), "main");
+    }
     let out = rwv()
         .args(["workweave", "delete", "--project", PROJECT, &wwa.name])
         .current_dir(&main.root)
@@ -417,6 +445,7 @@ fn retire_adopts_children() {
     let wwb = create_workweave(&main, "wwb", Some(&wwa.root));
 
     // Retire wwa to primary (bare sync-to reads parent = primary).
+    rebind(&main, &format!("{PROJECT}--wwb"), "main");
     let out = rwv()
         .args(["sync-to", "--retire"])
         .current_dir(&wwa.root)
@@ -470,26 +499,32 @@ fn retire_into(a: &Workweave, target: &Workweave) -> std::process::Output {
         .unwrap()
 }
 
+/// The deletion rule judges against the branch the record lands into, `p1`'s,
+/// so work landed in `p2` is not seen as landed: the workweave is retired, its
+/// branches survive with their commits, and the exit status says so.
 #[test]
-fn retire_counts_the_named_target_it_landed_into() {
+fn retire_into_a_named_target_keeps_what_the_record_does_not_see_landed() {
     let tmp = common::tempdir().unwrap();
     let main = make_main_workspace(tmp.path());
     let (a, p2) = fork_and_land_in_a_named_target(&main);
 
     let out = retire_into(&a, &p2);
-    assert!(
-        out.status.success(),
-        "the retire must count the target it just synced into:\n{}\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(3), "{stderr}");
     assert!(!a.root.exists(), "a retired");
+    assert!(
+        stderr.contains(&format!(
+            "left: {MANIFEST_REPO_PATH} {PROJECT}--a: unlanded"
+        )),
+        "{stderr}"
+    );
 }
 
-/// The target holds only what it holds: work in a checkout the target lacks
-/// still refuses, and the member it does hold is not listed.
+/// A checkout the manifest does not name that is its own store, holding
+/// commits no remote has, cannot be retired over: nothing a backup written
+/// there could keep would survive the directory.
 #[test]
-fn retire_into_a_named_target_refuses_what_that_target_lacks() {
+fn retire_refuses_a_stranded_standalone_checkout() {
     let tmp = common::tempdir().unwrap();
     let main = make_main_workspace(tmp.path());
     let (a, p2) = fork_and_land_in_a_named_target(&main);
@@ -502,15 +537,8 @@ fn retire_into_a_named_target_refuses_what_that_target_lacks() {
         .lines()
         .filter_map(|l| l.strip_prefix("rwv explain "))
         .collect();
-    assert_eq!(routes, vec!["unmerged-commits"], "{stderr}");
-    assert!(
-        stderr.contains("github/org/extra (not a manifest member)"),
-        "{stderr}"
-    );
-    assert!(
-        !stderr.contains(&format!("  {MANIFEST_REPO_PATH}")),
-        "the target holds the member, so it is not unmerged: {stderr}"
-    );
+    assert_eq!(routes, vec!["standalone-in-workweave"], "{stderr}");
+    assert!(stderr.contains("github/org/extra"), "{stderr}");
     assert!(a.root.exists(), "a refused retire leaves the workweave");
 }
 
