@@ -85,6 +85,13 @@ const ALLOWLIST: &[Allowed] = &[
              Nothing is derived from an identity.",
     },
     Allowed {
+        file: "member_pin.rs",
+        count: 1,
+        justification: "The pin verb's lookup key: the operator's typed path is \
+             matched against the manifest, and a path it does not list is refused \
+             rather than asserted into it.",
+    },
+    Allowed {
         file: "member_settings.rs",
         count: 2,
         justification: "The member setters' lookup key: the operator's typed path is \

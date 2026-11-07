@@ -214,7 +214,7 @@ A forward move over commits no remote-tracking branch reaches reports them when 
 | Flag | Effect |
 |---|---|
 | `--dirty` | Allow locking repos with uncommitted changes to tracked files |
-| `--repo <selector>` | Record only the members matching the selector (exact path, `glob:<pat>` or `re:<pat>`; repeat for union), and let each of them move its pin backward. A selector matching no member refuses (`repo-not-in-manifest`). There is no `--role` |
+| `--repo <selector>` | Record only the members matching the selector (exact path, `glob:<pat>` or `re:<pat>`; repeat for union), and let each of them move its pin backward. A selector matching no member refuses (`repo-not-in-manifest`) |
 | `--commit` | Commit `rwv.lock` after writing it, together with `rwv.toml` when it is modified or has never been committed. Other uncommitted changes in the project repo refuse (`edits`) |
 | `-m` / `--message <msg>` | The commit message for `--commit`, in place of the generated summary. Without `--commit` it is a usage error (exit 2) |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |

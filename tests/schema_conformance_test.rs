@@ -727,7 +727,11 @@ fn fetched_repos() -> Vec<FetchedRepoOutput> {
             message,
             refusal,
             pins_off_remote: match status {
-                FetchStatus::Fetched => vec![judged(Axis::Pin, "off remote", "rwv push --repo x")],
+                FetchStatus::Fetched => {
+                    let mut lines = vec![judged(Axis::Pin, "off remote", "rwv push --repo x")];
+                    lines.extend(judged_on_every_axis());
+                    lines
+                }
                 FetchStatus::Unconfirmed | FetchStatus::Skipped => Vec::new(),
             },
         }

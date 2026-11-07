@@ -35,11 +35,11 @@ Commands:
   resolve      Print weave root path
   clone        Clone a project and each of its members at the commit `rwv.lock` pins. A member the lock does not pin, or pins at a commit no ref reaches, is cloned at its declared branch's tip and listed; the exit status is then 3
   init         Initialize a new project
-  member       Add a repo to the active project, remove one, or change a member's role or submodule setting
+  member       Add a repo to the active project, remove one, pin one at a commit, or change a member's role or submodule setting
   branch       Record how a weave branch is used, or list the weave branches with their records
   workweave    Create, delete, or list workweaves
   doctor       Convention enforcement and lock-freshness checking
-  lock         Snapshot repo versions (pure git SHA snapshot — no integration hooks fire). Run `rwv materialize` after lock changes the workspace membership to refresh node_modules / .venv / etc
+  lock         Record where each member's checkout is as its pin, moving a pin forward only: a member with no pin keeps none, and one behind or diverged from its pin is refused unless `--repo` names it. No integration hooks fire; run `rwv materialize` after lock changes the workspace membership to refresh node_modules / .venv / etc
   status       Show per-repo state of the CWD workspace
   log          Show the VCS's log in every repo of the workspace, or with `--against` the commits beyond what a weave branch pins
   abort        Roll an in-flight sync or sync-to back to its savepoints in every workspace it touched, run from any of them
@@ -48,7 +48,7 @@ Commands:
   sync-to      Advance target workspace to CWD's tip (3-step orchestration: rebase CWD against target, auto-relock, then fast-forward target to CWD's converged tip). CWD's unique commits land on top of target's prior history; target absorbs CWD's state with CWD as the newest contribution
   fetch        Bring every remote's branches and tags into each repo's object store, dropping remote branches that are gone. Moves no branch, checkout or lock, and reports what moved
   pull         Fetch, fast-forward the project branch to its upstream, then update the members to the lock it holds
-  update       Clone the members missing on disk and align the rest to rwv.lock, without writing it. With --remote, advance each repo to its branch HEAD on the remote and re-snapshot the lock (network bump; analogous to `cargo update` / `npm update`)
+  update       Clone the members missing on disk and align the rest to rwv.lock, without writing it. With --remote, advance each repo to its branch HEAD on the remote and record the advanced tips in the lock (network bump; analogous to `cargo update` / `npm update`)
   push         Push member repos and then the project repo, in that order. Refuses from a workweave. Member pushes are attempt-all-and-collect; project repo is gated on every member repo succeeding
   completions  Generate shell completions
   explain      Agent-oriented reflection: per-verb markdown bundle (purpose, invocation, output, JSON Schema)

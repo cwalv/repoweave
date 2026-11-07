@@ -112,12 +112,12 @@ fn explain_push_includes_purpose_and_schema() {
 }
 
 /// Checking out the locked SHA detaches HEAD, and push then refuses
-/// (`unpushable-repo-branch`; see `remedy_hints_test.rs`). The lock-state
-/// mismatch remedy in `rwv explain push`'s Common errors must not offer it.
-/// Revert this line to watch it go red: push.md.tmpl:132-134 said "check out
-/// the locked SHA in each repo".
+/// (`unpushable-repo-branch`; see `remedy_hints_test.rs`). The `pin unpinned`
+/// remedy in `rwv explain push`'s Common errors must not offer it.
+/// Revert this line to watch it go red: push.md.tmpl once said "check out the
+/// locked SHA in each repo".
 #[test]
-fn explain_push_lock_state_mismatch_remedy_has_no_dead_checkout_advice() {
+fn explain_push_pin_remedy_has_no_dead_checkout_advice() {
     rwv().args(["explain", "push"]).assert().success().stdout(
         predicate::str::contains("check out the locked SHA")
             .not()
@@ -126,17 +126,20 @@ fn explain_push_lock_state_mismatch_remedy_has_no_dead_checkout_advice() {
 }
 
 /// A `--new` member's worktree, skipped in a workweave because the canonical
-/// clone has no commits yet, is created by `rwv lock` then `rwv doctor
-/// --fix` (src/add_remove.rs), not `rwv sync` (there is no such verb).
+/// clone has no commits yet, is created by `rwv member pin <repo> HEAD` then
+/// `rwv doctor --fix` (src/add_remove.rs), not `rwv sync` (there is no such
+/// verb) and not `rwv lock`, which gives a member no first pin.
 /// Revert this line to watch it go red: the member page's add section once
-/// said "run `rwv sync` after the first commit".
+/// said "run `rwv sync` after the first commit", then "`rwv lock` then
+/// `rwv doctor --fix`".
 #[test]
-fn explain_member_worktree_skip_names_lock_then_doctor_fix() {
+fn explain_member_worktree_skip_names_pin_then_doctor_fix() {
     let out = rwv().args(["explain", "member"]).assert().success();
     let text = String::from_utf8_lossy(&out.get_output().stdout).replace("\r\n", "\n");
     assert!(!text.contains("run `rwv sync`"), "{text}");
+    assert!(!text.contains("`rwv lock` then"), "{text}");
     assert!(
-        text.contains("`rwv lock` then\n`rwv doctor --fix`"),
+        text.contains("`rwv member pin <repo> HEAD`\nthen `rwv doctor --fix`"),
         "{text}"
     );
 }

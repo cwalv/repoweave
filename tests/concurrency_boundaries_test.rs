@@ -133,11 +133,12 @@ fn the_op_lease_is_syncs_tool_and_not_a_verb_surface_mutex() {
 /// A module with more than one site holds a verb per site: `activate.rs`
 /// the two `materialize` and `activate_with_options` added, `backup.rs` the
 /// two backup verbs that write.
-const ADVISORY_REFUSAL_SITES: [(&str, usize); 6] = [
+const ADVISORY_REFUSAL_SITES: [(&str, usize); 7] = [
     ("activate.rs", 2),
     ("backup.rs", 2),
     ("check.rs", 1),
     ("lock.rs", 1),
+    ("member_pin.rs", 1),
     ("update_remote.rs", 1),
     ("workweave.rs", 1),
 ];
