@@ -16,10 +16,6 @@
 //!   prefix. `Reporter::Parallel { prefix }` prepends `[<prefix>] ` to each
 //!   line and serializes writes through a shared mutex so lines from
 //!   different workers don't interleave mid-line.
-//! - [`run_subprocess_with_reporter`] spawns a `Command`, captures
-//!   stdout/stderr; under `Serial` it captures both streams and reports
-//!   them only on failure; under `Parallel` it streams lines through the
-//!   reporter so the user can watch per-repo progress as it happens.
 //!
 //! Design notes:
 //!
@@ -36,8 +32,7 @@
 //!   input order so the failure report shape doesn't depend on
 //!   scheduling.
 
-use std::io::{BufRead, BufReader, Read, Write};
-use std::process::{Command, ExitStatus, Stdio};
+use std::io::Write;
 use std::sync::Mutex;
 use std::thread;
 
@@ -247,89 +242,6 @@ where
     guard.iter_mut().map(|slot| slot.take().unwrap()).collect()
 }
 
-/// Outcome of running a subprocess through [`run_subprocess_with_reporter`].
-///
-/// `status` is the child exit status. `stderr_capture` is the stderr
-/// content that the caller may want to surface in an error message —
-/// under `Reporter::Serial` this is the full captured stderr (matching
-/// `Command::output()` behavior); under `Reporter::Parallel` it is
-/// `String::new()` because stderr has already been streamed to the
-/// user, prefixed, and re-capturing would either duplicate output or
-/// require buffering an entire stream just for the error path.
-pub struct SubprocessOutcome {
-    pub status: ExitStatus,
-    pub stderr_capture: String,
-}
-
-/// Spawn `cmd` and wait for it to exit, routing stdout/stderr according
-/// to `reporter`.
-///
-/// Under `Reporter::Serial` the implementation mirrors `Command::output()`
-/// — both streams are captured and only surfaced via
-/// [`SubprocessOutcome::stderr_capture`] on failure, so a successful
-/// `git fetch` prints nothing to the terminal.
-///
-/// Under `Reporter::Parallel` each stream is read line-by-line and
-/// forwarded through `Reporter::out` / `Reporter::err` (which prepend
-/// the per-repo prefix and serialize writes). The user sees per-repo
-/// progress as it happens, even when other workers are mid-fetch.
-pub fn run_subprocess_with_reporter(
-    cmd: &mut Command,
-    reporter: &Reporter<'_>,
-) -> std::io::Result<SubprocessOutcome> {
-    if !reporter.is_parallel() {
-        // Capture-only: identical to Command::output() behavior.
-        // Silent mode and serial mode both capture rather than stream;
-        // the distinction is in whether the caller surfaces the output.
-        let output = cmd.output()?;
-        let stderr_capture = String::from_utf8_lossy(&output.stderr).into_owned();
-        return Ok(SubprocessOutcome {
-            status: output.status,
-            stderr_capture,
-        });
-    }
-
-    let mut child = cmd
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-
-    let stdout = child.stdout.take().expect("stdout piped, must be present");
-    let stderr = child.stderr.take().expect("stderr piped, must be present");
-
-    thread::scope(|scope| {
-        scope.spawn(|| forward_stream(stdout, reporter, true));
-        scope.spawn(|| forward_stream(stderr, reporter, false));
-    });
-
-    let status = child.wait()?;
-    Ok(SubprocessOutcome {
-        status,
-        // Stream output has already gone to the user via reporter; no
-        // need to re-surface it on error.
-        stderr_capture: String::new(),
-    })
-}
-
-/// Read `stream` line-by-line and forward each line through `reporter`.
-///
-/// `is_stdout = true` routes to [`Reporter::out`]; `false` routes to
-/// [`Reporter::err`]. Stops on EOF or first read error. Read errors
-/// are swallowed deliberately — the parent waits on the child anyway,
-/// and a broken pipe is the normal "subprocess hung up" path.
-fn forward_stream<R: Read>(stream: R, reporter: &Reporter<'_>, is_stdout: bool) {
-    let reader = BufReader::new(stream);
-    for line in reader.lines() {
-        let Ok(line) = line else { return };
-        if is_stdout {
-            reporter.out(&line);
-        } else {
-            reporter.err(&line);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -507,154 +419,5 @@ mod tests {
         let _r = Reporter::parallel("with [bracket]".into(), &lock);
         let _r = Reporter::parallel("with \"quote\"".into(), &lock);
         let _r = Reporter::parallel(String::new(), &lock);
-    }
-
-    /// Env vars carrying the fixture's script to [`fixture_child`]: what to
-    /// write to its own stdout/stderr and what code to exit with.
-    const FIXTURE_STDOUT: &str = "RWV_PARALLEL_TEST_FIXTURE_STDOUT";
-    const FIXTURE_STDERR: &str = "RWV_PARALLEL_TEST_FIXTURE_STDERR";
-    const FIXTURE_EXIT_CODE: &str = "RWV_PARALLEL_TEST_FIXTURE_EXIT_CODE";
-
-    /// Not a test: the child half of the `run_subprocess_with_reporter`
-    /// tests below. It runs as a normal (instant, inert) test in an
-    /// ordinary suite run, and only when a parent spawns
-    /// `current_exe()` with `FIXTURE_EXIT_CODE` set does it write the
-    /// requested bytes to its own stdout/stderr and exit with the
-    /// requested code — a portable stand-in for `sh -c 'printf ...; exit
-    /// N'`, since the test binary itself exists on every platform cargo
-    /// builds one for. Mirrors the `strace_probe_child_*` pattern in
-    /// `tests/ref_registry_test.rs`.
-    #[test]
-    fn fixture_child() {
-        let Ok(code) = std::env::var(FIXTURE_EXIT_CODE) else {
-            return;
-        };
-        if let Ok(s) = std::env::var(FIXTURE_STDOUT) {
-            print!("{s}");
-            std::io::stdout().flush().unwrap();
-        }
-        if let Ok(s) = std::env::var(FIXTURE_STDERR) {
-            eprint!("{s}");
-            std::io::stderr().flush().unwrap();
-        }
-        std::process::exit(code.parse().expect("valid exit code"));
-    }
-
-    /// A `Command` that re-invokes this test binary selecting only
-    /// [`fixture_child`]. Callers set `FIXTURE_STDOUT`/`FIXTURE_STDERR`/
-    /// `FIXTURE_EXIT_CODE` on the returned `Command` before spawning it.
-    /// `--nocapture` is load-bearing: without it, libtest's own capture
-    /// hook swallows `fixture_child`'s `print!`/`eprint!` calls before
-    /// they reach the real stdout/stderr this fixture exists to write to.
-    fn fixture_command() -> Command {
-        let mut cmd = Command::new(std::env::current_exe().expect("test binary path"));
-        cmd.args([
-            "--exact",
-            "parallel::tests::fixture_child",
-            "--test-threads=1",
-            "--nocapture",
-        ]);
-        cmd
-    }
-
-    /// Under `Reporter::Serial`, `run_subprocess_with_reporter` mirrors
-    /// `Command::output()`: failing subprocess returns a non-zero
-    /// status AND captured stderr. This is the path verbs take under
-    /// `-j 1` so successful runs don't spam the terminal but failures
-    /// keep their captured stderr for the summary.
-    #[test]
-    fn run_subprocess_with_reporter_serial_captures_stderr_on_failure() {
-        let mut cmd = fixture_command();
-        cmd.env(FIXTURE_STDERR, "boom\n");
-        cmd.env(FIXTURE_EXIT_CODE, "7");
-        let reporter = Reporter::serial();
-        let outcome =
-            run_subprocess_with_reporter(&mut cmd, &reporter).expect("subprocess spawned");
-        assert!(!outcome.status.success(), "expected non-zero exit");
-        assert_eq!(outcome.status.code(), Some(7));
-        assert!(
-            outcome.stderr_capture.contains("boom"),
-            "expected captured stderr to include child output; got {:?}",
-            outcome.stderr_capture
-        );
-    }
-
-    /// Under `Reporter::Parallel`, `run_subprocess_with_reporter`
-    /// streams stdout/stderr lines through the reporter as they
-    /// arrive and returns an *empty* `stderr_capture`. The user
-    /// already saw the lines (prefixed); re-surfacing on failure
-    /// would either duplicate output or require buffering an entire
-    /// stream just for the error path. Pin the contract that
-    /// `stderr_capture` is empty under Parallel — verb-side error
-    /// summaries must not assume otherwise.
-    #[test]
-    fn run_subprocess_with_reporter_parallel_returns_empty_capture() {
-        let lock = Mutex::new(());
-        let reporter = Reporter::parallel("ut".into(), &lock);
-        let mut cmd = fixture_command();
-        cmd.env(FIXTURE_STDERR, "line1\nline2\n");
-        cmd.env(FIXTURE_EXIT_CODE, "3");
-        let outcome =
-            run_subprocess_with_reporter(&mut cmd, &reporter).expect("subprocess spawned");
-        assert!(!outcome.status.success());
-        assert_eq!(outcome.status.code(), Some(3));
-        assert_eq!(
-            outcome.stderr_capture, "",
-            "Parallel reporter streams stderr to the user; stderr_capture must be empty"
-        );
-    }
-
-    /// A child writing multiple lines to both stdout and stderr
-    /// exercises two concurrent `forward_stream` loops (one per pipe,
-    /// via `thread::scope`) instead of a single read. This pins only
-    /// that the call returns rather than hanging; it cannot pin line
-    /// content or count. Under `Reporter::Parallel`, forwarded lines
-    /// go straight to this process's real stdout/stderr from a
-    /// spawned thread, which is outside libtest's own capture (see
-    /// `forward_stream_consumes_to_eof_without_panic`), and
-    /// `stderr_capture` is empty by contract regardless of what the
-    /// child wrote (`run_subprocess_with_reporter_parallel_returns_empty_capture`).
-    /// That a forwarded line arrives at all is therefore unobservable from
-    /// here, and is pinned end-to-end against a real child in
-    /// `tests/parallel_test.rs::update_dash_j_forwards_child_output_prefixed`.
-    #[test]
-    fn run_subprocess_multi_line_under_parallel_completes_without_hanging() {
-        let lock = Mutex::new(());
-        let reporter = Reporter::parallel("ut".into(), &lock);
-        let mut cmd = fixture_command();
-        cmd.env(FIXTURE_STDOUT, "o1\no2\no3\no4\n");
-        cmd.env(FIXTURE_STDERR, "e1\ne2\ne3\ne4\n");
-        cmd.env(FIXTURE_EXIT_CODE, "0");
-        let outcome =
-            run_subprocess_with_reporter(&mut cmd, &reporter).expect("subprocess spawned");
-        assert!(outcome.status.success());
-        assert_eq!(outcome.stderr_capture, "");
-    }
-
-    /// `forward_stream` reads UTF-8 line-by-line via `BufReader::lines()`,
-    /// stops on EOF, and never panics on a broken stream. Pin the
-    /// stop-on-EOF behavior directly via an in-memory cursor (no
-    /// subprocess needed). Output goes to the test process's stdout —
-    /// we can't easily intercept it, but we can confirm the function
-    /// returns cleanly.
-    #[test]
-    fn forward_stream_consumes_to_eof_without_panic() {
-        let lock = Mutex::new(());
-        let reporter = Reporter::parallel("ut".into(), &lock);
-        let data: &[u8] = b"a\nb\nc\n";
-        forward_stream(std::io::Cursor::new(data), &reporter, true);
-        forward_stream(std::io::Cursor::new(data), &reporter, false);
-    }
-
-    /// A stream that ends without a trailing newline still surfaces
-    /// the final partial line — `BufReader::lines()` yields it on the
-    /// last iteration. Pin the contract so verb output that ends mid-
-    /// line under `-j N` isn't silently dropped.
-    #[test]
-    fn forward_stream_emits_final_line_without_trailing_newline() {
-        let lock = Mutex::new(());
-        let reporter = Reporter::parallel("ut".into(), &lock);
-        let data: &[u8] = b"first\nsecond-no-newline";
-        forward_stream(std::io::Cursor::new(data), &reporter, true);
     }
 }
