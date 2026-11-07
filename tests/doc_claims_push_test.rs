@@ -171,6 +171,16 @@ fn bare_main_sha(bare: &Path) -> Option<String> {
 /// Advance every manifest repo with one new commit and rewrite the lock
 /// to match. Returns the (repo_path, new SHA) pairs.
 fn advance_all_and_relock(ws: &PushWorkspace, repos: &[(&str, &str)]) -> Vec<(String, String)> {
+    advance_all_and_relock_leaving(ws, repos, &[])
+}
+
+/// [`advance_all_and_relock`], the repos of the roles `leaving` names kept at
+/// the pin they had: advanced locally, but not pinned there.
+fn advance_all_and_relock_leaving(
+    ws: &PushWorkspace,
+    repos: &[(&str, &str)],
+    leaving: &[&str],
+) -> Vec<(String, String)> {
     let mut manifest_yaml = String::from("[repositories]\n");
     let mut lock_entries: Vec<(String, String, String)> = Vec::new();
     let mut expected_shas: Vec<(String, String)> = Vec::new();
@@ -185,7 +195,12 @@ fn advance_all_and_relock(ws: &PushWorkspace, repos: &[(&str, &str)]) -> Vec<(St
         manifest_yaml.push_str(&format!(
             "[repositories.\"{rp}\"]\ntype = \"git\"\nurl = \"{bare_url}\"\nbranch = \"main\"\nrole = \"{role}\"\n"
         ));
-        lock_entries.push(((*rp).to_string(), bare_url, sha.clone()));
+        let pinned = if leaving.contains(role) {
+            common::git_in(&local, &["rev-parse", "HEAD~1"])
+        } else {
+            sha.clone()
+        };
+        lock_entries.push(((*rp).to_string(), bare_url, pinned));
         expected_shas.push(((*rp).to_string(), sha));
     }
     let project_dir = ws.workspace.join("projects").join(&ws.project_name);
@@ -222,13 +237,8 @@ fn push_project_repo_pushed_after_manifest_repos() {
     let baseline_project = bare_main_sha(&ws.project_bare);
     let _expected_shas = advance_all_and_relock(&ws, &repos);
 
-    // Sabotage repo B so its push fails; repo A succeeds.
-    let local_b = ws.workspace.join("local/org/b");
-    let bad_url = ws.workspace.join("nonexistent-remote.git");
-    common::git_in(
-        &local_b,
-        &["remote", "set-url", "origin", bad_url.to_str().unwrap()],
-    );
+    // Make repo B's remote refuse the push; repo A succeeds.
+    common::refuse_pushes_to(&ws.manifest_bares[1].1, "refs/heads/main");
 
     let output = rwv()
         .args(["push"])
@@ -359,7 +369,7 @@ fn push_dry_run_prints_plan_and_does_not_push() {
     }
     let project_line = stdout
         .lines()
-        .find(|l| l.contains("projects/alpha"))
+        .find(|l| l.contains("projects/alpha") && l.contains("would push"))
         .unwrap_or_else(|| panic!("dry-run printed no project-repo line; got: {stdout}"));
     assert!(
         project_line.contains("would push")
@@ -625,13 +635,8 @@ fn push_outcome_variants_show_in_output() {
     let ws = build_workspace("alpha", &repos);
     let _expected = advance_all_and_relock(&ws, &repos);
 
-    // Sabotage the third repo's origin to force a Failed outcome.
-    let local_broken = ws.workspace.join("local/org/broken");
-    let bad_url = ws.workspace.join("nope.git");
-    common::git_in(
-        &local_broken,
-        &["remote", "set-url", "origin", bad_url.to_str().unwrap()],
-    );
+    // Make the third repo's remote refuse the push to force a Failed outcome.
+    common::refuse_pushes_to(&ws.manifest_bares[2].1, "refs/heads/main");
 
     let output = rwv()
         .args(["push"])
@@ -782,7 +787,12 @@ fn push_json_envelope_under_parallel_mode() {
         .collect();
     assert_eq!(
         kinds,
-        ["pushed", "pushed", "project-repo-pushed"],
+        [
+            "pushed",
+            "pushed",
+            "records-published",
+            "project-repo-pushed"
+        ],
         "{stdout}"
     );
 }
@@ -825,7 +835,7 @@ fn push_default_plan_skips_dependency_and_reference() {
     let dep_baseline = bare_main_sha(dep_bare);
     let ref_baseline = bare_main_sha(ref_bare);
 
-    let expected = advance_all_and_relock(&ws, &repos);
+    let expected = advance_all_and_relock_leaving(&ws, &repos, &["dependency", "reference"]);
 
     let output = rwv()
         .args(["push"])

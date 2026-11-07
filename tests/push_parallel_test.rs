@@ -194,12 +194,13 @@ fn push_dash_j_mid_batch_failure_skips_project_repo() {
 
     // Sabotage one repo's remote so its push fails. The other two should
     // still complete; project repo must NOT be pushed.
-    let local_bad = ws.workspace.join("local/org/bad");
-    let bad_url = ws.workspace.join("nonexistent-remote.git");
-    common::git_in(
-        &local_bad,
-        &["remote", "set-url", "origin", bad_url.to_str().unwrap()],
-    );
+    let bad = ws
+        .manifest_bares
+        .iter()
+        .find(|(path, _)| path == "local/org/bad")
+        .map(|(_, bare)| bare.clone())
+        .expect("the fixture has the repo that fails");
+    common::refuse_pushes_to(&bad, "refs/heads/main");
 
     let output = rwv()
         .args(["push", "-j", "3"])
@@ -257,12 +258,7 @@ fn push_dash_j_project_repo_runs_after_manifest_pushes() {
 
     // Break the project repo's origin so its push fails. Manifest pushes
     // must all complete first (proving they ran before the project push).
-    let project_dir = ws.workspace.join("projects").join(&ws.project_name);
-    let bad_url = ws.workspace.join("nonexistent-project.git");
-    common::git_in(
-        &project_dir,
-        &["remote", "set-url", "origin", bad_url.to_str().unwrap()],
-    );
+    common::refuse_pushes_to(&ws.project_bare, "refs/heads/main");
 
     let output = rwv()
         .args(["push", "-j", "3"])

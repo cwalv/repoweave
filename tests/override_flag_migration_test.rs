@@ -122,17 +122,15 @@ fn a_retired_top_level_remove_gets_no_force_mapping() {
 }
 
 #[test]
-fn push_force_is_not_migrated() {
+fn push_force_is_refused_like_any_other_verbs_force() {
     let stderr = stderr_of(&["push", "--force", "--dry-run"]);
     assert!(
-        !stderr.contains("has been renamed")
-            && !stderr.contains("has been split")
-            && !stderr.contains(NO_BLANKET_FORCE),
-        "push --force must survive the rename pass; got: {stderr}"
+        stderr.contains(NO_BLANKET_FORCE),
+        "push --force gets the one generic refusal; got: {stderr}"
     );
     assert!(
-        stderr.contains("no repoweave workspace") || stderr.contains("workspace"),
-        "push --force must reach workspace resolution, past argument parsing; got: {stderr}"
+        !stderr.contains("has been renamed") && !stderr.contains("--overwrite"),
+        "and no message maps the old spelling to a new one; got: {stderr}"
     );
 }
 

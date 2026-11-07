@@ -19,23 +19,6 @@ fn rwv() -> Command {
     common::rwv()
 }
 
-/// An `update` hook that refuses pushes of `refname` and accepts the rest.
-fn refuse_pushes_to(bare: &Path, refname: &str) {
-    let hooks = bare.join("hooks");
-    std::fs::create_dir_all(&hooks).unwrap();
-    let hook = hooks.join("update");
-    std::fs::write(
-        &hook,
-        format!("#!/bin/sh\nif [ \"$1\" = {refname} ]; then\n    echo refused >&2\n    exit 1\nfi\nexit 0\n"),
-    )
-    .unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
-}
-
 /// Get the `main` SHA in a bare repo, or `None` if `main` doesn't exist
 /// (e.g. nothing was ever pushed).
 fn bare_main_sha(bare: &Path) -> Option<String> {
@@ -705,7 +688,7 @@ fn push_aborts_before_project_when_manifest_push_fails() {
 
     // Make repo B's remote refuse the push. Repo A pushes succeed; B fails;
     // project must not be pushed.
-    refuse_pushes_to(&ws.manifest_bares[1].1, "refs/heads/main");
+    common::refuse_pushes_to(&ws.manifest_bares[1].1, "refs/heads/main");
 
     let output = rwv()
         .args(["push"])
@@ -751,7 +734,7 @@ fn push_surfaces_project_push_failure_after_manifest_pushed() {
     common::git_in(&project_dir, &["commit", "-m", "relock"]);
 
     // Make the project remote refuse the branch, not the record beside it.
-    refuse_pushes_to(&ws.project_bare, "refs/heads/main");
+    common::refuse_pushes_to(&ws.project_bare, "refs/heads/main");
 
     let output = rwv()
         .args(["push"])

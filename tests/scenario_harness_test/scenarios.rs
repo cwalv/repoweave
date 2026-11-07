@@ -3,6 +3,7 @@ use crate::runner::{Claim, Exit, Forge, MergeHow, MissingVerb, Scenario, Step};
 use crate::sandbox::{
     declared_branch_text, Machine, Place, Remote, Repo, SecondProject, Seed, RECORDS_BRANCH,
 };
+use repoweave::manifest::Role;
 
 fn a() -> Place {
     Place::Primary(Machine::A)
@@ -14,6 +15,12 @@ fn ww(name: &str) -> Place {
 
 fn create(name: &str) -> Step {
     Step::rwv(&a(), &["workweave", "create", "--project", "proj", name]).expect(Exit::Succeeds)
+}
+
+/// A push of the weave branch the project repo is on publishes its record to
+/// the project's origin, creating the records branch there on the first.
+fn publishes_records(step: Step) -> Step {
+    step.pushes(Remote::origin(Repo::Proj), RECORDS_BRANCH)
 }
 
 fn scenario(name: &'static str, steps: Vec<Step>) -> Scenario {
@@ -44,7 +51,7 @@ pub fn solo_workweave() -> Scenario {
                     member: Repo::App,
                     mark: "solo-app",
                 }),
-            Step::rwv(&a(), &["push"])
+            publishes_records(Step::rwv(&a(), &["push"]))
                 .pushes(Remote::origin(Repo::App), "main")
                 .pushes(Remote::origin(Repo::Proj), "main")
                 .expect(Exit::Succeeds)
@@ -62,38 +69,123 @@ pub fn solo_workweave() -> Scenario {
     )
 }
 
-fn two_member_feature(name: &str) -> Vec<Step> {
+/// `feat-x` in the primary holding a commit in `app` and one in `lib`, locked.
+fn two_member_feature_in_primary() -> Vec<Step> {
     vec![
-        create(name),
-        Step::commit(&ww(name), Repo::App, "pr-app"),
-        Step::commit(&ww(name), Repo::Lib, "pr-lib"),
+        Step::git(&a(), Repo::App, &["switch", "-c", "feat-x"]),
+        Step::commit(&a(), Repo::App, "pr-app"),
+        Step::git(&a(), Repo::Lib, &["switch", "-c", "feat-x"]),
+        Step::commit(&a(), Repo::Lib, "pr-lib"),
+        Step::git(&a(), Repo::Proj, &["switch", "-c", "feat-x"]),
+        Step::rwv(
+            &a(),
+            &[
+                "branch", "set-mode", "feat-x", "feature", "--target", "main",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        Step::rwv(&a(), &["update"]).expect(Exit::Succeeds),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
     ]
 }
 
+fn push_feat_x_everywhere(step: Step) -> Step {
+    publishes_records(step)
+        .pushes(Remote::origin(Repo::App), "feat-x")
+        .pushes(Remote::origin(Repo::Lib), "feat-x")
+        .pushes(Remote::origin(Repo::Proj), "feat-x")
+}
+
+fn feat_x_record() -> Option<Record> {
+    Some(feature_onto("main", Mode::Declared))
+}
+
+/// A cross-repo PR: one `push` publishes the members' branches, the record and
+/// the project branch; an amend of `app` is republished only by a named,
+/// leased `--overwrite`, which keeps the replaced tip as a backup.
 pub fn cross_repo_pr() -> Scenario {
-    let mut steps = two_member_feature("pr");
-    steps.push(Step::pending(
-        "publish app and lib for review",
-        MissingVerb::Publish,
-    ));
+    let app = Repo::App.rel_path();
+    let mut steps = two_member_feature_in_primary();
+    steps.extend([
+        push_feat_x_everywhere(Step::rwv(&a(), &["push"]))
+            .expect(Exit::Succeeds)
+            .claim(Claim::RemoteContains {
+                repo: Repo::App,
+                branch: "feat-x",
+                mark: "pr-app",
+            })
+            .claim(Claim::RemoteContains {
+                repo: Repo::Lib,
+                branch: "feat-x",
+                mark: "pr-lib",
+            })
+            .claim(Claim::RemoteRecordIs {
+                branch: "feat-x",
+                record: feat_x_record(),
+            }),
+        Step::git(
+            &a(),
+            Repo::App,
+            &["commit", "--amend", "-m", "pr-app amended"],
+        ),
+        Step::rwv(&a(), &["lock", "--repo", &app, "--commit"])
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::App]),
+        Step::rwv(&a(), &["push"])
+            .expect(Exit::Fails)
+            .claim(Claim::OutputContains("push-branch diverged"))
+            .claim(Claim::OutputLacks("--overwrite")),
+        Step::rwv(&a(), &["push", "--overwrite", &app])
+            .overwrites(Remote::origin(Repo::App), "feat-x")
+            .pushes(Remote::origin(Repo::Proj), "feat-x")
+            .expect(Exit::Succeeds)
+            .claim(Claim::BackedUp {
+                repo: Repo::App,
+                mark: "pr-app",
+                marked: None,
+            }),
+    ]);
     scenario("cross-repo PR from a workweave", steps)
 }
 
+/// The fork variant: the members publish to a `fork` remote their push target
+/// names, and the pin gate judges each pin by that remote's branches.
 pub fn cross_repo_pr_fork() -> Scenario {
-    let mut steps = two_member_feature("pr");
-    steps.push(Step::pending(
-        "publish to the fork remote",
-        MissingVerb::Publish,
-    ));
-    scenario("cross-repo PR, fork variant", steps)
+    let mut steps = vec![
+        Step::add_remote(&a(), Repo::App, "fork", Remote::fork(Repo::App)),
+        Step::add_remote(&a(), Repo::Lib, "fork", Remote::fork(Repo::Lib)),
+        Step::git(&a(), Repo::App, &["config", "remote.pushDefault", "fork"]),
+        Step::git(&a(), Repo::Lib, &["config", "remote.pushDefault", "fork"]),
+    ];
+    steps.extend(two_member_feature_in_primary());
+    steps.push(
+        publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::fork(Repo::App), "feat-x")
+            .pushes(Remote::fork(Repo::Lib), "feat-x")
+            .pushes(Remote::origin(Repo::Proj), "feat-x")
+            .may_leave_unresolved(&[Repo::App, Repo::Lib])
+            .expect(Exit::Succeeds)
+            .claim(Claim::RemoteLacks {
+                repo: Repo::App,
+                branch: "feat-x",
+            }),
+    );
+    Scenario {
+        name: "cross-repo PR, fork variant",
+        seed: Seed::default().forks(),
+        steps,
+    }
 }
 
+/// The published branch is what machine B resumes from; opening it there is
+/// the `workweave create --branch` of a later release.
 pub fn resume_on_machine_b() -> Scenario {
-    let mut steps = two_member_feature("pr");
-    steps.push(Step::pending(
-        "publish before resuming elsewhere",
-        MissingVerb::Publish,
-    ));
+    let mut steps = two_member_feature_in_primary();
+    steps.extend([
+        push_feat_x_everywhere(Step::rwv(&a(), &["push"])).expect(Exit::Succeeds),
+        Step::new_machine(Machine::B),
+        Step::pending("open feat-x on machine B", MissingVerb::WeaveBranch),
+    ]);
     scenario("resume on machine B", steps)
 }
 
@@ -220,13 +312,22 @@ pub fn tombstone_to_backup() -> Scenario {
     )
 }
 
+/// A workweave made without a branch of its own carries a minted name that is
+/// never published: `push` refuses it, and naming the branch is the rename of a
+/// later release.
 pub fn workweave_without_b_given_up_after_publishing() -> Scenario {
     scenario(
         "workweave without -b, given up after publishing",
         vec![
             create("anon"),
             Step::commit(&ww("anon"), Repo::App, "anon-app"),
-            Step::pending("publish before giving up", MissingVerb::Publish),
+            Step::rwv(&ww("anon"), &["push"])
+                .expect(Exit::Fails)
+                .claim(Claim::OutputContains(
+                    "projects/proj: name minted (proj--anon)",
+                ))
+                .claim(Claim::OutputLacks("rwv branch rename")),
+            Step::pending("name the branch, then publish it", MissingVerb::Rename),
         ],
     )
 }
@@ -451,7 +552,7 @@ fn raw_merge(name: &'static str, main_moves: bool) -> Scenario {
         Step::git(&a(), Repo::Proj, &["merge", "--no-edit", "feat-x"]),
         Step::git(&a(), Repo::App, &["merge", "--no-edit", "feat-x"]),
         Step::rwv(&a(), &["lock", "--commit"]),
-        Step::rwv(&a(), &["push"])
+        publishes_records(Step::rwv(&a(), &["push"]))
             .pushes(Remote::origin(Repo::App), "main")
             .pushes(Remote::origin(Repo::Proj), "main")
             .expect(Exit::Succeeds)
@@ -604,15 +705,40 @@ pub fn cherry_pick_onto_stable() -> Scenario {
     )
 }
 
+/// A PR closed unmerged: the feature was published, then its remote branches
+/// were deleted; the next `push` reports each branch gone and publishes none
+/// of them again.
 pub fn pr_closed_unmerged() -> Scenario {
-    scenario(
-        "a PR closed unmerged",
-        vec![
-            create("closed"),
-            Step::commit(&ww("closed"), Repo::App, "closed-app"),
-            Step::pending("publish for review", MissingVerb::Publish),
-        ],
-    )
+    let mut steps = two_member_feature_in_primary();
+    steps.extend([
+        push_feat_x_everywhere(Step::rwv(&a(), &["push"])).expect(Exit::Succeeds),
+        Step::forge(Forge::DeleteBranch {
+            repo: Repo::App,
+            branch: "feat-x",
+        })
+        .may_leave_unresolved(&[Repo::App]),
+        Step::forge(Forge::DeleteBranch {
+            repo: Repo::Lib,
+            branch: "feat-x",
+        })
+        .may_leave_unresolved(&[Repo::Lib]),
+        Step::forge(Forge::DeleteBranch {
+            repo: Repo::Proj,
+            branch: "feat-x",
+        }),
+        Step::rwv(&a(), &["push"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("push-branch gone"))
+            .claim(Claim::RemoteLacks {
+                repo: Repo::App,
+                branch: "feat-x",
+            })
+            .claim(Claim::RemoteLacks {
+                repo: Repo::Proj,
+                branch: "feat-x",
+            }),
+    ]);
+    scenario("a PR closed unmerged", steps)
 }
 
 /// A feature on its own branch in the project repo, `app` and `lib`, whose
@@ -1233,4 +1359,501 @@ pub fn fork_remote_missing() -> Scenario {
                 )),
         ],
     }
+}
+
+fn b() -> Place {
+    Place::Primary(Machine::B)
+}
+
+fn origin_records() -> Remote {
+    Remote::origin(Repo::Proj)
+}
+
+/// dc03-roles-bound-push: a `dependency` member holding a commit its lock
+/// pins is pushed only when named, and the project branch waits for the pin
+/// the url remote's branches do not yet reach.
+pub fn dc03_roles_bound_push() -> Scenario {
+    let docs = Repo::Docs.rel_path();
+    Scenario {
+        name: "dc03: roles bound push",
+        seed: Seed::default().role(Repo::Docs, Role::Dependency),
+        steps: vec![
+            Step::commit(&a(), Repo::Docs, "docs-dep"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["push"])
+                .expect(Exit::Fails)
+                .claim(Claim::OutputContains(
+                    "local/remotes/docs: publish withheld",
+                ))
+                .claim(Claim::OutputContains(
+                    "reached by no remote-tracking branch",
+                ))
+                .claim(Claim::OutputContains("rwv push --repo local/remotes/docs"))
+                .claim(Claim::RemoteLacks {
+                    repo: Repo::Proj,
+                    branch: "rwv-records",
+                }),
+            Step::rwv(&a(), &["push", "--repo", &docs])
+                .pushes(Remote::origin(Repo::Docs), "main")
+                .expect(Exit::Succeeds)
+                .claim(Claim::RemoteContains {
+                    repo: Repo::Docs,
+                    branch: "main",
+                    mark: "docs-dep",
+                }),
+            publishes_records(Step::rwv(&a(), &["push"]))
+                .pushes(Remote::origin(Repo::Proj), "main")
+                .expect(Exit::Succeeds)
+                .claim(Claim::PinContains {
+                    site: LockSite::remote_main(Repo::Proj),
+                    member: Repo::Docs,
+                    mark: "docs-dep",
+                }),
+        ],
+    }
+}
+
+/// dc13-push-no-lock: a member holding a commit no lock pins refuses the push,
+/// naming the verb that records it, and the lock is not written.
+pub fn dc13_push_no_lock() -> Scenario {
+    scenario(
+        "dc13: push never writes the lock",
+        vec![
+            Step::commit(&a(), Repo::App, "unpinned"),
+            Step::rwv(&a(), &["push"])
+                .expect(Exit::Fails)
+                .claim(Claim::OutputContains("local/remotes/app: pin unpinned"))
+                .claim(Claim::OutputContains("rwv lock --commit"))
+                .claim(Claim::LocalStateUnchanged(a())),
+        ],
+    )
+}
+
+/// dc22-raw-project-switch: a raw `switch main` of the project repo while the
+/// members stay on `feat-x` is no project-level refusal; each member refuses,
+/// naming `update`, which moves them with their commits kept.
+pub fn dc22_raw_project_switch() -> Scenario {
+    let per_member = |step: Step| {
+        step.expect(Exit::Fails)
+            .claim(Claim::OutputContains(
+                "local/remotes/app: alignment on branch with stray commits (feat-x)",
+            ))
+            .claim(Claim::OutputContains(
+                "local/remotes/lib: alignment on branch (feat-x)",
+            ))
+            .claim(Claim::OutputContains("rwv update"))
+            .claim(Claim::OutputLacks("projects/proj: alignment"))
+            .claim(Claim::LocalStateUnchanged(a()))
+    };
+    let mut steps = feature_branch_in_primary();
+    steps.extend([
+        Step::git(&a(), Repo::Proj, &["switch", "main"]),
+        per_member(Step::rwv(&a(), &["lock"])),
+        per_member(Step::rwv(&a(), &["push"])),
+        Step::rwv(&a(), &["update"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OnBranch {
+                at: a(),
+                repo: Repo::App,
+                branch: "main",
+            })
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::App,
+                rev: "feat-x",
+                mark: "feat-app",
+            }),
+    ]);
+    scenario("dc22: a raw project switch", steps)
+}
+
+/// records-conflict: two machines record `feat-x` differently; A publishes, B
+/// fetches and meets the conflict alone, never publishes it, and settles it
+/// with `branch set-mode`.
+pub fn records_conflict() -> Scenario {
+    scenario(
+        "records: a conflict on the second to record",
+        vec![
+            Step::new_machine(Machine::B),
+            Step::git(&a(), Repo::Proj, &["branch", "feat-x"]),
+            Step::git(&b(), Repo::Proj, &["branch", "feat-x"]),
+            Step::rwv(
+                &a(),
+                &[
+                    "branch", "set-mode", "feat-x", "feature", "--target", "main",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::rwv(&b(), &["branch", "set-mode", "feat-x", "declared"]).expect(Exit::Succeeds),
+            publishes_records(Step::rwv(&a(), &["push", "--branch", "feat-x"]))
+                .pushes(origin_records(), "feat-x")
+                .expect(Exit::Succeeds)
+                .claim(Claim::RemoteRecordIs {
+                    branch: "feat-x",
+                    record: feat_x_record(),
+                }),
+            publishes_records(Step::rwv(&b(), &["push"]))
+                .expect(Exit::Succeeds)
+                .claim(Claim::RecordIs {
+                    machine: Machine::B,
+                    branch: "feat-x",
+                    record: Some(Record::Conflict(vec![
+                        Record::Declared,
+                        feature_onto("main", Mode::Declared),
+                    ])),
+                })
+                .claim(Claim::RemoteRecordIs {
+                    branch: "feat-x",
+                    record: feat_x_record(),
+                }),
+            Step::rwv(&b(), &["push"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::RemoteRecordIs {
+                    branch: "feat-x",
+                    record: feat_x_record(),
+                }),
+            Step::rwv(&b(), &["branch", "set-mode", "feat-x", "declared"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::RecordIs {
+                    machine: Machine::B,
+                    branch: "feat-x",
+                    record: Some(Record::Declared),
+                })
+                .claim(Claim::RecordIs {
+                    machine: Machine::A,
+                    branch: "feat-x",
+                    record: feat_x_record(),
+                }),
+        ],
+    )
+}
+
+/// records-rejected: a remote refusing the records branch withholds a
+/// feature's project branch and loses nothing, and publishes the trunk, whose
+/// record is `declared`, reporting the rejection as a fact.
+pub fn records_rejected() -> Scenario {
+    let mut steps = feature_branch_in_primary();
+    steps.extend([
+        Step::rwv(&a(), &["push"])
+            .pushes(Remote::origin(Repo::App), "feat-x")
+            .expect(Exit::Fails)
+            .claim(Claim::OutputContains(
+                "projects/proj: publish records rejected",
+            ))
+            .claim(Claim::OutputContains("projects/proj feat-x was not pushed"))
+            .claim(Claim::OutputContains("choose where it pushes"))
+            .claim(Claim::RemoteContains {
+                repo: Repo::App,
+                branch: "feat-x",
+                mark: "feat-app",
+            })
+            .claim(Claim::RemoteLacks {
+                repo: Repo::Proj,
+                branch: "feat-x",
+            })
+            .claim(Claim::RemoteRecordIs {
+                branch: "feat-x",
+                record: None,
+            }),
+        Step::git(&a(), Repo::Proj, &["switch", "main"]),
+        Step::rwv(&a(), &["update"]).expect(Exit::Succeeds),
+        Step::commit(&a(), Repo::App, "trunk-app"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&a(), &["push"])
+            .pushes(Remote::origin(Repo::App), "main")
+            .pushes(Remote::origin(Repo::Proj), "main")
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(
+                "projects/proj: publish records rejected",
+            ))
+            .claim(Claim::PinContains {
+                site: LockSite::remote_main(Repo::Proj),
+                member: Repo::App,
+                mark: "trunk-app",
+            }),
+    ]);
+    Scenario {
+        name: "records: a remote that refuses the records branch",
+        seed: Seed::default().refusing_records(Remote::origin(Repo::Proj)),
+        steps,
+    }
+}
+
+/// records-first-push: the first push creates the records branch on a remote
+/// that has none, and no other verb writes it there.
+pub fn records_first_push() -> Scenario {
+    scenario(
+        "records: only the first push creates the branch",
+        vec![
+            Step::git(&a(), Repo::Proj, &["branch", "feat-z"]),
+            Step::rwv(&a(), &["branch", "set-mode", "feat-z", "declared"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["update"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["lock", "--commit"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::RemoteLacks {
+                    repo: Repo::Proj,
+                    branch: "rwv-records",
+                }),
+            publishes_records(Step::rwv(&a(), &["push"]))
+                .expect(Exit::Succeeds)
+                .claim(Claim::RemoteRecordIs {
+                    branch: "main",
+                    record: Some(Record::Declared),
+                })
+                .claim(Claim::RemoteRecordIs {
+                    branch: "feat-z",
+                    record: None,
+                }),
+            Step::rwv(&a(), &["push"]).expect(Exit::Succeeds),
+        ],
+    )
+}
+
+/// records-drop-per-machine: A deletes `feat-y` everywhere while B holds a
+/// local `feat-y`; B keeps its record, never republishes it, and the records
+/// branch reaches a fixed point.
+pub fn records_drop_per_machine() -> Scenario {
+    scenario(
+        "records: a drop meets a branch kept on another machine",
+        vec![
+            Step::new_machine(Machine::B),
+            Step::git(&a(), Repo::Proj, &["branch", "feat-y"]),
+            Step::rwv(&a(), &["branch", "set-mode", "feat-y", "declared"]).expect(Exit::Succeeds),
+            publishes_records(Step::rwv(&a(), &["push", "--branch", "feat-y"]))
+                .pushes(Remote::origin(Repo::Proj), "feat-y")
+                .expect(Exit::Succeeds)
+                .claim(Claim::RemoteRecordIs {
+                    branch: "feat-y",
+                    record: Some(Record::Declared),
+                }),
+            Step::git(&b(), Repo::Proj, &["fetch", "origin"]),
+            Step::git(&b(), Repo::Proj, &["branch", "feat-y", "origin/feat-y"]),
+            Step::rwv(&b(), &["update"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::RecordIs {
+                    machine: Machine::B,
+                    branch: "feat-y",
+                    record: Some(Record::Declared),
+                }),
+            Step::rwv(
+                &a(),
+                &[
+                    "branch",
+                    "delete",
+                    "feat-y",
+                    "--target",
+                    "main",
+                    "--delete-remote",
+                ],
+            )
+            .deletes(Remote::origin(Repo::Proj), "feat-y")
+            .expect(Exit::Succeeds),
+            publishes_records(Step::rwv(&a(), &["push"]))
+                .expect(Exit::Succeeds)
+                .claim(Claim::RemoteRecordIs {
+                    branch: "feat-y",
+                    record: None,
+                }),
+            Step::rwv(&b(), &["push"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::RecordIs {
+                    machine: Machine::B,
+                    branch: "feat-y",
+                    record: Some(Record::Declared),
+                })
+                .claim(Claim::RemoteRecordIs {
+                    branch: "feat-y",
+                    record: None,
+                }),
+            Step::rwv(&a(), &["push"]).expect(Exit::Succeeds),
+            Step::rwv(&b(), &["push"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["push"]).expect(Exit::Succeeds),
+            Step::rwv(&b(), &["push"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::RemoteRecordIs {
+                    branch: "feat-y",
+                    record: None,
+                })
+                .claim(Claim::RecordIs {
+                    machine: Machine::B,
+                    branch: "feat-y",
+                    record: Some(Record::Declared),
+                }),
+        ],
+    )
+}
+
+/// records-offline-write: a record written with the remote unreachable stays
+/// local, nothing is dropped meanwhile, a push is refused while the remote is
+/// unconfirmed, and the next push online publishes it.
+pub fn records_offline_write() -> Scenario {
+    scenario(
+        "records: a write made offline is published by the next push",
+        vec![
+            Step::git(&a(), Repo::Proj, &["branch", "feat-w"]),
+            Step::rwv(&a(), &["branch", "set-mode", "feat-w", "declared"]).expect(Exit::Succeeds),
+            publishes_records(Step::rwv(&a(), &["push", "--branch", "feat-w"]))
+                .pushes(Remote::origin(Repo::Proj), "feat-w")
+                .expect(Exit::Succeeds),
+            Step::unreachable(origin_records()),
+            Step::git(&a(), Repo::Proj, &["branch", "-D", "feat-w"]),
+            Step::git(&a(), Repo::Proj, &["branch", "feat-z"]),
+            Step::rwv(&a(), &["branch", "set-mode", "feat-z", "declared"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::RecordIs {
+                    machine: Machine::A,
+                    branch: "feat-w",
+                    record: Some(Record::Declared),
+                })
+                .claim(Claim::RecordIs {
+                    machine: Machine::A,
+                    branch: "feat-z",
+                    record: Some(Record::Declared),
+                }),
+            Step::rwv(&a(), &["push", "--branch", "feat-z"])
+                .expect(Exit::Fails)
+                .claim(Claim::OutputContains("push-branch unconfirmed"))
+                .claim(Claim::OutputContains("rwv fetch")),
+            Step::reachable(origin_records()),
+            Step::rwv(&a(), &["push", "--branch", "feat-z"])
+                .pushes(Remote::origin(Repo::Proj), "feat-z")
+                .pushes(Remote::origin(Repo::Proj), RECORDS_BRANCH)
+                .expect(Exit::Succeeds)
+                .claim(Claim::RemoteRecordIs {
+                    branch: "feat-z",
+                    record: Some(Record::Declared),
+                }),
+        ],
+    )
+}
+
+/// records-unpushed-stay-local: two machines each hold a minted seat and an
+/// unpushed `feat-y` recorded differently; each pushes `main`, and no remote
+/// ever holds either entry.
+pub fn records_unpushed_stay_local() -> Scenario {
+    let seat = |machine: Machine| {
+        Step::rwv(
+            &Place::Primary(machine),
+            &["workweave", "create", "--project", "proj", "seat"],
+        )
+        .expect(Exit::Succeeds)
+    };
+    let nothing_unpushed_is_held = |step: Step| {
+        step.expect(Exit::Succeeds)
+            .claim(Claim::RemoteRecordIs {
+                branch: "feat-y",
+                record: None,
+            })
+            .claim(Claim::RemoteRecordIs {
+                branch: "proj--seat",
+                record: None,
+            })
+    };
+    scenario(
+        "records: unpushed branches stay on their machine",
+        vec![
+            Step::new_machine(Machine::B),
+            seat(Machine::A),
+            seat(Machine::B),
+            Step::git(&a(), Repo::Proj, &["branch", "feat-y"]),
+            Step::git(&b(), Repo::Proj, &["branch", "feat-y"]),
+            Step::rwv(
+                &a(),
+                &[
+                    "branch", "set-mode", "feat-y", "feature", "--target", "main",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::rwv(&b(), &["branch", "set-mode", "feat-y", "declared"]).expect(Exit::Succeeds),
+            nothing_unpushed_is_held(publishes_records(Step::rwv(&a(), &["push"]))).claim(
+                Claim::RemoteRecordIs {
+                    branch: "main",
+                    record: Some(Record::Declared),
+                },
+            ),
+            nothing_unpushed_is_held(Step::rwv(&b(), &["push"])),
+            nothing_unpushed_is_held(Step::rwv(&a(), &["push"])),
+            nothing_unpushed_is_held(Step::rwv(&b(), &["push"])),
+            Step::rwv(&b(), &["branch", "list"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("conflict")),
+            Step::rwv(&a(), &["branch", "list"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("conflict")),
+        ],
+    )
+}
+
+/// waiver-per-merge: a raw merge that keeps this side's lock leaves the other
+/// side's `app` commit unjoined, which `push` refuses naming the merge; a
+/// later backward re-pin by name abandons that commit, and the push then
+/// passes listing the one merge it waived.
+pub fn waiver_per_merge() -> Scenario {
+    let app = Repo::App.rel_path();
+    let mut steps = feature_branch_in_primary();
+    steps.extend([
+        Step::git(&a(), Repo::Proj, &["switch", "main"]),
+        Step::rwv(&a(), &["update"]).expect(Exit::Succeeds),
+        Step::commit(&a(), Repo::App, "main-app"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::git(&a(), Repo::Proj, &["merge", "--no-edit", "feat-x"]),
+        Step::rwv(&a(), &["push", "--repo", &app])
+            .pushes(Remote::origin(Repo::App), "main")
+            .expect(Exit::Succeeds),
+        Step::rwv(&a(), &["push"])
+            .expect(Exit::Fails)
+            .claim(Claim::OutputContains("local/remotes/app: pin unmerged"))
+            .claim(Claim::OutputContains("merge --no-ff"))
+            .claim(Claim::OutputLacks("pin waived"))
+            .claim(Claim::RemoteLacks {
+                repo: Repo::Proj,
+                branch: "feat-x",
+            }),
+        Step::rwv(&a(), &["member", "pin", &app, "main~1", "--commit"])
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::App]),
+        publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::origin(Repo::Proj), "main")
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("local/remotes/app: pin waived")),
+    ]);
+    scenario("waiver per merge", steps)
+}
+
+/// records-push-race: two machines publish records at once; the loser's
+/// compare-and-swap on the remote loses, it fetches, merges and retries, and
+/// no entry is lost.
+pub fn records_push_race() -> Vec<Step> {
+    vec![
+        Step::new_machine(Machine::B),
+        Step::git(&a(), Repo::Proj, &["branch", "feat-a"]),
+        Step::git(&b(), Repo::Proj, &["branch", "feat-b"]),
+        Step::rwv(&a(), &["branch", "set-mode", "feat-a", "declared"]).expect(Exit::Succeeds),
+        Step::rwv(&b(), &["branch", "set-mode", "feat-b", "declared"]).expect(Exit::Succeeds),
+        Step::rwv_paused(
+            &a(),
+            &["push", "--branch", "feat-a"],
+            "records-publish",
+            "loser",
+        ),
+        publishes_records(Step::rwv(&b(), &["push", "--branch", "feat-b"]))
+            .pushes(Remote::origin(Repo::Proj), "feat-b")
+            .expect(Exit::Succeeds)
+            .claim(Claim::RemoteRecordIs {
+                branch: "feat-a",
+                record: None,
+            }),
+        publishes_records(Step::release("loser"))
+            .pushes(Remote::origin(Repo::Proj), "feat-a")
+            .expect(Exit::Succeeds)
+            .claim(Claim::RemoteRecordIs {
+                branch: "feat-a",
+                record: Some(Record::Declared),
+            })
+            .claim(Claim::RemoteRecordIs {
+                branch: "feat-b",
+                record: Some(Record::Declared),
+            }),
+    ]
 }

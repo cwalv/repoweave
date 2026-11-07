@@ -10,9 +10,6 @@ use crate::sandbox::{Machine, Place, Remote, RemoteKind, Repo, Sandbox, Seed, Un
 /// recorded and the scenario stops there: nothing stands in for it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MissingVerb {
-    /// Push a workweave's member and project branches somewhere others can
-    /// review them, and push again after an amend.
-    Publish,
     /// Start a branch across the project and its members, or move a weave
     /// between such branches.
     WeaveBranch,
@@ -27,7 +24,6 @@ pub enum MissingVerb {
 impl MissingVerb {
     pub fn describe(self) -> &'static str {
         match self {
-            MissingVerb::Publish => "publish a workweave's branches for review",
             MissingVerb::WeaveBranch => "create or switch a branch across the whole weave",
             MissingVerb::Rename => "rename a workweave's branches",
             MissingVerb::Declare => "change a member's declared branch",
@@ -225,6 +221,17 @@ pub enum Claim {
         machine: Machine,
         branch: &'static str,
         record: Option<Record>,
+    },
+    /// The records branch of `proj`'s origin holds exactly this entry for
+    /// `branch`: none when it holds none.
+    RemoteRecordIs {
+        branch: &'static str,
+        record: Option<Record>,
+    },
+    /// The origin of `repo` has no branch `branch`.
+    RemoteLacks {
+        repo: Repo,
+        branch: &'static str,
     },
     /// The checkout of `repo` at `at` is at the commit the lock of the project
     /// checked out there pins it at.
@@ -1147,6 +1154,31 @@ impl Run<'_> {
                     Err(format!(
                         "machine {machine:?} records {branch} as {held:?}, not {record:?}"
                     ))
+                }
+            }
+            Claim::RemoteRecordIs { branch, record } => {
+                let origin = sb.remote_store(Remote::origin(Repo::Proj));
+                let held = crate::invariants::read_records(sb, &origin)
+                    .and_then(|records| records.get(*branch).cloned());
+                if held == *record {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "the origin records {branch} as {held:?}, not {record:?}"
+                    ))
+                }
+            }
+            Claim::RemoteLacks { repo, branch } => {
+                let origin = sb.remote_store(Remote::origin(*repo));
+                let refname = format!("refs/heads/{branch}");
+                if sb
+                    .git(&origin, &["rev-parse", "--verify", "--quiet", &refname])
+                    .status
+                    .success()
+                {
+                    Err(format!("the origin of {} has {branch}", repo.name()))
+                } else {
+                    Ok(())
                 }
             }
             Claim::AtPin { at, repo } => {

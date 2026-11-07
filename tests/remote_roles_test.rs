@@ -521,16 +521,28 @@ fn a_gone_upstream_is_marked_only_while_the_branch_holds_unpushed_commits() {
 fn push_leaves_a_gone_branch_unpublished_unless_the_repo_is_named() {
     let weave = Weave::new();
     feature_whose_upstream_is_gone_with_nothing_unpushed(&weave);
+    let project = weave.project();
+    common::git_in(&project, &["switch", "-c", "feature"]);
+    common::record_feature(&project, "feature", "main");
     let head = commit(&weave.member(), "mine alone");
     common::fixture_lock(
-        &weave.project(),
+        &project,
         &[(MEMBER, &common::file_url(weave.bare()), &head)],
     );
-    common::git_in(weave.project(), &["add", "rwv.lock"]);
-    common::commit_staged(weave.project(), "pin the member's commit");
+    common::git_in(&project, &["add", "rwv.lock"]);
+    common::commit_staged(&project, "pin the member's commit");
 
     let skipped = weave.rwv(&["push"]);
-    assert!(skipped.status.success(), "{}", text(&skipped.stderr));
+    assert!(
+        !skipped.status.success(),
+        "the project branch waits for the pin the skipped branch holds"
+    );
+    assert!(
+        text(&skipped.stderr).contains("local/org/a: push-branch gone")
+            && text(&skipped.stderr).contains("local/org/a: publish withheld"),
+        "{}",
+        text(&skipped.stderr)
+    );
     assert!(
         ref_of(weave.bare(), "refs/heads/feature").is_none(),
         "the branch the remote deleted stayed deleted"

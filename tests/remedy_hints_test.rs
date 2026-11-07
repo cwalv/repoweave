@@ -157,39 +157,10 @@ impl Weave {
     }
 }
 
-/// `git push -u origin main` publishes the branch and leaves `origin/HEAD`
-/// unset, so the hint names only `git remote set-head`, which is what works.
-#[test]
-fn no_remote_default_branch_names_only_the_remedy_that_works() {
-    let weave = Weave::new(&["web"]);
-    let report = weave.refused(&["push"]);
-    assert!(
-        report.contains("rwv explain no-remote-default-branch"),
-        "fixture: the push stops on the unset origin/HEAD:\n{report}"
-    );
-    assert!(
-        report.contains("git fetch origin && git remote set-head origin -a"),
-        "the hint names set-head:\n{report}"
-    );
-    assert!(
-        !report.contains("push once"),
-        "a push with an explicit branch is what left origin/HEAD unset; the hint \
-         must not offer it:\n{report}"
-    );
-
-    common::git_in(weave.project(), &["fetch", "-q", "origin"]);
-    weave.set_project_head();
-    let (_, report) = rwv(&weave.ws, &["push"]);
-    assert!(
-        !report.contains("no-remote-default-branch"),
-        "following the hint gets push past the gate:\n{report}"
-    );
-}
-
 /// A member holding a commit its lock does not pin: push judges it `pin
 /// unpinned` and names `rwv lock --commit`, which records the commit. Moving
 /// the branch back without detaching it also gets push through, and a
-/// detached HEAD at the pin is what push refuses next.
+/// detached HEAD at the pin is what push refuses next (`alignment`).
 #[test]
 fn an_unpinned_commit_names_the_remedy_push_accepts() {
     let weave = Weave::new(&["web"]);
@@ -212,13 +183,9 @@ fn an_unpinned_commit_names_the_remedy_push_accepts() {
     common::git_in(&member, &["checkout", "-q", &locked]);
     let report = weave.refused(&["push"]);
     assert!(
-        !report.contains("pin unpinned"),
-        "fixture: the checkout agrees with the lock:\n{report}"
-    );
-    assert!(
-        report.contains("github/acme/web: detached HEAD")
-            && report.contains("rwv explain unpushable-repo-branch"),
-        "and push refuses the detached HEAD it leaves:\n{report}"
+        report.contains("github/acme/web: alignment detached")
+            && report.contains("rwv explain alignment"),
+        "and push refuses the detached HEAD it leaves, as an alignment state:\n{report}"
     );
     common::git_in(&member, &["checkout", "-q", "main"]);
 
@@ -226,7 +193,7 @@ fn an_unpinned_commit_names_the_remedy_push_accepts() {
     common::git_in(&member, &["reset", "-q", "--keep", &locked]);
     let report = weave.ok(&["push"]);
     assert!(
-        !report.contains("pin unpinned") && !report.contains("unpushable-repo-branch"),
+        !report.contains("pin unpinned") && !report.contains("alignment"),
         "the branch moved back without detaching gets push through:\n{report}"
     );
     assert!(

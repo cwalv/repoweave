@@ -535,6 +535,27 @@ pub fn record_feature(project_dir: &std::path::Path, branch: &str, target: &str)
         .unwrap_or_else(|e| panic!("cannot record {branch}: {e:#}"));
 }
 
+/// An `update` hook on the bare repo `bare` that refuses a push of `refname`
+/// and accepts every other ref, so a push that carries both lands the rest.
+/// How a test makes one remote's push fail while it stays reachable.
+pub fn refuse_pushes_to(bare: &std::path::Path, refname: &str) {
+    let hooks = bare.join("hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    let hook = hooks.join("update");
+    std::fs::write(
+        &hook,
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = {refname} ]; then\n    echo refused >&2\n    exit 1\nfi\nexit 0\n"
+        ),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+}
+
 /// Initialize a bare repo and seed it with one commit on `main` so it can
 /// be cloned by `--origin` consumers and act as a push target.
 pub fn init_bare_repo_with_commit(bare: &std::path::Path) {

@@ -267,11 +267,12 @@ fn push_json_emits_envelope_with_schema_and_outcomes() {
         .and_then(Value::as_array)
         .expect("outcomes must be an array");
 
-    // Should have 2 manifest repo outcomes + 1 project-repo outcome.
+    // Should have 2 manifest repo outcomes, the record's, and the project-repo
+    // outcome.
     assert_eq!(
         outcomes.len(),
-        3,
-        "expected 2 manifest + 1 project-repo: {stdout}"
+        4,
+        "expected 2 manifest + the record + 1 project-repo: {stdout}"
     );
 
     for o in &outcomes[..2] {
@@ -332,7 +333,7 @@ fn push_json_project_repo_distinguishable_from_manifest_repos() {
         .iter()
         .filter(|o| {
             let kind = o.get("kind").and_then(Value::as_str).unwrap_or("");
-            !kind.starts_with("project-repo-")
+            !kind.starts_with("project-repo-") && !kind.starts_with("records-")
         })
         .collect();
     let project_records: Vec<&Value> = outcomes
@@ -409,8 +410,8 @@ fn push_json_is_one_envelope_whatever_the_worker_count() {
     );
     assert_eq!(
         serial.1.len(),
-        PUSH_REPO_PATHS.len() + 1,
-        "the project-repo record comes last"
+        PUSH_REPO_PATHS.len() + 2,
+        "the record's comes next to last and the project-repo record last"
     );
     assert_eq!(shape_under("4"), serial);
 }

@@ -271,20 +271,82 @@ macro_rules! pending_on {
 }
 
 pending_on!(
-    cross_repo_pr => Publish,
-    cross_repo_pr_fork => Publish,
-    resume_on_machine_b => Publish,
+    resume_on_machine_b => WeaveBranch,
     feature_in_primary_while_main_moves => WeaveBranch,
     workweave_without_b_then_pr => Rename,
-    workweave_without_b_given_up_after_publishing => Publish,
+    workweave_without_b_given_up_after_publishing => Rename,
     feature_off_stable => WeaveBranch,
     review_colleague_fix => Review,
     stable_end_to_end => WeaveBranch,
     main_change_into_stable => WeaveBranch,
     nested_workweaves => WeaveBranch,
     cherry_pick_onto_stable => WeaveBranch,
-    pr_closed_unmerged => Publish,
 );
+
+#[test]
+fn a_cross_repo_pr_publishes_members_record_and_project_and_an_amend_needs_a_named_lease() {
+    runner::run(scenarios::cross_repo_pr()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_cross_repo_pr_through_a_fork_remote_is_judged_by_the_push_target() {
+    runner::run(scenarios::cross_repo_pr_fork()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_pr_closed_unmerged_reports_its_gone_branches_and_publishes_none() {
+    runner::run(scenarios::pr_closed_unmerged()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_dependency_member_is_pushed_only_when_named_and_the_gate_reads_the_url_remote() {
+    runner::run(scenarios::dc03_roles_bound_push()).assert_fully_decided_green();
+}
+
+#[test]
+fn push_refuses_an_unpinned_member_commit_and_never_writes_the_lock() {
+    runner::run(scenarios::dc13_push_no_lock()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_raw_project_switch_refuses_each_member_and_never_the_project() {
+    runner::run(scenarios::dc22_raw_project_switch()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_records_conflict_stays_on_the_machine_that_met_it_and_is_never_published() {
+    runner::run(scenarios::records_conflict()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_remote_refusing_the_records_branch_withholds_a_feature_and_publishes_the_trunk() {
+    runner::run(scenarios::records_rejected()).assert_fully_decided_green();
+}
+
+#[test]
+fn only_the_first_push_creates_the_records_branch_on_a_remote() {
+    runner::run(scenarios::records_first_push()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_drop_meeting_a_branch_kept_elsewhere_reaches_a_fixed_point() {
+    runner::run(scenarios::records_drop_per_machine()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_record_written_offline_is_published_by_the_next_push_and_nothing_drops_meanwhile() {
+    runner::run(scenarios::records_offline_write()).assert_fully_decided_green();
+}
+
+#[test]
+fn unpushed_branches_and_minted_seats_never_reach_a_remote() {
+    runner::run(scenarios::records_unpushed_stay_local()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_waiver_covers_the_merge_it_re_pins_after_and_is_listed() {
+    runner::run(scenarios::waiver_per_merge()).assert_fully_decided_green();
+}
 
 fn a() -> Place {
     Place::Primary(Machine::A)
@@ -1441,6 +1503,14 @@ fn landed() -> Claim {
         repo: Repo::App,
         rev: "main",
         mark: "landing-app",
+    }
+}
+
+holding_rwv! {
+    /// Two machines publish records at once; the loser's push to the remote
+    /// loses, so it fetches, merges and retries, and no entry is lost.
+    fn a_records_push_that_loses_the_race_fetches_merges_and_retries() {
+        bad_steps("records push race", scenarios::records_push_race()).assert_fully_decided_green();
     }
 }
 

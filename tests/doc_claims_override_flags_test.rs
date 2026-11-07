@@ -22,10 +22,9 @@
 //!     waives — `workweave_topology_parent_test.rs::delete_waivers_do_not_bypass_op_mutex`.
 //!
 //! `--allow-non-empty-dir` (fetch) only had unit coverage of the underlying
-//! function; the tests here exercise it through the CLI. `push --force` is
-//! the deliberate non-waiver in the family (it is git's force-push, not a
-//! precondition override) — the tests here pin that it actually force-pushes
-//! and that it does not widen into the unrelated from-workweave refusal.
+//! function; the tests here exercise it through the CLI. `push --overwrite
+//! <repo>` is the deliberate narrow one in the family: it replaces one repo's
+//! diverged push branch and never a branch some weave branch declares.
 
 use assert_cmd::Command;
 use std::path::Path;
@@ -464,11 +463,11 @@ fn write_lock_at(fixture: &PushFixture, sha: &str) {
     common::git_in(&fixture.project_dir, &["commit", "-m", "relock"]);
 }
 
-/// `push --force` is not a precondition waiver like the other four flags —
-/// it is git's force-push. Pin what it actually claims to do: overwrite a
-/// diverged remote that a plain push is rejected by git for touching.
+/// `push --overwrite <repo>` replaces a push branch only for a branch nothing
+/// declares: a diverged declared branch refuses, naming the flag's limit, and
+/// the remote keeps what it holds.
 #[test]
-fn push_force_actually_force_pushes() {
+fn push_overwrite_never_rewrites_a_declared_branch() {
     let fixture = build_push_fixture();
 
     // Advance and push normally: bare moves to commit B.
@@ -492,7 +491,7 @@ fn push_force_actually_force_pushes() {
     let sha_c = head_sha(&fixture.manifest_local);
     write_lock_at(&fixture, &sha_c);
 
-    // A plain push is a non-fast-forward: git rejects it, bare stays at B.
+    // A plain push refuses on the diverged push branch; bare stays at B.
     rwv()
         .args(["push"])
         .current_dir(&fixture.workspace)
@@ -500,46 +499,25 @@ fn push_force_actually_force_pushes() {
         .failure();
     assert_eq!(
         bare_main_sha(&fixture.manifest_bare),
-        Some(sha_b),
+        Some(sha_b.clone()),
         "a plain push must not move the diverged remote"
     );
 
-    // --force pushes it through: bare now holds the rewritten history.
-    rwv()
-        .args(["push", "--force"])
-        .current_dir(&fixture.workspace)
-        .assert()
-        .success();
-    assert_eq!(
-        bare_main_sha(&fixture.manifest_bare),
-        Some(sha_c),
-        "--force must overwrite the remote with the diverged local history"
-    );
-}
-
-/// `--force` does not widen into refusals it was never meant to touch: the
-/// from-workweave refusal has no waiver at all, with or without `--force`.
-#[test]
-fn push_force_does_not_waive_workweave_refusal() {
-    let fixture = build_push_fixture();
-
-    let workweave_dir = fixture.workspace.parent().unwrap().join("alpha--feat");
-    std::fs::create_dir_all(&workweave_dir).unwrap();
-    let marker = common::workweave_marker(&fixture.workspace, "alpha", &fixture.workspace);
-    std::fs::write(workweave_dir.join(".rwv-workweave"), marker).unwrap();
-
+    // `main` is the branch the project declares: `--overwrite` names the repo
+    // and still refuses, and the remote keeps B.
     let output = rwv()
-        .args(["push", "--force"])
-        .current_dir(&workweave_dir)
+        .args(["push", "--overwrite", "local/org/repo"])
+        .current_dir(&fixture.workspace)
         .output()
         .expect("rwv push should run");
     assert!(
         !output.status.success(),
-        "push --force from a workweave must still refuse"
+        "a declared branch is not rewritten"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("workweave"),
-        "refusal must still name the workweave hazard; got: {stderr}"
+        stderr.contains("a branch some weave branch declares"),
+        "the refusal names why; got: {stderr}"
     );
+    assert_eq!(bare_main_sha(&fixture.manifest_bare), Some(sha_b));
 }

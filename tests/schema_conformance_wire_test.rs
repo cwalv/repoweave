@@ -82,6 +82,10 @@ impl Weave {
     fn member_origin(&self) -> PathBuf {
         self.origin.join("server.git")
     }
+
+    fn project_origin(&self) -> PathBuf {
+        self.origin.join("web-app.git")
+    }
 }
 
 fn weave() -> Weave {
@@ -574,21 +578,9 @@ fn update_remote_json_wire_output_conforms_on_failure() {
 fn push_json_wire_output_conforms_on_manifest_failure() {
     let weave = weave();
 
-    // Advance the bare remote past local from a scratch clone, so pushing
-    // the (also independently advanced) local tip is a non-fast-forward.
-    let other = weave.parent.join("other");
-    common::git_in(
-        &weave.parent,
-        &[
-            "clone",
-            &weave.member_origin().to_string_lossy(),
-            &other.to_string_lossy(),
-        ],
-    );
-    std::fs::write(other.join("FOREIGN.md"), "foreign\n").unwrap();
-    common::git_in(&other, &["add", "."]);
-    common::git_in(&other, &["commit", "-m", "foreign advance"]);
-    common::git_in(&other, &["push", "origin", "main"]);
+    // The member's remote is reachable and refuses the branch the push
+    // carries.
+    common::refuse_pushes_to(&weave.member_origin(), "refs/heads/main");
 
     std::fs::write(weave.member().join("LOCAL.md"), "local\n").unwrap();
     common::git_in(weave.member(), &["add", "."]);
@@ -642,11 +634,7 @@ fn push_json_wire_output_conforms_on_project_failure() {
 
     // Sabotage the project repo's remote so the manifest push succeeds and
     // only the project-repo push fails.
-    let bad_url = weave.parent.join("no-such-project.git");
-    common::git_in(
-        weave.project(),
-        &["remote", "set-url", "origin", &bad_url.to_string_lossy()],
-    );
+    common::refuse_pushes_to(&weave.project_origin(), "refs/heads/main");
 
     let doc = emit_after_failure(&weave.primary, &["push", "--json"]);
     assert_conforms("push", &doc, "outcomes");
@@ -684,6 +672,39 @@ fn update_remote_json_wire_output_conforms_under_two_workers() {
     let weave = weave();
     let doc = emit(&weave.primary, &["update", "--remote", "--json", "-j", "2"]);
     assert_conforms("update-remote", &doc, "repos");
+}
+
+#[test]
+fn push_json_wire_output_conforms_when_the_record_is_published_and_when_it_is_rejected() {
+    let weave = weave();
+    let doc = emit(&weave.primary, &["push", "--json"]);
+    assert_conforms("push", &doc, "outcomes");
+    assert!(
+        doc["outcomes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|o| o["kind"] == "records-published"),
+        "expected the record's publication: {doc:#}"
+    );
+
+    let refusing = weave_with_refused_records();
+    let doc = emit(&refusing.primary, &["push", "--json"]);
+    assert_conforms("push", &doc, "outcomes");
+    assert!(
+        doc["outcomes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|o| o["kind"] == "records-rejected" && o["withheld"] == false),
+        "the default branch's rejected record is a fact: {doc:#}"
+    );
+}
+
+fn weave_with_refused_records() -> Weave {
+    let weave = weave();
+    common::refuse_pushes_to(&weave.project_origin(), "refs/heads/rwv-records");
+    weave
 }
 
 #[test]

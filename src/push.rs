@@ -20,7 +20,7 @@ use crate::refusal::RefusalKind;
 use crate::selector::RepoFilter;
 use crate::vcs::{
     project_vcs, vcs_for, BackupSource, HeadAttachment, LocalRefName, PublishRef, RawRefName,
-    RemoteHandle, Replace, Vcs,
+    RemoteHandle, Replace, ResolvedRevisionId, Vcs,
 };
 use crate::workspace::{project_dir, project_rel_path, WorkspaceContext};
 use anyhow::Context;
@@ -777,12 +777,17 @@ fn judge(
     }
     match (result, refusals.is_empty()) {
         (Err(e), true) => Err((reported, e)),
-        (_, false) => Err((
-            reported,
-            refusals
-                .into_result()
-                .expect_err("a report holding a line refuses"),
-        )),
+        (_, false) => {
+            if request.output == OutputMode::Text && !reported.is_empty() {
+                eprint!("{}", reported.render("push"));
+            }
+            Err((
+                reported,
+                refusals
+                    .into_result()
+                    .expect_err("a report holding a line refuses"),
+            ))
+        }
         (Ok(mut plan), true) => {
             if request.output == OutputMode::Text && !reported.is_empty() {
                 eprint!("{}", reported.render("push"));
@@ -938,7 +943,10 @@ fn judge_member(
             failures.push(format!("{path}: branch {branch} does not exist"));
             return Ok(());
         }
-        None => pin.clone(),
+        None => {
+            plan.state_skipped.push(path.clone());
+            return Ok(());
+        }
     };
     let held = live.get(path).map(Vec::as_slice).unwrap_or_default();
     let standing = match crate::pins::standing(vcs, &member.dir, &head, &pin, held) {
@@ -985,13 +993,29 @@ fn judge_member(
                         .find(|copy| &copy.remote == target)
                 })
                 .map(|copy| copy.tip);
-            match remote_tip.and_then(|tip| request.overwrite.lease(&operand, tip)) {
-                Some(lease) => Replace::Leased(lease),
-                None => {
-                    refusals.extend(judged);
-                    return Ok(());
-                }
+            let Some(lease) = remote_tip
+                .clone()
+                .and_then(|tip| request.overwrite.lease(&operand, tip))
+            else {
+                refusals.extend(judged);
+                return Ok(());
+            };
+            let stranded = overwrite_strands_pins(
+                pushed,
+                member,
+                &branch,
+                target
+                    .as_ref()
+                    .expect("a diverged branch has a push target"),
+                lease.expected(),
+                &head,
+                live,
+            )?;
+            if let Some(stranded) = stranded {
+                refusals.add(stranded);
+                return Ok(());
             }
+            Replace::Leased(lease)
         }
         Standing::Behind | Standing::Diverged { .. } => {
             reported.extend(judged);
@@ -1027,6 +1051,66 @@ fn judge_member(
         replace,
     });
     Ok(())
+}
+
+/// The line refusing an overwrite of `branch`'s push branch while a live lock
+/// of another weave branch pins a commit only the tip being replaced reaches:
+/// replacing it would leave that pin in no remote-tracking branch. The locks of
+/// the branch being pushed are replaced by the push and do not count.
+fn overwrite_strands_pins(
+    pushed: &Pushed,
+    member: &Member,
+    branch: &RawRefName,
+    remote: &RemoteHandle,
+    replaced: &ResolvedRevisionId,
+    replacing: &ResolvedRevisionId,
+    live: &BTreeMap<RepoPath, Vec<crate::pins::LivePin>>,
+) -> anyhow::Result<Option<crate::diagnosis::Judged>> {
+    let vcs = member.vcs.as_ref();
+    let Some(held) = live.get(&member.path) else {
+        return Ok(None);
+    };
+    let own = |pin: &crate::pins::LivePin| {
+        pin.project == pushed.project
+            && (pin.branch == pushed.branch.as_str()
+                || pin.branch.ends_with(&format!("/{}", pushed.branch)))
+    };
+    let replaced_name = format!("{remote}/{branch}");
+    let others: Vec<ResolvedRevisionId> = vcs
+        .branch_tips(&member.dir)?
+        .into_iter()
+        .filter(|tip| tip.label != branch.as_str() && tip.label != replaced_name)
+        .map(|tip| tip.tip)
+        .collect();
+    let mut listing: Vec<String> = Vec::new();
+    for pin in held.iter().filter(|pin| !own(pin)) {
+        let commit = ResolvedRevisionId::from(pin.commit.clone());
+        let reached = |tip: &ResolvedRevisionId| vcs.is_ancestor(&member.dir, &commit, tip);
+        if reached(replaced)?
+            && !reached(replacing)?
+            && !others.iter().any(|t| matches!(reached(t), Ok(true)))
+        {
+            listing.push(format!(
+                "{} is pinned by {}, and only {replaced_name} reaches it",
+                pin.commit.short(),
+                pin.held_by
+            ));
+        }
+    }
+    if listing.is_empty() {
+        return Ok(None);
+    }
+    listing.sort();
+    listing.dedup();
+    Ok(Some(
+        State::PinWouldBeUnreachable
+            .of(&member.path)
+            .member()
+            .checkout(&member.dir)
+            .bind("<m>", member.path.as_str())
+            .listing(listing)
+            .judge(vcs),
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1093,7 +1177,11 @@ fn judge_project(
             false
         }
         Standing::Even => false,
-        Standing::Ahead | Standing::Unpublished | Standing::Gone { .. } => true,
+        Standing::Gone { .. } => {
+            reported.extend(judged);
+            request.filter.names_text(&label)
+        }
+        Standing::Ahead | Standing::Unpublished => true,
     };
     let target = target.expect("a project branch with no push target was refused");
 
@@ -1364,13 +1452,15 @@ fn publish(
         return Ok(());
     };
 
-    let mut gate = Report::default();
-    gate_reachability(pushed, members, pvcs, fetched, &mut gate);
-    if let Err(refusal) = gate.into_result() {
-        if output.is_json() {
-            print_envelope(json_outcomes, &refusal, reported, ctx);
+    if project_plan.push_branch {
+        let mut gate = Report::default();
+        gate_reachability(pushed, members, pvcs, fetched, &mut gate);
+        if let Err(refusal) = gate.into_result() {
+            if output.is_json() {
+                print_envelope(json_outcomes, &refusal, reported, ctx);
+            }
+            return Err(refusal);
         }
-        return Err(refusal);
     }
 
     let project_path = project_label(&pushed.project);
@@ -1463,6 +1553,9 @@ fn publish(
             &publish_ref,
             &project_plan.replace,
         );
+        let result = result.and_then(|()| {
+            give_upstream(pvcs, &pushed.project_dir, &pushed.raw, &project_plan.target)
+        });
         match &result {
             Ok(()) => json_outcomes.push(PushOutcomeOutput::ProjectRepoPushed {
                 path: project_path,
@@ -1655,12 +1748,42 @@ fn push_one(
         }
     }
     match vcs.push_ref(repo_dir, &item.target, &item.publish_ref, &item.replace) {
-        Ok(()) => PushOutcome::Pushed,
+        Ok(()) => {
+            let branch = RawRefName::new(item.branch.clone());
+            match give_upstream(vcs, repo_dir, &branch, &item.target) {
+                Ok(()) => PushOutcome::Pushed,
+                Err(e) => PushOutcome::Failed(format!(
+                    "{}: pushed, but could not record the upstream: {e:#}",
+                    item.repo_path.as_str()
+                )),
+            }
+        }
         Err(e) => PushOutcome::Failed(format!(
             "{}: git push failed: {e:#}",
             item.repo_path.as_str()
         )),
     }
+}
+
+/// The pushed branch takes in from its push branch when it takes in from
+/// nothing yet; one that already has an upstream keeps it.
+fn give_upstream(
+    vcs: &dyn Vcs,
+    repo: &Path,
+    branch: &RawRefName,
+    target: &RemoteHandle,
+) -> Result<(), crate::vcs::VcsError> {
+    if vcs.upstream_of(repo, branch)?.is_some() {
+        return Ok(());
+    }
+    vcs.set_upstream(
+        repo,
+        branch,
+        &crate::vcs::Upstream {
+            remote: target.clone(),
+            branch: branch.clone(),
+        },
+    )
 }
 
 /// Push publishes the project repo's last commit but plans from `rwv.toml`

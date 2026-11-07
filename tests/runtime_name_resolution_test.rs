@@ -245,35 +245,6 @@ fn drifted_basename_mints_the_recorded_name() {
 // Arm 2 — a marker-bearing directory no record names
 // ---------------------------------------------------------------------------
 
-/// `rwv push` refuses from every workweave, so what an unregistered one
-/// changes is how the refusal addresses it: by directory, since there is no
-/// recorded name to quote.
-#[test]
-fn unregistered_workweave_is_addressed_by_directory_in_push_refusal() {
-    let tmp = common::tempdir().unwrap();
-    let ws = make_workspace(tmp.path());
-    let dir = make_registered_workweave(&ws);
-    deregister(&ws, "feat");
-
-    let out = rwv().args(["push"]).current_dir(&dir).output().unwrap();
-    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-    assert!(!out.status.success(), "push must refuse: {stderr}");
-    // The operator spelling, because a refusal is read by a person who will
-    // paste the path back into their own shell — the canonicalized form this
-    // host holds is not that on every host.
-    assert!(
-        stderr.contains(&format!(
-            "workweave at {}",
-            repoweave::path_spelling::resolve(&dir).unwrap().display()
-        )),
-        "the refusal must address the workweave by directory: {stderr}"
-    );
-    assert!(
-        !stderr.contains(r"\\?\"),
-        "an internal spelling reached a refusal: {stderr}"
-    );
-}
-
 /// A verb that acts on the workweave's identity refuses, naming the state and
 /// routing to the condition. The repairs are the entry's to carry: which one
 /// applies turns on where the directory sits, and a message that cannot

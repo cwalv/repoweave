@@ -5,7 +5,6 @@
 //! whose subcommand it is, built from the verbs the CLI has now. A spelling
 //! that exists only because an earlier release had it is answered as any
 //! unknown spelling is: nothing here keeps a table of old-to-new names.
-//! `push --force` is a real flag until `--overwrite` replaces it.
 
 mod common;
 use common::rwv;
@@ -85,15 +84,14 @@ fn the_retired_set_container_is_an_unrecognized_subcommand() {
     assert!(!stderr.contains("has been"), "{stderr}");
 }
 
-/// `push --force` parses: it is git's force-push, which `--overwrite <repo>`
-/// replaces in a later release. Outside a workspace it fails past parsing, at
-/// workspace resolution, and says nothing of an unknown or inapplicable flag.
+/// `push --force` gets the one generic refusal: rwv has no blanket force, and
+/// `--overwrite <repo>` is the flag that names the loss it consents to.
 #[test]
-fn push_force_is_still_a_flag() {
+fn push_force_gets_the_generic_refusal() {
     let (code, stderr) = run(&["push", "--force", "--dry-run"]);
     assert_eq!(code, Some(1), "{stderr}");
     assert!(
-        !stderr.contains("unexpected argument") && !stderr.contains("no blanket force"),
+        stderr.contains("no blanket force") && stderr.contains("`--force` is not a flag"),
         "{stderr}"
     );
 }

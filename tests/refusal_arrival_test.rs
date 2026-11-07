@@ -113,18 +113,19 @@ fn owner_record_json(ws: &Path) -> String {
 // Inline refusal
 // ---------------------------------------------------------------------------
 
-/// `rwv push` from a workweave: the kind is attached at the `bail!` itself.
+/// `rwv push --overwrite` naming a repo the push does not publish: the kind is
+/// attached at the `bail!` itself.
 #[test]
 fn an_inline_refusal_routes_to_its_token() {
     let tmp = common::tempdir().unwrap();
-    let (_primary, workweave) = primary_and_workweave(tmp.path());
+    let (primary, _workweave) = primary_and_workweave(tmp.path());
 
-    let stderr = refusal_stderr(&["push"], &workweave);
+    let stderr = refusal_stderr(&["push", "--overwrite", "github/acme/nothing"], &primary);
     assert!(
-        stderr.contains("refusing to push from workweave"),
-        "precondition: this is the push-from-workweave refusal:\n{stderr}"
+        stderr.contains("names no member this push publishes"),
+        "precondition: this is the overwrite refusal:\n{stderr}"
     );
-    assert_routes_to(&stderr, "push-from-workweave");
+    assert_routes_to(&stderr, "inapplicable-flag");
 }
 
 // ---------------------------------------------------------------------------
@@ -911,11 +912,7 @@ fn a_rejected_member_push_routes_to_publish() {
         "{}",
         String::from_utf8_lossy(&lock.stderr)
     );
-    let gone = ws._tmp.path().join("no-such-remote.git");
-    common::git_in(
-        &member,
-        &["remote", "set-url", "origin", &gone.to_string_lossy()],
-    );
+    common::refuse_pushes_to(&ws.manifest_bares[0].1, "refs/heads/main");
 
     let stderr = refusal_stderr(&["push"], &ws.workspace);
     assert!(
