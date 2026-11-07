@@ -219,11 +219,14 @@ pub enum Commands {
         #[arg(long)]
         project: Option<String>,
     },
-    /// Snapshot repo versions (pure git SHA snapshot — no integration hooks fire). Run `rwv materialize` after lock changes the workspace membership to refresh node_modules / .venv / etc.
+    /// Record where each member's checkout is as its pin, moving a pin forward only: a member with no pin keeps none, and one behind or diverged from its pin is refused unless `--repo` names it. No integration hooks fire; run `rwv materialize` after lock changes the workspace membership to refresh node_modules / .venv / etc.
     Lock {
         /// Allow locking repos with uncommitted changes
         #[arg(long)]
         dirty: bool,
+        /// Record only the repos matching this selector, and let one of them move its pin backward. Bare strings match exactly; `re:<pat>` matches as regex; `glob:<pat>` matches as glob. Repeat for union.
+        #[arg(long = "repo", value_name = "REPO")]
+        repos: Vec<String>,
         /// Commit rwv.lock after writing it, together with rwv.toml when it has uncommitted changes
         #[arg(long)]
         commit: bool,
@@ -662,6 +665,19 @@ pub enum MemberAction {
         /// Skip integration install hooks (e.g., `npm install`, `uv sync`); `rwv materialize` runs them later
         #[arg(long)]
         no_materialize: bool,
+    },
+    /// Pin a member at a commit of your choosing, forward or backward, and align it to the pin
+    Pin {
+        /// Path of the repo, as `rwv.toml` lists it
+        repo: String,
+        /// The commit to pin: a commit id, or a tag or branch name that resolves to one here. Where the member follows a declared branch, the branch or its upstream must reach it
+        rev: String,
+        /// Commit `rwv.lock` after writing it, together with `rwv.toml` when it has uncommitted changes
+        #[arg(long)]
+        commit: bool,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
     },
     /// Say whether new checkouts of a repo populate its submodules
     SetRecurseSubmodules {

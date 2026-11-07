@@ -7,7 +7,7 @@
 //! in every project of the weave, not only the one the verb runs in.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::Context;
 use schemars::JsonSchema;
@@ -15,13 +15,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::add_remove::find_project;
 use crate::diagnosis::State;
-use crate::manifest::{LockFile, Manifest, ProjectName, RepoOperand, RepoPath};
+use crate::manifest::{Manifest, ProjectName, RepoOperand, RepoPath};
 use crate::parallel::OutputMode;
+use crate::pins::{live_pins, LivePin};
 use crate::vcs::{
     project_vcs, vcs_for, Backup, BackupMark, BackupName, CommitId, ListedBackup, RemoteTracking,
     Vcs, VcsError,
 };
-use crate::workspace::{discover_projects, project_dir, WorkspaceContext};
+use crate::workspace::{project_dir, WorkspaceContext};
 
 pub const BACKUP_SCHEMA_URL: &str = crate::schema_url::schema_url!("backup");
 
@@ -247,58 +248,6 @@ fn backup_line(entry: &ListedBackup) -> String {
         line.push_str(" [redundant]");
     }
     line
-}
-
-/// A pin some project's live lock holds, and the lock that holds it.
-struct LivePin {
-    commit: CommitId,
-    held_by: String,
-}
-
-/// Every live pin in the weave, by the member it pins: the commits named by
-/// the `rwv.lock` at the tip of each local and remote-tracking branch of each
-/// project's repo. A branch with no lock is no weave branch and pins nothing,
-/// and a lock that does not parse pins nothing.
-fn live_pins(primary: &Path) -> anyhow::Result<BTreeMap<RepoPath, Vec<LivePin>>> {
-    let mut pins: BTreeMap<RepoPath, Vec<LivePin>> = BTreeMap::new();
-    let vcs = project_vcs();
-    for project in discover_projects(primary) {
-        let dir = project_dir(primary, &project);
-        if !vcs.is_repo(&dir) {
-            continue;
-        }
-        let tips = vcs
-            .branch_tips(&dir)
-            .with_context(|| format!("projects/{project}: could not list its branches"))?;
-        for branch in tips {
-            let text = match vcs.read_file_at_revision(
-                &dir,
-                &branch.tip,
-                Path::new(LockFile::FILE_NAME),
-            ) {
-                Ok(text) => text,
-                Err(VcsError::RevisionNotFound { .. }) => continue,
-                Err(e) => {
-                    return Err(anyhow::Error::new(e).context(format!(
-                        "projects/{project}: could not read the lock at {}",
-                        branch.label
-                    )))
-                }
-            };
-            let Ok(lock) = LockFile::from_json_str(&text) else {
-                continue;
-            };
-            for (path, entry) in lock.iter_entries() {
-                if let Some(commit) = entry.version.as_commit_id() {
-                    pins.entry(path.clone()).or_default().push(LivePin {
-                        commit,
-                        held_by: format!("{project} {}", branch.label),
-                    });
-                }
-            }
-        }
-    }
-    Ok(pins)
 }
 
 /// Refuse to drop `dropping` from `repo` when that would leave a live pin

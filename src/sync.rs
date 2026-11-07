@@ -4989,11 +4989,14 @@ fn lock_relation_refusal(
     if offending.is_empty() {
         return None;
     }
-    let mut any_diverged = false;
+    let mut by_name: Vec<&RepoPath> = Vec::new();
+    let mut without_pin: Vec<&RepoPath> = Vec::new();
     let mut lines = String::new();
     for r in offending {
-        if r.relation == LockRelation::Diverged {
-            any_diverged = true;
+        match r.relation {
+            LockRelation::Diverged | LockRelation::Behind => by_name.push(&r.repo_path),
+            LockRelation::NoLock | LockRelation::Unknown => without_pin.push(&r.repo_path),
+            _ => {}
         }
         // Phrase the relation from a single fixed vantage point (HEAD relative to
         // lock) to match `LockRelation`'s tip-relative naming: `HEAD ahead of
@@ -5020,8 +5023,18 @@ fn lock_relation_refusal(
          \n\
          Usual fix: {recovery}.\n"
     );
-    if any_diverged {
-        msg.push_str("\nFor a diverged repo, bless the current HEAD with `rwv lock --commit`.\n");
+    for repo in &by_name {
+        msg.push_str(&format!(
+            "\nFor {repo}, whose HEAD is behind or diverged from its pin, record the current HEAD \
+             by name with `rwv lock --repo {repo} --commit`; a plain `rwv lock` refuses to move a \
+             pin backward.\n"
+        ));
+    }
+    for repo in &without_pin {
+        msg.push_str(&format!(
+            "\nFor {repo}, which the lock has no pin for, `rwv lock` gives none: pin it with \
+             `rwv member pin {repo} <rev> --commit`.\n"
+        ));
     }
     msg.push_str(
         "\nTo skip this check: pass `--allow-stale-lock` (use when you know the lock is \

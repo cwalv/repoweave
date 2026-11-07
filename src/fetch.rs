@@ -5,6 +5,7 @@
 //! moved. No local branch, no checkout and no lock moves: `rwv update` and
 //! `rwv pull` are the verbs that act on what it brought.
 
+use crate::diagnosis::Judged;
 use crate::fetch_claim::FetchClaim;
 use crate::manifest::{Manifest, ProjectName};
 use crate::member_selection::MemberSelection;
@@ -127,6 +128,10 @@ pub struct FetchedRepoOutput {
     /// The cause of an `unconfirmed` fetch, or the reason for a `skipped` one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    /// Each commit some live lock pins that no remote-tracking branch of this
+    /// repo reaches after the fetch (`pin` off remote), with the locks that
+    /// hold it and the choices that apply in this workspace.
+    pub pins_off_remote: Vec<crate::diagnosis::JudgedOutput>,
     /// The refusal token of an `unconfirmed` repo whose cause is a refusal,
     /// resolvable with `rwv explain <token>`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -174,6 +179,7 @@ pub(crate) fn pruning_fetch(
 
 struct Target {
     path: String,
+    member: Option<crate::manifest::RepoPath>,
     dir: PathBuf,
     vcs: Box<dyn Vcs>,
     /// The url the member declares: its url remote is added before the fetch
@@ -195,6 +201,7 @@ fn targets(
     if selection.names_every_member() {
         targets.push(Target {
             path: crate::workspace::project_rel_path(project).to_string(),
+            member: None,
             dir: project_dir(ctx.primary_path(), project),
             vcs: project_vcs(),
             url: None,
@@ -206,6 +213,7 @@ fn targets(
             .filter(|(path, entry)| selection.covers(path, entry.role))
             .map(|(path, entry)| Target {
                 path: path.to_string(),
+                member: Some(path.clone()),
                 dir: ctx.primary_path().join(path.as_path()),
                 vcs: vcs_for(entry.vcs_type),
                 url: crate::registry::resolve_to_clone_info(&entry.url)
@@ -324,10 +332,12 @@ pub(crate) fn fetch_repos(
             pruning_fetch(target.vcs.as_ref(), &target.dir, adds[idx].as_ref()).map(Some)
         });
 
+    let off_remote = OffRemote::open(ctx, &project);
     let mut records = Vec::new();
     let mut unconfirmed = 0usize;
     for (target, result) in targets.iter().zip(results) {
         let absolute_path = crate::path_spelling::WirePath::of(&target.dir);
+        let mut pins_off = Vec::new();
         let record = match result {
             Ok(None) => FetchedRepoOutput {
                 path: target.path.clone(),
@@ -338,11 +348,14 @@ pub(crate) fn fetch_repos(
                     "not on disk; `rwv update` clones the members that are missing".to_owned(),
                 ),
                 refusal: None,
+                pins_off_remote: Vec::new(),
             },
             Ok(Some(fetched)) => {
                 let unreached = unreached_remotes(&fetched.unconfirmed);
                 if unreached.is_some() {
                     unconfirmed += 1;
+                } else {
+                    pins_off = off_remote.pins_off(target);
                 }
                 FetchedRepoOutput {
                     path: target.path.clone(),
@@ -355,6 +368,7 @@ pub(crate) fn fetch_repos(
                     moved: fetched.moves.iter().map(BranchMoveOutput::of).collect(),
                     message: unreached,
                     refusal: None,
+                    pins_off_remote: pins_off.iter().map(Judged::output).collect(),
                 }
             }
             Err(error) => {
@@ -366,11 +380,19 @@ pub(crate) fn fetch_repos(
                     moved: Vec::new(),
                     message: Some(format!("{error:#}")),
                     refusal: crate::refusal::kind_of(&error).map(RefusalKind::token),
+                    pins_off_remote: Vec::new(),
                 }
             }
         };
         if output == OutputMode::Text {
             print_record(&record);
+            if !pins_off.is_empty() {
+                let mut report = crate::diagnosis::Report::default();
+                for line in pins_off {
+                    report.add(line);
+                }
+                outln!("{}", report.render("fetch").trim_end_matches('\n'));
+            }
         }
         records.push(record);
     }
@@ -378,6 +400,71 @@ pub(crate) fn fetch_repos(
         records,
         unconfirmed,
     })
+}
+
+/// What `pin off remote` is judged against: the pins every live lock holds,
+/// and how the lock this workspace has checked out holds them.
+struct OffRemote {
+    live: std::collections::BTreeMap<crate::manifest::RepoPath, Vec<crate::pins::LivePin>>,
+    checked_out: Option<crate::manifest::LockFile>,
+    mode: Option<crate::alignment::Mode>,
+}
+
+impl OffRemote {
+    fn open(ctx: &WorkspaceContext, project: &ProjectName) -> Self {
+        let project_dir = project_dir(ctx.active_path(), project);
+        let lock_path = crate::manifest::LockFile::path_in(&project_dir);
+        Self {
+            live: crate::pins::live_pins(ctx.primary_path()).unwrap_or_default(),
+            checked_out: lock_path
+                .exists()
+                .then(|| crate::manifest::LockFile::from_state(&lock_path).ok())
+                .flatten(),
+            mode: crate::alignment::Aligner::open(
+                ctx.active_path(),
+                project,
+                crate::alignment::Accounting::default(),
+            )
+            .ok()
+            .map(|aligner| aligner.mode),
+        }
+    }
+
+    /// The pins of the member `target` is that no remote-tracking branch of
+    /// its clone reaches, as last fetched.
+    fn pins_off(&self, target: &Target) -> Vec<Judged> {
+        let Some(member) = &target.member else {
+            return Vec::new();
+        };
+        let Some(live) = self.live.get(member) else {
+            return Vec::new();
+        };
+        let held = self
+            .checked_out
+            .as_ref()
+            .and_then(|lock| lock.get_entry(member))
+            .and_then(|entry| entry.version.as_commit_id());
+        let holding = |commit: &crate::vcs::CommitId| {
+            if held.as_ref() != Some(commit) {
+                return crate::pins::Holding::NotHeld;
+            }
+            match self.mode {
+                Some(crate::alignment::Mode::Feature { .. }) => crate::pins::Holding::Feature,
+                Some(crate::alignment::Mode::Declared) => crate::pins::Holding::Declared,
+                Some(crate::alignment::Mode::Detached) | None => crate::pins::Holding::NotHeld,
+            }
+        };
+        match crate::pins::off_remote(target.vcs.as_ref(), &target.dir, member, live, holding) {
+            Ok(lines) => lines,
+            Err(e) => {
+                eprintln!(
+                    "rwv fetch: {}: could not judge its pins: {e:#}",
+                    target.path
+                );
+                Vec::new()
+            }
+        }
+    }
 }
 
 fn unreached_remotes(unconfirmed: &[crate::vcs::UnconfirmedRemote]) -> Option<String> {

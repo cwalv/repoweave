@@ -345,6 +345,12 @@ pub enum State {
     AlignmentProjectUnaligned,
     AlignmentProjectDetached,
     PinNotOnDeclaredBranch,
+    PinBehind,
+    PinAhead,
+    PinUnpinned,
+    PinDiverged,
+    PinOffRemote,
+    PinBackwards,
 }
 
 /// A state's row: its axis and name, the page prose, and the forms it offers,
@@ -362,7 +368,7 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 36] = [
+    pub const ALL: [State; 42] = [
         Self::EditsDirty,
         Self::EditsMidOperation,
         Self::EditsLockFilesUncommitted,
@@ -374,8 +380,16 @@ impl State {
         Self::PushBranchGone,
         Self::PushBranchForeignUpstream,
         Self::PushBranchNoPushTarget,
+        Self::PinBehind,
+        Self::PinAhead,
+        Self::PinUnpinned,
         Self::PinNone,
+        Self::PinDiverged,
+        Self::PinNotOnDeclaredBranch,
         Self::PinUnreachable,
+        Self::PinOffRemote,
+        Self::PinBackwards,
+        Self::PinWouldBeUnreachable,
         Self::NameTaken,
         Self::NameARevision,
         Self::NameNoSuchBranch,
@@ -383,7 +397,6 @@ impl State {
         Self::PublishWithheld,
         Self::UnparseableProjectHere,
         Self::UnparseableProjectMalformed,
-        Self::PinWouldBeUnreachable,
         Self::TargetUnrecorded,
         Self::TargetConflict,
         Self::TargetUnreadable,
@@ -398,7 +411,6 @@ impl State {
         Self::AlignmentProjectMoved,
         Self::AlignmentProjectUnaligned,
         Self::AlignmentProjectDetached,
-        Self::PinNotOnDeclaredBranch,
     ];
 
     pub fn row(self) -> &'static StateRow {
@@ -518,10 +530,12 @@ impl State {
                 axis: Axis::Pin,
                 name: "none",
                 means: "the lock has no entry for the member, or there is no lock file; the \
-                        checkout is on the declared branch at the tip of the remote's branch",
-                refused_by: "`rwv clone`, which does not refuse: it completes, lists the member \
-                             and exits with status 3",
-                offers: &[Form::C25, Form::C1UpdateRemote],
+                        checkout is on the declared branch at the tip of the remote's branch, \
+                        or where it was found",
+                refused_by: "`rwv push`; `rwv clone`, which does not refuse: it completes, \
+                             lists the member and exits with status 3; `rwv lock`, `rwv \
+                             update` and `rwv status` report it",
+                offers: &[Form::C25, Form::C1UpdateRemoteCommit],
                 verb_offers: &[],
             },
             Self::PinUnreachable => &StateRow {
@@ -529,8 +543,8 @@ impl State {
                 name: "unreachable",
                 means: "the lock pins a commit that no ref in the clone reaches; the checkout \
                         is on the declared branch at the tip of the remote's branch",
-                refused_by: "`rwv clone`, which does not refuse: it completes, lists the member \
-                             and exits with status 3",
+                refused_by: "`rwv push`; `rwv clone`, which does not refuse: it completes, \
+                             lists the member and exits with status 3; `rwv status` reports it",
                 offers: &[Form::C17, Form::C25, Form::C19],
                 verb_offers: &[],
             },
@@ -775,8 +789,70 @@ impl State {
                 name: "not on declared branch",
                 means: "the lock pins a commit that neither the member's declared branch nor \
                         its upstream reaches, so the checkout sits detached at the pin",
-                refused_by: "`rwv update` and `rwv status` report it",
-                offers: &[Form::C19, Form::C15],
+                refused_by: "`rwv member pin`, for a commit that neither reaches; `rwv update` \
+                             and `rwv status` report it",
+                offers: &[Form::C19, Form::C15, Form::C25, Form::C11SetBranch],
+                verb_offers: &[],
+            },
+            Self::PinBehind => &StateRow {
+                axis: Axis::Pin,
+                name: "behind",
+                means: "the checkout's commit is an ancestor of the commit the lock pins: the \
+                        lock records commits the checkout lacks",
+                refused_by: "`rwv push`; `rwv status` reports it",
+                offers: &[Form::C6, Form::C1UpdateRemote],
+                verb_offers: &[],
+            },
+            Self::PinAhead => &StateRow {
+                axis: Axis::Pin,
+                name: "ahead",
+                means: "the checkout holds commits beyond the commit the lock pins, and each is \
+                        pushed or pinned by another live lock, which the facts name; the \
+                        commits are published with `rwv push` only where none is pushed yet",
+                refused_by: "`rwv status` reports it; `rwv push` reports it and goes on",
+                offers: &[Form::C5Lock, Form::C7PushRepo],
+                verb_offers: &[],
+            },
+            Self::PinUnpinned => &StateRow {
+                axis: Axis::Pin,
+                name: "unpinned",
+                means: "the checkout holds the commits listed beyond the commit the lock pins, \
+                        which no remote-tracking branch and no live lock reaches",
+                refused_by: "`rwv push`; `rwv status` reports it",
+                offers: &[Form::C5Lock],
+                verb_offers: &[],
+            },
+            Self::PinDiverged => &StateRow {
+                axis: Axis::Pin,
+                name: "diverged",
+                means: "neither the checkout's commit nor the commit the lock pins is an \
+                        ancestor of the other",
+                refused_by: "`rwv push`; `rwv status` reports it",
+                offers: &[Form::C5LockRepo],
+                verb_offers: &[],
+            },
+            Self::PinOffRemote => &StateRow {
+                axis: Axis::Pin,
+                name: "off remote",
+                means: "a live lock pins a commit that no remote-tracking branch of the member \
+                        reaches after the pruning fetch, listed with the locks that pin it. \
+                        Choices print only in a workspace whose checked-out branch's lock holds \
+                        the pin: a feature's offers publishing it, a declared branch's offers \
+                        pinning another commit; elsewhere the state is a fact and offers \
+                        waiting",
+                refused_by: "nothing refuses; `rwv fetch` and `rwv pull` report it",
+                offers: &[Form::C7PushRepo, Form::C27, Form::C25, Form::C19],
+                verb_offers: &[],
+            },
+            Self::PinBackwards => &StateRow {
+                axis: Axis::Pin,
+                name: "backwards",
+                means: "recording the commit the checkout is at would move the pin to one that \
+                        does not descend from the pinned commit: it is behind the pin or has \
+                        diverged from it, or the pinned commit is in no ref here",
+                refused_by: "`rwv lock`, for a member `--repo` does not name; `rwv update \
+                             --remote`",
+                offers: &[Form::C5LockRepo],
                 verb_offers: &[],
             },
             Self::TargetGone => &StateRow {
@@ -802,6 +878,7 @@ impl State {
             facts: Vec::new(),
             workspace: None,
             verb: None,
+            only: None,
             bindings: BTreeMap::new(),
             places: BTreeMap::new(),
         }
@@ -1127,6 +1204,7 @@ pub enum Step {
 pub enum Form {
     C1Pull,
     C1UpdateRemote,
+    C1UpdateRemoteCommit,
     C2Pull,
     C2UpdateRemote,
     C3Pull,
@@ -1202,6 +1280,7 @@ impl Form {
     pub const ALL: [Form; 63] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
+        Self::C1UpdateRemoteCommit,
         Self::C2Pull,
         Self::C2UpdateRemote,
         Self::C3Pull,
@@ -1283,6 +1362,12 @@ impl Form {
                 at: W::Any,
                 shipped: true,
             },
+            Self::C1UpdateRemoteCommit => &FormRow {
+                choice: C::C1,
+                steps: &[Rwv("rwv update --remote --repo <m> --commit")],
+                at: W::Any,
+                shipped: true,
+            },
             Self::C2Pull => &FormRow {
                 choice: C::C2,
                 steps: &[Rwv("rwv pull --merge-upstream")],
@@ -1317,7 +1402,7 @@ impl Form {
                 choice: C::C5,
                 steps: &[Rwv("rwv lock --repo <m> --commit")],
                 at: W::WithBranch,
-                shipped: false,
+                shipped: true,
             },
             Self::C6 => &FormRow {
                 choice: C::C6,
@@ -1545,7 +1630,7 @@ impl Form {
                 choice: C::C25,
                 steps: &[Rwv("rwv member pin <m> <rev> --commit")],
                 at: W::WithBranch,
-                shipped: false,
+                shipped: true,
             },
             Self::C26 => &FormRow {
                 choice: C::C26,
@@ -1664,6 +1749,7 @@ impl Form {
         match self {
             Self::C1Pull | Self::C2Pull | Self::C3Pull | Self::C7Push => Some(Scope::Project),
             Self::C1UpdateRemote
+            | Self::C1UpdateRemoteCommit
             | Self::C2UpdateRemote
             | Self::C3UpdateRemote
             | Self::C7PushRepo => Some(Scope::Member),
@@ -1770,6 +1856,7 @@ pub struct Judging {
     facts: Vec<Fact>,
     workspace: Option<PathBuf>,
     verb: Option<&'static str>,
+    only: Option<Vec<ChoiceId>>,
     bindings: BTreeMap<&'static str, String>,
     places: BTreeMap<&'static str, PathBuf>,
 }
@@ -1799,6 +1886,13 @@ impl Judging {
     /// are offered too.
     pub fn by_verb(mut self, verb: &'static str) -> Self {
         self.verb = Some(verb);
+        self
+    }
+
+    /// Print only the forms of these choices. The state's row says what it can
+    /// offer; this narrows it where the judging knows which of them hold.
+    pub fn only(mut self, choices: &[ChoiceId]) -> Self {
+        self.only = Some(choices.to_vec());
         self
     }
 
@@ -1874,6 +1968,11 @@ impl Judging {
         let choices = forms
             .iter()
             .filter(|form| form.printable())
+            .filter(|form| {
+                self.only
+                    .as_ref()
+                    .is_none_or(|only| only.contains(&form.row().choice))
+            })
             .filter(|form| match (self.scope, form.scope()) {
                 (Some(want), Some(have)) => want == have,
                 _ => true,

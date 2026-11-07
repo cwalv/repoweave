@@ -1,8 +1,14 @@
-//! Lock logic: snapshot repo HEADs into `rwv.lock`.
+//! Lock logic: record where member checkouts are as `rwv.lock`'s pins.
 
-use crate::diagnosis::{Report, State};
-use crate::manifest::{LockFile, Manifest, Project, ResolvedLockEntry, ResolvedLockFile};
-use crate::vcs::{project_vcs, vcs_for, HeadAttachment, Vcs};
+use crate::alignment::{Accounting, Aligner, Member, Mode, Pin, ProjectStanding, Target};
+use crate::diagnosis::{Judged, Report, State};
+use crate::manifest::{
+    LockEntry, LockFile, Manifest, Project, RepoPath, ResolvedLockEntry, ResolvedLockFile,
+};
+use crate::selector::RepoFilter;
+use crate::vcs::{
+    project_vcs, vcs_for, HeadAttachment, RawRevisionId, Relation, ResolvedRevisionId, Vcs,
+};
 use crate::workspace::{project_dir, Checkout, WorkspaceContext};
 use anyhow::Context;
 use std::collections::{BTreeMap, BTreeSet};
@@ -12,12 +18,10 @@ use std::path::{Path, PathBuf};
 /// and naming `rwv.toml` when `records_manifest` says it is in the commit.
 ///
 /// When `old_lock` is `None` (fresh lock), all repos appear in the list.
-/// Otherwise, only repos whose version advanced are listed. Both sides
-/// are [`ResolvedLockFile`]s, so the comparison is a straightforward
-/// canonical-SHA equality (no raw-vs-resolved ambiguity).
+/// Otherwise, only repos whose version changed are listed.
 fn build_commit_message(
-    new_lock: &ResolvedLockFile,
-    old_lock: Option<&ResolvedLockFile>,
+    new_lock: &LockFile,
+    old_lock: Option<&LockFile>,
     records_manifest: bool,
 ) -> String {
     let changed: Vec<_> = new_lock
@@ -271,18 +275,15 @@ impl CommitMessage {
     }
 }
 
-/// Refuse when the project repo has uncommitted changes to tracked files
-/// outside `rwv.lock`, `rwv.toml` and `authored`: a lock commit must not bundle
-/// unrelated work in progress.
-///
-/// Pure judgment, so a verb that commits the lock can ask it before it writes
-/// the lock.
-pub(crate) fn judge_unrelated_dirt(
+/// The line for uncommitted changes to tracked files of the project repo
+/// outside `rwv.lock`, `rwv.toml` and `authored`: a lock commit must not
+/// bundle unrelated work in progress.
+pub(crate) fn unrelated_dirt_line(
     vcs: &dyn Vcs,
     project: &crate::manifest::ProjectName,
     project_dir: &Path,
     authored: &BTreeSet<String>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<Judged>> {
     let tracked_dirty = vcs
         .tracked_dirty_file_names(project_dir)
         .context("failed to read project repo status")?;
@@ -295,16 +296,30 @@ pub(crate) fn judge_unrelated_dirt(
         })
         .collect();
     if unrelated.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
-    let mut report = Report::default();
-    report.add(
+    Ok(Some(
         State::EditsDirty
             .of(crate::workspace::project_rel_path(project))
             .listing(unrelated)
             .checkout(project_dir)
             .judge(vcs),
-    );
+    ))
+}
+
+/// Refuse when the project repo has uncommitted changes to tracked files
+/// outside `rwv.lock`, `rwv.toml` and `authored`.
+///
+/// Pure judgment, so a verb that commits the lock can ask it before it writes
+/// the lock.
+pub(crate) fn judge_unrelated_dirt(
+    vcs: &dyn Vcs,
+    project: &crate::manifest::ProjectName,
+    project_dir: &Path,
+    authored: &BTreeSet<String>,
+) -> anyhow::Result<()> {
+    let mut report = Report::default();
+    report.extend(unrelated_dirt_line(vcs, project, project_dir, authored)?);
     report.into_result()
 }
 
@@ -323,8 +338,8 @@ fn commit_lock_file(
     vcs: &dyn Vcs,
     project: &crate::manifest::ProjectName,
     project_dir: &Path,
-    new_lock: &ResolvedLockFile,
-    old_lock: Option<&ResolvedLockFile>,
+    new_lock: &LockFile,
+    old_lock: Option<&LockFile>,
     authored: &BTreeSet<String>,
     message: &CommitMessage,
 ) -> anyhow::Result<()> {
@@ -365,24 +380,538 @@ fn commit_lock_file(
 
 /// Execute `rwv lock` for the current workspace context.
 ///
+/// Records each member `acting` selects at the commit its checkout is at,
+/// moving a pin forward only: a member with no pin keeps none, and one that
+/// is behind or diverged from its pin is refused unless `--repo` names it.
+/// Every member is judged before anything is written.
+///
 /// When `dirty` is true, the uncommitted-changes check is skipped.
 /// When `commit` is set, the lock file is staged and committed after writing.
 /// `ctx` is the already-resolved invocation context (with `--project` baked
 /// in when passed). Handlers must not re-resolve.
 ///
-/// Pure git SHA snapshot — no integration hooks fire here. Install/build
-/// hooks are part of activation (`rwv activate`), since the trigger for
+/// Pure snapshot: no integration hooks fire here. Install/build hooks are
+/// part of activation (`rwv activate`), since the trigger for
 /// ecosystem-lockfile refresh is workspace membership change, not
 /// cross-repo snapshot.
 pub fn lock(
     ctx: &WorkspaceContext,
+    acting: &RepoFilter,
     dirty: bool,
     commit: Option<CommitMessage>,
 ) -> anyhow::Result<()> {
     crate::branch::require_recorded(ctx)?;
-    match write_project_lock(ctx, dirty, commit)? {
+    let relocking = Relocking {
+        verb: "lock",
+        acting,
+        dirty,
+        first_pins: FirstPins::Withheld,
+        unaligned: Unaligned::Refused,
+        by_name: !acting.is_empty(),
+    };
+    match relock(ctx, &relocking, commit)? {
         Some(pending) => commit_project_lock(&pending, &BTreeSet::new()),
         None => Ok(()),
+    }
+}
+
+/// Whether a member with no pin is given one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FirstPins {
+    /// It keeps none: only a verb that names a commit gives a first pin.
+    Withheld,
+    /// It takes the commit its checkout is at.
+    Taken,
+}
+
+/// What a relock does with a member that is not where its plan puts it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Unaligned {
+    /// The relock is refused.
+    Refused,
+    /// The member keeps its pin and the relock reports where it sits.
+    Left,
+}
+
+/// One relock: the verb running it, the members it records and the rules it
+/// records them under.
+pub(crate) struct Relocking<'a> {
+    pub(crate) verb: &'static str,
+    pub(crate) acting: &'a RepoFilter,
+    pub(crate) dirty: bool,
+    pub(crate) first_pins: FirstPins,
+    pub(crate) unaligned: Unaligned,
+    /// Whether a member `acting` selects may move its pin backward: the
+    /// operator named it.
+    pub(crate) by_name: bool,
+}
+
+/// How a member's new pin stands to its old one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum How {
+    First,
+    Same,
+    Forward,
+    Backward,
+}
+
+struct Recorded {
+    path: RepoPath,
+    dir: PathBuf,
+    vcs_type: crate::manifest::VcsType,
+    was: Option<RawRevisionId>,
+    to: ResolvedRevisionId,
+    how: How,
+}
+
+/// What judging one member of a relock found: the lines to print, and the
+/// pin to record, if it records one.
+struct Judgment {
+    lines: Vec<Judged>,
+    record: Option<Recorded>,
+}
+
+impl Judgment {
+    fn kept(lines: Vec<Judged>) -> Self {
+        Self {
+            lines,
+            record: None,
+        }
+    }
+}
+
+/// The line for a pin that would move to a commit not descending from the one
+/// it holds.
+pub(crate) fn backwards_line(
+    repo: &RepoPath,
+    dir: &Path,
+    vcs: &dyn Vcs,
+    subject: impl std::fmt::Display,
+) -> Judged {
+    State::PinBackwards
+        .of(repo)
+        .member()
+        .checkout(dir)
+        .bind("<m>", repo.as_str())
+        .subject(subject)
+        .judge(vcs)
+}
+
+/// How a commit that does not descend from the pin stands to it, in words.
+pub(crate) fn backwards_subject(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    what: &str,
+    head: &ResolvedRevisionId,
+    pin: &ResolvedRevisionId,
+    relation: Relation,
+) -> String {
+    match relation {
+        Relation::Behind => {
+            let by = vcs.count_commits_in_range(dir, head, pin).unwrap_or(0);
+            format!(
+                "{what} {} is {by} commit(s) behind the pin {}",
+                head.id().short(),
+                pin.id().short()
+            )
+        }
+        _ => format!(
+            "{what} {} has diverged from the pin {}",
+            head.id().short(),
+            pin.id().short()
+        ),
+    }
+}
+
+/// Judge one member of a relock: what its checkout allows, and what it records.
+fn judge_member(
+    relocking: &Relocking<'_>,
+    aligner: &Aligner,
+    old: Option<&LockFile>,
+    path: &RepoPath,
+    entry: &crate::manifest::RepoEntry,
+    dir: &Path,
+    refusals: &mut Report,
+) -> anyhow::Result<Judgment> {
+    let vcs = vcs_for(entry.vcs_type);
+    let member = Member {
+        path,
+        entry,
+        dir,
+        vcs: vcs.as_ref(),
+    };
+    let plan = aligner
+        .plan(&member, old)
+        .map_err(|e| anyhow::anyhow!("{path}: {e:#}"))?;
+    let mut lines: Vec<Judged> = Vec::new();
+
+    if !relocking.dirty {
+        let tracked = vcs.tracked_dirty_file_names(dir)?;
+        if !tracked.is_empty() {
+            refusals.add(
+                State::EditsDirty
+                    .of(path)
+                    .listing(tracked)
+                    .checkout(dir)
+                    .judge(vcs.as_ref()),
+            );
+        }
+    }
+
+    if let Some(off) = aligner.refusal(&member, &plan, path)? {
+        match relocking.unaligned {
+            Unaligned::Refused => refusals.add(off),
+            Unaligned::Left => {
+                lines.push(off);
+                return Ok(Judgment::kept(lines));
+            }
+        }
+    }
+
+    let was = old
+        .and_then(|lock| lock.get_entry(path))
+        .map(|e| e.version.clone());
+    if let HeadAttachment::Unborn(_) = vcs.head_attachment(dir)? {
+        lines.extend(Aligner::pin_note(&member, &plan, path));
+        return Ok(Judgment::kept(lines));
+    }
+    let head = vcs
+        .head_revision(dir)
+        .map_err(|e| anyhow::anyhow!("{path}: {e:#}"))?;
+
+    let how = match &plan.pin {
+        Pin::None
+            if relocking.first_pins == FirstPins::Withheld
+                || matches!(plan.target, Target::AsFound) =>
+        {
+            lines.extend(aligner.status_lines(&member, old, path)?);
+            lines.extend(Aligner::pin_note(&member, &plan, path));
+            return Ok(Judgment::kept(lines));
+        }
+        Pin::None => How::First,
+        Pin::Unreachable => {
+            if !relocking.by_name {
+                refusals.add(backwards_line(
+                    path,
+                    dir,
+                    vcs.as_ref(),
+                    format!(
+                        "the pin {} is in no ref here",
+                        was.as_ref().map_or("", |v| v.short_display())
+                    ),
+                ));
+            }
+            How::Backward
+        }
+        Pin::At(pin) => match vcs.relation(dir, &head, pin)? {
+            Relation::Even => How::Same,
+            Relation::Ahead => How::Forward,
+            relation @ (Relation::Behind | Relation::Diverged) => {
+                if !relocking.by_name {
+                    refusals.add(backwards_line(
+                        path,
+                        dir,
+                        vcs.as_ref(),
+                        backwards_subject(vcs.as_ref(), dir, "HEAD", &head, pin, relation),
+                    ));
+                }
+                How::Backward
+            }
+        },
+    };
+    Ok(Judgment {
+        lines,
+        record: Some(Recorded {
+            path: path.clone(),
+            dir: dir.to_path_buf(),
+            vcs_type: entry.vcs_type,
+            was,
+            to: head,
+            how,
+        }),
+    })
+}
+
+/// The project the invocation acts on, and the workweave directory when it
+/// runs in one.
+pub(crate) fn scope(
+    ctx: &WorkspaceContext,
+) -> anyhow::Result<(crate::manifest::ProjectName, Option<PathBuf>)> {
+    Ok(match &ctx.checkout {
+        Checkout::Primary { .. } => (ctx.require_active_project_on_disk()?.clone(), None),
+        Checkout::Workweave { dir, project, .. } => {
+            (project.clone(), Some(dir.as_path().to_path_buf()))
+        }
+    })
+}
+
+/// The lock as it stands: `None` where there is none, and where it does not
+/// parse, which pins nothing.
+pub(crate) fn read_old_lock(
+    lock_path: &crate::state_file::StatePath,
+    verb: &str,
+) -> Option<LockFile> {
+    if !lock_path.exists() {
+        return None;
+    }
+    match LockFile::from_state(lock_path) {
+        Ok(lock) => Some(lock),
+        Err(e) => {
+            eprintln!(
+                "rwv {verb}: {lock_path} does not parse, so it pins nothing and is written \
+                 afresh: {e:#}"
+            );
+            None
+        }
+    }
+}
+
+/// Refuse a detached workspace or project repo: there is no branch to record
+/// the pins on.
+pub(crate) fn refuse_detached(
+    aligner: &Aligner,
+    project: &crate::manifest::ProjectName,
+) -> anyhow::Result<()> {
+    if aligner.standing != ProjectStanding::Detached && aligner.mode != Mode::Detached {
+        return Ok(());
+    }
+    let vcs = project_vcs();
+    let held = vcs
+        .head_revision(&aligner.project_dir)
+        .ok()
+        .map(|head| vcs.stray_commits(&aligner.project_dir, &head, None, None))
+        .transpose()?
+        .unwrap_or_default();
+    Err(State::AlignmentProjectDetached
+        .of(crate::workspace::project_rel_path(project))
+        .project_repo()
+        .listing(
+            held.iter()
+                .map(|c| format!("{} {}", c.id.short(), c.subject)),
+        )
+        .checkout(&aligner.project_dir)
+        .judge(vcs.as_ref())
+        .refused())
+}
+
+/// Record the members `relocking` selects in `rwv.lock`, every other pin as it
+/// was. Every member is judged first, and the relock refuses with all that it
+/// found before anything is written.
+///
+/// Returns the pending commit when `commit` is set; the caller finishes with
+/// [`commit_project_lock`], after any authoring pass of its own.
+pub(crate) fn relock(
+    ctx: &WorkspaceContext,
+    relocking: &Relocking<'_>,
+    commit: Option<CommitMessage>,
+) -> anyhow::Result<Option<PendingLockCommit>> {
+    // `--commit` writes a new lock commit into the history a mid-op replay is
+    // reconciling; a plain lock write is the auto-relock's own input and is
+    // not refused.
+    if commit.is_some() {
+        crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
+    }
+
+    let (project_name, workweave_dir) = scope(ctx)?;
+
+    let project_dir = project_dir(ctx.active_path(), &project_name);
+    // The lock is read below, tolerantly: one that does not parse must not
+    // stop the verb that writes it afresh.
+    let project = Project::from_dir_skip_lock(&project_dir, project_name.clone())
+        .with_context(|| format!("failed to load project '{}'", project_name))?;
+    let lock_path = LockFile::path_in(&project_dir);
+    let old = read_old_lock(&lock_path, relocking.verb);
+
+    let aligner = Aligner::open(
+        ctx.active_path(),
+        &project_name,
+        Accounting::scan(ctx.primary_path()),
+    )?;
+    refuse_detached(&aligner, &project_name)?;
+
+    let mut refusals = Report::default();
+    let mut failures: Vec<String> = Vec::new();
+    let mut recorded: Vec<Recorded> = Vec::new();
+    let mut lines: Vec<Judged> = Vec::new();
+    let mut acted = 0usize;
+    for (path, entry) in project.manifest.iter_entries() {
+        if !relocking.acting.matches(path, entry.role) {
+            continue;
+        }
+        acted += 1;
+        let checkout = crate::workspace::member_checkout_dir(
+            path,
+            ctx.primary_path(),
+            workweave_dir.as_deref(),
+        );
+        if !checkout.path().exists() {
+            failures.push(format!(
+                "{path}: clone missing on disk; run `rwv update` to re-materialize it, then \
+                 re-run `rwv {}`",
+                relocking.verb
+            ));
+            continue;
+        }
+        match judge_member(
+            relocking,
+            &aligner,
+            old.as_ref(),
+            path,
+            entry,
+            checkout.path(),
+            &mut refusals,
+        ) {
+            Ok(judgment) => {
+                lines.extend(judgment.lines);
+                recorded.extend(judgment.record);
+            }
+            Err(e) => failures.push(format!("{e:#}")),
+        }
+    }
+    if acted == 0 && !relocking.acting.is_empty() {
+        crate::refuse!(
+            crate::refusal::RefusalKind::RepoNotInManifest,
+            "--repo selects no member of the manifest"
+        );
+    }
+    if commit.is_some() {
+        refusals.extend(unrelated_dirt_line(
+            project_vcs().as_ref(),
+            &project_name,
+            &project_dir,
+            &BTreeSet::new(),
+        )?);
+    }
+    if !failures.is_empty() {
+        if refusals.is_empty() {
+            anyhow::bail!("{}", failures.join("\n"));
+        }
+        for failure in &failures {
+            refusals.note(failure);
+        }
+    }
+    refusals.into_result()?;
+
+    let new = with_pins(
+        &project.manifest,
+        old.as_ref(),
+        recorded.iter().map(|one| (&one.path, &one.to)),
+    );
+    write_lock_in(&new, &project_dir)?;
+
+    eprintln!("Wrote {lock_path}");
+    report_recorded(relocking, ctx, &project_name, &recorded);
+    if !lines.is_empty() {
+        let mut report = Report::default();
+        for line in lines {
+            report.add(line);
+        }
+        eprint!("{}", report.render(relocking.verb));
+    }
+
+    Ok(commit.map(|message| PendingLockCommit {
+        project_name,
+        project_dir,
+        new_lock: new,
+        old_lock: old,
+        message,
+    }))
+}
+
+/// `old` restricted to the members of `manifest`, each of `pins` recorded at
+/// its commit under the url the manifest gives it.
+pub(crate) fn with_pins<'a>(
+    manifest: &Manifest,
+    old: Option<&LockFile>,
+    pins: impl IntoIterator<Item = (&'a RepoPath, &'a ResolvedRevisionId)>,
+) -> LockFile {
+    let mut new = LockFile {
+        repositories: BTreeMap::new(),
+    };
+    for (path, _) in manifest.iter_entries() {
+        if let Some(held) = old.and_then(|lock| lock.get_entry(path)) {
+            new.insert_entry(path.clone(), held.clone());
+        }
+    }
+    for (path, to) in pins {
+        let entry = manifest
+            .get_entry(path)
+            .expect("a pinned member is a member of the manifest");
+        new.insert_entry(
+            path.clone(),
+            LockEntry {
+                vcs_type: entry.vcs_type,
+                url: entry.url.clone(),
+                version: RawRevisionId::new(to.id().as_str()),
+            },
+        );
+    }
+    new
+}
+
+/// Say what the relock did that the lock file does not show: a first pin, a
+/// pin moved backward by name, and a forward move over commits another
+/// project's lock does not pin.
+fn report_recorded(
+    relocking: &Relocking<'_>,
+    ctx: &WorkspaceContext,
+    project: &crate::manifest::ProjectName,
+    recorded: &[Recorded],
+) {
+    let verb = relocking.verb;
+    let mut live = None;
+    for one in recorded {
+        let path = &one.path;
+        let to = one.to.id().short();
+        match one.how {
+            How::Same => {}
+            How::First => eprintln!("rwv {verb}: {path}: pinned at {to}; it had no pin"),
+            How::Backward => eprintln!(
+                "rwv {verb}: {path}: re-pinned {} to {to}, by name",
+                one.was.as_ref().map_or("none", |was| was.short_display())
+            ),
+            How::Forward => {
+                let vcs = vcs_for(one.vcs_type);
+                let Some(was) = one
+                    .was
+                    .as_ref()
+                    .and_then(|was| vcs.resolve_revision(&one.dir, was.as_str()).ok())
+                else {
+                    continue;
+                };
+                let Ok(unpushed) = vcs.unpushed_beyond(&one.dir, &one.to, &was) else {
+                    continue;
+                };
+                if unpushed.is_empty() {
+                    continue;
+                }
+                let live = live.get_or_insert_with(|| {
+                    crate::pins::live_pins(ctx.primary_path()).unwrap_or_default()
+                });
+                let others: BTreeSet<String> = live
+                    .get(path)
+                    .into_iter()
+                    .flatten()
+                    .filter(|pin| &pin.project != project)
+                    .map(|pin| pin.project.to_string())
+                    .collect();
+                if others.is_empty() {
+                    continue;
+                }
+                eprintln!(
+                    "rwv {verb}: {path}: pins {} unpushed commit(s) beyond {}, which the lock \
+                     of project {} does not pin: {}",
+                    unpushed.len(),
+                    was.id().short(),
+                    others.into_iter().collect::<Vec<_>>().join(", "),
+                    unpushed
+                        .iter()
+                        .map(|c| c.id.short())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
+        }
     }
 }
 
@@ -394,80 +923,27 @@ pub fn lock(
 pub(crate) struct PendingLockCommit {
     project_name: crate::manifest::ProjectName,
     project_dir: PathBuf,
-    new_lock: ResolvedLockFile,
-    old_lock: Option<ResolvedLockFile>,
+    new_lock: LockFile,
+    old_lock: Option<LockFile>,
     message: CommitMessage,
 }
 
-/// Regenerate and write `rwv.lock` for the current workspace context.
-///
-/// Returns the pending commit when `commit` is set — the caller finishes
-/// with [`commit_project_lock`], after any authoring pass of its own.
-pub(crate) fn write_project_lock(
-    ctx: &WorkspaceContext,
-    dirty: bool,
-    commit: Option<CommitMessage>,
-) -> anyhow::Result<Option<PendingLockCommit>> {
-    // `--commit` writes a new lock commit into the history a mid-op replay is
-    // reconciling; a plain lock write is the auto-relock's own input and is
-    // not refused.
-    if commit.is_some() {
-        crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
+impl PendingLockCommit {
+    pub(crate) fn new(
+        project_name: crate::manifest::ProjectName,
+        project_dir: PathBuf,
+        new_lock: LockFile,
+        old_lock: Option<LockFile>,
+        message: CommitMessage,
+    ) -> Self {
+        Self {
+            project_name,
+            project_dir,
+            new_lock,
+            old_lock,
+            message,
+        }
     }
-
-    let (project_name, workweave_dir) = match &ctx.checkout {
-        Checkout::Primary { .. } => {
-            let name = ctx.require_active_project_on_disk()?.clone();
-            (name, None)
-        }
-        Checkout::Workweave { dir, project, .. } => {
-            (project.clone(), Some(dir.as_path().to_path_buf()))
-        }
-    };
-
-    let project_dir = project_dir(ctx.active_path(), &project_name);
-    // Use the parse-free loader: `rwv.lock` is derived state and must be
-    // regenerable *over* a corrupted or conflict-markered existing lock.
-    // `from_dir` hard-parses `rwv.lock` and errors on conflict markers,
-    // which turned the naive recovery sequence (`rwv lock; git add; git
-    // rebase --continue`) into a footgun that silently committed the
-    // markers. `lock()` never reads `project.lock`
-    // (it regenerates from manifest tips and reads the old lock
-    // tolerantly further down via `.ok()`), so skipping the parse
-    // costs nothing and closes the recovery gap.
-    let project = Project::from_dir_skip_lock(&project_dir, project_name.clone())
-        .with_context(|| format!("failed to load project '{}'", project_name))?;
-
-    let lock = generate_lock(
-        &project.manifest,
-        ctx.primary_path(),
-        workweave_dir.as_deref(),
-        dirty,
-    )?;
-
-    let lock_path = LockFile::path_in(&project_dir);
-    // Read old lock before overwriting so the commit message can list what
-    // changed. Resolve the raw lock against on-disk repos so the diff
-    // computed by `commit_lock_file` is a canonical-SHA comparison rather
-    // than a string comparison of possibly-tag-form values.
-    let old_lock = if commit.is_some() {
-        LockFile::from_state(&lock_path)
-            .ok()
-            .map(|raw| raw.resolve_versions(ctx.primary_path()).0)
-    } else {
-        None
-    };
-    write_lock_in(&lock, &project_dir)?;
-
-    eprintln!("Wrote {lock_path}");
-
-    Ok(commit.map(|message| PendingLockCommit {
-        project_name,
-        project_dir,
-        new_lock: lock,
-        old_lock,
-        message,
-    }))
 }
 
 /// Commit a written `rwv.lock`, carrying whatever of `authored` the caller

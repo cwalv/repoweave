@@ -3378,6 +3378,19 @@ pub trait Vcs: Send + Sync {
         branch: &RawRefName,
     ) -> Result<Vec<CommitSummary>, VcsError>;
 
+    /// The commits `tip` reaches that `base` does not, and that no
+    /// remote-tracking branch and no superseded tip reaches either, newest
+    /// first.
+    ///
+    /// For git: `git log <tip> --not <base> --remotes
+    /// --glob=refs/rwv/superseded/*`.
+    fn unpushed_beyond(
+        &self,
+        repo: &Path,
+        tip: &ResolvedRevisionId,
+        base: &ResolvedRevisionId,
+    ) -> Result<Vec<CommitSummary>, VcsError>;
+
     /// Fetch objects from `src_repo` into `dst_repo` so SHAs reachable in
     /// `src_repo` are reachable in `dst_repo`.
     ///

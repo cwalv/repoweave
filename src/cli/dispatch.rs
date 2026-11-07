@@ -772,6 +772,23 @@ pub fn run() -> anyhow::Result<()> {
                     activate::ActivateOptions { no_materialize },
                 )?;
             }
+            MemberAction::Pin {
+                repo,
+                rev,
+                commit,
+                project,
+            } => {
+                let project_override =
+                    project.map(crate::manifest::ProjectName::new).transpose()?;
+                let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
+                refuse_symlinked_members_here(&ctx)?;
+                crate::member_pin::run_pin(
+                    &repo,
+                    &rev,
+                    commit.then_some(lock::CommitMessage::Generated),
+                    &ctx,
+                )?;
+            }
             MemberAction::SetRecurseSubmodules {
                 repo,
                 recurse,
@@ -954,6 +971,7 @@ pub fn run() -> anyhow::Result<()> {
         }
         Some(Commands::Lock {
             dirty,
+            repos,
             commit,
             message,
             project,
@@ -962,7 +980,8 @@ pub fn run() -> anyhow::Result<()> {
             let ctx = resolve_project_scoped(origin_dir, project_override, use_workweave_flag)?;
             refuse_symlinked_members_here(&ctx)?;
             let commit = commit.then(|| lock::CommitMessage::from_flag(message));
-            lock::lock(&ctx, dirty, commit)?;
+            let acting = crate::selector::RepoFilter::parse(&[], &repos)?;
+            lock::lock(&ctx, &acting, dirty, commit)?;
         }
         Some(Commands::Status {
             json,

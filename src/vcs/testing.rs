@@ -774,6 +774,15 @@ impl Vcs for FakeVcs {
         unsupported("unpushed_commits")
     }
 
+    fn unpushed_beyond(
+        &self,
+        _repo: &Path,
+        _tip: &ResolvedRevisionId,
+        _base: &ResolvedRevisionId,
+    ) -> Result<Vec<CommitSummary>, VcsError> {
+        unsupported("unpushed_beyond")
+    }
+
     fn upstream(&self, _on: &AttachedRef) -> Result<Option<Upstream>, VcsError> {
         unsupported("upstream")
     }

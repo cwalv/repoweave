@@ -2108,8 +2108,8 @@ pub enum ViolationOutput {
         project: ProjectName,
         /// The path the entry's URL places it at, when a clone of the same
         /// remote stands there and no entry of the project names it; `null`
-        /// otherwise. Present, the repair is to re-key the entry to it and run
-        /// `rwv lock`; absent, it is `rwv update`.
+        /// otherwise. Present, the repair is to re-key the entry to it, run
+        /// `rwv lock` and pin it with `rwv member pin`; absent, it is `rwv update`.
         clone_at_placement: Option<String>,
     },
     MemberPermissions {
@@ -7674,8 +7674,8 @@ impl CheckViolation {
                 "dangling reference in {project}: {repo} — listed in rwv.toml but not \
                      cloned on disk, while a clone of its URL stands at `{placed}`, where \
                      that URL places it; re-key the entry in rwv.toml from `{repo}` to \
-                     `{placed}` and run `rwv lock` (`rwv update` would clone it a second time \
-                     at `{repo}`)"
+                     `{placed}`, run `rwv lock`, and pin it with `rwv member pin {placed} \
+                     <rev> --commit` (`rwv update` would clone it a second time at `{repo}`)"
             ),
             CheckViolation::MemberPermissions {
                 workweave,
@@ -7720,13 +7720,14 @@ impl CheckViolation {
                 actual,
             } => format!(
                 "stale lock in {project}: {repo} locked={} actual={}; \
-                     run `rwv lock` to re-snapshot current HEAD SHAs",
+                     run `rwv lock --repo {repo}` to record the checkout's commit, or \
+                     `rwv update` to move the checkout to the pin",
                 locked.short_display(),
                 actual.short_display(),
             ),
             CheckViolation::IncompleteLock { project, repo } => format!(
                 "incomplete lock in {project}: {repo} has no rwv.lock entry; \
-                     run `rwv lock` to add it"
+                     pin it with `rwv member pin {repo} <rev> --commit`"
             ),
             CheckViolation::WorkweaveDrift {
                 workweave,
@@ -7883,7 +7884,8 @@ impl CheckViolation {
             ),
             CheckViolation::UnresolvableLockEntry { project, repo } => format!(
                 "{project}: lock references unknown revision for {repo}; \
-                     run `rwv lock` or fetch"
+                     `rwv fetch` brings in the history that may hold it, or pin another \
+                     commit with `rwv member pin {repo} <rev>`"
             ),
             CheckViolation::LockPinnedByName {
                 project,
@@ -8211,7 +8213,8 @@ impl CheckViolation {
                          `{expected_path}` under the canonical layout (report-only; to \
                          converge, {retire}move the checkout to `{expected_path}` unless it is \
                          already there, re-key the entry in rwv.toml from `{repo}` to \
-                         `{expected_path}`, and run `rwv lock` — a `reference` or `fork` role \
+                         `{expected_path}`, run `rwv lock`, and pin it with `rwv member pin \
+                         {expected_path} <rev> --commit` — a `reference` or `fork` role \
                          exempts this comparison)",
                     retire = if retire_first.is_empty() {
                         String::new()

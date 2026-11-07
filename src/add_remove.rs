@@ -370,7 +370,15 @@ pub fn run_add(
             existing.role,
             existing.recurse_submodules,
         )?;
-        return settle_manifest(ctx, &project, None, &[], opts);
+        return settle_registered(
+            ctx,
+            &project,
+            &project_dir,
+            &repo_path,
+            &dest,
+            vcs.as_ref(),
+            opts,
+        );
     }
 
     refuse_non_clone_at_placements(
@@ -382,6 +390,8 @@ pub fn run_add(
     if vcs.is_repo(&dest) {
         refuse_foreign_clone_at_placement(vcs.as_ref(), &clone_url, &dest, &repo_path)?;
     }
+
+    judge_commit_of_add(ctx, &project, &project_dir, &manifest)?;
 
     // Warn when this clone path is already registered by another project.
     // The physical clone is shared; the operator should know. This is not a
@@ -463,7 +473,16 @@ pub fn run_add(
 
         // Per-workspace state: the workweave's own copy when CWD is in one,
         // primary's otherwise.
-        settle_manifest(ctx, &project, Some(&manifest), &[], opts)
+        settle_and_commit(
+            ctx,
+            &project,
+            &project_dir,
+            &manifest,
+            &repo_path,
+            &dest,
+            vcs.as_ref(),
+            opts,
+        )
     })();
     added.map_err(|e| {
         left.refused(
@@ -475,6 +494,166 @@ pub fn run_add(
     })?;
 
     eprintln!("Added '{}' to manifest", repo_path.as_str());
+    Ok(())
+}
+
+/// The first pin of a member just added: the commit its clone's HEAD is at,
+/// where HEAD sits on the declared branch or that branch's upstream reaches
+/// it; none where HEAD is unborn or holds commits only the clone has.
+fn first_pin(
+    vcs: &dyn Vcs,
+    clone: &Path,
+    entry: &RepoEntry,
+) -> anyhow::Result<Option<crate::vcs::ResolvedRevisionId>> {
+    let attached = match vcs.head_attachment(clone)? {
+        HeadAttachment::Unborn(_) => return Ok(None),
+        HeadAttachment::Attached(attached) => Some(attached),
+        HeadAttachment::Detached(_) => None,
+    };
+    let head = vcs.head_revision(clone)?;
+    let declared = crate::vcs::RawRefName::new(entry.branch.local_counterpart().as_str());
+    let sits_on_declared = attached
+        .is_some_and(|attached| attached.is_named(&crate::vcs::LocalRefName::of_branch(&declared)));
+    let reached_by_upstream = vcs
+        .remote_copies(clone, &declared)?
+        .iter()
+        .any(|copy| copy.tip == head || vcs.is_ancestor(clone, &head, &copy.tip).unwrap_or(false));
+    Ok((sits_on_declared || reached_by_upstream).then_some(head))
+}
+
+/// Refuse, before the add changes anything, project-repo changes the add's
+/// commit would have to leave out.
+fn judge_commit_of_add(
+    ctx: &WorkspaceContext,
+    project: &ProjectName,
+    project_dir: &Path,
+    manifest: &Manifest,
+) -> anyhow::Result<()> {
+    crate::lock::judge_unrelated_dirt(
+        crate::vcs::project_vcs().as_ref(),
+        project,
+        project_dir,
+        &crate::activate::owned_paths(ctx.active_path(), project, manifest),
+    )
+}
+
+/// Settle the manifest that adds `repo_path`, then commit the addition with
+/// the member's first pin: the manifest, the integration files regenerated
+/// from it and `rwv.lock`, in one commit.
+///
+/// A settle that failed after the manifest landed (an install hook) still
+/// leaves the member added, so its commit is made before that failure is
+/// reported.
+#[allow(clippy::too_many_arguments)]
+fn settle_and_commit(
+    ctx: &WorkspaceContext,
+    project: &ProjectName,
+    project_dir: &Path,
+    manifest: &Manifest,
+    repo_path: &RepoPath,
+    canonical: &Path,
+    vcs: &dyn Vcs,
+    opts: ActivateOptions,
+) -> anyhow::Result<()> {
+    let settled = settle_manifest(ctx, project, Some(manifest), &[], opts);
+    let on_disk = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME));
+    let Some(on_disk) = on_disk.ok().filter(|m| m.contains_repo(repo_path)) else {
+        return settled;
+    };
+    let committed = commit_addition(
+        ctx,
+        project,
+        project_dir,
+        &on_disk,
+        repo_path,
+        canonical,
+        vcs,
+    );
+    settled.and(committed)
+}
+
+/// Settle a member the manifest already names, then give it the first pin it
+/// lacks, in the commit that carries the entry: a hand edit that added the
+/// member is finished by the verb that adds it.
+#[allow(clippy::too_many_arguments)]
+fn settle_registered(
+    ctx: &WorkspaceContext,
+    project: &ProjectName,
+    project_dir: &Path,
+    repo_path: &RepoPath,
+    canonical: &Path,
+    vcs: &dyn Vcs,
+    opts: ActivateOptions,
+) -> anyhow::Result<()> {
+    let settled = settle_manifest(ctx, project, None, &[], opts);
+    let manifest = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME))?;
+    let pinned = crate::lock::read_old_lock(&LockFile::path_in(project_dir), "member add")
+        .is_some_and(|lock| lock.contains_repo(repo_path));
+    if pinned || !canonical.exists() || manifest.get_entry(repo_path).is_none() {
+        return settled;
+    }
+    let committed = commit_addition(
+        ctx,
+        project,
+        project_dir,
+        &manifest,
+        repo_path,
+        canonical,
+        vcs,
+    );
+    settled.and(committed)
+}
+
+fn commit_addition(
+    ctx: &WorkspaceContext,
+    project: &ProjectName,
+    project_dir: &Path,
+    manifest: &Manifest,
+    repo_path: &RepoPath,
+    canonical: &Path,
+    vcs: &dyn Vcs,
+) -> anyhow::Result<()> {
+    let entry = manifest
+        .get_entry(repo_path)
+        .expect("the manifest names the member just added");
+    let pin = first_pin(vcs, canonical, entry)?;
+    let lock_path = LockFile::path_in(project_dir);
+    let old = crate::lock::read_old_lock(&lock_path, "member add");
+    let new = crate::lock::with_pins(manifest, old.as_ref(), pin.iter().map(|p| (repo_path, p)));
+    crate::lock::write_lock_in(&new, project_dir)?;
+    let message = match &pin {
+        Some(pin) => format!(
+            "member add {repo_path}\n\n  - {repo_path}: {}",
+            pin.id().short()
+        ),
+        None => format!("member add {repo_path}\n\n  - {repo_path}: no pin"),
+    };
+    let authored = crate::activate::owned_paths(ctx.active_path(), project, manifest);
+    crate::lock::commit_project_lock(
+        &crate::lock::PendingLockCommit::new(
+            project.clone(),
+            project_dir.to_path_buf(),
+            new,
+            old,
+            crate::lock::CommitMessage::Given(message),
+        ),
+        &authored,
+    )?;
+    match &pin {
+        Some(pin) => eprintln!("Pinned '{repo_path}' at {}", pin.id().short()),
+        None => {
+            let mut report = crate::diagnosis::Report::default();
+            report.add(
+                crate::diagnosis::State::PinNone
+                    .of(repo_path)
+                    .member()
+                    .checkout(canonical)
+                    .bind("<m>", repo_path.as_str())
+                    .judge(vcs),
+            );
+            eprint!("{}", report.render("member add"));
+        }
+    }
     Ok(())
 }
 
@@ -582,6 +761,13 @@ pub fn run_add_adopt(
             candidate.display()
         );
     }
+    judge_commit_of_add(
+        ctx,
+        &project,
+        &project_dir,
+        &Manifest::from_path(&manifest_path)
+            .with_context(|| format!("failed to load manifest at {}", manifest_path.display()))?,
+    )?;
     warn_if_shared_clone(ctx.primary_path(), &project, &repo_path, &candidate, role);
     let registration = run_add_from_local_path(
         vcs.as_ref(),
@@ -616,13 +802,27 @@ pub fn run_add_adopt(
             recurse_submodules,
             &mut left,
         )?;
-        settle_manifest(
-            ctx,
-            &project,
-            registration.as_ref().map(|(manifest, _)| manifest),
-            &[],
-            opts,
-        )
+        match registration.as_ref().map(|(manifest, _)| manifest) {
+            Some(manifest) => settle_and_commit(
+                ctx,
+                &project,
+                &project_dir,
+                manifest,
+                &repo_path,
+                &canonical,
+                vcs.as_ref(),
+                opts,
+            ),
+            None => settle_registered(
+                ctx,
+                &project,
+                &project_dir,
+                &repo_path,
+                &canonical,
+                vcs.as_ref(),
+                opts,
+            ),
+        }
     })();
     added.map_err(|e| {
         left.refused(
@@ -1512,7 +1712,15 @@ pub fn run_add_new(
                 existing.role,
                 existing.recurse_submodules,
             )?;
-            return settle_manifest(ctx, &project, None, &[], opts);
+            return settle_registered(
+                ctx,
+                &project,
+                &project_dir,
+                &repo_path,
+                &dest,
+                vcs.as_ref(),
+                opts,
+            );
         }
         crate::refuse!(
             RefusalKind::OccupiedPlacement,
@@ -1524,6 +1732,8 @@ pub fn run_add_new(
             plan.url
         );
     }
+
+    judge_commit_of_add(ctx, &project, &project_dir, &manifest)?;
 
     // Warn when this repo path is already registered by another project with
     // a potentially different role. The physical init'd repo is shared; the
@@ -1671,7 +1881,16 @@ pub fn run_add_new(
             &mut left,
         )?;
 
-        settle_manifest(ctx, &project, Some(&manifest), &[], opts)
+        settle_and_commit(
+            ctx,
+            &project,
+            &project_dir,
+            &manifest,
+            &repo_path,
+            &dest,
+            vcs.as_ref(),
+            opts,
+        )
     })();
     added.map_err(|e| {
         left.refused(

@@ -330,6 +330,9 @@ pub fn run_status(
     let mut aligned: Vec<AlignedStatus> = Vec::new();
     let mut operator_branches: Vec<OperatorBranch> = Vec::new();
     let accounting = Accounting::scan(ctx.primary_path());
+    let mut live_pins: Option<
+        std::collections::BTreeMap<crate::manifest::RepoPath, Vec<crate::pins::LivePin>>,
+    > = None;
 
     for pname in project_names_for_ctx(ctx) {
         let project_dir = project_dir(&workspace_dir, &pname);
@@ -435,6 +438,20 @@ pub fn run_status(
 
                 let mid_op = vcs.mid_operation(&repo_abs);
 
+                judged.add(
+                    crate::diagnosis::State::PinUnreachable
+                        .of(repo_path)
+                        .member()
+                        .checkout(&repo_abs)
+                        .bind("<m>", repo_path.as_str())
+                        .subject(
+                            raw_lock_sha
+                                .as_deref()
+                                .map_or("", crate::vcs::short_revision),
+                        )
+                        .judge(vcs.as_ref()),
+                );
+
                 let parent = recorded_parent.as_ref().map(|parent_path| {
                     let parent_repo_abs = parent_path.join(repo_path.as_path());
                     let parent_tip = vcs
@@ -498,6 +515,41 @@ pub fn run_status(
                 .map(|e| e.version.clone());
 
             let relation = compute_relation(vcs.as_ref(), &repo_abs, &tip, &lock_sha);
+            if let Some(head) = &tip {
+                let judging = match &lock_sha {
+                    None => Some(
+                        crate::diagnosis::State::PinNone
+                            .of(repo_path)
+                            .member()
+                            .checkout(&repo_abs)
+                            .bind("<m>", repo_path.as_str())
+                            .judge(vcs.as_ref()),
+                    ),
+                    Some(pin) => {
+                        let live = live_pins.get_or_insert_with(|| {
+                            crate::pins::live_pins(ctx.primary_path()).unwrap_or_default()
+                        });
+                        let held = live.get(repo_path).map(Vec::as_slice).unwrap_or_default();
+                        match crate::pins::standing(vcs.as_ref(), &repo_abs, head, pin, held) {
+                            Ok(standing) => crate::pins::judge(
+                                repo_path,
+                                &repo_abs,
+                                vcs.as_ref(),
+                                &standing,
+                                head,
+                                pin,
+                            ),
+                            Err(e) => {
+                                eprintln!(
+                                    "rwv status: {repo_path}: could not judge its pin: {e:#}"
+                                );
+                                None
+                            }
+                        }
+                    }
+                };
+                judged.extend(judging);
+            }
 
             let mid_op = vcs.mid_operation(&repo_abs);
 

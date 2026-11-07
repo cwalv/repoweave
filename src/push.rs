@@ -276,9 +276,13 @@ pub fn run_push(
         .map(|(rp, e)| (rp.clone(), e.clone()))
         .collect();
 
-    // 3. Lock-matches-state precondition. Compare each manifest repo's HEAD
-    //    SHA to the lock's recorded SHA. Bail before touching the network so
-    //    we don't half-publish state the committed lock doesn't reference.
+    // 3. The pin gate. Every member of the manifest is judged against the
+    //    commit the committed lock pins for it, before the network is
+    //    touched, so a lock that names commits only this clone holds is never
+    //    half-published. A member with no pin, a pin no ref reaches, a
+    //    checkout behind or diverged from its pin, or commits beyond it that
+    //    nothing else holds refuses; commits beyond the pin that are pushed
+    //    or pinned by another live lock are reported and go on.
     //
     //    Filter scope: this check ALWAYS runs against the full manifest, even
     //    when `--role` / `--repo` narrows the actual push loop below. The
@@ -286,8 +290,7 @@ pub fn run_push(
     //    project-repo lock that doesn't match the unfiltered repos breaks
     //    collaborators' `rwv clone` or `rwv update` (they hit "object missing" against the
     //    pinned-but-unpublished SHAs). The filter narrows the push loop,
-    //    not the precondition.
-    let lock_path = LockFile::path_in(&project_dir);
+    //    not the gate.
     let lock_entries: std::collections::BTreeMap<RepoPath, RawRevisionId> =
         if let Some(raw_lock) = &project.lock {
             raw_lock
@@ -297,8 +300,11 @@ pub fn run_push(
         } else {
             std::collections::BTreeMap::new()
         };
+    let live = crate::pins::live_pins(&primary_root)?;
 
-    let mut lock_mismatches: Vec<String> = Vec::new();
+    let mut pin_refusals = Report::default();
+    let mut pin_notes = Report::default();
+    let mut pin_failures: Vec<String> = Vec::new();
     for (repo_path, entry) in &manifest_repos {
         let vcs = vcs_for(entry.vcs_type);
         let repo_dir = primary_root.join(repo_path.as_path());
@@ -306,7 +312,7 @@ pub fn run_push(
             // `rwv update` re-clones missing members of the
             // active project — the settled repair verb for dangling
             // references. See fetch::run_fetch_in_place.
-            lock_mismatches.push(format!(
+            pin_failures.push(format!(
                 "{}: clone missing on disk; run `rwv update` from the workspace \
                  to re-materialize missing manifest members, then re-run `rwv push`",
                 repo_path.as_str(),
@@ -316,61 +322,68 @@ pub fn run_push(
         let head = match vcs.head_revision(&repo_dir) {
             Ok(h) => h,
             Err(e) => {
-                lock_mismatches.push(format!(
+                pin_failures.push(format!(
                     "{}: failed to resolve HEAD: {e:#}",
                     repo_path.as_str()
                 ));
                 continue;
             }
         };
+        let judging = |state: State| {
+            state
+                .of(repo_path)
+                .member()
+                .checkout(&repo_dir)
+                .bind("<m>", repo_path.as_str())
+        };
         let Some(lock_raw) = lock_entries.get(repo_path) else {
-            lock_mismatches.push(format!(
-                "{}: missing from {lock_path} — run `rwv lock --commit` to record local state",
-                repo_path.as_str(),
-            ));
+            pin_refusals.add(judging(State::PinNone).judge(vcs.as_ref()));
             continue;
         };
         // Resolve the lock's raw version against the repo so tag-form lock
         // entries (e.g. `v1.2.3`) compare equal to a SHA-form HEAD.
-        let lock_resolved = match vcs.resolve_revision(&repo_dir, lock_raw.as_str()) {
-            Ok(r) => r,
+        let Ok(pin) = vcs.resolve_revision(&repo_dir, lock_raw.as_str()) else {
+            pin_refusals.add(
+                judging(State::PinUnreachable)
+                    .subject(lock_raw.short_display())
+                    .judge(vcs.as_ref()),
+            );
+            continue;
+        };
+        let held = live.get(repo_path).map(Vec::as_slice).unwrap_or_default();
+        let standing = match crate::pins::standing(vcs.as_ref(), &repo_dir, &head, &pin, held) {
+            Ok(standing) => standing,
             Err(e) => {
-                lock_mismatches.push(format!(
-                    "{}: lock entry '{}' could not be resolved in clone: {e:#}",
-                    repo_path.as_str(),
-                    lock_raw
-                ));
+                pin_failures.push(format!("{}: {e:#}", repo_path.as_str()));
                 continue;
             }
         };
-        if lock_resolved != head {
-            lock_mismatches.push(format!(
-                "{}: HEAD {} differs from lock {}",
-                repo_path.as_str(),
-                head.id().short(),
-                lock_resolved.id().short(),
-            ));
+        if let Some(judged) =
+            crate::pins::judge(repo_path, &repo_dir, vcs.as_ref(), &standing, &head, &pin)
+        {
+            if judged.state() == State::PinAhead {
+                pin_notes.add(judged);
+            } else {
+                pin_refusals.add(judged);
+            }
         }
     }
-
-    if !lock_mismatches.is_empty() {
-        eprintln!(
-            "rwv push: {} repo(s) disagree with {lock_path}:",
-            lock_mismatches.len(),
-        );
-        for msg in &lock_mismatches {
-            eprintln!("  - {msg}");
+    if !pin_notes.is_empty() {
+        eprint!("{}", pin_notes.render("push"));
+    }
+    if !pin_failures.is_empty() {
+        if pin_refusals.is_empty() {
+            anyhow::bail!("{}", pin_failures.join("\n"));
         }
-        eprintln!(
-            "Hint: run `rwv lock --commit` to record each listed repo's HEAD in the lock, or \
-             move the repo's branch to its lock commit without detaching it: `git reset \
-             --keep <lock commit>` in the repo (after `git branch <name>` to keep the commits \
-             it moves off)."
-        );
-        crate::refuse!(
-            RefusalKind::LockStateMismatch,
-            "lock-state mismatch — refusing to push before clone state and lock agree"
-        );
+        for failure in &pin_failures {
+            pin_refusals.note(failure);
+        }
+    }
+    if let Err(e) = pin_refusals.into_result() {
+        if output.is_json() {
+            print_envelope(Vec::new(), &e, ctx);
+        }
+        return Err(e);
     }
 
     // 4. Per-repo branch sanity. Detached HEAD is fatal; off-version branch

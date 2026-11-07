@@ -1,17 +1,19 @@
 //! `rwv update --remote` — advance each manifest repo to its branch HEAD and
-//! re-snapshot `rwv.lock`.
+//! record the advanced tips in `rwv.lock`.
 //!
 //! Semantically analogous to `cargo update` or `npm update`: this is the
 //! form that mutates the lock by pulling fresh tips from the network.
-//! `rwv update` aligns clones to the lock; `rwv lock` snapshots local tips;
-//! `rwv update --remote` advances and re-snapshots.
+//! `rwv update` aligns clones to the lock; `rwv lock` records local tips;
+//! `rwv update --remote` advances and records. A member with no pin takes
+//! its tip as its first pin; a tip that would move a pin backward is refused
+//! before any member moves.
 
 use crate::lock;
 use crate::manifest::{Project, ProjectName, RepoEntry, RepoPath};
 use crate::parallel::{run_in_parallel, OutputMode, Reporter};
 use crate::placement::PlacementOutput;
 use crate::selector::RepoFilter;
-use crate::vcs::{vcs_for, HeadAttachment, ResolvedRevisionId, Vcs, VcsError};
+use crate::vcs::{vcs_for, HeadAttachment, Relation, ResolvedRevisionId, Vcs, VcsError};
 use crate::workspace::{
     member_checkout_dir, Checkout, MemberCheckout, Resolution, WorkspaceContext,
 };
@@ -94,9 +96,9 @@ pub struct UpdateRemoteJsonOutput {
 ///    is the canonical "HEAD of the upstream branch" value.
 /// 3. Checkout that revision in the local clone.
 ///
-/// After all repos are advanced, regenerate `rwv.lock` from the new tips
-/// and write it. The lock-write reuses `lock::generate_lock`, which carries
-/// the dirty check; `dirty` here controls whether to bypass it.
+/// After all repos are advanced, record the tips of the members the filter
+/// selects in `rwv.lock`, every other pin as it was; `dirty` controls whether
+/// to bypass the uncommitted-changes check of the members recorded.
 ///
 /// The enabled integrations then re-author their managed/generated content
 /// against the advanced tree, so it can be committed alongside the lock. This
@@ -199,6 +201,14 @@ fn update_for_project(
             filter.matches(path, role)
         })?;
     }
+    lock::refuse_detached(
+        &crate::alignment::Aligner::open(
+            active_root,
+            project_name,
+            crate::alignment::Accounting::default(),
+        )?,
+        project_name,
+    )?;
 
     if commit.is_some() {
         let authored = if filter.is_empty() {
@@ -219,10 +229,7 @@ fn update_for_project(
     // Vec mirrors the previous serial loop's order exactly.
     //
     // Apply the `--role` / `--repo` filter so only selected repos are
-    // advanced. Empty filter is a no-op (every repo passes). The post-loop
-    // lock re-snapshot below still walks the *full* manifest, so unfiltered
-    // repos remain at their previous lock SHAs — see the comment by the
-    // `lock::lock` call.
+    // advanced and recorded. Empty filter is a no-op (every repo passes).
     //
     // Capture the old SHA before the advance so JSON output can report
     // the before/after delta. Missing-repo clones produce `old_sha = None`.
@@ -252,20 +259,38 @@ fn update_for_project(
     let use_reporter = output == OutputMode::Text;
     let write_lock: Mutex<()> = Mutex::new(());
 
-    let outcomes: Vec<RepoOutcome> = run_in_parallel(&work_items, jobs, |_idx, item| {
-        let reporter = if parallel && use_reporter {
+    let reporter_for = |item: &WorkItem| {
+        if parallel && use_reporter {
             Reporter::parallel(item.repo_path.as_str().to_string(), &write_lock)
         } else {
             Reporter::serial()
+        }
+    };
+    let fetched: Vec<Result<ResolvedRevisionId, String>> =
+        run_in_parallel(&work_items, jobs, |_idx, item| {
+            fetch_and_resolve(
+                item.vcs.as_ref(),
+                &item.repo_path,
+                &item.entry,
+                item.planned.as_ref(),
+                &item.checkout,
+                &reporter_for(item),
+                use_reporter,
+            )
+        });
+    refuse_backwards(&work_items, &fetched, project.lock.as_ref())?;
+
+    let outcomes: Vec<RepoOutcome> = run_in_parallel(&work_items, jobs, |idx, item| {
+        let resolved = match &fetched[idx] {
+            Ok(resolved) => resolved,
+            Err(message) => return Err(message.clone()),
         };
         advance_one(
             item.vcs.as_ref(),
             &item.repo_path,
             &item.entry,
-            item.planned.as_ref(),
             &item.checkout,
-            &reporter,
-            use_reporter,
+            resolved,
         )
         .and_then(|new_sha| {
             crate::settle::settle_moved(
@@ -382,25 +407,23 @@ fn update_for_project(
         );
     }
 
-    // Re-snapshot the lock to capture the new tips. Delegates to the same
-    // `lock::lock` entry point so the commit/dirty handling, hook fire
-    // policy, and error surface stay consistent. Pass the same override
-    // through so the lock operates on the same project the update did.
-    //
-    // Critical: this happens AFTER the parallel worker pool has joined.
-    // The lock file is shared project-wide state; concurrent writes would
-    // race. Keeping it serial post-join is the natural fit for the
-    // existing structure.
-    //
-    // Filter scope: the `--role` / `--repo` filter narrows the *advance*
-    // loop above, not the lock snapshot. `lock::lock` walks the full
-    // manifest and records HEAD of every repo on disk: filtered repos are
-    // at their newly-advanced HEAD; unfiltered repos are at whatever HEAD
-    // they were already on. This preserves the invariant that the lock
-    // always describes the whole manifest. The filter narrows the loop,
-    // not the lock-shape — same decision as push in `src/push.rs`.
-    let pending_commit = lock::write_project_lock(ctx, dirty, commit)
-        .context("failed to write lock after update")?;
+    // Record the advanced members' tips. This happens after the worker pool
+    // has joined: the lock is shared project-wide state, and concurrent writes
+    // would race. The `--role` / `--repo` filter selects the members recorded
+    // as well as the ones advanced; every other pin stays as it was.
+    let pending_commit = lock::relock(
+        ctx,
+        &lock::Relocking {
+            verb: "update --remote",
+            acting: filter,
+            dirty,
+            first_pins: lock::FirstPins::Taken,
+            unaligned: lock::Unaligned::Left,
+            by_name: false,
+        },
+        commit,
+    )
+    .context("failed to write lock after update")?;
 
     // Regeneration reads EVERY manifest member (member presence is gated on
     // `.exists()`, and content-derived fields read member working trees), so it
@@ -499,19 +522,16 @@ fn plan_url_remotes(mut items: Vec<WorkItem>) -> anyhow::Result<Vec<WorkItem>> {
     Ok(items)
 }
 
-/// Per-repo worker: the pruning fetch of every remote, resolve the branch on
-/// the member's url remote, then advance the checkout onto it
-/// ([`advance_checkout`]).
+/// Per-repo worker: the pruning fetch of every remote, the url remote added
+/// first, then the tip of the branch on the member's url remote.
 ///
-/// Returns `Ok(new_sha)` on success (the SHA the repo is now at) or
-/// `Err(msg)` on failure. `use_reporter` suppresses progress lines under
-/// `--json` so stdout carries only structured data.
+/// `use_reporter` suppresses progress lines under `--json` so stdout carries
+/// only structured data.
 ///
 /// All user-facing text output is routed through `reporter`, which prefixes
 /// `[<repo>]` and serializes writes under `-j > 1`; under `-j 1` the
 /// reporter is a no-prefix passthrough.
-#[allow(clippy::too_many_arguments)]
-fn advance_one(
+fn fetch_and_resolve(
     vcs: &dyn Vcs,
     repo_path: &RepoPath,
     entry: &RepoEntry,
@@ -519,12 +539,8 @@ fn advance_one(
     checkout: &MemberCheckout,
     reporter: &Reporter<'_>,
     use_reporter: bool,
-) -> Result<String, String> {
+) -> Result<ResolvedRevisionId, String> {
     let repo_dir = checkout.path();
-    // Which checkout this member is advancing decides which ref is the legal
-    // object of the MOVE — the canonical's tracking counterpart, or the
-    // workweave's ephemeral ref.
-    let in_workweave = checkout.is_workweave_slot();
 
     if !repo_dir.exists() {
         // `rwv update` re-clones missing members of the active
@@ -590,10 +606,9 @@ fn advance_one(
     // `branch`, this resolution will now correctly fail rather than
     // resolving against a ghost ref. The error below names the state and
     // the two actionable exits so the operator knows what to do.
-    let resolved = match vcs.resolve_branch_on_remote(repo_dir, &planned.remote, &branch) {
-        Ok(r) => r,
-        Err(_) => {
-            return Err(format!(
+    vcs.resolve_branch_on_remote(repo_dir, &planned.remote, &branch)
+        .map_err(|_| {
+            format!(
                 "{repo}: branch '{branch}' does not resolve on the remote \
                  — renamed or deleted upstream, or `branch` was never a \
                  branch (it tracks a branch only; it cannot pin a tag or \
@@ -601,11 +616,64 @@ fn advance_one(
                  current branch name.",
                 repo = repo_path.as_str(),
                 branch = branch.branch(),
-            ));
-        }
-    };
+            )
+        })
+}
 
-    advance_checkout(vcs, repo_path, entry, repo_dir, in_workweave, &resolved)?;
+/// Refuse, before any member moves, every member whose upstream tip does not
+/// descend from the commit the lock pins for it: recording it would move the
+/// pin backward, and only a verb that names the member may do that.
+fn refuse_backwards(
+    items: &[WorkItem],
+    fetched: &[Result<ResolvedRevisionId, String>],
+    lock: Option<&crate::manifest::LockFile>,
+) -> anyhow::Result<()> {
+    let mut report = crate::diagnosis::Report::default();
+    for (item, tip) in items.iter().zip(fetched) {
+        let Ok(tip) = tip else { continue };
+        let dir = item.checkout.path();
+        let subject = match crate::alignment::pin_of(item.vcs.as_ref(), dir, lock, &item.repo_path)
+        {
+            crate::alignment::Pin::None => continue,
+            crate::alignment::Pin::Unreachable => "the pin is in no ref here".to_owned(),
+            crate::alignment::Pin::At(pin) => match item.vcs.relation(dir, tip, &pin) {
+                Ok(Relation::Even | Relation::Ahead) | Err(_) => continue,
+                Ok(relation) => lock::backwards_subject(
+                    item.vcs.as_ref(),
+                    dir,
+                    "the upstream's tip",
+                    tip,
+                    &pin,
+                    relation,
+                ),
+            },
+        };
+        report.add(lock::backwards_line(
+            &item.repo_path,
+            dir,
+            item.vcs.as_ref(),
+            subject,
+        ));
+    }
+    report.into_result()
+}
+
+/// Advance the checkout onto `resolved`, the tip fetched for it
+/// ([`advance_checkout`]), and return the commit it is then at.
+fn advance_one(
+    vcs: &dyn Vcs,
+    repo_path: &RepoPath,
+    entry: &RepoEntry,
+    checkout: &MemberCheckout,
+    resolved: &ResolvedRevisionId,
+) -> Result<String, String> {
+    let repo_dir = checkout.path();
+    // Which checkout this member is advancing decides which ref is the legal
+    // object of the MOVE — the canonical's tracking counterpart, or the
+    // workweave's ephemeral ref.
+    let in_workweave = checkout.is_workweave_slot();
+
+    advance_checkout(vcs, repo_path, entry, repo_dir, in_workweave, resolved)?;
 
     // Capture the new SHA after checkout for JSON reporting.
     let new_sha = vcs

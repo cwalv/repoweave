@@ -762,16 +762,11 @@ impl Aligner {
                 notes,
             });
         }
-        let off = self.standing_of(m, plan)?;
-        let dirty = m.vcs.tracked_dirty_file_names(m.dir)?;
-        let busy = m.vcs.mid_operation(m.dir).is_some();
-        if !dirty.is_empty() || busy || !self.may_leave(m, &off) {
-            let mut judged = vec![self.judge_off(m, &off, repo, &facts)];
-            if let Some(edits) = crate::diagnosis::judge_edits(m.vcs, repo, m.dir, dirty, None) {
-                judged.push(edits);
-            }
-            return Ok(Applied::Left { judged });
+        let blocked = self.blocked(m, plan, repo)?;
+        if !blocked.is_empty() {
+            return Ok(Applied::Left { judged: blocked });
         }
+        let off = self.standing_of(m, plan)?;
         let departure = Departure(());
         let moved_from = match &off {
             Off::OnBranch { branch, .. }
@@ -791,7 +786,54 @@ impl Aligner {
         })
     }
 
-    fn pin_note(m: &Member<'_>, plan: &Plan, repo: &dyn std::fmt::Display) -> Option<Judged> {
+    /// The lines that say why a member cannot move to where its plan puts it:
+    /// none where it is there already, or may leave where it is.
+    pub fn blocked(
+        &self,
+        m: &Member<'_>,
+        plan: &Plan,
+        repo: &dyn std::fmt::Display,
+    ) -> anyhow::Result<Vec<Judged>> {
+        if self.is_aligned(m, plan)? {
+            return Ok(Vec::new());
+        }
+        let facts: Vec<Fact> = match &plan.target {
+            Target::Detached { why, .. } => why.fact().into_iter().collect(),
+            _ => Vec::new(),
+        };
+        let off = self.standing_of(m, plan)?;
+        let dirty = m.vcs.tracked_dirty_file_names(m.dir)?;
+        let busy = m.vcs.mid_operation(m.dir).is_some();
+        if dirty.is_empty() && !busy && self.may_leave(m, &off) {
+            return Ok(Vec::new());
+        }
+        let mut judged = vec![self.judge_off(m, &off, repo, &facts)];
+        if let Some(edits) = crate::diagnosis::judge_edits(m.vcs, repo, m.dir, dirty, None) {
+            judged.push(edits);
+        }
+        Ok(judged)
+    }
+
+    /// The refusal for a member that is not where its plan puts it, `None`
+    /// where it is, or where the plan leaves it as found.
+    pub fn refusal(
+        &self,
+        m: &Member<'_>,
+        plan: &Plan,
+        repo: &dyn std::fmt::Display,
+    ) -> anyhow::Result<Option<Judged>> {
+        if matches!(plan.target, Target::AsFound) || self.is_aligned(m, plan)? {
+            return Ok(None);
+        }
+        let facts: Vec<Fact> = match &plan.target {
+            Target::Detached { why, .. } => why.fact().into_iter().collect(),
+            _ => Vec::new(),
+        };
+        let off = self.standing_of(m, plan)?;
+        Ok(Some(self.judge_off(m, &off, repo, &facts)))
+    }
+
+    pub fn pin_note(m: &Member<'_>, plan: &Plan, repo: &dyn std::fmt::Display) -> Option<Judged> {
         let state = match plan.pin {
             Pin::At(_) => return None,
             Pin::None => State::PinNone,

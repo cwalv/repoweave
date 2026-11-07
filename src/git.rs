@@ -2899,6 +2899,36 @@ impl Vcs for GitVcs {
             .collect()
     }
 
+    fn unpushed_beyond(
+        &self,
+        repo: &Path,
+        tip: &ResolvedRevisionId,
+        base: &ResolvedRevisionId,
+    ) -> Result<Vec<CommitSummary>, VcsError> {
+        let superseded = format!("--glob={SUPERSEDED_NAMESPACE}*");
+        let args = [
+            "log",
+            "--pretty=format:%H%x00%s",
+            tip.id().as_str(),
+            "--not",
+            base.id().as_str(),
+            "--remotes",
+            superseded.as_str(),
+            "--",
+        ];
+        Self::run_trimmed(args, repo)?
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|line| {
+                let (id, subject) = line.split_once('\0').unwrap_or((line, ""));
+                Ok(CommitSummary {
+                    id: commit_id_printed(id, &args, repo)?,
+                    subject: subject.to_owned(),
+                })
+            })
+            .collect()
+    }
+
     fn fetch_objects_from(&self, dst_repo: &Path, src_repo: &Path) {
         // Errors are swallowed by design — for sibling worktrees that
         // share an object store the fetch may fail (FETCH_HEAD unavailable)
