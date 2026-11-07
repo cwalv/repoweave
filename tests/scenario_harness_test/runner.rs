@@ -2,8 +2,9 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::PathBuf;
 
-use crate::invariants::{self, LockSite, Snapshot, Violation};
-use crate::sandbox::{Machine, Place, Repo, Sandbox, SecondProject};
+use crate::common::pause::Paused;
+use crate::invariants::{self, Allowance, LockSite, RemoteWrite, Snapshot, Violation};
+use crate::sandbox::{Machine, Place, Remote, RemoteKind, Repo, Sandbox, Seed, Unreachable};
 
 /// A verb a scenario needs that rwv does not have. A step that needs one is
 /// recorded and the scenario stops there: nothing stands in for it.
@@ -41,7 +42,8 @@ impl MissingVerb {
 
 /// What the owner of a remote does to it from outside every machine — a forge
 /// merging or deleting a branch, a colleague pushing — performed as plain git
-/// in a clone of the forge's own.
+/// in a clone of the forge's own, or in the bare remote itself where no push
+/// can do it.
 #[derive(Debug, Clone)]
 pub enum Forge {
     Commit {
@@ -58,6 +60,45 @@ pub enum Forge {
         repo: Repo,
         branch: &'static str,
     },
+    /// The origin's default branch follows a rename of it, as a forge's
+    /// rename does; no change when the default was another branch.
+    DefaultFollowsRename {
+        repo: Repo,
+        from: &'static str,
+        to: &'static str,
+    },
+    /// Both mirrors of `repo` take the origin's branches and tags, the
+    /// pruning one dropping those the origin lacks.
+    SyncMirrors {
+        repo: Repo,
+    },
+}
+
+impl Forge {
+    fn writes(&self) -> Vec<RemoteWrite> {
+        match self {
+            Forge::Commit { repo, branch, .. } => {
+                vec![RemoteWrite::Push(
+                    Remote::origin(*repo),
+                    (*branch).to_owned(),
+                )]
+            }
+            Forge::Merge { repo, .. } => {
+                vec![RemoteWrite::Push(Remote::origin(*repo), "main".to_owned())]
+            }
+            Forge::DeleteBranch { repo, branch } => {
+                vec![RemoteWrite::Delete(
+                    Remote::origin(*repo),
+                    (*branch).to_owned(),
+                )]
+            }
+            Forge::DefaultFollowsRename { .. } => Vec::new(),
+            Forge::SyncMirrors { repo } => vec![
+                RemoteWrite::Every(Remote::keeping_mirror(*repo)),
+                RemoteWrite::Every(Remote::pruning_mirror(*repo)),
+            ],
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -86,8 +127,16 @@ pub enum Action {
         at: Place,
         repo: Repo,
         file: &'static str,
-        from: &'static str,
-        to: &'static str,
+        from: String,
+        to: String,
+    },
+    /// Commit `files` over `branch`'s tip without a working tree; see
+    /// [`Sandbox::hand_commit`].
+    HandCommit {
+        at: Place,
+        repo: Repo,
+        branch: String,
+        files: Vec<(String, String)>,
     },
     Rwv {
         at: Place,
@@ -99,6 +148,20 @@ pub enum Action {
     /// `rwv fetch` of another project's remote into an existing weave.
     FetchProject(Machine, Repo),
     Forge(Forge),
+    /// rwv spawned in the background armed at `point`, the step ending once
+    /// it is held there; the process stays held under `handle` until a
+    /// [`Action::Release`] names it.
+    RwvPaused {
+        at: Place,
+        args: Vec<String>,
+        point: &'static str,
+        handle: &'static str,
+    },
+    /// The held process lets go of its point and runs to its exit, which is
+    /// this step's outcome.
+    Release(&'static str),
+    Unreachable(Remote),
+    Reachable(Remote),
     Pending(MissingVerb),
 }
 
@@ -160,11 +223,16 @@ impl Expect {
     }
 }
 
+/// One step of a scenario: what runs, what it may do that the invariants
+/// would otherwise report, and its expected outcome. Between a step that
+/// holds a process at a pause point and the step that releases it, the held
+/// process is blocked, so every step's invariants read a state nothing is
+/// changing.
 #[derive(Debug, Clone)]
 pub struct Step {
     pub label: String,
     pub action: Action,
-    pub may_rewind: Vec<Repo>,
+    pub allow: Allowance,
     pub expect: Expect,
 }
 
@@ -173,9 +241,59 @@ impl Step {
         Step {
             label: label.into(),
             action,
-            may_rewind: Vec::new(),
+            allow: Allowance::default(),
             expect,
         }
+    }
+
+    fn forge_git(repo: Repo, args: &[&str]) -> Step {
+        Step::new(
+            format!("forge: git -C {} {}", repo.name(), args.join(" ")),
+            Action::Git {
+                at: Place::Forge,
+                repo,
+                args: args.iter().map(|a| (*a).to_owned()).collect(),
+            },
+            Expect::succeeds(),
+        )
+    }
+
+    /// A colleague replaces `branch`'s tip on the origin with a commit
+    /// holding the tip's changes and `<mark>.txt`, and force-pushes it.
+    pub fn forge_force_push(repo: Repo, branch: &'static str, mark: &'static str) -> Vec<Step> {
+        let tracking = format!("origin/{branch}");
+        vec![
+            Step::forge_git(repo, &["switch", "-C", branch, &tracking]),
+            Step::forge_git(repo, &["reset", "--soft", "HEAD~1"]),
+            Step::commit(&Place::Forge, repo, mark),
+            Step::forge_git(repo, &["push", "--force", "origin", branch])
+                .overwrites(Remote::origin(repo), branch),
+        ]
+    }
+
+    /// The forge renames `from` to `to` on the origin, moving the default
+    /// branch with it when `from` was the default.
+    pub fn forge_rename_branch(repo: Repo, from: &'static str, to: &'static str) -> Vec<Step> {
+        let create = format!("refs/remotes/origin/{from}:refs/heads/{to}");
+        let delete = format!(":refs/heads/{from}");
+        vec![
+            Step::forge_git(repo, &["push", "origin", &create]).pushes(Remote::origin(repo), to),
+            Step::forge(Forge::DefaultFollowsRename { repo, from, to }),
+            Step::forge_git(repo, &["push", "origin", &delete]).deletes(Remote::origin(repo), from),
+        ]
+    }
+
+    /// The forge rebase-merges `branch` into `into`: a copy of each of its
+    /// commits replayed onto `into`, which then moves to the last copy.
+    pub fn forge_rebase_merge(repo: Repo, branch: &'static str, into: &'static str) -> Vec<Step> {
+        let tracking = format!("origin/{branch}");
+        let onto = format!("origin/{into}");
+        let target = format!("HEAD:refs/heads/{into}");
+        vec![
+            Step::forge_git(repo, &["switch", "-C", branch, &tracking]),
+            Step::forge_git(repo, &["rebase", "--force-rebase", &onto]),
+            Step::forge_git(repo, &["push", "origin", &target]).pushes(Remote::origin(repo), into),
+        ]
     }
 
     pub fn git(at: &Place, repo: Repo, args: &[&str]) -> Step {
@@ -202,21 +320,36 @@ impl Step {
         )
     }
 
-    pub fn hand_edit(
-        at: &Place,
-        repo: Repo,
-        file: &'static str,
-        from: &'static str,
-        to: &'static str,
-    ) -> Step {
+    pub fn hand_edit(at: &Place, repo: Repo, file: &'static str, from: &str, to: &str) -> Step {
         Step::new(
             format!("hand-edit {} {file}: {from:?} -> {to:?}", repo.name()),
             Action::HandEdit {
                 at: at.clone(),
                 repo,
                 file,
-                from,
-                to,
+                from: from.to_owned(),
+                to: to.to_owned(),
+            },
+            Expect::succeeds(),
+        )
+    }
+
+    pub fn hand_commit(at: &Place, repo: Repo, branch: &str, files: &[(&str, &str)]) -> Step {
+        let paths: Vec<&str> = files.iter().map(|(path, _)| *path).collect();
+        Step::new(
+            format!(
+                "hand-commit {} on {} {branch}",
+                paths.join(", "),
+                repo.name()
+            ),
+            Action::HandCommit {
+                at: at.clone(),
+                repo,
+                branch: branch.to_owned(),
+                files: files
+                    .iter()
+                    .map(|(path, content)| ((*path).to_owned(), (*content).to_owned()))
+                    .collect(),
             },
             Expect::succeeds(),
         )
@@ -250,9 +383,55 @@ impl Step {
     }
 
     pub fn forge(forge: Forge) -> Step {
-        Step::new(
+        let writes = forge.writes();
+        let mut step = Step::new(
             format!("forge: {forge:?}"),
             Action::Forge(forge),
+            Expect::succeeds(),
+        );
+        step.allow.writes = writes;
+        step
+    }
+
+    /// rwv run at `at` and held at `point` under `handle`.
+    pub fn rwv_paused(
+        at: &Place,
+        args: &[&str],
+        point: &'static str,
+        handle: &'static str,
+    ) -> Step {
+        Step::new(
+            format!("rwv {} (held at {point} as {handle})", args.join(" ")),
+            Action::RwvPaused {
+                at: at.clone(),
+                args: args.iter().map(|a| (*a).to_owned()).collect(),
+                point,
+                handle,
+            },
+            Expect::succeeds(),
+        )
+    }
+
+    pub fn release(handle: &'static str) -> Step {
+        Step::new(
+            format!("release {handle}"),
+            Action::Release(handle),
+            Expect::undecided(),
+        )
+    }
+
+    pub fn unreachable(remote: Remote) -> Step {
+        Step::new(
+            format!("{remote:?} unreachable"),
+            Action::Unreachable(remote),
+            Expect::succeeds(),
+        )
+    }
+
+    pub fn reachable(remote: Remote) -> Step {
+        Step::new(
+            format!("{remote:?} reachable again"),
+            Action::Reachable(remote),
             Expect::succeeds(),
         )
     }
@@ -272,14 +451,45 @@ impl Step {
     }
 
     pub fn may_rewind(mut self, members: &[Repo]) -> Step {
-        self.may_rewind.extend_from_slice(members);
+        self.allow.may_rewind.extend_from_slice(members);
+        self
+    }
+
+    pub fn may_strand(mut self, repos: &[Repo]) -> Step {
+        self.allow.may_strand.extend_from_slice(repos);
+        self
+    }
+
+    pub fn may_rewrite(mut self, repos: &[Repo]) -> Step {
+        self.allow.may_rewrite.extend_from_slice(repos);
+        self
+    }
+
+    pub fn pushes(mut self, remote: Remote, branch: &str) -> Step {
+        self.allow
+            .writes
+            .push(RemoteWrite::Push(remote, branch.to_owned()));
+        self
+    }
+
+    pub fn overwrites(mut self, remote: Remote, branch: &str) -> Step {
+        self.allow
+            .writes
+            .push(RemoteWrite::Overwrite(remote, branch.to_owned()));
+        self
+    }
+
+    pub fn deletes(mut self, remote: Remote, branch: &str) -> Step {
+        self.allow
+            .writes
+            .push(RemoteWrite::Delete(remote, branch.to_owned()));
         self
     }
 }
 
 pub struct Scenario {
     pub name: &'static str,
-    pub second_project: Option<SecondProject>,
+    pub seed: Seed,
     pub steps: Vec<Step>,
 }
 
@@ -376,10 +586,12 @@ impl Report {
 struct Run<'a> {
     sandbox: &'a Sandbox,
     marks: BTreeMap<&'static str, String>,
+    held: BTreeMap<&'static str, Paused>,
+    offline: BTreeMap<Remote, Unreachable<'a>>,
 }
 
 pub fn run(scenario: Scenario) -> Report {
-    let sandbox = Sandbox::new(scenario.second_project);
+    let sandbox = Sandbox::new(scenario.seed.clone());
     run_in(&sandbox, scenario)
 }
 
@@ -391,6 +603,8 @@ pub fn run_in(sandbox: &Sandbox, scenario: Scenario) -> Report {
     let mut run = Run {
         sandbox,
         marks: BTreeMap::new(),
+        held: BTreeMap::new(),
+        offline: BTreeMap::new(),
     };
     let steps = std::iter::once(Step::new_machine(Machine::A)).chain(scenario.steps);
     let mut before = invariants::snapshot(sandbox);
@@ -401,7 +615,7 @@ pub fn run_in(sandbox: &Sandbox, scenario: Scenario) -> Report {
         }
         let (succeeded, output) = run.perform(&step.action);
         let after = invariants::snapshot(sandbox);
-        for violation in invariants::check(sandbox, &before, &after, &step.may_rewind) {
+        for violation in invariants::check(sandbox, &before, &after, &step.allow) {
             report.violations.push((step.label.clone(), violation));
         }
         match (step.expect.exit, succeeded) {
@@ -427,7 +641,13 @@ pub fn run_in(sandbox: &Sandbox, scenario: Scenario) -> Report {
         });
         before = after;
     }
-    report.marks = run.marks;
+    for handle in std::mem::take(&mut run.held).into_keys() {
+        report.unmet.push((
+            format!("release {handle}"),
+            "the scenario ended with this process still held".to_owned(),
+        ));
+    }
+    report.marks = std::mem::take(&mut run.marks);
     report
 }
 
@@ -444,11 +664,19 @@ impl Run<'_> {
         let sb = self.sandbox;
         match action {
             Action::Git { at, repo, args } => {
+                if *at == Place::Forge {
+                    self.forge_clone(*repo);
+                }
                 let args: Vec<&str> = args.iter().map(String::as_str).collect();
                 let out = sb.git(&sb.checkout(at, *repo), &args);
                 (out.status.success(), rendered(&out))
             }
-            Action::Commit { at, repo, mark } => self.commit_in(sb.checkout(at, *repo), mark),
+            Action::Commit { at, repo, mark } => {
+                if *at == Place::Forge {
+                    self.forge_clone(*repo);
+                }
+                self.commit_in(sb.checkout(at, *repo), mark)
+            }
             Action::HandEdit {
                 at,
                 repo,
@@ -458,14 +686,23 @@ impl Run<'_> {
             } => {
                 let path = sb.checkout(at, *repo).join(file);
                 let text = std::fs::read_to_string(&path).unwrap();
-                if text.matches(from).count() != 1 {
+                if text.matches(from.as_str()).count() != 1 {
                     return (
                         false,
                         format!("{from:?} is not in {} exactly once", path.display()),
                     );
                 }
-                std::fs::write(&path, text.replacen(from, to, 1)).unwrap();
+                std::fs::write(&path, text.replacen(from.as_str(), to, 1)).unwrap();
                 (true, String::new())
+            }
+            Action::HandCommit {
+                at,
+                repo,
+                branch,
+                files,
+            } => {
+                let commit = sb.hand_commit(&sb.checkout(at, *repo), branch, files);
+                (true, commit)
             }
             Action::Rwv { at, args } => {
                 let args: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -486,6 +723,48 @@ impl Run<'_> {
                 (out.status.success(), rendered(&out))
             }
             Action::Forge(forge) => self.forge(forge),
+            Action::RwvPaused {
+                at,
+                args,
+                point,
+                handle,
+            } => {
+                assert!(!self.held.contains_key(handle), "{handle} is already held");
+                let args: Vec<&str> = args.iter().map(String::as_str).collect();
+                let dir = sb.root.join("pause").join(handle);
+                std::fs::create_dir_all(dir.parent().unwrap()).unwrap();
+                match Paused::spawn(sb.rwv_command(&sb.place_root(at), &args), point, &dir) {
+                    Ok(held) => {
+                        self.held.insert(handle, held);
+                        (true, String::new())
+                    }
+                    Err(why) => (false, why),
+                }
+            }
+            Action::Release(handle) => {
+                let held = self
+                    .held
+                    .remove(handle)
+                    .unwrap_or_else(|| panic!("nothing is held as {handle}"));
+                let out = held.release();
+                (out.status.success(), rendered(&out))
+            }
+            Action::Unreachable(remote) => {
+                assert!(
+                    !self.offline.contains_key(remote),
+                    "{remote:?} is already unreachable"
+                );
+                self.offline.insert(*remote, sb.unreachable(*remote));
+                (true, String::new())
+            }
+            Action::Reachable(remote) => {
+                let back_online = self
+                    .offline
+                    .remove(remote)
+                    .unwrap_or_else(|| panic!("{remote:?} is not unreachable"));
+                drop(back_online);
+                (true, String::new())
+            }
             Action::Pending(_) => {
                 unreachable!("a pending step stops the run before it is performed")
             }
@@ -509,16 +788,21 @@ impl Run<'_> {
         (true, rendered(&commit))
     }
 
+    /// The forge's clone of `repo`'s origin, fetched to the origin's state.
     fn forge_clone(&self, repo: Repo) -> PathBuf {
         let sb = self.sandbox;
-        let dir = sb.root.join("forge").join(repo.name());
+        let dir = sb.checkout(&Place::Forge, repo);
         if dir.is_dir() {
             sb.git_ok(&dir, &["fetch", "--prune", "origin"]);
         } else {
             std::fs::create_dir_all(dir.parent().unwrap()).unwrap();
             sb.git_ok(
                 dir.parent().unwrap(),
-                &["clone", &sb.remote_url(repo), dir.to_str().unwrap()],
+                &[
+                    "clone",
+                    &sb.remote_url(Remote::origin(repo)),
+                    dir.to_str().unwrap(),
+                ],
             );
         }
         dir
@@ -562,8 +846,46 @@ impl Run<'_> {
                 )
             }
             Forge::DeleteBranch { repo, branch } => {
-                let out = sb.git(&sb.remote(*repo), &["branch", "-D", branch]);
+                let origin = sb.remote_store(Remote::origin(*repo));
+                let out = sb.git(&origin, &["branch", "-D", branch]);
                 (out.status.success(), rendered(&out))
+            }
+            Forge::DefaultFollowsRename { repo, from, to } => {
+                let origin = sb.remote_store(Remote::origin(*repo));
+                let head = sb.git_ok(&origin, &["symbolic-ref", "HEAD"]);
+                if head != format!("refs/heads/{from}") {
+                    return (true, String::new());
+                }
+                let out = sb.git(
+                    &origin,
+                    &["symbolic-ref", "HEAD", &format!("refs/heads/{to}")],
+                );
+                (out.status.success(), rendered(&out))
+            }
+            Forge::SyncMirrors { repo } => {
+                let origin = sb.remote_url(Remote::origin(*repo));
+                let mut synced = String::new();
+                for (kind, prune) in [
+                    (RemoteKind::KeepingMirror, false),
+                    (RemoteKind::PruningMirror, true),
+                ] {
+                    let mirror = Remote { repo: *repo, kind };
+                    let mut args = vec!["fetch", "--quiet"];
+                    if prune {
+                        args.push("--prune");
+                    }
+                    args.extend([
+                        origin.as_str(),
+                        "+refs/heads/*:refs/heads/*",
+                        "+refs/tags/*:refs/tags/*",
+                    ]);
+                    let out = sb.git(&sb.remote_store(mirror), &args);
+                    synced += &rendered(&out);
+                    if !out.status.success() {
+                        return (false, synced);
+                    }
+                }
+                (true, synced)
             }
         }
     }
@@ -600,16 +922,18 @@ impl Run<'_> {
                 rev,
                 mark,
             } => self.contains(&sb.checkout(at, *repo), rev, mark),
-            Claim::RemoteContains { repo, branch, mark } => {
-                self.contains(&sb.remote(*repo), &format!("refs/heads/{branch}"), mark)
-            }
+            Claim::RemoteContains { repo, branch, mark } => self.contains(
+                &sb.remote_store(Remote::origin(*repo)),
+                &format!("refs/heads/{branch}"),
+                mark,
+            ),
             Claim::PinContains { site, member, mark } => {
                 let pin = after
                     .pins
                     .get(site)
                     .and_then(|pins| pins.get(member))
                     .ok_or_else(|| format!("{site:?} has no pin for {}", member.name()))?;
-                let store = invariants::store_for(sb, site, *member)
+                let store = invariants::store_for(sb, after, site, *member)
                     .ok_or_else(|| format!("no repository backs {} at {site:?}", member.name()))?;
                 self.contains(&store, pin, mark)
             }

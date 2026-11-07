@@ -35,6 +35,13 @@ name = "generate-explain"
 path = "src/bin/generate-explain.rs"
 test = true
 
+[features]
+# Compiles `test_pause::point` into a wait a test can arm, so a race inside one
+# verb can be driven from outside the process. scripts/ci-local.sh passes it to
+# the stages that run the suite; no release enables it, and its no-test-pause
+# stage holds that a build without it carries no pause.
+test-pause = []
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }

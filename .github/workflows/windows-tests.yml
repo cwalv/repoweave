@@ -239,7 +239,7 @@ jobs:
         run: |
           if [ -z "${TESTS:-}" ]; then
             echo "Full suite (no 'tests' input given)."
-            cargo test --locked --no-fail-fast
+            cargo test --locked --no-fail-fast --features test-pause
           else
             echo "Partial suite, restricted to: ${TESTS}"
             args=()
@@ -250,5 +250,5 @@ jobs:
                 args+=(--test "$target")
               fi
             done
-            cargo test --locked --no-fail-fast "${args[@]}"
+            cargo test --locked --no-fail-fast --features test-pause "${args[@]}"
           fi

@@ -143,16 +143,22 @@ fn stderr_of(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
-const AMBIENT_AUTOCRLF_HEADER: &str = "==> cargo test --release --no-fail-fast \
+const AMBIENT_AUTOCRLF_HEADER: &str =
+    "==> cargo test --release --no-fail-fast --features test-pause \
      (ambient core.autocrlf=true, as Git for Windows installs it)";
+
+const NO_TEST_PAUSE_HEADER: &str = "==> cargo test --no-fail-fast --test test_pause_build_test \
+     (built as releases build it: without test-pause)";
 
 const HEADERS_IN_ORDER: &[&str] = &[
     "==> cargo check",
-    "==> cargo check --locked --all-targets --target x86_64-pc-windows-msvc",
+    "==> cargo check --locked --all-targets --features test-pause --target x86_64-pc-windows-msvc",
     "==> cargo clippy --locked --all-targets --target x86_64-pc-windows-msvc -- -D warnings",
-    "==> cargo test --release --no-fail-fast",
+    "==> cargo test --release --no-fail-fast --features test-pause",
     AMBIENT_AUTOCRLF_HEADER,
+    NO_TEST_PAUSE_HEADER,
     "==> cargo clippy --all-targets -- -D warnings",
+    "==> cargo clippy --all-targets --features test-pause -- -D warnings",
     "==> cargo doc --no-deps --document-private-items --lib --bins --examples (rustdoc warnings deny)",
     "==> cargo fmt --all -- --check",
     "==> explain artifacts up to date (no drift after regeneration)",
@@ -228,7 +234,7 @@ fn assert_cargo_headers_agree_with_invocations(stdout: &str) {
 /// `assert_eq!` has nothing to object to. Only the comparison count catches
 /// the drop.
 #[test]
-#[should_panic(expected = "expected 8 header/invocation comparisons")]
+#[should_panic(expected = "expected 10 header/invocation comparisons")]
 fn header_invocation_floor_catches_a_header_the_position_scan_never_finds() {
     let stdout = "\n==> cargo check\nSTUB_CARGO: check\n\
 \n==> cargo check --locked --all-targets --target x86_64-pc-windows-msvc\nSTUB_CARGO: check --locked --all-targets --target x86_64-pc-windows-msvc\n\
@@ -354,7 +360,7 @@ fn stages_flag_naming_every_default_stage_explicitly_gets_the_full_run_line() {
     let out = run_ci_local(
         fixture.path(),
         stub.path(),
-        &["--stages=drift,fmt,doc,clippy,test-ambient-autocrlf,test,windows,check"],
+        &["--stages=drift,fmt,doc,clippy,no-test-pause,test-ambient-autocrlf,test,windows,check"],
         &[("CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED", "1")],
     );
     assert!(out.status.success(), "{}", stderr_of(&out));
@@ -429,9 +435,9 @@ fn windows_stage_runs_the_cross_check_when_the_target_is_installed() {
     );
     assert!(out.status.success(), "{}", stderr_of(&out));
     let stdout = stdout_of(&out);
-    assert!(
-        stdout.contains("STUB_CARGO: check --locked --all-targets --target x86_64-pc-windows-msvc")
-    );
+    assert!(stdout.contains(
+        "STUB_CARGO: check --locked --all-targets --features test-pause --target x86_64-pc-windows-msvc"
+    ));
     assert!(stdout.contains(
         "STUB_CARGO: clippy --locked --all-targets --target x86_64-pc-windows-msvc -- -D warnings"
     ));
@@ -561,14 +567,14 @@ fn the_wine_stage_cannot_stand_in_for_a_default_stage_on_the_terminal_line() {
         &ci_local,
         fixture.path(),
         stub.path(),
-        &["--stages=check,windows,test,test-ambient-autocrlf,clippy,doc,fmt,windows-wine"],
+        &["--stages=check,windows,test,test-ambient-autocrlf,no-test-pause,clippy,doc,fmt,windows-wine"],
         &[("CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED", "1")],
     );
     assert!(out.status.success(), "{}", stderr_of(&out));
     let stdout = stdout_of(&out);
     assert_eq!(
         stdout.trim_end().lines().last().unwrap_or(""),
-        "All checks passed (stages: check,windows,test,test-ambient-autocrlf,clippy,doc,fmt,windows-wine).",
+        "All checks passed (stages: check,windows,test,test-ambient-autocrlf,no-test-pause,clippy,doc,fmt,windows-wine).",
         "{stdout}"
     );
 }
@@ -655,23 +661,25 @@ fn run_recording_git_config(
 }
 
 /// The default run's second `cargo test` reads `core.autocrlf=true` from a
-/// system config of the stage's own, which is gone once it is done; the first
-/// is given none.
+/// system config of the stage's own, which is gone once it is done; the
+/// others are given none.
 #[test]
 fn the_ambient_autocrlf_stage_runs_the_suite_under_a_system_config_that_converts() {
     let fixture = fixture_repo();
     let (seen, out) = run_recording_git_config(fixture.path(), &[], "0");
     assert!(out.status.success(), "{}", stderr_of(&out));
-    let [plain, ambient] = &seen[..] else {
+    let [plain, ambient, unfeatured] = &seen[..] else {
         panic!(
-            "expected two `cargo test` runs; the stub saw {:?}",
+            "expected three `cargo test` runs; the stub saw {:?}",
             seen.iter().map(|s| &s.argv).collect::<Vec<_>>()
         );
     };
-    assert_eq!(
-        plain.system, None,
-        "the test stage must not set a system config"
-    );
+    for (stage, run) in [("test", plain), ("no-test-pause", unfeatured)] {
+        assert_eq!(
+            run.system, None,
+            "the {stage} stage must not set a system config"
+        );
+    }
     let system = ambient
         .system
         .as_ref()
@@ -813,7 +821,7 @@ fn entries(dir: &Path) -> Vec<String> {
 /// stopped running the suite fails here rather than leaving nothing to check.
 #[test]
 fn every_cargo_test_runs_with_tmpdir_behind_a_symlink_inside_the_handed_one() {
-    let test_stages = ["test", "test-ambient-autocrlf"];
+    let test_stages = ["test", "test-ambient-autocrlf", "no-test-pause"];
     let fixture = fixture_repo();
     let handed = common::tempdir().expect("tempdir");
     let (seen, out) = run_recording_tmpdir(fixture.path(), handed.path(), &[], "0", &[]);

@@ -7480,6 +7480,7 @@ fn ff_advance_repo(
     cwd_repo: &Path,
     cwd_tip: &ResolvedRevisionId,
 ) -> anyhow::Result<FfAdvance> {
+    crate::test_pause::point("advance-target");
     // Verify that target_repo's HEAD is an ancestor of (or equal to) cwd_tip.
     // If not, this is a concurrent-modification scenario — bail.
     let target_tip = vcs

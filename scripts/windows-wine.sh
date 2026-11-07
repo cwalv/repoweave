@@ -268,7 +268,7 @@ export WINE_WINDOWS_CARGO="$(winpath "$windows_toolchain/bin/cargo.exe")"
 export WINE_WINDOWS_PATH="$(winpath "$mingit/cmd");$(winpath "$mingit/usr/bin");$(winpath "$windows_toolchain/bin");$(winpath "$binutils")"
 export WINE_LIBRARY_PATH="$(winpath "$mingw_lib")"
 
-cargo test --no-run --target "$TARGET" \
+cargo test --no-run --target "$TARGET" --features test-pause \
     --config "target.$TARGET.linker='x86_64-w64-mingw32-gcc'" \
     --config "target.$TARGET.rustflags=['-L','native=$pthreads_lib','-C','debuginfo=0']" \
     --message-format=json-render-diagnostics "${cargo_args[@]}" \
@@ -289,7 +289,7 @@ while IFS=$'\t' read -r name kind src _; do
 done < "$run_dir/built"
 : > "$run_dir/rebuilt"
 if [ "${#probe_targets[@]}" -gt 0 ]; then
-    run_wine 0 wine "$WINE_WINDOWS_CARGO" test --no-run \
+    run_wine 0 wine "$WINE_WINDOWS_CARGO" test --no-run --features test-pause \
         --target-dir "$(winpath "$cache/target")" \
         --config "target.$TARGET.rustflags=['-C','debuginfo=0']" \
         --message-format=json-render-diagnostics "${probe_targets[@]}" \

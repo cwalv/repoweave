@@ -86,7 +86,9 @@ jobs:
         run: rustup show
 
       - name: Check the whole crate compiles on Windows
-        run: cargo check --locked --all-targets
+        # With the feature the test stages build, so the code it compiles in
+        # compiles here too; the lint below builds what releases ship.
+        run: cargo check --locked --all-targets --features test-pause
 
       - name: Lint the whole crate on Windows
         # clippy.toml's bans cover cfg(windows) code only in a Windows-target

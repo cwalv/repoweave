@@ -5,6 +5,7 @@ pub mod contract;
 pub mod doctor_corpus;
 pub mod job;
 pub mod json_schema;
+pub mod pause;
 pub mod src_scan;
 
 use std::path::PathBuf;
@@ -873,6 +874,7 @@ pub fn rwv() -> assert_cmd::Command {
     for var in GIT_ENV_VARS {
         cmd.env_remove(var);
     }
+    cmd.env_remove(pause::ARMING_VARIABLE);
     // Mirror the `init.defaultBranch=main` pin from [`git`] — rwv shells out
     // to git internally and those subprocesses inherit this env, so any
     // `git init` rwv runs on behalf of a test gets `main` as the default
@@ -1010,6 +1012,7 @@ pub fn rwv_std() -> Command {
     for var in GIT_ENV_VARS {
         cmd.env_remove(var);
     }
+    cmd.env_remove(pause::ARMING_VARIABLE);
     cmd.envs(git_config_env(&[]));
     cmd
 }

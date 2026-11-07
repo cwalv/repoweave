@@ -1,6 +1,6 @@
 use crate::invariants::LockSite;
 use crate::runner::{Claim, Exit, Forge, MergeHow, MissingVerb, Scenario, Step};
-use crate::sandbox::{Machine, Place, Repo, SecondProject};
+use crate::sandbox::{declared_branch_text, Machine, Place, Remote, Repo, SecondProject, Seed};
 
 fn a() -> Place {
     Place::Primary(Machine::A)
@@ -17,7 +17,7 @@ fn create(name: &str) -> Step {
 fn scenario(name: &'static str, steps: Vec<Step>) -> Scenario {
     Scenario {
         name,
-        second_project: None,
+        seed: Seed::default(),
         steps,
     }
 }
@@ -43,6 +43,8 @@ pub fn solo_workweave() -> Scenario {
                     mark: "solo-app",
                 }),
             Step::rwv(&a(), &["push"])
+                .pushes(Remote::origin(Repo::App), "main")
+                .pushes(Remote::origin(Repo::Proj), "main")
                 .expect(Exit::Succeeds)
                 .claim(Claim::RemoteContains {
                     repo: Repo::App,
@@ -50,7 +52,7 @@ pub fn solo_workweave() -> Scenario {
                     mark: "solo-app",
                 })
                 .claim(Claim::PinContains {
-                    site: LockSite::RemoteMain(Repo::Proj),
+                    site: LockSite::remote_main(Repo::Proj),
                     member: Repo::App,
                     mark: "solo-app",
                 }),
@@ -233,7 +235,7 @@ fn shared_member(name: &'static str, branch: &'static str) -> Scenario {
     let side = Place::Workweave(Machine::A, Repo::Proj2, "side".to_owned());
     Scenario {
         name,
-        second_project: Some(SecondProject { branch }),
+        seed: Seed::default().second_project(SecondProject { branch }),
         steps: vec![
             Step::fetch_project(Machine::A, Repo::Proj2).expect(Exit::Undecided),
             Step::commit(&a(), Repo::Lib, "lib-pending"),
@@ -335,11 +337,15 @@ fn feature_branch_in_primary() -> Vec<Step> {
     ]
 }
 
+fn push_feat_x(repo: Repo) -> Step {
+    Step::git(&a(), repo, &["push", "origin", "feat-x"]).pushes(Remote::origin(repo), "feat-x")
+}
+
 fn raw_merge(name: &'static str, main_moves: bool) -> Scenario {
     let mut steps = feature_branch_in_primary();
     steps.extend([
-        Step::git(&a(), Repo::App, &["push", "origin", "feat-x"]),
-        Step::git(&a(), Repo::Proj, &["push", "origin", "feat-x"]),
+        push_feat_x(Repo::App),
+        push_feat_x(Repo::Proj),
         Step::git(&a(), Repo::App, &["switch", "main"]),
         Step::git(&a(), Repo::Proj, &["switch", "main"]),
     ]);
@@ -354,6 +360,8 @@ fn raw_merge(name: &'static str, main_moves: bool) -> Scenario {
         Step::git(&a(), Repo::App, &["merge", "--no-edit", "feat-x"]),
         Step::rwv(&a(), &["lock", "--commit"]),
         Step::rwv(&a(), &["push"])
+            .pushes(Remote::origin(Repo::App), "main")
+            .pushes(Remote::origin(Repo::Proj), "main")
             .expect(Exit::Succeeds)
             .claim(Claim::RemoteContains {
                 repo: Repo::App,
@@ -361,7 +369,7 @@ fn raw_merge(name: &'static str, main_moves: bool) -> Scenario {
                 mark: "feat-app",
             })
             .claim(Claim::PinContains {
-                site: LockSite::RemoteMain(Repo::Proj),
+                site: LockSite::remote_main(Repo::Proj),
                 member: Repo::App,
                 mark: "feat-app",
             }),
@@ -426,8 +434,8 @@ pub fn raw_switch_in_primary_project() -> Scenario {
 pub fn project_pr_merged_before_members() -> Scenario {
     let mut steps = feature_branch_in_primary();
     steps.extend([
-        Step::git(&a(), Repo::App, &["push", "origin", "feat-x"]),
-        Step::git(&a(), Repo::Proj, &["push", "origin", "feat-x"]),
+        push_feat_x(Repo::App),
+        push_feat_x(Repo::Proj),
         Step::forge(Forge::Merge {
             repo: Repo::Proj,
             branch: "feat-x",
@@ -452,8 +460,8 @@ pub fn hand_edit_declaration_to_existing_branch() -> Scenario {
                 &a(),
                 Repo::Proj,
                 "rwv.toml",
-                "lib.git\"\nversion = \"main\"",
-                "lib.git\"\nversion = \"dev\"",
+                &declared_branch_text(Repo::Lib, "main"),
+                &declared_branch_text(Repo::Lib, "dev"),
             ),
             Step::rwv(&a(), &["update"]),
         ],
@@ -468,8 +476,8 @@ pub fn hand_edit_declaration_to_missing_branch() -> Scenario {
                 &a(),
                 Repo::Proj,
                 "rwv.toml",
-                "lib.git\"\nversion = \"main\"",
-                "lib.git\"\nversion = \"nowhere\"",
+                &declared_branch_text(Repo::Lib, "main"),
+                &declared_branch_text(Repo::Lib, "nowhere"),
             ),
             Step::rwv(&a(), &["update"]),
         ],

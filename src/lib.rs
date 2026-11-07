@@ -127,6 +127,7 @@ pub mod state_file;
 pub mod status;
 pub mod symlink;
 pub mod sync;
+pub(crate) mod test_pause;
 pub(crate) mod tool_program;
 pub mod update;
 pub mod vcs;

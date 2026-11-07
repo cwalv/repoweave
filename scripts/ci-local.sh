@@ -4,7 +4,7 @@
 # and contributors running checks locally. Anything that diverges between local
 # and CI belongs here so it stays in sync.
 #
-# Usage: scripts/ci-local.sh [--stages=check,windows,test,test-ambient-autocrlf,clippy,doc,fmt,drift,windows-wine]
+# Usage: scripts/ci-local.sh [--stages=check,windows,test,test-ambient-autocrlf,no-test-pause,clippy,doc,fmt,drift,windows-wine]
 #
 # With no --stages, runs all stages in the order above but the last — this is
 # what CI, the release gate and the pre-push hook invoke. windows-wine runs
@@ -17,7 +17,13 @@
 # default stage is never mistaken for a full gate.
 #
 # Both test stages run the suite with TMPDIR behind a symlink, the geometry
-# macOS's temp root has, on every host that can make one.
+# macOS's temp root has, on every host that can make one, and with the
+# test-pause feature, which lets a test hold rwv at a named point while it
+# changes what rwv will read. The `rwv` an integration test spawns is the one
+# cargo builds for that invocation, so the feature reaches it only by being
+# passed here. no-test-pause then builds without it, as every release does,
+# and holds that no pause survives there. The windows stage compiles the
+# featured build, its lint the shipped one; clippy lints both.
 #
 # test-ambient-autocrlf runs the suite a second time under a system-tier
 # core.autocrlf=true, which Git for Windows' installer sets, so every git a
@@ -36,7 +42,7 @@
 
 set -euo pipefail
 
-ALL_STAGES=(check windows test test-ambient-autocrlf clippy doc fmt drift)
+ALL_STAGES=(check windows test test-ambient-autocrlf no-test-pause clippy doc fmt drift)
 OPT_IN_STAGES=(windows-wine)
 KNOWN_STAGES=("${ALL_STAGES[@]}" "${OPT_IN_STAGES[@]}")
 
@@ -121,9 +127,9 @@ if run_stage check; then
 fi
 
 if run_stage windows; then
-    header "cargo check --locked --all-targets --target x86_64-pc-windows-msvc"
+    header "cargo check --locked --all-targets --features test-pause --target x86_64-pc-windows-msvc"
     if command -v rustup >/dev/null 2>&1 && rustup target list --installed 2>/dev/null | grep -qx x86_64-pc-windows-msvc; then
-        cargo check --locked --all-targets --target x86_64-pc-windows-msvc
+        cargo check --locked --all-targets --features test-pause --target x86_64-pc-windows-msvc
         # Host clippy never sees a cfg(windows) item, so clippy.toml's bans
         # reach those only through a run for the Windows target. Linting
         # needs no linker.
@@ -135,15 +141,15 @@ if run_stage windows; then
 fi
 
 if run_stage test; then
-    header "cargo test --release --no-fail-fast"
+    header "cargo test --release --no-fail-fast --features test-pause"
     # --no-fail-fast: without it cargo stops at the first failing binary and
     # every later one goes unrun rather than green — this is what makes the
     # red list a list.
-    with_symlinked_tmpdir cargo test --release --no-fail-fast
+    with_symlinked_tmpdir cargo test --release --no-fail-fast --features test-pause
 fi
 
 if run_stage test-ambient-autocrlf; then
-    header "cargo test --release --no-fail-fast (ambient core.autocrlf=true, as Git for Windows installs it)"
+    header "cargo test --release --no-fail-fast --features test-pause (ambient core.autocrlf=true, as Git for Windows installs it)"
     # GIT_CONFIG_SYSTEM, not GIT_CONFIG_GLOBAL: the system tier is where Git
     # for Windows' installer sets it, below anyone's identity rather than in
     # place of it, so a test that sandboxes its own HOME for an identity or a
@@ -151,14 +157,25 @@ if run_stage test-ambient-autocrlf; then
     ambient_config="$(mktemp)"
     printf '[core]\n\tautocrlf = true\n' > "$ambient_config"
     ambient_status=0
-    with_symlinked_tmpdir env GIT_CONFIG_SYSTEM="$ambient_config" cargo test --release --no-fail-fast || ambient_status=$?
+    with_symlinked_tmpdir env GIT_CONFIG_SYSTEM="$ambient_config" cargo test --release --no-fail-fast --features test-pause || ambient_status=$?
     rm -f "$ambient_config"
     [ "$ambient_status" -eq 0 ] || exit "$ambient_status"
+fi
+
+if run_stage no-test-pause; then
+    header "cargo test --no-fail-fast --test test_pause_build_test (built as releases build it: without test-pause)"
+    # Debug, not the test stages' release profile: whether the pause is
+    # compiled in turns on the feature, never on the profile, and the debug
+    # library is one drift's generator build compiles anyway.
+    with_symlinked_tmpdir cargo test --no-fail-fast --test test_pause_build_test
 fi
 
 if run_stage clippy; then
     header "cargo clippy --all-targets -- -D warnings"
     cargo clippy --all-targets -- -D warnings
+    # The build the test stages run, which compiles what the feature adds.
+    header "cargo clippy --all-targets --features test-pause -- -D warnings"
+    cargo clippy --all-targets --features test-pause -- -D warnings
 fi
 
 if run_stage doc; then

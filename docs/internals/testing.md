@@ -289,3 +289,96 @@ Gates, scans, and summaries are tested like the code they guard:
 - A check that never fires may be blocked upstream — assert the enumeration
   reaches your predicate, not only that the predicate is correct.
 - Judge a gate from its output, never from a piped exit code.
+
+## The scenario harness
+
+`tests/scenario_harness_test.rs` runs branching scenarios step by step in a
+hermetic sandbox and holds every step to a set of invariants. A scenario is
+data: a [`Seed`](../../tests/scenario_harness_test/sandbox.rs) saying what the
+sandbox holds beyond its fixed shape, and a list of steps, each carrying its
+expected outcome and what it may do that an invariant would otherwise report.
+Three modules carry it, and each has one job:
+
+- **`tests/scenario_harness_test/sandbox.rs`** builds the world: bare remotes,
+  the machines that clone them, and the forge's own clone of each origin. Every
+  git and rwv it runs sees a `HOME` inside the sandbox. A seed can add, per
+  member, a fork remote and two mirrors of the origin (one keeping branches the
+  origin drops, one pruning to an exact copy), give a member a role other than
+  `owned`, and install an `update` hook on any remote that refuses the records
+  branch. Any remote can be made unreachable mid-scenario by moving its bare
+  directory aside behind a drop guard, so a scenario that fails during an
+  outage still leaves the remote where its URL points. The key a member entry
+  declares its branch under and the `.gitattributes` line for the lock are one
+  constant each, which the seed and every hand edit of an entry spell from.
+- **`tests/scenario_harness_test/runner.rs`** performs steps and checks their
+  outcomes. A forge event that a push can express (a force-push, a branch
+  rename, a rebase-merge) is a sequence of plain `Action::Git` steps in the
+  forge's clone; one no push can express (moving a remote's default branch,
+  syncing a mirror) runs in the bare remote itself. A step may also commit by
+  hand with git's plumbing, which is how a fixture lands a records entry or a
+  lock on a branch nothing has checked out.
+- **`tests/scenario_harness_test/invariants.rs`** snapshots the sandbox before
+  and after each step and compares the two. Its module comment is the one
+  statement of what each check holds, what it reads, and what it cannot see;
+  keep it that way rather than restating checks elsewhere.
+
+### What a step declares
+
+A step's `Allowance` is the scenario's statement of what it expects the step
+to do, read only by the invariants:
+
+- `may_rewind`, `may_strand` and `may_rewrite` name the repos in which the
+  step may move a pin backwards, leave a commit no ref reaches, or move a
+  declared branch to or with its upstream. Each is the seam for an operation
+  the step names, never a blanket pass: a check that is spared still runs for
+  every repo the step does not name.
+- Its remote writes say which refs of which remotes the step may change, and
+  how: a push creates a branch or moves it forward, an overwrite may move it
+  anywhere, a delete removes it, and the forge's sync of a mirror may change
+  any of its refs. A forge step declares its own; every other step that writes
+  a remote must say so, or the write is reported.
+
+### Adding an instrument
+
+One instrument is one `Violation` variant, its `Invariant`, and one function
+that `check` calls, all in `invariants.rs`, plus a paragraph in that module's
+comment. Whatever it needs to read goes into `Snapshot`, so every check reads
+the same state. It lands with a seeded-failure test in
+`tests/scenario_harness_test.rs` that drives the violation through real steps
+and asserts on the violation itself, not only on a red report; where the
+instrument derives the set of refs it watches, add a test showing it watches
+nothing it should not.
+
+### Holding rwv at a pause point
+
+A race inside one verb cannot be driven by whole-process steps. For those,
+`src/test_pause.rs` provides named points: `test_pause::point(name)` compiles
+to nothing unless the crate is built with the `test-pause` cargo feature, and
+waits only when `RWV_TEST_PAUSE` is `<point>@<dir>` naming that point. The
+first pass writes `<dir>/paused` and waits until `<dir>/release` exists; a
+value of any other shape stops the process. A point sits immediately before a
+compare-and-swap, so what the test changes while the process waits is what
+the compare then reads.
+
+The driving side is `tests/common/pause.rs`, and in the harness it is a pair
+of steps: one spawns rwv armed at a point and ends once it is held, and one
+releases it and takes its exit as the step's outcome. Between them the held
+process is blocked, so every step's invariants read a state nothing is
+changing. Every rwv a test spawns has the arming variable removed, so only
+that step arms one.
+
+The feature reaches the binary because the `rwv` an integration test spawns
+is the one cargo builds for that `cargo test` invocation:
+`scripts/ci-local.sh` passes `--features test-pause` to both test stages, and
+CI and the pre-push hook run that script. Two cargo invocations with
+different features in one target directory relink the same
+`target/<profile>/rwv` under each other, so run one at a time. A test that
+holds rwv is written through the `holding_rwv!` macro, which compiles its body
+in every build, reads the feature with `cfg!`, and announces a skip in a
+build without it.
+
+`debug_assertions` would not do: the gate runs the suite in release. That a
+build without the feature carries no pause is held by
+`tests/test_pause_build_test.rs`, which asserts that the spawned binary
+contains the arming variable's name exactly when the feature is on; the
+gate's `no-test-pause` stage runs it in the build every release makes.

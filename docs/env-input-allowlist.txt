@@ -23,4 +23,5 @@ env-input:PATHEXT  # Windows' definition of executable, read as the `which` crat
 env-input:RWV_WORKSPACE  # read by the bundled rwv-each plugin, which is the child this handoff surface is set for; rwv itself never reads it
 env-input:RWV_WORKWEAVE  # read by the bundled rwv-each plugin, which is the child this handoff surface is set for; rwv itself never reads it
 env-input:RWV_WORKWEAVE_UNREGISTERED  # read by the bundled rwv-each plugin, which is the child this handoff surface is set for; rwv itself never reads it
+env-input:RWV_TEST_PAUSE  # read only in a build with the test-pause cargo feature, which no release enables, to arm a pause point a test drives a race through; the shipped binary carries no read of it, which scripts/ci-local.sh's no-test-pause stage holds
 env-input:RWV_PROJECT  # read by the bundled rwv-each plugin, which is the child this handoff surface is set for; rwv itself never reads it
