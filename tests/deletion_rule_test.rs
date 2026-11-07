@@ -97,9 +97,13 @@ fn bare_of<'a>(w: &'a common::PushWorkspace, member: &str) -> &'a Path {
 }
 
 fn recorded(ws: &Path, branch: &str) -> bool {
-    let text = String::from_utf8(succeed(&["branch", "list"], ws).stdout).unwrap();
-    text.lines()
-        .any(|l| l.split_whitespace().any(|word| word == branch))
+    common::git()
+        .args(["cat-file", "-e", &format!("rwv-records:{branch}")])
+        .current_dir(project_dir(ws))
+        .output()
+        .unwrap()
+        .status
+        .success()
 }
 
 fn json(out: &std::process::Output) -> serde_json::Value {
