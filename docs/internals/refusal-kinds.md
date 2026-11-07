@@ -194,6 +194,10 @@ rwv explain <kind>
 2. Offer the forms the state prints, in order. A choice whose verb has not
    shipped is offered all the same, marked unshipped on its form; it prints
    once its verb ships and the mark is flipped.
+   A state may offer none, where the design's choice table names none for it
+   (`unparseable-project` `malformed`); then no `choices:` block prints and the
+   route line still does. The test over `State::ALL` lists such states, so one
+   is a decision and not an omission.
 3. Judge it at each site — `State::…of(repo)`, its listing and bindings,
    `.judge(vcs)` — into the verb's `Report`, and refuse once every repo the
    check covers has been judged.

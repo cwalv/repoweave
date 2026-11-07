@@ -2201,31 +2201,18 @@ fn gita_is_opt_in() {
 // as the recovery path.
 // ---------------------------------------------------------------------------
 
-/// Regression test: sync bails hard when the project manifest is corrupted
-/// immediately after Phase 1' (project repo fast-forward merge).
+/// Runs `rwv sync <primary> <args>` from a workweave whose project repo
+/// fast-forwards onto the primary's, with a `post-merge` hook that leaves
+/// `rwv.toml` unparseable once the merge lands, so the manifest cannot be
+/// reloaded after Phase 1'.
 ///
-/// We simulate post-Phase-1' corruption via a `post-merge` git hook installed
-/// in the shared git hooks directory.  `git merge --ff-only` (the default
-/// Phase 1' path when CWD is behind source) triggers `post-merge`, which
-/// replaces `rwv.toml` with text no parser accepts.  The reload at the fixed code site
-/// sees garbage and must bail — not warn and proceed.
-///
-/// The workweave's project repo is a git worktree of primary's project, so
-/// hooks live in primary.project_dir/.git/hooks/ and fire for both repos.
-/// The `post-merge` hook writes its corruption to `rwv.toml` relative to the
-/// git work tree, which at hook time is the workweave's project directory.
-///
-/// Assertions:
-///   - sync exits non-zero
-///   - stderr contains "rwv abort" (recovery hint)
-///   - stderr does NOT contain "warning:" (old warn-and-proceed fingerprint)
-#[test]
-fn sync_bails_hard_when_post_phase1_manifest_reload_fails() {
+/// The hook lives in the shared git hooks directory, which the workweave's
+/// project worktree shares with the primary's project repo, and writes
+/// relative to the git work tree: the workweave's project directory.
+fn sync_with_a_manifest_corrupted_after_phase_1(args: &[&str]) -> std::process::Output {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
-    // Primary: advance server to C2 and commit an updated lock.  The WW
-    // project is behind (no extra WW commits), so Phase 1' can fast-forward.
     let c2 = make_commit(
         &primary.server_dir,
         "primary_advance.txt",
@@ -2239,17 +2226,9 @@ fn sync_bails_hard_when_post_phase1_manifest_reload_fails() {
         &["commit", "-m", "lock: primary advance"],
     );
 
-    // Install a `post-merge` hook in the shared git hooks directory.
-    // Because ww.project_dir is a worktree of primary.project_dir, both
-    // share the same hooks directory (primary.project_dir/.git/hooks/).
-    // `git merge --ff-only` (the default Phase 1' path) triggers post-merge.
-    // The hook writes an unparseable rwv.toml in the current working tree
-    // (the workweave's project dir at hook-call time).
     let hooks_dir = primary.project_dir.join(".git").join("hooks");
     std::fs::create_dir_all(&hooks_dir).unwrap();
     let hook_path = hooks_dir.join("post-merge");
-    // The hook receives a single squash-merge flag argument.  We ignore it
-    // and unconditionally corrupt the manifest.
     std::fs::write(
         &hook_path,
         "#!/bin/sh\nprintf '[[[not a manifest\\n' > rwv.toml\n",
@@ -2261,17 +2240,35 @@ fn sync_bails_hard_when_post_phase1_manifest_reload_fails() {
         std::fs::set_permissions(&hook_path, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
-    // Run sync with the default FF strategy.  Phase 1' calls
-    // `git merge --ff-only <source_project_tip>` in the WW project dir,
-    // which fires the post-merge hook and corrupts rwv.toml on disk.
-    // The fixed reload code should bail immediately rather than proceeding
-    // with a stale snapshot.
-    let out = rwv()
-        .args(["sync", &primary.root.to_string_lossy()])
+    rwv()
+        .arg("sync")
+        .arg(&primary.root)
+        .args(args)
         .current_dir(&ww.root)
         .output()
-        .expect("rwv process should start");
+        .expect("rwv process should start")
+}
 
+fn assert_routes_to(stderr: &str, token: &str) {
+    let routed: Vec<&str> = stderr
+        .lines()
+        .filter_map(|l| l.strip_prefix("rwv explain "))
+        .collect();
+    assert_eq!(routed, vec![token], "stderr was:\n{stderr}");
+}
+
+/// Regression test: sync bails hard when the project manifest is corrupted
+/// immediately after Phase 1' (project repo fast-forward merge), and the
+/// refusal is the `malformed` state of `unparseable-project`.
+///
+/// Assertions:
+///   - sync exits non-zero
+///   - stderr names the state, the file that failed and the recovery
+///     (`rwv abort`), and routes to the kind
+///   - stderr does NOT contain "warning:" (old warn-and-proceed fingerprint)
+#[test]
+fn sync_bails_hard_when_post_phase1_manifest_reload_fails() {
+    let out = sync_with_a_manifest_corrupted_after_phase_1(&[]);
     let stderr = String::from_utf8_lossy(&out.stderr);
 
     assert!(
@@ -2285,6 +2282,40 @@ fn sync_bails_hard_when_post_phase1_manifest_reload_fails() {
     assert!(
         !stderr.contains("warning:"),
         "must not emit the old warn-and-proceed fingerprint; stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("rwv sync: projects/web-app: unparseable-project malformed\n"),
+        "the refusal is the malformed state of the kind; stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("failed to parse rwv.toml at ") && stderr.contains("TOML parse error"),
+        "the file that failed and the parser's error are listed; stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("choices:"),
+        "the table gives the state no choice, so none is printed; stderr: {stderr}"
+    );
+    assert_routes_to(&stderr, "unparseable-project");
+}
+
+#[test]
+fn the_malformed_reload_carries_its_axis_and_state_under_json() {
+    let out = sync_with_a_manifest_corrupted_after_phase_1(&["--json"]);
+    assert!(!out.status.success());
+    let envelope: serde_json::Value = serde_json::from_slice(&out.stdout)
+        .unwrap_or_else(|e| panic!("sync --json prints an envelope: {e}"));
+    let refused = envelope["refused"].as_array().expect("refused is an array");
+    assert_eq!(refused.len(), 1, "{envelope}");
+    assert_eq!(refused[0]["path"], "projects/web-app");
+    assert_eq!(refused[0]["axis"], "unparseable-project");
+    assert_eq!(refused[0]["state"], "malformed");
+    assert_eq!(refused[0]["choices"], serde_json::json!([]));
+    assert!(
+        refused[0]["listed"][0]
+            .as_str()
+            .unwrap()
+            .starts_with("failed to parse rwv.toml at "),
+        "{envelope}"
     );
 }
 

@@ -3,6 +3,7 @@
 //! `rwv sync` aligns the CWD workspace with another workspace's committed
 //! `rwv.lock`. `rwv abort` rolls back to pre-sync state using savepoint refs.
 
+use crate::check::UnparseableProjectKind;
 use crate::cli::consent::DiscardLocalCommitsConsent;
 use crate::diagnosis::{Report, State};
 use crate::integration::Integration;
@@ -1690,18 +1691,31 @@ fn replay_exclusion_source_only_refusal(
 
 /// CWD's project as Phase 1' left it: the manifest the op ends with.
 fn reload_replayed_project(ctx: &OpContext<'_>) -> anyhow::Result<Project> {
-    Project::from_dir(&ctx.cwd_project_dir, ctx.cwd_project_name.clone()).with_context(|| {
-        format!(
-            "failed to reload project manifest after Phase 1'.\n\
-             \n\
-             The project repo was successfully rebased/merged, but the manifest \
-             in {cwd_project_dir} could not be parsed. Proceeding would silently \
-             omit newly-added repos from the regenerated lock.\n\
-             \n\
-             To recover: `rwv abort`",
-            cwd_project_dir = ctx.cwd_project_dir.display(),
-        )
-    })
+    let failure = match Project::from_dir(&ctx.cwd_project_dir, ctx.cwd_project_name.clone()) {
+        Ok(project) => return Ok(project),
+        Err(failure) => failure,
+    };
+    let refusal = match UnparseableProjectKind::of(&failure) {
+        UnparseableProjectKind::PreSchema => failure,
+        UnparseableProjectKind::Malformed => {
+            let listing = format!("{failure:#}");
+            State::UnparseableProjectMalformed
+                .of(crate::workspace::project_rel_path(&ctx.cwd_project_name))
+                .listing(listing.lines())
+                .judge(ctx.project_vcs.as_ref())
+                .refused()
+        }
+    };
+    Err(refusal.context(format!(
+        "failed to reload project manifest after Phase 1'.\n\
+         \n\
+         The project repo was successfully rebased/merged, but the manifest \
+         in {cwd_project_dir} could not be parsed. Proceeding would silently \
+         omit newly-added repos from the regenerated lock.\n\
+         \n\
+         To recover: `rwv abort`",
+        cwd_project_dir = ctx.cwd_project_dir.display(),
+    )))
 }
 
 /// CWD's manifest as the op found it, read at the project repo's savepoint so

@@ -169,7 +169,9 @@ file failed and carries that file's remedy — the manifest is yours to edit, at
 parser names; the lock is generated, so `rwv lock` rewrites it. A repository entry with no \
 `role`, an unknown top-level key, an unknown `[integrations.<name>]` table, an unknown key in \
 one, and an `enabled` that is not `true` or `false` are all parse failures of this kind, each \
-naming the line and what was expected.
+naming the line and what was expected. `rwv sync` and `rwv sync-to` refuse with it when the \
+project does not load after the project repo is replayed, and `rwv abort` rolls that operation \
+back.
 
 `--fix` has no arm for it. Rewriting a manifest rwv could not parse would be guesswork, and \
 regenerating a lock re-pins the workspace to whatever the working tips happen to be — a decision \
@@ -215,6 +217,7 @@ pub enum State {
     NameNoSuchBranch,
     PublishWithheld,
     UnparseableProjectHere,
+    UnparseableProjectMalformed,
 }
 
 /// A state's row: its axis and name, the page prose, and the forms it offers,
@@ -232,7 +235,7 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 10] = [
+    pub const ALL: [State; 11] = [
         Self::EditsDirty,
         Self::EditsMidOperation,
         Self::EditsLockFilesUncommitted,
@@ -243,6 +246,7 @@ impl State {
         Self::NameNoSuchBranch,
         Self::PublishWithheld,
         Self::UnparseableProjectHere,
+        Self::UnparseableProjectMalformed,
     ];
 
     pub fn row(self) -> &'static StateRow {
@@ -346,6 +350,17 @@ impl State {
                              reports it instead, and `rwv status` and `rwv prime` skip the \
                              project with a warning",
                 offers: &[Form::DoctorFix],
+                verb_offers: &[],
+            },
+            Self::UnparseableProjectMalformed => &StateRow {
+                axis: Axis::UnparseableProject,
+                name: "malformed",
+                means: "the project's `rwv.toml` or `rwv.lock` does not parse, listed with the \
+                        file that failed and the parser's error",
+                refused_by: "`rwv sync` and `rwv sync-to`, when the project does not load after \
+                             the project repo is replayed; `rwv doctor` reports it for every \
+                             project",
+                offers: &[],
                 verb_offers: &[],
             },
         }
@@ -1975,13 +1990,21 @@ mod tests {
     #[test]
     fn every_state_row_names_its_own_axis_and_a_unique_name() {
         let mut seen = std::collections::BTreeSet::new();
+        let mut offering_nothing = Vec::new();
         for state in State::ALL {
             assert!(
                 seen.insert((state.axis(), state.name())),
                 "{state:?} repeats a name on its axis"
             );
-            assert!(!state.row().offers.is_empty(), "{state:?} offers nothing");
+            if state.row().offers.is_empty() {
+                offering_nothing.push(state);
+            }
         }
+        assert_eq!(
+            offering_nothing,
+            [State::UnparseableProjectMalformed],
+            "a state that offers nothing is a decision the table records, not an omission"
+        );
         for axis in Axis::ALL {
             assert!(
                 State::ALL.iter().any(|s| s.axis() == axis),
@@ -2112,6 +2135,24 @@ mod tests {
         assert!(
             !kind_entries_markdown(crate::manifest::VcsType::Git).contains("unparseable-project"),
             "the refusals page holds no entry for a kind the findings page holds"
+        );
+    }
+
+    #[test]
+    fn a_state_that_offers_nothing_prints_no_choices_block_and_still_routes() {
+        let mut report = Report::default();
+        report.add(
+            State::UnparseableProjectMalformed
+                .of("projects/p")
+                .listing(["failed to parse rwv.toml at /w/projects/p/rwv.toml"])
+                .judge(git().as_ref()),
+        );
+        assert_eq!(
+            report.render("sync"),
+            "rwv sync: projects/p: unparseable-project malformed\n\
+             \x20   failed to parse rwv.toml at /w/projects/p/rwv.toml\n\
+             \n\
+             rwv explain unparseable-project\n"
         );
     }
 

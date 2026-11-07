@@ -39,7 +39,7 @@ src/cli/dispatch.rs	wrong-address-flag	-	4
 src/cli/dispatch.rs	wrong-checkout-kind	-	1
 src/diagnosis.rs	edits dirty	tests/refusal_arrival_test.rs	1
 src/diagnosis.rs	edits mid-operation	tests/refusal_arrival_test.rs	1
-src/diagnosis.rs	unparseable-project here	tests/pre_schema_manifest_test.rs	1
+src/diagnosis.rs	unparseable-project here	tests/e2e_sync_abort_test.rs	1
 src/explain.rs	ambiguous-explain-token	-	1
 src/explain.rs	no-explain-entry	-	4
 src/fetch.rs	(untokened:tally)	-	1
@@ -115,6 +115,7 @@ src/sync.rs	store-claims-unreadable	-	2
 src/sync.rs	store-still-claimed	-	1
 src/sync.rs	target-diverged-mid-op	-	1
 src/sync.rs	target-lock-behind	-	1
+src/sync.rs	unparseable-project malformed	tests/e2e_sync_abort_test.rs	1
 src/sync.rs	unreadable-status	-	2
 src/sync.rs	unresolvable-lock-entry	tests/refusal_arrival_test.rs	3
 src/sync.rs	untracked-collision	-	1

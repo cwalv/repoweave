@@ -276,6 +276,7 @@ A project directory exists but does not load: its `rwv.toml` or its `rwv.lock` f
 | State | Means | Refused by |
 |---|---|---|
 | `here` | the project's `rwv.toml` at the checked-out tip names member-entry keys an earlier release wrote, each listed with the key that replaces it | every verb that reads the project's `rwv.toml`; `rwv doctor` reports it instead, and `rwv status` and `rwv prime` skip the project with a warning |
+| `malformed` | the project's `rwv.toml` or `rwv.lock` does not parse, listed with the file that failed and the parser's error | `rwv sync` and `rwv sync-to`, when the project does not load after the project repo is replayed; `rwv doctor` reports it for every project |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
 
@@ -295,7 +296,7 @@ A commit other than the checked-out one that names the old keys is not reported 
 
 #### `malformed`
 
-**Error. Report-only.** Any other reason the project did not load. The message names which file failed and carries that file's remedy — the manifest is yours to edit, at the line the parser names; the lock is generated, so `rwv lock` rewrites it. A repository entry with no `role`, an unknown top-level key, an unknown `[integrations.<name>]` table, an unknown key in one, and an `enabled` that is not `true` or `false` are all parse failures of this kind, each naming the line and what was expected.
+**Error. Report-only.** Any other reason the project did not load. The message names which file failed and carries that file's remedy — the manifest is yours to edit, at the line the parser names; the lock is generated, so `rwv lock` rewrites it. A repository entry with no `role`, an unknown top-level key, an unknown `[integrations.<name>]` table, an unknown key in one, and an `enabled` that is not `true` or `false` are all parse failures of this kind, each naming the line and what was expected. `rwv sync` and `rwv sync-to` refuse with it when the project does not load after the project repo is replayed, and `rwv abort` rolls that operation back.
 
 `--fix` has no arm for it. Rewriting a manifest rwv could not parse would be guesswork, and regenerating a lock re-pins the workspace to whatever the working tips happen to be — a decision about state, not a repair.
 

@@ -1153,7 +1153,7 @@ impl UnparseableProjectKind {
         }
     }
 
-    fn of(failure: &anyhow::Error) -> Self {
+    pub(crate) fn of(failure: &anyhow::Error) -> Self {
         if failure
             .chain()
             .any(|link| link.is::<crate::manifest::PreSchemaManifest>())
