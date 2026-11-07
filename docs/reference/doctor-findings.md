@@ -70,7 +70,8 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`unparseable-project`](#unparseable-project) / `pre-schema` | Error | Auto-fixable |
 | [`unparseable-project`](#unparseable-project) / `malformed` | Error | Report-only |
 | [`legacy-manifest-format`](#legacy-manifest-format) | Error | Report-only |
-| [`pin`](#pin) / `none`, `unreachable`, `behind`, `ahead`, `unpinned`, `diverged` | Error | Report-only |
+| [`pin`](#pin) / `none`, `unreachable`, `behind`, `unpinned`, `diverged` | Error | Report-only |
+| [`pin`](#pin) / `ahead` | Warning | Report-only |
 | [`lock-pinned-by-name`](#lock-pinned-by-name) | Warning | Report-only |
 | [`head-unreadable`](#head-unreadable) | Error | Report-only |
 | [`projects-dir-unreadable`](#projects-dir-unreadable) | Error | Report-only |
@@ -364,7 +365,7 @@ A commit a lock pins is not there to be at: the lock has no entry for a member, 
 
 #### `ahead`
 
-**Error. Report-only.** The checkout holds commits beyond its pin, and each is pushed or pinned by another project's live lock. **What to do:** `rwv lock` records the checkout's commit.
+**Warning. Report-only.** The checkout holds commits beyond its pin, and each is pushed or pinned by another project's live lock: the ordinary state between committing and `rwv lock`, so `rwv doctor` warns and exits as it does for any warning. **What to do:** `rwv lock` records the checkout's commit.
 
 #### `unpinned`
 

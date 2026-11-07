@@ -1078,7 +1078,12 @@ impl PinKind {
     ];
 
     pub fn severity(self) -> crate::integration::Severity {
-        crate::integration::Severity::Error
+        match self {
+            Self::Ahead => crate::integration::Severity::Warning,
+            Self::None | Self::Unreachable | Self::Behind | Self::Unpinned | Self::Diverged => {
+                crate::integration::Severity::Error
+            }
+        }
     }
 
     pub fn fix_disposition(self) -> FixDisposition {
@@ -1110,8 +1115,9 @@ impl PinKind {
             }
             Self::Ahead => {
                 "The checkout holds commits beyond its pin, and each is pushed or pinned by \
-                 another project's live lock. **What to do:** `rwv lock` records the \
-                 checkout's commit."
+                 another project's live lock: the ordinary state between committing and \
+                 `rwv lock`, so `rwv doctor` warns and exits as it does for any warning. \
+                 **What to do:** `rwv lock` records the checkout's commit."
             }
             Self::Unpinned => {
                 "The checkout holds commits beyond its pin that no remote-tracking branch \

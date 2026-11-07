@@ -69,8 +69,17 @@ fn doctor(w: &Weave, args: &[&str]) -> std::process::Output {
 }
 
 fn pin_finding(w: &Weave) -> Value {
+    pin_finding_exiting(w, 1)
+}
+
+fn pin_finding_exiting(w: &Weave, status: i32) -> Value {
     let out = doctor(w, &["--json"]);
-    assert_eq!(out.status.code(), Some(1), "a pin finding is an error");
+    assert_eq!(
+        out.status.code(),
+        Some(status),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
     let doc: Value = serde_json::from_slice(&out.stdout).expect("doctor --json prints JSON");
     let pins: Vec<Value> = doc["violations"]
         .as_array()
@@ -88,11 +97,15 @@ fn pin_finding(w: &Weave) -> Value {
 }
 
 fn text_names(w: &Weave, sub_kind: &str) {
+    text_names_as(w, "error", sub_kind);
+}
+
+fn text_names_as(w: &Weave, severity: &str, sub_kind: &str) {
     let out = doctor(w, &[]);
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(
-        text.contains(&format!("[error: pin/{sub_kind}]")),
-        "doctor's text opens the line with the kind and sub-kind:\n{text}"
+        text.contains(&format!("[{severity}: pin/{sub_kind}]")),
+        "doctor's text opens the line with the severity, kind and sub-kind:\n{text}"
     );
 }
 
@@ -128,8 +141,7 @@ fn a_checkout_at_an_ancestor_of_its_pin_is_pin_behind() {
     text_names(&w, "behind");
 }
 
-#[test]
-fn commits_beyond_the_pin_that_a_remote_branch_holds_are_pin_ahead() {
+fn ahead_of_its_pin_on_a_remote_branch() -> (Weave, String, String) {
     let (w, first) = weave();
     let bare = w.root.join("origin.git");
     git_in(
@@ -143,11 +155,33 @@ fn commits_beyond_the_pin_that_a_remote_branch_holds_are_pin_ahead() {
     pin_at(&w, &first);
     let second = commit(&w.repo, "second");
     git_in(&w.repo, &["push", "-q", "origin", "main"]);
-    let pin = pin_finding(&w);
+    (w, first, second)
+}
+
+#[test]
+fn commits_beyond_the_pin_that_a_remote_branch_holds_are_pin_ahead() {
+    let (w, first, second) = ahead_of_its_pin_on_a_remote_branch();
+    let pin = pin_finding_exiting(&w, 0);
     assert_eq!(pin["sub_kind"], "ahead");
     assert_eq!(pin["locked"], first.as_str());
     assert_eq!(pin["actual"], second.as_str());
-    text_names(&w, "ahead");
+    text_names_as(&w, "warning", "ahead");
+}
+
+#[test]
+fn a_workspace_whose_only_finding_is_pin_ahead_exits_as_it_does_for_warnings() {
+    let (w, _, _) = ahead_of_its_pin_on_a_remote_branch();
+    for args in [&[][..], &["--json"][..]] {
+        let out = doctor(&w, args);
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(out.status.code(), Some(0), "{args:?}:\n{text}");
+        assert!(!text.contains("[error:") && !text.contains("\"severity\": \"error\""));
+    }
+    let text = String::from_utf8_lossy(&doctor(&w, &[]).stdout).into_owned();
+    assert!(
+        text.contains("[warning: pin/ahead]"),
+        "the finding is shown as a warning:\n{text}"
+    );
 }
 
 #[test]
@@ -237,8 +271,15 @@ fn rwv_explain_pin_serves_the_one_entry_on_the_findings_page() {
         "unpinned",
         "diverged",
     ] {
+        let severity = if sub_kind == "ahead" {
+            "Warning"
+        } else {
+            "Error"
+        };
         assert!(
-            entry.contains(&format!("\n#### `{sub_kind}`\n\n**Error. Report-only.**")),
+            entry.contains(&format!(
+                "\n#### `{sub_kind}`\n\n**{severity}. Report-only.**"
+            )),
             "the entry opens `{sub_kind}` with the register's marks:\n{entry}"
         );
         let own = explain(&format!("pin/{sub_kind}"));
