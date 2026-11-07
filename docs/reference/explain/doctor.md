@@ -191,10 +191,10 @@ sub-kind — the name `rwv explain <token>` serves the finding's entry under. Un
 ```
 
 The `$schema` URL points to the committed schema artifact. Variants are
-discriminated by the `kind` tag — `alignment`, `branch-discipline`, `cargo-patch-shadowing`, `cargo-version-skew`, `clone-topology`, `confusable-siblings`, `dangling-active-project`, `dangling-ref-receipt`, `dangling-reference`, `dead-op-lease`, `head-unreadable`, `incomplete-lock`, `index-drift`, `legacy-manifest-format`, `legacy-workweave-index`, `legacy-workweave-marker`, `lock-pinned-by-name`, `member-permissions`, `merge-driver-config-unreadable`, `missing-canonical-clone`, `missing-merge-driver-config`, `missing-replay-exclusion`, `orphaned-clone`, `orphaned-savepoint`, `phantom-merge-driver`, `pre-flat-ref-receipt`, `projectless-dir`, `projects-dir-unreadable`, `provenance`, `replay-exclusion-unreadable`, `role-disagreement`, `stale-lock`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unknown-segment-clone`, `unnameable-project`, `unparseable-project`, `unreadable-active-project`, `unreadable-owned-state`, `unreadable-workweave-index`, `unrecognized-savepoint-ref`, `unresolvable-lock-entry`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
+discriminated by the `kind` tag — `alignment`, `cargo-patch-shadowing`, `cargo-version-skew`, `clone-topology`, `confusable-siblings`, `dangling-active-project`, `dangling-reference`, `dead-op-lease`, `head-unreadable`, `incomplete-lock`, `index-drift`, `legacy-manifest-format`, `legacy-workweave-index`, `legacy-workweave-marker`, `lock-pinned-by-name`, `member-permissions`, `merge-driver-config-unreadable`, `missing-canonical-clone`, `missing-merge-driver-config`, `missing-replay-exclusion`, `orphaned-clone`, `orphaned-savepoint`, `phantom-merge-driver`, `projectless-dir`, `projects-dir-unreadable`, `provenance`, `replay-exclusion-unreadable`, `role-disagreement`, `stale-lock`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unknown-segment-clone`, `unnameable-project`, `unparseable-project`, `unreadable-active-project`, `unreadable-owned-state`, `unreadable-workweave-index`, `unrecognized-savepoint-ref`, `unresolvable-lock-entry`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
 Every per-repo variant carries `path` (manifest-relative) and
 `absolute_path` (fully resolved). Variants with subkinds
-(`alignment`, `branch-discipline`, `clone-topology`, `dead-op-lease`, `index-drift`, `member-permissions`, `missing-replay-exclusion`, `orphaned-savepoint`, `provenance`, `stale-worktree-registration`, `uninitialized-submodule`, `unparseable-project`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
+(`alignment`, `clone-topology`, `dead-op-lease`, `index-drift`, `member-permissions`, `missing-replay-exclusion`, `orphaned-savepoint`, `provenance`, `stale-worktree-registration`, `uninitialized-submodule`, `unparseable-project`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
 `workweave-tree-integrity` carries `workweave_dir` and a `sub_kind`
 (`dangling-parent`, `foreign-primary`, `foreign-primary-other-workspace`, `misnamed-dir`, `nested-workweave-dir`, `parent-chain-anomaly`, `stale-registry-entry`, `tracked-index`, `unreadable-marker`, `unregistered-dir`, `unregistered-workweave`).
 
@@ -365,172 +365,6 @@ Schema:
         }
       ]
     },
-    "BranchDisciplineKind": {
-      "description": "Discriminator for `CheckViolation::BranchDiscipline` findings: the refs rwv holds an ownership receipt for.\n\n* a workweave's flat ref with no receipt: `UnrecordedEphemeralBranch`. * what a canonical store's HEAD is on: `CanonicalHoldsLiveWorkweaveRef`, `CanonicalHoldsLeakedRef`. * a `<project>--<name>` branch in a canonical clone whose workweave no longer exists on disk: `StaleEphemeralBranchSafe`, `StaleEphemeralBranchLive` or `StaleEphemeralBranchUnowned`. A tip that is an ancestor of the primary's tracking-branch tip carries no unique work and is safely removable; a tip with commits not reachable from the primary is live work and is left alone.\n\nOwnership is by record, never by name shape: a branch that merely *looks* like one of rwv's is an operator branch, and `--fix` never deletes it.",
-      "oneOf": [
-        {
-          "description": "The workweave's flat ref exists in the canonical store, but rwv holds no receipt for it.\n\nThe state a build that minted flat names before receipts existed leaves behind, and the state a migration crash between the receipt and the rename would leave if the receipt had not been written first. Under R2 the ref is nobody's until adopted, so `workweave delete` cannot clean it up; `--fix` adopts it at its observed tip.",
-          "type": "object",
-          "required": [
-            "unrecorded-ephemeral-branch"
-          ],
-          "properties": {
-            "unrecorded-ephemeral-branch": {
-              "type": "object",
-              "required": [
-                "branch"
-              ],
-              "properties": {
-                "branch": {
-                  "description": "The flat ref (`<project>--<workweave>`).",
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "additionalProperties": false
-        },
-        {
-          "description": "(b) The canonical store is attached to a ref rwv recorded as belonging to a workweave that is **still on disk**.\n\nAn I3 disjointness violation. git forbids one branch being checked out in two worktrees of the same store, so reaching this state means a directory was moved or copied. Report-only — there is no fix that does not guess which of the two checkouts is the real one.",
-          "type": "object",
-          "required": [
-            "canonical-holds-live-workweave-ref"
-          ],
-          "properties": {
-            "canonical-holds-live-workweave-ref": {
-              "type": "object",
-              "required": [
-                "actual_branch",
-                "workweave"
-              ],
-              "properties": {
-                "actual_branch": {
-                  "description": "The branch the canonical store is attached to.",
-                  "type": "string"
-                },
-                "workweave": {
-                  "description": "The live workweave the receipt says that ref belongs to.",
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "additionalProperties": false
-        },
-        {
-          "description": "(b) The canonical store is attached to a ref rwv recorded as belonging to a workweave that is **gone** — a leak.\n\nReport-only in practice: the DESTROY that would reclaim the ref cannot run while this store's own HEAD is on it (git refuses to delete a branch a worktree uses), so `--fix` names the ref and the `git switch` that frees it rather than attempting a delete that cannot succeed. Once the store is off the ref it is an ordinary (c) finding and `--fix` reclaims it under a warrant.",
-          "type": "object",
-          "required": [
-            "canonical-holds-leaked-ref"
-          ],
-          "properties": {
-            "canonical-holds-leaked-ref": {
-              "type": "object",
-              "required": [
-                "actual_branch",
-                "project"
-              ],
-              "properties": {
-                "actual_branch": {
-                  "description": "The branch the canonical store is attached to.",
-                  "type": "string"
-                },
-                "project": {
-                  "description": "The project whose registry holds the receipt.\n\nNot the workweave: rwv does not try to reconstruct which workweave a stray ref belonged to. The receipt records `(store, name, created_at)`, and the workweave is recoverable only while one on disk would mint that name — which is exactly the case this variant is *not*.",
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "additionalProperties": false
-        },
-        {
-          "description": "(c) A `<project>--<name>/...` branch in the canonical clone whose workweave `<name>` no longer exists on disk, **which rwv holds an ownership receipt for**, and whose tip is an ancestor of the primary tracking branch's tip (no unique commits). Safe-class per the shared-refs-drift doctrine — `--fix` deletes it under a `Merged` warrant, with no information loss.",
-          "type": "object",
-          "required": [
-            "stale-ephemeral-branch-safe"
-          ],
-          "properties": {
-            "stale-ephemeral-branch-safe": {
-              "type": "object",
-              "required": [
-                "branch",
-                "project"
-              ],
-              "properties": {
-                "branch": {
-                  "description": "The full branch name (e.g. `foundations--feat-a`).",
-                  "type": "string"
-                },
-                "project": {
-                  "description": "The project whose registry holds the receipt.\n\nNot the workweave, for the reason `CanonicalHoldsLeakedRef` gives: rwv does not reconstruct which workweave a ref belonged to, and for this class no workweave on disk would mint the name — that is what makes it stale.",
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "additionalProperties": false
-        },
-        {
-          "description": "(c) A `<project>--<name>/...` branch in the canonical clone whose workweave `<name>` no longer exists on disk, which rwv holds a receipt for, but whose tip carries commits not reachable from the primary tracking branch's tip (unique work). Live-class per the shared-refs-drift doctrine — report-only; `--fix` never touches this, because no `Merged` warrant can be established for it. The operator decides whether to land the commits, archive the branch, or delete it.",
-          "type": "object",
-          "required": [
-            "stale-ephemeral-branch-live"
-          ],
-          "properties": {
-            "stale-ephemeral-branch-live": {
-              "type": "object",
-              "required": [
-                "branch",
-                "project",
-                "tip_sha"
-              ],
-              "properties": {
-                "branch": {
-                  "description": "The full branch name.",
-                  "type": "string"
-                },
-                "project": {
-                  "description": "The project whose registry holds the receipt. See `StaleEphemeralBranchSafe`.",
-                  "type": "string"
-                },
-                "tip_sha": {
-                  "description": "The branch tip SHA, surfaced so the operator can recover the commits before deleting (e.g. `git log <tip_sha>`).",
-                  "allOf": [
-                    {
-                      "$ref": "#/definitions/CommitId"
-                    }
-                  ]
-                }
-              }
-            }
-          },
-          "additionalProperties": false
-        },
-        {
-          "description": "(c) A branch shaped like one rwv minted before the naming scheme was flattened, sitting in a canonical store, which **rwv holds no ownership receipt for** and which no workweave on disk claims.\n\nUnder R2 this ref is not rwv's: name shape is not ownership. It is reported so the operator can see it, and it is never deleted — deleting this class is how a hand-made `<a>--<b>/<c>` branch can disappear under `--fix`.\n\n# Why this one is discovered by shape and nothing else is\n\nEvery other arm asks the registry or asks a live workweave's **minted** name. This arm has neither to ask: there is no receipt, and reconstructing which workweave the ref belonged to is forbidden — so the alternative to a shape heuristic is not a better signal, it is silence, and the refs the operator most needs to see (the pre-receipt population the migration cannot reach) would simply stop being reported.\n\nWhat keeps that sound is that the heuristic yields a `bool` and nothing else — see `looks_like_a_pre_flat_ref`. No name is taken apart, no workweave is named, and the only route to a DESTROY runs through an `OwnedRef`, which only a persisted receipt produces. A false positive costs one line of output and can cost nothing more.",
-          "type": "object",
-          "required": [
-            "stale-ephemeral-branch-unowned"
-          ],
-          "properties": {
-            "stale-ephemeral-branch-unowned": {
-              "type": "object",
-              "required": [
-                "branch"
-              ],
-              "properties": {
-                "branch": {
-                  "description": "The full branch name.",
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "additionalProperties": false
-        }
-      ]
-    },
     "CargoSkewOccurrenceOutput": {
       "description": "Wire representation of `crate::integrations::cargo_workspace::CargoSkewOccurrence`.\n\nKept separate so the internal type stays free of serde/schemars deps and the wire shape is a single-source-of-truth definition here.",
       "type": "object",
@@ -675,11 +509,6 @@ Schema:
           "additionalProperties": false
         }
       ]
-    },
-    "CommitId": {
-      "description": "A full commit id: 40 lowercase hex digits, or 64 in a SHA-256 repository.",
-      "type": "string",
-      "pattern": "^([0-9a-f]{40}|[0-9a-f]{64})$"
     },
     "DeadOpLeaseKind": {
       "description": "Discriminator for `CheckViolation::DeadOpLease` findings. Both shapes share the same `--fix` disposition (safe to remove the lease file) but name distinct root causes so the human-facing message can be specific.",
@@ -2294,38 +2123,6 @@ Schema:
           "type": "object",
           "required": [
             "kind",
-            "repo_path",
-            "sub_kind"
-          ],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "enum": [
-                "branch-discipline"
-              ]
-            },
-            "repo_path": {
-              "description": "Absolute path to the canonical clone where the violation was found.",
-              "allOf": [
-                {
-                  "$ref": "#/definitions/WirePath"
-                }
-              ]
-            },
-            "sub_kind": {
-              "description": "Discriminator for the specific branch-discipline anomaly.",
-              "allOf": [
-                {
-                  "$ref": "#/definitions/BranchDisciplineKind"
-                }
-              ]
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "kind",
             "listed",
             "project",
             "repo_path",
@@ -2490,73 +2287,6 @@ Schema:
             },
             "workspace_dir": {
               "description": "Absolute path to the workspace dir holding the dangling lease.",
-              "allOf": [
-                {
-                  "$ref": "#/definitions/WirePath"
-                }
-              ]
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
-            "kind",
-            "project",
-            "ref_name",
-            "store_path"
-          ],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "enum": [
-                "dangling-ref-receipt"
-              ]
-            },
-            "project": {
-              "description": "The project whose registry holds the receipt.",
-              "type": "string"
-            },
-            "ref_name": {
-              "description": "The recorded ref name that does not exist in that store.",
-              "type": "string"
-            },
-            "store_path": {
-              "description": "Absolute path of the canonical store the receipt is keyed to.",
-              "allOf": [
-                {
-                  "$ref": "#/definitions/WirePath"
-                }
-              ]
-            }
-          }
-        },
-        {
-          "description": "See `CheckViolation::PreFlatRefReceipt`.",
-          "type": "object",
-          "required": [
-            "kind",
-            "project",
-            "ref_name",
-            "store_path"
-          ],
-          "properties": {
-            "kind": {
-              "type": "string",
-              "enum": [
-                "pre-flat-ref-receipt"
-              ]
-            },
-            "project": {
-              "description": "The project whose registry holds the receipt.",
-              "type": "string"
-            },
-            "ref_name": {
-              "description": "The recorded ref name that carries a `/` segment.",
-              "type": "string"
-            },
-            "store_path": {
-              "description": "Absolute path of the canonical store the receipt is keyed to.",
               "allOf": [
                 {
                   "$ref": "#/definitions/WirePath"

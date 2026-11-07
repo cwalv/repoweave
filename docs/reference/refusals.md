@@ -99,8 +99,8 @@ The others follow.
 
 | State | Means | Refused by |
 |---|---|---|
-| `in another workspace` | a workweave's checkout derives from the clone, named | `rwv member remove --delete` in the primary, and replay's prune of a dropped member there |
-| `in a raw worktree` | a worktree no workweave records derives from the clone, named by path | `rwv member remove --delete` in the primary, and replay's prune of a dropped member there |
+| `in another workspace` | a workweave's checkout derives from the clone, named; or the branch is checked out there | `rwv member remove --delete` in the primary, and replay's prune of a dropped member there; `rwv branch delete`, for a branch checked out in another workspace |
+| `in a raw worktree` | a worktree no workweave records derives from the clone, named by path; or the branch is checked out there | `rwv member remove --delete` in the primary, and replay's prune of a dropped member there; `rwv branch delete`, for a branch checked out in a raw worktree |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
 
@@ -145,15 +145,16 @@ The others follow.
 
 ### `name`
 
-**Condition.** A name the verb was given cannot be used: another workweave already holds it, it reads as a revision where a branch belongs, it names nothing in a repo the verb read, or it is the name rwv keeps its branch records under.
+**Condition.** A name the verb was given cannot be used: another workweave already holds it, a repo already has a branch of that name holding commits, it reads as a revision where a branch belongs, it names nothing in a repo the verb read, or it is the name rwv keeps its branch records under.
 
-**Why.** A workweave name maps to one workweave; recording a second would make every later address ambiguous, and a delete would remove whichever was found first. A member entry's `branch` declares the branch to track while the lock records where you are, so a commit id or release tag there leaves nothing to track. A name that resolves to nothing has no tip to read, and reading another branch in its place would answer a question nobody asked. The branch that holds the branch records is rwv's own: a weave branch of that name, or below it, would be read as records and written over by them.
+**Why.** A workweave name maps to one workweave; recording a second would make every later address ambiguous, and a delete would remove whichever was found first. A branch that already holds commits under the name a create would give its checkout is work this create did not make, and starting the new branch there or somewhere else would hide or lose it. A member entry's `branch` declares the branch to track while the lock records where you are, so a commit id or release tag there leaves nothing to track. A name that resolves to nothing has no tip to read, and reading another branch in its place would answer a question nobody asked. The branch that holds the branch records is rwv's own: a weave branch of that name, or below it, would be read as records and written over by them.
 
 **States.** A verb that judges a repo in one of these prints `rwv <verb>: <repo>: name <state>`, with what the state lists beneath it, and refuses unless its row below says it completes.
 
 | State | Means | Refused by |
 |---|---|---|
 | `taken` | the project already records a workweave by this name at another path, or the directory the workweave would take is another workweave's; or a member's clone has a remote holding the name its url remote would take, with another url | `rwv workweave create`; for a member's url remote, `rwv fetch`, `rwv pull`, `rwv update`, `rwv update --remote`, `rwv backup prune`, `rwv init` and `rwv member add` |
+| `exists` | a repo already has a branch of the name the verb would give its checkout, standing at a revision other than the one the verb would start it at, which the line lists; it holds commits the verb did not put there | `rwv workweave create`, for the branch it mints in the project repo and in each owned or fork member |
 | `a revision` | the branch `rwv member add` would declare reads as a commit id (seven or more hex digits) or a release tag (`v2.0`, `v0.3.4-rc1`) | `rwv member add`, for the remote's default branch or, with `--new`, the branch the new repo is on |
 | `no-such-branch` | a branch or revision the verb was asked to read names nothing in this repo, spelled as the repo's VCS resolves it; the name is listed with the repo it is missing from, and the repos that have it are still read | `rwv log`, for a range endpoint a member lacks, and for the weave branch `--against` names; `rwv branch set-mode`, for a branch the project repo has neither locally nor on a remote as last fetched |
 | `reserved` | the name is the one rwv keeps its branch records under, or is below it (`<records>/<name>`); no weave branch can take it | `rwv branch set-mode`, `rwv init`, `rwv clone`, and the verbs that align, lock, land or publish while the project repo is on a branch of that name |
@@ -170,6 +171,7 @@ The others follow.
 | `taken`, for `rwv member add` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
 | `taken`, for `rwv update` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
 | `taken`, for `rwv init` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
+| `exists`, for `rwv workweave create` | use another name | — | here | nothing changes |
 | `no-such-branch` | C33: look for what may be published but not yet fetched | `rwv fetch` | any workspace | downloads only |
 
 **Where this sits.** [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md); [Lock as derived](../explanation/joints/lock-as-derived.md).
@@ -244,7 +246,7 @@ The others follow.
 
 ### `target`
 
-**Condition.** A weave branch's record cannot be used: the branch has none, two writers recorded it differently, the entry does not read, its target chain returns to it, or the branch it lands into is gone.
+**Condition.** A weave branch's record cannot be used: the branch has none, two writers recorded it differently, the entry does not read, its target chain returns to it, or the branch it lands into is gone; or other branches' records land into it and a delete would strand them.
 
 **Why.** A weave branch's record is the one statement of how it is used: as feature work onto a target, or as declared. Every verb that aligns members, locks, lands or publishes reads it, and rwv picks none for a branch that has none, because a guess that is wrong fails later, about something else. A record two writers set differently keeps both values until one is chosen, an entry rwv cannot read is refused for that branch alone, and a target chain that returns to its branch could never land.
 
@@ -252,16 +254,19 @@ The others follow.
 
 | State | Means | Refused by |
 |---|---|---|
+| `no target` | the branch's record is `declared`, so it names no branch the branch lands into | `rwv branch delete`, which needs the branch whose commits should have landed, named with `--target` |
 | `unrecorded` | the branch has no record here: a raw switch or rename made it, its record was never published, or it came from a remote that carries none. The branches that could be its target are listed, nearest first | `rwv lock`, `rwv update`, `rwv pull`, `rwv sync`, `rwv sync-to` and `rwv push`, for the project repo's checked-out branch; `rwv workweave create`, for the branch it forks from; `rwv branch set-mode`, for a `--target` that has no record |
 | `conflict` | two writers recorded the branch differently and a merge kept both values, listed; the conflict stays on the machine whose merge met it | every verb that reads the branch's record on this machine |
 | `unreadable` | the branch's entry on the records branch does not read as a record, with why and the rwv release that wrote it when its commit names one; other branches' entries read as usual | every verb that reads the branch's record |
 | `cycle` | the branch's target chain returns to it, listed from the branch | `rwv branch set-mode`, for a `--target` that would close one, and every verb that reads the record of a branch a merge of records put on one |
 | `gone` | the branch the record lands into exists nowhere: not as a local branch, nor on a remote as last fetched | `rwv branch list` reports it |
+| `dependents` | another branch's record names this branch as the one it lands into, one line for each such branch; deleting this one would leave that record with no target | `rwv branch delete`, `rwv workweave delete` and `rwv sync-to --retire` |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
 
 | State | Choice | Spelled | Where | Keeps work because |
 |---|---|---|---|---|
+| `no target` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> feature --target <T>` | any workspace | records only |
 | `unrecorded` | C33: look for what may be published but not yet fetched | `rwv fetch` | any workspace | downloads only |
 | `unrecorded` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> feature --target <T>` | any workspace | records only |
 | `unrecorded` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> declared` | any workspace | records only |
@@ -272,6 +277,7 @@ The others follow.
 | `cycle` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> feature --target <T>` | any workspace | records only |
 | `cycle` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> declared` | any workspace | records only |
 | `gone` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> feature --target <T>` | any workspace | records only |
+| `dependents` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> feature --target <T>` | any workspace | records only |
 
 **Where this sits.** [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md); [Formats](./formats.md).
 

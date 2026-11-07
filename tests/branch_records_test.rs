@@ -818,3 +818,170 @@ fn entries_changed_on_both_sides_are_stored_as_a_conflict_that_set_mode_settles(
         feature("other", "declared").trim_end()
     );
 }
+
+// ---------------------------------------------------------------------------
+// The drop rule
+// ---------------------------------------------------------------------------
+
+impl Weave {
+    fn has_entry(&self, branch: &str) -> bool {
+        common::git()
+            .args(["cat-file", "-e", &format!("{RECORDS}:{branch}")])
+            .current_dir(self.project())
+            .output()
+            .unwrap()
+            .status
+            .success()
+    }
+}
+
+#[test]
+fn deleting_a_branch_drops_its_record_so_a_name_below_it_can_be_recorded() {
+    let weave = Weave::new();
+    weave.branch("a");
+    succeed(&["branch", "set-mode", "a", "declared"], &weave.ws);
+    assert!(weave.has_entry("a"));
+
+    succeed(&["branch", "delete", "a", "--target", "main"], &weave.ws);
+    assert!(!weave.has_entry("a"), "the deleted branch's entry is dropped");
+
+    // An entry is a file at the branch's name, so a stale `a` would make `a/b`
+    // a file inside a file.
+    weave.branch("a/b");
+    succeed(&["branch", "set-mode", "a/b", "declared"], &weave.ws);
+    assert_eq!(weave.entry("a/b"), DECLARED.trim_end());
+}
+
+#[test]
+fn a_stale_entry_goes_with_the_next_deletion_whatever_branch_it_names() {
+    let weave = Weave::new();
+    weave.branch("stale");
+    weave.branch("gone");
+    succeed(&["branch", "set-mode", "stale", "declared"], &weave.ws);
+    succeed(&["branch", "set-mode", "gone", "declared"], &weave.ws);
+    common::git_in(weave.project(), &["branch", "-D", "stale"]);
+    assert!(weave.has_entry("stale"), "a raw delete leaves the entry");
+
+    succeed(&["branch", "delete", "gone", "--target", "main"], &weave.ws);
+
+    assert!(!weave.has_entry("gone"));
+    assert!(!weave.has_entry("stale"));
+    assert!(weave.has_entry("main"), "an entry whose branch exists stays");
+}
+
+#[test]
+fn an_entry_a_merge_brought_in_is_kept_by_that_merge_and_dropped_by_the_next() {
+    let weave = Weave::new();
+    weave.with_origin();
+    weave.branch("first");
+    weave.branch("second");
+    succeed(&["branch", "set-mode", "first", "declared"], &weave.ws);
+    succeed(&["branch", "set-mode", "second", "declared"], &weave.ws);
+    let base = weave.records_tip().unwrap();
+    weave.remote_records("origin", Some(&base), &[("ghost", DECLARED)]);
+
+    succeed(&["branch", "delete", "first", "--target", "main"], &weave.ws);
+    assert!(
+        weave.has_entry("ghost"),
+        "a record that reached a remote just before its branch is not lost in the gap"
+    );
+
+    succeed(&["branch", "delete", "second", "--target", "main"], &weave.ws);
+    assert!(
+        !weave.has_entry("ghost"),
+        "once this machine holds the entry and no branch has the name, it goes"
+    );
+}
+
+#[test]
+fn a_drop_merged_from_a_remote_is_undone_for_a_branch_that_exists_here() {
+    let weave = Weave::new();
+    weave.with_origin();
+    weave.branch("here");
+    weave.branch("nowhere");
+    succeed(&["branch", "set-mode", "here", "declared"], &weave.ws);
+    succeed(&["branch", "set-mode", "nowhere", "declared"], &weave.ws);
+    common::git_in(weave.project(), &["branch", "-D", "nowhere"]);
+    let base = weave.records_tip().unwrap();
+    let dropped = common::records::commit(
+        &weave.project(),
+        Some(&base),
+        &[],
+        &["here", "nowhere"],
+        "another machine's drop",
+    );
+    common::git_in(
+        weave.project(),
+        &[
+            "update-ref",
+            &format!("refs/remotes/origin/{RECORDS}"),
+            &dropped,
+        ],
+    );
+
+    succeed(&["branch", "set-mode", "main", "declared"], &weave.ws);
+
+    assert_eq!(
+        weave.entry("here"),
+        DECLARED.trim_end(),
+        "the entry is kept where its branch exists"
+    );
+    assert!(
+        !weave.has_entry("nowhere"),
+        "the drop stands where no branch of the name does"
+    );
+}
+
+#[test]
+fn nothing_drops_while_a_fetch_went_unconfirmed() {
+    let weave = Weave::new();
+    let bare = weave.with_origin();
+    let project = weave.project();
+    weave.branch("published");
+    weave.branch("stale");
+    succeed(&["branch", "set-mode", "published", "declared"], &weave.ws);
+    succeed(&["branch", "set-mode", "stale", "declared"], &weave.ws);
+    common::git_in(&project, &["push", "-q", "-u", "origin", "published"]);
+    common::git_in(&project, &["branch", "-D", "stale"]);
+    std::fs::remove_dir_all(&bare).unwrap();
+
+    let out = run(
+        &["branch", "delete", "published", "--target", "main"],
+        &weave.ws,
+    );
+
+    assert_eq!(out.status.code(), Some(3), "{}", describe(&out));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("unconfirmed"),
+        "the branch is kept, the cause named; {}",
+        describe(&out)
+    );
+    assert!(weave.has_entry("published"));
+    assert!(
+        weave.has_entry("stale"),
+        "no entry drops while a remote could not be asked"
+    );
+}
+
+#[test]
+fn an_entry_for_a_branch_a_workspace_is_aligned_for_is_kept() {
+    let weave = Weave::new();
+    weave.branch("wip");
+    weave.branch("other");
+    succeed(&["branch", "set-mode", "wip", "declared"], &weave.ws);
+    succeed(&["branch", "set-mode", "other", "declared"], &weave.ws);
+    let project = weave.project();
+    common::git_in(&project, &["switch", "-q", "wip"]);
+    succeed(&["update"], &weave.ws);
+    common::git_in(&project, &["switch", "-q", "main"]);
+    common::git_in(&project, &["branch", "-D", "wip"]);
+
+    succeed(&["branch", "delete", "other", "--target", "main"], &weave.ws);
+
+    assert!(
+        weave.has_entry("wip"),
+        "this workspace last aligned its members for wip, so its record stays"
+    );
+    assert!(!weave.has_entry("other"));
+}

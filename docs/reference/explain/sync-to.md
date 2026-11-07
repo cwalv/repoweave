@@ -327,6 +327,13 @@ Schema:
         "null"
       ]
     },
+    "survivors": {
+      "description": "The branches of the retired workweave the deletion rule kept, and why. Absent when it kept none.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Survivor"
+      }
+    },
     "target": {
       "description": "Absolute path of the target workspace that step-3 fast-forwarded, as the machine resolved it.",
       "allOf": [
@@ -950,6 +957,46 @@ Schema:
         }
       }
     },
+    "Reason": {
+      "description": "Why a branch that belongs survived the rule.",
+      "oneOf": [
+        {
+          "description": "It holds commits the branch it lands into does not reach.",
+          "type": "string",
+          "enum": [
+            "unlanded"
+          ]
+        },
+        {
+          "description": "A live lock pins a commit that only it reaches.",
+          "type": "string",
+          "enum": [
+            "pinned"
+          ]
+        },
+        {
+          "description": "Its published copy holds commits the branch it lands into does not reach: a pull request may be open against it.",
+          "type": "string",
+          "enum": [
+            "open-head"
+          ]
+        },
+        {
+          "description": "A member branch that belongs to it survives.",
+          "type": "string",
+          "enum": [
+            "members"
+          ]
+        },
+        {
+          "description": "A remote it has a copy on could not be fetched.",
+          "type": "string",
+          "enum": [
+            "unconfirmed"
+          ]
+        }
+      ]
+    },
     "ReplayBaseline": {
       "description": "Which read gave replay this repo's target: the source lock's entry for it, or the source checkout's committed tip pulled ahead of that entry (tips-as-truth).",
       "type": "string",
@@ -1007,6 +1054,34 @@ Schema:
         },
         "to_sha": {
           "description": "Target repo's HEAD SHA after the fast-forward (== CWD's tip).",
+          "type": "string"
+        }
+      }
+    },
+    "Survivor": {
+      "description": "A branch the rule kept.",
+      "type": "object",
+      "required": [
+        "branch",
+        "detail",
+        "reason",
+        "repo"
+      ],
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "detail": {
+          "description": "What the reason rests on: the commits, the locks, the remote's cause.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "reason": {
+          "$ref": "#/definitions/Reason"
+        },
+        "repo": {
           "type": "string"
         }
       }
