@@ -128,6 +128,7 @@ The others follow.
 | `gone` | the branch takes in from a branch its remote no longer has, as last fetched, and holds commits no remote-tracking branch reaches, listed | `rwv push` skips it unless `--repo` names it; `rwv status` reports it |
 | `foreign upstream` | the branch takes in from a branch of another name, which the subject names; a branch publishes to the branch of its own name | `rwv push`; `rwv status` reports it |
 | `no push target` | no remote is configured for the branch to push to, and the repo has no url remote to fall back on | `rwv push`; `rwv status` reports it |
+| `unconfirmed` | the last pruning fetch of the remote the branch publishes to could not complete, the cause listed; the verb needs the remote's answer and judges nothing from refs as last fetched | `rwv push` |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
 
@@ -141,6 +142,7 @@ The others follow.
 | `gone` | C7: publish it (again) | `rwv push --repo <m>` | here | adds only |
 | `foreign upstream` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
 | `no push target` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
+| `unconfirmed` | C33: look for what may be published but not yet fetched | `rwv fetch` | any workspace | downloads only |
 
 **Where this sits.** [Sync semantics](../explanation/joints/sync-semantics.md).
 
@@ -159,6 +161,7 @@ The others follow.
 | `a revision` | the branch `rwv member add` would declare reads as a commit id (seven or more hex digits) or a release tag (`v2.0`, `v0.3.4-rc1`) | `rwv member add`, for the remote's default branch or, with `--new`, the branch the new repo is on |
 | `no-such-branch` | a branch or revision the verb was asked to read names nothing in this repo, spelled as the repo's VCS resolves it; the name is listed with the repo it is missing from, and the repos that have it are still read | `rwv log`, for a range endpoint a member lacks, and for the weave branch `--against` names; `rwv branch set-mode`, for a branch the project repo has neither locally nor on a remote as last fetched |
 | `reserved` | the name is the one rwv keeps its branch records under, or is below it (`<records>/<name>`); no weave branch can take it | `rwv branch set-mode`, `rwv init`, `rwv clone`, and the verbs that align, lock, land or publish while the project repo is on a branch of that name |
+| `minted` | the project branch is the name `rwv workweave create` gave a workweave that was not given one, `<project>--<workweave>`, which is never published, and neither is its record | `rwv push` |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
 
@@ -187,14 +190,20 @@ The others follow.
 
 | State | Means | Refused by |
 |---|---|---|
-| `withheld` | the remote rejected this member's push, so the project repo was not pushed; what the remote answered is listed | `rwv push` |
+| `withheld` | the project repo was not pushed: a pin the project branch's lock holds is not reached by the remote-tracking branches that must reach it, or the remote rejected a member's push; the branches that do reach each pin, and what the remote answered, are listed | `rwv push` |
+| `records rejected` | the remote the project branch publishes to refused the branch that holds the weave branches' records, so the branch was withheld; for the remote's default branch, whose record is `declared`, the branch is published and the rejection reported as a fact. What the remote answered is listed | `rwv push`, for a branch that is not the remote's default branch recorded as `declared`; reported for that one |
+| `no pin` | the project branch's lock has no entry for a member the push does not act on, so the project repo was not pushed with a lock that pins nothing there | `rwv push` |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
 
 | State | Choice | Spelled | Where | Keeps work because |
 |---|---|---|---|---|
 | `withheld` | C7: publish it (again) | `rwv push` | here | adds only |
+| `withheld` | C7: publish it (again) | `rwv push --repo <m>` | here | adds only |
+| `withheld` | C27: publish this commit under a branch name you choose | VCS action (git: `git -C <checkout> push <r> <sha>:refs/heads/<name>`) | any workspace | creates or fast-forwards |
 | `withheld` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
+| `records rejected` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
+| `no pin` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |
 
 ### `target`
 

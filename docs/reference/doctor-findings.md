@@ -321,6 +321,8 @@ A commit a lock pins is not there to be at: the lock has no entry for a member, 
 | `unreachable` | the lock pins a commit that no ref in the clone reaches; the checkout is on the declared branch at the tip of the remote's branch | `rwv push`; `rwv clone`, which does not refuse: it completes, lists the member and exits with status 3; `rwv status` reports it |
 | `off remote` | a live lock pins a commit that no remote-tracking branch of the member reaches after the pruning fetch, listed with the locks that pin it. Choices print only in a workspace whose checked-out branch's lock holds the pin: a feature's offers publishing it, a declared branch's offers pinning another commit; elsewhere the state is a fact and offers waiting | nothing refuses; `rwv fetch` and `rwv pull` report it |
 | `backwards` | recording the commit the checkout is at would move the pin to one that does not descend from the pinned commit: it is behind the pin or has diverged from it, or the pinned commit is in no ref here | `rwv lock`, for a member `--repo` does not name; `rwv update --remote` |
+| `unmerged` | a merge commit in the range being pushed joined two pins of one member that its parents changed, each under one declared branch, and the pushed tip pins neither merged with the other: a commit holding both. The merge and the pins are listed. A member the parents declare differently is listed and not refused | `rwv push` |
+| `waived` | a merge in the range being pushed left one member's pins unmerged, and a later lock in the range, the merge's own included, re-pinned the member backward by name to a commit that does not reach the pin the merge left. The merge and the re-pin that waived it are listed | nothing refuses; `rwv push` reports it and goes on |
 | `would be unreachable` | a live lock pins a commit that only the backups being dropped reach, listed with the locks that pin it | `rwv backup drop` and `rwv backup prune` |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
@@ -346,6 +348,7 @@ A commit a lock pins is not there to be at: the lock has no entry for a member, 
 | `off remote` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |
 | `off remote` | C19: wait until the PR lands or its branch is deleted, then rerun | — | nowhere | nothing changes |
 | `backwards` | C5: record it: the lock, and `rwv.toml` as it stands | `rwv lock --repo <m> --commit` | a workspace with the branch checked out | records only |
+| `unmerged` | C26: merge `<rev>` in as a merge commit | VCS action (git: `git -C <checkout> merge --no-ff <rev>`) | the checkout | a merge adds only |
 | `would be unreachable` | C7: publish it (again) | `rwv push` | here | adds only |
 | `would be unreachable` | C27: publish this commit under a branch name you choose | VCS action (git: `git -C <checkout> push <r> <sha>:refs/heads/<name>`) | any workspace | creates or fast-forwards |
 
