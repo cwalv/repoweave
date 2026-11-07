@@ -1171,3 +1171,66 @@ pub fn inactive_project_moves_no_shared_checkout() -> Scenario {
         ],
     }
 }
+
+/// `proj` holds a `lib` commit no lock pins and nothing remote holds; `proj2`
+/// locks over it. The relock says so to `proj2`, and `proj`'s own status then
+/// reads the commit as held by `proj2`'s lock, not as unpinned.
+pub fn proj2_relock_over_pending() -> Scenario {
+    Scenario {
+        name: "proj2 relocks over another project's pending commit",
+        seed: Seed::default().second_project(SecondProject { branch: "main" }),
+        steps: vec![
+            Step::clone_project(Machine::A, Repo::Proj2).expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::Lib, "lib-pending"),
+            Step::rwv(&a(), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("local/remotes/lib: pin unpinned"))
+                .claim(Claim::OutputLacks("pinned-by")),
+            Step::rwv(&a(), &["lock", "--commit", "--project", "proj2"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains(
+                    "local/remotes/lib: pins 1 unpushed commit(s) beyond",
+                ))
+                .claim(Claim::OutputContains(
+                    "which the lock of project proj does not pin",
+                ))
+                .claim(Claim::PinContains {
+                    site: LockSite::Checkout(a(), Repo::Proj2, "main".to_owned()),
+                    member: Repo::Lib,
+                    mark: "lib-pending",
+                }),
+            Step::rwv(&a(), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("local/remotes/lib: pin ahead"))
+                .claim(Claim::OutputContains("pinned-by: proj2 main"))
+                .claim(Claim::OutputLacks("pin unpinned")),
+        ],
+    }
+}
+
+/// A `lib` commit only a fork remote holds is pinned, and the pin is
+/// published without it. A clone elsewhere cannot reach the pin, and the
+/// remote it lacks is the first thing the report offers.
+pub fn fork_remote_missing() -> Scenario {
+    Scenario {
+        name: "a pin only a fork remote holds, that remote absent",
+        seed: Seed::default().forks(),
+        steps: vec![
+            Step::add_remote(&a(), Repo::Lib, "fork", Remote::fork(Repo::Lib)),
+            Step::commit(&a(), Repo::Lib, "fork-only"),
+            Step::git(&a(), Repo::Lib, &["push", "fork", "main"])
+                .pushes(Remote::fork(Repo::Lib), "main"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::git(&a(), Repo::Proj, &["push", "origin", "main"])
+                .pushes(Remote::origin(Repo::Proj), "main")
+                .may_leave_unresolved(&[Repo::Lib]),
+            Step::new_machine(Machine::B)
+                .expect(Exit::Code(3))
+                .may_leave_unresolved(&[Repo::Lib])
+                .claim(Claim::OutputContains("local/remotes/lib: pin unreachable"))
+                .claim(Claim::OutputContains(
+                    "choices:\n  choose where it pushes and pulls",
+                )),
+        ],
+    }
+}

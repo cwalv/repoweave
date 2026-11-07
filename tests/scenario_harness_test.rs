@@ -70,6 +70,16 @@ fn a_clone_while_the_remote_is_ahead_of_the_pins_places_every_member_at_its_pin_
 }
 
 #[test]
+fn a_relock_over_another_projects_pending_commit_is_reported_to_both_projects() {
+    runner::run(scenarios::proj2_relock_over_pending()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_pin_only_an_absent_fork_remote_holds_offers_the_remote_first() {
+    runner::run(scenarios::fork_remote_missing()).assert_fully_decided_green();
+}
+
+#[test]
 fn clone_of_a_project_with_a_complete_lock_exits_zero() {
     runner::run(scenarios::clone_with_a_complete_lock()).assert_fully_decided_green();
 }

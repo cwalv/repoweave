@@ -110,6 +110,13 @@ pub enum Action {
         repo: Repo,
         args: Vec<String>,
     },
+    /// `git remote add <name>` in the checkout, at `remote`'s url.
+    AddRemote {
+        at: Place,
+        repo: Repo,
+        name: &'static str,
+        remote: Remote,
+    },
     /// Write `<mark>.txt` and commit it with message `<mark>`, recording the
     /// commit under that mark for claims to name.
     Commit {
@@ -349,6 +356,19 @@ impl Step {
                 at: at.clone(),
                 repo,
                 args: args.iter().map(|a| (*a).to_owned()).collect(),
+            },
+            Expect::succeeds(),
+        )
+    }
+
+    pub fn add_remote(at: &Place, repo: Repo, name: &'static str, remote: Remote) -> Step {
+        Step::new(
+            format!("git -C {} remote add {name} ({remote:?})", repo.name()),
+            Action::AddRemote {
+                at: at.clone(),
+                repo,
+                name,
+                remote,
             },
             Expect::succeeds(),
         )
@@ -765,6 +785,18 @@ impl Run<'_> {
                 }
                 let args: Vec<&str> = args.iter().map(String::as_str).collect();
                 let out = sb.git(&sb.checkout(at, *repo), &args);
+                (out.status.success(), rendered(&out))
+            }
+            Action::AddRemote {
+                at,
+                repo,
+                name,
+                remote,
+            } => {
+                let out = sb.git(
+                    &sb.checkout(at, *repo),
+                    &["remote", "add", name, &sb.remote_url(*remote)],
+                );
                 (out.status.success(), rendered(&out))
             }
             Action::Commit { at, repo, mark } => {
