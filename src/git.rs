@@ -1183,21 +1183,18 @@ impl GitVcs {
     ///
     /// `--quiet` makes an unknown revision an exit with no stderr, so the
     /// absence is recognized by its shape rather than by git's wording, which
-    /// is translated. A spelling git would read as an option names nothing.
+    /// is translated. Peeling to a commit is what keeps a spelling git would
+    /// read as an option from resolving to anything.
     fn endpoint_commit(repo: &Path, spelled: &str) -> Result<CommitId, VcsError> {
-        let not_found = || VcsError::RevisionNotFound {
-            repo: repo.to_path_buf(),
-            rev: spelled.to_owned(),
-        };
-        if spelled.starts_with('-') {
-            return Err(not_found());
-        }
         let deref = format!("{spelled}^{{commit}}");
         let args = ["rev-parse", "--verify", "--quiet", &deref];
         match Self::run_trimmed(args, repo) {
             Ok(printed) => commit_id_printed(&printed, &args, repo),
             Err(VcsError::CommandFailed { stderr, .. }) if stderr.trim().is_empty() => {
-                Err(not_found())
+                Err(VcsError::RevisionNotFound {
+                    repo: repo.to_path_buf(),
+                    rev: spelled.to_owned(),
+                })
             }
             Err(e) => Err(e),
         }
