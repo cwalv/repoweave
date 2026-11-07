@@ -1277,7 +1277,7 @@ pub struct FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 63] = [
+    pub const ALL: [Form; 64] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
