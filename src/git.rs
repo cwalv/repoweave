@@ -7214,3 +7214,465 @@ mod log_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod remote_role_tests {
+    //! The roles a remote plays, resolved from a repo's own configuration:
+    //! its url remote, the project repo's, where a branch publishes, where a
+    //! new branch is taken from, and what a branch takes in from.
+
+    use super::*;
+    use crate::vcs::{Relation, VcsErrorKind};
+
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let out = git_command()
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("git runs");
+        assert!(
+            out.status.success(),
+            "git {args:?} in {}: {}",
+            dir.display(),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    }
+
+    fn repo() -> tempfile::TempDir {
+        let tmp = crate::tempdir().unwrap();
+        git(tmp.path(), &["init", "-b", "main"]);
+        git(tmp.path(), &["config", "user.email", "t@t"]);
+        git(tmp.path(), &["config", "user.name", "T"]);
+        commit(tmp.path(), "one");
+        tmp
+    }
+
+    fn commit(dir: &Path, name: &str) -> ResolvedRevisionId {
+        std::fs::write(dir.join(name), name).unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-m", name]);
+        GitVcs.head_revision(dir).unwrap()
+    }
+
+    fn url(text: &str) -> CloneUrl {
+        let source: crate::manifest::RepoUrl = text.parse().unwrap();
+        crate::registry::resolve_to_clone_info(&source).unwrap().url
+    }
+
+    fn attached(dir: &Path) -> AttachedRef {
+        let HeadAttachment::Attached(a) = GitVcs.head_attachment(dir).unwrap() else {
+            panic!("fixture should be attached");
+        };
+        a
+    }
+
+    fn names(dir: &Path) -> Vec<String> {
+        git(dir, &["remote"]).lines().map(str::to_owned).collect()
+    }
+
+    fn handle(dir: &Path, name: &str) -> RemoteHandle {
+        GitVcs
+            .recorded_urls(dir)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.remote)
+            .find(|r| r.name() == name)
+            .unwrap_or_else(|| panic!("no remote {name}"))
+    }
+
+    #[test]
+    fn the_owner_segment_is_the_segment_before_the_repository_whatever_the_scheme() {
+        for (spelled, owner) in [
+            ("https://github.com/acme/lib.git", Some("acme")),
+            ("https://github.com/acme/lib", Some("acme")),
+            ("git@github.com:acme/lib.git", Some("acme")),
+            ("ssh://git@host.example/acme/lib.git", Some("acme")),
+            ("file:///srv/git/team/lib.git", Some("team")),
+            ("/srv/git/team/lib.git", Some("team")),
+            ("https://host.example/lib.git", None),
+            ("https://host.example/odd name/lib.git", Some("odd-name")),
+        ] {
+            assert_eq!(owner_segment(spelled).as_deref(), owner, "{spelled}");
+        }
+    }
+
+    #[test]
+    fn the_url_remote_is_the_remote_that_has_the_url_however_it_is_spelled() {
+        let repo = repo();
+        git(
+            repo.path(),
+            &[
+                "remote",
+                "add",
+                "mirror",
+                "https://host.example/acme/lib.git",
+            ],
+        );
+        git(
+            repo.path(),
+            &["remote", "add", "main-line", "git@github.com:acme/lib.git"],
+        );
+
+        let found = GitVcs
+            .url_remote(repo.path(), &url("https://github.com/acme/lib"))
+            .unwrap();
+
+        assert!(
+            matches!(&found, UrlRemote::Present(r) if r.name() == "main-line"),
+            "{found:?}"
+        );
+    }
+
+    #[test]
+    fn a_missing_url_remote_is_named_by_the_owner_and_nothing_is_added() {
+        let repo = repo();
+        git(
+            repo.path(),
+            &["remote", "add", "fork", "https://host.example/me/lib.git"],
+        );
+
+        let found = GitVcs
+            .url_remote(repo.path(), &url("https://github.com/acme/lib.git"))
+            .unwrap();
+
+        let UrlRemote::Absent(absent) = found else {
+            panic!("expected an absent remote, got {found:?}");
+        };
+        assert_eq!(absent.remote().name(), "acme");
+        assert_eq!(names(repo.path()), ["fork"], "finding adds nothing");
+
+        let added = GitVcs.add_url_remote(repo.path(), &absent).unwrap();
+        assert_eq!(added.name(), "acme");
+        assert_eq!(
+            git(repo.path(), &["config", "remote.acme.url"]),
+            "https://github.com/acme/lib.git"
+        );
+    }
+
+    #[test]
+    fn the_first_remote_of_a_repo_takes_gits_conventional_name() {
+        let repo = repo();
+
+        let found = GitVcs
+            .url_remote(repo.path(), &url("https://github.com/acme/lib.git"))
+            .unwrap();
+
+        assert!(
+            matches!(&found, UrlRemote::Absent(a) if a.remote().name() == "origin"),
+            "{found:?}"
+        );
+    }
+
+    #[test]
+    fn a_name_that_holds_another_url_is_taken_and_nothing_is_added() {
+        let repo = repo();
+        git(
+            repo.path(),
+            &["remote", "add", "origin", "https://host.example/me/lib.git"],
+        );
+        git(
+            repo.path(),
+            &[
+                "remote",
+                "add",
+                "acme",
+                "https://elsewhere.example/other/lib.git",
+            ],
+        );
+
+        let found = GitVcs
+            .url_remote(repo.path(), &url("https://github.com/acme/lib.git"))
+            .unwrap();
+
+        let UrlRemote::NameTaken(taken) = found else {
+            panic!("expected a taken name, got {found:?}");
+        };
+        assert_eq!(taken.remote.name(), "acme");
+        assert_eq!(taken.holds, "https://elsewhere.example/other/lib.git");
+        assert_eq!(names(repo.path()), ["acme", "origin"]);
+    }
+
+    #[test]
+    fn the_project_url_remote_is_the_recorded_remote_else_the_only_one_else_none() {
+        let repo = repo();
+        assert!(GitVcs.project_url_remote(repo.path()).unwrap().is_none());
+
+        git(
+            repo.path(),
+            &["remote", "add", "first", "file:///nowhere/a.git"],
+        );
+        let only = GitVcs.project_url_remote(repo.path()).unwrap();
+        assert_eq!(only.unwrap().name(), "first", "its only remote");
+
+        git(
+            repo.path(),
+            &["remote", "add", "second", "file:///nowhere/b.git"],
+        );
+        assert!(
+            GitVcs.project_url_remote(repo.path()).unwrap().is_none(),
+            "two remotes and none recorded is a choice nobody made"
+        );
+
+        GitVcs
+            .record_project_url_remote(repo.path(), &handle(repo.path(), "second"))
+            .unwrap();
+        let recorded = GitVcs.project_url_remote(repo.path()).unwrap();
+        assert_eq!(recorded.unwrap().name(), "second");
+
+        git(repo.path(), &["remote", "remove", "second"]);
+        let stale = GitVcs.project_url_remote(repo.path()).unwrap();
+        assert_eq!(
+            stale.unwrap().name(),
+            "first",
+            "a recorded remote the repo no longer has counts as none recorded"
+        );
+    }
+
+    #[test]
+    fn the_project_url_remote_of_a_non_repo_is_an_error_not_an_absence() {
+        let dir = crate::tempdir().unwrap();
+        let err = GitVcs.project_url_remote(dir.path()).unwrap_err();
+        assert_eq!(err.kind(), VcsErrorKind::NotARepo);
+    }
+
+    #[test]
+    fn a_branch_publishes_in_gits_order_ending_with_the_url_remote() {
+        let repo = repo();
+        for name in ["by-branch", "by-default", "by-upstream", "by-url"] {
+            git(
+                repo.path(),
+                &[
+                    "remote",
+                    "add",
+                    name,
+                    &format!("file:///nowhere/{name}.git"),
+                ],
+            );
+        }
+        let on = attached(repo.path());
+        let url_remote = handle(repo.path(), "by-url");
+        let target = |expect: Option<&str>| {
+            let found = GitVcs.push_target(&on, Some(&url_remote)).unwrap();
+            assert_eq!(found.as_ref().map(|r| r.name()), expect);
+        };
+
+        target(Some("by-url"));
+        git(
+            repo.path(),
+            &["config", "branch.main.remote", "by-upstream"],
+        );
+        target(Some("by-upstream"));
+        git(repo.path(), &["config", "remote.pushDefault", "by-default"]);
+        target(Some("by-default"));
+        git(
+            repo.path(),
+            &["config", "branch.main.pushRemote", "by-branch"],
+        );
+        target(Some("by-branch"));
+        assert!(
+            GitVcs.push_target(&on, None).unwrap().is_some(),
+            "a configured remote needs no url remote"
+        );
+    }
+
+    #[test]
+    fn a_branch_with_no_configured_remote_and_no_url_remote_has_no_push_target() {
+        let repo = repo();
+        assert!(GitVcs
+            .push_target(&attached(repo.path()), None)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn a_new_branch_is_taken_from_the_configured_default_else_the_url_remote() {
+        let repo = repo();
+        git(
+            repo.path(),
+            &["remote", "add", "main-line", "file:///nowhere/m.git"],
+        );
+        git(
+            repo.path(),
+            &["remote", "add", "fork", "file:///nowhere/f.git"],
+        );
+        let url_remote = handle(repo.path(), "main-line");
+
+        assert_eq!(
+            GitVcs.home_remote(repo.path(), &url_remote).unwrap().name(),
+            "main-line"
+        );
+        git(repo.path(), &["config", "checkout.defaultRemote", "fork"]);
+        assert_eq!(
+            GitVcs.home_remote(repo.path(), &url_remote).unwrap().name(),
+            "fork"
+        );
+        git(
+            repo.path(),
+            &["config", "checkout.defaultRemote", "not-a-remote"],
+        );
+        assert_eq!(
+            GitVcs.home_remote(repo.path(), &url_remote).unwrap().name(),
+            "main-line",
+            "a default that names no remote is no default"
+        );
+    }
+
+    /// `repo` with a bare `remote` named `name`, `main` pushed to it, and
+    /// `main` taking in from it.
+    fn tracking(name: &str) -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let repo = repo();
+        let bare = repo.path().join("remote.git");
+        git(repo.path(), &["init", "--bare", "-b", "main", "remote.git"]);
+        git(
+            repo.path(),
+            &["remote", "add", name, bare.to_str().unwrap()],
+        );
+        git(repo.path(), &["push", "-u", name, "main"]);
+        let path = repo.path().to_path_buf();
+        (repo, path, bare)
+    }
+
+    #[test]
+    fn the_upstream_is_the_branch_the_vcs_records_for_taking_in() {
+        let (_tmp, repo, _bare) = tracking("fork");
+        let upstream = GitVcs
+            .upstream(&attached(&repo))
+            .unwrap()
+            .expect("recorded");
+        assert_eq!(upstream.remote.name(), "fork");
+        assert_eq!(upstream.branch.as_str(), "main");
+
+        git(&repo, &["switch", "-c", "feature"]);
+        assert!(
+            GitVcs.upstream(&attached(&repo)).unwrap().is_none(),
+            "a branch with no recorded upstream has none"
+        );
+    }
+
+    #[test]
+    fn the_push_branch_is_the_same_named_branch_on_the_target_as_last_fetched() {
+        let (_tmp, repo, bare) = tracking("fork");
+        let on = attached(&repo);
+        let fork = handle(&repo, "fork");
+
+        let pushed = GitVcs.push_branch(&on, &fork).unwrap().expect("pushed");
+        assert_eq!(pushed, GitVcs.head_revision(&repo).unwrap());
+
+        git(&repo, &["switch", "-c", "feature"]);
+        assert!(GitVcs
+            .push_branch(&attached(&repo), &fork)
+            .unwrap()
+            .is_none());
+
+        let ahead = commit(&repo, "two");
+        git(&repo, &["switch", "main"]);
+        assert_eq!(
+            GitVcs
+                .push_branch(&attached(&repo), &fork)
+                .unwrap()
+                .unwrap(),
+            pushed,
+            "main's push branch did not move with feature"
+        );
+        assert_ne!(ahead, pushed);
+        drop(bare);
+    }
+
+    #[test]
+    fn a_remote_reaches_what_one_of_its_tracking_branches_reaches() {
+        let (_tmp, repo, _bare) = tracking("fork");
+        git(&repo, &["remote", "add", "other", "file:///nowhere/o.git"]);
+        let pushed = GitVcs.head_revision(&repo).unwrap();
+        let fork = handle(&repo, "fork");
+        let other = handle(&repo, "other");
+
+        assert!(GitVcs.reached_by_remote(&repo, &pushed, &fork).unwrap());
+        assert!(!GitVcs.reached_by_remote(&repo, &pushed, &other).unwrap());
+
+        let local = commit(&repo, "two");
+        assert!(!GitVcs.reached_by_remote(&repo, &local, &fork).unwrap());
+    }
+
+    #[test]
+    fn relation_is_by_ancestry() {
+        let repo = repo();
+        let base = GitVcs.head_revision(repo.path()).unwrap();
+        let tip = commit(repo.path(), "two");
+        git(repo.path(), &["switch", "-c", "side", base.id().as_str()]);
+        let side = commit(repo.path(), "three");
+
+        let relate = |a: &ResolvedRevisionId, b: &ResolvedRevisionId| {
+            GitVcs.relation(repo.path(), a, b).unwrap()
+        };
+        assert_eq!(relate(&tip, &tip), Relation::Even);
+        assert_eq!(relate(&tip, &base), Relation::Ahead);
+        assert_eq!(relate(&base, &tip), Relation::Behind);
+        assert_eq!(relate(&tip, &side), Relation::Diverged);
+    }
+
+    #[test]
+    fn unpushed_commits_are_those_no_remote_tracking_branch_reaches() {
+        let (_tmp, repo, _bare) = tracking("fork");
+        git(&repo, &["switch", "-c", "feature"]);
+        commit(&repo, "own");
+        let branch = RawRefName::new("feature");
+
+        let unpushed = GitVcs.unpushed_commits(&repo, &branch).unwrap();
+        assert_eq!(
+            unpushed
+                .iter()
+                .map(|c| c.subject.as_str())
+                .collect::<Vec<_>>(),
+            ["own"]
+        );
+
+        git(&repo, &["push", "fork", "feature"]);
+        assert!(GitVcs.unpushed_commits(&repo, &branch).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_superseded_tip_is_not_unpushed() {
+        let (_tmp, repo, _bare) = tracking("fork");
+        git(&repo, &["switch", "-c", "feature"]);
+        let own = commit(&repo, "own");
+        git(&repo, &["push", "fork", "feature"]);
+        git(
+            &repo,
+            &[
+                "update-ref",
+                &format!("{SUPERSEDED_NAMESPACE}fork/feature/{}", own.id().as_str()),
+                own.id().as_str(),
+            ],
+        );
+        git(&repo, &["push", "fork", "--delete", "feature"]);
+        git(&repo, &["fetch", "--prune", "fork"]);
+
+        assert!(
+            GitVcs
+                .unpushed_commits(&repo, &RawRefName::new("feature"))
+                .unwrap()
+                .is_empty(),
+            "the commit was published once: the record says so"
+        );
+    }
+
+    #[test]
+    fn a_clone_returns_the_remote_it_made_whatever_the_operator_calls_a_first_remote() {
+        let (_tmp, _repo, bare) = tracking("fork");
+        let dest = crate::tempdir().unwrap();
+        let into = dest.path().join("c");
+        let config = dest.path().join("gitconfig");
+        std::fs::write(&config, "[clone]\n\tdefaultRemoteName = upstream\n").unwrap();
+        let out = std::process::Command::new("git")
+            .env("GIT_CONFIG_GLOBAL", &config)
+            .args(["clone", bare.to_str().unwrap(), into.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+
+        let made = GitVcs::only_remote(&into).unwrap();
+
+        assert_eq!(made.name(), "upstream");
+    }
+}

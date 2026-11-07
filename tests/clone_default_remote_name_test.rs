@@ -1,22 +1,15 @@
-//! rwv's clones name their own remote, rather than inheriting the name the
-//! operator's git config picks.
+//! rwv's clones keep the name git gave their remote, and every later
+//! interaction resolves the remote by the role it plays.
 //!
-//! The defect this pins: git resolves `clone.defaultRemoteName` from the
-//! operator's own config, so a clone rwv made could land its remote under any
-//! name. Every later interaction rwv performs on that clone looks the remote up
-//! by rwv's convention instead, so the clone is one rwv cannot read back — a
-//! `git remote` rwv itself created and immediately misreads.
+//! git resolves `clone.defaultRemoteName` from the operator's own config, so a
+//! clone rwv made can land its remote under any name. rwv does not choose one:
+//! the project repo's url remote is the remote its clone made, recorded when it
+//! was made, and `rwv push` publishes to it, reading its default branch there.
 //!
 //! Driven through `rwv init --adopt`, whose project-repo clone `rwv push` then
-//! reads `origin/HEAD` from before it will publish anything. `rwv push` is
-//! where the misread surfaces as a refusal.
-//!
-//! This is the pin that distinguishes. `GitVcs::clone_repo`'s own unit test
-//! cannot: it runs in the test process, whose git config is the developer's,
-//! and absent a `clone.defaultRemoteName` there a clone that names the remote
-//! and one that leaves the name to git are byte-identical. Setting the config
-//! for a subprocess is what makes the two outcomes different, and only a test
-//! that spawns `rwv` can do it.
+//! publishes to. The test spawns `rwv` because only a subprocess can be given a
+//! git config that differs from the developer's: the in-process unit test of
+//! the seam cannot tell a remote rwv named from one git named.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -84,11 +77,7 @@ fn make_empty_workspace(tmp: &Path) -> PathBuf {
 }
 
 /// An operator whose git renames the default remote still gets a project repo
-/// `rwv push` can read `origin/HEAD` from.
-///
-/// Without the fix `rwv init --adopt` leaves the clone's only remote named
-/// `weavecheck`, `refs/remotes/origin/HEAD` never exists, and `rwv push`
-/// refuses at its canonical-branch gate.
+/// `rwv push` publishes: the remote git named is the one recorded and used.
 #[test]
 fn adopted_project_is_publishable_under_a_renamed_default_remote() {
     let tmp = common::tempdir().unwrap();
@@ -130,8 +119,19 @@ fn adopted_project_is_publishable_under_a_renamed_default_remote() {
     let stderr = String::from_utf8_lossy(&out.stderr);
 
     assert!(
-        !stderr.contains("origin/HEAD is unset"),
-        "the adopted clone's remote is one rwv cannot read back; got:\n{stderr}"
+        !stderr.contains("origin"),
+        "no message names a remote nobody resolved; got:\n{stderr}"
+    );
+    let project = ws.join("projects").join("project");
+    assert_eq!(
+        common::git_in(&project, &["config", "--get", "rwv.url-remote"]),
+        OPERATOR_REMOTE_NAME,
+        "the recorded url remote is the remote the clone made"
+    );
+    assert_eq!(
+        common::git_in(&project, &["remote"]),
+        OPERATOR_REMOTE_NAME,
+        "rwv added no remote of its own"
     );
     assert!(
         out.status.success(),

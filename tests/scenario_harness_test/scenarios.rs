@@ -744,6 +744,42 @@ pub fn clone_exit_status() -> Scenario {
     scenario("clone lists what the lock cannot place and exits 3", steps)
 }
 
+/// The remote moved past the pins before the clone: every member is born
+/// at its pin, and the branch reads as behind the one it takes in from.
+pub fn fresh_take_at_pin() -> Scenario {
+    let b = Place::Primary(Machine::B);
+    let mut steps = forge_commits_everywhere();
+    steps.extend([
+        Step::new_machine(Machine::B)
+            .expect(Exit::Code(0))
+            .claim(Claim::AtPin {
+                at: b.clone(),
+                repo: Repo::App,
+            })
+            .claim(Claim::AtPin {
+                at: b.clone(),
+                repo: Repo::Lib,
+            })
+            .claim(Claim::OnBranch {
+                at: b.clone(),
+                repo: Repo::App,
+                branch: "main",
+            }),
+        Step::rwv(&b, &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(
+                "local/remotes/app: push-branch behind",
+            ))
+            .claim(Claim::OutputContains(
+                "rwv update --remote --repo local/remotes/app",
+            )),
+    ]);
+    scenario(
+        "a fresh take is at its pins while the remote is ahead",
+        steps,
+    )
+}
+
 pub fn clone_with_a_complete_lock() -> Scenario {
     scenario(
         "clone with a complete lock exits 0",

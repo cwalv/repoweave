@@ -79,12 +79,14 @@ pub(crate) fn standing(
 
 impl Standing {
     /// The state this standing is judged as, where it is one worth a line:
-    /// not the even branch, and not one the push target has never had.
+    /// not the even branch, not one the push target has never had, and not a
+    /// gone upstream whose branch holds nothing the remote lacks.
     pub(crate) fn state(&self) -> Option<State> {
         match self {
             Standing::NoPushTarget => Some(State::PushBranchNoPushTarget),
             Standing::ForeignUpstream { .. } => Some(State::PushBranchForeignUpstream),
-            Standing::Gone { .. } => Some(State::PushBranchGone),
+            Standing::Gone { unpushed } if !unpushed.is_empty() => Some(State::PushBranchGone),
+            Standing::Gone { .. } => None,
             Standing::Ahead => Some(State::PushBranchAhead),
             Standing::Behind => Some(State::PushBranchBehind),
             Standing::Diverged { .. } => Some(State::PushBranchDiverged),

@@ -484,8 +484,8 @@ pub fn run_push(
                 state_skipped.push(repo_path.clone());
                 continue;
             }
-            (Standing::Gone { .. }, Some(judged)) if using_default => {
-                reported.add(judged);
+            (Standing::Gone { .. }, judged) if using_default => {
+                reported.extend(judged);
                 state_skipped.push(repo_path.clone());
                 continue;
             }

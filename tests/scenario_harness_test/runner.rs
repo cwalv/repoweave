@@ -209,6 +209,12 @@ pub enum Claim {
     },
     /// What the step printed holds this text.
     OutputContains(&'static str),
+    /// The checkout of `repo` at `at` is at the commit the lock of the project
+    /// checked out there pins it at.
+    AtPin {
+        at: Place,
+        repo: Repo,
+    },
     /// The checkout of `repo` at `at` is on `branch`.
     OnBranch {
         at: Place,
@@ -1052,6 +1058,26 @@ impl Run<'_> {
                     Ok(())
                 } else {
                     Err(format!("the output does not hold {text:?}:\n{output}"))
+                }
+            }
+            Claim::AtPin { at, repo } => {
+                let lock = std::fs::read_to_string(sb.checkout(at, Repo::Proj).join("rwv.lock"))
+                    .map_err(|e| format!("no lock at {at:?}: {e}"))?;
+                let lock: serde_json::Value =
+                    serde_json::from_str(&lock).map_err(|e| format!("unreadable lock: {e}"))?;
+                let pin = lock["repositories"][repo.rel_path()]["version"]
+                    .as_str()
+                    .ok_or_else(|| format!("the lock at {at:?} pins no {}", repo.name()))?
+                    .to_owned();
+                let out = sb.git(&sb.checkout(at, *repo), &["rev-parse", "HEAD"]);
+                let head = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+                if head == pin {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "{} at {at:?} is at {head}, not its pin {pin}",
+                        repo.name()
+                    ))
                 }
             }
             Claim::OnBranch { at, repo, branch } => {

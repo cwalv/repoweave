@@ -1728,6 +1728,11 @@ impl Report {
         self.lines.is_empty()
     }
 
+    /// Add `judged` when there is one.
+    pub fn extend(&mut self, judged: Option<Judged>) {
+        self.lines.extend(judged);
+    }
+
     pub fn lines(&self) -> &[Judged] {
         &self.lines
     }

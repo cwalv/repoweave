@@ -64,6 +64,12 @@ fn clone_completes_listing_each_member_the_lock_cannot_place_and_exits_with_the_
 }
 
 #[test]
+fn a_clone_while_the_remote_is_ahead_of_the_pins_places_every_member_at_its_pin_and_reads_it_as_behind(
+) {
+    runner::run(scenarios::fresh_take_at_pin()).assert_fully_decided_green();
+}
+
+#[test]
 fn clone_of_a_project_with_a_complete_lock_exits_zero() {
     runner::run(scenarios::clone_with_a_complete_lock()).assert_fully_decided_green();
 }
