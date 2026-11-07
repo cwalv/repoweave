@@ -86,7 +86,7 @@ fn a_member_in_its_expected_state_is_no_finding_whatever_its_role() {
 fn a_member_on_a_branch_whose_commits_other_refs_hold_is_on_branch() {
     let w = weave();
     let ww = workweave(&w);
-    common::git_in(&ww.join(OWNED), &["switch", "-c", "wip"]);
+    common::git_in(ww.join(OWNED), &["switch", "-c", "wip"]);
 
     assert_eq!(
         about(&alignment(&ww), OWNED),
@@ -99,7 +99,7 @@ fn a_member_on_a_branch_whose_commits_other_refs_hold_is_on_branch() {
 fn a_member_on_a_branch_holding_commits_nothing_else_does_lists_them() {
     let w = weave();
     let ww = workweave(&w);
-    common::git_in(&ww.join(OWNED), &["switch", "-c", "wip"]);
+    common::git_in(ww.join(OWNED), &["switch", "-c", "wip"]);
     commit(&ww.join(OWNED), "stray.txt");
 
     let findings = alignment(&ww);
@@ -117,7 +117,7 @@ fn a_member_on_a_branch_holding_commits_nothing_else_does_lists_them() {
 fn a_detached_member_holding_unpushed_commits_is_reported_with_them() {
     let w = weave();
     let ww = workweave(&w);
-    common::git_in(&ww.join(OWNED), &["switch", "--detach"]);
+    common::git_in(ww.join(OWNED), &["switch", "--detach"]);
     commit(&ww.join(OWNED), "loose.txt");
 
     assert_eq!(
@@ -139,9 +139,9 @@ fn a_detached_dependency_at_its_pin_is_not_reported() {
 fn a_checkout_stopped_in_an_operation_of_its_own_is_left_alone() {
     let w = weave();
     let ww = workweave(&w);
-    common::git_in(&ww.join(OWNED), &["switch", "-c", "wip"]);
+    common::git_in(ww.join(OWNED), &["switch", "-c", "wip"]);
     commit(&ww.join(OWNED), "stray.txt");
-    common::git_in(&ww.join(OWNED), &["bisect", "start"]);
+    common::git_in(ww.join(OWNED), &["bisect", "start"]);
 
     assert!(
         about(&alignment(&ww), OWNED).is_empty(),
@@ -153,7 +153,7 @@ fn a_checkout_stopped_in_an_operation_of_its_own_is_left_alone() {
 fn a_project_repo_on_no_branch_is_reported_in_the_primary() {
     let w = weave();
     common::git_in(
-        &w.workspace.join("projects").join(PROJECT),
+        w.workspace.join("projects").join(PROJECT),
         &["switch", "--detach"],
     );
 

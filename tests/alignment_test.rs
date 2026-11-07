@@ -99,7 +99,7 @@ fn workspace_state_is_written_only_when_it_changes() {
         "aligning for the same branch by the same entries rewrites nothing"
     );
 
-    common::git_in(&project_dir(&w.workspace), &["switch", "-c", "other"]);
+    common::git_in(project_dir(&w.workspace), &["switch", "-c", "other"]);
     common::record_feature(&project_dir(&w.workspace), "other", "main");
     std::thread::sleep(std::time::Duration::from_millis(30));
     rwv()
