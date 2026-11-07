@@ -2022,6 +2022,23 @@ pub fn dc21_marker_disagreement() -> Scenario {
                     at: ww("w"),
                     parent: a(),
                 }),
+            Step::tamper(
+                "point w's marker at a parent the index does not record",
+                Tamper::RepointMarkerParent(ww("w")),
+            ),
+            refused_naming_the_repair(Step::rwv(&a(), &["workweave", "delete", "w"]))
+                .claim(Claim::DirStands(Machine::A, ".workweaves/proj--w"))
+                .claim(Claim::MarkerIs(ww("w"), MarkerState::ParentElsewhere)),
+            refused_naming_the_repair(Step::rwv(&ww("w"), &["sync-to", "--retire"]))
+                .claim(Claim::DirStands(Machine::A, ".workweaves/proj--w"))
+                .claim(Claim::MarkerIs(ww("w"), MarkerState::ParentElsewhere)),
+            Step::rwv(&ww("w"), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("restored"))
+                .claim(Claim::MarkerParent {
+                    at: ww("w"),
+                    parent: a(),
+                }),
             Step::tamper("delete the index", Tamper::DeleteIndex(Machine::A)),
             Step::rwv(&ww("w"), &["status"])
                 .expect(Exit::Succeeds)

@@ -182,6 +182,8 @@ pub enum Tamper {
     DeleteMarker(Place),
     /// Overwrite the marker with text no parser reads.
     CorruptMarker(Place),
+    /// Point the marker's `parent` at a directory the index does not record.
+    RepointMarkerParent(Place),
     DeleteIndex(Machine),
     /// Write the index as an earlier release kept it: at the top of the
     /// project checkout, `container` for `basedir`, bare paths, an empty
@@ -332,6 +334,8 @@ pub enum Claim {
 pub enum MarkerState {
     Absent,
     Corrupt,
+    /// Parses, and names a parent other than the one the index records.
+    ParentElsewhere,
 }
 
 /// The outcome a step is expected to have. A step whose outcome the adopted
@@ -1220,6 +1224,15 @@ impl Run<'_> {
                 let marker = sb.place_root(at).join(".rwv-workweave");
                 std::fs::write(&marker, "{ not a marker").map_err(|e| io(&marker, e))
             }
+            Tamper::RepointMarkerParent(at) => {
+                let marker = sb.place_root(at).join(".rwv-workweave");
+                let text = std::fs::read_to_string(&marker).map_err(|e| io(&marker, e))?;
+                let mut value: serde_json::Value = serde_json::from_str(&text)
+                    .map_err(|e| format!("{}: {e}", marker.display()))?;
+                value["parent"] = serde_json::json!(sb.root.join("nowhere"));
+                std::fs::write(&marker, serde_json::to_string_pretty(&value).unwrap())
+                    .map_err(|e| io(&marker, e))
+            }
             Tamper::DeleteIndex(machine) => {
                 let index = sb.index_file(*machine);
                 std::fs::remove_file(&index).map_err(|e| io(&index, e))
@@ -1394,6 +1407,12 @@ impl Run<'_> {
                 let matches = match (state, found.as_deref()) {
                     (MarkerState::Absent, None) => true,
                     (MarkerState::Corrupt, Some(text)) => text == "{ not a marker",
+                    (MarkerState::ParentElsewhere, Some(text)) => {
+                        serde_json::from_str::<serde_json::Value>(text)
+                            .ok()
+                            .and_then(|marker| marker["parent"].as_str().map(str::to_owned))
+                            .is_some_and(|parent| parent.ends_with("nowhere"))
+                    }
                     _ => false,
                 };
                 if matches {
