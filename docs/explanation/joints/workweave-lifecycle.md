@@ -120,7 +120,7 @@ Use `--replace-existing` to tear down and recreate from scratch. It refuses if
 any checkout under the existing workweave, a manifest member or not, holds
 uncommitted changes or unmerged commits — the operator must discard those
 explicitly with `rwv workweave delete <name> --discard-uncommitted
---discard-unmerged-commits`.
+--discard-unlanded`.
 
 ## Working state
 
@@ -178,32 +178,21 @@ Workweaves live at `<parent>/.workweaves/<project>--<name>/` — by default a si
 ### The retire contract
 
 Retire is a phase in the sync-to machine, not a separate command. It runs
-only after `advance-target` has completed successfully. It does three checks:
-
-**Merged-check** — every member repo in CWD must have the same HEAD as
-the corresponding repo in the target workspace. After a successful
-`advance-target`, both sides have been fast-forwarded to CWD's converged
-tips, so this should hold. Retire refuses (with the diverged repos listed)
-if it does not.
-
-The check compares **member repo tips**, not project repo tips. The
-project repo's post-sync state can diverge from the target by the
-auto-relock commit Phase 3 writes. That commit is purely derived
-and will be regenerated on the parent's next sync, so comparing project
-tips would refuse every retire, including the happy path. Manifest tip
-equality is the accurate convergence signal.
+only after `advance-target` has completed successfully. It does two things:
 
 **Dirty-check** — no checkout in the workweave may have uncommitted
 changes, whether a manifest member names it or not (a clone put there by
 hand is listed with the suffix `(not a manifest member)`). Any dirty path
-blocks retire.
+blocks retire. A detached HEAD holding commits no branch reaches blocks it
+too (`alignment`).
 
-**Unpruned-checkout check** — when replay refused to prune a member the
-manifest no longer names, because pruning would have destroyed what its
-checkout holds, that checkout is still in the workweave, and deleting the
-workweave would destroy it. Retire refuses (`retire-unpruned-checkout`)
-until the checkout is gone: save what it holds or discard it, then remove it
-by hand. Committing or discarding alone does not unblock it.
+**The deletion rule** — retire removes the workweave as `rwv workweave delete`
+does without its `--discard-*` overrides, then applies the deletion rule to the
+workweave's branches: a branch that landed on the branch the workweave's record
+lands into is deleted, with its record, and one that did not survives with its
+reason. A workweave retired with a branch the rule kept is gone and reports it;
+`sync-to` then exits with status `3`. Landing the work into a target other than
+the recorded one leaves the branches unlanded as far as the rule can see.
 
 ### What retire deletes
 
@@ -213,17 +202,14 @@ does without its `--discard-*` overrides:
 - Every member-repo worktree is removed (`git worktree remove`), whatever
   its role.
 - Stale `.git/worktrees/` entries are pruned.
-- Each ephemeral branch (`{project}--{name}`) a repo holds is deleted if its
-  creation receipt is recorded in `.rwv-workweave-index`.
-- The project-repo worktree and its ephemeral branch are removed.
+- Each branch of the workweave (`{project}--{name}`) that the deletion rule
+  finds landed is deleted, in the project repo and in each member that holds
+  one.
 - The workweave directory is removed.
 
-Ephemeral branch deletion is what makes the `git branch -D` analogy
-exact: once retire runs, the only refs to the workweave's commits are the
-ones that landed in the parent during `advance-target`. Any commit not
-reachable from the parent is permanently lost. The pre-op savepoints
-(`refs/rwv/pre-op/<op-id>`) remain during the op but are dropped in cleanup
-after a successful retire.
+What the rule keeps stays reachable: a branch that has not landed holds its
+commits, and the pre-op savepoints (`refs/rwv/pre-op/<op-id>`) remain during
+the op and are dropped in cleanup after a successful retire.
 
 ### Why `--retire` is on `sync-to` and not on `sync`
 
@@ -248,7 +234,7 @@ into the target has already completed, and the workweave is preserved. The
 repair loop:
 
 ```bash
-# fix what the refusal names (commit, remove the unpruned checkout, etc.), then:
+# fix what the refusal names (commit or discard the edits), then:
 rwv sync-to --continue    # re-runs the retire check
 
 # or roll back the entire op:
@@ -270,9 +256,10 @@ Refuses if:
 
 - Any checkout has **uncommitted changes** (staged, unstaged, or untracked
   files outside `.gitignore`).
-- Any checkout's HEAD holds **commits not reachable from the recorded parent
-  or the primary weave** — work that would be permanently destroyed when
-  the ephemeral branches are force-deleted.
+- Any checkout's HEAD is detached holding **commits no branch or
+  remote-tracking branch reaches** — work that would be lost with the
+  directory.
+- The workweave's branch is one other branches' records land into.
 
 Both checks cover every checkout under the workweave, not only the members
 the project's manifest names: a member replay dropped but could not prune, a
@@ -283,22 +270,22 @@ the manifest `(not a manifest member)`. Options:
 - Commit the work and land it: `rwv sync-to --retire`
 - Stash or discard the uncommitted changes, then delete
 - Consent to losing everything: `rwv workweave delete <name>
-  --discard-uncommitted --discard-unmerged-commits`
+  --discard-uncommitted --discard-unlanded`
 
-**`--discard-uncommitted`** waives the first refusal, **`--discard-unmerged-commits`**
-the second. Passing both consents to losing the workweave's branches and
-checkouts, and keeps their contents: each flag makes a backup of what it waives
-before anything is removed (`rwv backup list` shows them, `rwv backup drop`
-drops them). The same sequence runs as retire's delete step (worktrees
-removed, branches deleted, directory removed), but without the waived check.
+**`--discard-uncommitted`** waives the first refusal, **`--discard-unlanded`**
+the second, and also deletes a branch of the workweave that has not landed.
+Passing both consents to losing the workweave's branches and checkouts, and
+keeps their contents: each flag makes a backup of what it waives before
+anything is removed (`rwv backup list` shows them, `rwv backup drop` drops
+them).
 
-The diverged-commit check uses **both** the recorded parent and the primary
-weave as baselines: work counts as merged when it is reachable from either.
-This means a nested workweave's commits that have landed in the parent
-workweave (but not yet in primary) are not flagged as unmerged. Retire's
-delete step adds a third baseline, the target its `sync-to` has just landed
-the workweave into, so `rwv sync-to <target> --retire` retires a workweave
-whose work is in a target other than its recorded parent.
+A branch that has not landed is not a refusal. The workweave is removed and the
+deletion rule keeps the branch, listed with its reason, and the exit status is
+`3`. Whether a branch landed is judged against the branch the workweave's
+record lands into, by ancestry: the project branch of that name, and in each
+member its branch for that target. `--delete-remote` and
+`--delete-remote-unlanded <repo>` extend the rule to the push branches; see
+[`rwv branch delete`](../../reference/cli.md#rwv-branch).
 
 ## Lifecycle in one view
 

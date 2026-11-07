@@ -96,7 +96,7 @@ empty is what lets the consent tokens in `src/cli/consent.rs` stay
 | `manifest` (`src/manifest.rs`, 3152) | `Manifest`, `LockFile`, `Project`, and the newtypes `RepoPath`, `RepoEntry`, `Role`, `RepoUrl`. `ProjectName` and `WorkweaveName` are re-exports from `naming`. |
 | `lock` (`src/lock.rs`, 392) | Snapshotting member HEADs into `rwv.lock`. |
 | `workweave` (`src/workweave.rs`, 4294) | Workweave create / delete / list / log, and member birth (`birth_ephemeral_worktree`, `materialize_member`). |
-| `workweave_index` (`src/workweave_index.rs`, 1779) | The primary-side `.rwv-workweave-index` and `RefRegistry` — the ref-ownership receipt store. |
+| `workweave_index` (`src/workweave_index.rs`, 1779) | The primary-side `.rwv-workweave-index`: the container path and the name-to-path map of the project's workweaves. |
 | `op_state` (`src/op_state.rs`) | The in-flight-operation record: `OpVerb`, `OpPhase`, `OwnerRecord`, `PhaseTips`, `TouchedWorkspaces`, `acquire_op`; and `OpId`, `SavepointKey` and `SyncStrategy`: the two record fields the engine also reads, and the key a savepoint is filed under. |
 | `owned_state` (`src/owned_state.rs`, 1025) | The attested-generation ledger `.rwv-owned-digests` (`OWNED_DIGESTS_FILE`,): what rwv last accepted for each fully-owned generated file, and the inputs a generation read. Consumed by `activate`, `check`, `workweave` and the cargo integration. |
 | `durable_file` (`src/durable_file.rs`) | The one whole-file publish path: `replace` (overwrite) and `create_new` (refuse an occupied target), both temp-then-fsync-then-publish. A state file reaches it only through `StatePath`. |
@@ -121,14 +121,15 @@ the rest read it.
 | `pull` (`src/pull.rs`) | `rwv pull`: the fetch, the fast-forward of the project branch (`take_in_project`), then `update_members`. |
 | `update` (`src/update.rs`) | `rwv update`, and `bring_members`, the clone-missing-and-align engine `rwv clone` shares: it clones each member not on disk, aligns each present one to its lock entry, and reports what became of every pin as a `PinOutcome`. The lock is read and never written. |
 | `update_remote` (`src/update_remote.rs`) | `rwv update --remote`: the pruning fetch, the advance of each repo to its branch HEAD, and the re-snapshot of `rwv.lock` through `write_project_lock` (`src/lock.rs`, which `rwv lock` also runs). An authoring verb, so it also regenerates integration files. |
-| `branch` (`src/branch.rs`) | `rwv branch set-mode` and `rwv branch list`, and `require_recorded`, the gate the verbs that align, lock, land or publish call before they change anything; `record_trunk` for `init` and `clone`; `workweave_parent` and `record_workweave` for `workweave create`. |
-| `records` (`src/records.rs`) | The branch records: the entry format (`Entry`, `Record`), the entry-by-entry merge of the records remotes (`merge_snapshots`), `View` (what a branch's record reads as, the cycle walk, dependents) and `Store`, whose `write` merges, then writes, then moves the local records branch by compare-and-swap, re-reading and retrying when it loses. The git spelling stays in `src/git/records.rs`. |
+| `branch` (`src/branch.rs`) | `rwv branch set-mode`, `rwv branch list` and `rwv branch delete`, and `require_recorded`, the gate the verbs that align, lock, land or publish call before they change anything; `record_trunk` for `init` and `clone`; `workweave_parent` and `record_workweave` for `workweave create`. |
+| `deletion` (`src/deletion.rs`) | The deletion rule: `Rule::open` reads what belongs to a branch and `Rule::apply` judges each, producing an `Outcome` of `Deleted` and `Survivor` values with their `Reason`. `branch delete`, `workweave delete` and `sync-to --retire` all run it; none decides a deletion itself. |
+| `records` (`src/records.rs`) | The branch records: the entry format (`Entry`, `Record`), the entry-by-entry merge of the records remotes (`merge_snapshots`), `View` (what a branch's record reads as, the cycle walk, dependents) and `Store`, whose `write` merges, then writes, then moves the local records branch by compare-and-swap, re-reading and retrying when it loses; `write_dropping` also drops the entries the drop rule names, removals ordered before additions. The git spelling stays in `src/git/records.rs`. |
 
 ### Seams and shared machinery
 
 | Module | Owns |
 |---|---|
-| `vcs` (`src/vcs.rs`, 3439) | The `Vcs` trait, its witness and warrant types, and `VcsError`. §6.1. |
+| `vcs` (`src/vcs.rs`, 3439) | The `Vcs` trait, its witness and destroy-proof types, and `VcsError`. §6.1. |
 | `git` (`src/git.rs`, 3869) | The one implementor, `GitVcs`, plus `git_command()`. |
 | `integration` (`src/integration.rs`, 618) | The `Integration` trait, `IntegrationContextBase` and `IntegrationContext`; the finding vocabulary `Issue` / `IssueKind` / `MemberIncompatibility` the trait returns. §6.2. |
 | `integrations/` | Eight built-in implementors plus `merge.rs`, the managed-file merge engine they share. |
@@ -210,7 +211,7 @@ All durable rwv state is files. There is no database and no cache directory.
 | `rwv.lock` | — | `projects/<name>/` | Committed intent: the revision each member is pinned to. |
 | `.rwv-active` | `ACTIVE_PROJECT_FILE`, `src/workspace.rs` | weave root | Which project the primary root currently presents. Ambient default. Read only by `observe_root`, through the private `read_active_pointer`; a file naming no project refuses where a verb would select by it (`unreadable-active-project`). |
 | `.rwv-workweave` | `WORKWEAVE_MARKER_FILE`, `src/workspace.rs` | each workweave root | A workweave's only identity file: `{primary, project, parent}`. Self-describing without the index. |
-| `.rwv-workweave-index` | `INDEX_FILENAME`, `src/workweave_index.rs` | `projects/<project>/` | The primary's inverse view: container path, name→path map, and `RefRegistry` receipts. |
+| `.rwv-workweave-index` | `INDEX_FILENAME`, `src/workweave_index.rs` | `projects/<project>/` | The primary's inverse view: container path and name→path map. |
 | `.rwv-op` | `OP_STATE_FILE`, `src/op_state.rs` | a weave root | The owner record of an in-flight multi-repo operation. §5. |
 | `.rwv-op-lease` | `OP_LEASE_FILE`, `src/op_state.rs` | every other workspace the operation mutates | A mutex plus a redirect to the owner. Immutable once written. |
 | `.rwv-owned-digests` | `OWNED_DIGESTS_FILE`, `src/owned_state.rs` | beside a generated file | SHA-256 of fully-owned generated content, so drift is detectable. |
@@ -225,12 +226,11 @@ canonicalizes to this primary, `marker.project` matches). A stale or foreign
 entry degrades to `None` plus a `rwv doctor` finding; destructive operations
 hard-require the round-trip (`src/workweave_index.rs`).
 
-**`RefRegistry` is a receipt store, not a cache.** It records that rwv created a
-particular ref name in a particular store, and it is the reason rwv can destroy
-a ref: without a receipt, a ref is somebody else's. It is homed in the
-*primary's* project checkout rather than in the workweave's marker because
-deleting a workweave is a `remove_dir_all`, which would take a marker-homed
-receipt with it (`src/workweave_index.rs`).
+**The index records no ownership.** What rwv may delete is decided by the
+deletion rule (`src/deletion.rs`) from the branch records and the refs
+themselves, never from a record that rwv created a ref; the index file keeps
+an empty `receipts` list so the format stays one a reader can tell from a
+pre-record one (`src/workweave_index.rs`).
 
 `.rwv-active` and `.rwv-workweave` are **mutually exclusive**; `rwv doctor`
 reports the conflict.
@@ -479,16 +479,19 @@ requires.** The proof is a value that cannot be forged:
   `HeadObservation`. Splitting the observable enum from the witness
   enum is what makes the witnesses unforgeable. `verify_attachment`
   re-observes and fails with `VcsError::StaleRefWitness` if the world moved.
-- **Ownership receipts.** `OwnedRef` means rwv holds a persisted
-  receipt for exactly this name in exactly this store.
-  `OwnedRef::from_receipt` is `pub(crate)` with two callers, both in
-  `src/workweave_index.rs` — the registry read and write paths (§4). A ref rwv
-  did not record creating cannot be spoken of as owned.
-- **Warrants.** `DeletionWarrant` wraps a private enum with four
-  constructors, so "may I delete this" is answered by construction rather than
-  by a boolean argument. `DiscardWarrant` pairs a `SavepointRef`
-  with an operator consent token: a destructive reset is
-  representable only when a savepoint provably exists.
+- **Destroy proofs.** `DestroyProof` is an opaque struct over a private enum:
+  a branch deletion is representable only with a proof that every commit on the
+  branch is reached by a ref that outlives it (`DestroyProof::landed`, which
+  runs the ancestry check) or that a backup of it was made first
+  (`DestroyProof::backed_up`, which makes the backup and holds the witness).
+  The proof names the store, the branch and the tip it was proved about, and
+  `Vcs::delete_branch` deletes only at that tip, so a branch that moved since is
+  left. `DiscardWarrant` pairs a `SavepointRef` with an operator consent token:
+  a destructive reset is representable only when a savepoint provably exists.
+- **Found branches.** `FoundBranch` is the branch §2.1 of the branch model
+  found in a store, with the revision a birth would start it at; a worktree is
+  born only on one, so a birth derives its branch from the store rather than
+  from an independent name.
 - **The fetch claim.** `Vcs::fetch_pruning` takes a `&FetchClaim`
   (`src/fetch_claim.rs`), which only `FetchClaim::hold` constructs, so a
   pruning fetch into an object store without the claim on it is not
@@ -500,7 +503,7 @@ requires.** The proof is a value that cannot be forged:
   stay empty (§2).
 
 Several witness types deliberately have **no `as_str()`** — `TrackingRef`,
-`OwnedRef`, `AttachedRef` — so a caller cannot launder a proof back into a
+`FoundBranch`, `AttachedRef` — so a caller cannot launder a proof back into a
 bare string. `compile_fail` doctests pin this.
 
 `VcsError` carries a `kind()` of stable kebab-case tags and a
@@ -625,7 +628,7 @@ scales, and they explain several otherwise-odd shapes in the tree:
 |---|---|
 | `ResolvedRevisionId` (`src/vcs.rs`) serializes but does not deserialize; `RawRevisionId` does both | A revision read from a lock file cannot be mistaken for one resolved against a repo. |
 | `ResolvedLockFile` (`src/manifest.rs`) has no `Deserialize` | Same rule at the file level: parsing yields `LockFile`; resolution is a separate, explicit step (`resolve_versions`,). |
-| Witnesses, receipts, warrants and consent tokens (§6.1) | A destructive VCS operation is unrepresentable without the proof its class requires. |
+| Witnesses, destroy proofs and consent tokens (§6.1) | A destructive VCS operation is unrepresentable without the proof its class requires. |
 
 ### 6.4 Plugin dispatch
 

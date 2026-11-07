@@ -3742,7 +3742,7 @@ pub struct UnlandedBranch {
     pub backup: String,
 }
 
-pub const WORKWEAVE_DELETE_SCHEMA_URL: &str = crate::schema_url::schema_url!("workweave-delete");
+pub const WORKWEAVE_SCHEMA_URL: &str = crate::schema_url::schema_url!("workweave");
 
 /// Print what a workweave delete did: by kind what it discarded, then the
 /// deletion rule's outcome.
@@ -3753,7 +3753,7 @@ pub fn report_deletion(
 ) -> anyhow::Result<()> {
     if output.is_json() {
         let envelope = WorkweaveDeleteJsonOutput {
-            schema_url: WORKWEAVE_DELETE_SCHEMA_URL.to_owned(),
+            schema_url: WORKWEAVE_SCHEMA_URL.to_owned(),
             project: project.to_string(),
             discarded: DiscardedOutput {
                 edits: deletion.discarded.edits.clone(),

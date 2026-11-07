@@ -4,9 +4,10 @@
 
 Create, delete, or list workweaves for a project. A workweave is a parallel
 working directory that materializes every repo in the project's manifest
-(including the project repo itself). Every repo, whatever its `role`, becomes
-a `git worktree` checkout of the canonical weave-root clone on the ephemeral
-branch `{project}--{name}`. A `reference` repo's tracked files carry no write
+(including the project repo itself). Every `owned` and `fork` repo, and the
+project repo, becomes a `git worktree` checkout of the canonical weave-root
+clone on the branch `{project}--{name}`; a `dependency` or `reference` repo is
+checked out detached at its pin. A `reference` repo's tracked files carry no write
 bit, here and in the primary: every verb that writes or moves a member's files
 settles them for its role, and `rwv doctor` reports a member whose files
 disagree (`rwv explain member-permissions`). A member slot holding a symlink —
@@ -60,8 +61,8 @@ rwv workweave create <name> [--from <source>] [--replace-existing] [--capture-di
   holds uncommitted changes or unmerged commits in any checkout under it, a
   member or not (work visible only in the workweave and not yet reachable from
   the parent or primary). Use `rwv workweave
-  delete <name> --discard-uncommitted --discard-unmerged-commits` to
-  discard dirty workweaves explicitly.
+  delete <name> --discard-uncommitted --discard-unlanded` to discard dirty
+  workweaves explicitly.
 - `--capture-dirty` — allow creation even when the source project directory
   has uncommitted changes, and move the uncommitted edits to `rwv.toml` and
   `rwv.lock` into the new workweave's project worktree: they are copied there,
@@ -106,8 +107,12 @@ between invocations (`.runtime/`, `.claude/`, etc.) is preserved. Re-invocation
 is the standard "ensure workweave exists" path.
 
 **What `create` writes:**
-1. One `git worktree` per member repo, whatever its role (plus the project
-   repo), at `{workweave}/{repo-path}/`, on a fresh ephemeral branch.
+1. One `git worktree` per member repo (plus the project repo), at
+   `{workweave}/{repo-path}/`: on the branch `{project}--{name}` for an `owned`
+   or `fork` member and the project repo, detached at the pin for the rest. A
+   branch of that name standing anywhere but at the revision the create starts
+   from is refused as `name` `exists`; one standing at that revision is a
+   create's own earlier, interrupted result and is taken.
 2. A copy of every rwv-owned generated file the source workspace has accepted
    — its lockfiles, plus the `.rwv-owned-digests` record attesting them. These
    are gitignore-eligible, so the worktrees above arrive without them, and
@@ -152,58 +157,84 @@ The recorded basedir is an explicit, audit-visible act, not ambient
 process state: it lives in a file the operator can read, not in a shell
 environment.
 
-### `rwv workweave delete <name> [--discard-uncommitted] [--discard-unmerged-commits] [--project <name>]`
+### `rwv workweave delete <name>`
 
-Delete a workweave. Refuses if:
+Delete a workweave, and apply the deletion rule to its branches.
 
-- Any worktree (project repo or member repo) has **uncommitted changes**
-  (staged, unstaged, or untracked files outside `.gitignore`).
-- Any worktree HEAD holds **commits not reachable from the recorded parent
-  or the primary weave** — i.e., unmerged work that would be permanently
-  destroyed when the ephemeral branches are force-deleted.
+```
+rwv workweave delete <name> [--discard-uncommitted] [--discard-unlanded] [--delete-remote] [--delete-remote-unlanded <repo>]... [--json] [--project <name>]
+```
 
-Both checks also cover every checkout under the workweave that no member of
-the project's manifest names: a member replay dropped but could not prune, or
-one the workweave added that has not landed. The directory removal takes such
-a checkout with it, so its uncommitted changes and its commits count the same
-way. A commit in one counts as unmerged unless the parent or the primary
-weave holds that repo and contains it.
+Refuses, before it changes anything, if:
 
-The refusal message lists the dirty or diverged paths, marking a checkout
-outside the manifest `(not a manifest member)`, so the operator can decide
-whether to commit, land with `rwv sync-to`, or discard explicitly. For
-uncommitted changes the choices it prints include `rwv workweave delete <name>
---discard-uncommitted`.
+- Any checkout under the workweave, a manifest member or not, has
+  **uncommitted changes** (`edits` `dirty`).
+- Any checkout's HEAD is detached holding **commits no branch or
+  remote-tracking branch reaches** (`alignment` `detached with unpushed
+  commits`).
+- The workweave's branch is a feature other branches' records land into
+  (`target` `dependents`), or is checked out in another workspace (`checkout`).
 
-**`--discard-uncommitted`** waives the first refusal; **`--discard-unmerged-commits`**
-waives the second. Each names exactly what it destroys; passing both is the
-`git branch -D` contract, which consents to destroying whatever is in the
-workweave. The operator must have reviewed the contents (or not care). Once a
-refusal is waived, `delete` removes worktrees, prunes stale `.git/worktrees/` entries,
-deletes all ephemeral branches, and removes the workweave directory.
-The canonical clones keep everything but this workweave's own branches.
+It then removes the worktrees, prunes their registrations and removes the
+workweave directory. The workweave's own branches are the rule's: the branch
+the workweave is aligned for, when its record is a feature, and the branch of
+that name in each member that lists it.
 
-**What the flags keep.** Neither flag discards for good. Before anything is
-removed, each keeps what it consents to losing as a backup (`rwv backup list`):
-`--discard-uncommitted` keeps each checkout's uncommitted edits as a commit on
-its HEAD (untracked files included, ignored ones not), and
-`--discard-unmerged-commits` keeps the tip of each workweave branch it deletes
-and the commits a detached HEAD holds that no branch reaches. The delete prints
-each backup it made, named `<branch>/<id>`. A backup that cannot be written
-stops the delete with nothing changed.
+**The deletion rule.** The project branch, and in each member the branch of the
+same name that no live weave branch declares, belong to the workweave. Members
+are judged first. A local branch that belongs is deleted when:
+
+1. every commit on it is reached by the branch it lands into, or that
+   branch's remote-tracking branch (the project branch the record names as the
+   target; in a member, its branch for that target, or any branch the target's
+   history declared for it);
+2. no live lock pins a commit that only it reaches, outside the workweave
+   branch's own lock;
+3. for the project branch, its published copy has landed too, and no member
+   branch that belongs survives.
+
+Otherwise it survives, with its record. Each survivor is reported with its
+reason: `unlanded`, `pinned`, `open-head`, `members` or `unconfirmed`. The
+pruning fetch covers only the remotes these branches have an upstream or a push
+branch on, and a branch on a remote that could not be fetched is kept
+(`unconfirmed`); a branch never published is judged on local refs alone. A
+declared branch never belongs, so `main` and a release line's member branches
+are never touched. When anything survives the exit status is **3**, and
+`--json` lists what survived and why.
+
+**`--discard-uncommitted`** waives the `edits` refusal; **`--discard-unlanded`**
+waives the detached-commits refusal and lifts clause 1 for every branch of the
+workweave, deleting a branch that has not landed. Neither discards for good.
+Before anything is removed each keeps what it consents to losing as a backup
+(`rwv backup list`): the edits as a commit on the checkout's HEAD (untracked
+files included, ignored ones not), the commits a detached HEAD holds, and the
+tip of each unlanded branch. A backup that cannot be written stops the delete
+with nothing changed. The report lists what was discarded by kind: edits,
+detached commits, unlanded branches.
+
+**`--delete-remote`** also deletes each push branch of what belongs that has
+landed on the target's remote-tracking branch. **`--delete-remote-unlanded
+<repo>`**, one repo per occurrence and needing `--discard-unlanded`, also
+deletes that repo's push branch whether or not it landed, an open pull request's
+head included, after keeping its tip as a backup. A push branch of any other
+repo that has not landed is kept. Both are leased to the tip the last fetch
+saw: a push branch someone pushed to since is left. A declared-mode project
+branch's push branch is deleted by `--delete-remote` once landed and never by
+`--delete-remote-unlanded`.
+
+**Records.** An entry on the records branch whose branch is gone locally and
+from every remote, with no workspace of this machine aligned for it, is dropped
+in the same write.
 
 **Child adoption.** Before the workweave is destroyed, any living child
 workweave that records it as `parent:` is re-pointed to the retiree's OWN
 recorded parent (the grandparent; falls back to `primary`, which always
 exists). One loud line is printed per child:
-`adopted child workweave <name>: parent now <path>`. Lineage stays transitive
-by construction — the retiree's unique commits have just landed in that
-grandparent. Branch names are NOT rewritten (they are creation-time
-namespaces, not lineage), which is exactly why consumers must read the parent
-from the marker / `rwv status --json .parent`, never from the branch name. The
-same adoption step runs on `rwv sync-to --retire`. A parent that goes away
-another way (crash, hand-deletion) leaves a `dangling-parent` that
-`rwv doctor --fix` re-points to primary.
+`adopted child workweave <name>: parent now <path>`. Branch names are NOT
+rewritten, which is exactly why consumers must read the parent from the marker
+or `rwv status --json .parent`, never from the branch name. The same adoption
+step runs on `rwv sync-to --retire`, which applies the same rule to the
+retiring workweave's branches.
 
 ### `rwv workweave list [--project <name>]`
 
@@ -213,7 +244,7 @@ List existing workweave names for the project. One name per line.
 
 ```
 rwv workweave create <name> [--from <source>] [--replace-existing] [--capture-dirty] [--dir <path> | --basedir <path>] [--project <name>] [--no-materialize]
-rwv workweave delete <name> [--discard-uncommitted] [--discard-unmerged-commits] [--project <name>]
+rwv workweave delete <name> [--discard-uncommitted] [--discard-unlanded] [--delete-remote] [--delete-remote-unlanded <repo>]... [--json] [--project <name>]
 rwv workweave list [--project <name>]
 rwv workweave set-default-create-basedir <path> [--project <name>]
 rwv workweave --hook-mode create <name> [...]
@@ -238,13 +269,235 @@ thing on stdout. With `--no-materialize` it says so in one line: `[skipped]
 core: the install hooks did not run (--no-materialize); `rwv materialize` runs
 them`.
 
-`delete` — no output on success.
+`delete` — what the rule did, one line each: `deleted <repo> <branch>
+(<site>): <because>` for a branch it deleted, `left: <repo> <branch>: <reason>`
+(on stderr, with the commits or locks behind it) for a survivor, and the
+backups and discards by kind on stderr. With `--json` it emits one envelope,
+whose `discarded` object lists `edits`, `detached_commits` and
+`unlanded_branches`, and whose `deleted` and `survivors` arrays carry the rest:
+
+Schema:
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "WorkweaveDeleteJsonOutput",
+  "description": "The envelope `rwv workweave delete --json` prints.",
+  "type": "object",
+  "required": [
+    "$schema",
+    "discarded",
+    "project"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "deleted": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Deleted"
+      }
+    },
+    "discarded": {
+      "$ref": "#/definitions/DiscardedOutput"
+    },
+    "project": {
+      "type": "string"
+    },
+    "records_dropped": {
+      "description": "Branches whose records the drop rule removed.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "survivors": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Survivor"
+      }
+    }
+  },
+  "definitions": {
+    "Deleted": {
+      "description": "A branch the rule deleted.",
+      "type": "object",
+      "required": [
+        "because",
+        "branch",
+        "repo",
+        "site"
+      ],
+      "properties": {
+        "backup": {
+          "description": "The backup kept first, when the branch had not landed.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "because": {
+          "description": "What licensed it: the branch it landed on, or the backup kept first.",
+          "type": "string"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "repo": {
+          "description": "The repo, as `rwv backup drop` names it.",
+          "type": "string"
+        },
+        "site": {
+          "description": "`local`, or `remote <name>` for a push branch.",
+          "type": "string"
+        }
+      }
+    },
+    "DiscardedOutput": {
+      "description": "What a workweave delete discarded, by kind.",
+      "type": "object",
+      "required": [
+        "detached_commits",
+        "edits",
+        "unlanded_branches"
+      ],
+      "properties": {
+        "detached_commits": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/KeptWork"
+          }
+        },
+        "edits": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/KeptWork"
+          }
+        },
+        "unlanded_branches": {
+          "description": "Branches that had not landed, each deleted after the backup named.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/UnlandedBranch"
+          }
+        }
+      }
+    },
+    "KeptWork": {
+      "type": "object",
+      "required": [
+        "backup",
+        "repo"
+      ],
+      "properties": {
+        "backup": {
+          "description": "The name `rwv backup drop` takes.",
+          "type": "string"
+        },
+        "repo": {
+          "type": "string"
+        }
+      }
+    },
+    "Reason": {
+      "description": "Why a branch that belongs survived the rule.",
+      "oneOf": [
+        {
+          "description": "It holds commits the branch it lands into does not reach.",
+          "type": "string",
+          "enum": [
+            "unlanded"
+          ]
+        },
+        {
+          "description": "A live lock pins a commit that only it reaches.",
+          "type": "string",
+          "enum": [
+            "pinned"
+          ]
+        },
+        {
+          "description": "Its published copy holds commits the branch it lands into does not reach: a pull request may be open against it.",
+          "type": "string",
+          "enum": [
+            "open-head"
+          ]
+        },
+        {
+          "description": "A member branch that belongs to it survives.",
+          "type": "string",
+          "enum": [
+            "members"
+          ]
+        },
+        {
+          "description": "A remote it has a copy on could not be fetched.",
+          "type": "string",
+          "enum": [
+            "unconfirmed"
+          ]
+        }
+      ]
+    },
+    "Survivor": {
+      "description": "A branch the rule kept.",
+      "type": "object",
+      "required": [
+        "branch",
+        "detail",
+        "reason",
+        "repo"
+      ],
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "detail": {
+          "description": "What the reason rests on: the commits, the locks, the remote's cause.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "reason": {
+          "$ref": "#/definitions/Reason"
+        },
+        "repo": {
+          "type": "string"
+        }
+      }
+    },
+    "UnlandedBranch": {
+      "type": "object",
+      "required": [
+        "backup",
+        "branch",
+        "repo"
+      ],
+      "properties": {
+        "backup": {
+          "type": "string"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "repo": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
+```
 
 `list` — one workweave name per line to stdout.
 
 ## Exit codes
 
 - `0` — operation completed successfully.
+- `3` — `delete` removed the workweave and the deletion rule kept at least one
+  branch; the output lists each and why.
 - non-zero — operation failed; see stderr for details. For `create`, a failed
   install hook is non-zero too, though the workweave was created and is kept —
   except under `--hook-mode` or `--claude-hook`, where it is a warning and the
@@ -283,10 +536,11 @@ Delete a workweave whose work has already landed:
 rwv workweave delete my-feature --project foundations
 ```
 
-Delete a workweave regardless of state:
+Delete a workweave regardless of state, keeping a backup of what is discarded,
+and its landed push branches too:
 
 ```
-rwv workweave delete my-feature --project foundations --discard-uncommitted --discard-unmerged-commits
+rwv workweave delete my-feature --project foundations --discard-uncommitted --discard-unlanded --delete-remote
 ```
 
 List all workweaves for a project:
@@ -300,10 +554,12 @@ rwv workweave list --project foundations
 - *workweave has uncommitted changes; refusing to delete without
   --discard-uncommitted* — list the named paths; commit or discard the changes,
   or pass the flag to discard them.
-- *workweave has commits not merged into ...; refusing to delete without
-  --discard-unmerged-commits* — the workweave HEAD holds commits not reachable
-  from the parent or primary. Land the work via `rwv sync-to`, or pass the flag
-  to discard them.
+- *alignment: detached with unpushed commits* — a checkout's detached HEAD
+  holds commits no branch reaches. Keep them on a branch, or pass
+  `--discard-unlanded` to keep them as a backup and remove the workweave.
+- *left: ... unlanded* — the workweave is gone and a branch of it holds commits
+  the branch it lands into does not reach. Land them, or run `rwv branch delete
+  <branch> --discard-unlanded` to keep them as a backup and delete the branch.
 - *workweave directory exists but has no .rwv-workweave marker* — a previous
   failed `create` left a partial workweave; safe to recreate with
   `--replace-existing`.

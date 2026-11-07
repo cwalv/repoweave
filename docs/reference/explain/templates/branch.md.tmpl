@@ -2,9 +2,9 @@
 
 ## Purpose
 
-Record how a **weave branch** is used, and list the weave branches with their
-records. A weave branch is a branch of the project repo that carries `rwv.toml`
-and `rwv.lock`.
+Record how a **weave branch** is used, list the weave branches with their
+records, and delete one. A weave branch is a branch of the project repo that
+carries `rwv.toml` and `rwv.lock`.
 
 A branch's **record** is one of two modes:
 
@@ -68,11 +68,57 @@ onto <T> (as <mode>)`, `unrecorded`, `conflict`, `unreadable`, `cycle`).
 `list` reads refs as last fetched and writes nothing: the records of the
 remotes it knows are merged in memory, not into the local records branch.
 
+### `delete`
+
+Deletes `<W>` and the branches that belong to it, by the deletion rule. `<W>`
+may exist only on a remote, as last fetched. What belongs to `<W>` is the
+project branch `<W>` and, in each member `<W>`'s `rwv.toml` lists, the branch of
+the same name that no live weave branch declares: a declared branch never
+belongs, so `main` and a release line's member branches are never touched.
+
+A branch that belongs is deleted when everything on it has landed on the branch
+`<W>` lands into (the record's target, or `--target <T>`, which a branch that
+is not a feature needs), when no live lock pins a commit that only it reaches,
+and, for the project branch, when its published copy has landed and no member
+branch that belongs survives. Members are judged first. Otherwise it survives
+with its record, reported with its reason: `unlanded`, `pinned`, `open-head`,
+`members` or `unconfirmed`. The exit status is then **3**, and `--json` lists
+each survivor and why. A branch is a target's: `<T>` needs a record that reads
+(`target` `unrecorded` otherwise).
+
+Refused, before anything changes: a `<W>` checked out in any workspace
+(`checkout`), a `<W>` other branches' records land into (`target`
+`dependents`, one line for each), and a `<W>` that is not a feature with no
+`--target` (`target` `no target`).
+
+- `--discard-unlanded` also deletes a branch that has not landed, after keeping
+  its tip as a backup (`rwv backup list`). It lifts the landed clause and no
+  other: a pinned branch still survives.
+- `--delete-remote` also deletes each push branch of what belongs that has
+  landed on the target's remote-tracking branch.
+- `--delete-remote-unlanded <repo>`, one repo per occurrence and needing
+  `--discard-unlanded`, also deletes that repo's push branch whether or not it
+  landed (a pull request's head included), after keeping its tip as a backup.
+  The repo is its workspace-relative path, or `projects/<name>` for the project
+  repo. It never deletes the push branch of a declared-mode project branch.
+  Remote deletes are leased to the tip the last fetch saw.
+
+The rule starts with a pruning fetch of only the remotes these branches have an
+upstream or a push branch on. A branch on a remote that could not be fetched is
+kept (`unconfirmed`), and nothing on it is deleted remotely. A branch never
+published is judged on local refs, offline too.
+
+When a branch is gone locally and from every remote, with no workspace of this
+machine aligned for it, its entry on the records branch is dropped in the same
+write: an entry is a file at the branch's name, so a stale `a` would block
+recording `a/b`.
+
 ## Invocation
 
 ```
 rwv branch set-mode [<W>] <feature|declared> [--target <T>] [--project <name>]
 rwv branch list [--json] [--project <name>]
+rwv branch delete <W> [--target <T>] [--discard-unlanded] [--delete-remote] [--delete-remote-unlanded <repo>]... [--json] [--project <name>]
 ```
 
 - `<W>` and the mode are positional; the mode is always the last word, so a
@@ -86,8 +132,15 @@ Run `rwv branch --help` for the full clap surface.
 
 `set-mode` prints one line saying what is recorded, then any `target-recorded`
 and dependent lines. `list` prints one line per branch, or `no weave branches`.
+`delete` prints `deleted <repo> <branch> (<site>): <because>` for each branch it
+deleted and `dropped the record of <branch>` for each record it dropped; each
+survivor is `left: <repo> <branch>: <reason>` on stderr, with what the reason
+rests on beneath it.
 
-`rwv branch list --json` emits one envelope:
+`rwv branch list --json` and `rwv branch delete --json` each emit one envelope.
+A delete's carries `branch`, `target`, `deleted` (`repo`, `branch`, `site`,
+`because` and the `backup` kept first, when there was one), `survivors` (`repo`,
+`branch`, `reason`, `detail`) and `records_dropped`:
 
 Schema:
 
@@ -95,8 +148,12 @@ Schema:
 
 ## Exit codes
 
-- `0` — the record was written (or already held), or the listing printed.
-- non-zero — a refusal (`target`, `name`) or a branch the verb could not read.
+- `0` — the record was written (or already held), the listing printed, or
+  `delete` deleted everything that belongs to the branch.
+- `3` — `delete` finished and the rule kept at least one branch; the output
+  lists each and why.
+- non-zero — a refusal (`target`, `name`, `checkout`) or a branch the verb could
+  not read.
 
 ## Examples
 
@@ -118,6 +175,19 @@ See every weave branch and how it is used:
 rwv branch list
 ```
 
+Delete a feature once it has landed, with its member branches:
+
+```
+rwv branch delete feat-x
+```
+
+Delete one that was merged elsewhere (a squash, say), keeping a backup, and its
+published branches too:
+
+```
+rwv branch delete feat-x --discard-unlanded --delete-remote
+```
+
 ## Common errors
 
 - *target unrecorded* — the branch has no record here. Its record may be
@@ -132,5 +202,12 @@ rwv branch list
   listed; pick a `--target` outside it.
 - *name reserved* — the name is the one rwv keeps its branch records under, or is
   below it.
+- *target dependents* — other branches' records land into the branch. Each is
+  listed; rebind it with `rwv branch set-mode <dependent> feature --target
+  <T>`.
+- *target no target* — the branch is declared, so its record names no branch it
+  landed on. Name one with `--target <T>`.
+- *checkout* — the branch is checked out in another workspace (named). Switch
+  that workspace off it, or delete its workweave.
 - *name no-such-branch* — `<W>` is a branch nowhere in the project repo, local or
   remote as last fetched. `rwv fetch` brings in what a remote has published.

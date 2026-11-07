@@ -59,8 +59,8 @@ backstop unnecessary.
   against it, the question each one answers, and why `rwv doctor --locked` is
   not a renderer over the violation pipeline.
 - [branch-model](./branch-model.md) — the MOVE / ATTACH / DESTROY /
-  DESTROY-STORE classification and the type split (`AttachedRef`,
-  `OwnedRef`, warrants, consent tokens) that makes ref discipline hold by
+  DESTROY-STORE classification, the deletion rule, and the type split
+  (`AttachedRef`, `DestroyProof`, consent tokens) that makes ref discipline hold by
   construction. Cited by section from `docs/reference/explain/doctor.md` and
   `docs/reference/schemas/doctor.json`, so its section numbering is
   load-bearing.

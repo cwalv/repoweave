@@ -94,7 +94,8 @@ use regex::Regex;
 use schemars::schema_for;
 
 use repoweave::backup::BackupJsonOutput;
-use repoweave::branch::BranchListJsonOutput;
+use repoweave::branch::BranchJsonOutput;
+use repoweave::workweave::WorkweaveDeleteJsonOutput;
 use repoweave::check::DoctorJsonOutput;
 use repoweave::cli::Cli;
 use repoweave::clone::CloneJsonOutput;
@@ -421,8 +422,13 @@ fn schema_backup() -> String {
 }
 
 fn schema_branch() -> String {
-    let schema = schema_for!(BranchListJsonOutput);
+    let schema = schema_for!(BranchJsonOutput);
     serde_json::to_string_pretty(&schema).expect("branch schema serializes")
+}
+
+fn schema_workweave() -> String {
+    let schema = schema_for!(WorkweaveDeleteJsonOutput);
+    serde_json::to_string_pretty(&schema).expect("workweave schema serializes")
 }
 
 fn verbs() -> Vec<Verb> {
@@ -490,7 +496,7 @@ fn verbs() -> Vec<Verb> {
         Verb {
             name: "workweave",
             summary: "create, delete, or list workweaves for a project",
-            schema: None,
+            schema: Some(schema_workweave),
         },
         Verb {
             name: "abort",
@@ -504,7 +510,7 @@ fn verbs() -> Vec<Verb> {
         },
         Verb {
             name: "branch",
-            summary: "record how a weave branch is used, or list the weave branches with their records",
+            summary: "record how a weave branch is used, list the weave branches with their records, or delete one",
             schema: Some(schema_branch),
         },
         Verb {
@@ -4774,6 +4780,11 @@ fn main() -> anyhow::Result<()> {
     assert!(
         repoweave::branch::BRANCH_SCHEMA_URL.ends_with("/docs/reference/schemas/branch.json"),
         "BRANCH_SCHEMA_URL no longer points at the committed artifact"
+    );
+    assert!(
+        repoweave::workweave::WORKWEAVE_SCHEMA_URL
+            .ends_with("/docs/reference/schemas/workweave.json"),
+        "WORKWEAVE_SCHEMA_URL no longer points at the committed artifact"
     );
     assert!(
         REFUSAL_SCHEMA_URL.ends_with("/docs/reference/schemas/refusal.json"),

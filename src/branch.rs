@@ -18,7 +18,6 @@ use crate::vcs::{project_vcs, HeadObservation, ResolvedRevisionId, Vcs};
 use crate::workspace::{project_rel_path, WorkspaceContext};
 
 pub const BRANCH_SCHEMA_URL: &str = crate::schema_url::schema_url!("branch");
-pub const BRANCH_DELETE_SCHEMA_URL: &str = crate::schema_url::schema_url!("branch-delete");
 
 /// What `rwv branch set-mode` is asked to record.
 #[derive(Debug, Clone)]
@@ -500,6 +499,14 @@ pub struct Delete {
     pub remote_deletes: crate::deletion::RemoteDeletes,
 }
 
+/// Every envelope `rwv branch` prints under `--json`.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum BranchJsonOutput {
+    List(BranchListJsonOutput),
+    Delete(BranchDeleteJsonOutput),
+}
+
 /// The envelope `rwv branch delete --json` prints.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct BranchDeleteJsonOutput {
@@ -555,7 +562,7 @@ pub fn run_delete(
     let outcome = rule.apply()?;
     if output.is_json() {
         let envelope = BranchDeleteJsonOutput {
-            schema_url: BRANCH_DELETE_SCHEMA_URL.to_owned(),
+            schema_url: BRANCH_SCHEMA_URL.to_owned(),
             branch: branch.to_string(),
             target: target.to_string(),
             outcome: outcome.clone(),

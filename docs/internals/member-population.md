@@ -42,7 +42,7 @@ member it lacks). Its `WorktreeFiles` argument says where the tracked files
 come from: `Shared` for members, placed as §4 describes; `Written` for the
 project repo, which the VCS checks out itself. A detached member goes through
 `create_detached_populated` in `src/share.rs`, which places files the same way
-and takes no branch, so no receipt is minted for it.
+and takes no branch.
 
 ## 2. Two rules
 
@@ -76,8 +76,8 @@ workspace. Git is the first backend, not the definition: each question is one a
 repository can be asked without naming git's mechanism.
 
 1. **`create_unpopulated_worktree_on`** (with its VCS half
-   `materialize_unpopulated_worktree_on_ref`): `create_worktree_on`'s receipt
-   and branch handling, writing no tracked file. The new workspace already
+   `materialize_unpopulated_worktree_on_ref`): `create_worktree_on`'s
+   branch handling, writing no tracked file. The new workspace already
    records what it is a checkout of. Git: `worktree add --no-checkout`, then
    `read-tree HEAD`, so the index holds the revision before any file exists.
    The next question reads attributes from that index (`check-attr --cached`),
@@ -364,10 +364,10 @@ the canonical clone. rwv no longer operates on that shape:
   `missing` and `dangling-link`, and `rwv update` in the workweave). It acts on
   what the canonical clone still holds: a registration of the slot is
   reattached (`Vcs::reattach_registered_worktree`, git's `worktree repair`);
-  else the workweave's receipted branch is checked out where it stands
-  (`ReceiptedBranch::Attach` in `birth_ephemeral_worktree`, or
+  else the workweave's branch is checked out where it stands
+  (`BranchPolicy::Restore` in `birth_ephemeral_worktree`, or
   `Vcs::register_worktree_in_place` for a slot that keeps its files); else the
-  branch is created at the start revision under a fresh receipt. A
+  branch is created at the start revision. A
   `dependency` or `reference` member is relinked detached at the start revision
   and takes no branch. A stale
   registration of a removed slot is dropped first

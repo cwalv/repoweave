@@ -54,11 +54,10 @@ rwv doctor [--all] [--locked] [--json] [--fix] [--abandon-lost-pins]
   checkout whose pinned revision is in no clone is relinked onto the canonical
   clone's HEAD, and the pin is given up. Named for what it destroys.
 
-**A branch that looks like rwv's is not rwv's.** Every deletion `--fix`
-performs is gated on a persisted ownership receipt for that exact ref in
-that exact store (`branch-model.md` R2), and on a warrant proving the loss
-is safe (R3). A hand-made `<project>--<workweave>/<segment>` branch is
-reported — so you can see it — and never removed.
+**`--fix` deletes no branch.** Branches are deleted by the deletion rule, run
+by `rwv branch delete`, `rwv workweave delete` and `rwv sync-to --retire`;
+doctor reports where a checkout stands against the branch it should be on
+(`alignment`) and removes nothing from a repo's refs.
 
 Run `rwv doctor --help` for the full clap surface.
 
@@ -80,9 +79,8 @@ Run at primary, these arms repair primary's own copy — except the drift and
 state-hygiene arms, which additionally enumerate every workweave primary
 parents, a scope only primary can name.
 
-**Workspace-rooted arms — the invoking weave is ignored.** Dangling-receipt
-retraction, the ref-ownership registry migration, the canonical-store
-migration and reattach arms, safe-class stale-branch deletion, the
+**Workspace-rooted arms — the invoking weave is ignored.** The workweave-index
+migration, the canonical-store migration and reattach arms, the
 workweave-registry prune and adopt arms, the dangling-parent re-point, the
 dangling-active-project and unreadable-active-project clears, and the
 weave-root-identity-conflict clear all act on state the workspace holds in exactly one place, so they take the
@@ -96,8 +94,7 @@ weave-local for them to bind to:
   (`git rev-parse --git-path refs/heads` from inside a workweave resolves
   into primary's `.git`). A per-weave view of these refs would be a shadow of
   the shared store, not a separate store.
-- The ownership receipts that describe those refs, and the registry that
-  records which workweaves exist, live only in primary, at
+- The registry that records which workweaves exist lives only in primary, at
   `projects/<project>/.rwv-workweave-index` — an untracked, primary-local
   file. A workweave has no copy to write instead.
 - The active-project pointer is a primary-only selector, and the only place it
@@ -153,26 +150,6 @@ Like the other arms in this class, the scan starts from primary
 unconditionally: `--fix` run inside workweave A will clear a stray pointer in
 sibling workweave B, because the registry that classifies both lives only at
 primary.
-
-**Acting on another weave's refs is a policy, not a consequence of the
-above.** Sharing the ref database forces these arms to *see* every weave's
-refs. It does not by itself force `--fix` run in weave A to *destroy* a ref
-recorded for weave B. That it does so is a deliberate choice: the alternative
-— acting only on refs the invoking weave minted — would leave the reclaimable
-population permanently unreachable, because a stale ephemeral branch is by
-definition one whose workweave is gone, so no weave could be the one
-authorized to reclaim it.
-
-What bounds the destroy is therefore not where you ran the command. It is the
-receipt gate (`branch-model.md` R2 — a persisted receipt for that exact ref
-in that exact store), the liveness test (a name some workweave still on disk
-would mint is live-class and is never deleted), and the merged warrant (R3 —
-the tip is an ancestor of the store's tip). The invoking weave contributes
-nothing to that decision, which also means it backstops nothing: run `--fix`
-from a throwaway weave and it will still act on registry entries and refs
-belonging to weaves you are actively using — correctly when the
-classification is right, with nothing about the invocation site to catch it
-when it is not.
 
 ## Output
 

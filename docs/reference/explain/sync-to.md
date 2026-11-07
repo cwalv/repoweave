@@ -168,9 +168,12 @@ rwv sync-to [<target>] [--json] [--strategy <ff|rebase>] [-j <N>] [--allow-stale
 - `--retire` deletes the current workweave on success (after all three steps
   complete). Requires a workweave context; emits a warning and is a no-op in
   a primary weave. Use to close out a workweave in one step. Retire refuses,
-  parking the op at `retire`, while a member checkout replay could not prune
-  is still in the workweave (`retire-unpruned-checkout`): deleting the
-  workweave would destroy what replay refused to.
+  parking the op at `retire`, while any checkout under the workweave holds
+  uncommitted changes (`edits`) or a detached HEAD with commits no branch
+  reaches (`alignment`): deleting the workweave would destroy them. Retire
+  then applies the deletion rule to the workweave's branches, as `rwv workweave
+  delete` does (`rwv explain workweave`): a branch that landed is deleted, and
+  one that did not survives, listed under `survivors` with its reason.
 - `-j <N>` runs up to `N` per-repo manifest syncs in parallel during step 1.
   Default is `1` (serial).
 - `--continue` resumes a sync-to that was interrupted mid-op (e.g. after
@@ -1601,6 +1604,9 @@ Schema:
 
 - `0` — all three steps completed; target is at CWD's tip, and every member
   checkout the replayed manifest no longer names was pruned from CWD.
+- `3` — every step completed and the workweave was retired, and the deletion
+  rule kept at least one of its branches. `survivors` lists each with its
+  `repo`, `branch`, `reason` and `detail`.
 - non-zero — at least one step failed (inspect the error output for
   details), or every step completed but replay could not prune a member
   checkout from CWD. In the second case op-state is cleared, so `rwv abort`

@@ -245,11 +245,11 @@ Consumed by:
 
 See [workweave hierarchy](../explanation/joints/workweave-hierarchy.md) for one-hop semantics.
 
-## `.rwv-workweave-index` — workweave registry and ref receipts
+## `.rwv-workweave-index` — workweave registry
 
 Lives at `<primary>/projects/<project>/.rwv-workweave-index`. Machine-local JSON state (excluded from git through the project repo's `.git/info/exclude`), written and updated by `rwv workweave create`, `delete`, `set-default-create-basedir`, and `rwv doctor --fix`.
 
-It records the project's default workweave basedir (`<parent-of-primary>/.workweaves` unless `set-default-create-basedir` recorded another), the absolute path of every workweave created for the project, which `-w <project>--<name>` and `rwv workweave list` resolve through, and an ownership receipt for every ephemeral `<project>--<workweave>` branch `rwv` created, so `delete` and `doctor --fix` delete only branches `rwv` itself minted. Its field-level schema is an implementation detail; read it through `rwv workweave list` and `rwv doctor`, and let `rwv doctor --fix` repair it.
+It records the project's default workweave basedir (`<parent-of-primary>/.workweaves` unless `set-default-create-basedir` recorded another), and the absolute path of every workweave created for the project, which `-w <project>--<name>` and `rwv workweave list` resolve through. Its field-level schema is an implementation detail; read it through `rwv workweave list` and `rwv doctor`, and let `rwv doctor --fix` repair it.
 
 ## `rwv-workspace-state` — what the workspace last aligned for
 

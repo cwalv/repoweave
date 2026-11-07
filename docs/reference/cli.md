@@ -392,7 +392,7 @@ Advance `<target>` to CWD's tip via a three-step orchestration: (1) rebase CWD a
 | Flag | Effect |
 |---|---|
 | `--strategy ff\|rebase` | Default `rebase` (unlike `rwv sync`). Step 3 is always FF regardless. (`merge` is not offered — see [sync semantics](../explanation/joints/sync-semantics.md#why-no-merge-strategy).) |
-| `--retire` | Delete the workweave on success. Requires a workweave context; warning + no-op in a primary weave. Refuses, after the landing has completed and with the op parked at the retire phase, while the workweave holds divergent work (`retire-not-converged`), uncommitted changes in any checkout (`edits`), or a checkout replay could not prune (`retire-unpruned-checkout`); resolve it and `--continue`, or `rwv abort` |
+| `--retire` | Delete the workweave on success. Requires a workweave context; warning + no-op in a primary weave. Refuses, after the landing has completed and with the op parked at the retire phase, while any checkout under the workweave holds uncommitted changes (`edits`) or a detached HEAD with commits no branch reaches (`alignment`); resolve it and `--continue`, or `rwv abort`. Applies the deletion rule to the workweave's branches (see `rwv workweave delete`): one that has not landed survives, listed with its reason, and the exit status is `3` |
 | `--allow-stale-lock` | Consent: skip the lock-freshness precondition on both source and destination |
 | `--discard-local-commits` | Consent: discard CWD's project commits not reachable from target, hard-resetting the project repo to target's tip. Pre-sync state preserved in `refs/rwv/pre-op/<id>` |
 | `--continue` | Resume after resolving a mid-op conflict. All parameters are read from the in-progress op-state file |
@@ -400,7 +400,7 @@ Advance `<target>` to CWD's tip via a three-step orchestration: (1) rebase CWD a
 | `-j N` | Parallel per-repo step-1 syncs (default: 1) |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
-See [sync semantics](../explanation/joints/sync-semantics.md) for the full three-step model, strategy semantics, and the `--retire` contract. Exit codes and the unpruned-checkout case are as for `rwv sync` above.
+See [sync semantics](../explanation/joints/sync-semantics.md) for the full three-step model, strategy semantics, and the `--retire` contract. Exit codes are as for `rwv sync` above, with `3` for a retire that left a branch of the workweave.
 
 ### Direction conventions: `sync` vs. `sync-to`
 
@@ -460,7 +460,7 @@ An op record this rwv cannot fully parse is still aborted when its op id, verb, 
 
 ### `rwv backup`
 
-List, drop or prune the backups rwv keeps. A **backup** is a ref an rwv verb makes before any step that would leave a commit or an uncommitted edit unpreserved: `rwv workweave delete --discard-unmerged-commits` and `--discard-uncommitted` make one first, `rwv abort --abandon-foreign-tip` keeps the tip it gives up as one marked `abandoned`, and `rwv doctor --fix` turns a savepoint no operation owns any more into one. A backup is named `<branch>/<id>`, `<branch>` being the branch it backs up (`HEAD` for a detached HEAD), and stays until it is dropped. Each subcommand acts on the repos of the active project, its project repo (`projects/<name>`) and its members, and takes `--project <name>` to act on another project's (does not change `.rwv-active`). `drop` and `prune` refuse while an operation is in progress; `list` does not.
+List, drop or prune the backups rwv keeps. A **backup** is a ref an rwv verb makes before any step that would leave a commit or an uncommitted edit unpreserved: `rwv workweave delete --discard-unlanded` and `--discard-uncommitted`, and `rwv branch delete --discard-unlanded`, make one first, `rwv abort --abandon-foreign-tip` keeps the tip it gives up as one marked `abandoned`, and `rwv doctor --fix` turns a savepoint no operation owns any more into one. A backup is named `<branch>/<id>`, `<branch>` being the branch it backs up (`HEAD` for a detached HEAD), and stays until it is dropped. Each subcommand acts on the repos of the active project, its project repo (`projects/<name>`) and its members, and takes `--project <name>` to act on another project's (does not change `.rwv-active`). `drop` and `prune` refuse while an operation is in progress; `list` does not.
 
 ### `rwv backup list [--json]`
 
@@ -480,7 +480,7 @@ Fetch every remote of every repo of the project with pruning, then drop each bac
 
 ### `rwv branch`
 
-Record how a weave branch is used, or list the weave branches with their records. A weave branch is a branch of the project repo that carries `rwv.toml` and `rwv.lock`. Its **record** is `feature` (work onto a target branch, with `as` the target's own mode when the record was written) or `declared` (members on the branches its `rwv.toml` entries declare). Records are kept on a branch of the project repo of their own, written without a checkout, and every verb that aligns members, locks, lands or publishes (`update`, `pull`, `update --remote`, `lock`, `sync`, `sync-to`, `push`) refuses a checked-out branch that has none, naming `rwv fetch` and `rwv branch set-mode`. `rwv init`, `rwv clone` and `rwv workweave create` record the branch they leave checked out. See [Formats](./formats.md#branch-records).
+Record how a weave branch is used, list the weave branches with their records, or delete one. A weave branch is a branch of the project repo that carries `rwv.toml` and `rwv.lock`. Its **record** is `feature` (work onto a target branch, with `as` the target's own mode when the record was written) or `declared` (members on the branches its `rwv.toml` entries declare). Records are kept on a branch of the project repo of their own, written without a checkout, and every verb that aligns members, locks, lands or publishes (`update`, `pull`, `update --remote`, `lock`, `sync`, `sync-to`, `push`) refuses a checked-out branch that has none, naming `rwv fetch` and `rwv branch set-mode`. `rwv init`, `rwv clone` and `rwv workweave create` record the branch they leave checked out. See [Formats](./formats.md#branch-records).
 
 ### `rwv branch set-mode [<W>] <feature|declared> [--target <T>] [--project <name>]`
 
@@ -498,6 +498,23 @@ A `--target` with no record is refused as `target` `unrecorded`, naming `rwv bra
 List each weave branch, local or only on a remote as last fetched, with its record: `declared`, `feature onto <T> (as <mode>)`, `unrecorded`, `conflict`, `unreadable` or `cycle`. `*` marks the checked-out branch; `[unpublished]` marks an entry no remote's records, as last fetched, hold; `[target gone]` a target that exists nowhere; `[remote only]` a branch with no local copy. It reads refs as last fetched and writes nothing: the records of the remotes are merged in memory, not into the local records branch.
 
 `--json` emits the envelope `{"$schema": "...", "branches": [...]}`. Each branch has `name`, `checked_out`, `local`, `record` (an object whose `state` is `declared`, `feature` with `target_branch` and `as`, `unrecorded`, `conflict` with `values`, `unreadable` with `reason`, or `cycle` with `chain`), `published` (absent for an unrecorded branch) and `target_gone`. See [JSON envelope convention](#--json-envelope-convention).
+
+### `rwv branch delete <W> [--target <T>] [--discard-unlanded] [--delete-remote] [--delete-remote-unlanded <repo>]... [--json] [--project <name>]`
+
+Delete `<W>` and the branches that belong to it, by the deletion rule: the project branch `<W>` (which may exist only on a remote, as last fetched) and, in each member `<W>`'s `rwv.toml` lists, the branch of the same name that no live weave branch declares. A declared branch never belongs. A branch that belongs is deleted when everything on it has landed on the branch `<W>` lands into, no live lock pins a commit that only it reaches, and, for the project branch, its published copy has landed and no member branch that belongs survives. Members are judged first. A branch the rule keeps survives with its record and is reported with its reason (`unlanded`, `pinned`, `open-head`, `members`, `unconfirmed`); the exit status is then `3`.
+
+| Flag | Effect |
+|---|---|
+| `--target <T>` | The branch whose commits count as landed; the record's target when omitted, and required for a branch that is not a feature (`target` `no target`). `<T>` needs a record that reads |
+| `--discard-unlanded` | Also delete a branch that has not landed, after keeping its tip as a backup. Lifts the landed clause only: a pinned branch survives |
+| `--delete-remote` | Also delete each push branch of what belongs that has landed on the target's remote-tracking branch |
+| `--delete-remote-unlanded <repo>` | Also delete that repo's push branch, landed or not, an open pull request's head included, after keeping its tip as a backup. One repo per occurrence, as `rwv backup drop` names it; needs `--discard-unlanded`; never the push branch of a declared-mode project branch |
+| `--json` | Emit one envelope with `branch`, `target`, `deleted`, `survivors` and `records_dropped` |
+| `--project <name>` | Operate on this project instead of the active project |
+
+Refused before anything changes: a `<W>` checked out in any workspace (`checkout`) and a `<W>` other branches' records land into (`target` `dependents`, one line each). The rule fetches only the remotes the branches have an upstream or a push branch on; a branch on a remote that could not be fetched is kept (`unconfirmed`) and nothing on it is deleted remotely, and a branch never published is judged on local refs. Remote deletes are leased to the tip the last fetch saw. A record whose branch is gone locally and from every remote, with no workspace of this machine aligned for it, is dropped in the same write.
+
+`--json` emits the envelope `{"$schema": "...", "branch": "...", "target": "...", "deleted": [...], "survivors": [...], "records_dropped": [...]}`. Each `deleted` record has `repo`, `branch`, `site` (`local` or `remote <name>`), `because` and `backup` when one was kept first; each survivor has `repo`, `branch`, `reason` and `detail`. See [JSON envelope convention](#--json-envelope-convention).
 
 ### `rwv status [--json] [...]`
 
@@ -562,7 +579,7 @@ Convention and health audit across clones, `rwv.toml`, `rwv.lock`, workweaves, o
 | `--json` | Emits envelope `{"$schema": "...", "violations": [...], "issues": [...], "advisories": [...], "plugins": [...]}`: rwv's own findings on `violations`, integration findings on `issues` |
 | `--all` | Scan all projects and run weave-wide checks (orphan detection, cross-project stale locks, etc.). By default only the active project is checked |
 | `--abandon-lost-pins` | With `--fix`, relink a workweave checkout whose link dangles and whose pinned revision and branch are in no clone onto the workweave's branch created at the canonical clone's HEAD, keeping every file: the pinned commits are given up, and their changes stand as edits. Without this flag, `--fix` reports the checkout |
-| `--kind <kind>` | Filter the report to the named finding kind (repeatable; text and `--json` both). Kind names are the wire spellings `--json` emits, for `violations` and `issues` alike (e.g. `branch-discipline`, `orphaned-savepoint`, `tool-missing`); a filter naming only `violations` kinds excludes every integration issue. An unknown name refuses (`unknown-finding-kind`), listing the valid set. Kinds whose classes normally collapse to a per-class count line render itemized under the filter — this is the drill-down. The exit code reflects the filtered view, text and `--json` alike: non-zero on any finding in the view, warnings included, so `rwv doctor --kind tool-missing` (or `--json --kind tool-missing`) fails a CI job on a missing tool |
+| `--kind <kind>` | Filter the report to the named finding kind (repeatable; text and `--json` both). Kind names are the wire spellings `--json` emits, for `violations` and `issues` alike (e.g. `alignment`, `orphaned-savepoint`, `tool-missing`); a filter naming only `violations` kinds excludes every integration issue. An unknown name refuses (`unknown-finding-kind`), listing the valid set. Kinds whose classes normally collapse to a per-class count line render itemized under the filter — this is the drill-down. The exit code reflects the filtered view, text and `--json` alike: non-zero on any finding in the view, warnings included, so `rwv doctor --kind tool-missing` (or `--json --kind tool-missing`) fails a CI job on a missing tool |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
 Without `--kind`, the exit code is non-zero when any finding is an error, and a warning leaves it at `0` — text and `--json` alike. `--fix` exits non-zero when a repair it attempted failed or refused, or an error finding remains.
@@ -595,13 +612,19 @@ Workweaves live at `<basedir>/<project>--<name>/` where `<basedir>` is recorded 
 
 Record the default basedir for the project: the directory `rwv workweave create` places new workweaves under. Writes the `container` field of `projects/<project>/.rwv-workweave-index`. Absolute paths are used as-is; relative paths resolve against the invocation directory. Existing registry entries are preserved. `--dir` and `--basedir` on `create` are unaffected. An explicit, recorded, audit-visible act, not ambient process state. `--project <name>` records it for that project.
 
-### `rwv workweave delete <name> [--discard-uncommitted] [--discard-unmerged-commits]`
+### `rwv workweave delete <name> [--discard-uncommitted] [--discard-unlanded] [--delete-remote] [--delete-remote-unlanded <repo>]... [--json]`
 
-Delete a workweave. Default refuses if any checkout under it is dirty (`edits`), or holds commits contained in neither the workweave's recorded parent nor the primary weave (`unmerged-commits`; work in a nested workweave counts as merged once its parent has it). `--discard-uncommitted` waives the first refusal, `--discard-unmerged-commits` the second. The `edits` refusal prints `rwv workweave delete <name> --discard-uncommitted` among its choices. `--project <name>` selects the project whose workweave it deletes.
+Delete a workweave, and apply the deletion rule (see `rwv branch delete`) to its aligned branch when that is a feature. Refuses, before it changes anything, if any checkout under it is dirty (`edits`), if a detached HEAD holds commits no branch reaches (`alignment` `detached with unpushed commits`), or if other branches' records land into its branch (`target` `dependents`). `--discard-uncommitted` waives the first refusal and `--discard-unlanded` the second; `--discard-unlanded` also deletes a branch of the workweave that has not landed. The `edits` refusal prints `rwv workweave delete <name> --discard-uncommitted` among its choices. `--project <name>` selects the project whose workweave it deletes.
 
-Neither flag discards for good: each keeps what it consents to losing as a [backup](#rwv-backup) before anything is removed, and a backup that cannot be written stops the delete with nothing changed. `--discard-uncommitted` keeps each checkout's uncommitted edits as a commit on its HEAD (untracked files included, ignored ones not). `--discard-unmerged-commits` keeps each workweave branch it deletes at its tip, and the commits a detached HEAD holds that no branch reaches. The delete prints each backup it made; `rwv backup list` shows them afterwards.
+A branch that has not landed is not a refusal: the workweave is removed, the rule keeps the branch, and the exit status is `3`. The output lists each survivor with its reason, and `--json` carries them in `survivors`.
 
-Both checks cover every checkout under the workweave, not only the members the project's manifest names: a member replay could not prune, one the workweave added that has not landed, or a clone put there by hand. Such a checkout is listed with the suffix `(not a manifest member)`, and one whose commits no baseline holds at all is reported rather than skipped. `create --replace-existing` weighs the same set.
+Neither discard flag discards for good: each keeps what it consents to losing as a [backup](#rwv-backup) before anything is removed, and a backup that cannot be written stops the delete with nothing changed. `--discard-uncommitted` keeps each checkout's uncommitted edits as a commit on its HEAD (untracked files included, ignored ones not). `--discard-unlanded` keeps the commits a detached HEAD holds that no branch reaches and the tip of each branch of the workweave it deletes. The report lists what was discarded by kind (edits, detached commits, unlanded branches); `rwv backup list` shows the backups afterwards.
+
+`--delete-remote` also deletes each push branch of what belongs that has landed on the target's remote-tracking branch, and `--delete-remote-unlanded <repo>`, needing `--discard-unlanded`, also deletes the named repo's push branch whether or not it landed, after keeping its tip as a backup. A push branch of a repo no flag names that has not landed is kept.
+
+Both refusals cover every checkout under the workweave, not only the members the project's manifest names: a member replay could not prune, one the workweave added that has not landed, or a clone put there by hand. Such a checkout is listed with the suffix `(not a manifest member)`. `create --replace-existing` weighs the same set.
+
+`--json` emits the envelope `{"$schema": "...", "project": "...", "discarded": {"edits": [...], "detached_commits": [...], "unlanded_branches": [...]}, "deleted": [...], "survivors": [...], "records_dropped": [...]}`; the last three are the deletion rule's, as `rwv branch delete` emits them, and are absent when the workweave's aligned branch is not a feature.
 
 ### `rwv workweave list`
 
@@ -633,7 +656,7 @@ Generate shell completions (bash, zsh, fish, etc.). Source the output in your sh
 | `0` | The verb completed everything it set out to do. |
 | `1` | The verb stopped: a refusal, a failed repo, a conflict parked for `--continue` or `rwv abort`. |
 | `2` | The arguments did not parse. |
-| `3` | The verb completed and left part of the work to you. [`rwv clone`](#rwv-clone-source-) ends so when a member is left with no pin or at a pin no ref reaches; its report and `--json` envelope list each member. |
+| `3` | The verb completed and left part of the work to you. [`rwv clone`](#rwv-clone-source-) ends so when a member is left with no pin or at a pin no ref reaches; its report and `--json` envelope list each member. [`rwv branch delete`](#rwv-branch-delete-w---target-t---discard-unlanded---delete-remote---delete-remote-unlanded-repo---json---project-name), `rwv workweave delete` and `rwv sync-to --retire` end so when the deletion rule keeps a branch; the output and `--json` `survivors` list each with its reason. |
 
 A status of `3` is a finished run, not a failure: everything the verb could do was done, and the output names what remains.
 

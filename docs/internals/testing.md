@@ -133,7 +133,7 @@ Obligations that come with the license:
   per-file, exemptions are per-file too. A global exemption fed by a local
   mention widens the blind spot beyond the file that earned it.
 - **Justification prose follows the same rule.** An allowlist entry whose
-  justification names a type gate (a receipt parameter, a sealed
+  justification names a type gate (a proof parameter, a sealed
   constructor) survives new callers; one that enumerates callers rots
   silently. Prefer the type-gate claim; where only a caller enumeration is
   available, assert the measured caller count so a new caller reddens the

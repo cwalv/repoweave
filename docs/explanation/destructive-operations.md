@@ -27,13 +27,19 @@ verify the gate matches the destruction it guards. Anonymous guards
 Examples in the current tree:
 
 - `rwv workweave delete` checks every checkout under the workweave, a
-  manifest member or not, for uncommitted changes and unmerged commits
-  before removing the workweave directory. Both refusals fire with
-  actionable error messages. Its two override flags keep what they
-  consent to losing as a backup first (rule 3).
-- `rwv sync-to --retire` refuses to delete a workweave that still holds a
-  checkout replay refused to prune (`retire-unpruned-checkout`), and its
-  dirty check covers every checkout under the workweave the same way.
+  manifest member or not, for uncommitted changes and for a detached HEAD
+  holding commits no branch reaches before removing the workweave directory.
+  Both refusals fire with actionable error messages. Its two override flags
+  keep what they consent to losing as a backup first (rule 3). A branch of the
+  workweave that has not landed is not deleted at all: the deletion rule keeps
+  it, and `--discard-unlanded` is the override that backs it up and deletes it.
+- `rwv sync-to --retire` applies the same checks and the same rule, with no
+  override: its dirty check covers every checkout under the workweave, and a
+  branch that has not landed survives.
+- `rwv branch delete` deletes a branch only when everything on it has landed on
+  the branch it lands into and no live lock pins a commit only it reaches;
+  `--discard-unlanded` lifts the first of those after a backup, and nothing
+  lifts the second.
 - `rwv member remove --delete` refuses to delete a checkout with uncommitted
   changes or commits no other clone reaches, a backup holding such commits
   included, and refuses to delete the canonical store while another
@@ -188,9 +194,9 @@ When a PR introduces a destructive call:
    `refs/rwv/pre-op/<op-id>` ref before the destructive write and wire
    the abort path to consume it. For a discard the operator consents to,
    make the backup first through `Vcs::create_backup` and take the
-   witness it returns: the proof that destroys a ref
-   (`DeletionWarrant::operator_discarded`) runs the backup itself, so a
-   discard without one does not build.
+   witness it returns: the proof that destroys a branch
+   (`DestroyProof::backed_up`) runs the backup itself, so a discard
+   without one does not build.
 4. **Update the allowlist.** Add an entry to `ALLOWLIST` in
    `tests/destructive_ops_audit_test.rs` with the file name, pattern,
    count, and a one-paragraph justification that names the

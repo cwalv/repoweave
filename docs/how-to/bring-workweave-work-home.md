@@ -90,14 +90,18 @@ Do not re-pass `--retire` or strategy flags with `--continue`; they are restored
 
 ## If `--retire` refuses to delete the workweave
 
-When the parent dropped a member repo that the workweave still has a checkout of, `sync-to` lands the work and then tries to prune that checkout. If the checkout holds uncommitted work, unpushed commits, or the only copy of its repository, the prune is refused and `--retire` refuses too (`retire-unpruned-checkout`, exit 1), naming the checkout. The landing has already completed; the op stays parked at its retire step in both workspaces. Save what you need from the checkout, remove it by hand, and re-run the retire step:
+`--retire` removes the workweave only when no checkout under it, a manifest member or not, holds uncommitted changes (`edits`) or a detached HEAD with commits no branch reaches (`alignment`). The landing has already completed; the op stays parked at its retire step in both workspaces. Commit or discard what the refusal names, and re-run the retire step:
 
 ```bash
-rm -rf github/chatly/extra       # the checkout the refusal names, after saving its work
+git -C github/chatly/extra commit -am "keep this"   # the checkout the refusal names
 rwv sync-to --continue
 ```
 
-`--continue` refuses again while the checkout is still on disk. `rwv abort` rolls the whole op back instead.
+`rwv abort` rolls the whole op back instead.
+
+## If `--retire` leaves a branch behind
+
+A branch of the workweave that has not landed on the branch the workweave's record lands into survives the retire. The workweave is gone, `sync-to` exits with status `3`, and the output lists each branch and why (`unlanded`, `pinned`, `open-head`, `members`, `unconfirmed`). Land it, or delete it with `rwv branch delete <branch> --discard-unlanded`, which keeps its tip as a backup first.
 
 ## Related
 

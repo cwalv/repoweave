@@ -1,0 +1,210 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "WorkweaveDeleteJsonOutput",
+  "description": "The envelope `rwv workweave delete --json` prints.",
+  "type": "object",
+  "required": [
+    "$schema",
+    "discarded",
+    "project"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "deleted": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Deleted"
+      }
+    },
+    "discarded": {
+      "$ref": "#/definitions/DiscardedOutput"
+    },
+    "project": {
+      "type": "string"
+    },
+    "records_dropped": {
+      "description": "Branches whose records the drop rule removed.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "survivors": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/Survivor"
+      }
+    }
+  },
+  "definitions": {
+    "Deleted": {
+      "description": "A branch the rule deleted.",
+      "type": "object",
+      "required": [
+        "because",
+        "branch",
+        "repo",
+        "site"
+      ],
+      "properties": {
+        "backup": {
+          "description": "The backup kept first, when the branch had not landed.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "because": {
+          "description": "What licensed it: the branch it landed on, or the backup kept first.",
+          "type": "string"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "repo": {
+          "description": "The repo, as `rwv backup drop` names it.",
+          "type": "string"
+        },
+        "site": {
+          "description": "`local`, or `remote <name>` for a push branch.",
+          "type": "string"
+        }
+      }
+    },
+    "DiscardedOutput": {
+      "description": "What a workweave delete discarded, by kind.",
+      "type": "object",
+      "required": [
+        "detached_commits",
+        "edits",
+        "unlanded_branches"
+      ],
+      "properties": {
+        "detached_commits": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/KeptWork"
+          }
+        },
+        "edits": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/KeptWork"
+          }
+        },
+        "unlanded_branches": {
+          "description": "Branches that had not landed, each deleted after the backup named.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/UnlandedBranch"
+          }
+        }
+      }
+    },
+    "KeptWork": {
+      "type": "object",
+      "required": [
+        "backup",
+        "repo"
+      ],
+      "properties": {
+        "backup": {
+          "description": "The name `rwv backup drop` takes.",
+          "type": "string"
+        },
+        "repo": {
+          "type": "string"
+        }
+      }
+    },
+    "Reason": {
+      "description": "Why a branch that belongs survived the rule.",
+      "oneOf": [
+        {
+          "description": "It holds commits the branch it lands into does not reach.",
+          "type": "string",
+          "enum": [
+            "unlanded"
+          ]
+        },
+        {
+          "description": "A live lock pins a commit that only it reaches.",
+          "type": "string",
+          "enum": [
+            "pinned"
+          ]
+        },
+        {
+          "description": "Its published copy holds commits the branch it lands into does not reach: a pull request may be open against it.",
+          "type": "string",
+          "enum": [
+            "open-head"
+          ]
+        },
+        {
+          "description": "A member branch that belongs to it survives.",
+          "type": "string",
+          "enum": [
+            "members"
+          ]
+        },
+        {
+          "description": "A remote it has a copy on could not be fetched.",
+          "type": "string",
+          "enum": [
+            "unconfirmed"
+          ]
+        }
+      ]
+    },
+    "Survivor": {
+      "description": "A branch the rule kept.",
+      "type": "object",
+      "required": [
+        "branch",
+        "detail",
+        "reason",
+        "repo"
+      ],
+      "properties": {
+        "branch": {
+          "type": "string"
+        },
+        "detail": {
+          "description": "What the reason rests on: the commits, the locks, the remote's cause.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "reason": {
+          "$ref": "#/definitions/Reason"
+        },
+        "repo": {
+          "type": "string"
+        }
+      }
+    },
+    "UnlandedBranch": {
+      "type": "object",
+      "required": [
+        "backup",
+        "branch",
+        "repo"
+      ],
+      "properties": {
+        "backup": {
+          "type": "string"
+        },
+        "branch": {
+          "type": "string"
+        },
+        "repo": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

@@ -883,22 +883,6 @@ a more specific entry than this one.
 
 **Where this sits.** [Sync semantics](../explanation/joints/sync-semantics.md).
 
-### `owned-branch-moved`
-
-**Condition.** A receipted ref is not at the tip its receipt records.
-
-**Why.** rwv retracts only refs it authored and still recognizes. A ref that
-moved since the receipt was written may carry someone else's work, and
-retracting it would destroy commits rwv never accounted for.
-
-**Exits.** For a workweave create, use a different workweave name, or keep
-the commits under another branch name (`git branch -m`) and re-run. Only when
-the commits are not wanted, reset the ref to the recorded tip and re-run.
-Restoring a member of an existing workweave never meets this refusal: it puts
-the worktree on the workweave's own branch where it stands.
-
-**Where this sits.** [Shared refs and drift](../explanation/joints/shared-refs-drift.md).
-
 ### `partial-run-aborted`
 
 **Condition.** Some repos failed, and an artifact that would otherwise be
@@ -974,17 +958,6 @@ has its own entry.
 then push from there.
 
 **Where this sits.** [Workweave lifecycle](../explanation/joints/workweave-lifecycle.md).
-
-### `receipt-revision-uncanonical`
-
-**Condition.** A receipt's recorded revision is not a commit id.
-
-**Why.** Receipts prove which tip rwv authored a ref at. A tag or branch name
-there would resolve differently later, so the proof would not be one.
-
-**Exits.** This is a corrupt record rather than an operator mistake. `rwv
-doctor` reports it; the repair is to retract and re-create the receipt through
-the verb that authored it.
 
 ### `registry-path-disagreement`
 
@@ -1076,42 +1049,6 @@ operation than the one that stopped.
 message names both sides — or `rwv abort` if the record is the thing that is
 wrong.
 
-### `retire-not-converged`
-
-**Condition.** After the landing, `--retire` found a member repo whose tip in
-the workweave differs from the target's, or that is missing on one side. The
-op parks at the retire phase, with op-state held in both workspaces.
-
-**Why.** Retiring deletes the workweave. That is only safe once everything in
-it is reachable from the target; divergence means some of it is not, and the
-delete would take it.
-
-**Exits.** Reconcile the divergent repos the message lists, then run `rwv
-sync-to --continue`, which re-runs the retire check. Or `rwv abort` to roll
-the whole op back.
-
-**Where this sits.** [Workweave lifecycle](../explanation/joints/workweave-lifecycle.md).
-
-### `retire-unpruned-checkout`
-
-**Condition.** `rwv sync-to --retire` found a checkout in the workweave that
-replay could not prune: the manifest no longer names it, and it is still on
-disk. The landing into the target has completed; the op parks at the retire
-phase, with op-state held in both workspaces.
-
-**Why.** Replay refuses to prune a checkout whose removal would lose
-something: uncommitted changes, commits nothing else reaches, or an object
-store the weave has nowhere else. Retiring deletes the whole workweave, and
-that checkout with it.
-
-**Exits.** Save what you need from the checkout (commit and push it, or copy it
-out) or discard it, then remove it by hand and run `rwv sync-to --continue`,
-which re-runs the retire check and retires once the checkout is gone.
-Committing or discarding alone does not unblock it: the checkout has to go.
-Or run `rwv abort` to roll the whole op back.
-
-**Where this sits.** [Workweave lifecycle](../explanation/joints/workweave-lifecycle.md).
-
 ### `shared-clone-referenced`
 
 **Condition.** `--delete`'s clone is referenced by other projects, and
@@ -1148,36 +1085,6 @@ rather than an indefinite hang.
 
 **Exits.** Wait for the other process and re-run. If no rwv is running, the
 claim is stale: delete the claim file the refusal names, then re-run.
-
-### `store-claims-unreadable`
-
-**Condition.** The records that would prove a store unclaimed could not be
-read.
-
-**Why.** The delete is gated on nothing claiming the store. When the claim
-records cannot be read, rwv cannot show the gate is satisfied, so it fails
-closed — an unreadable claim is treated as a claim.
-
-**Exits.** Fix what made the records unreadable — permissions, a partially
-removed worktree registration — then re-run. Do not delete the store by hand to
-get past this: the claims it could not read may be real.
-
-**Where this sits.** [Destructive operations](../explanation/destructive-operations.md).
-
-### `store-still-claimed`
-
-**Condition.** Ownership receipts still stand for refs in the store a delete
-would destroy, while no live checkout derives from it. A store a live checkout
-derives from refuses on its `checkout` state instead, before receipts are read.
-
-**Why.** Deleting a store takes every ref and object with it at once. A
-standing receipt says rwv created a ref in there and has not yet destroyed it,
-so the store would take a ref rwv still accounts for.
-
-**Exits.** Delete the workweaves that own the listed refs first — that retracts
-their receipts — then re-run. The refusal lists the receipts.
-
-**Where this sits.** [Clone topology](../explanation/joints/clone-topology.md).
 
 ### `surfacing-path-occupied`
 
@@ -1313,43 +1220,6 @@ installs beside `rwv`; refused here, its `rwv-each` is not on `PATH` — see
 refuses names that *do* dispatch.
 
 **Where this sits.** [Plugin boundary](../explanation/joints/plugin-boundary.md).
-
-### `unmerged-commits`
-
-**Condition.** A workweave being deleted holds commits contained in neither its
-recorded parent nor the primary weave, and `--discard-unmerged-commits` was
-not given. When `rwv sync-to <target> --retire` deletes it, the target that op
-has just synced it into counts too, whether or not it is the recorded parent.
-As for its uncommitted changes (`edits`), every checkout under the workweave
-counts; one the manifest does not name is listed with the suffix `(not a
-manifest member)`, and is reported even when no baseline holds that repo at
-all.
-
-**Why.** The commits exist only on the ephemeral branch the delete retracts,
-or in a checkout the delete removes. The flag names that specific loss —
-separately from uncommitted changes, which is a different loss and has its own
-flag.
-
-**Exits.** `rwv sync-to` to land the commits, then delete; or pass
-`--discard-unmerged-commits` to accept losing the branch. The commits are not
-lost with it: each branch tip is kept as a backup first, and `rwv backup list`
-shows them.
-
-**Where this sits.** [Workweave lifecycle](../explanation/joints/workweave-lifecycle.md).
-
-### `unowned-branch-in-namespace`
-
-**Condition.** The ephemeral name is held by a ref with no receipt.
-
-**Why.** rwv only moves refs it authored and can prove it authored. A ref in
-the ephemeral namespace with no receipt was created by something else, and rwv
-does not claim a branch it did not write.
-
-**Exits.** Delete the ref yourself if it is stale, or create the workweave
-under a different name. Whether rwv noticed at creation or at delete time is
-timing rather than a different state, which is why one token covers both.
-
-**Where this sits.** [Shared refs and drift](../explanation/joints/shared-refs-drift.md).
 
 ### `unpushable-repo-branch`
 

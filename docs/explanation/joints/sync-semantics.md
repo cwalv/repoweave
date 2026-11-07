@@ -58,9 +58,10 @@ unique-commit and store-claim refusals. Pruning waits until every repo has
 replayed, so an op that parks has removed nothing — `rwv abort` restores refs
 and cannot bring back a deleted checkout. A refused prune leaves its checkout
 on disk: the op still runs to completion and clears its op-state, then exits
-1 naming the checkout to remove by hand. Under `--retire` the retire check
-refuses first (`retire-unpruned-checkout`), so the workweave is not deleted
-with that checkout in it.
+1 naming the checkout to remove by hand. Under `--retire` the dirty check
+refuses first if that checkout holds uncommitted changes, so the workweave is
+not deleted over them; what it committed stays on its branch, which the
+deletion rule keeps unless it landed.
 
 **Whose lock is the target.** Phase 2 advances to the named workspace's
 lock, with one exception: a plain `sync` from a workweave whose lock is

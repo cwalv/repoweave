@@ -37,7 +37,7 @@ rwv doctor --json | jq -r '.issues[] |
     (if (.kind | type) == "string" then .kind else (.kind | keys[0]) end)'
 ```
 
-Sixteen kinds carry a `sub_kind` — `alignment`, `branch-discipline`, `clone-topology`,
+Fifteen kinds carry a `sub_kind` — `alignment`, `clone-topology`,
 `dead-op-lease`, `index-drift`, `member-permissions`,
 `missing-replay-exclusion`, `orphaned-savepoint`, `provenance`,
 `stale-worktree-registration`, `unparseable-project`, `uninitialized-submodule`,
@@ -109,10 +109,6 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`provenance`](#provenance) / `origin-url-mismatch`, `relative-remote`, `placement-disagreement` | Warning | Report-only |
 | [`provenance`](#provenance) / `unresolvable-url`, `lock-sha-unreachable` | Error | Report-only |
 | [`alignment`](#alignment) / `on-branch`, `on-branch-with-stray-commits`, `detached`, `detached-with-unpushed-commits`, `unaligned`, `project-detached` | Warning | Report-only |
-| [`branch-discipline`](#branch-discipline) / `unrecorded-ephemeral-branch`, `stale-ephemeral-branch-safe` | Warning | Auto-fixable |
-| [`branch-discipline`](#branch-discipline) / `canonical-holds-live-workweave-ref`, `canonical-holds-leaked-ref`, `stale-ephemeral-branch-live`, `stale-ephemeral-branch-unowned` | Warning | Report-only |
-| [`dangling-ref-receipt`](#dangling-ref-receipt) | Warning | Auto-fixable |
-| [`pre-flat-ref-receipt`](#pre-flat-ref-receipt) | Warning | Auto-fixable |
 | [`index-drift`](#index-drift) / `safe-to-fix` | Warning | Auto-fixable |
 | [`index-drift`](#index-drift) / `live-staged` | Warning | Report-only |
 | [`working-tree-drift`](#working-tree-drift) / `safe-to-fix` | Warning | Auto-fixable |
@@ -175,13 +171,6 @@ ref or savepoint whose tip is already reachable from a live branch carries no
 unique commits, so removing it loses nothing; a tip carrying commits nothing
 else reaches is live work and is never removed automatically. The reasoning is
 in [Shared-refs drift](../explanation/joints/shared-refs-drift.md).
-
-**Ownership receipt** — a persisted record, keyed to one exact ref in one
-exact store, saying rwv created that ref. rwv destroys a ref only against a
-receipt. A branch that merely *looks* like one of rwv's — a hand-made
-`<project>--<workweave>` — is yours, is reported so you can see it, and is
-never deleted. Ownership is by record, never by name shape. The normative rule
-set is implementation detail and is not part of this published book.
 
 ---
 
@@ -593,18 +582,17 @@ workweave the marker refuses before any verb dispatches.
 
 ### `legacy-workweave-index`
 
-**Warning. Auto-fixable.** A `.rwv-workweave-index` written before ownership
-receipts existed, with no `receipts` field — the index-side twin of
-`legacy-workweave-marker`.
+**Warning. Auto-fixable.** A `.rwv-workweave-index` written before the
+`receipts` field was kept empty, with no `receipts` field — the index-side twin
+of `legacy-workweave-marker`.
 
-Adding the field is the precondition for every other arm of the migration:
-recording a new receipt refuses against a legacy index rather than erasing the
-only signal that the migration has not run. This one is reported rather than
-refused at read, for two reasons — the migration has to be able to read the
-index it is about to migrate, and an unmigrated index already fails closed on
-its own, because it holds no receipts and so nothing in it is destroyable.
+`workweave create` refuses against a legacy index rather than erasing the only
+signal that the migration has not run. It is reported rather than refused at
+read, because the migration has to be able to read the index it is about to
+migrate.
 
-**What to do:** `rwv doctor --fix` adds the field.
+**What to do:** `rwv doctor --fix` adds the field, discarding any receipts the
+old index held.
 
 ### `unreadable-owned-state`
 
@@ -641,9 +629,8 @@ current content matters, inspect it before you re-derive.
 ### `unreadable-workweave-index`
 
 **Error. Report-only.** A `.rwv-workweave-index` that exists and does not
-parse. Everything derived from it is unevaluated: the recorded placements, the
-ownership receipts, and whether the file needs the `legacy-workweave-index`
-migration.
+parse. Everything derived from it is unevaluated: the recorded placements and
+whether the file needs the `legacy-workweave-index` migration.
 
 While `.rwv-workweave-index` cannot be parsed, `unregistered-workweave` and
 `stale-registry-entry` are suppressed for the project because attempting to
@@ -652,8 +639,7 @@ adopt or prune against an unreadable index would fail on the same parse error.
 **What to do:** repair the file by hand, or delete it and re-run `rwv doctor
 --fix`, which re-adopts the workweaves on disk into a fresh index. `--fix`
 never rewrites it for you: a corrupt index gives no way to tell which entries
-it meant to hold, and the ownership receipts in it are the only record of
-which refs are rwv's to delete.
+it meant to hold.
 
 ### `workweave-tree-integrity`
 
@@ -901,9 +887,7 @@ committed it and the clone holding it was deleted before it was pushed —
 `rwv doctor --fix --abandon-lost-pins` relinks the checkout onto the
 workweave's branch created at the canonical clone's HEAD. Every file stays, so
 the lost commits' changes stand as edits against that HEAD; commit them and
-run `rwv lock` in the workweave. The receipt for the workweave's branch is
-kept until then, and is not reported as a
-[`dangling-ref-receipt`](#dangling-ref-receipt). A canonical clone that is not
+run `rwv lock` in the workweave. A canonical clone that is not
 on disk at all is reported as
 [`missing-canonical-clone`](#missing-canonical-clone) instead.
 
@@ -1032,8 +1016,7 @@ the canonical store itself. It is reported as `workweave-drift`.
 
 **What to do:** `rwv doctor --fix`, in text mode, replaces the full clone with
 a worktree of the canonical clone on the workweave's `<project>--<workweave>`
-branch, born at the commit the clone had checked out, and records an ownership
-receipt for that branch. Run inside a workweave it repairs that workweave; run
+branch, born at the commit the clone had checked out. Run inside a workweave it repairs that workweave; run
 from the primary, every registered workweave of the projects in scope. It
 prints:
 
@@ -1062,7 +1045,7 @@ Nothing was changed. Re-run `rwv doctor --fix` once each of these is resolved.
 Land the commits in the canonical clone or delete the refs, commit, move or
 delete the files, then re-run `rwv doctor --fix`. rwv never runs the `git
 clean` it names. Do not repair by hand with `git worktree add`: a worktree rwv
-did not create carries no ownership receipt.
+did not create is not registered in the workweave's index.
 
 **As a refusal.** `rwv workweave delete` refuses with this token when a
 checkout in the workweave is itself a canonical store that other worktrees
@@ -1249,7 +1232,7 @@ record's `converge` carries those workweaves as `{"here": {"retire_first":
 
 ---
 
-## Branches and ownership receipts
+## Branches
 
 ### `alignment`
 
@@ -1314,146 +1297,6 @@ A member's checkout, or the project repo's, is not where the checked-out project
 #### `project-detached`
 
 **Warning. Report-only.** The project repo's HEAD is on no branch, and the workspace was not made detached, so no record says how its members should sit. The commits it holds that no branch reaches are listed. **What to do:** keep them on a branch if there are any, then switch the project repo back to a branch.
-
-### `branch-discipline`
-
-`branch-discipline` covers the refs rwv holds an ownership receipt for: a
-workweave's own ref, what a canonical store is attached to, and stale
-ephemeral branches left over from deleted workweaves. Where a member's checkout
-stands against the branch it should be on is [`alignment`](#alignment).
-
-Every deletion `--fix` performs is gated twice: on an ownership receipt for
-that exact ref in that exact store, and on a warrant proving the loss is safe.
-Neither gate is inferable from a branch name.
-
-Its findings are grouped below by what each one is about, because the
-disposition differs across them and no statement about the kind as a whole
-would be true. Every finding names a `sub_kind`, which `rwv doctor --json`
-prints and which `rwv explain <sub-kind>` serves directly; that is the entry
-to read, and this one is only the route to it.
-
-### `branch-discipline` — a workweave's own ref
-
-#### `unrecorded-ephemeral-branch`
-
-**Warning. Auto-fixable.** The workweave's flat ref exists in the canonical
-store but rwv holds no receipt for it — what a build that minted flat names
-before receipts existed leaves behind. Until it is adopted the ref is nobody's,
-so `rwv workweave delete` will leave it behind.
-
-**What to do:** `rwv doctor --fix` adopts it at its observed tip.
-
-### `branch-discipline` — what the canonical store is attached to
-
-#### `canonical-holds-live-workweave-ref`
-
-**Warning. Report-only.** The canonical store is attached to a ref rwv
-recorded for a workweave that is still on disk. git forbids one branch being
-checked out in two worktrees of the same store, so reaching this state means a
-directory was moved or copied.
-
-**What to do:** decide which of the two checkouts is the real one and switch
-the other off the ref. Nothing here can tell them apart, which is exactly why
-`--fix` has no arm.
-
-#### `canonical-holds-leaked-ref`
-
-**Warning. Report-only.** The canonical store is attached to a ref recorded
-for a workweave that is gone — a leak. The reclaim cannot run while the
-store's own HEAD is on it, because git refuses to delete a branch a worktree
-uses, so there is no arm here even though the ref is one rwv owns.
-
-**What to do:** `git switch <tracking-branch>`, then re-run
-`rwv doctor --fix`. Once the store is off the ref it becomes an ordinary
-stale-branch finding and `--fix` reclaims it under a warrant.
-
-### `branch-discipline` — stale ephemeral branches
-
-A `<project>--<workweave>` branch in a canonical clone whose workweave is no
-longer on disk. Three classes, and only one is removable.
-
-"No longer on disk" is asked of three sources: the container walk, the
-workweave index, and git's own worktree table. The third is what keeps a
-workweave placed outside every container (`rwv workweave create
-<name> --dir <path>`) whose index entry has been lost out of all three
-classes — a branch a live checkout is sitting on is never reported here.
-
-#### `stale-ephemeral-branch-safe`
-
-**Warning. Auto-fixable.** rwv holds a receipt for the ref and its tip is
-reachable from the store's tip, so it carries no unique commits.
-
-**What to do:** `rwv doctor --fix` deletes it under a merged warrant, with no
-information loss. git will not delete a branch a registered worktree is on, even
-one whose directory is gone, so before its first delete in a store the fix
-drops that store's registrations of removed worktrees, whether or not any
-manifest lists the store, and prints each one it drops. A locked registration
-stays, and so does the branch it holds.
-
-#### `stale-ephemeral-branch-live`
-
-**Warning. Report-only.** rwv holds a receipt, but the tip carries commits not
-reachable from the primary tracking branch — unique work. No merged warrant
-can be established, so `--fix` never touches it. The tip SHA is reported so
-you can inspect the commits before deciding.
-
-**What to do:** land the commits, archive the branch, or delete it by hand.
-
-#### `stale-ephemeral-branch-unowned`
-
-**Warning. Report-only.** A branch shaped like one rwv minted before names
-were flattened, which no workweave on disk claims and which rwv holds no
-receipt for. It is not rwv's: name shape is not ownership. Deleting this class
-is precisely how a hand-made branch could disappear under `--fix`, so `--fix`
-never touches it — and this is the one entry where that is permanent rather
-than pending an arm nobody has written.
-
-This is the one class discovered by name shape rather than by asking the
-registry — every other arm has a receipt or a live workweave's minted name to
-ask, and this one has neither. The alternative to a shape heuristic here is
-not a better signal; it is silence, and the refs you most need to see are
-exactly the ones the migration cannot reach. What keeps it sound is that the
-heuristic yields a yes-or-no and nothing else: no name is taken apart, no
-workweave is named, and the only route to a deletion runs through a receipt.
-A false positive costs one line of output and can cost nothing more.
-
-**What to do:** remove it by hand if it is yours to remove.
-
-### `dangling-ref-receipt`
-
-**Warning. Auto-fixable.** An ownership receipt naming a ref that is not in
-the store it names — the benign residue of a crash between the receipt write
-and the ref creation.
-
-Receipts are written *before* the refs they describe, precisely so a crash
-leaves this state rather than an unreceipted ref, which nothing could ever
-destroy. A dangling receipt authorizes nothing: no deletion warrant can be
-built against a ref that is not there.
-
-**What to do:** `rwv doctor --fix` retracts it. Only raised when the store is
-present and readable; a receipt whose *store* is gone is left alone here.
-
-### `pre-flat-ref-receipt`
-
-**Warning. Auto-fixable.** An ownership receipt whose ref name carries a `/`
-segment — a name no live workweave of that project mints, so a record claiming
-a ref rwv cannot have created. It is written on purpose, mid-flight, by the
-pre-flat migration (adopt, then rename, then retract) and survives whenever
-that rename does not complete. Unlike `dangling-ref-receipt`, the ref itself
-usually *does* exist; the residue is in the registry, not in the store.
-
-Left in place it is worse than no receipt at all. The canonical-store scan
-asks which live workweave mints the recorded name, a segmented name is minted
-by none, so the ref reads as a leak — and holding a receipt is exactly what
-lifts a ref out of the untouchable unowned class into the ones `--fix` deletes
-from. Where the ref is also checked out, every `--fix` re-attempts a deletion
-git refuses, and doctor never converges.
-
-**What to do:** `rwv doctor --fix` retracts the receipt. Retraction disowns;
-it does not touch the ref. Afterwards the branch is unowned, which `--fix`
-never deletes.
-
----
 
 ## Working state and in-flight operations
 
